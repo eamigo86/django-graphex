@@ -53,7 +53,7 @@ _all_lookups = (
 
 #: Every lookup the catalog knows about.
 ALL_LOOKUPS = _all_lookups
-#: ``("exact", "icontains")`` -- the minimal text pair.
+#: ``("iexact", "icontains")`` -- the minimal text pair.
 BASIC_LOOKUPS = _all_lookups[2:3] + _all_lookups[4:5]
 #: Lookups shared by most scalar fields.
 COMMON_LOOKUPS = _all_lookups[0:10]

@@ -308,7 +308,6 @@ class DjangoInputObjectType(InputObjectType):
             container = type(cls.__name__, (InputObjectTypeContainer, cls), {})
 
         _meta = DjangoObjectOptions(cls)
-        _meta.by_polar = True
         _meta.model = model
         _meta.registry = registry
         _meta.filter_fields = filter_fields
@@ -319,7 +318,6 @@ class DjangoInputObjectType(InputObjectType):
         _meta.container = container
 
         super(InputObjectType, cls).__init_subclass_with_meta__(
-            # container=container,
             _meta=_meta,
             **options,
         )
@@ -706,7 +704,6 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
                 input_type = registry.get_type_for_model(model, for_input=operation)
 
                 if not input_type:
-                    # factory_kwargs.update({'skip_registry': True})
                     input_type = factory_type(
                         "input", DjangoInputObjectType, operation, **factory_kwargs
                     )

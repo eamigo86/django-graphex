@@ -149,7 +149,6 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
                 input_type = registry.get_type_for_model(model, for_input=operation)
 
                 if not input_type:
-                    # factory_kwargs.update({'skip_registry': True})
                     input_type = factory_type(
                         "input", DjangoInputObjectType, operation, **factory_kwargs
                     )

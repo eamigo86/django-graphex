@@ -281,7 +281,6 @@ def is_required(field: Field) -> bool:
     try:
         blank = getattr(field, "blank", getattr(field, "field", None))
         default = getattr(field, "default", getattr(field, "field", None))
-        #  null = getattr(field, "null", getattr(field, "field", None))
 
         if blank is None:
             blank = True

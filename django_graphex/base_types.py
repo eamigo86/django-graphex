@@ -42,7 +42,6 @@ def factory_type(operation: str, _type: Any, *args: Any, **kwargs: Any) -> Any:
             skip_registry = kwargs.get("skip_registry")
             max_deep = kwargs.get("max_deep")
             complexity = kwargs.get("complexity")
-            # fields = kwargs.get('fields')
             description = "Auto generated Type for {} model".format(
                 kwargs.get("model").__name__
             )
@@ -191,7 +190,7 @@ class GenericForeignKeyInputType(graphene.InputObjectType):
 # ************** CUSTOM BASE TYPES *************** #
 # ************************************************ #
 class Binary(graphene.Scalar):
-    """BinaryArray is used to convert a Django BinaryField to the string form."""
+    """Binary is used to convert a Django BinaryField to the string form."""
 
     @staticmethod
     def binary_to_string(value: bytes) -> str:
