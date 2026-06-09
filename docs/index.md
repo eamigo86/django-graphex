@@ -74,6 +74,6 @@ Ready to dive in? Check out our [Installation Guide](installation.md) to get sta
 
 ## Community & Support
 
-- **GitHub Issues**: [Report bugs or request features](https://github.com/eamigo86/django-graphex/issues)
+- **GitHub Issues**: [Report a bug or request a feature](https://github.com/eamigo86/django-graphex/issues/new/choose)
 - **PyPI Package**: [Install from PyPI](https://pypi.org/project/django-graphex/)
 - **Source Code**: [View on GitHub](https://github.com/eamigo86/django-graphex)

@@ -1,0 +1,91 @@
+name: 🐛 Bug Report
+description: Report a reproducible bug in django-graphex
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill in the fields below
+        so we can reproduce and fix it quickly. Issues missing reproduction steps or
+        version information may be closed until they are provided.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I searched the existing issues and this bug has not been reported yet.
+          required: true
+        - label: I am using a supported version (Python >= 3.12, Django >= 4.2).
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps and/or code to reproduce the behavior.
+      placeholder: |
+        1. Define model '...'
+        2. Create the type / mutation '...'
+        3. Run query '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior (logs / traceback)
+      description: What actually happened? Paste the full error or traceback.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: graphex-version
+    attributes:
+      label: django-graphex version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: django-version
+    attributes:
+      label: Django version
+      placeholder: "4.2 / 5.2 / 6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12 / 3.13 / 3.14"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else relevant — graphene version, relevant settings, related issues, etc.
+    validations:
+      required: false
