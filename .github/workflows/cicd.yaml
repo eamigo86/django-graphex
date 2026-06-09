@@ -3,13 +3,10 @@ name: Continuous Integration & Delivery
 on:
   push:
     branches:
-    - master
-    - develop
-    - pre-v2
+    - main
   pull_request:
     branches:
-    - master
-    - pre-v2
+    - main
   workflow_dispatch:
     inputs:
       repository:
@@ -195,10 +192,10 @@ jobs:
     needs: [ test, lint-and-security, coverage, get-version ]
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch')
     environment:
-      name: ${{ (github.ref == 'refs/heads/master' && github.event_name == 'push') && 'production' || 'staging' }}
+      name: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'push') && 'production' || 'staging' }}
 
     steps:
     - name: Checkout code
@@ -221,7 +218,7 @@ jobs:
       run: |
         if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
           REPO="${{ github.event.inputs.repository }}"
-        elif [ "${{ github.ref }}" == "refs/heads/master" ] && [ "${{ github.event_name }}" == "push" ]; then
+        elif [ "${{ github.ref }}" == "refs/heads/main" ] && [ "${{ github.event_name }}" == "push" ]; then
           REPO="pypi"
         else
           REPO="testpypi"
@@ -275,7 +272,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       needs.publish.result == 'success' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
        (github.event_name == 'workflow_dispatch' && github.event.inputs.repository == 'pypi'))
 
     steps:

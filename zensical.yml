@@ -5,7 +5,7 @@ site_url: https://eamigo86.github.io/django-graphex/
 
 repo_name: eamigo86/django-graphex
 repo_url: https://github.com/eamigo86/django-graphex
-edit_uri: edit/master/docs/
+edit_uri: edit/main/docs/
 
 theme:
   name: material
