@@ -1,12 +1,11 @@
-name: Documentation
+name: Documentation (manual)
 
+# Automatic docs deployment happens in the release pipeline (cicd.yaml's
+# `deploy-docs` job, which runs after a successful PyPI publish on a version
+# tag). This workflow is only for rebuilding/redeploying the docs on demand
+# (e.g. a docs-only fix between releases).
 on:
-  push:
-    tags:
-      - 'v*.*.*'  # Trigger on version tags like v2.0.0
-  release:
-    types: [created, published]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:  # Manual trigger only
 
 permissions:
   contents: read

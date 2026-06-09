@@ -33,7 +33,8 @@ Django models — no DRF, no `graphene-django`, no `django-filter`.
 
 - **Python:** 3.12+ (3.13, 3.14 supported)
 - **Django:** 4.0+ (4.2, 5.0, 5.1, 5.2, 6.0 supported)
-- **graphene:** >=3.3,<4 · **pydantic:** >=2,<3
+- **graphene:** >=3.3,<4
+- **pydantic:** >=2,<3
 
 ## Installation
 
