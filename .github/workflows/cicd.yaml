@@ -4,6 +4,8 @@ on:
   push:
     branches:
     - main
+    tags:
+    - 'v*.*.*'
   pull_request:
     branches:
     - main
@@ -191,11 +193,12 @@ jobs:
   publish:
     needs: [ test, lint-and-security, coverage, get-version ]
     runs-on: ubuntu-latest
+    # Publish only when a version tag is pushed, or when triggered manually.
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch')
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch'
     environment:
-      name: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'push') && 'production' || 'staging' }}
+      name: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging' }}
 
     steps:
     - name: Checkout code
@@ -208,56 +211,32 @@ jobs:
       with:
         enable-cache: true
 
-    - name: Configure Git
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-
     - name: Determine target repository
       id: target_repo
       run: |
+        # A pushed tag publishes to PyPI; a manual run uses the chosen repo.
         if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
           REPO="${{ github.event.inputs.repository }}"
-        elif [ "${{ github.ref }}" == "refs/heads/main" ] && [ "${{ github.event_name }}" == "push" ]; then
-          REPO="pypi"
         else
-          REPO="testpypi"
+          REPO="pypi"
         fi
 
         echo "repository=$REPO" >> $GITHUB_OUTPUT
         echo "Publishing to: $REPO"
 
+    - name: Verify the tag matches the package version
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        TAG_VERSION="${GITHUB_REF_NAME#v}"
+        PKG_VERSION="${{ needs.get-version.outputs.version }}"
+        if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+          echo "::error::Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${PKG_VERSION}."
+          exit 1
+        fi
+        echo "Tag matches package version: $PKG_VERSION"
+
     - name: Build package
       run: uv build
-
-    - name: Check if tag exists
-      id: check_tag
-      if: steps.target_repo.outputs.repository == 'pypi'
-      run: |
-        VERSION="${{ needs.get-version.outputs.version }}"
-        TAG_NAME="v$VERSION"
-
-        if git rev-parse --verify "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
-          echo "tag_exists=true" >> $GITHUB_OUTPUT
-          echo "Tag $TAG_NAME already exists"
-        else
-          echo "tag_exists=false" >> $GITHUB_OUTPUT
-          echo "Tag $TAG_NAME does not exist"
-        fi
-
-        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-
-    - name: Create Git tag
-      id: create_tag
-      if: steps.target_repo.outputs.repository == 'pypi' && steps.check_tag.outputs.tag_exists == 'false'
-      run: |
-        TAG_NAME="${{ steps.check_tag.outputs.tag_name }}"
-        VERSION="${{ needs.get-version.outputs.version }}"
-
-        git tag -a "$TAG_NAME" -m "Release version $VERSION"
-        git push origin "$TAG_NAME"
-
-        echo "Created and pushed tag: $TAG_NAME"
 
     - name: Publish to PyPI
       if: steps.target_repo.outputs.repository == 'pypi'
@@ -270,10 +249,10 @@ jobs:
   create-release:
     needs: [ publish, get-version ]
     runs-on: ubuntu-latest
+    # Only cut a GitHub Release for a real version tag.
     if: |
       needs.publish.result == 'success' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-       (github.event_name == 'workflow_dispatch' && github.event.inputs.repository == 'pypi'))
+      startsWith(github.ref, 'refs/tags/v')
 
     steps:
     - name: Checkout code
