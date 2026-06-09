@@ -1,0 +1,1051 @@
+"""Utility functions for Django-GraphQL integration."""
+
+from __future__ import annotations
+
+import re
+from collections import OrderedDict
+from typing import TYPE_CHECKING, Any, Iterator
+
+from django.apps import apps
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRel
+from django.core.exceptions import ValidationError
+from django.db.models import (
+    NOT_PROVIDED,
+    Manager,
+    ManyToManyRel,
+    ManyToOneRel,
+    Model,
+    Prefetch,
+    QuerySet,
+)
+from django.db.models.base import ModelBase
+from django.db.models.constants import LOOKUP_SEP
+from graphene.utils.str_converters import to_snake_case
+from graphql import GraphQLList, GraphQLNonNull, GraphQLObjectType, get_named_type
+from graphql.execution.values import get_argument_values
+from graphql.language.ast import FragmentSpreadNode, InlineFragmentNode
+
+from ._compat import is_valid_django_model
+from .settings import graphql_api_settings
+
+if TYPE_CHECKING:
+    from django.db.models import Field
+    from graphql import GraphQLResolveInfo, GraphQLType
+    from graphql.language.ast import SelectionSetNode
+
+
+def not_found_error(model: type[Model], pk: Any) -> list:
+    """Return a one-entry ``ErrorType`` list for a missing object.
+
+    Centralizes the "object not found" mutation error so its wording stays
+    consistent across types and mutations.
+
+    Args:
+        model: The Django model that was looked up.
+        pk: The primary key that did not match a row.
+
+    Returns:
+        A single-element list of "ErrorType" with the "id" field set.
+    """
+    from ._compat import ErrorType
+
+    return [
+        ErrorType(
+            field="id",
+            messages=["{} with id {} does not exist.".format(model.__name__, pk)],
+        )
+    ]
+
+
+def get_reverse_fields(model: type[Model]) -> Iterator[tuple[str, Any]]:
+    """Yield the reverse relation fields of a Django model.
+
+    Args:
+        model: The Django model class to inspect.
+
+    Yields:
+        Pairs of the field name and its reverse relation descriptor.
+    """
+    reverse_fields = {
+        f.name: f for f in model._meta.get_fields() if f.auto_created and not f.concrete
+    }
+
+    for name, field in reverse_fields.items():
+        # Django =>1.9 uses 'rel', django <1.9 uses 'related'
+        related = getattr(field, "rel", None) or getattr(field, "related", None)
+        if isinstance(related, ManyToOneRel):
+            yield (name, related)
+        elif isinstance(related, ManyToManyRel) and not related.symmetrical:
+            yield (name, related)
+
+
+def to_kebab_case(name: str) -> str:
+    """Convert a name to kebab-case format.
+
+    Args:
+        name: The name to convert.
+
+    Returns:
+        The kebab-cased name.
+    """
+    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1-\2", name.title().replace(" ", ""))
+    return re.sub("([a-z0-9])([A-Z])", r"\1-\2", s1).lower()
+
+
+def get_related_model(field: Field) -> type[Model]:
+    """Return the related model of a Django relation field.
+
+    Args:
+        field: The Django relation field to inspect.
+
+    Returns:
+        The related Django model class.
+    """
+    return field.remote_field.model
+
+
+def get_model_fields(model: type[Model]) -> list[tuple[str, Any]]:
+    """Return all fields of a Django model, including reverse fields.
+
+    Args:
+        model: The Django model class to inspect.
+
+    Returns:
+        A list of "(name, field)" pairs for every local and reverse field.
+    """
+    private_fields = model._meta.private_fields
+
+    all_fields_list = (
+        list(model._meta.fields)
+        + list(model._meta.local_many_to_many)
+        + list(private_fields)
+        + list(model._meta.fields_map.values())
+    )
+
+    # Make sure we don't duplicate local fields with "reverse" version
+    # and get the real reverse django related_name
+    reverse_fields = list(get_reverse_fields(model))
+    exclude_fields = [field[1] for field in reverse_fields]
+
+    local_fields = [
+        (field.name, field) for field in all_fields_list if field not in exclude_fields
+    ]
+
+    all_fields = local_fields + reverse_fields
+
+    return all_fields
+
+
+def get_obj(app_label: str, model_name: str, object_id: Any) -> Model | None:
+    """Get a Django object by app label, model name, and object ID.
+
+    Args:
+        app_label: The Django app label.
+        model_name: The model name.
+        object_id: The primary key of the object.
+
+    Returns:
+        The model instance, or None if it does not exist.
+
+    Raises:
+        ValidationError: If the lookup fails validation.
+        TypeError: If the lookup arguments have an invalid type.
+        Exception: If any other error occurs during the lookup.
+    """
+    try:
+        model = apps.get_model(f"{app_label}.{model_name}")
+    except LookupError:
+        # Unknown app label / model name -> no such object.
+        return None
+
+    if not is_valid_django_model(model):
+        return None
+
+    try:
+        return get_Object_or_None(model, pk=object_id)
+    except model.DoesNotExist:
+        return None
+    except ValidationError as e:
+        raise ValidationError(str(e))
+    except TypeError as e:
+        raise TypeError(str(e))
+    except Exception as e:
+        raise Exception(str(e))
+
+
+def create_obj(
+    django_model: Any, new_obj_key: str | None = None, *args: Any, **kwargs: Any
+) -> Any:
+    """Create a Django model instance.
+
+    Args:
+        django_model: A Django model class or a "app_label.model_name" string.
+        new_obj_key: The key in "kwargs" holding the data, if any.
+        *args: Additional positional arguments.
+        **kwargs: The model attribute values.
+
+    Returns:
+        The created model instance, or an error message string on failure.
+
+    Raises:
+        ValidationError: If the new object fails validation.
+        TypeError: If the supplied data has an invalid type.
+    """
+    try:
+        if isinstance(django_model, str):
+            django_model = apps.get_model(django_model)
+        assert is_valid_django_model(django_model), (
+            "You need to pass a valid Django Model or a string with format: "
+            '<app_label>.<model_name> to "create_obj"'
+            ' function, received "{}".'
+        ).format(django_model)
+
+        data = kwargs.get(new_obj_key, None) if new_obj_key else kwargs
+        new_obj = django_model(**data)
+        new_obj.full_clean()
+        new_obj.save()
+        return new_obj
+    except LookupError:
+        pass
+    except ValidationError as e:
+        raise ValidationError(str(e))
+    except TypeError as e:
+        raise TypeError(str(e))
+    except Exception as e:
+        return str(e)
+
+
+def clean_dict(d: Any) -> Any:
+    """Remove all empty fields in a nested dict.
+
+    Args:
+        d: The value to clean, typically a dict or list.
+
+    Returns:
+        The value with empty entries removed at every nesting level.
+    """
+    if not isinstance(d, (dict, list)):
+        return d
+    if isinstance(d, list):
+        return [v for v in (clean_dict(v) for v in d) if v]
+    return OrderedDict(
+        [(k, v) for k, v in ((k, clean_dict(v)) for k, v in list(d.items())) if v]
+    )
+
+
+def get_type(_type: GraphQLType) -> GraphQLType:
+    """Return the base type from GraphQL list/non-null wrappers.
+
+    Args:
+        _type: The GraphQL type, possibly wrapped.
+
+    Returns:
+        The unwrapped underlying GraphQL type.
+    """
+    if isinstance(_type, (GraphQLList, GraphQLNonNull)):
+        return get_type(_type.of_type)
+    return _type
+
+
+def get_fields(info: GraphQLResolveInfo) -> Iterator[str]:
+    """Extract the requested field names from the GraphQL query info.
+
+    Args:
+        info: The GraphQL resolve info for the current field.
+
+    Yields:
+        The name of each selected field, expanding fragment spreads.
+    """
+    fragments = info.fragments
+    field_nodes = info.field_nodes[0].selection_set.selections
+
+    for field_ast in field_nodes:
+        field_name = field_ast.name.value
+        if isinstance(field_ast, FragmentSpreadNode):
+            for field in fragments[field_name].selection_set.selections:
+                yield field.name.value
+            continue
+
+        yield field_name
+
+
+def is_required(field: Field) -> bool:
+    """Check whether a Django field is required.
+
+    Args:
+        field: The Django field to inspect.
+
+    Returns:
+        True if the field is required, False otherwise.
+    """
+    try:
+        blank = getattr(field, "blank", getattr(field, "field", None))
+        default = getattr(field, "default", getattr(field, "field", None))
+        #  null = getattr(field, "null", getattr(field, "field", None))
+
+        if blank is None:
+            blank = True
+        elif not isinstance(blank, bool):
+            blank = getattr(blank, "blank", True)
+
+        if default is None:
+            default = NOT_PROVIDED
+        elif default != NOT_PROVIDED:
+            default = getattr(default, "default", default)
+
+    except AttributeError:
+        return False
+
+    return not blank and default == NOT_PROVIDED
+
+
+def _get_queryset(klass: Any) -> QuerySet:
+    """Return a QuerySet from a Model, Manager, or QuerySet.
+
+    Args:
+        klass: A Django model, manager, or queryset.
+
+    Returns:
+        A queryset derived from "klass".
+
+    Raises:
+        ValueError: If "klass" is not a valid type.
+    """
+    if isinstance(klass, QuerySet):
+        return klass
+    elif isinstance(klass, Manager):
+        manager = klass
+    elif isinstance(klass, ModelBase):
+        manager = klass._default_manager
+    else:
+        if isinstance(klass, type):
+            klass__name = klass.__name__
+        else:
+            klass__name = klass.__class__.__name__
+        raise ValueError(
+            "Object is of type '{}', but must be a Django Model, "
+            "Manager, or QuerySet".format(klass__name)
+        )
+    return manager.all()
+
+
+def _get_custom_resolver(info: GraphQLResolveInfo) -> Any | None:
+    """Get the custom user-defined resolver for the query, if any.
+
+    This resolver must return a QuerySet instance to be successfully resolved.
+
+    Args:
+        info: The GraphQL resolve info for the current field.
+
+    Returns:
+        The custom resolver callable, or None if none is defined.
+    """
+    parent = info.parent_type
+    custom_resolver_name = f"resolve_{to_snake_case(info.field_name)}"
+    if hasattr(parent.graphene_type, custom_resolver_name):
+        return getattr(parent.graphene_type, custom_resolver_name)
+    return None
+
+
+def get_Object_or_None(klass: Any, *args: Any, **kwargs: Any) -> Model | None:
+    """Use get() to return an object, or None if it does not exist.
+
+    The "klass" may be a Model, Manager, or QuerySet object. All other passed
+    arguments and keyword arguments are used in the get() query. Like with
+    get(), a MultipleObjectsReturned error is raised if more than one object
+    is found.
+
+    Args:
+        klass: A Django model, manager, or queryset.
+        *args: When given, the first value selects the database alias.
+        **kwargs: The lookup arguments for the get() query.
+
+    Returns:
+        The matched object, or None if it does not exist.
+    """
+    queryset = _get_queryset(klass)
+    try:
+        if args:
+            return queryset.using(args[0]).get(**kwargs)
+        else:
+            return queryset.get(*args, **kwargs)
+    except queryset.model.DoesNotExist:
+        return None
+
+
+def get_extra_filters(root: Model, model: type[Model]) -> dict[str, Any]:
+    """Build extra filters tying a model to its parent "root" relations.
+
+    Args:
+        root: The parent model instance to filter against.
+        model: The Django model class being filtered.
+
+    Returns:
+        A mapping of relation field names to the "root" instance.
+    """
+    extra_filters = {}
+    for field in model._meta.get_fields():
+        if field.is_relation and field.related_model == root._meta.model:
+            extra_filters.update({field.name: root})
+
+    return extra_filters
+
+
+def get_related_fields(model: type[Model]) -> dict[str, Any]:
+    """Return the relation fields of a Django model.
+
+    Args:
+        model: The Django model class to inspect.
+
+    Returns:
+        A mapping of field name to field for each non-generic relation.
+    """
+    return {
+        field.name: field
+        for field in model._meta.get_fields()
+        if field.is_relation and not isinstance(field, (GenericForeignKey, GenericRel))
+    }
+
+
+def find_field(field: Any, fields_dict: dict[str, Any]) -> Any:
+    """Find a field in a fields dictionary by its name or snake_case name.
+
+    Args:
+        field: The GraphQL field node whose name is looked up.
+        fields_dict: The mapping of field names to fields.
+
+    Returns:
+        The matched field, or None if not found.
+    """
+    temp = fields_dict.get(
+        field.name.value, fields_dict.get(to_snake_case(field.name.value), None)
+    )
+
+    return temp
+
+
+# GraphQL/relay plumbing leaf names that never map to a model column and must not
+# mark a model as "computed" when deciding `.only()` narrowing.
+_PLUMBING_FIELDS = frozenset(
+    {
+        "__typename",
+        "totalcount",
+        "count",
+        "pageinfo",
+        "page_info",
+        "cursor",
+        "startcursor",
+        "endcursor",
+        "hasnextpage",
+        "haspreviouspage",
+        "edges",
+        "node",
+    }
+)
+
+
+def _relation_optimization(field: Any) -> tuple[str, str] | None:
+    """Classify a Django relation field for queryset optimization.
+
+    The "orm_name" is the path component to feed "select_related" /
+    "prefetch_related" (the reverse accessor for reverse relations).
+
+    Args:
+        field: The Django field to classify.
+
+    Returns:
+        A "(select, orm_name)" pair for forward FK or one-to-one, a
+        "(prefetch, orm_name)" pair for many-to-many or reverse FK, or None
+        for non-relations and generic relations.
+    """
+    if isinstance(field, (GenericForeignKey, GenericRel)):
+        return None
+    if not getattr(field, "is_relation", False):
+        return None
+
+    is_reverse = getattr(field, "auto_created", False) and not getattr(
+        field, "concrete", False
+    )
+    if is_reverse:
+        get_accessor = getattr(field, "get_accessor_name", None)
+        orm_name = get_accessor() if callable(get_accessor) else field.name
+    else:
+        orm_name = field.name
+
+    if field.many_to_many or field.one_to_many:
+        return ("prefetch", orm_name)
+    if field.many_to_one or field.one_to_one:
+        return ("select", orm_name)
+    return None  # pragma: no cover
+
+
+def _relation_field_map(model: type[Model]) -> dict[str, Any]:
+    """Map relation names (with snake and accessor aliases) to their fields.
+
+    Args:
+        model: The Django model class to inspect.
+
+    Returns:
+        A mapping of every GraphQL-facing relation name and alias to its
+        field.
+    """
+    result = {}
+    for field in model._meta.get_fields():
+        if _relation_optimization(field) is None:
+            continue
+        names = {field.name, to_snake_case(field.name)}
+        get_accessor = getattr(field, "get_accessor_name", None)
+        if callable(get_accessor):
+            try:
+                names.add(get_accessor())
+            except Exception:  # nosec B110 - accessor may be unavailable ; pragma: no cover
+                pass
+        for name in names:
+            result.setdefault(name, field)
+    return result
+
+
+def _concrete_field_map(model: type[Model]) -> dict[str, str]:
+    """Map concrete non-relation field names and snake aliases to attnames.
+
+    Args:
+        model: The Django model class to inspect.
+
+    Returns:
+        A mapping of each concrete field name and snake alias to its attname.
+    """
+    result = {}
+    for field in model._meta.get_fields():
+        if getattr(field, "is_relation", False):
+            continue
+        if not getattr(field, "concrete", False):
+            continue  # pragma: no cover
+        result.setdefault(field.name, field.attname)
+        result.setdefault(to_snake_case(field.name), field.attname)
+    return result
+
+
+def recursive_params(
+    selection_set: SelectionSetNode,
+    fragments: dict[str, Any],
+    available_related_fields: dict[str, Any],
+    select_related: list[str],
+    prefetch_related: list[str],
+    _prefix: str = "",
+) -> tuple[list[str], list[str]]:
+    """Walk a GraphQL selection set building nested select/prefetch paths.
+
+    The "available_related_fields" argument is the relation map of the current
+    model (name to field). Forward FK or one-to-one relations become dotted
+    "select_related" paths; many-to-many or reverse relations become
+    "prefetch_related" paths. The walk descends into related models (building
+    "a__b" paths) and is transparent to wrapper fields (such as "results"),
+    fragments and inline fragments.
+
+    Args:
+        selection_set: The GraphQL selection set to walk.
+        fragments: The fragment definitions keyed by name.
+        available_related_fields: The relation map of the current model.
+        select_related: The accumulated select_related paths, mutated in place.
+        prefetch_related: The accumulated prefetch_related paths, mutated in
+            place.
+        _prefix: The dotted ORM path prefix for the current model.
+
+    Returns:
+        The mutated "(select_related, prefetch_related)" pair.
+    """
+    for field in selection_set.selections:
+        if isinstance(field, FragmentSpreadNode):
+            fragment = fragments.get(field.name.value) if fragments else None
+            if fragment is not None:
+                recursive_params(
+                    fragment.selection_set,
+                    fragments,
+                    available_related_fields,
+                    select_related,
+                    prefetch_related,
+                    _prefix,
+                )
+            continue
+
+        if isinstance(field, InlineFragmentNode):
+            recursive_params(
+                field.selection_set,
+                fragments,
+                available_related_fields,
+                select_related,
+                prefetch_related,
+                _prefix,
+            )
+            continue
+
+        name = field.name.value
+        related_field = available_related_fields.get(
+            name, available_related_fields.get(to_snake_case(name), None)
+        )
+        sub_selection = getattr(field, "selection_set", None)
+
+        if related_field is not None:
+            optimization = _relation_optimization(related_field)
+            if optimization is None:
+                continue  # pragma: no cover
+            kind, orm_name = optimization
+            path = _prefix + orm_name
+            target = select_related if kind == "select" else prefetch_related
+            if path not in target:
+                target.append(path)
+            if sub_selection is not None:
+                related_model = get_related_model(related_field)
+                recursive_params(
+                    sub_selection,
+                    fragments,
+                    _relation_field_map(related_model),
+                    select_related,
+                    prefetch_related,
+                    path + LOOKUP_SEP,
+                )
+        elif sub_selection is not None:
+            # Wrapper field (e.g. `results`) or unknown object: stay on the same
+            # model and prefix so nested relations are still discovered.
+            recursive_params(
+                sub_selection,
+                fragments,
+                available_related_fields,
+                select_related,
+                prefetch_related,
+                _prefix,
+            )
+
+    return select_related, prefetch_related
+
+
+def _collect_only_fields(
+    model: type[Model],
+    selection_set: SelectionSetNode,
+    fragments: dict[str, Any],
+    _prefix: str = "",
+    _only: set[str] | None = None,
+) -> list[str]:
+    """Collect a safe ".only()" field set across the select_related span.
+
+    Always keeps the pk (per model in the span), forward FK attnames and
+    "Meta.ordering" columns. A model that selects a computed or unknown leaf
+    is loaded in full (not narrowed) so properties keep working. Prefetched
+    branches are not narrowed.
+
+    Args:
+        model: The Django model class at the current span position.
+        selection_set: The GraphQL selection set to walk.
+        fragments: The fragment definitions keyed by name.
+        _prefix: The dotted ORM path prefix for the current model.
+        _only: The accumulating set of dotted only paths.
+
+    Returns:
+        A sorted list of dotted "only" paths.
+    """
+    if _only is None:
+        _only = set()
+
+    rel_map = _relation_field_map(model)
+    concrete_map = _concrete_field_map(model)
+    concrete_attnames = {field.attname for field in model._meta.concrete_fields}
+
+    # Always-on columns for this model so select_related joins/ordering survive.
+    _only.add(_prefix + model._meta.pk.attname)
+    for term in model._meta.ordering or []:
+        if not isinstance(term, str):
+            continue
+        column = term.lstrip("-+").split(LOOKUP_SEP)[0]
+        if column in concrete_attnames:
+            _only.add(_prefix + column)
+
+    model_full = False
+    pending = []
+    for field in selection_set.selections:
+        if isinstance(field, FragmentSpreadNode):
+            fragment = fragments.get(field.name.value) if fragments else None
+            if fragment is not None:
+                _collect_only_fields(
+                    model, fragment.selection_set, fragments, _prefix, _only
+                )
+            continue
+        if isinstance(field, InlineFragmentNode):
+            _collect_only_fields(model, field.selection_set, fragments, _prefix, _only)
+            continue
+
+        name = field.name.value
+        snake = to_snake_case(name)
+        sub_selection = getattr(field, "selection_set", None)
+
+        related_field = rel_map.get(name, rel_map.get(snake, None))
+        if related_field is not None:
+            optimization = _relation_optimization(related_field)
+            if optimization is None:
+                continue  # pragma: no cover
+            kind, orm_name = optimization
+            if kind == "select":
+                # Forward FK / O2O: keep the local join key on this model.
+                if getattr(related_field, "concrete", False) and getattr(
+                    related_field, "attname", None
+                ):
+                    _only.add(_prefix + related_field.attname)
+                if sub_selection is not None:
+                    _collect_only_fields(
+                        get_related_model(related_field),
+                        sub_selection,
+                        fragments,
+                        _prefix + orm_name + LOOKUP_SEP,
+                        _only,
+                    )
+            # prefetch branches use separate querysets -> not narrowed here.
+            continue
+
+        concrete_attname = concrete_map.get(name, concrete_map.get(snake, None))
+        if concrete_attname is not None:
+            pending.append(_prefix + concrete_attname)
+            continue
+
+        if name.lower() in _PLUMBING_FIELDS or snake in _PLUMBING_FIELDS:
+            continue
+
+        if sub_selection is not None:
+            # Wrapper field (e.g. `results`, or a renamed results field).
+            _collect_only_fields(model, sub_selection, fragments, _prefix, _only)
+            continue
+
+        # Unknown leaf -> computed/property/custom-named field: load this model
+        # in full so the resolver does not trigger extra queries.
+        model_full = True
+
+    if model_full:
+        for attname in concrete_attnames:
+            _only.add(_prefix + attname)
+    else:
+        _only.update(pending)
+
+    return sorted(_only)
+
+
+def _nested_list_field_instance(field_def: Any) -> Any | None:
+    """Recover the DjangoNestedListObjectField behind a GraphQL field.
+
+    Args:
+        field_def: The GraphQL field definition to inspect.
+
+    Returns:
+        The DjangoNestedListObjectField instance, or None if the field is not
+        backed by one.
+    """
+    resolve = getattr(field_def, "resolve", None)
+    func = getattr(resolve, "func", None)  # functools.partial -> bound method
+    inst = getattr(func, "__self__", None)
+    from .fields import DjangoNestedListObjectField
+
+    if isinstance(inst, DjangoNestedListObjectField):
+        return inst
+    return None
+
+
+def _walk_filtered_prefetches(
+    gql_type: GraphQLObjectType | None,
+    model: type[Model] | None,
+    selection_set: SelectionSetNode,
+    prefix: str,
+    info: GraphQLResolveInfo,
+    out: list[Any],
+    seen: dict[str, int],
+) -> None:
+    """Collect filtered Prefetch objects for nested list fields with filters.
+
+    Args:
+        gql_type: The GraphQL object type at the current position.
+        model: The Django model class at the current position, if known.
+        selection_set: The GraphQL selection set to walk.
+        prefix: The dotted ORM lookup prefix for the current position.
+        info: The GraphQL resolve info for the current field.
+        out: The accumulating list of Prefetch objects, mutated in place.
+        seen: A counter of how often each lookup was produced, mutated in
+            place.
+    """
+    relation_map = _relation_field_map(model) if model is not None else {}
+
+    for field in selection_set.selections:
+        if isinstance(field, FragmentSpreadNode):
+            fragment = info.fragments.get(field.name.value) if info.fragments else None
+            if fragment is not None:  # pragma: no branch
+                _walk_filtered_prefetches(
+                    gql_type, model, fragment.selection_set, prefix, info, out, seen
+                )
+            continue
+        if isinstance(field, InlineFragmentNode):
+            _walk_filtered_prefetches(
+                gql_type, model, field.selection_set, prefix, info, out, seen
+            )
+            continue
+
+        name = field.name.value
+        field_def = gql_type.fields.get(name) if gql_type is not None else None
+        if field_def is None:
+            continue
+        sub_gql = get_named_type(field_def.type)
+        sub_gql = sub_gql if isinstance(sub_gql, GraphQLObjectType) else None
+
+        inst = _nested_list_field_instance(field_def)
+        if inst is not None:
+            lookup = prefix + inst.accessor
+            args = get_argument_values(field_def, field, info.variable_values or {})
+            filter_value = args.get("filter")
+            if filter_value:
+                out.append(inst.build_prefetch(lookup, filter_value, info))
+                seen[lookup] = seen.get(lookup, 0) + 1
+            if field.selection_set and sub_gql is not None:  # pragma: no branch
+                _walk_filtered_prefetches(
+                    sub_gql,
+                    inst.type._meta.model,
+                    field.selection_set,
+                    lookup + LOOKUP_SEP,
+                    info,
+                    out,
+                    seen,
+                )
+            continue
+
+        related_field = relation_map.get(name, relation_map.get(to_snake_case(name)))
+        if related_field is not None and field.selection_set and sub_gql is not None:
+            optimization = _relation_optimization(related_field)
+            if optimization is not None:  # pragma: no branch
+                _walk_filtered_prefetches(
+                    sub_gql,
+                    get_related_model(related_field),
+                    field.selection_set,
+                    prefix + optimization[1] + LOOKUP_SEP,
+                    info,
+                    out,
+                    seen,
+                )
+            continue
+
+        if field.selection_set and sub_gql is not None:
+            # Wrapper field (results / pageInfo): same model and prefix.
+            _walk_filtered_prefetches(
+                sub_gql, model, field.selection_set, prefix, info, out, seen
+            )
+
+
+def build_filtered_prefetches(info: GraphQLResolveInfo) -> list[Any]:
+    """Build filtered Prefetch objects for the nested list fields in the query.
+
+    A nested list field carrying filter arguments is fetched in a single
+    filtered Prefetch for all parents (instead of one query per parent). This
+    walks the GraphQL return type and the selection AST together to map each
+    filtered nested list to its dotted ORM lookup.
+
+    Args:
+        info: The GraphQL resolve info for the current field.
+
+    Returns:
+        The list of filtered Prefetch objects, one per uniquely filtered
+        nested list lookup.
+    """
+    return_type = get_named_type(info.return_type)
+    field_nodes = info.field_nodes
+    if not field_nodes or not isinstance(return_type, GraphQLObjectType):
+        return []
+    field_node = field_nodes[0]
+    if not field_node.selection_set:
+        return []
+
+    graphene_type = getattr(return_type, "graphene_type", None)
+    model = getattr(getattr(graphene_type, "_meta", None), "model", None)
+
+    out = []
+    seen = {}
+    _walk_filtered_prefetches(
+        return_type, model, field_node.selection_set, "", info, out, seen
+    )
+    # Drop lookups that appeared more than once (aliased fields with different
+    # filters): fall back to the per-parent path for those, for correctness.
+    return [p for p in out if seen.get(p.prefetch_through, 0) == 1]
+
+
+def _merge_filtered_prefetches(
+    prefetch_related: list[str], filtered_prefetches: list[Any]
+) -> tuple[list[str], list[Any]]:
+    """Re-root prefetches under a filtered Prefetch into its own queryset.
+
+    Django forbids the same lookup appearing with two different querysets, so a
+    plain prefetch ("posts__comments") cannot sit beside a filtered
+    Prefetch("posts", ...). Re-root every prefetch (plain string or filtered
+    Prefetch) that lives under a filtered lookup into that filtered Prefetch's
+    queryset, which also optimizes the deeper level.
+
+    Args:
+        prefetch_related: The accumulated plain prefetch lookup strings.
+        filtered_prefetches: The filtered Prefetch objects for nested lists.
+
+    Returns:
+        The top-level (plain prefetch strings, filtered Prefetch objects) to
+        apply directly; deeper ones are nested into their parent's queryset.
+    """
+    if not filtered_prefetches:
+        return prefetch_related, filtered_prefetches
+
+    throughs = [pf.prefetch_through for pf in filtered_prefetches]
+    by_through = {pf.prefetch_through for pf in filtered_prefetches}
+
+    def nearest(path: str) -> str | None:
+        best = None
+        for through in throughs:
+            if path != through and path.startswith(through + LOOKUP_SEP):
+                if best is None or len(through) > len(best):
+                    best = through
+        return best
+
+    def strip(path: str, ancestor: str) -> str:
+        return path[len(ancestor) + len(LOOKUP_SEP) :]
+
+    plain_children: dict[str, list[str]] = {}
+    top_plain: list[str] = []
+    for path in prefetch_related:
+        if path in by_through:
+            continue  # the filtered Prefetch supersedes the plain lookup
+        ancestor = nearest(path)
+        if ancestor is None:
+            top_plain.append(path)
+        else:
+            plain_children.setdefault(ancestor, []).append(strip(path, ancestor))
+
+    filtered_children: dict[str, list[Any]] = {}
+    top_filtered: list[Any] = []
+    for pf in filtered_prefetches:
+        ancestor = nearest(pf.prefetch_through)
+        if ancestor is None:
+            top_filtered.append(pf)
+        else:
+            filtered_children.setdefault(ancestor, []).append(pf)
+
+    # Materialize bottom-up so a parent captures already-finalized children.
+    for pf in sorted(
+        filtered_prefetches,
+        key=lambda p: p.prefetch_through.count(LOOKUP_SEP),
+        reverse=True,
+    ):
+        children: list[Any] = list(plain_children.get(pf.prefetch_through, []))
+        for child in filtered_children.get(pf.prefetch_through, []):
+            children.append(
+                Prefetch(
+                    strip(child.prefetch_through, pf.prefetch_through),
+                    queryset=child.queryset,
+                )
+            )
+        if children:
+            pf.queryset = pf.queryset.prefetch_related(*children)
+
+    return top_plain, top_filtered
+
+
+def queryset_factory(
+    manager: Any, root: Any, info: GraphQLResolveInfo, **kwargs: Any
+) -> QuerySet:
+    """Build a queryset optimized for the requested GraphQL selection.
+
+    This applies nested "select_related" / "prefetch_related" (eliminating the
+    N+1 problem for related objects) and, when "OPTIMIZE_ONLY_FIELDS" is on, a
+    conservative ".only()" column projection. It honors a custom
+    "resolve_<field>" that returns a QuerySet. Behavior is controlled by the
+    "OPTIMIZE_QUERYSET" and "OPTIMIZE_ONLY_FIELDS" settings.
+
+    Args:
+        manager: A Django model, manager, or queryset to start from.
+        root: The root value passed to the resolver.
+        info: The GraphQL resolve info for the current field.
+        **kwargs: The resolver arguments, used to seed relation joins.
+
+    Returns:
+        The optimized queryset.
+    """
+    base = _get_queryset(manager)
+    model = base.model
+
+    custom_used = False
+    custom_resolver = _get_custom_resolver(info)
+    if custom_resolver is not None:
+        produced = custom_resolver(root, info, **kwargs)
+        if isinstance(produced, QuerySet):
+            base = produced
+            model = base.model
+            custom_used = True
+
+    if not graphql_api_settings.OPTIMIZE_QUERYSET:
+        return base
+
+    relation_map = _relation_field_map(model)
+    select_related = []
+    prefetch_related = []
+
+    # Filter kwargs that traverse relations (e.g. ``author__name``) also seed the
+    # joins so filtering does not trigger extra queries.
+    for key in kwargs.keys():
+        head = key.split(LOOKUP_SEP, 1)[0]
+        related_field = relation_map.get(
+            head, relation_map.get(to_snake_case(head), None)
+        )
+        if related_field is not None:
+            optimization = _relation_optimization(related_field)
+            if optimization is not None:  # pragma: no branch
+                kind, orm_name = optimization
+                target = select_related if kind == "select" else prefetch_related
+                if orm_name not in target:
+                    target.append(orm_name)
+
+    fields_asts = info.field_nodes
+    if fields_asts:
+        recursive_params(
+            fields_asts[0].selection_set,
+            info.fragments,
+            relation_map,
+            select_related,
+            prefetch_related,
+        )
+
+    # Filtered nested lists are fetched once for all parents via a filtered
+    # Prefetch. Anything prefetched *under* a filtered lookup is re-rooted into
+    # that Prefetch's own queryset (Django forbids the same lookup with two
+    # different querysets), which also optimizes the deeper level.
+    filtered_prefetches = build_filtered_prefetches(info) if fields_asts else []
+    prefetch_related, filtered_prefetches = _merge_filtered_prefetches(
+        prefetch_related, filtered_prefetches
+    )
+
+    if select_related:
+        base = base.select_related(*select_related)
+    if prefetch_related:
+        base = base.prefetch_related(*prefetch_related)
+    if filtered_prefetches:
+        base = base.prefetch_related(*filtered_prefetches)
+
+    if graphql_api_settings.OPTIMIZE_ONLY_FIELDS and not custom_used and fields_asts:
+        only_fields = _collect_only_fields(
+            model, fields_asts[0].selection_set, info.fragments
+        )
+        if only_fields:  # pragma: no branch
+            base = base.only(*only_fields)
+
+    return _get_queryset(base)
+
+
+def parse_validation_exc(validation_exc: Any) -> list[dict[str, Any]]:
+    """Parse a Django validation exception into a structured error list.
+
+    Args:
+        validation_exc: The Django validation exception to parse.
+
+    Returns:
+        A list of "{field, messages}" dictionaries, one per error.
+    """
+    errors_list = []
+    for key, value in validation_exc.error_dict.items():
+        for exc in value:
+            errors_list.append({"field": key, "messages": exc.messages})
+
+    return errors_list

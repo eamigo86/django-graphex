@@ -1,0 +1,28 @@
+[project]
+name = "gde-playground"
+version = "0.0.0"
+description = "Local playground to try django-graphex features end to end."
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    # The library itself (from the parent repo) with the subscriptions extra.
+    "django-graphex[subscriptions]",
+    # ASGI server so HTTP + WebSocket (subscriptions) work together.
+    "daphne>=4.0",
+]
+
+[tool.uv.sources]
+# Use the local checkout of the library (editable) so you test your changes.
+# `dependencies` above only says *what* is required; this says *where* it comes
+# from -- so `make install` installs the library from this repo checkout,
+# editable, NOT from PyPI. No published release is needed.
+django-graphex = { path = "../..", editable = true }
+# To install from GitHub instead (e.g. outside this repo), swap the line above
+# for:
+#   django-graphex = { git = "https://github.com/eamigo86/django-graphex.git", branch = "main" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["config", "blog"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GraphQL Subscriptions Client</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a101c;color:#cdd9e5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .gdsx-page{margin:0;padding:1.2rem;height:100vh;width:100%;display:flex;flex-direction:column;box-sizing:border-box}
+  .gdsx-h{display:flex;align-items:baseline;gap:.6rem;margin:.2rem 0 1rem}
+  .gdsx-h h1{font-size:1.6rem;margin:0;font-weight:700}
+  .gdsx-h span{color:#7286a3;font-size:1rem}
+  .gdsx-wrap{
+    --bg:#0e1726;--panel:#0b1422;--panel2:#111d31;--line:#1e2d44;
+    --txt:#cdd9e5;--muted:#7286a3;--accent:#e535ab;--accent2:#1ba8a0;
+    --key:#e535ab;--str:#9effa5;--num:#f6c177;--bool:#7aa2f7;--null:#7286a3;
+    color:var(--txt);background:var(--bg);border:1px solid var(--line);
+    border-radius:12px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.25);
+    display:flex;flex-direction:column;flex:1 1 auto;min-height:0
+  }
+  .gdsx-wrap *{box-sizing:border-box}
+  .gdsx-top{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;padding:.6rem .8rem;background:var(--panel2);border-bottom:1px solid var(--line)}
+  .gdsx-pill{display:inline-flex;align-items:center;gap:.4rem;font-size:.84rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:.34rem .7rem;border-radius:999px;background:#172339;color:var(--muted);white-space:nowrap}
+  .gdsx-dot{width:.55rem;height:.55rem;border-radius:50%;background:var(--muted)}
+  .gdsx-pill[data-state="open"]{color:#9effa5;background:rgba(40,140,90,.18)}
+  .gdsx-pill[data-state="open"] .gdsx-dot{background:#36d399;box-shadow:0 0 8px #36d399}
+  .gdsx-pill[data-state="connecting"]{color:#f6c177;background:rgba(170,130,40,.18)}
+  .gdsx-pill[data-state="connecting"] .gdsx-dot{background:#f6c177;box-shadow:0 0 8px #f6c177;animation:gdsx-pulse 1s infinite}
+  .gdsx-pill[data-state="closed"]{color:#ff8a8a;background:rgba(170,50,50,.16)}
+  .gdsx-pill[data-state="closed"] .gdsx-dot{background:#ff6b6b}
+  @keyframes gdsx-pulse{0%{opacity:1}50%{opacity:.35}100%{opacity:1}}
+  .gdsx-field{display:flex;align-items:center;gap:.35rem;flex:1 1 220px;min-width:160px}
+  .gdsx-field label{font-size:.82rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+  .gdsx-input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:.5rem .65rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9rem;min-width:0}
+  .gdsx-input:focus{outline:none;border-color:var(--accent2);box-shadow:0 0 0 2px rgba(27,168,160,.25)}
+  .gdsx-btn{cursor:pointer;border:none;border-radius:7px;padding:.55rem 1rem;font-size:.92rem;font-weight:600;letter-spacing:.02em;transition:filter .15s,transform .05s}
+  .gdsx-btn:active{transform:translateY(1px)}
+  .gdsx-btn-primary{background:linear-gradient(135deg,var(--accent),#b3208a);color:#fff}
+  .gdsx-btn-ghost{background:#1b2840;color:var(--txt)}
+  .gdsx-btn:hover{filter:brightness(1.1)}
+  .gdsx-channel{font-family:ui-monospace,monospace;font-size:.82rem;color:var(--accent2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gdsx-main{position:relative;display:grid;grid-template-columns:1fr 1fr;flex:1 1 auto;min-height:0}
+  .gdsx-pane{display:flex;flex-direction:column;min-width:0;min-height:0}
+  .gdsx-pane+.gdsx-pane{border-left:1px solid var(--line)}
+  .gdsx-panehead{display:flex;align-items:center;justify-content:space-between;padding:.55rem .85rem;background:var(--panel);border-bottom:1px solid var(--line);font-size:.82rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .gdsx-editor{flex:1;width:100%;border:none;resize:none;background:var(--panel);color:var(--txt);padding:.9rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92rem;line-height:1.6;tab-size:2}
+  .gdsx-editor:focus{outline:none}
+  .gdsx-ac{position:fixed;z-index:50;min-width:170px;max-height:240px;overflow:auto;background:#0c1626;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.82rem;display:none}
+  .gdsx-ac-item{padding:.3rem .65rem;cursor:pointer;display:flex;justify-content:space-between;gap:1.2rem;white-space:nowrap}
+  .gdsx-ac-item .gdsx-ac-kind{color:var(--muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.04em}
+  .gdsx-ac-item.sel{background:rgba(27,168,160,.2);color:#9effa5}
+  .gdsx-out{flex:1;overflow:auto;padding:.7rem;background:var(--panel);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86rem;line-height:1.55}
+  .gdsx-entry{border:1px solid var(--line);border-radius:8px;margin-bottom:.55rem;overflow:hidden;background:var(--panel2);animation:gdsx-in .25s ease}
+  @keyframes gdsx-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .gdsx-entry-h{display:flex;align-items:center;gap:.5rem;padding:.35rem .55rem;background:#0c1626;border-bottom:1px solid var(--line)}
+  .gdsx-badge{font-size:.64rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:.15rem .45rem;border-radius:5px}
+  .gdsx-b-handshake{background:rgba(122,162,247,.2);color:#9db4ff}
+  .gdsx-b-sent{background:rgba(229,53,171,.2);color:#ff8fd6}
+  .gdsx-b-confirm{background:rgba(54,211,153,.18);color:#7defb7}
+  .gdsx-b-notify{background:rgba(27,168,160,.2);color:#79e6df}
+  .gdsx-b-error{background:rgba(255,107,107,.2);color:#ff9d9d}
+  .gdsx-time{margin-left:auto;color:var(--muted);font-size:.66rem}
+  .gdsx-entry pre{margin:0;padding:.55rem;white-space:pre-wrap;word-break:break-word;overflow-x:auto}
+  .gdsx-empty{color:var(--muted);text-align:center;padding:2.5rem 1rem;font-size:.8rem}
+  .gdsx-key{color:var(--key)}.gdsx-str{color:var(--str)}.gdsx-num{color:var(--num)}.gdsx-bool{color:var(--bool)}.gdsx-null{color:var(--null)}
+  .gdsx-fab{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:58px;height:58px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(135deg,var(--accent),#a01a7c);color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(229,53,171,.45);z-index:5;transition:transform .12s,filter .15s}
+  .gdsx-fab:hover{filter:brightness(1.12);transform:translate(-50%,-50%) scale(1.06)}
+  .gdsx-fab:active{transform:translate(-50%,-50%) scale(.96)}
+  .gdsx-fab[disabled]{opacity:.4;cursor:not-allowed;filter:grayscale(.4)}
+  .gdsx-fab svg{width:24px;height:24px;margin-left:3px}
+  @media(max-width:720px){.gdsx-main{grid-template-columns:1fr;grid-template-rows:1fr 1fr}.gdsx-pane+.gdsx-pane{border-left:none;border-top:1px solid var(--line)}.gdsx-fab{top:50%;bottom:auto}}
+</style>
+</head>
+<body>
+<div class="gdsx-page">
+  <div class="gdsx-h"><h1>GraphQL Subscriptions Client</h1><span>django-graphex</span></div>
+  <div class="gdsx-wrap" id="gdsx">
+    <div class="gdsx-top">
+      <span class="gdsx-pill" data-state="closed" id="gdsx-status"><span class="gdsx-dot"></span><span id="gdsx-status-txt">Disconnected</span></span>
+      <span class="gdsx-field"><label>WS</label><input class="gdsx-input" id="gdsx-ws" spellcheck="false"></span>
+      <span class="gdsx-field"><label>HTTP</label><input class="gdsx-input" id="gdsx-http" spellcheck="false"></span>
+      <button class="gdsx-btn gdsx-btn-primary" id="gdsx-connect">Connect</button>
+      <button class="gdsx-btn gdsx-btn-ghost" id="gdsx-clear">Clear</button>
+    </div>
+    <div class="gdsx-main">
+      <div class="gdsx-pane">
+        <div class="gdsx-panehead"><span>subscription</span><span class="gdsx-channel" id="gdsx-channel" title="channel_id">no channel yet</span></div>
+        <textarea class="gdsx-editor" id="gdsx-query" spellcheck="false">subscription ($channelId: String!) {
+  # Replace with one of your subscriptions (see your schema).
+  postSubscription(
+    channelId: $channelId
+    action: ALL_ACTIONS
+    operation: SUBSCRIBE
+  ) {
+    ok
+    error
+    stream
+    operation
+    action
+  }
+}</textarea>
+      </div>
+      <div class="gdsx-pane">
+        <div class="gdsx-panehead"><span>output</span><span class="gdsx-time" id="gdsx-count">0 events</span></div>
+        <div class="gdsx-out" id="gdsx-out"><div class="gdsx-empty">Connect, then press &#9654; to send your subscription. Notifications appear here live.</div></div>
+      </div>
+      <button class="gdsx-fab" id="gdsx-run" title="Send subscription (Ctrl/Cmd+Enter)" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+<div class="gdsx-ac" id="gdsx-ac"></div>
+
+<script>
+(function(){
+  var root=document.getElementById("gdsx");
+  if(!root||root.dataset.init) return; root.dataset.init="1";
+  var ws=null, channelId=null, count=0, schemaCandidates=[];
+  var $=function(id){return document.getElementById(id)};
+  var statusEl=$("gdsx-status"), statusTxt=$("gdsx-status-txt");
+  var connectBtn=$("gdsx-connect"), runBtn=$("gdsx-run"), out=$("gdsx-out"), countEl=$("gdsx-count");
+  var editor=$("gdsx-query"), ac=$("gdsx-ac");
+
+  // Default the endpoints from the page origin (same origin -> no CORS).
+  var loc=window.location;
+  var wsProto=loc.protocol==="https:"?"wss:":"ws:";
+  $("gdsx-ws").value=wsProto+"//"+loc.host+"__WS_PATH__";
+  $("gdsx-http").value=loc.protocol+"//"+loc.host+"__HTTP_PATH__";
+
+  function setStatus(state,label){statusEl.setAttribute("data-state",state);statusTxt.textContent=label;}
+  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  function highlight(value){
+    var json=typeof value==="string"?value:JSON.stringify(value,null,2);
+    json=esc(json);
+    return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,function(m){
+      var cls="gdsx-num";
+      if(/^"/.test(m)){cls=/:$/.test(m)?"gdsx-key":"gdsx-str";}
+      else if(/true|false/.test(m)){cls="gdsx-bool";}
+      else if(/null/.test(m)){cls="gdsx-null";}
+      return '<span class="'+cls+'">'+m+'</span>';
+    });
+  }
+  function log(kind,label,payload){
+    var empty=out.querySelector(".gdsx-empty"); if(empty) empty.remove();
+    var entry=document.createElement("div"); entry.className="gdsx-entry";
+    var time=new Date().toLocaleTimeString();
+    var body=typeof payload==="string"?esc(payload):highlight(payload);
+    entry.innerHTML='<div class="gdsx-entry-h"><span class="gdsx-badge gdsx-b-'+kind+'">'+label+'</span><span class="gdsx-time">'+time+'</span></div><pre>'+body+'</pre>';
+    out.appendChild(entry); out.scrollTop=out.scrollHeight;
+    count++; countEl.textContent=count+(count===1?" event":" events");
+  }
+
+  function connect(){
+    var url=$("gdsx-ws").value.trim(); if(!url) return;
+    loadSchema();  // refresh autocomplete from the (possibly edited) endpoint
+    try{ws=new WebSocket(url);}catch(e){log("error","Error",String(e));return;}
+    setStatus("connecting","Connecting&#8230;"); connectBtn.textContent="Connecting&#8230;"; connectBtn.disabled=true;
+    ws.onopen=function(){connectBtn.textContent="Disconnect";connectBtn.disabled=false;setStatus("open","Connected");};
+    ws.onmessage=function(ev){
+      var data; try{data=JSON.parse(ev.data);}catch(_){log("notify","Frame",ev.data);return;}
+      if(data&&data.connect==="success"&&data.channel_id){
+        channelId=data.channel_id;
+        $("gdsx-channel").textContent=channelId; $("gdsx-channel").title=channelId;
+        runBtn.disabled=false;
+        log("handshake","Handshake",data);
+      } else {
+        log("notify","Notification",data);
+      }
+    };
+    ws.onerror=function(){log("error","WS Error","Could not reach "+url+". Is the server running?");};
+    ws.onclose=function(){setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;runBtn.disabled=true;channelId=null;$("gdsx-channel").textContent="no channel yet";ws=null;};
+  }
+  function disconnect(){ if(ws){ws.close();} }
+
+  function run(){
+    if(!channelId){log("error","Error","Connect the WebSocket first to obtain a channel_id.");return;}
+    var query=$("gdsx-query").value;
+    var endpoint=$("gdsx-http").value.trim();
+    var body=JSON.stringify({query:query,variables:{channelId:channelId}});
+    log("sent","Sent",{operation:"subscription",variables:{channelId:channelId}});
+    fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:body})
+      .then(function(r){return r.json().then(function(j){return{ok:r.ok,json:j};});})
+      .then(function(res){
+        if(res.json&&res.json.errors){log("error","GraphQL Errors",res.json);}
+        else{log("confirm","Confirmation",res.json);}
+      })
+      .catch(function(err){log("error","HTTP Error",String(err));});
+  }
+
+  // --- Schema introspection (for autocomplete) -------------------------------
+  // Uses the HTTP endpoint shown above. If introspection is disabled on the
+  // server, autocomplete quietly falls back to GraphQL keywords only.
+  function loadSchema(){
+    var endpoint=$("gdsx-http").value.trim(); if(!endpoint) return;
+    var q="{__schema{types{name kind fields{name args{name}}inputFields{name}enumValues{name}}}}";
+    fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify({query:q})})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        if(!j||!j.data||!j.data.__schema) return;
+        var seen={}, cands=[];
+        function add(name,kind){ if(!name||/^__/.test(name)) return; var k=name+"|"+kind; if(seen[k]) return; seen[k]=1; cands.push({name:name,kind:kind}); }
+        (j.data.__schema.types||[]).forEach(function(t){
+          if(/^__/.test(t.name)) return;
+          add(t.name,"type");
+          (t.fields||[]).forEach(function(f){ add(f.name,"field"); (f.args||[]).forEach(function(a){ add(a.name,"arg"); }); });
+          (t.inputFields||[]).forEach(function(f){ add(f.name,"input"); });
+          (t.enumValues||[]).forEach(function(v){ add(v.name,"enum"); });
+        });
+        ["subscription","mutation","query","fragment"].forEach(function(k){ add(k,"keyword"); });
+        add("channelId","var");
+        schemaCandidates=cands;
+      })
+      .catch(function(){ /* introspection optional */ });
+  }
+
+  // --- Caret pixel position via a mirror element -----------------------------
+  function caretCoords(){
+    var pos=editor.selectionStart, style=getComputedStyle(editor);
+    var div=document.createElement("div");
+    ["fontFamily","fontSize","fontWeight","lineHeight","letterSpacing","paddingTop","paddingRight","paddingBottom","paddingLeft","borderTopWidth","borderLeftWidth","tabSize"].forEach(function(p){ div.style[p]=style[p]; });
+    div.style.position="absolute"; div.style.visibility="hidden"; div.style.whiteSpace="pre-wrap"; div.style.wordWrap="break-word"; div.style.boxSizing="border-box"; div.style.width=editor.clientWidth+"px";
+    div.textContent=editor.value.substring(0,pos);
+    var span=document.createElement("span"); span.textContent="​"; div.appendChild(span);
+    document.body.appendChild(div);
+    var rect=editor.getBoundingClientRect();
+    var co={top:rect.top - editor.scrollTop + span.offsetTop, left:rect.left - editor.scrollLeft + span.offsetLeft, lh:parseFloat(style.lineHeight)||16};
+    document.body.removeChild(div); return co;
+  }
+
+  // --- Autocomplete ----------------------------------------------------------
+  var acItems=[], acSel=0, acStart=-1;
+  function currentWord(){
+    var pos=editor.selectionStart, m=/[A-Za-z_][A-Za-z0-9_]*$/.exec(editor.value.substring(0,pos));
+    return m ? {word:m[0], start:pos-m[0].length, end:pos} : null;
+  }
+  function closeAc(){ ac.style.display="none"; acItems=[]; }
+  function openAc(){
+    var w=currentWord();
+    if(!w){ closeAc(); return; }
+    var ql=w.word.toLowerCase();
+    acItems=schemaCandidates.filter(function(c){ return c.name.toLowerCase().indexOf(ql)===0 && c.name!==w.word; }).slice(0,14);
+    if(!acItems.length){ closeAc(); return; }
+    acSel=0; acStart=w.start;
+    ac.innerHTML=acItems.map(function(c,i){ return '<div class="gdsx-ac-item'+(i===0?' sel':'')+'" data-i="'+i+'">'+esc(c.name)+'<span class="gdsx-ac-kind">'+c.kind+'</span></div>'; }).join("");
+    var co=caretCoords();
+    ac.style.top=(co.top+co.lh+3)+"px"; ac.style.left=co.left+"px"; ac.style.display="block";
+  }
+  function acAccept(){
+    if(!acItems.length) return false;
+    var name=acItems[acSel].name, pos=editor.selectionStart, val=editor.value;
+    editor.value=val.substring(0,acStart)+name+val.substring(pos);
+    editor.selectionStart=editor.selectionEnd=acStart+name.length;
+    closeAc(); return true;
+  }
+  function acMove(d){
+    acSel=(acSel+d+acItems.length)%acItems.length;
+    Array.prototype.forEach.call(ac.children,function(el,i){ el.className="gdsx-ac-item"+(i===acSel?" sel":""); });
+    if(ac.children[acSel]) ac.children[acSel].scrollIntoView({block:"nearest"});
+  }
+  ac.addEventListener("mousedown",function(e){
+    var item=e.target.closest(".gdsx-ac-item"); if(!item) return;
+    e.preventDefault(); acSel=parseInt(item.getAttribute("data-i"),10); acAccept(); editor.focus();
+  });
+
+  // --- Tab indentation (like a code editor) ----------------------------------
+  var IND="  ";
+  function indent(){
+    var s=editor.selectionStart, e=editor.selectionEnd, val=editor.value;
+    if(s===e){ editor.value=val.substring(0,s)+IND+val.substring(e); editor.selectionStart=editor.selectionEnd=s+IND.length; return; }
+    var ls=val.lastIndexOf("\n",s-1)+1, seg=val.substring(ls,e).replace(/^/gm,IND);
+    editor.value=val.substring(0,ls)+seg+val.substring(e);
+    editor.selectionStart=s+IND.length; editor.selectionEnd=e+(seg.length-(val.substring(ls,e).length));
+  }
+  function outdent(){
+    var s=editor.selectionStart, e=editor.selectionEnd, val=editor.value;
+    var ls=val.lastIndexOf("\n",s-1)+1, seg=val.substring(ls,e), newSeg=seg.replace(/^( {1,2}|\t)/gm,"");
+    editor.value=val.substring(0,ls)+newSeg+val.substring(e);
+    editor.selectionStart=Math.max(ls,s-IND.length); editor.selectionEnd=e-(seg.length-newSeg.length);
+  }
+
+  editor.addEventListener("input",openAc);
+  editor.addEventListener("blur",function(){ setTimeout(closeAc,120); });
+
+  connectBtn.addEventListener("click",function(){ ws?disconnect():connect(); });
+  runBtn.addEventListener("click",run);
+  $("gdsx-clear").addEventListener("click",function(){out.innerHTML='<div class="gdsx-empty">Cleared. Press &#9654; to send your subscription.</div>';count=0;countEl.textContent="0 events";});
+  $("gdsx-http").addEventListener("change",loadSchema);
+  editor.addEventListener("keydown",function(e){
+    if(ac.style.display==="block" && acItems.length){
+      if(e.key==="ArrowDown"){e.preventDefault();acMove(1);return;}
+      if(e.key==="ArrowUp"){e.preventDefault();acMove(-1);return;}
+      if(e.key==="Enter"||e.key==="Tab"){e.preventDefault();acAccept();return;}
+      if(e.key==="Escape"){e.preventDefault();closeAc();return;}
+    }
+    if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();run();return;}
+    if(e.key==="Tab"){e.preventDefault();e.shiftKey?outdent():indent();return;}
+    if(e.ctrlKey&&e.key===" "){e.preventDefault();openAc();return;}  // Ctrl+Space to trigger
+  });
+
+  loadSchema();  // prime autocomplete from the prefilled endpoint
+})();
+</script>
+</body>
+</html>

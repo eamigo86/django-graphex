@@ -1,0 +1,7 @@
+db.sqlite3
+.venv/
+__pycache__/
+*.pyc
+blog/migrations/0*.py
+uv.lock
+staticfiles/

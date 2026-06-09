@@ -1,0 +1,51 @@
+repos:
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.9.0
+    hooks:
+      - id: commitizen
+        stages:
+          - commit-msg
+
+  # Lint + format with ruff (replaces isort, black, flake8 and autoflake).
+  # Configuration (rule selection, per-file ignores, pydocstyle convention) is
+  # read from pyproject.toml's [tool.ruff] section, so `examples/*` and
+  # `tests/*` are exempt from docstring (D) rules here too.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.13.1
+    hooks:
+      - id: ruff
+        args:
+          - --fix
+      - id: ruff-format
+
+  # Generic hygiene hooks.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: debug-statements
+
+  # Security checks (library code only).
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.6
+    hooks:
+      - id: bandit
+        args:
+          - --skip=B101,B311,B324
+          - --exclude=tests,migrations
+        files: ^django_graphex/
+
+  # Type checking (library code only).
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.17.1
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-six
+          - types-python-dateutil
+        files: ^django_graphex/

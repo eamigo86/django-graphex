@@ -1,0 +1,2 @@
+Playground static file. Served at /static/playground.txt under daphne (ASGI)
+while DEBUG is True, thanks to the ASGIStaticFilesHandler in config/asgi.py.

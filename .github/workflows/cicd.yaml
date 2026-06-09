@@ -1,0 +1,338 @@
+name: Continuous Integration & Delivery
+
+on:
+  push:
+    branches:
+    - master
+    - develop
+    - pre-v2
+  pull_request:
+    branches:
+    - master
+    - pre-v2
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Choose repository to publish"
+        required: true
+        default: "testpypi"
+        type: choice
+        options:
+        - testpypi
+        - pypi
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        # Python 3.12 — Django floor is declared >=4.0 but CI tests from 4.2 (SPEC OQ2)
+        - python-version: '3.12'
+          toxenv: 'py312-django42'
+        - python-version: '3.12'
+          toxenv: 'py312-django50'
+        - python-version: '3.12'
+          toxenv: 'py312-django51'
+        - python-version: '3.12'
+          toxenv: 'py312-django52'
+        - python-version: '3.12'
+          toxenv: 'py312-django60'
+        # Python 3.13
+        - python-version: '3.13'
+          toxenv: 'py313-django42'
+        - python-version: '3.13'
+          toxenv: 'py313-django50'
+        - python-version: '3.13'
+          toxenv: 'py313-django51'
+        - python-version: '3.13'
+          toxenv: 'py313-django52'
+        - python-version: '3.13'
+          toxenv: 'py313-django60'
+        # Python 3.14
+        - python-version: '3.14-dev'
+          toxenv: 'py314-django42'
+        - python-version: '3.14-dev'
+          toxenv: 'py314-django50'
+        - python-version: '3.14-dev'
+          toxenv: 'py314-django51'
+        - python-version: '3.14-dev'
+          toxenv: 'py314-django52'
+        - python-version: '3.14-dev'
+          toxenv: 'py314-django60'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+
+    - name: Run tests
+      run: uvx --with tox-uv tox -e ${{ matrix.toxenv }}
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: test-results-${{ matrix.toxenv }}
+        path: .tox/*/log/
+
+  base-install:
+    # Proves the base install (no [subscriptions] extra) never imports channels.
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+
+    - name: Assert channels is absent without the extra
+      run: uvx --with tox-uv tox -e base-install
+
+  lint-and-security:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+
+    - name: Run code quality checks
+      run: uvx --with tox-uv tox -e quality
+
+    - name: Run security checks
+      run: uvx --with tox-uv tox -e security
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+
+    - name: Run tests with coverage
+      run: |
+        uv sync
+        uv run coverage run -m pytest
+        uv run coverage xml
+        uv run coverage report
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: false
+        verbose: true
+
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Get version from pyproject.toml
+      id: get_version
+      run: |
+        VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+        if [[ $VERSION =~ (alpha|beta|rc|dev) ]]; then
+          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+        else
+          echo "is_prerelease=false" >> $GITHUB_OUTPUT
+        fi
+
+        echo "Detected version: $VERSION"
+
+  publish:
+    needs: [ test, lint-and-security, coverage, get-version ]
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'workflow_dispatch')
+    environment:
+      name: ${{ (github.ref == 'refs/heads/master' && github.event_name == 'push') && 'production' || 'staging' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Determine target repository
+      id: target_repo
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          REPO="${{ github.event.inputs.repository }}"
+        elif [ "${{ github.ref }}" == "refs/heads/master" ] && [ "${{ github.event_name }}" == "push" ]; then
+          REPO="pypi"
+        else
+          REPO="testpypi"
+        fi
+
+        echo "repository=$REPO" >> $GITHUB_OUTPUT
+        echo "Publishing to: $REPO"
+
+    - name: Build package
+      run: uv build
+
+    - name: Check if tag exists
+      id: check_tag
+      if: steps.target_repo.outputs.repository == 'pypi'
+      run: |
+        VERSION="${{ needs.get-version.outputs.version }}"
+        TAG_NAME="v$VERSION"
+
+        if git rev-parse --verify "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
+          echo "tag_exists=true" >> $GITHUB_OUTPUT
+          echo "Tag $TAG_NAME already exists"
+        else
+          echo "tag_exists=false" >> $GITHUB_OUTPUT
+          echo "Tag $TAG_NAME does not exist"
+        fi
+
+        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+    - name: Create Git tag
+      id: create_tag
+      if: steps.target_repo.outputs.repository == 'pypi' && steps.check_tag.outputs.tag_exists == 'false'
+      run: |
+        TAG_NAME="${{ steps.check_tag.outputs.tag_name }}"
+        VERSION="${{ needs.get-version.outputs.version }}"
+
+        git tag -a "$TAG_NAME" -m "Release version $VERSION"
+        git push origin "$TAG_NAME"
+
+        echo "Created and pushed tag: $TAG_NAME"
+
+    - name: Publish to PyPI
+      if: steps.target_repo.outputs.repository == 'pypi'
+      run: uv publish --token ${{ secrets.PYPI_TOKEN }}
+
+    - name: Publish to TestPyPI
+      if: steps.target_repo.outputs.repository == 'testpypi'
+      run: uv publish --publish-url https://test.pypi.org/legacy/ --token ${{ secrets.TESTPYPI_TOKEN }}
+
+  create-release:
+    needs: [ publish, get-version ]
+    runs-on: ubuntu-latest
+    if: |
+      needs.publish.result == 'success' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.repository == 'pypi'))
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        VERSION="${{ needs.get-version.outputs.version }}"
+        TAG_NAME="v$VERSION"
+
+        PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | sed -n '2p')
+
+        if [ -z "$PREVIOUS_TAG" ]; then
+          echo "No previous tag found, generating changelog from first commit"
+          CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+        else
+          echo "Generating changelog from $PREVIOUS_TAG to $TAG_NAME"
+          CHANGELOG=$(git log $PREVIOUS_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
+        fi
+
+        if [ -z "$CHANGELOG" ]; then
+          CHANGELOG="- Initial release"
+        fi
+
+        cat << EOF > changelog.md
+        ## What's Changed
+
+        $CHANGELOG
+
+        ## Installation
+
+        \`\`\`bash
+        pip install django-graphex==$VERSION
+        \`\`\`
+
+        **Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...$TAG_NAME
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ needs.get-version.outputs.version }}
+        name: Release v${{ needs.get-version.outputs.version }}
+        body_path: changelog.md
+        draft: false
+        prerelease: ${{ needs.get-version.outputs.is_prerelease == 'true' }}
+        files: |
+          dist/*
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Release summary
+      run: |
+        echo "✅ Release v${{ needs.get-version.outputs.version }} created successfully!"
+        echo "🔗 https://github.com/${{ github.repository }}/releases/tag/v${{ needs.get-version.outputs.version }}"
