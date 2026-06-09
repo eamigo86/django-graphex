@@ -211,9 +211,16 @@ def _format_time_ago(
     """
     if not isinstance(dt, timedelta):
         if now is None:
-            now = timezone.localtime(
-                timezone=timezone.get_fixed_timezone(-int(t.timezone / 60))
-            )
+            current = timezone.now()
+            # ``localtime`` rejects naive datetimes, which is what ``now()``
+            # returns when the host project runs with ``USE_TZ = False``.
+            if timezone.is_naive(current):
+                now = current
+            else:
+                now = timezone.localtime(
+                    current,
+                    timezone=timezone.get_fixed_timezone(-int(t.timezone / 60)),
+                )
 
         original_dt = dt
         dt = _parse(dt)
