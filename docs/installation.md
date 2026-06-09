@@ -2,9 +2,15 @@
 
 ## Basic Installation
 
-For installing django-graphex, just run this command in your shell:
+For installing django-graphex, run one of these in your shell:
 
 ```bash
+# uv (recommended)
+uv add django-graphex
+```
+
+```bash
+# pip
 pip install django-graphex
 ```
 
@@ -22,6 +28,12 @@ Real-time GraphQL subscriptions run over [Channels](https://channels.readthedocs
 and are shipped as an optional extra. The base install never pulls in Channels:
 
 ```bash
+# uv (recommended)
+uv add "django-graphex[subscriptions]"
+```
+
+```bash
+# pip
 pip install "django-graphex[subscriptions]"
 ```
 

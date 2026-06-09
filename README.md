@@ -39,8 +39,15 @@ Django models — no DRF, no `graphene-django`, no `django-filter`.
 ## Installation
 
 ```bash
-pip install django-graphex
+# uv (recommended)
+uv add django-graphex
 # real-time subscriptions (adds Django Channels 4):
+uv add "django-graphex[subscriptions]"
+```
+
+```bash
+# pip
+pip install django-graphex
 pip install "django-graphex[subscriptions]"
 ```
 

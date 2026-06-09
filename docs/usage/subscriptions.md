@@ -10,9 +10,9 @@ as an opt-in extra so that the base install never depends on `channels`.
     imports `channels`. You opt in explicitly:
 
     ```bash
-    pip install "django-graphex[subscriptions]"
-    # or
     uv add "django-graphex[subscriptions]"
+    # or
+    pip install "django-graphex[subscriptions]"
     ```
 
     Importing `django_graphex.subscriptions` without the extra raises a
@@ -455,7 +455,7 @@ global-state race present in the legacy implementation.)
 The old package is now a thin, deprecated shim that re-exports from here. To
 migrate:
 
-1. Install the extra: `pip install "django-graphex[subscriptions]"`.
+1. Install the extra: `uv add "django-graphex[subscriptions]"` (or `pip install "django-graphex[subscriptions]"`).
 2. Update imports to `django_graphex.subscriptions` (old import paths
    keep working for one deprecation cycle, emitting a `DeprecationWarning`).
 3. Remove `channels_api` from `INSTALLED_APPS`.
