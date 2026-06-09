@@ -105,4 +105,3 @@ class ExtraViewBranchesTest(TestCase):
         view = GraphQLView()
         request = self.factory.post("/graphql/", {}, content_type="application/json")
         self.assertIsNone(view.get_operation_ast(request))
-

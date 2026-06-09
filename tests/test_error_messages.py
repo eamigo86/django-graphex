@@ -63,9 +63,7 @@ class ErrorCodeTest(TestCase):
         )
         self.assertEqual(errors[0].extensions.get("code"), "QUERY_TOO_DEEP")
 
-    @override_settings(
-        DJANGO_GRAPHEX={"MAX_QUERY_COST": 1, "MAX_PAGE_SIZE": 100}
-    )
+    @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 1, "MAX_PAGE_SIZE": 100})
     def test_cost_error_carries_code(self):
         owner = GraphQLObjectType("Owner", {"name": GraphQLField(GraphQLString)})
         item = GraphQLObjectType("Item", {"owner": GraphQLField(owner)})

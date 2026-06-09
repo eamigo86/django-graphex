@@ -94,9 +94,7 @@ def test_cyclic_fragment_spread_costed_once():
 # --------------------------------------------------------------------------- #
 # DEFAULT_PAGE_SIZE multiplier (MAX_PAGE_SIZE unset)                             #
 # --------------------------------------------------------------------------- #
-@override_settings(
-    DJANGO_GRAPHEX={"MAX_PAGE_SIZE": None, "DEFAULT_PAGE_SIZE": 7}
-)
+@override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": None, "DEFAULT_PAGE_SIZE": 7})
 def test_list_without_page_size_uses_default_page_size():
     # No page-size arg, MAX_PAGE_SIZE unset -> DEFAULT_PAGE_SIZE multiplier (199).
     item = GraphQLObjectType(

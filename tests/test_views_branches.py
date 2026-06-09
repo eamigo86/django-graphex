@@ -167,9 +167,7 @@ class AtomicMutationTest(TestCase):
     def test_atomic_mutation_rolls_back_on_flag(self):
         # With ATOMIC_MUTATIONS on and the mutation flagging errors, the atomic
         # block sets rollback; the response still comes back 200 with ok:false.
-        with patch(
-            "django_graphex.views.graphene_settings.ATOMIC_MUTATIONS", True
-        ):
+        with patch("django_graphex.views.graphene_settings.ATOMIC_MUTATIONS", True):
             view = BaseGraphQLView.as_view(schema=_schema)
             request = self.factory.post(
                 "/graphql/",
@@ -185,9 +183,7 @@ class AtomicMutationTest(TestCase):
     def test_atomic_mutation_commits_without_flag(self):
         # ATOMIC_MUTATIONS on, mutation does NOT flag errors -> the atomic block
         # runs but does not set rollback (429->431 false branch).
-        with patch(
-            "django_graphex.views.graphene_settings.ATOMIC_MUTATIONS", True
-        ):
+        with patch("django_graphex.views.graphene_settings.ATOMIC_MUTATIONS", True):
             view = BaseGraphQLView.as_view(schema=_schema)
             request = self.factory.post(
                 "/graphql/",
@@ -354,4 +350,3 @@ class MoreBaseBranchesTest(TestCase):
         )
         types = get_accepted_content_types(request)
         self.assertIn("application/json", types)
-

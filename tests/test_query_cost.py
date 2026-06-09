@@ -114,9 +114,7 @@ class CostEngineTest(TestCase):
         q = "{ companies { properties { owner { name } } } }"
         self.assertEqual(_cost(schema, q), 111)
 
-    @override_settings(
-        DJANGO_GRAPHEX={"MAX_QUERY_COST": 1, "MAX_PAGE_SIZE": None}
-    )
+    @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 1, "MAX_PAGE_SIZE": None})
     def test_unbounded_list_warns_once(self):
         schema = _build_schema()
         cost_module._unbounded_warned = False
@@ -146,9 +144,7 @@ class CostRuleTest(TestCase):
             e.message for e in validate(schema, parse(query), [CostLimitValidationRule])
         ]
 
-    @override_settings(
-        DJANGO_GRAPHEX={"MAX_QUERY_COST": 100, "MAX_PAGE_SIZE": 1000}
-    )
+    @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 100, "MAX_PAGE_SIZE": 1000})
     def test_rejects_over_budget(self):
         schema = _build_schema()  # cost 211 > 100
         errors = self._errors(
@@ -158,9 +154,7 @@ class CostRuleTest(TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("exceeds the maximum of 100", errors[0])
 
-    @override_settings(
-        DJANGO_GRAPHEX={"MAX_QUERY_COST": 1000, "MAX_PAGE_SIZE": 1000}
-    )
+    @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 1000, "MAX_PAGE_SIZE": 1000})
     def test_allows_within_budget(self):
         schema = _build_schema()  # cost 211 < 1000
         self.assertEqual(

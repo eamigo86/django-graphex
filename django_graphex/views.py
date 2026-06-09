@@ -599,9 +599,9 @@ class GraphQLView(BaseGraphQLView):
                 response["id"] = id
                 response["status"] = status_code
 
-            if graphql_api_settings.CLEAN_RESPONSE and not (
-                query or ""
-            ).startswith("\n  query IntrospectionQuery"):
+            if graphql_api_settings.CLEAN_RESPONSE and not (query or "").startswith(
+                "\n  query IntrospectionQuery"
+            ):
                 if response.get("data", None):
                     response["data"] = clean_dict(response["data"])
 

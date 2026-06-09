@@ -32,9 +32,7 @@ assert importlib.util.find_spec("graphene_django") is None, (
 import django_graphex  # noqa: E402,F401
 
 leaked = sorted(m for m in sys.modules if m == "channels" or m.startswith("channels."))
-assert not leaked, "importing django_graphex pulled in channels: {}".format(
-    leaked
-)
+assert not leaked, "importing django_graphex pulled in channels: {}".format(leaked)
 
 try:
     import django_graphex.subscriptions  # noqa: E402,F401

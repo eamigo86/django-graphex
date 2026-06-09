@@ -133,7 +133,7 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
         unknown = set(model_operations) - {"create", "update", "delete"}
         if unknown:
             raise ImproperlyConfigured(
-                'Meta.model_operations of {} contains unknown operation(s) {}; '
+                "Meta.model_operations of {} contains unknown operation(s) {}; "
                 'only "create", "update" and "delete" are valid.'.format(
                     cls.__name__, sorted(unknown)
                 )
