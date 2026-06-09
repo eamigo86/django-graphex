@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import graphene
+from django.core.exceptions import FieldDoesNotExist
 from django.db import models
 from graphene.utils.str_converters import to_camel_case
 
@@ -263,7 +264,7 @@ def build_filter_input_type(
     for field_name, lookups in own.items():
         try:
             field = model._meta.get_field(field_name)
-        except Exception:
+        except FieldDoesNotExist:
             continue
         namespace[field_name] = _lookups_input_type(
             model, field, field_name, lookups, registry
