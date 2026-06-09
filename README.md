@@ -5,7 +5,7 @@
 ![Django Versions](https://img.shields.io/pypi/frameworkversions/django/django-graphex?label=django&color=0C4B33)
 ![PyPI](https://img.shields.io/pypi/v/django-graphex?color=blue)
 ![PyPI - License](https://img.shields.io/pypi/l/django-graphex)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/django-graphex?style=flat)
+![Downloads](https://img.shields.io/pepy/dt/django-graphex)
 ![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)
 
 **GraphQL for Django, powered by [graphene](https://graphene-python.org/) and

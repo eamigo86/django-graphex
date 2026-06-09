@@ -5,7 +5,7 @@
 ![Django Versions](https://img.shields.io/pypi/frameworkversions/django/django-graphex?label=django&color=0C4B33){ .md-badge }
 ![PyPI](https://img.shields.io/pypi/v/django-graphex?color=blue){ .md-badge }
 ![PyPI - License](https://img.shields.io/pypi/l/django-graphex){ .md-badge }
-![PyPI - Downloads](https://img.shields.io/pypi/dm/django-graphex?style=flat){ .md-badge }
+![Downloads](https://img.shields.io/pepy/dt/django-graphex){ .md-badge }
 ![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json){ .md-badge }
 
 django-graphex builds on graphene and Pydantic to make Django GraphQL APIs easy, without Relay:
