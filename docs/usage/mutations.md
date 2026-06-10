@@ -355,7 +355,7 @@ While `DjangoModelMutation` covers most use cases, you can still create traditio
 === "With Error Handling"
 
     ```python
-    from django_graphex._compat import ErrorType
+    from django_graphex.errors import ErrorType
 
     class CreateUser(graphene.Mutation):
         class Arguments:

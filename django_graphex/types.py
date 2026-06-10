@@ -17,21 +17,23 @@ from graphene.utils.deprecated import warn_deprecation
 from graphene.utils.props import props
 from graphql import GraphQLError
 
-from ._compat import (
-    ErrorType,
-    is_valid_django_model,
-    maybe_queryset,
-)
 from .backends import resolve_backend
 from .base_types import DjangoListObjectBase, factory_type
 from .converter import construct_fields
+from .errors import ErrorType
 from .fields import DjangoListField, DjangoListObjectField, DjangoObjectField
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .paginations.pagination import BaseDjangoGraphqlPagination
 from .registry import Registry, get_global_registry
 from .settings import graphql_api_settings
-from .utils import get_Object_or_None, not_found_error, queryset_factory
+from .utils import (
+    get_Object_or_None,
+    is_valid_django_model,
+    maybe_queryset,
+    not_found_error,
+    queryset_factory,
+)
 
 if TYPE_CHECKING:
     from django.db.models import Model

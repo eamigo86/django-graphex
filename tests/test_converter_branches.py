@@ -14,7 +14,7 @@ from django.test import override_settings
 from django.utils.translation import gettext_lazy as _
 from graphene import UUID, Boolean, Dynamic, Float, List, NonNull
 
-from django_graphex._compat import ArrayField
+from django_graphex.fields import ArrayField
 from django_graphex.base_types import Binary
 from django_graphex.converter import (
     assert_valid_name,

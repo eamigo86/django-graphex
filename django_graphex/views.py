@@ -46,10 +46,9 @@ from graphql.execution.middleware import MiddlewareManager
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
-from ._graphene_settings import graphene_settings
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
-from .settings import graphql_api_settings
+from .settings import graphene_settings, graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule
 

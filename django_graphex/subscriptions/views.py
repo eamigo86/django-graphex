@@ -16,7 +16,7 @@ from django.views.decorators.csrf import csrf_exempt
 from graphql import ExecutionResult, OperationType, parse, subscribe, validate
 from graphql.utilities import get_operation_ast
 
-from .._graphene_settings import graphene_settings
+from ..settings import graphene_settings
 from ..views import BaseGraphQLView
 
 if TYPE_CHECKING:

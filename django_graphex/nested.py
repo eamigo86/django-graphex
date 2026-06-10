@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
 
-from ._compat import ErrorType
 from .backends import backend_for_nested
+from .errors import ErrorType
 from .utils import get_Object_or_None
 
 if TYPE_CHECKING:

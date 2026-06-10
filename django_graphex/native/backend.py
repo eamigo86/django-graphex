@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any
 from django.db import models
 from pydantic import ValidationError
 
-from .._compat import ErrorType
 from ..backends import SerializerBackend
+from ..errors import ErrorType
 from .fields import build_model_schema
 
 if TYPE_CHECKING:

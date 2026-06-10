@@ -11,9 +11,9 @@ from graphene.types.base import BaseOptions
 from graphene.utils.deprecated import warn_deprecation
 from graphene.utils.props import props
 
-from ._compat import ErrorType
 from .backends import resolve_backend
 from .base_types import factory_type
+from .errors import ErrorType
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .registry import get_global_registry
