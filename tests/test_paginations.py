@@ -269,11 +269,22 @@ class CursorPageInfoTest(_Base):
         )
 
 
-def test_filter_paginate_list_field_without_pagination_does_not_raise():
-    """No `pagination` and DEFAULT_PAGINATION_CLASS=None must not call None()."""
+def test_filter_paginate_list_field_without_pagination_does_not_raise(monkeypatch):
+    """With DEFAULT_PAGINATION_CLASS=None and no `pagination`, the field must not
+    call None() — it simply ends up with no pagination."""
+    import django_graphex.fields as fields_mod
     from django_graphex import DjangoFilterPaginateListField
 
     from .schema import UserType
 
+    # The field reads the settings instance imported into django_graphex.fields.
+    # override_settings rebinds a *new* global that this reference never sees, so
+    # patch DEFAULT_PAGINATION_CLASS directly on the instance the field uses.
+    monkeypatch.setattr(
+        fields_mod.graphql_api_settings,
+        "DEFAULT_PAGINATION_CLASS",
+        None,
+        raising=False,
+    )
     field = DjangoFilterPaginateListField(UserType)
     assert getattr(field, "pagination", None) is None

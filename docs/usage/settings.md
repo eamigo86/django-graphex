@@ -8,7 +8,7 @@ below.
 # settings.py
 DJANGO_GRAPHEX = {
     # --- Pagination -------------------------------------------------------- #
-    "DEFAULT_PAGINATION_CLASS": None,
+    "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
     "DEFAULT_PAGE_SIZE": None,
     "MAX_PAGE_SIZE": None,
 
@@ -45,7 +45,7 @@ DJANGO_GRAPHEX = {
 
 | Setting | Default | Description |
 |---|---|---|
-| `DEFAULT_PAGINATION_CLASS` | `None` | Dotted path (or class) of the paginator applied to list fields that don't set one. `None` = no default pagination. See [Pagination](pagination.md). |
+| `DEFAULT_PAGINATION_CLASS` | `LimitOffsetGraphqlPagination` | Dotted path (or class) of the paginator applied to list fields that don't set their own. Set to `None` to disable default pagination (list fields then return a plain list). See [Pagination](pagination.md). |
 | `DEFAULT_PAGE_SIZE` | `None` | Page size used when the client omits it. `None` = unbounded unless a paginator default applies. |
 | `MAX_PAGE_SIZE` | `None` | Hard ceiling on the effective page size, applied **even when no page-size argument is sent**. `None` = no ceiling. |
 

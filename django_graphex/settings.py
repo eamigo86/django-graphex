@@ -14,7 +14,7 @@ from django.utils.module_loading import import_string
 
 DEFAULTS = {
     # Pagination
-    "DEFAULT_PAGINATION_CLASS": None,  # 'django_graphex.paginations.LimitOffsetGraphqlPagination'
+    "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
     "DEFAULT_PAGE_SIZE": None,
     "MAX_PAGE_SIZE": None,
     "CLEAN_RESPONSE": False,

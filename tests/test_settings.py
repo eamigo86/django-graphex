@@ -3,6 +3,7 @@
 
 from django.test import TestCase, override_settings
 
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.settings import graphql_api_settings
 
 
@@ -15,7 +16,7 @@ class SettingsTest(TestCase):
 
         # Each setting must resolve, and to its documented default value.
         expected_defaults = {
-            "DEFAULT_PAGINATION_CLASS": None,
+            "DEFAULT_PAGINATION_CLASS": LimitOffsetGraphqlPagination,
             "DEFAULT_PAGE_SIZE": None,
             "MAX_PAGE_SIZE": None,
             "CACHE_ACTIVE": False,
