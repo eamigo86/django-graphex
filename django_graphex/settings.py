@@ -61,6 +61,10 @@ DEFAULTS = {
     # `Meta.filter_fields` declares a field in list form (text/ordered fields
     # also get type-specific lookups on top). See `filtering/lookups.py`.
     "COMMON_FILTER_LOOKUPS": ("exact", "in", "isnull"),
+    # Optimizer safety net: when True, any exception raised inside the queryset
+    # optimization block degrades to the un-optimized queryset and logs a WARNING
+    # instead of surfacing a 500. Default False (fail loud).
+    "OPTIMIZER_SAFE_MODE": False,
 }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterator
@@ -495,7 +496,9 @@ def _relation_optimization(field: Any) -> tuple[str, str] | None:
         "(prefetch, orm_name)" pair for many-to-many or reverse FK, or None
         for non-relations and generic relations.
     """
-    if isinstance(field, (GenericForeignKey, GenericRel)):
+    if isinstance(field, GenericForeignKey):
+        return ("prefetch", field.name)
+    if isinstance(field, GenericRel):
         return None
     if not getattr(field, "is_relation", False):
         return None
@@ -631,7 +634,9 @@ def recursive_params(
             target = select_related if kind == "select" else prefetch_related
             if path not in target:
                 target.append(path)
-            if sub_selection is not None:
+            if sub_selection is not None and not isinstance(
+                related_field, GenericForeignKey
+            ):
                 related_model = get_related_model(related_field)
                 recursive_params(
                     sub_selection,
@@ -720,6 +725,21 @@ def _collect_only_fields(
             if optimization is None:
                 continue  # pragma: no cover
             kind, orm_name = optimization
+            if isinstance(related_field, GenericForeignKey):
+                # GFK needs the two concrete LOCAL columns on the parent row so
+                # Django can run the prefetch_related second query without
+                # re-loading: the content-type id and object id.  Resolve
+                # attnames via model meta (ct_field stores the field NAME, e.g.
+                # "content_type"; its attname is "content_type_id").
+                _only.add(
+                    _prefix
+                    + model._meta.get_field(related_field.ct_field).attname
+                )
+                _only.add(
+                    _prefix
+                    + model._meta.get_field(related_field.fk_field).attname
+                )
+                continue
             if kind == "select":
                 # Forward FK / O2O: keep the local join key on this model.
                 if getattr(related_field, "concrete", False) and getattr(
@@ -850,7 +870,9 @@ def _walk_filtered_prefetches(
         related_field = relation_map.get(name, relation_map.get(to_snake_case(name)))
         if related_field is not None and field.selection_set and sub_gql is not None:
             optimization = _relation_optimization(related_field)
-            if optimization is not None:  # pragma: no branch
+            if optimization is not None and not isinstance(
+                related_field, GenericForeignKey
+            ):  # pragma: no branch
                 _walk_filtered_prefetches(
                     sub_gql,
                     get_related_model(related_field),
@@ -981,47 +1003,35 @@ def _merge_filtered_prefetches(
     return top_plain, top_filtered
 
 
-def queryset_factory(
-    manager: Any, root: Any, info: GraphQLResolveInfo, **kwargs: Any
+def _apply_optimizations(
+    base: QuerySet,
+    model: type[Model],
+    info: GraphQLResolveInfo,
+    kwargs: dict[str, Any],
+    custom_used: bool,
 ) -> QuerySet:
-    """Build a queryset optimized for the requested GraphQL selection.
+    """Apply select_related, prefetch_related and .only() to *base*.
 
-    This applies nested "select_related" / "prefetch_related" (eliminating the
-    N+1 problem for related objects) and, when "OPTIMIZE_ONLY_FIELDS" is on, a
-    conservative ".only()" column projection. It honors a custom
-    "resolve_<field>" that returns a QuerySet. Behavior is controlled by the
-    "OPTIMIZE_QUERYSET" and "OPTIMIZE_ONLY_FIELDS" settings.
+    This helper is extracted from ``queryset_factory`` so that the optional
+    ``OPTIMIZER_SAFE_MODE`` try/except boundary can wrap the entire block in
+    one place without duplication.
 
     Args:
-        manager: A Django model, manager, or queryset to start from.
-        root: The root value passed to the resolver.
+        base: The starting queryset.
+        model: The Django model class for ``base``.
         info: The GraphQL resolve info for the current field.
-        **kwargs: The resolver arguments, used to seed relation joins.
+        kwargs: The resolver arguments, used to seed relation joins.
+        custom_used: Whether a custom resolver already supplied ``base``.
 
     Returns:
-        The optimized queryset.
+        The optimized queryset (may be the same object or a new one).
     """
-    base = _get_queryset(manager)
-    model = base.model
-
-    custom_used = False
-    custom_resolver = _get_custom_resolver(info)
-    if custom_resolver is not None:
-        produced = custom_resolver(root, info, **kwargs)
-        if isinstance(produced, QuerySet):
-            base = produced
-            model = base.model
-            custom_used = True
-
-    if not graphql_api_settings.OPTIMIZE_QUERYSET:
-        return base
-
     relation_map = _relation_field_map(model)
-    select_related = []
-    prefetch_related = []
+    select_related: list[str] = []
+    prefetch_related: list[str] = []
 
-    # Filter kwargs that traverse relations (e.g. ``author__name``) also seed the
-    # joins so filtering does not trigger extra queries.
+    # Filter kwargs that traverse relations (e.g. ``author__name``) also seed
+    # the joins so filtering does not trigger extra queries.
     for key in kwargs.keys():
         head = key.split(LOOKUP_SEP, 1)[0]
         related_field = relation_map.get(
@@ -1067,6 +1077,58 @@ def queryset_factory(
         )
         if only_fields:  # pragma: no branch
             base = base.only(*only_fields)
+
+    return base
+
+
+def queryset_factory(
+    manager: Any, root: Any, info: GraphQLResolveInfo, **kwargs: Any
+) -> QuerySet:
+    """Build a queryset optimized for the requested GraphQL selection.
+
+    This applies nested "select_related" / "prefetch_related" (eliminating the
+    N+1 problem for related objects) and, when "OPTIMIZE_ONLY_FIELDS" is on, a
+    conservative ".only()" column projection. It honors a custom
+    "resolve_<field>" that returns a QuerySet. Behavior is controlled by the
+    "OPTIMIZE_QUERYSET" and "OPTIMIZE_ONLY_FIELDS" settings.
+
+    Args:
+        manager: A Django model, manager, or queryset to start from.
+        root: The root value passed to the resolver.
+        info: The GraphQL resolve info for the current field.
+        **kwargs: The resolver arguments, used to seed relation joins.
+
+    Returns:
+        The optimized queryset.
+    """
+    base = _get_queryset(manager)
+    model = base.model
+
+    custom_used = False
+    custom_resolver = _get_custom_resolver(info)
+    if custom_resolver is not None:
+        produced = custom_resolver(root, info, **kwargs)
+        if isinstance(produced, QuerySet):
+            base = produced
+            model = base.model
+            custom_used = True
+
+    if not graphql_api_settings.OPTIMIZE_QUERYSET:
+        return base
+
+    if graphql_api_settings.OPTIMIZER_SAFE_MODE:
+        try:
+            base = _apply_optimizations(base, model, info, kwargs, custom_used)
+        except Exception as exc:  # noqa: BLE001 - intentional broad degrade guard
+            logging.getLogger("django_graphex.utils").warning(
+                "Queryset optimization failed for %s; serving un-optimized "
+                "queryset (OPTIMIZER_SAFE_MODE). %r",
+                model.__name__,
+                exc,
+            )
+            return base
+    else:
+        base = _apply_optimizations(base, model, info, kwargs, custom_used)
 
     return _get_queryset(base)
 

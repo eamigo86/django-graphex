@@ -69,3 +69,18 @@ class SettingsTest(TestCase):
         # Should have string representation
         str_repr = str(graphql_api_settings)
         self.assertIsInstance(str_repr, str)
+
+    def test_optimizer_safe_mode_default_is_false(self):
+        """OPTIMIZER_SAFE_MODE defaults to False when not configured."""
+        # REQ-1 / Scenario: Default value
+        self.assertIs(graphql_api_settings.OPTIMIZER_SAFE_MODE, False)
+
+    @override_settings(DJANGO_GRAPHEX={"OPTIMIZER_SAFE_MODE": True})
+    def test_optimizer_safe_mode_override_true(self):
+        """OPTIMIZER_SAFE_MODE can be overridden to True via override_settings."""
+        # REQ-1 / Scenario: Override to True
+        # setting_changed signal fires automatically via override_settings.
+        from django_graphex import settings as settings_module
+
+        s = settings_module.graphql_api_settings
+        self.assertIs(s.OPTIMIZER_SAFE_MODE, True)

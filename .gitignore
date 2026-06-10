@@ -182,3 +182,5 @@ docs/_build/
 .DS_Store
 .AppleDouble
 .LSOverride
+.atl/.skill-registry.cache.json
+.atl/skill-registry.md
