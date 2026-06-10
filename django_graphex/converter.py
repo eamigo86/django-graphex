@@ -36,7 +36,8 @@ from graphene.types.json import JSONString
 from graphene.utils.str_converters import to_camel_case
 from graphql.pyutils import register_description
 
-from ._compat import ArrayField, HStoreField, JSONField, RangeField, to_const
+from django.db.models import JSONField
+
 from .base_types import (
     Binary,
     CustomDate,
@@ -45,8 +46,14 @@ from .base_types import (
     GenericForeignKeyInputType,
     GenericForeignKeyType,
 )
-from .fields import DjangoListField, DjangoNestedListObjectField
-from .utils import get_model_fields, get_related_model, is_required
+from .fields import (
+    ArrayField,
+    DjangoListField,
+    DjangoNestedListObjectField,
+    HStoreField,
+    RangeField,
+)
+from .utils import get_model_fields, get_related_model, is_required, to_const
 
 # Allow Django's lazy ``gettext_lazy``/``verbose_name``/``help_text`` proxies to
 # be used as GraphQL descriptions (graphql-core only accepts ``str`` otherwise).

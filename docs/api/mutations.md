@@ -454,7 +454,7 @@ class UserMutation(DjangoModelMutation):
 
 ```python
 from django.core.exceptions import ValidationError
-from django_graphex._compat import ErrorType
+from django_graphex.errors import ErrorType
 
 class UserMutation(DjangoModelMutation):
     class Meta:

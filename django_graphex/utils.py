@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterator
@@ -24,14 +25,53 @@ from graphene.utils.str_converters import to_snake_case
 from graphql import GraphQLList, GraphQLNonNull, GraphQLObjectType, get_named_type
 from graphql.execution.values import get_argument_values
 from graphql.language.ast import FragmentSpreadNode, InlineFragmentNode
+from text_unidecode import unidecode
 
-from ._compat import is_valid_django_model
+from .errors import ErrorType
 from .settings import graphql_api_settings
 
 if TYPE_CHECKING:
     from django.db.models import Field
     from graphql import GraphQLResolveInfo, GraphQLType
     from graphql.language.ast import SelectionSetNode
+
+
+def is_valid_django_model(model: Any) -> bool:
+    """Return whether ``model`` is a Django model class.
+
+    Args:
+        model: The object to test.
+
+    Returns:
+        True if ``model`` is a subclass of ``django.db.models.Model``.
+    """
+    return inspect.isclass(model) and issubclass(model, Model)
+
+
+def maybe_queryset(value: Any) -> Any:
+    """Return a queryset for a manager, or the value unchanged.
+
+    Args:
+        value: A model manager or any other value.
+
+    Returns:
+        ``value.get_queryset()`` when ``value`` is a ``Manager``, else ``value``.
+    """
+    if isinstance(value, Manager):
+        value = value.get_queryset()
+    return value
+
+
+def to_const(string: str) -> str:
+    """Convert a label to an uppercase GraphQL enum constant name.
+
+    Args:
+        string: The human-readable label (e.g. a model choice display).
+
+    Returns:
+        An uppercase, underscore-separated constant safe for an enum name.
+    """
+    return re.sub(r"[\W|^]+", "_", unidecode(string)).upper()
 
 
 def not_found_error(model: type[Model], pk: Any) -> list:
@@ -47,8 +87,6 @@ def not_found_error(model: type[Model], pk: Any) -> list:
     Returns:
         A single-element list of "ErrorType" with the "id" field set.
     """
-    from ._compat import ErrorType
-
     return [
         ErrorType(
             field="id",

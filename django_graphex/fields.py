@@ -6,24 +6,54 @@ import operator
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable
 
-from django.db.models import Prefetch
+from django.db.models import JSONField, Prefetch
 from graphene import ID, Argument, Field, List
 from graphene.types.structures import NonNull, Structure
 
-from django_graphex._compat import (
-    is_valid_django_model,
-    maybe_queryset,
-)
 from django_graphex.filtering.backend import resolve_filter_backend
 from django_graphex.settings import graphql_api_settings
 
 from .base_types import DjangoListObjectBase
 from .paginations.pagination import BaseDjangoGraphqlPagination
-from .utils import find_field, get_extra_filters, get_related_fields, queryset_factory
+from .utils import (
+    find_field,
+    get_extra_filters,
+    get_related_fields,
+    is_valid_django_model,
+    maybe_queryset,
+    queryset_factory,
+)
 
 if TYPE_CHECKING:
     from django.db.models import Manager, Model
     from graphql import GraphQLResolveInfo as ResolveInfo
+
+
+class _MissingType:
+    """Placeholder for a Postgres field type that is unavailable."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Accept and ignore any arguments."""
+
+
+try:
+    # Postgres-only fields; available when psycopg is installed.
+    from django.contrib.postgres.fields import (  # type: ignore[assignment]
+        ArrayField,
+        HStoreField,
+        RangeField,
+    )
+except ImportError:  # pragma: no cover
+    HStoreField = RangeField = _MissingType  # type: ignore[misc,assignment]
+
+    class ArrayField(JSONField):  # type: ignore[no-redef]
+        """Test/no-postgres stand-in for ``ArrayField`` (backed by JSON)."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            """Capture the base field positional argument, like ArrayField."""
+            if args:
+                self.base_field = args[0]
+            super().__init__(**kwargs)
 
 
 # *********************************************** #
