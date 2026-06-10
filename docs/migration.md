@@ -206,6 +206,14 @@ so its filter, `limit`, `offset` and `ordering` all stay on the field (no
 2. **Swap the dependency** — uninstall the old package, install the new one:
 
    ```bash
+   # uv (recommended)
+   uv remove graphene-django-extras
+   uv add django-graphex
+   # subscriptions: uv add "django-graphex[subscriptions]"
+   ```
+
+   ```bash
+   # pip
    pip uninstall graphene-django-extras
    pip install django-graphex
    # subscriptions: pip install "django-graphex[subscriptions]"

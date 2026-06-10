@@ -14,7 +14,7 @@ same `{ ok, errors, <object> }` shape.
 
 !!! note "No DRF backend"
 
-    In `graphene-django-extras` the default backend was Django REST Framework,
+    In the previous library the default backend was Django REST Framework,
     selected with `Meta.serializer_class`. django-graphex has **no** DRF backend
     and no `djangorestframework` dependency: declare `Meta.model` instead.
     See the [migration guide](../migration.md).

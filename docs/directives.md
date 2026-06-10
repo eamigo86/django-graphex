@@ -6,10 +6,10 @@ GraphQL directives in `django-graphex` allow you to transform field values at qu
 
 Directives are applied to fields in your GraphQL queries and are processed after the field value is resolved. They enable you to:
 
-- :material-format-text: **Format strings**: Transform text case, encoding, and structure
-- :material-calendar: **Format dates**: Display dates in various formats and relative time
-- :material-calculator: **Format numbers**: Apply number formatting and currency display
-- :material-shuffle-variant: **Manipulate lists**: Transform and sample list data
+- 🔤 **Format strings**: Transform text case, encoding, and structure
+- 📅 **Format dates**: Display dates in various formats and relative time
+- 🔢 **Format numbers**: Apply number formatting and currency display
+- 🔀 **Manipulate lists**: Transform and sample list data
 
 ## Usage
 

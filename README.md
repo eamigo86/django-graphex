@@ -26,8 +26,9 @@ Django models — no DRF, no `graphene-django`, no `django-filter`.
   introspection control, and string/number/date/list directives.
 - **Subscriptions** — real-time GraphQL over Django Channels 4 (optional extra).
 
-> **Migrating from `graphene-django-extras`?** See the
-> [Migration Guide](https://eamigo86.github.io/django-graphex/migration.html).
+> **Coming from the previous library?** See the
+> [Migration Guide](https://eamigo86.github.io/django-graphex/migration.html) for a
+> step-by-step upgrade with before/after examples.
 
 ## Requirements
 

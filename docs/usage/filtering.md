@@ -13,7 +13,7 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
 - **Logical operators**: `and`, `or`, `not` (arbitrarily nested).
 - `choices` fields filter through their generated **Enum**.
 
-!!! warning "Different from `graphene-django-extras`"
+!!! warning "Different from the previous library"
 
     The old flat arguments (`username: "x"`, `username_Icontains: "x"`),
     `Meta.filterset_class` and `GraphqlIDFilter` are **gone**. Filtering now

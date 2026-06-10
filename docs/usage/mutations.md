@@ -8,11 +8,11 @@ The `DjangoModelMutation` is the cornerstone of mutations in `django-graphex`. I
 
 ### Features
 
-- :material-auto-fix: **Automatic CRUD Operations**: Generates create, update, and delete mutations
-- :material-check-circle: **Built-in Validation**: Validates all writable model fields, FK existence, uniqueness, and `unique_together` constraints
-- :material-file-upload: **File Upload Support**: Handles multipart/form-data requests
-- :material-link-variant: **Nested Relationships**: Supports nested field creation and updates
-- :material-alert-circle: **Error Handling**: Returns structured error responses
+- ✨ **Automatic CRUD Operations**: Generates create, update, and delete mutations
+- ✅ **Built-in Validation**: Validates all writable model fields, FK existence, uniqueness, and `unique_together` constraints
+- 📤 **File Upload Support**: Handles multipart/form-data requests
+- 🔗 **Nested Relationships**: Supports nested field creation and updates
+- ⚠️ **Error Handling**: Returns structured error responses
 
 ### Basic Usage
 

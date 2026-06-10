@@ -28,15 +28,15 @@ django-graphex builds on graphene and Pydantic to make Django GraphQL APIs easy,
 - **DjangoObjectField** - Single object queries with automatic ID filtering
 - **DjangoFilterListField** - List queries with filtering
 - **DjangoFilterPaginateListField** - List queries with filtering and pagination
-- **DjangoListObjectField** - :material-star: *Recommended for Queries*
+- **DjangoListObjectField** - ⭐ *Recommended for Queries*
 
 ### 🧬 Types
-- **DjangoListObjectType** - :material-star: *Recommended for Types*
+- **DjangoListObjectType** - ⭐ *Recommended for Types*
 - **DjangoInputObjectType** - Input types for mutations
-- **DjangoModelType** - :material-star: *Recommended for quick setup*
+- **DjangoModelType** - ⭐ *Recommended for quick setup*
 
 ### ⚡ Mutations
-- **DjangoModelMutation** - :material-star: *Recommended for Mutations*
+- **DjangoModelMutation** - ⭐ *Recommended for Mutations*
 
 ### 📄 Pagination
 - **LimitOffsetGraphqlPagination** - Offset-based pagination

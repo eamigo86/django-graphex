@@ -70,34 +70,6 @@ for name, field in all_fields:
     print(f"Field: {name}, Type: {type(field)}")
 ```
 
-### _resolve_model(obj)
-
-Resolve supplied object to a Django model class.
-
-```python
-def _resolve_model(obj)
-```
-
-**Parameters:**
-- `obj` (`str` or `Model`): Model class or string representation ('app_label.ModelName')
-
-**Returns:** Django model class
-
-**Raises:**
-- `ImproperlyConfigured`: If model cannot be resolved
-- `ValueError`: If obj is not a valid Django model reference
-
-**Example:**
-```python
-from django_graphex.utils import _resolve_model
-
-# Using string reference
-UserModel = _resolve_model('auth.User')
-
-# Using model class
-UserModel = _resolve_model(User)
-```
-
 ---
 
 ## Object Management

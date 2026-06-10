@@ -184,6 +184,67 @@ and the budget, then set `MAX_QUERY_COST` to start enforcing.
     `Field`); wrap an expensive field's return in a type with `Meta.complexity`,
     or watch for a future `@cost` directive.
 
+## Programmatic cost analysis
+
+Sometimes you want a query's estimated cost **without** running it through a view —
+to assert a budget in a test, gate a query in CI, or log the cost of a generated
+operation. `analyze_cost()` returns a `CostReport` for any parsed document against
+your schema, using the exact same estimator the `CostLimitValidationRule` uses.
+
+```python
+from graphql import parse
+
+from django_graphex import analyze_cost, CostReport
+
+query = parse("""
+    query {
+      rentalCompanies {
+        results(limit: 50) {
+          id
+          name
+        }
+        totalCount
+      }
+    }
+""")
+
+report: CostReport = analyze_cost(schema.graphql_schema, query)
+print(report.total)     # estimated cost, e.g. 51
+print(report.max_cost)  # the configured MAX_QUERY_COST budget (or None)
+```
+
+`CostReport` is a `NamedTuple` with two fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `total` | `int` | The estimated cost of the operation. |
+| `max_cost` | `int \| None` | The configured `MAX_QUERY_COST` budget (`None` when unset). |
+
+`analyze_cost(schema, document, operation_name=None, variable_values=None)` takes:
+
+- **`schema`** — the graphql-core schema (`schema.graphql_schema` on a graphene `Schema`).
+- **`document`** — the parsed query (`graphql.parse(...)`).
+- **`operation_name`** — required only when the document holds several operations;
+  otherwise the sole/first operation is costed.
+- **`variable_values`** — bound variables, so a variabled page size (`limit: $first`)
+  is costed exactly instead of falling back to the `MAX_PAGE_SIZE` cap.
+
+A handy use is a regression test that fails if a query gets more expensive:
+
+```python
+def test_dashboard_query_stays_within_budget(schema):
+    report = analyze_cost(schema.graphql_schema, parse(DASHBOARD_QUERY))
+    assert report.total <= 500
+```
+
+!!! tip "Same numbers as the runtime rule"
+
+    `analyze_cost()` shares the estimator with `CostLimitValidationRule`, so a
+    `report.total` over `report.max_cost` is exactly what the view would reject at
+    runtime. During validation the rule has no bound variables, so it costs
+    variabled page sizes at the `MAX_PAGE_SIZE` cap — pass `variable_values` to
+    `analyze_cost()` to mirror a specific request precisely.
+
 ## Error codes
 
 Both rules fail during **validation** and tag their error with a
