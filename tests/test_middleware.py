@@ -9,7 +9,7 @@ from graphql import GraphQLArgument, GraphQLString
 
 from django_graphex import all_directives
 from django_graphex.directives.base import BaseExtraGraphQLDirective
-from django_graphex.middleware import ExtraGraphQLDirectiveMiddleware
+from django_graphex.middleware import GraphQLDirectiveMiddleware
 
 
 class PrefixGraphQLDirective(BaseExtraGraphQLDirective):
@@ -30,7 +30,7 @@ class PrefixGraphQLDirective(BaseExtraGraphQLDirective):
 
 # Instantiating registers the directive in the global registry under "prefix".
 _prefix_directive = PrefixGraphQLDirective()
-_middleware = [ExtraGraphQLDirectiveMiddleware()]
+_middleware = [GraphQLDirectiveMiddleware()]
 
 
 class _Query(graphene.ObjectType):
@@ -49,7 +49,7 @@ _schema = graphene.Schema(
 )
 
 
-class ExtraGraphQLDirectiveMiddlewareExecutionTest(TestCase):
+class GraphQLDirectiveMiddlewareExecutionTest(TestCase):
     """Behavioural tests driving the middleware through real schema execution."""
 
     def _run(self, query, **variables):
@@ -87,14 +87,14 @@ class ExtraGraphQLDirectiveMiddlewareExecutionTest(TestCase):
         self.assertEqual(self._run("{ text }")["text"], "x")
 
 
-class ExtraGraphQLDirectiveMiddlewareUnitTest(TestCase):
+class GraphQLDirectiveMiddlewareUnitTest(TestCase):
     """Structural unit tests of the middleware plumbing."""
 
     def setUp(self):
-        self.middleware = ExtraGraphQLDirectiveMiddleware()
+        self.middleware = GraphQLDirectiveMiddleware()
 
     def test_middleware_creation(self):
-        self.assertIsInstance(self.middleware, ExtraGraphQLDirectiveMiddleware)
+        self.assertIsInstance(self.middleware, GraphQLDirectiveMiddleware)
         self.assertTrue(hasattr(self.middleware, "resolve"))
 
     def test_resolve_without_directives(self):

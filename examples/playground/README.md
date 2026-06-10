@@ -89,9 +89,9 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | **Security / middleware** | | |
 | `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
 | `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
-| `ExtraGraphQLDirectiveMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
-| `ExtraGraphQLSchema` (public + private roots) | ✅ | `schema.py` — `private_query=PrivateQuery`, `private_subscription=PrivateSubscriptions` |
-| `collect_field_names` | note | Used internally by `ExtraGraphQLSchema`; can be called directly to build a custom protected-field set |
+| `GraphQLDirectiveMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
+| `DjangoGraphQLSchema` (public + private roots) | ✅ | `schema.py` — `private_query=PrivateQuery`, `private_subscription=PrivateSubscriptions` |
+| `collect_field_names` | note | Used internally by `DjangoGraphQLSchema`; can be called directly to build a custom protected-field set |
 | `DenyAllRegistry` | note | Fail-closed sentinel for broken schemas; not needed in a healthy project |
 | **Views** | | |
 | `BaseGraphQLView` | ✅ | base of all views |
@@ -324,7 +324,7 @@ Private (requires a logged-in session; otherwise `Authentication required.`):
 }
 ```
 
-`ExtraGraphQLSchema` unions the public and private roots and attaches the
+`DjangoGraphQLSchema` unions the public and private roots and attaches the
 protected field registry to the schema. `AuthenticatedFieldsMiddleware` reads
 it at resolve time; the client cannot bypass it without an authenticated session.
 

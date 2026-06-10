@@ -67,7 +67,7 @@ The first release. A GraphQL + Django toolkit built directly on `graphene`
 - **Query depth limiting** (`MAX_QUERY_DEPTH` / `Meta.max_deep`) and **query cost
   analysis** (`MAX_QUERY_COST` / `Meta.complexity`, optional `extensions.cost`).
 - **Security middlewares** — `DisableIntrospectionMiddleware`,
-  `AuthenticatedFieldsMiddleware` — and `ExtraGraphQLSchema` for declaring private
+  `AuthenticatedFieldsMiddleware` — and `DjangoGraphQLSchema` for declaring private
   fields. Every execution error carries a machine-readable `extensions.code`.
 
 ### Views

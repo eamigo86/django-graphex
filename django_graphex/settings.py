@@ -38,7 +38,7 @@ DEFAULTS = {
     # Let superusers bypass the introspection block.
     "INTROSPECTION_ALLOW_SUPERUSER": True,
     # Extra top-level field names requiring auth (AuthenticatedFieldsMiddleware)
-    # when not using ExtraGraphQLSchema.
+    # when not using DjangoGraphQLSchema.
     "PROTECTED_FIELDS": (),
     # Global default maximum query depth (nested object levels) enforced by
     # DepthLimitValidationRule. None disables the global limit; per-type

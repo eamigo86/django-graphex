@@ -199,7 +199,7 @@ so its filter, `limit`, `offset` and `ordering` all stay on the field (no
 - **Native `and` / `or` / `not` filtering** on a single `filter:` argument, built
   on Django's ORM `Q` objects — no `django-filter` (see [Filtering](usage/filtering.md)).
 - **Security middlewares**: `DisableIntrospectionMiddleware` and
-  `AuthenticatedFieldsMiddleware`, plus `ExtraGraphQLSchema` for declaring private
+  `AuthenticatedFieldsMiddleware`, plus `DjangoGraphQLSchema` for declaring private
   fields (see [Security](usage/security.md)).
 - New directives (`@truncate`, `@slugify`, `@round`, `@abs`, `@unique`) and
   directive arguments as GraphQL variables (see [Directives](directives.md)).

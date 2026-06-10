@@ -1,6 +1,6 @@
 """Schema helpers for field-level authorization.
 
-"ExtraGraphQLSchema" lets you declare which top-level fields are private
+"DjangoGraphQLSchema" lets you declare which top-level fields are private
 right where the schema is built ("private_query" / "private_mutation" /
 "private_subscription"). It computes the set of protected field names once and
 attaches it to the underlying graphql-core schema, where the
@@ -19,7 +19,7 @@ from graphene.utils.str_converters import to_camel_case
 if TYPE_CHECKING:
     from graphene import ObjectType
 
-__all__ = ("collect_field_names", "DenyAllRegistry", "ExtraGraphQLSchema")
+__all__ = ("collect_field_names", "DenyAllRegistry", "DjangoGraphQLSchema")
 
 
 def collect_field_names(
@@ -77,7 +77,7 @@ def _auth_middleware_configured() -> bool:
     return False
 
 
-class ExtraGraphQLSchema(graphene.Schema):
+class DjangoGraphQLSchema(graphene.Schema):
     """A "graphene.Schema" that records private fields for the auth middleware.
 
     Each ``private_*`` ObjectType is **unioned** into its root, so you can keep
@@ -89,7 +89,7 @@ class ExtraGraphQLSchema(graphene.Schema):
       fields are merged into the corresponding root and require authentication::
 
           # disjoint public / private roots -> the schema exposes the union
-          ExtraGraphQLSchema(
+          DjangoGraphQLSchema(
               query=PublicQuery, private_query=PrivateQuery,
               subscription=PublicSubs, private_subscription=PrivateSubs,
           )
@@ -157,7 +157,7 @@ class ExtraGraphQLSchema(graphene.Schema):
             private_query or private_mutation or private_subscription
         ) and not _auth_middleware_configured():
             warnings.warn(
-                "ExtraGraphQLSchema received private_query/private_mutation/"
+                "DjangoGraphQLSchema received private_query/private_mutation/"
                 "private_subscription but AuthenticatedFieldsMiddleware is not in "
                 "settings.GRAPHENE['MIDDLEWARE']; private fields will NOT be "
                 "protected.",
