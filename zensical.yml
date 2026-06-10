@@ -65,6 +65,11 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
   - attr_list
+  # Render inline icons/emoji like :material-star: (Zensical bundles the icon sets
+  # and extends pymdownx.emoji; the zensical.* namespace is required for icon SVGs).
+  - pymdownx.emoji:
+      emoji_index: !!python/name:zensical.extensions.emoji.twemoji
+      emoji_generator: !!python/name:zensical.extensions.emoji.to_svg
   - md_in_html
   - tables
   - footnotes
