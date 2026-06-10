@@ -284,6 +284,32 @@ class CommentMutation(DjangoModelMutation):
         model = Comment
 
 
+class PostWithCommentsMutation(DjangoModelMutation):
+    """Nested-write demo: create a Post together with one or more Comments.
+
+    ``Meta.nested_fields`` tells django-graphex that the ``comments`` accessor
+    (a reverse FK from Comment.post) should be handled as nested input.  The
+    ``NestedFieldsMixin`` detects the relation direction automatically:
+
+    * It classifies ``comments`` as ``reverse_many`` (one_to_many).
+    * After saving the parent Post it calls ``_attach_children``, which
+      iterates the list, injects ``post=<saved_post>`` into each child payload,
+      and saves each Comment via the native backend — all inside one
+      ``transaction.atomic()`` block.
+
+    The auto-generated input type for the ``create`` operation therefore
+    exposes ``comments`` as a list-of-object argument.  No hand-written
+    resolver or serializer is needed.
+    """
+
+    class Meta:
+        model = Post
+        # Only expose the create operation; plain postCreate / postUpdate /
+        # postDelete remain available from PostMutation above.
+        model_operations = ("create",)
+        nested_fields = {"comments": Comment}
+
+
 # A model-derived input type. DjangoModelMutation builds these for you, but you
 # can also declare one explicitly and use it as an argument on a hand-written
 # graphene mutation when you need full control over the resolver.
@@ -317,6 +343,8 @@ class RootMutation(graphene.ObjectType):
     comment_delete = CommentMutation.DeleteField()
     # Hand-written mutation using an explicit DjangoInputObjectType argument.
     create_category = CreateCategory.Field()
+    # Nested-write demo: single operation creates the Post + its Comment(s).
+    post_with_comments_create = PostWithCommentsMutation.CreateField()
 
 
 # --------------------------------------------------------------------------- #

@@ -78,6 +78,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DjangoModelMutation` (full CRUD) | ✅ | `PostMutation`, `CommentMutation` → `postCreate/Update/Delete`, `commentCreate/Update/Delete` |
 | `DjangoModelType.MutationFields()` | ✅ | `NoteModelType` → `noteCreate/Update/Delete` |
 | `DjangoInputObjectType` on hand-written mutation | ✅ | `CategoryInput` / `createCategory` |
+| Nested writes (`nested_fields` — reverse FK) | ✅ | `PostWithCommentsMutation` → `postWithCommentsCreate` |
 | **Permissions** | | |
 | `BasePermission` (custom subclass) | ✅ | `schema.py` — `IsOwnerOrReadOnly` |
 | `AllowAny` | ✅ | imported; available for `permission_classes` |
@@ -242,6 +243,45 @@ A failing validation (blank title) returns the `errors` list instead of `ok: tru
 ```graphql
 mutation { noteCreate(newNote: { title: "" }) { ok errors { field messages } } }
 ```
+
+### 4. Nested write — create a Post with inline Comments
+
+`PostWithCommentsMutation` sets `Meta.nested_fields = {"comments": Comment}`.
+django-graphex detects that `comments` is a **reverse FK** (one-to-many), saves
+the Post first, then saves each Comment with `post` injected automatically — all
+inside a single `transaction.atomic()`.  If any comment fails validation the
+whole operation is rolled back.
+
+```graphql
+mutation CreatePostWithComments {
+  postWithCommentsCreate(
+    newPost: {
+      title: "Hello from nested writes"
+      body: "django-graphex handles the FK injection automatically."
+      author: 1
+      comments: [
+        { authorName: "Ada", text: "Great post!" }
+        { authorName: "Bob", text: "Really useful, thanks." }
+      ]
+    }
+  ) {
+    ok
+    errors { field messages }
+    post {
+      id
+      title
+      comments {
+        totalCount
+        results(first: 5) { id authorName text }
+      }
+    }
+  }
+}
+```
+
+The `comments` list is optional — omit it and the mutation behaves exactly like
+a plain `postCreate`.  Passing an empty list (`comments: []`) is a no-op
+(existing comments are never removed).
 
 ---
 

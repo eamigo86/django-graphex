@@ -90,8 +90,8 @@ DJANGO_GRAPHEX = {
     # Query depth limiting (DepthLimitValidationRule — wired in GraphQLView).
     # Reject queries that nest objects more than N levels deep.
     # None = no global limit; per-type max_deep still applies on top.
-    # Uncomment the line below to see the rule reject an over-nested query:
-    #   "MAX_QUERY_DEPTH": 6,
+    # Active here so the playground rejects an over-nested query out of the box:
+    "MAX_QUERY_DEPTH": 6,
     # ---------------------------------------------------------------------------
     # Query cost analysis (CostLimitValidationRule — wired in GraphQLView).
     # Reject queries whose estimated cost exceeds the budget; report cost in
