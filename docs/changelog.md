@@ -12,6 +12,20 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 1.1.0
+
+### Changed
+
+- **BREAKING — minimum Django is now 4.2.** Django 4.0 and 4.1 (both end-of-life)
+  are no longer supported. Projects pinned to those versions should stay on
+  `django-graphex` 1.0.x.
+- **BREAKING — public classes renamed (the `Extra` prefix is dropped).**
+  `ExtraGraphQLSchema` → **`DjangoGraphQLSchema`** and
+  `ExtraGraphQLDirectiveMiddleware` → **`GraphQLDirectiveMiddleware`**. Update your
+  imports and the `GRAPHENE["MIDDLEWARE"]` dotted path to
+  `django_graphex.GraphQLDirectiveMiddleware`. `DjangoGraphQLSchema` also avoids the
+  name clash with `graphql.GraphQLSchema` from graphql-core.
+
 ## 1.0.0
 
 The first release. A GraphQL + Django toolkit built directly on `graphene`
@@ -67,7 +81,7 @@ The first release. A GraphQL + Django toolkit built directly on `graphene`
 - **Query depth limiting** (`MAX_QUERY_DEPTH` / `Meta.max_deep`) and **query cost
   analysis** (`MAX_QUERY_COST` / `Meta.complexity`, optional `extensions.cost`).
 - **Security middlewares** — `DisableIntrospectionMiddleware`,
-  `AuthenticatedFieldsMiddleware` — and `DjangoGraphQLSchema` for declaring private
+  `AuthenticatedFieldsMiddleware` — and `ExtraGraphQLSchema` for declaring private
   fields. Every execution error carries a machine-readable `extensions.code`.
 
 ### Views

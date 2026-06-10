@@ -1,6 +1,6 @@
 [project]
 name = "django-graphex"
-version = "1.0.0"
+version = "1.1.0"
 description = "GraphQL for Django, powered by graphene and Pydantic: define types/mutations/subscriptions from your models, with nested filtering (and/or/not), pagination, permissions and directives."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
@@ -13,7 +13,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries",
     "Framework :: Django",
-    "Framework :: Django :: 4.0",
     "Framework :: Django :: 4.2",
     "Framework :: Django :: 5.0",
     "Framework :: Django :: 5.1",
@@ -26,7 +25,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-    "django>=4.0,<7.0",
+    "django>=4.2,<7.0",
     "python-dateutil>=2.8.2,<3.0",
     "graphene>=3.3,<4",
     "text-unidecode>=1.3",

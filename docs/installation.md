@@ -43,13 +43,13 @@ This adds `channels` and `channels-redis`. See the
 ## Requirements
 
 - **Python**: 3.12, 3.13, 3.14
-- **Django**: 4.0, 4.2, 5.0, 5.1, 5.2, 6.0
+- **Django**: 4.2, 5.0, 5.1, 5.2, 6.0
 - **graphene**: >=3.3,<4
 - **pydantic**: >=2,<3
 
 !!! info "Version Support"
     - **Minimum Python version**: 3.12+
-    - **Minimum Django version**: 4.0+
+    - **Minimum Django version**: 4.2+
     - Full compatibility tested with all combinations of supported versions
 
 ## Development Installation

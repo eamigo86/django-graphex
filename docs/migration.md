@@ -28,8 +28,8 @@ to the new one.
 #### 1. Python and Django Support
 
 !!! warning "Runtime Requirements"
-    django-graphex requires **Python 3.12+** (3.12, 3.13, 3.14) and **Django 4.0–6.0**
-    (CI runs from Django 4.2). It depends on **graphene >=3.3,<4** directly (the
+    django-graphex requires **Python 3.12+** (3.12, 3.13, 3.14) and **Django 4.2–6.0**.
+    It depends on **graphene >=3.3,<4** directly (the
     `graphene-django` dependency was dropped) and **pydantic >=2,<3**.
 
 #### 2. Django REST Framework removed — use `Meta.model`
@@ -206,7 +206,7 @@ so its filter, `limit`, `offset` and `ordering` all stay on the field (no
 
 ### Migration Steps
 
-1. **Update your environment** to Python 3.12+ and Django 4.0+ (graphene
+1. **Update your environment** to Python 3.12+ and Django 4.2+ (graphene
    `>=3.3,<4`, pydantic `>=2,<3`).
 2. **Swap the dependency** — uninstall the old package, install the new one:
 
