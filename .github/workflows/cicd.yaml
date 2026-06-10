@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        # Python 3.12 — Django floor is declared >=4.0 but CI tests from 4.2 (SPEC OQ2)
+        # Python 3.12 — Django floor is >=4.2 (SPEC OQ2)
         - python-version: '3.12'
           toxenv: 'py312-django42'
         - python-version: '3.12'
