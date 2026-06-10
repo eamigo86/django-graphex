@@ -259,8 +259,9 @@ def test_build_model_schema_exclude_drops_field():
 
 def test_build_model_schema_partial_makes_all_optional():
     schema = build_model_schema(SchemaShapeModel, partial=True)
-    inst = schema()  # no required field errors
-    assert inst is not None
+    # Every field is optional: none are required by pydantic.
+    assert not any(f.is_required() for f in schema.model_fields.values())
+    schema()  # constructing with no values must not raise required-field errors
 
 
 def _now():

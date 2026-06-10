@@ -5,6 +5,7 @@ On the CI floor (Django 4.x) ``field.choices`` is NOT pre-normalized, so these
 exercise the converter's own normalization directly.
 """
 
+import graphene
 from django.db import models
 
 from django_graphex.converter import (
@@ -63,20 +64,28 @@ def test_get_choices_handles_tuples_and_groups():
 
 def test_convert_field_with_choices_builds_enum_for_each_form():
     forms = {
-        "textchoices": models.CharField(choices=_Status, max_length=10),
-        "intchoices": models.IntegerField(choices=_Priority),
-        "mapping": models.CharField(choices=_DICT, max_length=10),
-        "callable": models.CharField(choices=_callable_choices, max_length=10),
-        "tuples": models.CharField(choices=_TUPLES, max_length=10),
+        "textchoices": (
+            models.CharField(choices=_Status, max_length=10),
+            {"DRAFT", "PUB"},
+        ),
+        "intchoices": (models.IntegerField(choices=_Priority), {"LOW", "HIGH"}),
+        "mapping": (models.CharField(choices=_DICT, max_length=10), {"X", "Y"}),
+        "callable": (
+            models.CharField(choices=_callable_choices, max_length=10),
+            {"A", "B"},
+        ),
+        "tuples": (models.CharField(choices=_TUPLES, max_length=10), {"C", "D"}),
     }
     registry = get_global_registry()
-    for label, field in forms.items():
+    for label, (field, expected_members) in forms.items():
         field.name = f"field_{label}"
         field.model = BasicModel  # the converter reads field.model._meta for the name
         # Each modern form converts without raising (it raised ValueError /
-        # TypeError before the normalization fix) and yields a field.
+        # TypeError before the normalization fix) and yields an Enum field whose
+        # members match the declared choices.
         converted = convert_django_field_with_choices(field, registry)
-        assert converted is not None, label
+        assert isinstance(converted, graphene.Enum), label
+        assert set(converted._meta.enum.__members__) == expected_members, label
 
 
 # --------------------------------------------------------------------------- #

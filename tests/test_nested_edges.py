@@ -45,13 +45,16 @@ class DeclaredButAbsentTest(TestCase):
     def test_non_introspectable_nested_left_for_parent(self):
         # `bogus` IS provided but isn't a model relation -> kind is None, so the
         # value is left in data for the parent backend (line 101-104). The parent
-        # backend then rejects the unknown field -> not ok (still exercises 104).
+        # backend silently ignores the unknown `bogus` key, so the create still
+        # succeeds and only the real fields are persisted.
         result = _create(
             PostNestedType,
             {"title": "T", "body": "b", "author": {"name": "A"}, "bogus": {"x": 1}},
         )
-        # The branch ran; whether ok depends on backend tolerance of unknown keys.
-        assert result is not None
+        assert result.ok, getattr(result, "errors", None)
+        post = Post.objects.get()
+        assert post.title == "T"
+        assert post.author.name == "A"
 
 
 # --------------------------------------------------------------------------- #

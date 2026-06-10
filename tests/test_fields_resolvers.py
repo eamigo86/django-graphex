@@ -109,7 +109,11 @@ def test_object_field_model_property():
 def test_django_list_field_unwraps_nonnull():
     # Passing a NonNull(type) -> unwrapped before wrapping in List(NonNull(...)).
     field = DjangoListField(NonNull(TagType))
-    assert field is not None
+    # The outer wrapper is List(NonNull(TagType)); the inner NonNull was unwrapped
+    # so it is not doubled (no List(NonNull(NonNull(TagType)))).
+    assert isinstance(field.type, graphene.List)
+    assert isinstance(field.type.of_type, NonNull)
+    assert field.type.of_type.of_type is TagType
 
 
 def test_filter_list_field_explicit_description_kept():

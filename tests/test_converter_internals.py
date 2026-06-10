@@ -13,12 +13,13 @@ from django.contrib.contenttypes.fields import (
 )
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from graphene import ID, Dynamic
+from graphene import ID, Dynamic, JSONString, List, NonNull
 
 from django_graphex.converter import (
     construct_fields,
     convert_django_field,
 )
+from django_graphex.fields import DjangoListField
 from django_graphex.registry import Registry
 from django_graphex.types import DjangoInputObjectType, DjangoObjectType
 
@@ -47,15 +48,22 @@ def test_m2m_input_flag_not_nested_is_list_of_id():
     registry = Registry()
     m2m = Post._meta.get_field("tags")
     out = _resolve(m2m, registry=registry, input_flag="create")
-    # DjangoListField wrapping ID.
-    assert out is not None
+    # DjangoListField wrapping [ID!].
+    assert isinstance(out, DjangoListField)
+    assert isinstance(out.type, List)
+    assert isinstance(out.type.of_type, NonNull)
+    assert out.type.of_type.of_type is ID
 
 
 def test_reverse_relation_input_flag_not_nested_is_list_of_id():
     registry = Registry()
     reverse = Author._meta.get_field("posts")  # reverse FK (ManyToOneRel)
     out = _resolve(reverse, registry=registry, input_flag="create")
-    assert out is not None
+    # DjangoListField wrapping [ID!].
+    assert isinstance(out, DjangoListField)
+    assert isinstance(out.type, List)
+    assert isinstance(out.type.of_type, NonNull)
+    assert out.type.of_type.of_type is ID
 
 
 def test_fk_output_unregistered_model_returns_none():
@@ -75,7 +83,8 @@ def test_fk_output_registered_model_returns_field():
 
     fk = Post._meta.get_field("author")
     out = _resolve(fk, registry=reg)
-    assert out is not None  # a Field wrapping the registered type
+    # A Field wrapping the registered type.
+    assert out.type is _AuthorType
 
 
 def test_m2m_nested_input_registered_returns_list():
@@ -167,4 +176,4 @@ def test_generic_relation_input_flag_returns_none():
 def test_json_field_converts_to_string_scalar():
     field = models.JSONField()
     out = convert_django_field(field)
-    assert out is not None
+    assert isinstance(out, JSONString)

@@ -66,11 +66,26 @@ def test_combine_date_time_none_parts():
 
 
 def test_parse_handles_each_input_kind():
-    assert _parse(datetime(2020, 1, 1)) is not None
-    assert _parse(date(2020, 1, 1)) is not None
-    assert _parse(time(10, 0, 0)) is not None
-    assert _parse(1577836800) is not None  # unix timestamp
-    assert _parse("2020-01-01 10:00:00") is not None
+    # A datetime input keeps its calendar fields and gains tz awareness.
+    parsed_dt = _parse(datetime(2020, 1, 1, 3, 4, 5))
+    assert (parsed_dt.year, parsed_dt.month, parsed_dt.day) == (2020, 1, 1)
+    assert (parsed_dt.hour, parsed_dt.minute, parsed_dt.second) == (3, 4, 5)
+    assert parsed_dt.tzinfo is not None
+    # A date input keeps its date and zeroes the time.
+    parsed_date = _parse(date(2020, 1, 1))
+    assert (parsed_date.year, parsed_date.month, parsed_date.day) == (2020, 1, 1)
+    assert (parsed_date.hour, parsed_date.minute, parsed_date.second) == (0, 0, 0)
+    # A time input keeps its time (date is today, which we do not assert on).
+    parsed_time = _parse(time(10, 0, 0))
+    assert (parsed_time.hour, parsed_time.minute, parsed_time.second) == (10, 0, 0)
+    # A unix timestamp and an ISO-ish string both yield aware datetimes.
+    # (The exact wall-clock value is host-timezone dependent, so only assert
+    # that parsing succeeds and produces an aware datetime.)
+    parsed_ts = _parse(1577836800)  # unix timestamp
+    assert isinstance(parsed_ts, datetime) and parsed_ts.tzinfo is not None
+    parsed_str = _parse("2020-01-01 10:00:00")
+    assert (parsed_str.year, parsed_str.month, parsed_str.day) == (2020, 1, 1)
+    assert (parsed_str.hour, parsed_str.minute, parsed_str.second) == (10, 0, 0)
 
 
 def test_parse_invalid_string_returns_none():
@@ -79,10 +94,13 @@ def test_parse_invalid_string_returns_none():
 
 def test_format_dt_named_formats():
     dt = _parse(datetime(2020, 12, 31, 10, 21, 30))
-    assert _format_dt(dt, "default")
-    assert _format_dt(dt, "iso").startswith("2020-")
-    assert _format_dt(dt, "js")
-    assert _format_dt(dt, "javascript")
+    # default -> "%d %b %Y %H:%M:%S"
+    assert _format_dt(dt, "default") == "31 Dec 2020 10:21:30"
+    # iso -> "%Y-%b-%dT%H:%M:%S"
+    assert _format_dt(dt, "iso") == "2020-Dec-31T10:21:30"
+    # js / javascript -> "%a %b %d %Y %H:%M:%S" (2020-12-31 was a Thursday)
+    assert _format_dt(dt, "js") == "Thu Dec 31 2020 10:21:30"
+    assert _format_dt(dt, "javascript") == "Thu Dec 31 2020 10:21:30"
 
 
 def test_format_dt_none_value():
@@ -109,8 +127,11 @@ def test_format_dt_invalid_token_returns_none():
 
 def test_format_dt_time_ago_named_formats():
     dt = _parse(datetime.now() - timedelta(days=2))
-    assert _format_dt(dt, "time ago") is not None
-    assert _format_dt(dt, "time ago 2d") is not None
+    # A past datetime renders with the "ago" suffix (exact component breakdown is
+    # sub-second-timing dependent, so we only assert the stable suffix).
+    assert _format_dt(dt, "time ago").endswith("ago")
+    # The two-day variant collapses "2 days ago" to the "Yesterday" wording.
+    assert _format_dt(dt, "time ago 2d") == "Yesterday"
 
 
 def test_format_dt_partial_token_then_invalid_returns_none():

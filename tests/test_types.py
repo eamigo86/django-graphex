@@ -48,8 +48,8 @@ class TypesTest(TestCase):
         list_type = BasicListType()
         self.assertIsNotNone(list_type)
 
-        # Should have pagination
-        self.assertTrue(hasattr(list_type._meta, "pagination"))
+        # Should carry the configured pagination strategy on its Meta.
+        self.assertIsInstance(list_type._meta.pagination, LimitOffsetGraphqlPagination)
 
     def test_django_input_object_type_creation(self):
         """Test DjangoInputObjectType creation."""
@@ -138,13 +138,14 @@ class TypesTest(TestCase):
         self.assertIsInstance(pagination, LimitOffsetGraphqlPagination)
 
     def test_list_type_ordering(self):
-        """Test list type ordering."""
-        # Test that ordering can be configured
-        try:
-            # Some types might have ordering
-            if hasattr(BasicListType._meta, "ordering"):
-                ordering = BasicListType._meta.ordering
-                self.assertIsNotNone(ordering)
-        except AttributeError:
-            # If ordering is not available, that's ok
-            pass
+        """Ordering is configured on the pagination object, not on _meta."""
+        # The list type itself carries no `ordering` on _meta; ordering is a
+        # property of the pagination strategy.
+        self.assertFalse(hasattr(BasicListType._meta, "ordering"))
+
+        class OrderedListType(DjangoListObjectType):
+            class Meta:
+                model = BasicModel
+                pagination = LimitOffsetGraphqlPagination(ordering="-text")
+
+        self.assertEqual(OrderedListType._meta.pagination.ordering, "-text")

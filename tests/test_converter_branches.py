@@ -235,7 +235,9 @@ def test_onetoone_rel_output_registered_returns_field():
             registry = reg
 
     rel = Author._meta.get_field("profile")
-    assert _resolve(rel, registry=reg) is not None
+    out = _resolve(rel, registry=reg)
+    # A Field wrapping the registered profile type.
+    assert out.type is _ProfileType
 
 
 # --------------------------------------------------------------------------- #
@@ -267,7 +269,10 @@ def test_reverse_relation_nested_input_registered_returns_list():
 
     reverse = Author._meta.get_field("posts")
     out = _resolve(reverse, registry=reg, input_flag="create", nested_field=True)
-    assert out is not None
+    # A list of the registered nested input type: [_PostInput!].
+    assert isinstance(out.type, List)
+    assert isinstance(out.type.of_type, NonNull)
+    assert out.type.of_type.of_type is _PostInput
 
 
 # --------------------------------------------------------------------------- #

@@ -176,8 +176,11 @@ class ConverterTest(TestCase):
 
         graphql_field = convert_django_field_with_choices(field, registry=registry)
 
-        # Should create some type for choices
-        self.assertIsNotNone(graphql_field)
+        # A choices field converts to a graphene Enum carrying both choices.
+        self.assertIsInstance(graphql_field, graphene.Enum)
+        self.assertEqual(
+            set(graphql_field._meta.enum.__members__), {"CHOICE_A", "CHOICE_B"}
+        )
 
     def test_convert_foreign_key_field(self):
         """Test ForeignKey field conversion."""
@@ -228,14 +231,17 @@ class ConverterTest(TestCase):
         self.assertFalse(isinstance(graphql_field, graphene.NonNull))
 
     def test_required_field_conversion(self):
-        """Test required field conversion."""
+        """A required CharField converts to a plain (nullable) String for input.
+
+        Input fields are intentionally NOT wrapped in NonNull on the ``create``
+        flag, so callers may omit fields that have model-level defaults; the
+        backend serializer enforces requiredness at validation time.
+        """
         field = TestModel._meta.get_field("char_field")
         graphql_field = convert_django_field(field, input_flag="create")
 
-        # Required fields for input should be NonNull
-        if hasattr(graphene, "NonNull"):
-            # Depending on configuration, might be wrapped in NonNull
-            self.assertIsInstance(graphql_field, (graphene.String, graphene.NonNull))
+        self.assertIsInstance(graphql_field, graphene.String)
+        self.assertNotIsInstance(graphql_field, graphene.NonNull)
 
     def test_field_with_default_conversion(self):
         """Test field with default value conversion."""
@@ -249,8 +255,8 @@ class ConverterTest(TestCase):
         field = TestModel._meta.get_field("id")  # Auto-created id field
         graphql_field = convert_django_field(field)
 
-        # ID field should convert to ID type
-        self.assertIsInstance(graphql_field, (graphene.ID, graphene.Int))
+        # An AutoField (the model pk) converts to the GraphQL ID type.
+        self.assertIsInstance(graphql_field, graphene.ID)
 
 
 class ConverterUtilsTest(TestCase):
@@ -266,8 +272,12 @@ class ConverterUtilsTest(TestCase):
 
         graphql_field = convert_django_field_with_choices(field, registry=registry)
 
-        # Should create some form of enum or choice field
-        self.assertIsNotNone(graphql_field)
+        # An integer choices field converts to a graphene Enum whose members
+        # mirror the declared choice labels.
+        self.assertIsInstance(graphql_field, graphene.Enum)
+        self.assertEqual(
+            set(graphql_field._meta.enum.__members__), {"CHOICE_A", "CHOICE_B"}
+        )
 
     def test_choices_extraction(self):
         """Test choices extraction from different field types."""

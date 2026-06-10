@@ -61,3 +61,8 @@ class UtilsTest(TestCase):
         for field_info in fields:
             self.assertIsInstance(field_info, tuple)
             self.assertEqual(len(field_info), 2)
+
+        # The model's declared fields are present, keyed by name.
+        names = {name for name, _field in fields}
+        self.assertIn("id", names)
+        self.assertIn("text", names)

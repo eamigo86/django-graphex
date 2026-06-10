@@ -51,8 +51,12 @@ def test_invalid_setting_name_raises_attribute_error():
 
 def test_user_setting_overrides_default():
     s = GraphQLAPISettings({"MAX_PAGE_SIZE": 42}, DEFAULTS, IMPORT_STRINGS)
+    # Not memoized before the first read: __getattr__ has not run yet.
+    assert "MAX_PAGE_SIZE" not in s.__dict__
     assert s.MAX_PAGE_SIZE == 42
-    # Caching: reading again returns the memoized attribute.
+    # __getattr__ caches via setattr, so the value now lives in the instance dict
+    # and a second read bypasses __getattr__ entirely.
+    assert s.__dict__["MAX_PAGE_SIZE"] == 42
     assert s.MAX_PAGE_SIZE == 42
 
 
