@@ -12,7 +12,6 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from django_graphex import (
-    AllowAny,
     BasePermission,
     CursorGraphqlPagination,
     DjangoFilterListField,
@@ -25,9 +24,6 @@ from django_graphex import (
     DjangoObjectField,
     DjangoObjectType,
     ExtraGraphQLSchema,
-    IsAdmin,
-    IsAdminOrReadOnly,
-    IsAuthenticated,
     IsAuthenticatedOrReadOnly,
     LimitOffsetGraphqlPagination,
     PageGraphqlPagination,
