@@ -12,6 +12,8 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from django_graphex import (
+    AllowAny,
+    BasePermission,
     CursorGraphqlPagination,
     DjangoFilterListField,
     DjangoFilterPaginateListField,
@@ -23,6 +25,9 @@ from django_graphex import (
     DjangoObjectField,
     DjangoObjectType,
     ExtraGraphQLSchema,
+    IsAdmin,
+    IsAdminOrReadOnly,
+    IsAuthenticated,
     IsAuthenticatedOrReadOnly,
     LimitOffsetGraphqlPagination,
     PageGraphqlPagination,
@@ -74,6 +79,13 @@ class PostType(DjangoObjectType):
             "status": ("exact",),
             "author": ("exact",),
         }
+        # Per-type depth/cost hints (DepthLimitValidationRule /
+        # CostLimitValidationRule, both wired in GraphQLView).
+        # max_deep: reject any query that nests *more than N levels below* a
+        # PostType field; this combines with MAX_QUERY_DEPTH (most-restrictive wins).
+        # complexity: cost weight for CostLimitValidationRule (default is 1).
+        max_deep = 4
+        complexity = 2
 
 
 class AuthorType(DjangoObjectType):
@@ -106,10 +118,38 @@ class CommentListType(DjangoListObjectType):
 
 
 # --------------------------------------------------------------------------- #
+# Custom permission — demonstrates BasePermission subclassing.               #
+# AllowAny, IsAuthenticated, IsAdmin, IsAdminOrReadOnly are all imported      #
+# above and are available to use on any DjangoModelType.                      #
+# --------------------------------------------------------------------------- #
+class IsOwnerOrReadOnly(BasePermission):
+    """Authenticated users may read; only the owner may write.
+
+    A real "is owner" check would compare instance.owner == request.user.
+    Here we check authentication as a simple stand-in for any custom rule —
+    the point is the pattern: override has_<action>_permission per-action.
+    """
+
+    def has_create_permission(self, info, model, **kwargs):
+        user = getattr(getattr(info, "context", None), "user", None)
+        return bool(user and user.is_authenticated)
+
+    def has_update_permission(self, info, model, **kwargs):
+        user = getattr(getattr(info, "context", None), "user", None)
+        return bool(user and user.is_authenticated)
+
+    def has_delete_permission(self, info, model, **kwargs):
+        user = getattr(getattr(info, "context", None), "user", None)
+        return bool(user and user.is_authenticated)
+
+
+# --------------------------------------------------------------------------- #
 # Serializer type: Note CRUD + permissions + per-request scoping             #
 # --------------------------------------------------------------------------- #
 class NoteModelType(DjangoModelType):
     # Anyone may read; only authenticated users may create/update/delete.
+    # Other built-in options: AllowAny, IsAuthenticated, IsAdmin,
+    # IsAdminOrReadOnly, or a custom BasePermission subclass like IsOwnerOrReadOnly.
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     class Meta:

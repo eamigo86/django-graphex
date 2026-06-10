@@ -86,6 +86,27 @@ DJANGO_GRAPHEX = {
     # Subscriptions: serialize the full instance in notifications (the default is
     # id-only). Per-subscription Meta.serialize_data can override this.
     "SUBSCRIPTION_SERIALIZE_DATA": True,
+    # ---------------------------------------------------------------------------
+    # Query depth limiting (DepthLimitValidationRule — wired in GraphQLView).
+    # Reject queries that nest objects more than N levels deep.
+    # None = no global limit; per-type max_deep still applies on top.
+    # Uncomment the line below to see the rule reject an over-nested query:
+    #   "MAX_QUERY_DEPTH": 6,
+    # ---------------------------------------------------------------------------
+    # Query cost analysis (CostLimitValidationRule — wired in GraphQLView).
+    # Reject queries whose estimated cost exceeds the budget; report cost in
+    # extensions.cost so clients can see the estimate. None = no budget.
+    # Uncomment these to see cost analysis in action:
+    #   "MAX_QUERY_COST": 200,
+    #   "EXPOSE_QUERY_COST": True,
+    # ---------------------------------------------------------------------------
+    # Queryset optimization (N+1 avoidance). Set False to feel the difference:
+    #   "OPTIMIZE_QUERYSET": False,
+    #   "OPTIMIZE_ONLY_FIELDS": False,
+    # ---------------------------------------------------------------------------
+    # Response caching. Flip CACHE_ACTIVE to True to enable query-result caching:
+    #   "CACHE_ACTIVE": True,
+    #   "CACHE_TIMEOUT": 60,  # seconds
 }
 
 LANGUAGE_CODE = "en-us"

@@ -1,13 +1,14 @@
 # django-graphex — Playground
 
-A small, runnable Django project to try **every** feature of
-`django-graphex` end to end: queries, the three paginations, filtering,
-generic single-object fields, **nested lists** (N+1-safe) with **nested
-pagination/filtering**, **choices → enum**, **directives**, **mutations** with
-**permissions**, and **public + private subscriptions** over Django Channels.
+A small, runnable Django project that exercises **every major feature** of
+`django-graphex` end-to-end: queries, all three paginators, filtering,
+generic single-object fields, nested lists (N+1-safe) with nested
+pagination/filtering, choices→enum, directives, CRUD mutations with
+permissions, query depth/cost limits, response caching, queryset
+optimization, and public + private subscriptions over Django Channels.
 
-It uses the library from the parent checkout (editable), **uv**, **SQLite**, and a
-`Makefile`.
+It installs the library from the parent checkout (editable), uses **uv**,
+**SQLite**, and a `Makefile`.
 
 ---
 
@@ -16,114 +17,160 @@ It uses the library from the parent checkout (editable), **uv**, **SQLite**, and
 ```bash
 cd examples/playground
 
-make install     # uv sync (installs the local library + daphne)
+make install     # uv sync — installs the local library + daphne
 make migrate     # create + apply migrations (SQLite)
-make seed        # demo data: 5 authors x 4 posts x 3 comments, 3 notes
+make seed        # demo data: 5 authors × 4 posts × 3 comments, 3 notes
 make run         # ASGI server at http://127.0.0.1:8000/graphql
 ```
 
 Open **GraphiQL** at <http://127.0.0.1:8000/graphql>.
 
-The seed creates a superuser **`demo` / `demo12345`**.
+The seed creates superuser **`demo` / `demo12345`**.
 
 > **No PyPI release needed.** `make install` installs the library **from this
-> repo checkout** (editable), via `[tool.uv.sources]` in `pyproject.toml` — so it
-> always uses the current checkout, not PyPI. To install from a GitHub branch
-> instead, see the commented `git = …` source in `pyproject.toml`.
+> repo checkout** (editable) via `[tool.uv.sources]` in `pyproject.toml`.
+> To install from a GitHub branch instead, swap to the commented `git = …`
+> source in `pyproject.toml`.
 
 ### Authenticating (for private fields)
 
-Private fields (`me`, `myNotes`, write mutations, `noteSubscription`) require an
-authenticated user. Auth here is **Django session based**:
+Private fields (`me`, `myNotes`, write mutations, `noteSubscription`) require
+an authenticated user. Auth here is **Django session-based**:
 
 1. Open <http://127.0.0.1:8000/admin> and log in as `demo` / `demo12345`.
-2. Go back to GraphiQL — it shares the session cookie, so `request.user` is now
-   authenticated.
+2. Return to GraphiQL — it shares the session cookie.
 
-Log out of `/admin` to test the anonymous (public) behavior.
-
-> **Introspection:** GraphiQL needs introspection, so the playground ships with
-> `DJANGO_GRAPHEX["ALLOW_INTROSPECTION"] = True`. Set it to `False` in
-> `config/settings.py` to watch `DisableIntrospectionMiddleware` block it
-> (superusers still bypass).
-
-> **Static files:** under `daphne` (ASGI) static files (the admin CSS,
-> `/static/...`) are served by the `ASGIStaticFilesHandler` in `config/asgi.py`
-> while `DEBUG` is `True` — try <http://127.0.0.1:8000/static/playground.txt>.
-> For production, run `make collectstatic` and serve `STATIC_ROOT` with a real
-> web server (or whitenoise).
+Log out of `/admin` to test anonymous (public) behaviour.
 
 ---
 
-## What the schema exposes
+## Feature coverage matrix
 
-| Area | Field(s) | Feature |
-|------|----------|---------|
-| Single object | `post(id)` | `DjangoObjectField` |
-| List (limit/offset) | `posts` | `DjangoListObjectField` + `LimitOffsetGraphqlPagination` |
-| List (page) | `authors` | `PageGraphqlPagination` |
-| List (cursor) | `comments` | `CursorGraphqlPagination` + `pageInfo` |
-| Filtered list | `categories` | `DjangoFilterListField` |
-| Filtered + paginated flat list | `postsFlat` | `DjangoFilterPaginateListField` |
-| Nested list | `authors → posts → comments` | `results`/`totalCount`, N+1-safe |
-| Nested M2M list | `post.tags` | `results`/`totalCount` over a ManyToMany |
-| Choices enum | `post.status` | `TextChoices` → GraphQL enum |
-| Private | `me`, `myNotes` | `AuthenticatedFieldsMiddleware` |
-| Mutations | `noteCreate/Update/Delete`, `postCreate/...`, `commentCreate/...` | `DjangoModelType` / `DjangoModelMutation` + permissions |
-| Input type | `createCategory(data: …)` | `DjangoInputObjectType` on a hand-written mutation |
-| Subscriptions | `postSubscription` (public), `commentSubscription` (public, with `filters`), `noteSubscription` (private) | Channels |
-| Views | `/graphql`, `/graphql/secure` | `SubscriptionGraphQLView`, `AuthenticatedGraphQLView` |
+| Feature | Status | Where (file:line or field name) |
+|---------|--------|--------------------------------|
+| **Types** | | |
+| `DjangoObjectType` | ✅ | `schema.py` — `PostType`, `AuthorType`, `CommentType`, `CategoryType`, `TagType`, `UserType` |
+| `DjangoListObjectType` | ✅ | `schema.py` — `PostListType`, `AuthorListType`, `CommentListType` |
+| `DjangoInputObjectType` | ✅ | `schema.py` — `CategoryInput` |
+| `DjangoModelType` | ✅ | `schema.py` — `NoteModelType` |
+| `TextChoices` → GraphQL enum | ✅ | `Post.status` / `PostType` |
+| `max_deep` per-type depth limit | ✅ | `schema.py` — `PostType.Meta.max_deep = 4` |
+| `complexity` per-type cost weight | ✅ | `schema.py` — `PostType.Meta.complexity = 2` |
+| **Fields** | | |
+| `DjangoObjectField` | ✅ | `PublicQuery.post` |
+| `DjangoListObjectField` | ✅ | `PublicQuery.posts`, `authors`, `comments` |
+| `DjangoFilterListField` | ✅ | `PublicQuery.categories` |
+| `DjangoFilterPaginateListField` | ✅ | `PublicQuery.posts_flat` |
+| **Pagination** | | |
+| `LimitOffsetGraphqlPagination` | ✅ | `PostListType`, `NoteModelType`, `posts_flat` |
+| `PageGraphqlPagination` | ✅ | `AuthorListType` |
+| `CursorGraphqlPagination` | ✅ | `CommentListType` — also exposes `pageInfo` |
+| **Filtering** | | |
+| `filter_fields` on object types | ✅ | All `DjangoObjectType` subclasses |
+| Filtering on list fields | ✅ | `posts(status: PUBLISHED, title_Icontains: "…")` |
+| Filtered nested lists | ✅ | `authors { results { posts(title_Icontains: "…") } }` |
+| **Nested lists (N+1-safe)** | | |
+| `results` / `totalCount` wrapper | ✅ | Every list field |
+| Nested FK list | ✅ | `Author → posts`, `Post → comments` |
+| Nested M2M list | ✅ | `Post.tags` — `TagType` registration triggers automatic nesting |
+| Multi-level nesting | ✅ | `authors → posts → comments` (all paginated independently) |
+| **Mutations** | | |
+| `DjangoModelMutation` (full CRUD) | ✅ | `PostMutation`, `CommentMutation` → `postCreate/Update/Delete`, `commentCreate/Update/Delete` |
+| `DjangoModelType.MutationFields()` | ✅ | `NoteModelType` → `noteCreate/Update/Delete` |
+| `DjangoInputObjectType` on hand-written mutation | ✅ | `CategoryInput` / `createCategory` |
+| **Permissions** | | |
+| `BasePermission` (custom subclass) | ✅ | `schema.py` — `IsOwnerOrReadOnly` |
+| `AllowAny` | ✅ | imported; available for `permission_classes` |
+| `IsAuthenticated` | ✅ | imported; available for `permission_classes` |
+| `IsAuthenticatedOrReadOnly` | ✅ | `NoteModelType.permission_classes` |
+| `IsAdmin` | ✅ | imported; available for `permission_classes` |
+| `IsAdminOrReadOnly` | ✅ | imported; available for `permission_classes` |
+| **Security / middleware** | | |
+| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
+| `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
+| `ExtraGraphQLDirectiveMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
+| `ExtraGraphQLSchema` (public + private roots) | ✅ | `schema.py` — `private_query=PrivateQuery`, `private_subscription=PrivateSubscriptions` |
+| `collect_field_names` | note | Used internally by `ExtraGraphQLSchema`; can be called directly to build a custom protected-field set |
+| `DenyAllRegistry` | note | Fail-closed sentinel for broken schemas; not needed in a healthy project |
+| **Views** | | |
+| `BaseGraphQLView` | ✅ | base of all views |
+| `GraphQLView` (depth/cost rules, caching) | ✅ | base of `SubscriptionGraphQLView` at `/graphql` |
+| `AuthenticatedGraphQLView` | ✅ | `/graphql/secure` — rejects unauthenticated requests with HTTP 403 |
+| `SubscriptionGraphQLView` | ✅ | `/graphql` |
+| `SubscriptionClientView` | ✅ | `/graphql/client/` |
+| **Query depth / cost limiting** | | |
+| `DepthLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.max_deep = 4` activates per-type enforcement |
+| `CostLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.complexity = 2`; enable budget via `MAX_QUERY_COST` |
+| `analyze_cost` / `CostReport` | ✅ | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
+| `MAX_QUERY_DEPTH` setting | note | Commented in `config/settings.py` — uncomment to activate global depth limit |
+| `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note | Commented in `config/settings.py` — uncomment to block expensive queries and expose cost |
+| **Queryset optimization** | | |
+| `OPTIMIZE_QUERYSET` | ✅ | Enabled by default; commented in `config/settings.py` to show how to flip it |
+| `OPTIMIZE_ONLY_FIELDS` | ✅ | Enabled by default; commented in `config/settings.py` |
+| **Response caching** | | |
+| `CACHE_ACTIVE` / `CACHE_TIMEOUT` | note | Commented in `config/settings.py` — uncomment to activate query-result caching |
+| **Subscriptions** | | |
+| Public `Subscription` | ✅ | `PostSubscription` (stream `posts`), `CommentSubscription` (stream `comments`, per-subscriber `filters`) |
+| Private subscription via `DjangoModelType` | ✅ | `NoteModelType.SubscriptionField()` — gated by `AuthenticatedFieldsMiddleware` |
+| `subscription_scope` (server-forced row scope) | ✅ | `NoteModelType.subscription_scope` — only own notes |
+| `subscription_index_fields` | ✅ | `NoteModelType.Meta.subscription_index_fields = ("owner",)` |
+| `serialize_data` | ✅ | `PostSubscription`, `CommentSubscription`, `NoteModelType.Meta.serialize_data = True` |
+| `GraphqlAPIDemultiplexer` | ✅ | `consumers.py` — `AppDemultiplexer` |
 
 ---
 
-## Queries
+## How to run
 
-### Single object + a choices enum
-
-```graphql
-{
-  post(id: 1) {
-    id
-    title
-    status          # enum: DRAFT | PUBLISHED | ARCHIVED
-    author { name }
-    category { name }
-  }
-}
+```text
+make install        uv sync (local library + daphne)
+make migrate        makemigrations + migrate
+make seed           load demo data
+make run            daphne ASGI server (HTTP + WebSocket)
+make collectstatic  collect static files into STATIC_ROOT
+make superuser      create your own superuser
+make shell          Django shell
+make reset          drop the SQLite db, re-migrate, re-seed
+make clean          remove the db and caches
 ```
 
-> **Where the arguments go:** **filter** arguments live on the **list field**
-> (`posts(status: …)`); **pagination / ordering** arguments live on the
-> **`results`** subfield (`results(limit: …, ordering: …)`).
+The `make run` command starts daphne at <http://127.0.0.1:8000/graphql>.
 
-### List with limit/offset pagination + filtering
+---
+
+## Example GraphQL operations
+
+### 1. Nested lists with all three paginators
 
 ```graphql
 {
-  posts(status: PUBLISHED, title_Icontains: "Post") {   # filters on the field
+  # Limit/offset: posts
+  posts(status: PUBLISHED) {
     totalCount
-    results(limit: 5, offset: 0, ordering: "-id") {      # pagination on results
-      id title status
+    results(limit: 5, offset: 0, ordering: "-id") {
+      id
+      title
+      status         # enum: DRAFT | PUBLISHED | ARCHIVED
+      author { name }
+      tags { totalCount results { name } }
+      comments {
+        totalCount
+        results(first: 2) { text }
+        pageInfo { hasNextPage endCursor }
+      }
     }
   }
-}
-```
-
-### Page pagination
-
-```graphql
-{
+  # Page pagination: authors
   authors {
     totalCount
-    results(page: 1) { name }   # page size is fixed by the type (10)
+    results(page: 1) {
+      name
+      posts(title_Icontains: "Post") {
+        totalCount
+        results(limit: 2, ordering: "-id") { title status }
+      }
+    }
   }
-}
-```
-
-### Cursor pagination + non-opaque pageInfo
-
-```graphql
-{
+  # Cursor pagination: comments
   comments {
     totalCount
     results(first: 3) { text }
@@ -132,95 +179,7 @@ Log out of `/admin` to test the anonymous (public) behavior.
 }
 ```
 
-Take `endCursor` from the response and page forward:
-
-```graphql
-{ comments { results(first: 3, cursor: "<endCursor>") { text } pageInfo { hasNextPage } } }
-```
-
-### Plain filtered list
-
-```graphql
-{ categories(name_Icontains: "te") { id name } }
-```
-
-### Flat filtered + paginated list
-
-`postsFlat` is a `DjangoFilterPaginateListField`: it filters like the list types
-but returns a **plain list** (no `results`/`totalCount` wrapper), with the
-pagination args on the field itself.
-
-```graphql
-{ postsFlat(status: PUBLISHED, limit: 5, offset: 0, ordering: "-id") { id title } }
-```
-
----
-
-## Nested lists (N+1-safe) + nested pagination / filtering
-
-Each nested relation is a full list with `results`/`totalCount`. **Filter**
-arguments go on the nested field, **pagination/ordering** on its `results`.
-
-Deep nesting (authors → posts → comments), each level paginated:
-
-```graphql
-{
-  authors {
-    totalCount
-    results(page: 1) {
-      name
-      posts {
-        totalCount
-        results(limit: 2, ordering: "-id") {
-          title
-          status
-          comments {
-            totalCount
-            results(first: 2) { text }
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-A **filtered** nested list (the headline N+1 demo):
-
-```graphql
-{
-  authors {
-    results(page: 1) {
-      name
-      posts(title_Icontains: "Post") {        # filter pushed into one Prefetch
-        totalCount
-        results(limit: 2, ordering: "-id") { title status }
-      }
-    }
-  }
-}
-```
-
-> **N+1:** with 5 authors this runs a constant number of queries (the filtered
-> nested `posts` come from one `Prefetch`, not one query per author). Set
-> `OPTIMIZE_QUERYSET = False` in settings to feel the difference, or inspect
-> `django.db.connection.queries` in `make shell`. A **filter on a nested level**
-> combined with a **deeper nested list on the same path** (filtered `posts` *and*
-> their `comments`) is also N+1-safe — the deeper list is prefetched through the
-> filtered parent's queryset.
-
-A **ManyToMany** relation gets the same nested-list shape. `Post.tags` is exposed
-because a `TagType` is registered:
-
-```graphql
-{ posts { results(limit: 2) { title tags { totalCount results { name } } } } }
-```
-
----
-
-## Directives
-
-Add the directive middleware (already wired) and use `@directive` in queries:
+### 2. Directives on string/numeric fields
 
 ```graphql
 {
@@ -228,129 +187,158 @@ Add the directive middleware (already wired) and use `@directive` in queries:
     results(limit: 3) {
       title @uppercase
       slug: title @slugify
-      teaser: body @truncate(length: 20)
+      teaser: body @truncate(length: 40)
       status @lowercase
     }
   }
 }
 ```
 
-Arguments can be variables:
+All directives from `all_directives` are available: `@uppercase`,
+`@lowercase`, `@capitalize`, `@titleCase`, `@camelCase`, `@snakeCase`,
+`@kebabCase`, `@swapCase`, `@strip`, `@center`, `@replace`, `@truncate`,
+`@slugify`, `@base64`, `@number`, `@currency`, `@default`, `@date`, `@abs`,
+`@ceil`, `@floor`, `@round`, `@shuffle`, `@sample`, `@unique`.
+
+### 3. Mutations with permissions + validation errors
+
+Log in via `/admin` first (session cookie), then:
 
 ```graphql
-query($n: Int!) { posts { results(limit: 1) { title @truncate(length: $n) } } }
-# variables: { "n": 8 }
-```
-
----
-
-## Mutations (DjangoModelType + permissions)
-
-`noteCreate` / `noteUpdate` / `noteDelete` are gated by
-`IsAuthenticatedOrReadOnly` — **you must be logged in** (see "Authenticating").
-The current user is set as the note owner automatically.
-
-```graphql
-mutation {
-  noteCreate(newNote: { title: "Hello", body: "from graphql" }) {
+# Create a note (requires auth; owner is set to the current user automatically)
+mutation CreateNote {
+  noteCreate(newNote: { title: "Hello", body: "from GraphQL" }) {
     ok
     errors { field messages }
-    note { id title owner { username } }   # owner is set to the current user
+    note { id title owner { username } }
   }
+}
+
+# Update
+mutation UpdateNote {
+  noteUpdate(newNote: { id: 1, title: "Edited title" }) {
+    ok
+    note { id title }
+  }
+}
+
+# Delete
+mutation DeleteNote {
+  noteDelete(id: 1) { ok }
 }
 ```
 
-```graphql
-mutation { noteUpdate(newNote: { id: 1, title: "Edited" }) { ok note { id title } } }
-mutation { noteDelete(id: 1) { ok } }
+Attempt the same **without being logged in** — the permission gate returns:
+
+```json
+{
+  "errors": [{ "message": "You do not have permission to perform this action.",
+               "extensions": { "code": "PERMISSION_DENIED", "status_code": 403 } }]
+}
 ```
 
-Anonymous write → `errors: [{ extensions: { code: "PERMISSION_DENIED" } }]`.
-
-A failing validation shows the error shape:
+A failing validation (blank title) returns the `errors` list instead of `ok: true`:
 
 ```graphql
 mutation { noteCreate(newNote: { title: "" }) { ok errors { field messages } } }
 ```
 
-### Explicit input type (DjangoInputObjectType)
+---
 
-`DjangoModelMutation` generates input types for you, but you can also declare one
-explicitly with `DjangoInputObjectType` and use it as an argument on a
-hand-written `graphene.Mutation`. `createCategory` does exactly that:
+## Query depth and cost limits
 
-```graphql
-mutation { createCategory(data: { name: "graphql" }) { ok category { id name } } }
+Both rules are wired into `GraphQLView` (and therefore `SubscriptionGraphQLView`).
+They are **no-ops by default**; activate them by uncommenting the settings in
+`config/settings.py`:
+
+```python
+DJANGO_GRAPHEX = {
+    ...
+    "MAX_QUERY_DEPTH": 6,          # reject queries nested > 6 levels
+    "MAX_QUERY_COST": 200,         # reject queries with estimated cost > 200
+    "EXPOSE_QUERY_COST": True,     # add extensions.cost to every response
+}
 ```
+
+`PostType` already sets `max_deep = 4` and `complexity = 2` so per-type
+enforcement is active for free — even without `MAX_QUERY_DEPTH` in settings.
+A query that nests more than 4 levels under a `post` field is rejected with
+`QUERY_TOO_DEEP`, regardless of the global limit.
 
 ---
 
-## Private vs public
+## Private vs public fields
 
-Public (works logged out):
+Public (works without auth):
 
 ```graphql
-{ posts { results(limit: 2) { title } } serverTime }
+{ posts { results(limit: 2) { title } } serverTime categories { name } }
 ```
 
-Private (needs a logged-in user; otherwise `Authentication required.`):
+Private (requires a logged-in session; otherwise `Authentication required.`):
 
 ```graphql
 {
   me { id username isSuperuser }
-  myNotes { totalCount results { id title } }   # scoped to YOUR notes
+  myNotes { totalCount results { id title } }
 }
 ```
 
+`ExtraGraphQLSchema` unions the public and private roots and attaches the
+protected field registry to the schema. `AuthenticatedFieldsMiddleware` reads
+it at resolve time; the client cannot bypass it without an authenticated session.
+
 ---
 
-## Subscriptions (public + private)
+## Subscriptions
 
-Subscriptions use a **two-channel** protocol: a WebSocket carries the
+Subscriptions use a **two-channel** protocol: a WebSocket carries
 notifications, and an HTTP GraphQL operation registers/unregisters the
-subscription using the channel id from the WebSocket handshake.
+subscription using the channel ID from the WebSocket handshake.
 
-1. **Open the WebSocket** to `ws://127.0.0.1:8000/ws/graphql/`. On connect it
-   sends:
+The easiest way to try them is the built-in browser client at
+<http://127.0.0.1:8000/graphql/client/>:
 
-   ```json
-   { "channel_id": "specific.channel!abc...", "connect": "success" }
-   ```
+1. Press **Connect** — the client opens the WebSocket and receives a `channel_id`.
+2. Press **▶ Subscribe** to send the subscribe HTTP call.
+3. Trigger a change (create a `Post` via `postCreate`) — the WebSocket delivers
+   a notification instantly.
 
-2. **Subscribe** over HTTP (`/graphql`) using that `channelId`:
+Manual flow (for `wscat` / custom clients):
+
+1. `wscat -c ws://127.0.0.1:8000/ws/graphql/` — receive `{ "channel_id": "…" }`.
+
+2. Subscribe over HTTP (`/graphql`):
 
    ```graphql
    subscription {
      postSubscription(
-       channelId: "specific.channel!abc..."
-       action: ALL_ACTIONS          # CREATE | UPDATE | DELETE | ALL_ACTIONS
-       operation: SUBSCRIBE         # or UNSUBSCRIBE
+       channelId: "<channel_id>"
+       action: ALL_ACTIONS
+       operation: SUBSCRIBE
      ) { ok error stream operation action }
    }
    ```
 
-3. **Trigger** a change with a mutation **on the same running server**
-   (`/graphql`) — the `InMemoryChannelLayer` is per-process, so the change must
-   happen inside the ASGI server, not a separate `make shell`:
+3. Trigger a change:
 
    ```graphql
-   mutation { postCreate(newPost: { title: "Hi", author: 1 }) { ok post { id } } }
-   ```
-
-   The WebSocket receives:
-
-   ```json
-   {
-     "stream": "posts",
-     "payload": { "action": "create", "model": "blog.post",
-                  "data": { "id": 99, "title": "Hi", "status": "draft", ... } }
+   mutation {
+     postCreate(newPost: { title: "Live update", author: 1 }) { ok post { id } }
    }
    ```
 
-### Filtering: only one post's comments
+   The WebSocket delivers:
 
-`commentSubscription` shows per-subscriber `filters`. On a post-detail page you
-subscribe with `filters: {post: <id>}` and receive **only** that post's comments:
+   ```json
+   { "stream": "posts",
+     "payload": { "action": "create", "model": "blog.post",
+                  "data": { "id": 21, "title": "Live update", "status": "draft" } } }
+   ```
+
+### Filtered subscription (per-post comments)
+
+Subscribe with `filters: { post: <id> }` to receive only that post's comments:
 
 ```graphql
 subscription {
@@ -358,76 +346,54 @@ subscription {
     channelId: "…"
     action: ALL_ACTIONS
     operation: SUBSCRIBE
-    filters: { post: 7 }          # only comments of post 7
-  ) { ok error stream operation action }
+    filters: { post: 1 }
+  ) { ok error }
 }
 ```
 
-Then create comments on different posts (same server) and watch the filter work:
-
 ```graphql
-mutation { commentCreate(newComment: { post: 7, authorName: "Ada", text: "hi" }) { ok comment { id } } }  # delivered
-mutation { commentCreate(newComment: { post: 9, authorName: "Bob", text: "yo" }) { ok comment { id } } }  # NOT delivered
+# Delivered (post 1):
+mutation { commentCreate(newComment: { post: 1, authorName: "Ada", text: "hi" }) { ok } }
+# NOT delivered (different post):
+mutation { commentCreate(newComment: { post: 2, authorName: "Bob", text: "yo" }) { ok } }
 ```
 
-The **private** subscription is `noteSubscription` (stream `notes`) — it is gated
-by `AuthenticatedFieldsMiddleware`, so subscribing without a logged-in session
-returns `Authentication required.`:
+### Private subscription (auth-gated)
+
+`noteSubscription` requires an authenticated session (gated by
+`AuthenticatedFieldsMiddleware`). Log in via `/admin` first, then subscribe
+from the same browser session.
 
 ```graphql
 subscription {
-  noteSubscription(channelId: "…", action: ALL_ACTIONS, operation: SUBSCRIBE) {
-    ok error
-  }
+  noteSubscription(channelId: "…", action: ALL_ACTIONS, operation: SUBSCRIBE) { ok error }
 }
 ```
-
-> GraphiQL doesn't drive the two-channel WebSocket flow on its own. This
-> playground mounts the built-in **browser client** at
-> <http://127.0.0.1:8000/graphql/client/> (the `SubscriptionClientView`) — open
-> it, press **Connect**, then **▶** to subscribe and watch notifications stream
-> in. Trigger a change by creating a `Post` (in the admin or `make shell`).
 
 ---
 
 ## Views
 
-`config/urls.py` mounts the schema behind three views:
-
 | Route | View | Notes |
 |-------|------|-------|
-| `/graphql` | `SubscriptionGraphQLView` | HTTP GraphQL + GraphiQL; also handles the subscribe/unsubscribe handshake |
-| `/graphql/client/` | `SubscriptionClientView` | A browser client for the WebSocket subscription flow |
-| `/graphql/secure` | `AuthenticatedGraphQLView` | The **same schema** behind **view-level** auth |
+| `/graphql` | `SubscriptionGraphQLView` | HTTP GraphQL + GraphiQL; handles subscribe/unsubscribe |
+| `/graphql/client/` | `SubscriptionClientView` | Browser client for the WebSocket subscription flow |
+| `/graphql/secure` | `AuthenticatedGraphQLView` | Same schema behind **view-level** HTTP 403 auth |
 
-`AuthenticatedGraphQLView` (a subclass of the plain `GraphQLView`) rejects
-unauthenticated requests with **HTTP 403 before any query runs** — a coarser gate
-than the per-field `AuthenticatedFieldsMiddleware`. Log in via `/admin`, then open
-<http://127.0.0.1:8000/graphql/secure>; anonymous requests get a 403. Override the
-gate with `permission_classes`:
+`AuthenticatedGraphQLView` rejects unauthenticated requests before any query
+runs. Override `permission_classes` for custom gates:
 
 ```python
 # urls.py
-AuthenticatedGraphQLView.as_view(graphiql=True, permission_classes=(IsStaff,))
+AuthenticatedGraphQLView.as_view(graphiql=True, permission_classes=(IsAdmin,))
 ```
 
-> **Offline / strict-CSP GraphiQL:** the views render GraphiQL from a CDN by
-> default. Pass `graphiql_template="path/to/graphiql.html"` to
-> `GraphQLView.as_view(...)` to render your own bundled template instead (it
-> receives `endpoint` and `subscription_path` in the context).
+> **Introspection:** GraphiQL needs introspection, so the playground ships with
+> `ALLOW_INTROSPECTION = True`. Set it to `False` in `config/settings.py` to
+> watch `DisableIntrospectionMiddleware` block it (superusers still bypass
+> thanks to `INTROSPECTION_ALLOW_SUPERUSER = True` by default).
 
----
-
-## Make targets
-
-```text
-make install     uv sync (local library + daphne)
-make migrate     makemigrations + migrate
-make seed        load demo data
-make run         daphne ASGI server (HTTP + WebSocket)
-make collectstatic  collect static files into STATIC_ROOT
-make superuser   create your own superuser
-make shell       Django shell
-make reset       drop the SQLite db, re-migrate, re-seed
-make clean       remove the db and caches
-```
+> **Static files:** under `daphne` (ASGI), static files are served by
+> `ASGIStaticFilesHandler` in `config/asgi.py` while `DEBUG = True`. For
+> production, run `make collectstatic` and serve `STATIC_ROOT` with a web
+> server or whitenoise.
