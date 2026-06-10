@@ -67,7 +67,7 @@ class AuthenticatedFieldsMiddleware:
 
     The protected field set comes from (in order):
 
-    1. the registry attached by "ExtraGraphQLSchema"
+    1. the registry attached by "DjangoGraphQLSchema"
        (the "info.schema._gde_protected_fields" attribute), or
     2. the "DJANGO_GRAPHEX['PROTECTED_FIELDS']" setting.
 

@@ -73,7 +73,7 @@ GRAPHENE = {
         # Require an authenticated user on the schema's private fields.
         "django_graphex.AuthenticatedFieldsMiddleware",
         # Process @directives.
-        "django_graphex.ExtraGraphQLDirectiveMiddleware",
+        "django_graphex.GraphQLDirectiveMiddleware",
     ],
 }
 

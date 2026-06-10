@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo
 
 
-class ExtraGraphQLDirectiveMiddleware:
+class GraphQLDirectiveMiddleware:
     """Middleware that processes custom GraphQL directives during execution."""
 
     def resolve(

@@ -54,7 +54,7 @@ A failing request gets a `403` with a JSON `errors` body before any resolver run
     `AuthenticatedGraphQLView` locks the **whole endpoint**. For per-field auth
     (public + private fields on one endpoint), prefer the finer tools:
     `permission_classes` on a `DjangoModelType`, `AuthenticatedFieldsMiddleware`,
-    or `ExtraGraphQLSchema` — see [Permissions](permissions.md) and
+    or `DjangoGraphQLSchema` — see [Permissions](permissions.md) and
     [Security](security.md).
 
 ## GraphiQL

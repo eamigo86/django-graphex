@@ -10,7 +10,7 @@ from .fields import (
     DjangoListObjectField,
     DjangoObjectField,
 )
-from .middleware import ExtraGraphQLDirectiveMiddleware
+from .middleware import GraphQLDirectiveMiddleware
 from .mutation import DjangoModelMutation
 from .paginations import (
     CursorGraphqlPagination,
@@ -25,7 +25,7 @@ from .permissions import (
     IsAuthenticated,
     IsAuthenticatedOrReadOnly,
 )
-from .schema import DenyAllRegistry, ExtraGraphQLSchema, collect_field_names
+from .schema import DenyAllRegistry, DjangoGraphQLSchema, collect_field_names
 from .security import (
     AuthenticatedFieldsMiddleware,
     DisableIntrospectionMiddleware,
@@ -75,12 +75,12 @@ __all__ = (
     "CostLimitValidationRule",
     "analyze_cost",
     "CostReport",
-    "ExtraGraphQLSchema",
+    "DjangoGraphQLSchema",
     "collect_field_names",
     "DenyAllRegistry",
     # DIRECTIVES
     "all_directives",
-    "ExtraGraphQLDirectiveMiddleware",
+    "GraphQLDirectiveMiddleware",
     # VIEWS
     "BaseGraphQLView",
     "GraphQLView",

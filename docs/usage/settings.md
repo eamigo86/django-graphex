@@ -76,7 +76,7 @@ DJANGO_GRAPHEX = {
 |---|---|---|
 | `ALLOW_INTROSPECTION` | `False` | Allow `__schema` / `__type` introspection (`DisableIntrospectionMiddleware`). |
 | `INTROSPECTION_ALLOW_SUPERUSER` | `True` | Let superusers bypass the introspection block. |
-| `PROTECTED_FIELDS` | `()` | Top-level field names requiring auth via `AuthenticatedFieldsMiddleware` (when not using `ExtraGraphQLSchema`). See [Security](security.md). |
+| `PROTECTED_FIELDS` | `()` | Top-level field names requiring auth via `AuthenticatedFieldsMiddleware` (when not using `DjangoGraphQLSchema`). See [Security](security.md). |
 
 ## Query depth & cost
 

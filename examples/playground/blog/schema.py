@@ -23,7 +23,7 @@ from django_graphex import (
     DjangoModelType,
     DjangoObjectField,
     DjangoObjectType,
-    ExtraGraphQLSchema,
+    DjangoGraphQLSchema,
     IsAuthenticatedOrReadOnly,
     LimitOffsetGraphqlPagination,
     PageGraphqlPagination,
@@ -365,13 +365,13 @@ class PrivateSubscriptions(graphene.ObjectType):
 
 # --------------------------------------------------------------------------- #
 # Schema. Each root is split into a public subset and a (disjoint) private     #
-# subset; ExtraGraphQLSchema unions them and protects the private fields. In a #
+# subset; DjangoGraphQLSchema unions them and protects the private fields. In a #
 # multi-app project you would aggregate per-app subsets, e.g.                   #
 #   class RootSubscription(blog.PublicSubscriptions, shop.PublicSubscriptions,  #
 #                          graphene.ObjectType): pass                           #
 # and pass those aggregates here instead.                                       #
 # --------------------------------------------------------------------------- #
-schema = ExtraGraphQLSchema(
+schema = DjangoGraphQLSchema(
     query=PublicQuery,
     private_query=PrivateQuery,
     mutation=RootMutation,

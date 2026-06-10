@@ -655,7 +655,7 @@ class AuthenticatedGraphQLView(GraphQLView):
     ``permission_classes`` (the same :class:`~django_graphex.permissions.
     BasePermission` subclasses used at the resolver level), evaluated against the
     request's user. For finer, per-field control use ``AuthenticatedFieldsMiddleware``
-    / ``ExtraGraphQLSchema`` or a type's ``permission_classes`` instead.
+    / ``DjangoGraphQLSchema`` or a type's ``permission_classes`` instead.
     """
 
     #: Permission classes every request must satisfy (default: must be logged in).

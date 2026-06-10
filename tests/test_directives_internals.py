@@ -17,7 +17,7 @@ from django.test import TestCase
 from graphql import GraphQLString
 
 from django_graphex import (
-    ExtraGraphQLDirectiveMiddleware,
+    GraphQLDirectiveMiddleware,
     all_directives,
 )
 from django_graphex.base_types import CustomDateFormat
@@ -315,7 +315,7 @@ _schema = graphene.Schema(query=_Query, directives=list(all_directives))
 
 class DirectiveSchemaNoneTest(TestCase):
     def _run(self, q):
-        result = _schema.execute(q, middleware=[ExtraGraphQLDirectiveMiddleware()])
+        result = _schema.execute(q, middleware=[GraphQLDirectiveMiddleware()])
         self.assertIsNone(result.errors, result.errors)
         return result.data
 

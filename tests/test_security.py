@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for the security middlewares and ExtraGraphQLSchema."""
+"""Tests for the security middlewares and DjangoGraphQLSchema."""
 
 import types
 import warnings
@@ -11,7 +11,7 @@ from django_graphex import (
     AuthenticatedFieldsMiddleware,
     DenyAllRegistry,
     DisableIntrospectionMiddleware,
-    ExtraGraphQLSchema,
+    DjangoGraphQLSchema,
     collect_field_names,
     security,
 )
@@ -70,7 +70,7 @@ class _Subscription(graphene.ObjectType):
 
 with warnings.catch_warnings():  # middleware not in GRAPHENE config during tests
     warnings.simplefilter("ignore", RuntimeWarning)
-    _schema = ExtraGraphQLSchema(
+    _schema = DjangoGraphQLSchema(
         query=_RootQuery,
         private_query=_PrivateQuery,
         mutation=_RootMutation,
@@ -190,7 +190,7 @@ def test_subscriptions_not_protected_without_private_subscription():
     # A `subscription` alone protects nothing — only `private_subscription` does.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        s = ExtraGraphQLSchema(
+        s = DjangoGraphQLSchema(
             query=_RootQuery, private_query=_PrivateQuery, subscription=_Subscription
         )
     assert "onEvent" not in s.graphql_schema._gde_protected_fields
@@ -206,7 +206,7 @@ def test_private_subscription_subset():
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        s = ExtraGraphQLSchema(
+        s = DjangoGraphQLSchema(
             query=_RootQuery, subscription=_SubTwo, private_subscription=_PrivateSub
         )
     reg = s.graphql_schema._gde_protected_fields
@@ -224,7 +224,7 @@ def test_disjoint_public_private_subscription_roots_are_unioned():
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        s = ExtraGraphQLSchema(
+        s = DjangoGraphQLSchema(
             query=_RootQuery, subscription=_PubSub, private_subscription=_PrivSub
         )
     sub = s.graphql_schema.subscription_type
@@ -245,7 +245,7 @@ def test_disjoint_public_private_query_roots_are_unioned():
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        s = ExtraGraphQLSchema(query=_PubQ, private_query=_PrivQ)
+        s = DjangoGraphQLSchema(query=_PubQ, private_query=_PrivQ)
     q = s.graphql_schema.query_type
     assert {"pubOnly", "privOnly"} <= set(q.fields)
     reg = s.graphql_schema._gde_protected_fields
@@ -270,7 +270,7 @@ def test_plain_schema_fallback_uses_protected_fields_only(monkeypatch):
 def test_warning_when_middleware_absent():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        ExtraGraphQLSchema(query=_RootQuery, private_query=_PrivateQuery)
+        DjangoGraphQLSchema(query=_RootQuery, private_query=_PrivateQuery)
     assert any(issubclass(w.category, RuntimeWarning) for w in caught)
 
 
@@ -282,7 +282,7 @@ def test_no_warning_when_middleware_configured():
     with override_settings(GRAPHENE=graphene_conf):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            ExtraGraphQLSchema(query=_RootQuery, private_query=_PrivateQuery)
+            DjangoGraphQLSchema(query=_RootQuery, private_query=_PrivateQuery)
     assert not any(issubclass(w.category, RuntimeWarning) for w in caught)
 
 
@@ -303,7 +303,7 @@ def test_imports():
     for name in (
         "DisableIntrospectionMiddleware",
         "AuthenticatedFieldsMiddleware",
-        "ExtraGraphQLSchema",
+        "DjangoGraphQLSchema",
         "collect_field_names",
         "DenyAllRegistry",
     ):

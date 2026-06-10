@@ -9,7 +9,7 @@ your resolvers.
   introspection in production.
 - [`AuthenticatedFieldsMiddleware`](#field-level-authentication) — require an
   authenticated user on selected top-level fields.
-- [`ExtraGraphQLSchema`](#declaring-private-fields-extragraphqlschema) — declare
+- [`DjangoGraphQLSchema`](#declaring-private-fields-extragraphqlschema) — declare
   the private fields next to the schema, with no settings duplication.
 
 !!! tip "Looking for depth & cost limits?"
@@ -26,7 +26,7 @@ GRAPHENE = {
     "MIDDLEWARE": [
         "django_graphex.DisableIntrospectionMiddleware",
         "django_graphex.AuthenticatedFieldsMiddleware",
-        "django_graphex.ExtraGraphQLDirectiveMiddleware",
+        "django_graphex.GraphQLDirectiveMiddleware",
     ],
 }
 ```
@@ -79,20 +79,20 @@ A blocked field returns:
 
 The private field set is resolved from, in order:
 
-1. the registry attached by [`ExtraGraphQLSchema`](#declaring-private-fields-extragraphqlschema)
+1. the registry attached by [`DjangoGraphQLSchema`](#declaring-private-fields-extragraphqlschema)
    (recommended), or
 2. `DJANGO_GRAPHEX["PROTECTED_FIELDS"]` — a list of top-level field names,
    for plain `graphene.Schema` setups.
 
 ```python
-# plain-schema setup, without ExtraGraphQLSchema
+# plain-schema setup, without DjangoGraphQLSchema
 DJANGO_GRAPHEX = {"PROTECTED_FIELDS": ["me", "allOrders", "createOrder"]}
 ```
 
-## Declaring private fields: `ExtraGraphQLSchema`
+## Declaring private fields: `DjangoGraphQLSchema`
 
 The cleanest way to declare what is private is right where you build the schema.
-`ExtraGraphQLSchema` is a `graphene.Schema` subclass that accepts `private_query`,
+`DjangoGraphQLSchema` is a `graphene.Schema` subclass that accepts `private_query`,
 `private_mutation` and `private_subscription` (all optional, all symmetric). Each
 `private_*` root is **unioned** into its operation root, so you keep public and
 private fields in **separate** roots: the schema exposes the union, and the
@@ -101,7 +101,7 @@ no settings, no naming conventions, always in sync with the schema.
 
 ```python
 import graphene
-from django_graphex import ExtraGraphQLSchema, all_directives
+from django_graphex import DjangoGraphQLSchema, all_directives
 
 class PublicQueries(graphene.ObjectType):
     server_time = graphene.String()
@@ -110,7 +110,7 @@ class PrivateQueries(graphene.ObjectType):
     me = graphene.Field(UserType)
     all_orders = graphene.List(OrderType)
 
-schema = ExtraGraphQLSchema(
+schema = DjangoGraphQLSchema(
     query=PublicQueries,                      # public-only subset
     private_query=PrivateQueries,             # private-only subset (require auth)
     mutation=PublicMutations,
@@ -149,7 +149,7 @@ matched against `info.field_name` (camelCase under the default
 
     If you pass `private_query`/`private_mutation`/`private_subscription` but
     `AuthenticatedFieldsMiddleware` is **not** in `GRAPHENE['MIDDLEWARE']`,
-    `ExtraGraphQLSchema` emits a `RuntimeWarning` — the private fields would
+    `DjangoGraphQLSchema` emits a `RuntimeWarning` — the private fields would
     otherwise go unprotected. (The check inspects `GRAPHENE['MIDDLEWARE']`;
     middleware wired only via `schema.execute(middleware=…)` or the view is not
     detected.)

@@ -544,12 +544,12 @@ query {
 
 ## Middleware Integration
 
-### ExtraGraphQLDirectiveMiddleware
+### GraphQLDirectiveMiddleware
 
 Middleware class that processes directives during query execution.
 
 ```python
-class ExtraGraphQLDirectiveMiddleware:
+class GraphQLDirectiveMiddleware:
     def resolve(self, next, root, info, **args):
         # Process directives on field resolution
         pass
@@ -561,7 +561,7 @@ class ExtraGraphQLDirectiveMiddleware:
 GRAPHENE = {
     'SCHEMA': 'myapp.schema.schema',
     'MIDDLEWARE': [
-        'django_graphex.ExtraGraphQLDirectiveMiddleware',
+        'django_graphex.GraphQLDirectiveMiddleware',
     ],
 }
 ```

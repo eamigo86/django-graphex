@@ -9,7 +9,7 @@ from graphql import (
     GraphQLString,
 )
 
-from django_graphex import ExtraGraphQLDirectiveMiddleware, all_directives
+from django_graphex import GraphQLDirectiveMiddleware, all_directives
 from django_graphex.directives.base import BaseExtraGraphQLDirective
 from tests.test_fields import ParentTest
 
@@ -70,7 +70,7 @@ _noop_directive = GraphQLDirective(name="noop", locations=[DirectiveLocation.FIE
 _directives_schema = graphene.Schema(
     query=_DirectivesQuery, directives=list(all_directives) + [_noop_directive]
 )
-_middleware = [ExtraGraphQLDirectiveMiddleware()]
+_middleware = [GraphQLDirectiveMiddleware()]
 
 
 class DirectivesTest(TestCase):
@@ -195,7 +195,7 @@ class CustomDirectiveTest(TestCase):
     def _run(self, query, **variables):
         result = _custom_schema.execute(
             query,
-            middleware=[ExtraGraphQLDirectiveMiddleware()],
+            middleware=[GraphQLDirectiveMiddleware()],
             variables=variables or None,
         )
         self.assertIsNone(result.errors, result.errors)

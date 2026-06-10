@@ -475,19 +475,19 @@ schema = graphene.Schema(
 )
 ```
 
-`django_graphex.ExtraGraphQLSchema` accepts the same `directives=`
+`django_graphex.DjangoGraphQLSchema` accepts the same `directives=`
 argument, so the snippet works with either schema class.
 
 ### 3. Enable the middleware
 
-Custom directives are applied by `ExtraGraphQLDirectiveMiddleware`. Without it the
+Custom directives are applied by `GraphQLDirectiveMiddleware`. Without it the
 directive parses and validates but does nothing:
 
 ```python
 # settings.py
 GRAPHENE = {
     "SCHEMA": "myapp.schema.schema",
-    "MIDDLEWARE": ["django_graphex.ExtraGraphQLDirectiveMiddleware"],
+    "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
 }
 ```
 
@@ -569,7 +569,7 @@ Enable directive processing with middleware:
     GRAPHENE = {
         'SCHEMA': 'myapp.schema.schema',
         'MIDDLEWARE': [
-            'django_graphex.ExtraGraphQLDirectiveMiddleware',
+            'django_graphex.GraphQLDirectiveMiddleware',
         ],
     }
     ```
