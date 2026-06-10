@@ -4,6 +4,11 @@
 `graphene-django-extras`. This guide walks you, step by step, from the old library
 to the new one.
 
+> **Coming from plain `graphene-django` instead?** `django-graphex` replaces it
+> together with `django-filter` and Django REST Framework — there is no separate
+> "extras" layer. The type, mutation, filtering and pagination concepts below map
+> directly; you can simply skip the DRF-serializer notes.
+
 !!! info "New name & import path"
 
     | | Old | New |
