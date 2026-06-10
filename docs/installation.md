@@ -14,8 +14,8 @@ uv add django-graphex
 pip install django-graphex
 ```
 
-This pulls in the core dependencies (`graphene`, `graphql-relay`, `pydantic`,
-`python-dateutil`) — **not** `graphene-django` and **not** `djangorestframework`
+This pulls in the core dependencies (`graphene`, `pydantic`, `python-dateutil`,
+`text-unidecode`) — **not** `graphene-django` and **not** `djangorestframework`
 (the package depends on neither). Filtering is built on Django's ORM lookups +
 `Q` objects, so there is **no `django-filter` dependency**.
 

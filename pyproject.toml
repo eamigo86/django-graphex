@@ -29,7 +29,6 @@ dependencies = [
     "django>=4.0,<7.0",
     "python-dateutil>=2.8.2,<3.0",
     "graphene>=3.3,<4",
-    "graphql-relay>=3.2,<4",
     "text-unidecode>=1.3",
     "pydantic>=2,<3",
 ]

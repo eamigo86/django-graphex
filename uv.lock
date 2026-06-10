@@ -591,7 +591,6 @@ source = { editable = "." }
 dependencies = [
     { name = "django" },
     { name = "graphene" },
-    { name = "graphql-relay" },
     { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "text-unidecode" },
@@ -631,7 +630,6 @@ requires-dist = [
     { name = "channels-redis", marker = "extra == 'subscriptions'", specifier = ">=4.2" },
     { name = "django", specifier = ">=4.0,<7.0" },
     { name = "graphene", specifier = ">=3.3,<4" },
-    { name = "graphql-relay", specifier = ">=3.2,<4" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "python-dateutil", specifier = ">=2.8.2,<3.0" },
     { name = "text-unidecode", specifier = ">=1.3" },

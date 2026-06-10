@@ -6,9 +6,9 @@ Pagination is essential for managing large datasets in GraphQL APIs. `django-gra
 
 `django-graphex` offers three pagination implementations:
 
-- 🔢 **LimitOffsetGraphqlPagination**: Traditional limit/offset pagination
-- 📖 **PageGraphqlPagination**: Page-number based pagination
-- 🔀 **CursorGraphqlPagination**: Forward keyset (cursor) pagination with `pageInfo`
+- :material-format-list-numbered: **LimitOffsetGraphqlPagination**: Traditional limit/offset pagination
+- :material-book-open-page-variant: **PageGraphqlPagination**: Page-number based pagination
+- :material-cursor-default: **CursorGraphqlPagination**: Forward keyset (cursor) pagination with `pageInfo`
 
 ## LimitOffsetGraphqlPagination
 
@@ -16,10 +16,10 @@ The most common pagination method, using `limit` and `offset` parameters to cont
 
 ### Features
 
-- ⚡ **Simple & Fast**: Easy to understand and implement
-- 🔀 **Flexible Ordering**: Supports custom ordering with Django syntax
-- 🔧 **Configurable Limits**: Set default and maximum page sizes
-- 🗄️ **Database Efficient**: Works well with Django QuerySets
+- :material-speedometer: **Simple & Fast**: Easy to understand and implement
+- :material-sort: **Flexible Ordering**: Supports custom ordering with Django syntax
+- :material-tune: **Configurable Limits**: Set default and maximum page sizes
+- :material-database: **Database Efficient**: Works well with Django QuerySets
 
 ### Basic Usage
 
@@ -161,10 +161,10 @@ Page-number based pagination, similar to Django's built-in pagination.
 
 ### Features
 
-- 📖 **Page-Based**: Navigate by page numbers
-- 📐 **Dynamic Page Size**: Optional client-controlled page sizes
-- 🔢 **Automatic Calculation**: Handles page calculations automatically
-- 🧭 **User Friendly**: Intuitive for frontend pagination controls
+- :material-book-multiple: **Page-Based**: Navigate by page numbers
+- :material-resize: **Dynamic Page Size**: Optional client-controlled page sizes
+- :material-calculator: **Automatic Calculation**: Handles page calculations automatically
+- :material-navigation: **User Friendly**: Intuitive for frontend pagination controls
 
 ### Basic Usage
 
@@ -271,9 +271,9 @@ page's last row — so it stays fast and stable. The list type also exposes a
 
 ### Features
 
-- ⚡ Constant-time paging regardless of how deep you are (no large `OFFSET`).
-- 🛡️ Stable under inserts/deletes between pages.
-- ℹ️ `pageInfo` with `endCursor` / `hasNextPage` / `hasPreviousPage` / `startCursor`.
+- :material-flash: Constant-time paging regardless of how deep you are (no large `OFFSET`).
+- :material-shield-check: Stable under inserts/deletes between pages.
+- :material-information: `pageInfo` with `endCursor` / `hasNextPage` / `hasPreviousPage` / `startCursor`.
 
 ### Basic Usage
 
