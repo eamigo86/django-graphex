@@ -173,6 +173,11 @@ default paginator (`DJANGO_GRAPHEX["DEFAULT_PAGINATION_CLASS"]`, or
 
 ## Performance (N+1)
 
+!!! tip "Hub"
+    This is the deep reference for DB-side window slicing. For a worked example
+    with the query and the constant-query-count payoff, see
+    [Query Optimization → DB-side nested pagination](query-optimization.md#db-side-nested-pagination-window-slicing).
+
 Nested lists are designed to keep the [query optimizer](query-optimization.md)'s
 N+1 elimination intact — **even when filtered or paginated** — and to fetch only
 the requested page rows from the database where possible:
@@ -238,6 +243,11 @@ returned.
 
 ## Per-field optimize hook
 
+!!! tip "Hub"
+    This is the authoritative reference for the hook. The
+    [query-optimization hub](query-optimization.md#per-field-optimize-hook) has a
+    short summary alongside the other optimization features.
+
 For cases where you need to customize the child queryset for a specific nested
 list field — for example to add a `select_related`, a custom annotation, or a
 default ordering — declare an **`optimize_<snake_field>`** static method on the
@@ -259,6 +269,16 @@ class AuthorType(DjangoObjectType):
         # Compose freely on top of the optimizer-built queryset.
         return queryset.select_related("category").order_by("-views", "id")
 ```
+
+!!! warning "`select_related(<fk>)` in a hook needs the client to select that relation"
+    The optimizer applies its `.only()` column narrowing to the child queryset
+    **after** the hook runs. If the client does **not** also select `category`,
+    `category_id` is deferred and `select_related("category")` raises a Django
+    `FieldError`. So a bare `select_related(<fk>)` is only safe when the relation
+    is part of the GraphQL selection; otherwise compose with an ordering instead
+    (e.g. `queryset.order_by("-id", "title")`). The example playground uses the
+    ordering form for exactly this reason — see `AuthorType.optimize_posts` in
+    `examples/playground/blog/schema.py`.
 
 **Rules**
 

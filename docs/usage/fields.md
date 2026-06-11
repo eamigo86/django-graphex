@@ -243,7 +243,9 @@ post_count = AnnotatedField(graphene.Int, lambda: Count("posts"))
     `Prefetch` queryset. A forward-FK relation whose child selects an
     `AnnotatedField` is auto-promoted from `select_related` to
     `prefetch_related`, because DB annotations cannot be pushed through a SQL
-    `JOIN`. See [Query Optimization](query-optimization.md).
+    `JOIN`. See
+    [Query Optimization → Selection-driven annotations](query-optimization.md#selection-driven-annotations-annotatedfield)
+    for a worked example.
 
 ## Custom resolvers
 

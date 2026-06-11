@@ -491,6 +491,11 @@ It **raises** a descriptive `TypeError` if a row's model has no registered type
 
 ### Per-content-type column narrowing (Django 5.0+)
 
+!!! tip "Optimizer hub"
+    For how this fits the rest of the N+1 optimizer (with the inline-fragment
+    query), see
+    [Query Optimization → Typed GenericForeignKey unions](query-optimization.md#typed-genericforeignkey-unions-per-content-type-narrowing).
+
 When `OPTIMIZE_ONLY_FIELDS` is on **and** Django is **5.0 or newer**, the
 optimizer routes the union GFK through a
 [`GenericPrefetch`](https://docs.djangoproject.com/en/stable/ref/contrib/contenttypes/#django.contrib.contenttypes.prefetch.GenericPrefetch),
