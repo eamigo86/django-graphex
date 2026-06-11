@@ -164,6 +164,87 @@ class UserType(DjangoModelType):
 
 See [Permissions & hooks](permissions.md) and the [Filtering guide](filtering.md).
 
+## AnnotatedField
+
+A `graphene.Field` backed by a Django ORM annotation that is injected into the
+queryset **only when the field is selected** in the GraphQL query. A built-in
+default resolver reads the annotated value off the row, so no `resolve_<field>`
+is needed — and when the field is not selected, no annotation (and no extra SQL)
+is added at all.
+
+`AnnotatedField` is public — import it directly:
+
+```python
+from django_graphex import AnnotatedField
+```
+
+**Signature:**
+
+```python
+AnnotatedField(type_, expression, aliases=None, annotation_name=None, **kwargs)
+```
+
+**Example** — a per-author post count, computed in the database:
+
+```python
+import graphene
+from django.db.models import Count
+from django_graphex import AnnotatedField, DjangoObjectType
+
+class AuthorType(DjangoObjectType):
+    # Backed by a DB annotation, injected ONLY when `postCount` is selected.
+    post_count = AnnotatedField(graphene.Int, Count("posts"))
+
+    class Meta:
+        model = Author
+```
+
+**Usage in GraphQL:**
+
+```graphql
+{
+  authors {
+    results {
+      id
+      name
+      postCount
+    }
+  }
+}
+```
+
+When `postCount` is selected, the optimizer adds the `Count("posts")`
+annotation to the queryset. When it is **not** selected, the annotation is never
+injected and the query is unchanged.
+
+**Arguments:**
+
+| Argument | Meaning |
+|----------|---------|
+| `type_` | The graphene output type (e.g. `graphene.Int`). |
+| `expression` | A Django `Expression` instance **or** a zero-arg callable returning one. The callable is invoked lazily at injection time, per request — useful for constructing a fresh expression on each resolve. |
+| `aliases` | Optional `dict[str, Expression \| callable]` applied via `.alias()` **before** `.annotate()` (for intermediate expressions the annotation depends on). |
+| `annotation_name` | Overrides the auto-derived annotation key. Defaults to `_gqx_ann_<snake_field>`. Set it when the auto key would collide with a model attname. |
+
+```python
+# expression may also be a zero-arg callable for fresh construction per request:
+post_count = AnnotatedField(graphene.Int, lambda: Count("posts"))
+```
+
+!!! note "Selection-driven and gated by a setting"
+    Injection runs as `qs.alias(**aliases).annotate(**{annotation_name: expression})`
+    and only fires when the field appears in the client selection set **and**
+    `OPTIMIZE_ANNOTATED_FIELDS` is `True` (the default). Set it to `False` to
+    disable `AnnotatedField` injection entirely. The default resolver returns
+    `None` when the annotation was not injected (field not selected).
+
+!!! tip "Annotations across a forward FK"
+    Child `AnnotatedField`s on a nested type are injected on that child's
+    `Prefetch` queryset. A forward-FK relation whose child selects an
+    `AnnotatedField` is auto-promoted from `select_related` to
+    `prefetch_related`, because DB annotations cannot be pushed through a SQL
+    `JOIN`. See [Query Optimization](query-optimization.md).
+
 ## Custom resolvers
 
 `DjangoObjectField`, `DjangoFilterListField`, `DjangoFilterPaginateListField` and

@@ -16,6 +16,32 @@ All notable changes to this library are documented here. The format is based on
 
 ### Added
 
+- **`OPTIMIZER_SAFE_MODE`** (default `False`) — opt-in coarse fail-safe: any
+  exception raised inside the queryset-optimization block degrades the whole
+  resolve to the un-optimized queryset and logs a `WARNING` instead of surfacing
+  a 500. Default is fail-loud. See
+  [Query Optimization — OPTIMIZER_SAFE_MODE](usage/query-optimization.md#optimizer_safe_mode-fail-safe-degrade).
+- **GenericForeignKey / GenericRelation prefetch** — `GenericForeignKey` targets
+  are added to `prefetch_related` (the parent's content-type-id and object-id
+  columns are retained so the second query resolves) and `GenericRelation`
+  reverse sides are prefetched and `.only()`-narrowed (their content-type /
+  object-id attnames kept). See
+  [Query Optimization](usage/query-optimization.md).
+- **`OPTIMIZE_NESTED_PAGINATION`** (default `True`) — DB-side
+  `ROW_NUMBER() OVER (PARTITION BY fk)` window slicing for reverse-FK nested
+  paginated lists (`LimitOffsetGraphqlPagination` / `PageGraphqlPagination`),
+  fetching only the requested page rows per parent in a single query, with a
+  filter-aware `totalCount` carried per partition. Set `False` to fall back to
+  the in-memory order+slice path. See
+  [Nested Lists — Performance (N+1)](usage/nested-lists.md#performance-n1).
+- **`AnnotatedField`** — a public, declarative GraphQL field backed by a Django
+  ORM annotation
+  (e.g. `comment_count = AnnotatedField(graphene.Int, Count("comments"))`),
+  injected only when the field is selected in the query; gated by
+  `OPTIMIZE_ANNOTATED_FIELDS` (default `True`). Forward-FK relations whose child
+  selection contains an `AnnotatedField` are auto-promoted from `select_related`
+  to `prefetch_related` (annotations can't cross a SQL JOIN). See
+  [Fields — AnnotatedField](usage/fields.md#annotatedfield).
 - **Per-field optimize hook** (`optimize_<field>`) on parent graphene types.
   Declare an `optimize_<snake_field>(queryset, info, **kwargs)` static method on
   the parent `DjangoObjectType` to customize the child queryset for a specific

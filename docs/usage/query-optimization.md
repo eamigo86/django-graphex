@@ -16,8 +16,13 @@ For the fields requested in the query, the optimizer:
   reverse one-to-one) — including **nested** dotted paths (`a__b__c`);
 - adds **`prefetch_related`** for `ManyToManyField` and reverse relations
   (also nested, e.g. `author__posts`);
-- applies a conservative **`.only()`** column projection across the
-  `select_related` span (see [caveats](#only-column-projection)).
+- adds **`prefetch_related`** for a `GenericForeignKey` (resolved in a second
+  query on `field.name`; the parent's content-type-id and object-id columns are
+  kept), and for a `GenericRelation` reverse side — which **is**
+  `.only()`-narrowed, keeping its content-type / object-id attnames;
+- applies a conservative **`.only()`** column projection both **across the
+  `select_related` span** and **inside each `Prefetch` child queryset**
+  (see [caveats](#only-column-projection)).
 
 It is transparent to the `DjangoListObjectType` wrapper (`results` / `totalCount`
 / `pageInfo`), to **fragments** and to **inline fragments**, and matches both
@@ -119,7 +124,12 @@ stay correct it is **conservative**:
   forward `ForeignKey` columns and the model's `Meta.ordering` columns;
 - a model that selects a **computed / property / custom-named** field is loaded in
   **full** (not narrowed), so that property keeps working;
-- prefetched branches are not narrowed (they are separate querysets).
+- narrowing also applies **inside each `Prefetch` child queryset**: the child
+  gets its own `.only()` keeping the reverse-FK back column, the child's
+  `Meta.ordering` columns, its pk and any `GenericRelation` ct/fk attnames; a
+  small set of forward-FK heads is added back to the child `select_related` so
+  the narrowing does not re-introduce an N+1. A child whose sub-selection hits a
+  computed / property leaf is full-loaded (bare-string prefetch, no `.only()`).
 
 !!! warning "Models with properties / custom resolvers"
     `.only()` defers the columns you did not request. If a model **property**,
@@ -142,14 +152,56 @@ Configure in `settings.py` under `DJANGO_GRAPHEX`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `OPTIMIZE_QUERYSET` | `True` | Apply nested `select_related` / `prefetch_related` derived from the query. Set to `False` to return the plain queryset (escape hatch). |
-| `OPTIMIZE_ONLY_FIELDS` | `True` | Additionally narrow columns with `.only()` (conservative; see the warning above). |
+| `OPTIMIZE_ONLY_FIELDS` | `True` | Additionally narrow columns with `.only()` across the `select_related` span **and** inside each `Prefetch` child queryset (conservative; see the warning above). |
+| `OPTIMIZE_NESTED_PAGINATION` | `True` | DB-side `ROW_NUMBER()` window slicing for reverse-FK nested paginated lists (`LimitOffset`/`Page`). `False` = in-memory order+slice fallback. See [Nested Lists](nested-lists.md#performance-n1). |
+| `OPTIMIZER_SAFE_MODE` | `False` | When `True`, any exception in the optimization block degrades to the un-optimized queryset and logs a `WARNING` (instead of a 500). Default fail-loud. |
+| `OPTIMIZE_ANNOTATED_FIELDS` | `True` | Inject `AnnotatedField` DB annotations only when the field is selected. Runtime kill-switch for annotation injection. See [Fields → AnnotatedField](fields.md#annotatedfield). |
 
 ```python
 DJANGO_GRAPHEX = {
     "OPTIMIZE_QUERYSET": True,
     "OPTIMIZE_ONLY_FIELDS": True,
+    "OPTIMIZE_NESTED_PAGINATION": True,
+    "OPTIMIZER_SAFE_MODE": False,
+    "OPTIMIZE_ANNOTATED_FIELDS": True,
 }
 ```
+
+## `OPTIMIZER_SAFE_MODE` (fail-safe degrade)
+
+By default (`OPTIMIZER_SAFE_MODE = False`) the optimizer **fails loud**: if
+building the optimized queryset raises, the exception propagates and you get a
+500 — so you find the bug.
+
+Setting it to `True` wraps the **whole** optimization in a `try/except`: on *any*
+exception the entire resolve degrades to the **un-optimized base queryset** and a
+`WARNING` is logged (`django_graphex.utils`) instead of surfacing the error. The
+boundary is **coarse** — it degrades the whole resolve, not a single field — so a
+raising per-field `optimize_<field>` hook is caught here too. It does **not**
+cover a malformed `AnnotatedField` expression that raises `FieldError` at
+SQL-eval time (that happens outside the build boundary; annotation injection has
+its own narrower guard that skips just the annotation).
+
+```python
+DJANGO_GRAPHEX = {
+    "OPTIMIZER_SAFE_MODE": True,
+}
+```
+
+## Selection-driven annotations (`AnnotatedField`)
+
+An `AnnotatedField` is a declarative GraphQL field backed by a Django ORM
+annotation that the optimizer injects **only when the field is selected** in the
+incoming query (and only when `OPTIMIZE_ANNOTATED_FIELDS` is `True`, the default).
+Unselected annotated fields add no SQL. A built-in resolver reads the annotation
+off the row, so no `resolve_<field>` is needed.
+
+A forward-FK relation that the optimizer placed in `select_related` is
+**auto-promoted** to `prefetch_related` when its child sub-selection contains an
+`AnnotatedField` — DB annotations cannot be pushed through a SQL `JOIN`, so the
+child annotation rides on the promoted `Prefetch`'s queryset instead.
+
+See [Fields → AnnotatedField](fields.md#annotatedfield).
 
 ## Custom resolvers
 
