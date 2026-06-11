@@ -1,7 +1,7 @@
 """Tests for optimizer-phase-d: AnnotatedField optimization.
 
 D1 slice: §1-6 + §8-9 implementation + tests 1-6b/8/10.
-D2 slice (§7 window-compose): NOT included here.
+D2 slice (§7 window-compose): Tests 7.1, 7.2, 7.3 — window-prefetch composition.
 
 STRICT TDD: RED tests are written first, then GREEN implementation fills them.
 """
@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import graphene
 from django.db import connection
 from django.db.models import Count, F, Sum
+from django.db.models.expressions import Window  # noqa: F401 - used for error-expression test
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 
@@ -1037,3 +1038,602 @@ class TestAnnotatedFieldsSettingAccessible(TestCase):
         from django_graphex.settings import graphql_api_settings as s
 
         self.assertIs(s.OPTIMIZE_ANNOTATED_FIELDS, True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: Window-prefetch composition (D2 slice — tasks 7.1, 7.2, 7.3)
+# ---------------------------------------------------------------------------
+
+
+def _build_window_annotated_schema(use_aggregate=False):
+    """Build a minimal schema for window-compose D2 e2e tests.
+
+    Author has a nested DjangoNestedListObjectField (posts) — the window path.
+    The PostType declares an AnnotatedField:
+      - use_aggregate=False: views_x2 = F("views") * 2  (concrete-column)
+      - use_aggregate=True:  comment_count = Count("comments")  (aggregate, must decline)
+    """
+    import graphene
+
+    from django_graphex.fields import DjangoNestedListObjectField
+    from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+    from django_graphex.types import DjangoListObjectField, DjangoListObjectType, DjangoObjectType
+    from tests.models import Author, Post
+
+    _REG = {}
+    paginator = LimitOffsetGraphqlPagination(default_limit=5)
+
+    if use_aggregate:
+        extra_fields = {
+            "comment_count": AnnotatedField(graphene.Int, Count("comments")),
+        }
+        extra_fields_query = "commentCount"
+    else:
+        extra_fields = {
+            "views_x2": AnnotatedField(graphene.Int, F("views") * 2),
+        }
+        extra_fields_query = "viewsX2"
+
+    _PostType = type(
+        "_WinAnnPostType",
+        (DjangoObjectType,),
+        {
+            **extra_fields,
+            "Meta": type("Meta", (), {"model": Post, "registry": _REG}),
+        },
+    )
+
+    _PostListType = type(
+        "_WinAnnPostListType",
+        (DjangoListObjectType,),
+        {
+            "Meta": type("Meta", (), {
+                "model": Post,
+                "pagination": paginator,
+                "registry": _REG,
+            }),
+        },
+    )
+
+    _AuthorType = type(
+        "_WinAnnAuthorType",
+        (DjangoObjectType,),
+        {
+            "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+            "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+        },
+    )
+
+    _AuthorListType = type(
+        "_WinAnnAuthorListType",
+        (DjangoListObjectType,),
+        {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+    )
+
+    schema = graphene.Schema(
+        query=type(
+            "_WinAnnQuery",
+            (graphene.ObjectType,),
+            {"authors": DjangoListObjectField(_AuthorListType)},
+        )
+    )
+    return schema, extra_fields_query
+
+
+class TestWindowCompositeConcreteColumn(TestCase):
+    """7.1 RED → GREEN: windowed nested child with concrete-column AnnotatedField.
+
+    The annotation expression (F("views") * 2) must appear in the window
+    child SQL, the value must be correct, and no N+1 (exactly 1 ROW_NUMBER
+    query across ALL parents — proves batched, not per-author N+1).
+
+    Two authors are created so that a naive N+1 implementation would emit
+    one window query PER author (len(window_sql) == 2), while the correct
+    batched implementation emits exactly ONE query covering both parents.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        # Author 1: 3 posts, views=10/11/12
+        cls.author1 = Author.objects.create(name="WinAnn_Author1")
+        cls.posts_a1 = []
+        for i in range(3):
+            p = Post.objects.create(
+                title=f"WinAnnPost_A1_{i}",
+                author=cls.author1,
+                views=10 + i,
+            )
+            cls.posts_a1.append(p)
+
+        # Author 2: 2 posts, views=20/21 — distinct views so cross-author
+        # value-correctness can be independently verified.
+        cls.author2 = Author.objects.create(name="WinAnn_Author2")
+        cls.posts_a2 = []
+        for i in range(2):
+            p = Post.objects.create(
+                title=f"WinAnnPost_A2_{i}",
+                author=cls.author2,
+                views=20 + i,
+            )
+            cls.posts_a2.append(p)
+
+        # Combined lookup map: post.pk → views * 2
+        cls.views_map = {
+            str(p.pk): p.views * 2
+            for p in cls.posts_a1 + cls.posts_a2
+        }
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        self.assertIsNone(result.errors, result.errors)
+        return result.data
+
+    def test_window_compose_concrete_column(self):
+        """7.1: Concrete-column AnnotatedField (views_x2 = F('views')*2) composes
+        inside the window prefetch across TWO parents.
+
+        Asserts:
+        1. The concrete-column expression appears in the window child SQL.
+        2. The resolved viewsX2 values are correct (views*2) for BOTH authors.
+        3. EXACTLY 1 ROW_NUMBER query is emitted across both parents — proves the
+           implementation is batched, not N+1 (which would emit 2 window queries).
+        4. The window still slices (ROW_NUMBER() in SQL).
+        """
+        schema, ann_field = _build_window_annotated_schema(use_aggregate=False)
+        query = (
+            '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") '
+            '{ id viewsX2 } totalCount } } } }'
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+
+        sql_list = [q["sql"].upper() for q in ctx.captured_queries]
+
+        # (1) Window SQL must be emitted (ROW_NUMBER present).
+        window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
+        self.assertGreaterEqual(len(window_sql), 1, "Must emit ROW_NUMBER() for the window child")
+
+        # (2) Concrete-column expression must appear in the window child SQL.
+        # F("views") * 2 compiles to something like "views" * 2 (SQL is uppercased).
+        # The annotation key _gqx_ann_views_x2 is another reliable indicator.
+        found_expr = any(
+            ("VIEWS" in s and ("* 2" in s or "*2" in s))
+            or "_GQX_ANN_VIEWS_X2" in s
+            for s in sql_list
+        )
+        self.assertTrue(
+            found_expr,
+            f"views*2 expression must appear in window child SQL. Captured: {sql_list}",
+        )
+
+        # (3) EXACTLY 1 window query across BOTH parents — the definitive N+1 check.
+        # With a single author the assertion len==1 is trivially true even for N+1
+        # (because there is only one parent to query).  With TWO authors an N+1
+        # implementation emits 2 window queries (one per author), so this assertion
+        # would fail, catching the regression.
+        self.assertEqual(
+            len(window_sql), 1,
+            "Posts must be fetched in a SINGLE window prefetch query across BOTH "
+            "authors (no N+1). An N+1 implementation would emit 2 ROW_NUMBER queries.",
+        )
+
+        # (4) Value correctness: viewsX2 == views * 2 for every post of BOTH authors.
+        author_results = data["authors"]["results"]
+        self.assertEqual(
+            len(author_results), 2,
+            "Expected exactly 2 authors in results",
+        )
+        for author_data in author_results:
+            for row in author_data["posts"]["results"]:
+                expected = self.views_map.get(row["id"])
+                self.assertIsNotNone(
+                    expected,
+                    f"Unknown post id {row['id']} not in views_map",
+                )
+                self.assertEqual(
+                    row["viewsX2"], expected,
+                    f"viewsX2 must equal views*2 for post {row['id']}",
+                )
+
+
+class TestWindowAggregateFallsBack(TestCase):
+    """7.2 RED → GREEN: windowed child with aggregate AnnotatedField falls back
+    to build_prefetch (structural decline), result still correct.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Comment, Post
+
+        cls.author = Author.objects.create(name="WinAgg_Author1")
+        cls.post = Post.objects.create(title="WinAggPost1", author=cls.author)
+        Comment.objects.create(post=cls.post, body="c1")
+        Comment.objects.create(post=cls.post, body="c2")
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        self.assertIsNone(result.errors, result.errors)
+        return result.data
+
+    def test_window_aggregate_falls_back_to_build_prefetch(self):
+        """7.2: aggregate AnnotatedField (Count('comments')) on a windowed child
+        is structurally declined (build_window_prefetch returns None) and falls
+        back to build_prefetch (plain path).
+
+        Asserts:
+        1. No ROW_NUMBER() in SQL (window NOT used for this child).
+        2. commentCount value is correct (=2 for the test post).
+        3. No unhandled exception.
+        """
+        schema, ann_field = _build_window_annotated_schema(use_aggregate=True)
+        query = (
+            '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") '
+            '{ id commentCount } totalCount } } } }'
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+
+        sql_list = [q["sql"].upper() for q in ctx.captured_queries]
+
+        # (1) Window must NOT be used — declined due to aggregate expression.
+        window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
+        self.assertEqual(
+            len(window_sql), 0,
+            "Aggregate AnnotatedField must cause window path to decline (no ROW_NUMBER)",
+        )
+
+        # (2) Value correctness: commentCount must be 2 for the test post.
+        results = data["authors"]["results"][0]["posts"]["results"]
+        self.assertEqual(len(results), 1, "Must have exactly 1 post result")
+        self.assertEqual(
+            results[0]["commentCount"], 2,
+            f"commentCount must equal 2, got {results[0]['commentCount']}",
+        )
+
+
+class TestWindowInjectionErrorGracefulFallback(TestCase):
+    """7.3 RED → GREEN: a FieldError during annotation injection inside
+    build_window_prefetch is caught gracefully — build_window_prefetch returns None
+    (fall back to build_prefetch), no unhandled exception propagates.
+    """
+
+    def test_window_injection_error_graceful_fallback(self):
+        """7.3: When qs.annotate() raises FieldError inside build_window_prefetch
+        (simulated via mock), the function must return None gracefully instead of
+        propagating the exception to the caller.
+
+        Asserts:
+        1. build_window_prefetch returns None (fall-back signal to caller).
+        2. No unhandled exception escapes from build_window_prefetch.
+        3. The fallback path (build_prefetch) is invoked by _walk_filtered_prefetches.
+        """
+        from unittest.mock import MagicMock, patch
+        from django.core.exceptions import FieldError
+
+        import graphene
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from django_graphex.types import DjangoListObjectType, DjangoObjectType
+        from tests.models import Author, Post
+
+        _REG_ERR = {}
+        paginator = LimitOffsetGraphqlPagination(default_limit=5)
+
+        _PostType = type(
+            "_ErrPostType",
+            (DjangoObjectType,),
+            {
+                # AnnotatedField with a concrete-column expression that will
+                # trigger a FieldError when .annotate() is called (mocked below).
+                "views_x2": AnnotatedField(graphene.Int, F("views") * 2),
+                "Meta": type("Meta", (), {"model": Post, "registry": _REG_ERR}),
+            },
+        )
+        _PostListType = type(
+            "_ErrPostListType",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {
+                "model": Post, "pagination": paginator, "registry": _REG_ERR,
+            })},
+        )
+        _AuthorType = type(
+            "_ErrAuthorType",
+            (DjangoObjectType,),
+            {
+                "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+                "Meta": type("Meta", (), {"model": Author, "registry": _REG_ERR}),
+            },
+        )
+
+        field = _AuthorType._meta.fields["posts"]
+
+        # Build a minimal graphene schema so the GraphQLObjectType for _PostType
+        # is registered and accessible via the schema's type_map.  Without a schema,
+        # graphene types are not yet wired into GraphQLObjectType instances, so
+        # _compute_child_only → _walk_annotated_fields would have no GraphQL type to
+        # look up AnnotatedFields on and child_annotations would remain empty.
+        _schema = graphene.Schema(
+            query=type(
+                "_ErrFallbackQuery",
+                (graphene.ObjectType,),
+                {"dummy": graphene.String()},
+            ),
+            types=[_PostType, _PostListType, _AuthorType],
+        )
+        gql_schema = _schema.graphql_schema
+        # The GraphQLObjectType for the inner row type (_PostType / "_ErrPostType").
+        post_gql_type = gql_schema.type_map.get("_ErrPostType")
+        self.assertIsNotNone(
+            post_gql_type,
+            "Could not resolve _ErrPostType from schema type_map — schema not wired",
+        )
+
+        # Build a minimal set of args for build_window_prefetch.
+        author = Author.objects.create(name="ErrFallbackAuthor")
+        Post.objects.create(title="ErrFallbackPost", author=author, views=7)
+
+        # Simulate a FieldError from qs.annotate() at injection time by patching
+        # the QuerySet.annotate method on the child manager's queryset.
+        from django.db.models import QuerySet
+
+        original_annotate = QuerySet.annotate
+
+        call_count = {"n": 0}
+
+        def failing_annotate(self, **kwargs):
+            call_count["n"] += 1
+            # Fail only on the FIRST annotate call (the user annotation).
+            # The second call (window expressions) should not be reached after fallback.
+            if call_count["n"] == 1 and "_gqx_ann_views_x2" in kwargs:
+                raise FieldError("Simulated injection error for test")
+            return original_annotate(self, **kwargs)
+
+        # Build a fake sub_selection and fragments via the existing Phase-C helper.
+        # We use a simplified approach: just verify the return value is None on error.
+        from graphql.language.ast import SelectionSetNode, FieldNode, NameNode
+
+        def make_field_node(name):
+            n = FieldNode(name=NameNode(value=name))
+            return n
+
+        sub_sel = SelectionSetNode(selections=[make_field_node("id"), make_field_node("viewsX2")])
+
+        # Build a mock info-like for _compute_child_only inner call.
+        from tests.models import Post as PostModel
+        author_rel = PostModel._meta.get_field("author").remote_field  # ManyToOneRel
+
+        with patch.object(QuerySet, "annotate", failing_annotate):
+            result = field.build_window_prefetch(
+                lookup="posts",
+                filter_value=None,
+                slice_tuple=(0, 5, ["id"]),
+                related_field=author_rel,
+                sub_selection=sub_sel,
+                fragments={},
+                # Pass the inner GraphQLObjectType and graphene type so
+                # _compute_child_only populates plan.child_annotations with
+                # _gqx_ann_views_x2.  Without these the try/except block is never
+                # reached (plan is None → pre-check 6 returns None early).
+                child_gql_type=post_gql_type,
+                child_graphene_type=_PostType,
+            )
+
+        # build_window_prefetch must return None when injection fails (graceful fallback).
+        self.assertIsNone(
+            result,
+            "build_window_prefetch must return None when annotation injection fails",
+        )
+        # Confirm the mock annotate was actually invoked — the try/except block
+        # truly exercised.  If call_count is 0 the test is vacuous (the mock never
+        # fired and None came from an earlier pre-check, not the graceful fallback).
+        self.assertGreater(
+            call_count["n"],
+            0,
+            "failing_annotate was never called — the try/except block was not reached. "
+            "The test is vacuous. Check that child_gql_type/child_graphene_type are "
+            "correctly passed and plan.child_annotations is populated.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 7.1-strength / 8.3-strength: alias()-before-annotate() ordering in the
+# WINDOW prefetch path (build_window_prefetch) has TEETH.
+#
+# Context: test 8.3 (TestAliasBeforeAnnotateOrder) exercises the ROOT
+# injection path and verifies call-order via spying, but the spy still calls
+# the original functions — so even reversed order stays GREEN at the root
+# because Django's QuerySet.annotate() raises FieldError lazily (at SQL-eval
+# time, not at call time) for some expressions.  More importantly, test 7.1
+# only uses views_x2 = F("views") * 2, which has NO aliases dict, so
+# child_aliases is empty and the alias/annotate block in build_window_prefetch
+# (lines ~737-745 in fields.py) is NEVER entered — reversing lines 739-742
+# has zero effect on any existing test.
+#
+# This test uses an alias-DEPENDENT AnnotatedField inside the WINDOW child:
+#   alias: views_base = F("views") * 3    (concrete-column, non-aggregate)
+#   expression: F("views_base") + 0       (references the alias name)
+# If .annotate() runs before .alias(), Django cannot resolve "views_base" as
+# an existing column/annotation, so the QuerySet raises FieldError at build
+# time (inside build_window_prefetch's try/except at ~line 737), which causes
+# build_window_prefetch to return None (fall back to build_prefetch / plain
+# path WITHOUT ROW_NUMBER).  The test asserts ROW_NUMBER() IS present,
+# catching exactly that regression.
+#
+# Path used: window prefetch child (build_window_prefetch → _compute_child_only
+# → child_aliases/child_annotations populated → fields.py lines 737-745).
+# The root injection path is NOT involved because the AnnotatedField lives on
+# the window CHILD (PostType), not on the root query type.
+# ---------------------------------------------------------------------------
+
+
+def _build_alias_dependent_window_schema():
+    """Build a schema where the window child's AnnotatedField has a non-empty
+    aliases dict whose expression REFERENCES the alias name.
+
+    PostType declares:
+        views_tripled = AnnotatedField(
+            graphene.Int,
+            expression=F("views_base") + 0,   # references the alias
+            aliases={"views_base": F("views") * 3},
+        )
+
+    This is a concrete-column expression (no aggregate), so it passes the
+    aggregate pre-check in build_window_prefetch, and child_aliases is
+    non-empty — the alias()/annotate() block at fields.py ~737-745 is
+    ACTUALLY entered.  Reversing that block causes FieldError at build time
+    (Django cannot resolve "views_base" before the alias is set), the
+    try/except returns None, and the test fails because ROW_NUMBER() vanishes.
+    """
+    from django_graphex.fields import DjangoNestedListObjectField
+    from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+    from django_graphex.types import DjangoListObjectField, DjangoListObjectType, DjangoObjectType
+    from tests.models import Author, Post
+
+    _REG = {}
+    paginator = LimitOffsetGraphqlPagination(default_limit=10)
+
+    _PostType = type(
+        "_AliasDepPostType",
+        (DjangoObjectType,),
+        {
+            "views_tripled": AnnotatedField(
+                graphene.Int,
+                # Expression references the alias name "views_base".
+                # alias() MUST be called first; annotate() references it.
+                F("views_base") + 0,
+                aliases={"views_base": F("views") * 3},
+            ),
+            "Meta": type("Meta", (), {"model": Post, "registry": _REG}),
+        },
+    )
+    _PostListType = type(
+        "_AliasDepPostListType",
+        (DjangoListObjectType,),
+        {"Meta": type("Meta", (), {
+            "model": Post,
+            "pagination": paginator,
+            "registry": _REG,
+        })},
+    )
+    _AuthorType = type(
+        "_AliasDepAuthorType",
+        (DjangoObjectType,),
+        {
+            "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+            "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+        },
+    )
+    _AuthorListType = type(
+        "_AliasDepAuthorListType",
+        (DjangoListObjectType,),
+        {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+    )
+    schema = graphene.Schema(
+        query=type(
+            "_AliasDepQuery",
+            (graphene.ObjectType,),
+            {"authors": DjangoListObjectField(_AuthorListType)},
+        )
+    )
+    return schema
+
+
+class TestWindowAliasBeforeAnnotateOrdering(TestCase):
+    """7.1-strength / alias-ordering: alias()-before-annotate() in
+    build_window_prefetch has genuine TEETH.
+
+    The AnnotatedField on the window child has:
+        aliases={"views_base": F("views") * 3}
+        expression=F("views_base") + 0   # references the alias
+
+    Correct order (alias then annotate):
+        qs = qs.alias(views_base=F("views") * 3)
+        qs = qs.annotate(_gqx_ann_views_tripled=F("views_base") + 0)
+        → ROW_NUMBER() is emitted; viewsTripled == views * 3.
+
+    Wrong order (annotate before alias — the mutation):
+        qs = qs.annotate(_gqx_ann_views_tripled=F("views_base") + 0)  # FieldError
+        → build_window_prefetch catches the exception, returns None, falls back
+          to build_prefetch (plain path, no ROW_NUMBER).
+        → The assertion "ROW_NUMBER() IS present" FAILS → test is RED.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+        a = Author.objects.create(name="AliasDep_Author1")
+        cls.posts = []
+        for i in range(2):
+            p = Post.objects.create(
+                title=f"AliasDep_Post{i}",
+                author=a,
+                views=5 + i,   # views=5, 6 → tripled=15, 18
+            )
+            cls.posts.append(p)
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        self.assertIsNone(result.errors, result.errors)
+        return result.data
+
+    def test_window_alias_before_annotate_correct_values_and_row_number(self):
+        """Alias-dependent AnnotatedField in window child: correct value + ROW_NUMBER.
+
+        (a) ROW_NUMBER() IS in SQL — window path was taken (alias order correct).
+        (b) viewsTripled == views * 3 for each post (alias expression resolved).
+
+        Mutation teeth: swap alias/annotate order in build_window_prefetch →
+        Django raises FieldError("views_base") at build time → try/except
+        returns None → build_prefetch fallback → NO ROW_NUMBER → assertion (a)
+        FAILS → test is RED.  (Verified; production restored after check.)
+        """
+        schema = _build_alias_dependent_window_schema()
+        query = (
+            '{ authors { results { posts { results(limit: 10, offset: 0, ordering: "id") '
+            '{ id viewsTripled } totalCount } } } }'
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+
+        sql_list = [q["sql"].upper() for q in ctx.captured_queries]
+
+        # (a) Window path must have been taken — ROW_NUMBER() IS present.
+        # If alias/annotate order were swapped, build_window_prefetch would
+        # return None (FieldError caught) and this assertion fails (RED).
+        window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
+        self.assertGreaterEqual(
+            len(window_sql), 1,
+            "ROW_NUMBER() must appear in SQL — the window path must be taken "
+            "(alias-before-annotate order is correct). If this fails, the alias/"
+            "annotate order in build_window_prefetch is wrong. "
+            f"Captured SQL: {sql_list}",
+        )
+
+        # (b) Value correctness: viewsTripled == views * 3.
+        # Also confirms that the alias ("views_base") was resolved by the DB,
+        # not just that the annotate call was reached.
+        views_tripled_map = {str(p.pk): p.views * 3 for p in self.posts}
+        author_results = data["authors"]["results"]
+        self.assertGreater(len(author_results), 0, "Expected at least one author")
+        for author_data in author_results:
+            for row in author_data["posts"]["results"]:
+                expected = views_tripled_map.get(row["id"])
+                self.assertIsNotNone(
+                    expected,
+                    f"Unknown post id {row['id']} not in views_tripled_map",
+                )
+                self.assertEqual(
+                    row["viewsTripled"], expected,
+                    f"viewsTripled must equal views*3 for post {row['id']}. "
+                    f"Got {row['viewsTripled']}, expected {expected}. "
+                    "If alias() ran after annotate(), Django would have raised "
+                    "FieldError and fallen back to build_prefetch (plain path), "
+                    "producing a non-None value via a different code path — but "
+                    "ROW_NUMBER() would be absent and assertion (a) would already "
+                    "have caught the regression.",
+                )

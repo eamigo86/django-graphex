@@ -1544,6 +1544,28 @@ def _walk_filtered_prefetches(
                     relation_map.get(to_snake_case(inst.accessor)),
                 )
                 sub_selection = getattr(results_field_node, "selection_set", None)
+
+                # Phase-d §7 CRITICAL: sub_gql is the DjangoListObjectType WRAPPER
+                # GraphQL type.  The results_field_node.selection_set is the INNER
+                # row selection.  If we pass the wrapper to build_window_prefetch
+                # → _compute_child_only → _walk_annotated_fields, the walker looks up
+                # AnnotatedFields on the wrapper's _meta.fields where they do NOT exist
+                # (they live on the INNER row type, e.g. _WinAnnPostType).
+                # Resolve the INNER row GraphQLObjectType via the wrapper's "results"
+                # field_def, then pass the inner type to build_window_prefetch.
+                inner_gql = None
+                inner_graphene = None
+                if sub_gql is not None:
+                    results_name = getattr(
+                        getattr(inst.type, "_meta", None), "results_field_name", None
+                    ) or "results"
+                    _res_field_def = sub_gql.fields.get(results_name)
+                    if _res_field_def is not None:
+                        _inner_candidate = get_named_type(_res_field_def.type)
+                        if isinstance(_inner_candidate, GraphQLObjectType):
+                            inner_gql = _inner_candidate
+                            inner_graphene = getattr(inner_gql, "graphene_type", None)
+
                 pf = inst.build_window_prefetch(
                     lookup,
                     filter_value,
@@ -1551,6 +1573,8 @@ def _walk_filtered_prefetches(
                     related_field,
                     sub_selection,
                     info.fragments or {},
+                    child_gql_type=inner_gql,
+                    child_graphene_type=inner_graphene,
                 )
                 if pf is not None:
                     # Tag the parent model+lookup so list_resolver can distinguish
