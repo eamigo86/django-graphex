@@ -1417,7 +1417,8 @@ def _apply_optimizations(
     if prefetch_related and select_related:
         prefetch_prefixes = {p + LOOKUP_SEP for p in prefetch_related}
         select_related = [
-            sr for sr in select_related
+            sr
+            for sr in select_related
             if not any(sr.startswith(pfx) for pfx in prefetch_prefixes)
         ]
 
