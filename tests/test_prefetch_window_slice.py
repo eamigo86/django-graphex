@@ -100,6 +100,12 @@ class TestPagePrefetchWindowSlice(TestCase):
         result = paginator.prefetch_window_slice(page=-1, ordering=["id"])
         self.assertIsNone(result)
 
+    def test_page_zero_returns_none(self):
+        """page=0 must return None — offset = page_size*(0-1) = negative (C2 edge guard)."""
+        paginator = PageGraphqlPagination(page_size=10)
+        result = paginator.prefetch_window_slice(page=0, ordering=["id"])
+        self.assertIsNone(result, "page=0 yields negative offset; must return None")
+
     def test_page_unbounded_returns_none(self):
         """Unbounded (page_size=None) returns None (task 2.10)."""
         paginator = PageGraphqlPagination(page_size=None)

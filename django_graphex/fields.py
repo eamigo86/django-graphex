@@ -6,16 +6,21 @@ import operator
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable
 
-from django.db.models import JSONField, Prefetch
+from django.db.models import Count, F, JSONField, Prefetch
+from django.db.models.constants import LOOKUP_SEP
+from django.db.models.expressions import Window
+from django.db.models.functions import RowNumber
 from graphene import ID, Argument, Field, List
 from graphene.types.structures import NonNull, Structure
 
+import django_graphex.settings as _settings_module
 from django_graphex.filtering.backend import resolve_filter_backend
 from django_graphex.settings import graphql_api_settings
 
 from .base_types import DjangoListObjectBase
 from .paginations.pagination import BaseDjangoGraphqlPagination
 from .utils import (
+    _compute_child_only,
     find_field,
     get_extra_filters,
     get_related_fields,
@@ -23,6 +28,14 @@ from .utils import (
     maybe_queryset,
     queryset_factory,
 )
+
+# ---------------------------------------------------------------------------
+# G3 spike result: does .only() survive Window + filter(_gqx_rn) wrapping?
+# Verified True on Django >= 4.2 / SQLite: the inner SELECT uses narrowed cols;
+# the outer SELECT * selects from the already-narrowed subquery.
+# If this is False, build_window_prefetch omits .only() (column over-fetch, but correct).
+# ---------------------------------------------------------------------------
+SELF_NARROW_VERIFIED: bool = True
 
 if TYPE_CHECKING:
     from django.db.models import Manager, Model
@@ -582,6 +595,113 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         model = self.type._meta.model
         qs = model._default_manager.all()
         qs = self.filter_backend.apply(qs, filter_value)
+        return Prefetch(lookup, queryset=qs)
+
+    def build_window_prefetch(
+        self,
+        lookup: str,
+        filter_value: Any,
+        slice_tuple: tuple[int, int, list[str]] | None,
+        related_field: Any,
+        sub_selection: Any,
+        fragments: dict[str, Any],
+    ) -> Prefetch | None:
+        """Build a window-function Prefetch that DB-side slices the nested list.
+
+        Returns a ``Prefetch`` with a queryset annotated with ``_gqx_rn``
+        (ROW_NUMBER) and ``_gqx_total`` (COUNT(*)) window functions, filtered to
+        the page window, so only the requested page rows are fetched per parent.
+
+        Returns ``None`` when any applicability pre-check fails, signalling the
+        caller to fall back to ``build_prefetch``.
+
+        This is a DORMANT gate in C2: the method is implemented but the live
+        walker still calls ``build_prefetch``; the switch-over is C3.
+
+        Args:
+            lookup: the ORM prefetch lookup path (e.g. ``"posts"``).
+            filter_value: the user-supplied filter input, or ``None``.
+            slice_tuple: ``(offset, limit, ordering)`` from
+                ``paginator.prefetch_window_slice()``, or ``None``.
+            related_field: the Django relation field for the reverse FK.
+            sub_selection: the GraphQL ``SelectionSetNode`` for the child
+                selection, or ``None`` (triggers full-load fallback).
+            fragments: fragment definitions from the GraphQL resolve info.
+
+        Returns:
+            A ``Prefetch`` with a window-annotated queryset, or ``None``.
+        """
+        # --- Pre-check 1: OPTIMIZE_NESTED_PAGINATION setting --------------------
+        # Access via module reference so override_settings reload is respected.
+        if not _settings_module.graphql_api_settings.OPTIMIZE_NESTED_PAGINATION:
+            return None
+
+        # --- Pre-check 2: paginator declined (Cursor / unbounded / page<0) ------
+        if slice_tuple is None:
+            return None
+
+        # --- Pre-check 3: M2M relation ------------------------------------------
+        if getattr(related_field, "many_to_many", False):
+            return None
+
+        # --- Pre-check 4: must be one_to_many (reverse FK) with an FK field -----
+        if not getattr(related_field, "one_to_many", False):
+            return None
+        fk_field = getattr(related_field, "field", None)
+        if fk_field is None:
+            return None
+        fk_attname = fk_field.attname  # e.g. "author_id"
+
+        offset, limit, order = slice_tuple
+
+        # --- Pre-check 5: all ordering terms must be concrete attnames ----------
+        child = self.type._meta.model
+        concrete_attnames = {f.attname for f in child._meta.concrete_fields}
+        order_terms: list[str] = list(order) if order else [child._meta.pk.attname]
+        for term in order_terms:
+            col = term.lstrip("-+").split(LOOKUP_SEP)[0]
+            if col not in concrete_attnames:
+                return None
+
+        # --- Pre-check 6: full-load detection ----------------------------------
+        # When sub_selection is None we can't know which columns are needed,
+        # but we also can't call _compute_child_only (requires a selection set).
+        # Fall back to no-narrow (plan=None means skip .only()).
+        plan = None
+        if sub_selection is not None:
+            plan = _compute_child_only(child, related_field, sub_selection, fragments)
+            if plan is None:
+                # _collect_only_fields_is_full_load returned True → fall back
+                return None
+
+        # --- Build the window queryset -----------------------------------------
+        qs = child._default_manager.all()
+        qs = self.filter_backend.apply(qs, filter_value)
+
+        # --- Pre-check 7: G5 — filter forces .distinct() (to-many traversal) ---
+        if getattr(getattr(qs, "query", None), "distinct", False):
+            return None
+
+        # Build order expressions for the window ORDER BY.
+        order_exprs = [
+            F(t.lstrip("-+")).desc() if t.startswith("-") else F(t.lstrip("-+")).asc()
+            for t in order_terms
+        ]
+
+        qs = qs.annotate(
+            _gqx_rn=Window(
+                RowNumber(), partition_by=[F(fk_attname)], order_by=order_exprs
+            ),
+            _gqx_total=Window(Count("*"), partition_by=[F(fk_attname)]),
+        )
+        qs = qs.filter(_gqx_rn__gt=offset, _gqx_rn__lte=offset + limit)
+
+        # Apply column narrowing only when the spike confirmed .only() survives.
+        if SELF_NARROW_VERIFIED and plan is not None and plan.only_cols:
+            if plan.child_select:
+                qs = qs.select_related(*plan.child_select)
+            qs = qs.only(*plan.only_cols)
+
         return Prefetch(lookup, queryset=qs)
 
     def list_resolver(

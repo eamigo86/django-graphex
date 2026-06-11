@@ -1153,6 +1153,112 @@ def _nested_list_field_instance(field_def: Any) -> Any | None:
     return None
 
 
+def _resolve_results_paginator(
+    results_field_def: Any,
+) -> Any | None:
+    """Defensively resolve the paginator instance from a ``results`` field definition.
+
+    Implements the G2 fail-loud guard (ADR-3 step 4): every attribute lookup is
+    guarded so that a custom resolver (whose bound object is NOT a
+    ``GenericPaginationField``) returns ``None`` instead of raising
+    ``AttributeError``.  A bare attribute access would crash the whole query
+    with a 500 when ``OPTIMIZER_SAFE_MODE`` is ``False`` (the default).
+
+    Args:
+        results_field_def: The GraphQL field definition for the ``results``
+            sub-field of a ``DjangoNestedListObjectField``.
+
+    Returns:
+        The ``BaseDjangoGraphqlPagination`` instance, or ``None`` if the
+        resolver is custom / not the default ``GenericPaginationField`` shape.
+    """
+    from .paginations.pagination import BaseDjangoGraphqlPagination
+
+    resolve_fn = getattr(results_field_def, "resolve", None)
+    func = getattr(resolve_fn, "func", None)  # functools.partial → bound method
+    bound = getattr(func, "__self__", None)  # the GenericPaginationField, or None
+    paginator = getattr(bound, "paginator_instance", None)
+    if not isinstance(paginator, BaseDjangoGraphqlPagination):
+        return None
+    return paginator
+
+
+def _walk_window_params(
+    inst: Any,
+    field: Any,
+    sub_gql: GraphQLObjectType | None,
+    info: GraphQLResolveInfo,
+) -> tuple[Any, Any, Any, Any] | None:
+    """Extract window-slice parameters from a ``DjangoNestedListObjectField`` AST node.
+
+    Descends one level into the selection set to find the ``results`` sub-field,
+    extracts pagination kwargs via ``get_argument_values``, resolves the paginator
+    via the G2 fail-loud guard, and calls ``prefetch_window_slice``.
+
+    In C2 this function is implemented and unit-tested but is NOT called from
+    the live ``_walk_filtered_prefetches`` path (that switch-over is C3).
+
+    Args:
+        inst: The ``DjangoNestedListObjectField`` instance.
+        field: The ``FieldNode`` for the nested list field in the AST.
+        sub_gql: The ``GraphQLObjectType`` for the nested list type, or ``None``.
+        info: The GraphQL resolve info.
+
+    Returns:
+        ``(slice_tuple, related_field, results_field_node, paginator)`` when
+        the window path is viable, or ``None`` to signal a fallback to
+        ``build_prefetch``.
+    """
+    if sub_gql is None or field.selection_set is None:
+        return None
+
+    # Locate the ``results`` sub-field name on the nested list type.
+    results_name = getattr(
+        getattr(inst.type, "_meta", None), "results_field_name", None
+    )
+    if results_name is None:
+        return None
+
+    # Descend into the selection set to find the results FieldNode.
+    results_field_node = None
+    for sel in field.selection_set.selections:
+        node_name = getattr(getattr(sel, "name", None), "value", None)
+        if node_name is not None and (
+            node_name == results_name or to_snake_case(node_name) == results_name
+        ):
+            results_field_node = sel
+            break
+
+    if results_field_node is None:
+        # Client did not select the results sub-field → fall back.
+        return None
+
+    # Get the GraphQL field definition for the results sub-field.
+    results_field_def = sub_gql.fields.get(results_name) or sub_gql.fields.get(
+        results_field_node.name.value
+    )
+    if results_field_def is None:
+        return None
+
+    # G2 fail-loud guard: resolve paginator defensively.
+    paginator = _resolve_results_paginator(results_field_def)
+    if paginator is None:
+        return None
+
+    # Extract pagination kwargs from the results sub-field's arguments.
+    page_args = get_argument_values(
+        results_field_def, results_field_node, info.variable_values or {}
+    )
+    slice_tuple = paginator.prefetch_window_slice(**page_args)
+
+    # Resolve the relation field on the parent model.
+    # inst.accessor is the name used for the reverse FK.
+    # We need the ManyToOneRel (or other relation) from the parent model.
+    # The parent model is not available here; the caller provides it via
+    # related_field when calling build_window_prefetch.
+    return (slice_tuple, results_field_node, page_args, paginator)
+
+
 def _walk_filtered_prefetches(
     gql_type: GraphQLObjectType | None,
     model: type[Model] | None,
