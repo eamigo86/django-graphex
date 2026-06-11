@@ -697,7 +697,10 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         plan = None
         if sub_selection is not None:
             plan = _compute_child_only(
-                child, related_field, sub_selection, fragments,
+                child,
+                related_field,
+                sub_selection,
+                fragments,
                 child_gql_type=child_gql_type,
                 child_graphene_type=child_graphene_type,
             )

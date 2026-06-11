@@ -1565,9 +1565,14 @@ def _walk_filtered_prefetches(
                 inner_gql = None
                 inner_graphene = None
                 if sub_gql is not None:
-                    results_name = getattr(
-                        getattr(inst.type, "_meta", None), "results_field_name", None
-                    ) or "results"
+                    results_name = (
+                        getattr(
+                            getattr(inst.type, "_meta", None),
+                            "results_field_name",
+                            None,
+                        )
+                        or "results"
+                    )
                     _res_field_def = sub_gql.fields.get(results_name)
                     if _res_field_def is not None:
                         _inner_candidate = get_named_type(_res_field_def.type)
