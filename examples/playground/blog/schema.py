@@ -9,9 +9,11 @@
 
 import graphene
 from django.contrib.auth import get_user_model
+from django.db.models import Count
 from django.utils import timezone
 
 from django_graphex import (
+    AnnotatedField,
     BasePermission,
     CursorGraphqlPagination,
     DjangoFilterListField,
@@ -24,14 +26,26 @@ from django_graphex import (
     DjangoModelType,
     DjangoObjectField,
     DjangoObjectType,
+    DjangoUnionType,
     IsAuthenticatedOrReadOnly,
     LimitOffsetGraphqlPagination,
     PageGraphqlPagination,
     all_directives,
 )
+from django_graphex.fields import DjangoNestedListObjectField
 from django_graphex.subscriptions import Subscription
 
-from .models import Author, Category, Comment, Note, Post, Tag
+from .models import (
+    Account,
+    Attachment,
+    Author,
+    Category,
+    Comment,
+    Invoice,
+    Note,
+    Post,
+    Tag,
+)
 
 User = get_user_model()
 
@@ -84,12 +98,6 @@ class PostType(DjangoObjectType):
         complexity = 2
 
 
-class AuthorType(DjangoObjectType):
-    class Meta:
-        model = Author
-        filter_fields = {"id": ("exact",), "name": ("icontains",)}
-
-
 # --------------------------------------------------------------------------- #
 # List types (results + totalCount). Also used for nested lists.              #
 # Each uses a different paginator so you can try all three.                   #
@@ -98,6 +106,57 @@ class PostListType(DjangoListObjectType):
     class Meta:
         model = Post
         pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="-id")
+
+
+# AuthorType is declared AFTER PostListType because it references it directly as
+# the type of its explicit nested `posts` field (DjangoNestedListObjectField).
+class AuthorType(DjangoObjectType):
+    # ---- Query-optimization showcase (v1.1.0) ---------------------------- #
+    # AnnotatedField: a selection-driven DB annotation. The optimizer adds
+    # `.annotate(_gqx_ann_post_count=Count('posts'))` ONLY when `postCount` is in
+    # the selection; when it is not selected, no extra SQL is emitted. The default
+    # resolver reads the value straight off the row (no resolve_post_count needed).
+    post_count = AnnotatedField(graphene.Int, Count("posts"))
+
+    # Explicit nested list (instead of the auto-generated one) so we can attach a
+    # per-field optimize hook below. Reuses PostListType's pagination + filtering.
+    posts = DjangoNestedListObjectField(PostListType, accessor="posts")
+
+    class Meta:
+        model = Author
+        filter_fields = {"id": ("exact",), "name": ("icontains",)}
+
+    @staticmethod
+    def optimize_posts(queryset, info, **kwargs):
+        """Per-field optimize hook for the `posts` nested list.
+
+        Composes on top of the optimizer-built child queryset for the `posts`
+        prefetch, and is called ONCE per query (not once per author). The name is
+        `optimize_` + the snake_case GraphQL field name, declared on the PARENT
+        type (AuthorType). It MUST return a QuerySet (a non-QuerySet return logs a
+        WARNING and is ignored). kwargs carries `filter_value` (the field's filter
+        input or None) and `is_window` (True only on the DB-side windowed path).
+
+        Here the hook forces a stable secondary ordering on every author's posts —
+        a composition that layers cleanly on top of whatever `.only()` narrowing
+        and window slicing the optimizer already built.
+
+            return queryset.order_by("-id", "title")
+
+        ------------------------------------------------------------------ #
+        Why not `select_related("category")` here?                          #
+        ------------------------------------------------------------------ #
+        It is the textbook hook example, and it works fine *when the client
+        also selects* `category { name }`. But the optimizer applies its
+        `.only()` column narrowing to this child queryset AFTER the hook runs.
+        When `category` is NOT in the selection, `category_id` is deferred —
+        and `select_related("category")` on a deferred relation raises a Django
+        ``FieldError``. The hook cannot see that future `.only()` plan, so a bare
+        `select_related` would make `posts { results { title } }` (no category)
+        blow up. We use an ordering composition instead so EVERY query stays
+        runnable; the README spells out the `select_related` variant and its rule.
+        """
+        return queryset.order_by("-id", "title")
 
 
 class AuthorListType(DjangoListObjectType):
@@ -111,6 +170,53 @@ class CommentListType(DjangoListObjectType):
         model = Comment
         # Cursor pagination exposes a non-opaque pageInfo.
         pagination = CursorGraphqlPagination(ordering="-created")
+
+
+# --------------------------------------------------------------------------- #
+# Typed GenericForeignKey union (v1.2.0).                                      #
+#                                                                              #
+# Declaration order is LOAD-BEARING: members -> union -> owner LAST.           #
+#   1. AccountType / InvoiceType  — the two DjangoObjectType members.          #
+#   2. AttachmentTargetUnion      — a DjangoUnionType over those members.      #
+#   3. AttachmentType             — the owner; its Meta.gfk_unions maps the     #
+#      `target` GFK to the union. If the owner were declared before the union   #
+#      the converter would WARN and fall back to the flat GenericForeignKeyType. #
+#                                                                              #
+# Members are explicit (Meta.gfk_types); resolve_type is provided by           #
+# DjangoUnionType (it maps a resolved Account/Invoice row to its registered     #
+# type via the registry). Clients select per-member fields with inline         #
+# fragments: `target { ... on AccountType { balance } ... on InvoiceType { … }}`.#
+# --------------------------------------------------------------------------- #
+class AccountType(DjangoObjectType):
+    class Meta:
+        model = Account
+
+
+class InvoiceType(DjangoObjectType):
+    class Meta:
+        model = Invoice
+
+
+class AttachmentTargetUnion(DjangoUnionType):
+    class Meta:
+        gfk_types = (AccountType, InvoiceType)
+
+
+class AttachmentType(DjangoObjectType):
+    class Meta:
+        model = Attachment
+        # Map the `target` GenericForeignKey to the typed union. On Django 5.0+
+        # with OPTIMIZE_ONLY_FIELDS the optimizer routes `target` through a
+        # GenericPrefetch with one .only()-narrowed queryset per content type
+        # (Account fetches `balance`, Invoice fetches `amount`) — batched across
+        # all attachments, no N+1.
+        gfk_unions = {"target": AttachmentTargetUnion}
+
+
+class AttachmentListType(DjangoListObjectType):
+    class Meta:
+        model = Attachment
+        pagination = LimitOffsetGraphqlPagination(default_limit=10)
 
 
 # --------------------------------------------------------------------------- #
@@ -231,6 +337,12 @@ class PublicQuery(graphene.ObjectType):
     )
     comments = DjangoListObjectField(
         CommentListType, description="Comments (cursor pagination + pageInfo)."
+    )
+    # Typed GFK union demo: each Attachment's `target` resolves to AccountType or
+    # InvoiceType, selectable per-member via inline fragments.
+    attachments = DjangoListObjectField(
+        AttachmentListType,
+        description="Attachments; each `target` is a typed GenericForeignKey union.",
     )
 
     # A plain filtered list (no pagination wrapper).

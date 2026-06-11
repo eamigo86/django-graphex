@@ -2,9 +2,17 @@
 
 Relations let us demo nested lists / N+1 (Author -> posts, Post -> comments),
 and Post.status is a TextChoices field (a GraphQL enum is generated from it).
+
+The ``Account`` / ``Invoice`` / ``Attachment`` trio at the bottom backs the
+v1.2.0 typed-``GenericForeignKey`` demo: ``Attachment.target`` is a GFK that the
+schema exposes as a ``DjangoUnionType`` (see ``blog/schema.py``). ``django.
+contrib.contenttypes`` is already in ``INSTALLED_APPS`` so no settings change is
+needed — only a migration (``make migrate`` / ``make reset``).
 """
 
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
 
@@ -64,6 +72,9 @@ class Post(models.Model):
     )
     tags = models.ManyToManyField(Tag, blank=True, related_name="posts")
     created = models.DateTimeField(auto_now_add=True)
+    # Reverse side of the GenericForeignKey on Attachment. Lets a Post expose its
+    # attachments and demonstrates the GenericRelation prefetch + .only() narrowing.
+    attachments = GenericRelation("Attachment")
 
     def __str__(self):
         return self.title
@@ -98,3 +109,42 @@ class Note(models.Model):
 
     def __str__(self):
         return self.title
+
+
+# --------------------------------------------------------------------------- #
+# Typed GenericForeignKey demo (v1.2.0).                                       #
+# Account and Invoice are the two GFK member models; Attachment.target points  #
+# at either of them. schema.py exposes `target` as a DjangoUnionType so clients #
+# select per-member fields via inline fragments.                               #
+# --------------------------------------------------------------------------- #
+class Account(models.Model):
+    label = models.CharField(max_length=100)
+    balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    def __str__(self):
+        return self.label
+
+
+class Invoice(models.Model):
+    number = models.CharField(max_length=50)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    def __str__(self):
+        return self.number
+
+
+class Attachment(models.Model):
+    """A caption attached to either an Account or an Invoice via a GFK.
+
+    ``target`` is a GenericForeignKey: the optimizer routes it through a
+    per-content-type GenericPrefetch (one .only()-narrowed queryset per content
+    type) on Django 5.0+, batched across all parents (no N+1).
+    """
+
+    caption = models.CharField(max_length=200)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    target = GenericForeignKey("content_type", "object_id")
+
+    def __str__(self):
+        return self.caption
