@@ -757,6 +757,9 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # build_window_prefetch stores results via to_attr="_gqx_win_<accessor>"
         # so we can distinguish an offset-beyond-end empty result (window active,
         # no rows in this page) from a zero-child parent (never had children).
+        # Read filter_value early so the empty-cache branch can apply it.
+        filter_value = kwargs.get("filter")
+
         win_attr = _GQX_WIN_ATTR_PREFIX + self.accessor
         win_results = getattr(root, win_attr, None)
         if win_results is not None:
@@ -766,10 +769,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                 count = win_results[0]._gqx_total
             else:
                 # Empty page: ambiguous (zero-child or offset-beyond-end).
-                # Use a slice-independent count that ignores the page window.
-                # This fires only for empty-cache parents (controlled fallback).
-                manager_attr = getattr(root, self.accessor)
-                count = manager_attr.count()
+                # Use a slice-independent count that ignores the page window but
+                # MUST apply the same user filter that build_window_prefetch used.
+                # Without the filter, the count would reflect the unfiltered partition
+                # size (all children) rather than the filtered K that the user
+                # requested — a correctness regression for filtered nested lists.
+                manager_qs = getattr(root, self.accessor).all()
+                filtered_qs = filter_backend.apply(manager_qs, filter_value)
+                count = filtered_qs.count()
             return DjangoListObjectBase(
                 count=count,
                 results=win_results,
@@ -789,7 +796,6 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             )
 
         related_manager = getattr(root, self.accessor)
-        filter_value = kwargs.get("filter")
 
         if filter_value:
             qs = filter_backend.apply(related_manager.all(), filter_value)
