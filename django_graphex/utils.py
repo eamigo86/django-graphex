@@ -410,6 +410,137 @@ def _get_custom_resolver(info: GraphQLResolveInfo) -> Any | None:
     return None
 
 
+def _get_field_optimize_hook(gql_type: Any, graphql_field_name: str) -> Any | None:
+    """Resolve the optimize_<snake_field> hook on the PARENT graphene type, or None.
+
+    The hook is looked up on ``gql_type.graphene_type`` — the level-local parent
+    type resolved inside ``_walk_filtered_prefetches``.  Do NOT use
+    ``info.parent_type``; the walker is multi-level and ``gql_type`` tracks the
+    correct parent type at each level.
+
+    Args:
+        gql_type: The GraphQL object type at the current walker position.
+        graphql_field_name: The raw GraphQL field name (camelCase or snake_case)
+            used to derive ``optimize_<snake_field>``.
+
+    Returns:
+        The callable (staticmethod / classmethod / function) or ``None`` when not
+        declared.
+    """
+    if gql_type is None:
+        return None
+    parent = getattr(gql_type, "graphene_type", None)
+    if parent is None:
+        return None
+    hook_name = f"optimize_{to_snake_case(graphql_field_name)}"
+    return getattr(parent, hook_name, None)
+
+
+def _apply_field_hook(
+    qs: QuerySet,
+    hook: Any | None,
+    info: Any,
+    *,
+    filter_value: Any,
+    is_window: bool,
+) -> QuerySet:
+    """Apply an optimize_<field> hook as a post-processor on a child QuerySet.
+
+    ``qs`` MUST already be a QuerySet (callers wrap bare strings first).
+    Returns a QuerySet — either the hook's result or the original ``qs`` on
+    guard failures.
+
+    Behaviour:
+    - If ``hook`` is ``None``: no-op, returns ``qs`` unchanged.
+    - If hook returns a ``QuerySet``: returns it.
+    - If hook returns a non-``QuerySet``: emits WARNING, returns original ``qs`` (AC10).
+    - If hook raises: the exception ALWAYS propagates from this helper (AC9).
+      SAFE_MODE is NOT handled here — it is a COARSE boundary owned by
+      ``queryset_factory`` (see ``OPTIMIZER_SAFE_MODE`` try/except there).  When
+      ``OPTIMIZER_SAFE_MODE=True`` the propagated exception is caught by that
+      boundary, degrading the WHOLE resolve to the un-optimized base queryset.
+      When ``OPTIMIZER_SAFE_MODE=False`` (default) the exception propagates to
+      the caller.  Catching here would produce per-field SAFE_MODE isolation,
+      which the Phase E spec explicitly forbids as a deliverable.
+
+    Args:
+        qs: The optimizer-built child queryset.
+        hook: The resolved callable or ``None``.
+        info: The GraphQL resolve info (forwarded to the hook).
+        filter_value: The filter input for this field, or ``None``.
+        is_window: ``True`` only on the window path; ``False`` on all plain paths.
+
+    Returns:
+        The (possibly hook-modified) queryset.
+    """
+    if hook is None:
+        return qs
+    _logger = logging.getLogger("django_graphex.utils")
+    # NOTE: a raising hook is NOT caught here. The exception propagates to the
+    # queryset_factory OPTIMIZER_SAFE_MODE boundary, which degrades the whole
+    # resolve coarsely (AC9). A non-QuerySet RETURN is a separate guard (AC10)
+    # that always degrades to the unmodified qs regardless of SAFE_MODE.
+    result = hook(qs, info, filter_value=filter_value, is_window=is_window)
+    if not isinstance(result, QuerySet):
+        _logger.warning(
+            "optimize hook returned a non-QuerySet value (%r); "
+            "ignoring hook result and using unmodified queryset.",
+            type(result).__name__,
+        )
+        return qs
+    return result
+
+
+def _apply_plain_hook(
+    model: Any,
+    item: Any,
+    hook_map: dict,
+    info: Any,
+) -> Any:
+    """Apply an unfiltered-plain hook from *hook_map* to *item* (str or Prefetch).
+
+    Used for SITE-A (top-level unfiltered prefetches) and SITE-B (re-rooted
+    children in ``_merge_filtered_prefetches``).
+
+    If the item has no entry in *hook_map* the item is returned unchanged.
+    If the item is a bare string, it is wrapped into a ``Prefetch`` with the
+    model's default manager queryset before the hook is applied (ADR-E4).
+
+    Args:
+        model: The Django model class (used for ``_default_manager.all()`` when
+            wrapping a bare-string item).
+        item: A bare ORM lookup string or an existing ``Prefetch`` object.
+        hook_map: A ``{orm_lookup -> (graphene_type, hook_callable)}`` map.
+        info: The GraphQL resolve info forwarded to the hook.
+
+    Returns:
+        The (possibly hook-modified) item — always a ``Prefetch`` when a hook
+        fires, otherwise the original item unchanged.
+    """
+    lookup = item if isinstance(item, str) else item.prefetch_through
+    entry = hook_map.get(lookup)
+    if entry is None:
+        return item
+    _graphene_type, hook = entry
+    # Wrap bare string into a Prefetch so the hook always receives a QuerySet.
+    if isinstance(item, str):
+        # Resolve the child model via the lookup path.
+        try:
+            child_model = model
+            for part in lookup.split(LOOKUP_SEP):
+                rel = child_model._meta.get_field(part)
+                child_model = rel.related_model or rel.remote_field.model
+        except Exception:
+            child_model = model
+        pf = Prefetch(lookup, queryset=child_model._default_manager.all())
+    else:
+        pf = item
+    hooked_qs = _apply_field_hook(
+        pf.queryset, hook, info, filter_value=None, is_window=False
+    )
+    return Prefetch(pf.prefetch_through, queryset=hooked_qs)
+
+
 def get_Object_or_None(klass: Any, *args: Any, **kwargs: Any) -> Model | None:
     """Use get() to return an object, or None if it does not exist.
 
@@ -1500,6 +1631,7 @@ def _walk_filtered_prefetches(
     info: GraphQLResolveInfo,
     out: list[Any],
     seen: dict[str, int],
+    hook_map: dict | None = None,
 ) -> None:
     """Collect filtered Prefetch objects for nested list fields with filters.
 
@@ -1512,6 +1644,8 @@ def _walk_filtered_prefetches(
         out: The accumulating list of Prefetch objects, mutated in place.
         seen: A counter of how often each lookup was produced, mutated in
             place.
+        hook_map: A ``{orm_lookup -> (graphene_type, hook_callable)}`` map for
+            unfiltered nested lists, mutated in place (Phase E AC2b).
     """
     relation_map = _relation_field_map(model) if model is not None else {}
 
@@ -1520,12 +1654,14 @@ def _walk_filtered_prefetches(
             fragment = info.fragments.get(field.name.value) if info.fragments else None
             if fragment is not None:  # pragma: no branch
                 _walk_filtered_prefetches(
-                    gql_type, model, fragment.selection_set, prefix, info, out, seen
+                    gql_type, model, fragment.selection_set, prefix, info, out, seen,
+                    hook_map=hook_map,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
             _walk_filtered_prefetches(
-                gql_type, model, field.selection_set, prefix, info, out, seen
+                gql_type, model, field.selection_set, prefix, info, out, seen,
+                hook_map=hook_map,
             )
             continue
 
@@ -1541,6 +1677,9 @@ def _walk_filtered_prefetches(
             lookup = prefix + inst.accessor
             args = get_argument_values(field_def, field, info.variable_values or {})
             filter_value = args.get("filter")
+
+            # Phase E: resolve hook for this field from the level-local parent type.
+            hook = _get_field_optimize_hook(gql_type, name)
 
             # C3: attempt window-slice path (fires for both filtered and unfiltered
             # nested lists when the paginator and relation support it).
@@ -1580,6 +1719,8 @@ def _walk_filtered_prefetches(
                             inner_gql = _inner_candidate
                             inner_graphene = getattr(inner_gql, "graphene_type", None)
 
+                # Phase E (AC1): pass hook + info into build_window_prefetch so the
+                # hook is applied on the filter-applied base qs before pre-check 7.
                 pf = inst.build_window_prefetch(
                     lookup,
                     filter_value,
@@ -1589,6 +1730,8 @@ def _walk_filtered_prefetches(
                     info.fragments or {},
                     child_gql_type=inner_gql,
                     child_graphene_type=inner_graphene,
+                    hook=hook,
+                    info=info,
                 )
                 if pf is not None:
                     # Tag the parent model+lookup so list_resolver can distinguish
@@ -1604,14 +1747,32 @@ def _walk_filtered_prefetches(
                             info,
                             out,
                             seen,
+                            hook_map=hook_map,
                         )
                     continue
                 # Window path declined (pre-checks failed) → fall through to plain path.
+                # The hook will be re-applied below on whichever plain path is taken.
+                # is_window=False on the plain fallback (FINAL path taken).
 
             # Plain path: build a filtered Prefetch only when a filter is applied.
             if filter_value:
-                out.append(inst.build_prefetch(lookup, filter_value, info))
+                pf = inst.build_prefetch(lookup, filter_value, info)
+                # Phase E (AC2): apply hook on filtered-plain Prefetch queryset.
+                if hook is not None:
+                    pf = Prefetch(
+                        lookup,
+                        queryset=_apply_field_hook(
+                            pf.queryset, hook, info,
+                            filter_value=filter_value, is_window=False,
+                        ),
+                    )
+                out.append(pf)
                 seen[lookup] = seen.get(lookup, 0) + 1
+            else:
+                # Phase E (AC2b): unfiltered path — record lookup in hook_map.
+                if hook is not None and hook_map is not None:
+                    hook_map[lookup] = (gql_type, hook)
+
             if field.selection_set and sub_gql is not None:  # pragma: no branch
                 _walk_filtered_prefetches(
                     sub_gql,
@@ -1621,6 +1782,7 @@ def _walk_filtered_prefetches(
                     info,
                     out,
                     seen,
+                    hook_map=hook_map,
                 )
             continue
 
@@ -1638,13 +1800,15 @@ def _walk_filtered_prefetches(
                     info,
                     out,
                     seen,
+                    hook_map=hook_map,
                 )
             continue
 
         if field.selection_set and sub_gql is not None:
             # Wrapper field (results / pageInfo): same model and prefix.
             _walk_filtered_prefetches(
-                sub_gql, model, field.selection_set, prefix, info, out, seen
+                sub_gql, model, field.selection_set, prefix, info, out, seen,
+                hook_map=hook_map,
             )
 
 
@@ -1809,7 +1973,9 @@ def _collect_annotated_fields(info: Any) -> tuple[dict, dict, set]:
     return annotations, aliases, names
 
 
-def build_filtered_prefetches(info: GraphQLResolveInfo) -> list[Any]:
+def build_filtered_prefetches(
+    info: GraphQLResolveInfo,
+) -> tuple[list[Any], dict]:
     """Build filtered Prefetch objects for the nested list fields in the query.
 
     A nested list field carrying filter arguments is fetched in a single
@@ -1817,36 +1983,48 @@ def build_filtered_prefetches(info: GraphQLResolveInfo) -> list[Any]:
     walks the GraphQL return type and the selection AST together to map each
     filtered nested list to its dotted ORM lookup.
 
+    Also collects a ``hook_map`` of ``{orm_lookup -> (graphene_type, hook)}``
+    for unfiltered nested lists that declare an ``optimize_<field>`` hook
+    (Phase E AC2b).
+
     Args:
         info: The GraphQL resolve info for the current field.
 
     Returns:
-        The list of filtered Prefetch objects, one per uniquely filtered
-        nested list lookup.
+        A 2-tuple of:
+        - The list of filtered Prefetch objects, one per uniquely filtered
+          nested list lookup.
+        - The ``hook_map`` for unfiltered nested lists with optimize hooks.
     """
     return_type = get_named_type(info.return_type)
     field_nodes = info.field_nodes
     if not field_nodes or not isinstance(return_type, GraphQLObjectType):
-        return []
+        return [], {}
     field_node = field_nodes[0]
     if not field_node.selection_set:
-        return []
+        return [], {}
 
     graphene_type = getattr(return_type, "graphene_type", None)
     model = getattr(getattr(graphene_type, "_meta", None), "model", None)
 
-    out = []
-    seen = {}
+    out: list[Any] = []
+    seen: dict[str, int] = {}
+    hook_map: dict = {}
     _walk_filtered_prefetches(
-        return_type, model, field_node.selection_set, "", info, out, seen
+        return_type, model, field_node.selection_set, "", info, out, seen,
+        hook_map=hook_map,
     )
     # Drop lookups that appeared more than once (aliased fields with different
     # filters): fall back to the per-parent path for those, for correctness.
-    return [p for p in out if seen.get(p.prefetch_through, 0) == 1]
+    filtered = [p for p in out if seen.get(p.prefetch_through, 0) == 1]
+    return filtered, hook_map
 
 
 def _merge_filtered_prefetches(
-    prefetch_related: list[str], filtered_prefetches: list[Any]
+    prefetch_related: list[str],
+    filtered_prefetches: list[Any],
+    hook_map: dict | None = None,
+    info: Any = None,
 ) -> tuple[list[str], list[Any]]:
     """Re-root prefetches under a filtered Prefetch into its own queryset.
 
@@ -1856,9 +2034,17 @@ def _merge_filtered_prefetches(
     Prefetch) that lives under a filtered lookup into that filtered Prefetch's
     queryset, which also optimizes the deeper level.
 
+    Phase E SITE B: when ``hook_map`` is provided, unfiltered plain children
+    that are re-rooted here have their ``optimize_<field>`` hook applied
+    (ADR-E6).  Their stripped path is used as the Prefetch lookup while the
+    absolute path is used to index ``hook_map``.
+
     Args:
         prefetch_related: The accumulated plain prefetch lookup strings.
         filtered_prefetches: The filtered Prefetch objects for nested lists.
+        hook_map: A ``{orm_lookup -> (graphene_type, hook_callable)}`` map
+            from ``build_filtered_prefetches`` (Phase E AC2b SITE B).
+        info: The GraphQL resolve info, forwarded to the hook (Phase E).
 
     Returns:
         The top-level (plain prefetch strings, filtered Prefetch objects) to
@@ -1883,6 +2069,9 @@ def _merge_filtered_prefetches(
 
     plain_children: dict[str, list[str]] = {}
     top_plain: list[str] = []
+    # Track the absolute lookup for each (ancestor, stripped_path) pair so
+    # SITE B can reconstruct the hook_map key.
+    plain_children_abs: dict[str, list[str]] = {}
     for path in prefetch_related:
         if path in by_through:
             continue  # the filtered Prefetch supersedes the plain lookup
@@ -1890,7 +2079,9 @@ def _merge_filtered_prefetches(
         if ancestor is None:
             top_plain.append(path)
         else:
-            plain_children.setdefault(ancestor, []).append(strip(path, ancestor))
+            stripped = strip(path, ancestor)
+            plain_children.setdefault(ancestor, []).append(stripped)
+            plain_children_abs.setdefault(ancestor, []).append(path)
 
     filtered_children: dict[str, list[Any]] = {}
     top_filtered: list[Any] = []
@@ -1907,7 +2098,44 @@ def _merge_filtered_prefetches(
         key=lambda p: p.prefetch_through.count(LOOKUP_SEP),
         reverse=True,
     ):
-        children: list[Any] = list(plain_children.get(pf.prefetch_through, []))
+        stripped_children = list(plain_children.get(pf.prefetch_through, []))
+        abs_children = list(plain_children_abs.get(pf.prefetch_through, []))
+
+        # The model for the filtered ancestor's queryset (= child model for
+        # re-rooted children).
+        ancestor_model = (
+            pf.queryset.model if hasattr(pf.queryset, "model") else None
+        )
+
+        children: list[Any] = []
+        for stripped_child, abs_lookup in zip(stripped_children, abs_children):
+            # Phase E SITE B: apply hook for re-rooted unfiltered plain children.
+            # abs_lookup is the ABSOLUTE path (hook_map key).
+            # stripped_child is the path RELATIVE to the ancestor (Prefetch lookup).
+            # The child model is resolved from the ANCESTOR queryset model.
+            if hook_map and abs_lookup in hook_map:
+                _graphene_type, hook = hook_map[abs_lookup]
+                # Resolve the child model from the ancestor model using the
+                # stripped path (relative to the ancestor).
+                child_model = ancestor_model
+                if child_model is not None:
+                    try:
+                        for part in stripped_child.split(LOOKUP_SEP):
+                            rel = child_model._meta.get_field(part)
+                            child_model = rel.related_model or rel.remote_field.model
+                    except Exception:
+                        child_model = ancestor_model
+                if child_model is not None:
+                    child_qs = child_model._default_manager.all()
+                    hooked_qs = _apply_field_hook(
+                        child_qs, hook, info, filter_value=None, is_window=False
+                    )
+                    children.append(Prefetch(stripped_child, queryset=hooked_qs))
+                else:
+                    children.append(stripped_child)
+            else:
+                children.append(stripped_child)
+
         for child in filtered_children.get(pf.prefetch_through, []):
             children.append(
                 Prefetch(
@@ -2137,9 +2365,13 @@ def _apply_optimizations(
     # Prefetch. Anything prefetched *under* a filtered lookup is re-rooted into
     # that Prefetch's own queryset (Django forbids the same lookup with two
     # different querysets), which also optimizes the deeper level.
-    filtered_prefetches = build_filtered_prefetches(info) if fields_asts else []
+    # Phase E: build_filtered_prefetches now returns (filtered_prefetches, hook_map).
+    if fields_asts:
+        filtered_prefetches, hook_map = build_filtered_prefetches(info)
+    else:
+        filtered_prefetches, hook_map = [], {}
     prefetch_related, filtered_prefetches = _merge_filtered_prefetches(
-        prefetch_related, filtered_prefetches
+        prefetch_related, filtered_prefetches, hook_map=hook_map, info=info
     )
 
     # Phase B + Phase-d §6: narrow each top_plain prefetch string to a
@@ -2173,6 +2405,18 @@ def _apply_optimizations(
             prefetch_related = [
                 _narrow_plain_prefetch(model, lk, only_map) for lk in prefetch_related
             ]
+
+    # Phase E AC2b SITE A: apply optimize_<field> hooks to unfiltered top-level
+    # plain prefetches.  This block is INDEPENDENT of the only/annotated gate
+    # (AC11): the hook fires regardless of OPTIMIZE_ONLY_FIELDS /
+    # OPTIMIZE_ANNOTATED_FIELDS / custom_used.  Guarded by ``if hook_map:``
+    # only.  Runs AFTER _narrow_plain_prefetch (Phase B .only() + Phase D
+    # annotations already present) and BEFORE base.prefetch_related().
+    if hook_map:
+        prefetch_related = [
+            _apply_plain_hook(model, item, hook_map, info)
+            for item in prefetch_related
+        ]
 
     if select_related:
         base = base.select_related(*select_related)

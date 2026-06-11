@@ -21,6 +21,7 @@ from django_graphex.settings import graphql_api_settings
 from .base_types import DjangoListObjectBase
 from .paginations.pagination import BaseDjangoGraphqlPagination
 from .utils import (
+    _apply_field_hook,
     _compute_child_only,
     find_field,
     get_extra_filters,
@@ -618,6 +619,8 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         fragments: dict[str, Any],
         child_gql_type: Any = None,
         child_graphene_type: Any = None,
+        hook: Any = None,
+        info: Any = None,
     ) -> Prefetch | None:
         """Build a window-function Prefetch that DB-side slices the nested list.
 
@@ -723,7 +726,13 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         qs = child._default_manager.all()
         qs = self.filter_backend.apply(qs, filter_value)
 
+        # --- Phase E (AC1): apply optimize_<field> hook on filter-applied base qs
+        # BEFORE pre-check 7 so a hook adding .distinct() triggers the clean
+        # window opt-out (AC5). is_window=True because the final path is window.
+        qs = _apply_field_hook(qs, hook, info, filter_value=filter_value, is_window=True)
+
         # --- Pre-check 7: G5 — filter forces .distinct() (to-many traversal) ---
+        # Re-run on hook-modified qs (AC5): a hook adding .distinct() falls back.
         if getattr(getattr(qs, "query", None), "distinct", False):
             return None
 

@@ -1108,7 +1108,7 @@ class FilteredPrefetchWalkTest(TestCase):
 # =========================================================================== #
 class BuildFilteredPrefetchesGuardTest(TestCase):
     def test_no_field_nodes_yields_no_prefetches(self):
-        # No field_nodes / non-object return type -> early return [] (855).
+        # No field_nodes / non-object return type -> early return ([], {}) (855).
         from django_graphex.utils import build_filtered_prefetches
 
         class _Info:
@@ -1117,7 +1117,9 @@ class BuildFilteredPrefetchesGuardTest(TestCase):
             fragments = {}
             variable_values = {}
 
-        self.assertEqual(build_filtered_prefetches(_Info()), [])
+        filtered, hook_map = build_filtered_prefetches(_Info())
+        self.assertEqual(filtered, [])
+        self.assertEqual(hook_map, {})
 
     def test_object_return_type_without_selection_set(self):
         # Object return type but the field node carries no selection set -> the
@@ -1140,7 +1142,9 @@ class BuildFilteredPrefetchesGuardTest(TestCase):
 
         info = _Info()
         info.return_type = return_type
-        self.assertEqual(build_filtered_prefetches(info), [])
+        filtered, hook_map = build_filtered_prefetches(info)
+        self.assertEqual(filtered, [])
+        self.assertEqual(hook_map, {})
 
 
 # =========================================================================== #
