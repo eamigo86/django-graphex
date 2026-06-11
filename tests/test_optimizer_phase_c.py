@@ -1593,7 +1593,12 @@ class TestC3FallbackRegressions(TestCase):
     def test_fallback_m2m_no_window_sql(self):
         """9.7: M2M nested list (tags) → falls back to in-memory path, no ROW_NUMBER().
 
-        Tags are M2M → pre-check 3 blocks the window path.
+        A real Django ManyToManyField has one_to_many=False, so both pre-check 3
+        (many_to_many guard) and pre-check 4 (one_to_many guard) block the window
+        path — defense-in-depth.  This test verifies the combined e2e fallback
+        behaviour; it does NOT isolate pre-check 3 alone.  The canonical isolation
+        test for pre-check 3 is
+        TestBuildWindowPrefetchPreChecks.test_precheck_returns_none_when_m2m.
         """
         import graphene
 
@@ -1954,12 +1959,15 @@ class TestC3ConstantQueryCount(TestCase):
         return result.data
 
     def test_constant_query_count_limitoffset(self):
-        """9.3: N parents with windowed LimitOffset posts → constant query count.
+        """9.3: N parents with windowed LimitOffset posts → constant query count of exactly 3.
 
         The exact count is derived empirically against the baseline:
         - DjangoListObjectField (authors): 1 count + 1 select = 2
         - Window posts prefetch: 1 query
         Total: 3 (constant regardless of N parents).
+
+        Asserting the exact value (not ≤ 4) ensures a regression that adds a
+        query is caught immediately.
         """
         schema = _build_c3_schema(page_size=5)
         query = (
@@ -1974,14 +1982,18 @@ class TestC3ConstantQueryCount(TestCase):
         self.assertTrue(len(window_sql) >= 1, "Must have window SQL")
 
         n_queries = len(ctx.captured_queries)
-        # Constant: does not grow with N parents.
-        # We expect 2 (authors) + 1 (window prefetch) = 3.
-        self.assertLessEqual(
-            n_queries, 4, f"Query count {n_queries} must be constant (≤4)"
+        # Exact constant: 2 (authors count + select) + 1 (window prefetch) = 3.
+        # Any regression adding a query will be caught by this assertion.
+        self.assertEqual(
+            n_queries, 3, f"Query count must be exactly 3, got {n_queries}"
         )
 
     def test_constant_query_count_page(self):
-        """9.4: N parents with windowed Page posts → constant query count."""
+        """9.4: N parents with windowed Page posts → constant query count of exactly 3.
+
+        Same breakdown as LimitOffset: 2 (authors) + 1 (window prefetch) = 3.
+        Asserting the exact value ensures any regression that adds a query is caught.
+        """
         schema = _build_c3_schema(page_size=5, use_page=True)
         query = (
             '{ authors { results { posts { results(page: 1, ordering: "id") '
@@ -1995,6 +2007,504 @@ class TestC3ConstantQueryCount(TestCase):
         self.assertTrue(len(window_sql) >= 1, "Must have window SQL for Page paginator")
 
         n_queries = len(ctx.captured_queries)
-        self.assertLessEqual(
-            n_queries, 4, f"Query count {n_queries} must be constant (≤4)"
+        # Exact constant: 2 (authors count + select) + 1 (window prefetch) = 3.
+        self.assertEqual(
+            n_queries, 3, f"Query count must be exactly 3, got {n_queries}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL regression: filtered offset-beyond-end totalCount correctness
+# ---------------------------------------------------------------------------
+
+
+def _build_c3_filtered_schema(page_size=5):
+    """Build a minimal schema for C3 e2e tests with a FILTERED nested posts field.
+
+    The nested posts field declares filter_fields={"title": ["exact", "icontains"]}
+    so that the filter GraphQL argument is wired up.  This is the schema that
+    exposes the totalCount bug: with Phase C ON, the empty-window-cache branch
+    called manager.count() WITHOUT applying the user filter, returning the
+    unfiltered partition size instead of the filtered one.
+    """
+    import graphene
+
+    from django_graphex.fields import DjangoNestedListObjectField
+    from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+    from django_graphex.types import (
+        DjangoListObjectField,
+        DjangoListObjectType,
+        DjangoObjectType,
+    )
+    from tests.models import Author, Post
+
+    _REG = {}
+    paginator = LimitOffsetGraphqlPagination(default_limit=page_size)
+
+    _PostType = type(
+        "_FC3PostType",
+        (DjangoObjectType,),
+        {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+    )
+    _PostListType = type(
+        "_FC3PostListType",
+        (DjangoListObjectType,),
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "pagination": paginator,
+                    "filter_fields": {"title": ["exact", "icontains"]},
+                    "registry": _REG,
+                },
+            )
+        },
+    )
+    _AuthorType = type(
+        "_FC3AuthorType",
+        (DjangoObjectType,),
+        {
+            "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+            "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+        },
+    )
+    _AuthorListType = type(
+        "_FC3AuthorListType",
+        (DjangoListObjectType,),
+        {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+    )
+
+    schema = graphene.Schema(
+        query=type(
+            "_FC3Query",
+            (graphene.ObjectType,),
+            {"authors": DjangoListObjectField(_AuthorListType)},
+        )
+    )
+    return schema
+
+
+class TestFilteredOffsetBeyondEndTotalCount(TestCase):
+    """CRITICAL regression: filtered nested list paged beyond filtered count.
+
+    Scenario: an author has 10 posts total. A filter matches only 4 of them.
+    A query with offset=100 (beyond any page) must report totalCount=4 (the
+    filtered partition size) with Phase C ON, matching the OPTIMIZE_NESTED_PAGINATION
+    =False baseline.  Before the fix, Phase C ON incorrectly called
+    manager.count() WITHOUT the filter, returning totalCount=10.
+
+    Also tests the zero-filtered-children branch (filter matches 0) to prove
+    BOTH empty-cache branches (zero vs beyond-end) are correct with filters.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        cls.author = Author.objects.create(name="FilteredBeyondEndAuthor")
+        cls.matching_posts = []
+        # 4 posts with title containing "Zebra" (used as the filter keyword).
+        # "Other" does NOT contain "Zebra", ensuring exactly 4 posts match.
+        for i in range(4):
+            p = Post.objects.create(title=f"ZebraPost{i:02d}", author=cls.author)
+            cls.matching_posts.append(p)
+        # 6 posts that do NOT contain "Zebra"
+        for i in range(6):
+            Post.objects.create(title=f"OtherPost{i:02d}", author=cls.author)
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        assert result.errors is None, result.errors
+        return result.data
+
+    def test_filtered_offset_beyond_end_totalcount_matches_baseline(self):
+        """CRITICAL: filtered nested list at offset:100 returns totalCount == filtered K.
+
+        Phase C ON must match Phase C OFF (OPTIMIZE_NESTED_PAGINATION=False baseline).
+        Before the fix: Phase C ON returned totalCount=10 (unfiltered); correct is 4.
+
+        Test data: 4 posts titled "ZebraPost*" (match "Zebra") + 6 "OtherPost*" (no match).
+        """
+        schema = _build_c3_filtered_schema(page_size=5)
+        # The filter selects only 4 posts; offset=100 is far beyond them.
+        query = (
+            "{ authors { results { "
+            'posts(filter: {title: {icontains: "Zebra"}}) { '
+            "results(limit: 5, offset: 100) { id } totalCount "
+            "} } } }"
+        )
+
+        # Phase C ON (default).
+        data_on = self._exec(schema, query)
+        total_on = data_on["authors"]["results"][0]["posts"]["totalCount"]
+
+        # Phase C OFF (baseline).
+        from django.test import override_settings
+
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": False}):
+            data_off = self._exec(schema, query)
+        total_off = data_off["authors"]["results"][0]["posts"]["totalCount"]
+
+        self.assertEqual(
+            total_on,
+            total_off,
+            f"Phase C ON totalCount ({total_on}) must equal baseline ({total_off}) for filtered beyond-end",
+        )
+        # Both must equal the filtered partition size (4), not the unfiltered count (10).
+        self.assertEqual(
+            total_on,
+            4,
+            f"totalCount must be the filtered count (4), not the unfiltered count; got {total_on}",
+        )
+        # Results must be empty (offset beyond filtered count).
+        results_on = data_on["authors"]["results"][0]["posts"]["results"]
+        self.assertEqual(
+            results_on, [], "Beyond-end filtered offset must return empty results"
+        )
+
+    def test_filtered_zero_match_totalcount_zero_matches_baseline(self):
+        """Zero filtered matches: totalCount must be 0 with Phase C ON, matching baseline.
+
+        This tests the other empty-cache sub-branch: a filter that matches 0
+        children.  Phase C ON must return totalCount=0, not the unfiltered count.
+        """
+        schema = _build_c3_filtered_schema(page_size=5)
+        # Filter that matches NOTHING.
+        query = (
+            "{ authors { results { "
+            'posts(filter: {title: {exact: "NonExistentTitle"}}) { '
+            "results(limit: 5, offset: 0) { id } totalCount "
+            "} } } }"
+        )
+
+        data_on = self._exec(schema, query)
+        total_on = data_on["authors"]["results"][0]["posts"]["totalCount"]
+
+        from django.test import override_settings
+
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": False}):
+            data_off = self._exec(schema, query)
+        total_off = data_off["authors"]["results"][0]["posts"]["totalCount"]
+
+        self.assertEqual(
+            total_on,
+            total_off,
+            f"Zero-match filter: Phase C ON totalCount ({total_on}) must equal baseline ({total_off})",
+        )
+        self.assertEqual(
+            total_on,
+            0,
+            f"Zero-match filter must return totalCount=0; got {total_on}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# WARNING 1: build_window_prefetch with real sub_selection narrows SELECT
+# ---------------------------------------------------------------------------
+
+
+class TestBuildWindowPrefetchWithSubSelection(TestCase):
+    """WARNING 1: build_window_prefetch with a real sub_selection narrows the
+    emitted SQL SELECT to only the requested columns.
+
+    The existing G3 spike tests the chain in isolation (Post.objects.all()
+    directly), but the production path goes through build_window_prefetch with
+    a real sub_selection.  This test closes that gap: it calls the production
+    method with a SelectionSetNode that selects only id+title, then uses
+    CaptureQueriesContext to assert that the emitted SELECT does NOT include
+    "body" (a concrete column that should be deferred by .only()).
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        cls.author = Author.objects.create(name="SubSelAuthor")
+        for i in range(3):
+            Post.objects.create(title=f"SSPost{i}", author=cls.author)
+
+    def test_build_window_prefetch_narrowed_select_with_real_sub_selection(self):
+        """build_window_prefetch + real sub_selection: SELECT excludes 'body' column."""
+        from graphql.language.ast import FieldNode, NameNode, SelectionSetNode
+
+        from django_graphex.fields import SELF_NARROW_VERIFIED
+        from tests.models import Author
+
+        if not SELF_NARROW_VERIFIED:
+            self.skipTest(
+                "SELF_NARROW_VERIFIED=False: .only() dropped; narrowing not applicable"
+            )
+
+        inst = _make_test_nested_field()
+        related_field = Author._meta.get_field("posts")
+
+        # Build a real SelectionSetNode selecting only id and title (not body).
+        id_field = FieldNode(name=NameNode(value="id"))
+        title_field = FieldNode(name=NameNode(value="title"))
+        sub_selection = SelectionSetNode(selections=[id_field, title_field])
+
+        pf = inst.build_window_prefetch(
+            lookup="posts",
+            filter_value=None,
+            slice_tuple=(0, 3, ["id"]),
+            related_field=related_field,
+            sub_selection=sub_selection,
+            fragments={},
+        )
+        self.assertIsNotNone(
+            pf, "build_window_prefetch must return a Prefetch with sub_selection"
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            rows = list(pf.queryset)
+
+        self.assertGreater(len(rows), 0, "Must return at least one row")
+
+        sql = ctx.captured_queries[0]["sql"].upper()
+
+        # The SQL must contain window functions.
+        self.assertIn("ROW_NUMBER()", sql, "SQL must contain ROW_NUMBER()")
+
+        # Column narrowing: 'body' must NOT appear in the SELECT clause.
+        # After .only(author_id, id, title, ...) the deferred 'body' column
+        # should be absent from the outer SELECT.
+        select_clause = sql.split("FROM")[0] if "FROM" in sql else sql
+        self.assertNotIn(
+            '"BODY"',
+            select_clause,
+            "SELECT must not include 'body' when sub_selection provides narrow columns "
+            "(SELF_NARROW_VERIFIED=True but .only() did not narrow the SELECT — "
+            "this means the production path differs from the G3 spike)",
+        )
+
+
+# ---------------------------------------------------------------------------
+# WARNING 2: Cursor paginator falls back (pre-check 2) — ON vs OFF parity
+# ---------------------------------------------------------------------------
+
+
+def _build_cursor_schema():
+    """Build a minimal schema with a CursorGraphqlPagination nested posts field."""
+    import graphene
+
+    from django_graphex.fields import DjangoNestedListObjectField
+    from django_graphex.paginations.pagination import CursorGraphqlPagination
+    from django_graphex.types import (
+        DjangoListObjectField,
+        DjangoListObjectType,
+        DjangoObjectType,
+    )
+    from tests.models import Author, Post
+
+    _REG = {}
+    paginator = CursorGraphqlPagination(ordering="id", page_size=5)
+
+    _PostType = type(
+        "_CurPostType",
+        (DjangoObjectType,),
+        {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+    )
+    _PostListType = type(
+        "_CurPostListType",
+        (DjangoListObjectType,),
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "pagination": paginator,
+                    "registry": _REG,
+                },
+            )
+        },
+    )
+    _AuthorType = type(
+        "_CurAuthorType",
+        (DjangoObjectType,),
+        {
+            "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+            "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+        },
+    )
+    _AuthorListType = type(
+        "_CurAuthorListType",
+        (DjangoListObjectType,),
+        {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+    )
+
+    schema = graphene.Schema(
+        query=type(
+            "_CurQuery",
+            (graphene.ObjectType,),
+            {"authors": DjangoListObjectField(_AuthorListType)},
+        )
+    )
+    return schema
+
+
+class TestCursorFallbackParity(TestCase):
+    """WARNING 2: Cursor paginator falls back via pre-check 2 (slice_tuple=None).
+
+    A nested list with a CursorGraphqlPagination must return byte-for-byte
+    identical results with Phase C ON vs OFF.  This verifies that the Cursor
+    fallback path is correct and does not emit ROW_NUMBER() SQL.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        cls.author = Author.objects.create(name="CursorFallbackAuthor")
+        cls.posts = []
+        for i in range(5):
+            p = Post.objects.create(title=f"CurPost{i:02d}", author=cls.author)
+            cls.posts.append(p)
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        assert result.errors is None, result.errors
+        return result.data
+
+    def test_cursor_fallback_on_vs_off_identical_results(self):
+        """Cursor nested list: Phase C ON and OFF return byte-for-byte identical results.
+
+        Cursor paginator returns slice_tuple=None from prefetch_window_slice
+        (pre-check 2), so build_window_prefetch falls back to build_prefetch.
+        The results must be identical to the OPTIMIZE_NESTED_PAGINATION=False baseline.
+        """
+        from django.test import override_settings
+
+        schema = _build_cursor_schema()
+        # Cursor uses different args (no limit/offset); query the first page.
+        query = "{ authors { results { posts { results { id title } totalCount } } } }"
+
+        # Phase C ON.
+        with CaptureQueriesContext(connection) as ctx_on:
+            data_on = self._exec(schema, query)
+
+        # Phase C OFF (baseline).
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": False}):
+            data_off = self._exec(schema, query)
+
+        # No ROW_NUMBER() SQL: Cursor must fall back via pre-check 2.
+        sql_on = [q["sql"].upper() for q in ctx_on.captured_queries]
+        self.assertTrue(
+            all("ROW_NUMBER()" not in s for s in sql_on),
+            "Cursor nested list must NOT emit ROW_NUMBER() SQL (pre-check 2 fallback)",
+        )
+
+        # Results must be identical.
+        self.assertEqual(
+            data_on["authors"]["results"][0]["posts"]["results"],
+            data_off["authors"]["results"][0]["posts"]["results"],
+            "Cursor fallback: Phase C ON and OFF must return identical results",
+        )
+        self.assertEqual(
+            data_on["authors"]["results"][0]["posts"]["totalCount"],
+            data_off["authors"]["results"][0]["posts"]["totalCount"],
+            "Cursor fallback: Phase C ON and OFF must return identical totalCount",
+        )
+
+
+# ---------------------------------------------------------------------------
+# SUGGESTION G4: no-ordering e2e parity (Phase C ON vs OFF)
+# ---------------------------------------------------------------------------
+
+
+class TestG4NoOrderingE2EParity(TestCase):
+    """SUGGESTION G4: e2e ON-vs-OFF identical rows for a no-ordering nested page.
+
+    When no ordering argument is provided and the paginator has no default
+    ordering, both Phase C ON (window path ORDER BY pk) and Phase C OFF
+    (in-memory path sorted by pk after G4 fix) must return identical rows
+    in identical order.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        cls.author = Author.objects.create(name="G4E2EAuthor")
+        cls.posts = []
+        for i in range(5):
+            p = Post.objects.create(title=f"G4E2EPost{i:02d}", author=cls.author)
+            cls.posts.append(p)
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        assert result.errors is None, result.errors
+        return result.data
+
+    def test_no_ordering_nested_page_on_vs_off_identical_rows(self):
+        """G4 e2e: no ordering arg -> Phase C ON and OFF return identical rows (same pks, same order)."""
+        import graphene
+        from django.test import override_settings
+
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from django_graphex.types import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from tests.models import Author, Post
+
+        _REG = {}
+        # Paginator with NO default ordering (ordering="") — G4 scenario.
+        paginator = LimitOffsetGraphqlPagination(default_limit=3)
+
+        _PostType = type(
+            "_G4E2EPostType",
+            (DjangoObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+        _PostListType = type(
+            "_G4E2EPostListType",
+            (DjangoListObjectType,),
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {"model": Post, "pagination": paginator, "registry": _REG},
+                )
+            },
+        )
+        _AuthorType = type(
+            "_G4E2EAuthorType",
+            (DjangoObjectType,),
+            {
+                "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+                "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+            },
+        )
+        _AuthorListType = type(
+            "_G4E2EAuthorListType",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+        )
+        schema = graphene.Schema(
+            query=type(
+                "_G4E2EQuery",
+                (graphene.ObjectType,),
+                {"authors": DjangoListObjectField(_AuthorListType)},
+            )
+        )
+
+        # No ordering argument.
+        query = "{ authors { results { posts { results(limit: 3, offset: 0) { id } totalCount } } } }"
+
+        data_on = self._exec(schema, query)
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": False}):
+            data_off = self._exec(schema, query)
+
+        results_on = data_on["authors"]["results"][0]["posts"]["results"]
+        results_off = data_off["authors"]["results"][0]["posts"]["results"]
+
+        self.assertEqual(
+            results_on,
+            results_off,
+            f"G4 e2e: Phase C ON {results_on} must equal Phase C OFF {results_off} for no-ordering nested page",
         )
