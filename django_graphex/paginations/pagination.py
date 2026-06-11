@@ -544,8 +544,10 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         )
         if page_size is None:
             return None
-        if page < 0:
-            # Count-relative offset requires total count at build time — fall back.
+        if page <= 0:
+            # page < 0: count-relative offset requires total count at build time.
+            # page == 0: offset = page_size*(0-1) = negative — invalid.
+            # Both cases fall back to the in-memory path.
             return None
         offset = page_size * (page - 1)
         order = kwargs.pop(self.ordering_param, None) or self.ordering
