@@ -616,6 +616,8 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         related_field: Any,
         sub_selection: Any,
         fragments: dict[str, Any],
+        child_gql_type: Any = None,
+        child_graphene_type: Any = None,
     ) -> Prefetch | None:
         """Build a window-function Prefetch that DB-side slices the nested list.
 
@@ -640,6 +642,11 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             sub_selection: the GraphQL ``SelectionSetNode`` for the child
                 selection, or ``None`` (triggers full-load fallback).
             fragments: fragment definitions from the GraphQL resolve info.
+            child_gql_type: The inner (row) ``GraphQLObjectType`` for the child
+                selection — NOT the ``DjangoListObjectType`` wrapper.  Required
+                for ``AnnotatedField`` self-collection (phase-d §7).
+            child_graphene_type: The graphene type corresponding to
+                ``child_gql_type``.
 
         Returns:
             A ``Prefetch`` with a window-annotated queryset, or ``None``.
@@ -689,10 +696,25 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # Fall back to no-narrow (plan=None means skip .only()).
         plan = None
         if sub_selection is not None:
-            plan = _compute_child_only(child, related_field, sub_selection, fragments)
+            plan = _compute_child_only(
+                child, related_field, sub_selection, fragments,
+                child_gql_type=child_gql_type,
+                child_graphene_type=child_graphene_type,
+            )
             if plan is None:
                 # _collect_only_fields_is_full_load returned True → fall back
                 return None
+
+        # --- Pre-check 6b: aggregate-over-relation decline (phase-d §7 ADR-D4) --
+        # A relation-traversing aggregate (e.g. Count("comments")) forces GROUP BY,
+        # which does NOT compose with Window() in the same queryset.  Detect
+        # structurally at build time via expr.contains_aggregate and return None
+        # so the caller falls back to build_prefetch (plain prefetch path with the
+        # annotation applied there via _narrow_plain_prefetch).
+        if plan is not None and plan.child_annotations:
+            for _ann_expr in plan.child_annotations.values():
+                if getattr(_ann_expr, "contains_aggregate", False):
+                    return None
 
         # --- Build the window queryset -----------------------------------------
         qs = child._default_manager.all()
@@ -707,6 +729,20 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             F(t.lstrip("-+")).desc() if t.startswith("-") else F(t.lstrip("-+")).asc()
             for t in order_terms
         ]
+
+        # --- Phase-d §7: apply user concrete-column annotation BEFORE window exprs --
+        # alias() first, then annotate() so that alias-backed expressions resolve.
+        # Wrap in a targeted try/except: nested-Window or invalid expressions raise
+        # FieldError at build time → return None to fall back to build_prefetch.
+        if plan is not None and (plan.child_aliases or plan.child_annotations):
+            try:
+                if plan.child_aliases:
+                    qs = qs.alias(**plan.child_aliases)
+                if plan.child_annotations:
+                    qs = qs.annotate(**plan.child_annotations)
+            except Exception:  # noqa: BLE001 — includes FieldError, ValueError
+                # Graceful fallback: return None so caller uses build_prefetch.
+                return None
 
         qs = qs.annotate(
             _gqx_rn=Window(
