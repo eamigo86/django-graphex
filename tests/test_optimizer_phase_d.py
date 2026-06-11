@@ -798,6 +798,158 @@ class TestPrefetchGateFiresOnAnnotatedFieldsOnly(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# S1 (W1 coverage gap from verify-report): mixed concrete+annotated prefetch
+# child still gets .only() narrowing.
+#
+# Mutation guard: if child_ann_names is NOT threaded into
+# _collect_only_fields_is_full_load (utils.py:1016), the AnnotatedField leaf
+# is treated as an unknown computed field → is_full_load=True → annotate-only
+# fallback (only_cols=[]) → .only() is skipped → "body" appears in the
+# prefetch SQL → the SQL assertion below goes RED.
+# ---------------------------------------------------------------------------
+
+
+class TestMixedConcreteAnnotatedChildOnlyNarrowing(TestCase):
+    """S1 — mixed concrete+annotated prefetch child keeps .only() narrowing.
+
+    A query that selects a prefetch child with BOTH a concrete field (title)
+    AND an AnnotatedField (commentCount) must:
+    (a) Emit a narrowed prefetch SQL: id, title, author_id present; body ABSENT.
+    (b) Resolve commentCount to the correct aggregate value.
+
+    This guards the child_ann_names threading in _compute_child_only
+    (utils.py ~1016). Dropping that threading makes is_full_load return True,
+    which falls through to the annotate-only plan (only_cols=[]), skipping
+    .only() — so body is fetched and assertion (a) fails (RED).
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post, Comment
+
+        cls.author = Author.objects.create(name="MixedChild_Author", bio="")
+        cls.post_a = Post.objects.create(
+            title="MixedChild_PostA", body="should not be fetched", author=cls.author
+        )
+        cls.post_b = Post.objects.create(
+            title="MixedChild_PostB", body="also not fetched", author=cls.author
+        )
+        # 1 comment on post_a, 2 on post_b — distinct counts make value-correctness
+        # assertions non-vacuous.
+        Comment.objects.create(post=cls.post_a, body="c1")
+        Comment.objects.create(post=cls.post_b, body="c2")
+        Comment.objects.create(post=cls.post_b, body="c3")
+
+    def test_mixed_child_only_narrowing_and_annotation_value(self):
+        """Mixed concrete+annotated child: SQL narrowed (no body) + value correct.
+
+        (a) The posts prefetch SQL must NOT SELECT the "body" column.
+        (b) The posts prefetch SQL MUST SELECT "id", "title", and the FK-back
+            attname ("author_id") — the structural columns.
+        (c) commentCount must equal the actual comment count for each post.
+
+        Mutation: remove annotated_names=child_ann_names from the
+        _collect_only_fields_is_full_load call in _compute_child_only
+        (utils.py ~1016). That makes is_full_load=True, which returns a plan
+        with only_cols=[], so _narrow_plain_prefetch skips .only() entirely —
+        body IS selected and assertion (a) fails (RED).
+        """
+        from tests.models import Author, Post, Comment
+
+        _RS1 = Registry()
+
+        class _PostTypeS1(DjangoObjectType):
+            comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+
+            class Meta:
+                model = Post
+                registry = _RS1
+
+        class _AuthorTypeS1(DjangoObjectType):
+            # Explicit graphene.List so the plain-prefetch path (_narrow_plain_prefetch
+            # via _collect_prefetch_only_sets) is exercised — NOT the window path.
+            posts = graphene.List(lambda: _PostTypeS1)
+
+            def resolve_posts(root, info):
+                return root.posts.all()
+
+            class Meta:
+                model = Author
+                registry = _RS1
+
+        class _AuthorListS1(DjangoListObjectType):
+            class Meta:
+                model = Author
+                registry = _RS1
+
+        class _QueryS1(graphene.ObjectType):
+            all_authors = DjangoListObjectField(_AuthorListS1)
+
+        schema_s1 = graphene.Schema(query=_QueryS1)
+
+        # Select both a concrete field (title) and the AnnotatedField (commentCount).
+        # This is exactly the "mixed" child scenario.
+        query = "{ allAuthors { results { posts { id title commentCount } } } }"
+
+        with CaptureQueriesContext(connection) as ctx:
+            data = _exec(schema_s1, query)
+
+        # Isolate the posts prefetch query: it references the Post table and
+        # includes the FK-back column (author_id).  Skip the author-list query
+        # (which contains "tests_author") but not the posts prefetch.
+        post_sqls = [
+            q["sql"] for q in ctx.captured_queries
+            if "tests_post" in q["sql"].lower()
+        ]
+        self.assertTrue(
+            post_sqls,
+            "Expected at least one query against the posts (tests_post) table. "
+            f"Captured queries: {[q['sql'] for q in ctx.captured_queries]}",
+        )
+        combined_post_sql = " ".join(post_sqls).lower()
+
+        # (a) body must NOT appear in the prefetch SQL — .only() is narrowing correctly.
+        # If child_ann_names threading is dropped, is_full_load becomes True and the
+        # annotate-only fallback (only_cols=[]) skips .only(), selecting body as well.
+        self.assertNotIn(
+            '"body"',
+            combined_post_sql,
+            "The posts prefetch SQL must NOT select the 'body' column — .only() "
+            "narrowing was lost on the mixed concrete+annotated child. "
+            "This likely means child_ann_names was not threaded into "
+            "_collect_only_fields_is_full_load in _compute_child_only (utils.py ~1016). "
+            f"SQL: {combined_post_sql}",
+        )
+
+        # (b) Structural columns MUST be present: id, title, and author_id (FK-back).
+        for col in ('"id"', '"title"', '"author_id"'):
+            self.assertIn(
+                col,
+                combined_post_sql,
+                f"Column {col} must be present in the narrowed prefetch SQL. "
+                f"SQL: {combined_post_sql}",
+            )
+
+        # (c) commentCount must equal the actual count — proves the annotation is
+        # still injected even when .only() narrowing is active.
+        expected_counts = {
+            str(self.post_a.pk): 1,
+            str(self.post_b.pk): 2,
+        }
+        results = data["allAuthors"]["results"]
+        self.assertEqual(len(results), 1, "Expected exactly one author")
+        for post_data in results[0]["posts"]:
+            pid = post_data["id"]
+            self.assertIn(pid, expected_counts, f"Unexpected post id {pid}")
+            self.assertEqual(
+                post_data["commentCount"],
+                expected_counts[pid],
+                f"commentCount mismatch for post {pid}: "
+                f"expected {expected_counts[pid]}, got {post_data['commentCount']}",
+            )
+
+
+# ---------------------------------------------------------------------------
 # Phase 8: SAFE_MODE + collision-safety + alias-before-annotate tests (tasks 8.1-8.4)
 # ---------------------------------------------------------------------------
 
