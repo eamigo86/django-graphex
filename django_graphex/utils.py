@@ -618,6 +618,135 @@ def find_field(field: Any, fields_dict: dict[str, Any]) -> Any:
     return temp
 
 
+def _inline_fragment_applies(
+    inline_fragment_node: Any,
+    *,
+    current_type_name: str | None = None,
+    current_model: type[Model] | None = None,
+    current_graphene_type: Any = None,
+) -> bool:
+    """Decide whether to descend into an inline fragment's selection set.
+
+    GAP-5 defensive guard (a subset of future Track-2 union/interface routing).
+    The optimizer walkers used to descend through ``InlineFragmentNode``
+    TRANSPARENTLY, ignoring ``type_condition``.  Because ``find_field`` matches
+    by name only, a fragment targeting a DIFFERENT concrete type than the one
+    being walked would mis-attribute its fields against the current model's
+    relation map.  This helper closes that hole while staying behaviour
+    preserving for every other case.
+
+    Decision table:
+
+    - ``type_condition is None`` -> ``True`` (bare inline fragment; descend).
+    - condition name == current type's GraphQL name / graphene ``__name__`` /
+      model ``__name__`` -> ``True`` (same type; descend).
+    - current graphene type declares an INTERFACE whose name matches the
+      condition -> ``True`` (forward-compat, best-effort).
+    - condition names a DIFFERENT concrete type AND a reliable GraphQL-type-name
+      identity is available -> ``False`` (SKIP; the fix).
+    - current type CANNOT be reliably determined at the call site -> ``True``
+      (preserve today's transparent-descent behaviour; never make it worse).
+
+    Forward-compat scope (best-effort, interfaces ONLY): the "current type
+    contains/implements the condition" branch recognises only graphene
+    ``Interface`` membership (via ``_meta.interfaces``).  Graphene ``Union``
+    membership is NOT detected here — a Union member type carries no back-pointer
+    to its unions (only the Union exposes ``_meta.types``), so walking a concrete
+    member and meeting ``... on <Union>`` will SKIP, not descend.  Django
+    multi-table-inheritance parent/child names are likewise not recognised.  All
+    of this is inert today (no polymorphic output types are exposed) and never
+    crashes; widening to unions/abstract parents is deferred to Track-2.
+
+    Reliability rule (critical): ``type_condition.name.value`` is a GraphQL TYPE
+    name (e.g. ``AccountType``), which normally does NOT equal the Django model
+    class name (e.g. ``Account``).  A model-name match can therefore only
+    CONFIRM "same type" (descend); it can never be the SOLE basis for a SKIP,
+    or every legitimate ``... on <Model>Type`` fragment would be dropped.  We
+    only skip when a GraphQL-type-name identity (``current_type_name`` or the
+    graphene type's ``_meta.name`` / ``__name__``) is present and the condition
+    does not match any accepted name.
+
+    Args:
+        inline_fragment_node: The ``InlineFragmentNode`` being considered.
+        current_type_name: The GraphQL type name of the type being walked, if
+            known (e.g. ``graphene_type._meta.name`` or the GraphQLObjectType
+            name).
+        current_model: The Django model being walked, if known (enables a
+            best-effort POSITIVE match against the model class ``__name__``).
+        current_graphene_type: The graphene type being walked, if known
+            (enables GraphQL-name + ``__name__`` match plus best-effort
+            interface lookup).
+
+    Returns:
+        True to descend into the inline fragment's selection set, False to skip.
+    """
+    type_condition = getattr(inline_fragment_node, "type_condition", None)
+    if type_condition is None:
+        # Bare inline fragment: always applies to the enclosing type.
+        return True
+
+    condition_name = getattr(getattr(type_condition, "name", None), "value", None)
+    if not condition_name:
+        # Malformed / unexpected node shape — preserve transparent descent.
+        return True  # pragma: no cover
+
+    # accepted_names: any name that identifies the current type.
+    # have_gql_identity: True only when a GraphQL-type-name identity exists.  A
+    # SKIP requires this — model name alone is not reliable enough to skip.
+    accepted_names: set[str] = set()
+    have_gql_identity = False
+
+    if current_type_name:
+        accepted_names.add(current_type_name)
+        have_gql_identity = True
+
+    graphene_type = current_graphene_type
+    meta = getattr(graphene_type, "_meta", None) if graphene_type is not None else None
+    if meta is not None:
+        gql_name = getattr(meta, "name", None)
+        if gql_name:
+            accepted_names.add(gql_name)
+            have_gql_identity = True
+    if graphene_type is not None:
+        gt_name = getattr(graphene_type, "__name__", None)
+        if gt_name:
+            accepted_names.add(gt_name)
+            have_gql_identity = True
+        # Forward-compat (best-effort, INTERFACES ONLY): if the graphene type
+        # declares interfaces whose name matches the condition, the fragment
+        # applies.  Union/abstract-parent membership is intentionally NOT handled
+        # here (see the docstring "Forward-compat scope" note).
+        for iface in getattr(meta, "interfaces", None) or ():
+            iface_meta = getattr(iface, "_meta", None)
+            iface_name = getattr(iface_meta, "name", None) or getattr(
+                iface, "__name__", None
+            )
+            if iface_name:
+                accepted_names.add(iface_name)
+
+    model = current_model
+    if model is None and meta is not None:
+        model = getattr(meta, "model", None)
+    if model is not None:
+        model_name = getattr(model, "__name__", None)
+        if model_name:
+            accepted_names.add(model_name)
+
+    if condition_name in accepted_names:
+        # Same type (or interface/model match) -> descend.
+        return True
+
+    if not have_gql_identity:
+        # No reliable GraphQL-type-name identity -> a non-match is inconclusive
+        # (the graphene type name usually differs from the model name).
+        # Preserve today's transparent-descent behaviour; never make it worse.
+        return True
+
+    # A reliable GraphQL-type-name identity exists and the condition matches no
+    # accepted name -> the fragment targets a DIFFERENT concrete type. SKIP.
+    return False
+
+
 # GraphQL/relay plumbing leaf names that never map to a model column and must not
 # mark a model as "computed" when deciding `.only()` narrowing.
 _PLUMBING_FIELDS = frozenset(
@@ -728,6 +857,8 @@ def recursive_params(
     select_related: list[str],
     prefetch_related: list[str],
     _prefix: str = "",
+    current_type_name: str | None = None,
+    current_model: type[Model] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Walk a GraphQL selection set building nested select/prefetch paths.
 
@@ -746,6 +877,11 @@ def recursive_params(
         prefetch_related: The accumulated prefetch_related paths, mutated in
             place.
         _prefix: The dotted ORM path prefix for the current model.
+        current_type_name: GraphQL type name of the type being walked, if known
+            (GAP-5 inline-fragment guard).  ``None`` preserves transparent
+            descent.
+        current_model: Django model being walked, if known (GAP-5 best-effort
+            inline-fragment guard by model class name).
 
     Returns:
         The mutated "(select_related, prefetch_related)" pair.
@@ -761,10 +897,20 @@ def recursive_params(
                     select_related,
                     prefetch_related,
                     _prefix,
+                    current_type_name=current_type_name,
+                    current_model=current_model,
                 )
             continue
 
         if isinstance(field, InlineFragmentNode):
+            # GAP-5 guard: skip inline fragments targeting a different concrete
+            # type than the one being walked.  Unknown current type -> descend.
+            if not _inline_fragment_applies(
+                field,
+                current_type_name=current_type_name,
+                current_model=current_model,
+            ):
+                continue
             recursive_params(
                 field.selection_set,
                 fragments,
@@ -772,6 +918,8 @@ def recursive_params(
                 select_related,
                 prefetch_related,
                 _prefix,
+                current_type_name=current_type_name,
+                current_model=current_model,
             )
             continue
 
@@ -801,6 +949,11 @@ def recursive_params(
                     select_related,
                     prefetch_related,
                     path + LOOKUP_SEP,
+                    # Descending into a related model: reset the type identity.
+                    # The GraphQL type name is not available at this walker, so
+                    # carry the child model for best-effort model-name matching.
+                    current_type_name=None,
+                    current_model=related_model,
                 )
         elif sub_selection is not None:
             # Wrapper field (e.g. `results`) or unknown object: stay on the same
@@ -812,6 +965,8 @@ def recursive_params(
                 select_related,
                 prefetch_related,
                 _prefix,
+                current_type_name=current_type_name,
+                current_model=current_model,
             )
 
     return select_related, prefetch_related
@@ -824,6 +979,7 @@ def _collect_only_fields(
     _prefix: str = "",
     _only: set[str] | None = None,
     annotated_names: set[str] | None = None,
+    current_type_name: str | None = None,
 ) -> list[str]:
     """Collect a safe ".only()" field set across the select_related span.
 
@@ -841,6 +997,9 @@ def _collect_only_fields(
         annotated_names: snake_case field names of AnnotatedFields on the model's
             graphene output type.  These leaves must NOT be added to ``.only()``
             and must NOT trigger ``model_full=True``.
+        current_type_name: GraphQL type name of the type being walked, if known
+            (GAP-5 inline-fragment guard).  ``None`` falls back to model-name
+            matching and otherwise preserves transparent descent.
 
     Returns:
         A sorted list of dotted "only" paths.
@@ -874,9 +1033,17 @@ def _collect_only_fields(
                     _prefix,
                     _only,
                     annotated_names=annotated_names,
+                    current_type_name=current_type_name,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
+            # GAP-5 guard: skip foreign-typed inline fragments.
+            if not _inline_fragment_applies(
+                field,
+                current_type_name=current_type_name,
+                current_model=model,
+            ):
+                continue
             _collect_only_fields(
                 model,
                 field.selection_set,
@@ -884,6 +1051,7 @@ def _collect_only_fields(
                 _prefix,
                 _only,
                 annotated_names=annotated_names,
+                current_type_name=current_type_name,
             )
             continue
 
@@ -924,6 +1092,9 @@ def _collect_only_fields(
                         _prefix + orm_name + LOOKUP_SEP,
                         _only,
                         annotated_names=annotated_names,
+                        # Descending into a related model: GraphQL type name is
+                        # not resolved here; the child model carries the guard.
+                        current_type_name=None,
                     )
             # prefetch branches use separate querysets -> not narrowed here.
             continue
@@ -945,6 +1116,7 @@ def _collect_only_fields(
                 _prefix,
                 _only,
                 annotated_names=annotated_names,
+                current_type_name=current_type_name,
             )
             continue
 
@@ -969,6 +1141,7 @@ def _collect_only_fields_is_full_load(
     selection_set: Any,
     fragments: dict[str, Any],
     annotated_names: set[str] | None = None,
+    current_type_name: str | None = None,
 ) -> bool:
     """Return True when ``_collect_only_fields`` would trigger the full-load path.
 
@@ -985,6 +1158,12 @@ def _collect_only_fields_is_full_load(
         fragments: The fragment definitions keyed by name.
         annotated_names: snake_case field names of AnnotatedFields on the model's
             graphene output type.  These leaves do NOT trigger full-load.
+        current_type_name: GraphQL type name of the type being walked, if known.
+            Required for the GAP-5 inline-fragment guard to SKIP a foreign-typed
+            fragment (model name alone can never trigger a SKIP).  Threaded so
+            this full-load detector and ``_collect_only_fields`` agree on whether
+            a foreign fragment is in scope; otherwise the two walkers disagree
+            and a foreign fragment could silently veto ``.only()`` narrowing.
 
     Returns:
         True if any unknown leaf would trigger full-load for ``model``.
@@ -1001,15 +1180,28 @@ def _collect_only_fields_is_full_load(
                     fragment.selection_set,
                     fragments,
                     annotated_names=annotated_names,
+                    current_type_name=current_type_name,
                 ):
                     return True
             continue
         if isinstance(field, InlineFragmentNode):
+            # GAP-5 guard: a foreign-typed inline fragment must not influence the
+            # full-load decision for the current model.  The GraphQL type name is
+            # REQUIRED for the guard to SKIP (model alone is inert), and it MUST
+            # agree with ``_collect_only_fields`` so the full-load detector and
+            # the column collector never disagree on foreign-fragment scope.
+            if not _inline_fragment_applies(
+                field,
+                current_type_name=current_type_name,
+                current_model=model,
+            ):
+                continue
             if _collect_only_fields_is_full_load(
                 model,
                 field.selection_set,
                 fragments,
                 annotated_names=annotated_names,
+                current_type_name=current_type_name,
             ):
                 return True
             continue
@@ -1035,6 +1227,7 @@ def _collect_only_fields_is_full_load(
                 sub_selection,
                 fragments,
                 annotated_names=annotated_names,
+                current_type_name=current_type_name,
             ):
                 return True
             continue
@@ -1165,12 +1358,29 @@ def _compute_child_only(
             )
         return None
 
+    # Resolve the child's GraphQL type name ONCE so both the full-load detector
+    # and the column collector share the SAME GAP-5 inline-fragment identity.
+    # Threading it into the full-load detector (below) is what keeps the two
+    # walkers in agreement: without it, a foreign ``... on Other`` fragment is
+    # descended-into by the full-load detector (signalling full load) while
+    # ``_collect_only_fields`` skips it — disagreement that can silently veto
+    # legitimate ``.only()`` narrowing.
+    child_type_name = None
+    if child_graphene_type is not None:
+        child_type_name = getattr(
+            getattr(child_graphene_type, "_meta", None), "name", None
+        ) or getattr(child_graphene_type, "__name__", None)
+
     # Full-load detection: if the sub-selection contains an unknown/computed
     # leaf (e.g. a @property), mirror the root model_full contract and return
     # None (caller leaves the lookup as a bare string -> full load; no FieldError).
     # AnnotatedField leaves are NOT unknown — pass child_ann_names so they are skipped.
     if _collect_only_fields_is_full_load(
-        child, sub_selection, fragments, annotated_names=child_ann_names
+        child,
+        sub_selection,
+        fragments,
+        annotated_names=child_ann_names,
+        current_type_name=child_type_name,
     ):
         # Even on full-load, if we have annotations, return a plan without .only().
         # S3 GUARD: This annotate-only fallback (empty only_cols) masks a missing
@@ -1192,9 +1402,15 @@ def _compute_child_only(
         return None
 
     # Collect the raw only-set via the existing helper (handles ordering, pk,
-    # fragment spreads, inline fragments transparently).
+    # fragment spreads, inline fragments).  Thread the child's GraphQL type name
+    # (computed above) so the GAP-5 inline-fragment guard can skip foreign-typed
+    # fragments — the SAME identity the full-load detector already used.
     raw_cols = _collect_only_fields(
-        child, sub_selection, fragments, annotated_names=child_ann_names
+        child,
+        sub_selection,
+        fragments,
+        annotated_names=child_ann_names,
+        current_type_name=child_type_name,
     )
 
     # Split raw_cols into dotted FK heads (-> child_select) and flat attnames
@@ -1335,6 +1551,24 @@ def _collect_prefetch_only_sets(
                 )
             continue
         if isinstance(field, InlineFragmentNode):
+            # GAP-5 guard: skip inline fragments targeting a different concrete
+            # type than the model being walked.  Thread the FULL GraphQL identity
+            # (type name + graphene type) exactly as ``_walk_filtered_prefetches``
+            # does — passing only ``current_model`` leaves the guard INERT
+            # (a model name alone can never trigger a SKIP).
+            if not _inline_fragment_applies(
+                field,
+                current_type_name=(
+                    getattr(gql_type, "name", None) if gql_type is not None else None
+                ),
+                current_model=model,
+                current_graphene_type=(
+                    getattr(gql_type, "graphene_type", None)
+                    if gql_type is not None
+                    else None
+                ),
+            ):
+                continue
             _collect_prefetch_only_sets(
                 model,
                 field.selection_set,
@@ -1665,6 +1899,21 @@ def _walk_filtered_prefetches(
                 )
             continue
         if isinstance(field, InlineFragmentNode):
+            # GAP-5 guard: skip foreign-typed inline fragments.  Identity comes
+            # from the current model and/or the GraphQL object type name.
+            if not _inline_fragment_applies(
+                field,
+                current_type_name=(
+                    getattr(gql_type, "name", None) if gql_type is not None else None
+                ),
+                current_model=model,
+                current_graphene_type=(
+                    getattr(gql_type, "graphene_type", None)
+                    if gql_type is not None
+                    else None
+                ),
+            ):
+                continue
             _walk_filtered_prefetches(
                 gql_type,
                 model,
@@ -1887,6 +2136,16 @@ def _walk_annotated_fields(
                 )
             continue
         if isinstance(field, InlineFragmentNode):
+            # GAP-5 guard: skip foreign-typed inline fragments so a fragment for
+            # a different concrete type cannot collect its AnnotatedFields here.
+            if not _inline_fragment_applies(
+                field,
+                current_type_name=(
+                    getattr(gql_type, "name", None) if gql_type is not None else None
+                ),
+                current_graphene_type=graphene_type,
+            ):
+                continue
             _walk_annotated_fields(
                 gql_type,
                 graphene_type,
@@ -2216,6 +2475,49 @@ def _apply_optimizations(
                 if orm_name not in target:
                     target.append(orm_name)
 
+    # GAP-5: resolve the root GraphQL type name so the inline-fragment guard can
+    # skip fragments targeting a different concrete type.
+    #
+    # The name is a valid row identity ONLY for a FLAT object return (the rows
+    # ARE the named type).  A DjangoListObjectType WRAPPER return exposes a
+    # ``results`` field whose INNER type is the real row type; the wrapper name
+    # would then wrongly reject a legitimate ``... on <ItemType>`` fragment
+    # placed inside ``results``.  So we trust the name only when the named type
+    # is NOT a list wrapper.  Otherwise leave it None -> model-only identity ->
+    # the guard never skips (preserving today's transparent descent).
+    root_type_name: str | None = None
+    _root_named = get_named_type(info.return_type)
+    if isinstance(_root_named, GraphQLObjectType):
+        _root_graphene = getattr(_root_named, "graphene_type", None)
+        _root_meta = (
+            getattr(_root_graphene, "_meta", None)
+            if _root_graphene is not None
+            else None
+        )
+        # Detect the list wrapper via its CONFIGURED results field name, not a
+        # hardcoded "results" literal.  A DjangoListObjectType may set a custom
+        # ``Meta.results_field_name`` (e.g. "items"); its ``_meta`` carries that
+        # name (defaults to "results"), while a flat DjangoObjectType leaves it
+        # None.  Mirrors utils.py:1759 / utils.py:1915-1918.  If we mis-classify
+        # a custom-named wrapper as a flat type, its wrapper GraphQL name leaks
+        # into the row selection and wrongly skips a legitimate
+        # ``... on <ItemType>`` fragment inside the results field (silent N+1).
+        _results_name = (
+            getattr(_root_meta, "results_field_name", None)
+            if _root_meta is not None
+            else None
+        )
+        _root_fields = getattr(_root_named, "fields", {})
+        _is_list_wrapper = (
+            _results_name is not None and _results_name in _root_fields
+        ) or ("results" in _root_fields)
+        if (
+            not _is_list_wrapper
+            and _root_meta is not None
+            and getattr(_root_meta, "model", None) is model
+        ):
+            root_type_name = getattr(_root_meta, "name", None)
+
     fields_asts = info.field_nodes
     if fields_asts:
         recursive_params(
@@ -2224,6 +2526,8 @@ def _apply_optimizations(
             relation_map,
             select_related,
             prefetch_related,
+            current_type_name=root_type_name,
+            current_model=model,
         )
 
     # --- Phase-d §3: collect AnnotatedField annotations ----------------------
@@ -2455,6 +2759,7 @@ def _apply_optimizations(
             fields_asts[0].selection_set,
             info.fragments,
             annotated_names=root_annotated_names,
+            current_type_name=root_type_name,
         )
         if only_fields:  # pragma: no branch
             base = base.only(*only_fields)
