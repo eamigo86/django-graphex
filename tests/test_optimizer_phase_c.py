@@ -5,9 +5,7 @@ C1 slice: setting + flag + paginator hook.
 
 from __future__ import annotations
 
-import pytest
 from django.test import TestCase, override_settings
-
 
 # ---------------------------------------------------------------------------
 # Phase 1: Setting + flag foundation

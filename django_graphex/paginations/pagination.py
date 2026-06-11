@@ -539,7 +539,9 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             if self.page_size_query_param
             else None
         )
-        page_size = self._resolve_page_size(requested, self.page_size, self.max_page_size)
+        page_size = self._resolve_page_size(
+            requested, self.page_size, self.max_page_size
+        )
         if page_size is None:
             return None
         if page < 0:

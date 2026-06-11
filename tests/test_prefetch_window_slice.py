@@ -14,7 +14,6 @@ C1 Phase 2 — RED-first per task:
 
 from __future__ import annotations
 
-import pytest
 from django.test import TestCase
 
 from django_graphex.paginations.pagination import (
@@ -72,7 +71,9 @@ class TestLimitOffsetPrefetchWindowSlice(TestCase):
         result = paginator.prefetch_window_slice(offset=0, ordering=["id"])
         self.assertIsNotNone(result)
         offset, limit, ordering = result
-        self.assertEqual(limit, 10, "default_limit must be applied when limit kwarg absent")
+        self.assertEqual(
+            limit, 10, "default_limit must be applied when limit kwarg absent"
+        )
 
     def test_limitoffset_unbounded_returns_none(self):
         """Unbounded paginator (default_limit=None, max_limit=None) returns None (task 2.6)."""
