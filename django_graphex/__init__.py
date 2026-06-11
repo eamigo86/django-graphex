@@ -33,9 +33,11 @@ from .security import (
 )
 from .types import (
     DjangoInputObjectType,
+    DjangoInterfaceType,
     DjangoListObjectType,
     DjangoModelType,
     DjangoObjectType,
+    DjangoUnionType,
 )
 from .validation import DepthLimitValidationRule
 from .views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
@@ -63,6 +65,8 @@ __all__ = (
     "DjangoListObjectType",
     "DjangoInputObjectType",
     "DjangoModelType",
+    "DjangoUnionType",
+    "DjangoInterfaceType",
     # PERMISSIONS
     "BasePermission",
     "AllowAny",

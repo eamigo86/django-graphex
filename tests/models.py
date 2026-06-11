@@ -2,6 +2,8 @@ from __future__ import unicode_literals
 
 import uuid
 
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -91,3 +93,47 @@ class UUIDThing(DummyModel):
 class UUIDItem(DummyModel):
     label = models.CharField(max_length=100)
     thing = models.ForeignKey(UUIDThing, related_name="items", on_delete=models.CASCADE)
+
+
+# --- Track 2: union / interface MVP models -------------------------------- #
+# Concrete member models referenced by a GFK union and an interface. Kept here
+# (not inline in the test module) so they share the "tests" app_label and play
+# nicely with the schema build, mirroring the existing relational models above.
+# Names are ``Track2``-prefixed to avoid colliding with same-named models that
+# other test modules register in the shared "tests" app (e.g. Account).
+class Track2Account(DummyModel):
+    """A GFK-union member model."""
+
+    balance = models.IntegerField(default=0)
+    label = models.CharField(max_length=50, default="")
+
+
+class Track2Invoice(DummyModel):
+    """A second GFK-union member model (distinct table from Track2Account)."""
+
+    amount = models.IntegerField(default=0)
+    note = models.CharField(max_length=50, default="")
+
+
+# GFK owner for the union-converter test. A standalone model (not the phase-d
+# ``Comment`` above, which other optimizer tests depend on) carrying a single
+# GenericForeignKey ``target`` whose explicit members are the Track2 members.
+class Track2GfkComment(DummyModel):
+    body = models.TextField(default="")
+    target_ct = models.ForeignKey(
+        ContentType, null=True, on_delete=models.CASCADE, related_name="+"
+    )
+    target_id = models.PositiveIntegerField(null=True)
+    target = GenericForeignKey("target_ct", "target_id")
+
+
+# Interface members (abstract-base field sharing): two concrete models sharing
+# a ``name`` field exposed through an interface.
+class Track2Book(DummyModel):
+    name = models.CharField(max_length=100)
+    pages = models.IntegerField(default=0)
+
+
+class Track2Magazine(DummyModel):
+    name = models.CharField(max_length=100)
+    issue = models.IntegerField(default=0)
