@@ -5,6 +5,7 @@ D2 slice (§7 window-compose): NOT included here.
 
 STRICT TDD: RED tests are written first, then GREEN implementation fills them.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -20,12 +21,9 @@ from django_graphex import (
     DjangoFilterListField,
     DjangoListObjectField,
     DjangoListObjectType,
-    DjangoObjectField,
     DjangoObjectType,
 )
 from django_graphex.registry import Registry
-from django_graphex.fields import _GQX_ANN_ATTR_PREFIX
-
 
 # ---------------------------------------------------------------------------
 # Phase 1: AnnotatedField class + setting unit tests (tasks 1.1 - 1.4)
@@ -54,7 +52,9 @@ class TestAnnotatedFieldAliasesAndOverride(TestCase):
         """aliases and annotation_name override are stored correctly."""
         expr = F("subtotal") / F("item_cnt")
         aliases = {"subtotal": Sum("price"), "item_cnt": Count("id")}
-        field = AnnotatedField(graphene.Float, expr, aliases=aliases, annotation_name="my_ann")
+        field = AnnotatedField(
+            graphene.Float, expr, aliases=aliases, annotation_name="my_ann"
+        )
         self.assertIs(field.expression, expr)
         self.assertEqual(field.aliases, aliases)
         self.assertEqual(field._explicit_annotation_name, "my_ann")
@@ -110,6 +110,7 @@ class TestOptimizeAnnotatedFieldsSettingDefault(TestCase):
     def test_optimize_annotated_fields_setting_default(self):
         """OPTIMIZE_ANNOTATED_FIELDS defaults to True."""
         from django_graphex import settings as settings_module
+
         s = settings_module.graphql_api_settings
         self.assertTrue(
             hasattr(s, "OPTIMIZE_ANNOTATED_FIELDS"),
@@ -121,6 +122,7 @@ class TestOptimizeAnnotatedFieldsSettingDefault(TestCase):
     def test_optimize_annotated_fields_explicit_false(self):
         """OPTIMIZE_ANNOTATED_FIELDS=False propagates via override_settings."""
         from django_graphex import settings as settings_module
+
         s = settings_module.graphql_api_settings
         self.assertIs(s.OPTIMIZE_ANNOTATED_FIELDS, False)
 
@@ -138,6 +140,7 @@ class _DWalkPost(DjangoObjectType):
 
     class Meta:
         from tests.models import Post as _P
+
         model = _P
         registry = _RWALK
 
@@ -145,6 +148,7 @@ class _DWalkPost(DjangoObjectType):
 class _DWalkPostList(DjangoListObjectType):
     class Meta:
         from tests.models import Post as _P
+
         model = _P
         registry = _RWALK
 
@@ -168,7 +172,8 @@ def _make_info_for_field(schema, query_str, field_name):
     assert isinstance(op, OperationDefinitionNode)
 
     field_nodes = [
-        sel for sel in op.selection_set.selections
+        sel
+        for sel in op.selection_set.selections
         if hasattr(sel, "name") and sel.name.value == field_name
     ]
     assert field_nodes, f"Field {field_name!r} not found in query"
@@ -186,6 +191,7 @@ class TestCollectAnnotatedFieldsSelected(TestCase):
 
     def test_collect_annotated_fields_selected(self):
         from django_graphex.utils import _collect_annotated_fields
+
         info = _make_info_for_field(
             _walk_schema,
             "{ allPostsFlat { id commentCount } }",
@@ -199,6 +205,7 @@ class TestCollectAnnotatedFieldsSelected(TestCase):
     def test_collect_annotated_fields_absent(self):
         """2.2 — No annotation when field not selected."""
         from django_graphex.utils import _collect_annotated_fields
+
         info = _make_info_for_field(
             _walk_schema,
             "{ allPostsFlat { id title } }",
@@ -215,6 +222,7 @@ class TestCollectAnnotatedFieldsWrapperDescent(TestCase):
     def test_collect_annotated_fields_wrapper_descent(self):
         """Wrapper shape allPosts { results { commentCount } } is descended."""
         from django_graphex.utils import _collect_annotated_fields
+
         info = _make_info_for_field(
             _walk_schema,
             "{ allPosts { results { id commentCount } totalCount } }",
@@ -234,18 +242,21 @@ class TestCollectOnlyFieldsAnnotatedLeafSkipped(TestCase):
     """3.1 — AnnotatedField leaf does not cause full-load, not added to only."""
 
     def test_collect_only_fields_annotated_leaf_skipped(self):
+        # Build a minimal selection set: id + title + commentCount (AnnotatedField)
+        from graphql import parse
+
         from django_graphex.utils import _collect_only_fields
         from tests.models import Post
 
-        # Build a minimal selection set: id + title + commentCount (AnnotatedField)
-        from graphql import parse
         doc = parse("{ id title commentCount }")
-        from graphql.language.ast import OperationDefinitionNode
+
         op = doc.definitions[0]
         selection_set = op.selection_set
 
         only = _collect_only_fields(
-            Post, selection_set, {},
+            Post,
+            selection_set,
+            {},
             annotated_names={"comment_count"},
         )
         self.assertIn("id", only)
@@ -257,18 +268,21 @@ class TestCollectOnlyFieldsAnnotatedLeafSkipped(TestCase):
 
     def test_collect_only_fields_wrapper_path_annotated_leaf_skipped(self):
         """3.1b — Wrapper recursion path: annotated leaf not full-load."""
+        # Simulate wrapper shape: { results { id title commentCount } }
+        from graphql import parse
+
         from django_graphex.utils import _collect_only_fields
         from tests.models import Post
 
-        # Simulate wrapper shape: { results { id title commentCount } }
-        from graphql import parse
         doc = parse("{ results { id title commentCount } }")
-        from graphql.language.ast import OperationDefinitionNode
+
         op = doc.definitions[0]
         selection_set = op.selection_set
 
         only = _collect_only_fields(
-            Post, selection_set, {},
+            Post,
+            selection_set,
+            {},
             annotated_names={"comment_count"},
         )
         self.assertIn("id", only)
@@ -282,17 +296,20 @@ class TestCollectOnlyFieldsIsFullLoadAnnotatedSkipped(TestCase):
     """3.2 — _collect_only_fields_is_full_load returns False for AnnotatedField."""
 
     def test_collect_only_fields_is_full_load_annotated_skipped(self):
+        from graphql import parse
+
         from django_graphex.utils import _collect_only_fields_is_full_load
         from tests.models import Post
 
-        from graphql import parse
         doc = parse("{ id commentCount }")
-        from graphql.language.ast import OperationDefinitionNode
+
         op = doc.definitions[0]
         selection_set = op.selection_set
 
         result = _collect_only_fields_is_full_load(
-            Post, selection_set, {},
+            Post,
+            selection_set,
+            {},
             annotated_names={"comment_count"},
         )
         self.assertFalse(result)
@@ -311,6 +328,7 @@ class _DPostType(DjangoObjectType):
 
     class Meta:
         from tests.models import Post as _P
+
         model = _P
         registry = _RANN
 
@@ -318,6 +336,7 @@ class _DPostType(DjangoObjectType):
 class _DPostListType(DjangoListObjectType):
     class Meta:
         from tests.models import Post as _P
+
         model = _P
         registry = _RANN
 
@@ -344,7 +363,8 @@ class TestRootAnnotationInjected1Query(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        from tests.models import Author, Post, Comment
+        from tests.models import Author, Comment, Post
+
         author = Author.objects.create(name="Alice", bio="")
         for i in range(3):
             p = Post.objects.create(title=f"Post{i}", author=author)
@@ -353,7 +373,8 @@ class TestRootAnnotationInjected1Query(TestCase):
 
     def test_root_annotation_injected_1query(self):
         """FLAT graphene.List(DPostType) with commentCount = exactly 1 DB query."""
-        from tests.models import Post, Comment
+        from tests.models import Comment, Post
+
         query = "{ allPostsList { id commentCount } }"
         with self.assertNumQueries(1):
             with CaptureQueriesContext(connection) as ctx:
@@ -373,7 +394,8 @@ class TestRootAnnotationInjectedWrapper2Queries(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        from tests.models import Author, Post, Comment
+        from tests.models import Author, Comment, Post
+
         author = Author.objects.create(name="Bob", bio="")
         for i in range(2):
             p = Post.objects.create(title=f"P{i}", author=author)
@@ -382,7 +404,8 @@ class TestRootAnnotationInjectedWrapper2Queries(TestCase):
 
     def test_root_annotation_injected_wrapper_2queries(self):
         """DjangoListObjectType wrapper with totalCount = exactly 2 queries."""
-        from tests.models import Post, Comment
+        from tests.models import Comment, Post
+
         query = "{ allPosts { results { id commentCount } totalCount } }"
         with self.assertNumQueries(2):
             data = _exec(_ann_schema, query)
@@ -399,6 +422,7 @@ class TestRootAnnotationAbsentNoSQL(TestCase):
     @classmethod
     def setUpTestData(cls):
         from tests.models import Author, Post
+
         author = Author.objects.create(name="Charlie", bio="")
         Post.objects.create(title="P0", author=author)
 
@@ -417,12 +441,14 @@ class TestKillSwitchDisablesAnnotation(TestCase):
     @classmethod
     def setUpTestData(cls):
         from tests.models import Author, Post
+
         author = Author.objects.create(name="Dave", bio="")
         Post.objects.create(title="PX", author=author)
 
     def test_kill_switch_disables_annotation(self):
         """With kill-switch off, no _gqx_ann_* in SQL and field resolves to None."""
         from django_graphex.settings import graphql_api_settings
+
         query = "{ allPostsList { id commentCount } }"
         with patch.object(graphql_api_settings, "OPTIMIZE_ANNOTATED_FIELDS", False):
             with CaptureQueriesContext(connection) as ctx:
@@ -447,6 +473,7 @@ class _AuthorTypePromo(DjangoObjectType):
 
     class Meta:
         from tests.models import Author as _A
+
         model = _A
         registry = _RPROM
 
@@ -454,6 +481,7 @@ class _AuthorTypePromo(DjangoObjectType):
 class _PostTypePromo(DjangoObjectType):
     class Meta:
         from tests.models import Post as _P
+
         model = _P
         registry = _RPROM
 
@@ -461,6 +489,7 @@ class _PostTypePromo(DjangoObjectType):
 class _PostListTypePromo(DjangoListObjectType):
     class Meta:
         from tests.models import Post as _P
+
         model = _P
         registry = _RPROM
 
@@ -478,6 +507,7 @@ class TestSelectToPrefetchPromotion(TestCase):
     @classmethod
     def setUpTestData(cls):
         from tests.models import Author, Post
+
         for i in range(3):
             a = Author.objects.create(name=f"A{i}", bio="")
             Post.objects.create(title=f"Post{i}", author=a)
@@ -487,7 +517,7 @@ class TestSelectToPrefetchPromotion(TestCase):
         query = "{ allPosts { results { id author { name postCount } } } }"
         # DjangoListObjectType = 2 base queries (count + posts) + 1 prefetch author = 3
         with self.assertNumQueries(3):
-            with CaptureQueriesContext(connection) as ctx:
+            with CaptureQueriesContext(connection):
                 data = _exec(_promo_schema, query)
         # Verify postCount value is present and not None
         results = data["allPosts"]["results"]
@@ -499,7 +529,7 @@ class TestSelectToPrefetchPromotion(TestCase):
         # 2 total: 1 count + 1 posts-with-author-join
         query = "{ allPosts { results { id author { name } } } }"
         with self.assertNumQueries(2):
-            with CaptureQueriesContext(connection) as ctx:
+            with CaptureQueriesContext(connection):
                 data = _exec(_promo_schema, query)
         results = data["allPosts"]["results"]
         self.assertTrue(len(results) > 0)
@@ -510,7 +540,8 @@ class TestPromotionGrandchildSelectSurvival(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        from tests.models import Author, Post, AuthorProfile
+        from tests.models import Author, AuthorProfile, Post
+
         for i in range(2):
             a = Author.objects.create(name=f"B{i}", bio="")
             AuthorProfile.objects.create(author=a, bio=f"bio{i}")
@@ -518,7 +549,9 @@ class TestPromotionGrandchildSelectSurvival(TestCase):
 
     def test_promotion_grandchild_select_survival(self):
         """Promotion of author to prefetch must not lose the author_profile child O2O."""
-        from tests.models import Author as _Author, Post as _Post, AuthorProfile as _AP
+        from tests.models import Author as _Author
+        from tests.models import AuthorProfile as _AP
+        from tests.models import Post as _Post
 
         _RGC = Registry()
 
@@ -574,13 +607,14 @@ class TestComputeChildOnlySelfCollectsAnnotations(TestCase):
 
     def test_compute_child_only_self_collects_annotations(self):
         """_compute_child_only with child_gql_type returns PrefetchPlan with child_annotations."""
-        from django_graphex.utils import _compute_child_only, PrefetchPlan
-        from tests.models import Post, Author
+        from django_graphex.utils import PrefetchPlan, _compute_child_only
+        from tests.models import Author, Post
 
         _R6 = Registry()
 
         class _PostT(DjangoObjectType):
             comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+
             class Meta:
                 model = Post
                 registry = _R6
@@ -598,15 +632,19 @@ class TestComputeChildOnlySelfCollectsAnnotations(TestCase):
         post_gql_type = gql_schema.type_map.get("_PostT")
 
         from graphql import parse
+
         doc = parse("{ id commentCount }")
-        from graphql.language.ast import OperationDefinitionNode
+
         op = doc.definitions[0]
         sub_selection = op.selection_set
 
         rel_field = Author._meta.get_field("posts")
 
         plan = _compute_child_only(
-            Post, rel_field, sub_selection, {},
+            Post,
+            rel_field,
+            sub_selection,
+            {},
             child_gql_type=post_gql_type,
             child_graphene_type=_PostT,
         )
@@ -625,7 +663,8 @@ class TestPrefetchChildAnnotation(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        from tests.models import Author, Post, Comment
+        from tests.models import Author, Comment, Post
+
         for i in range(2):
             a = Author.objects.create(name=f"C{i}", bio="")
             for j in range(2):
@@ -635,12 +674,13 @@ class TestPrefetchChildAnnotation(TestCase):
 
     def test_prefetch_child_annotation(self):
         """Author.posts prefetch carries commentCount annotation on child Prefetch qs."""
-        from tests.models import Author, Post, Comment
+        from tests.models import Author, Comment, Post
 
         _R6B = Registry()
 
         class _PostType6(DjangoObjectType):
             comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+
             class Meta:
                 model = Post
                 registry = _R6B
@@ -674,7 +714,9 @@ class TestPrefetchChildAnnotation(TestCase):
             data = _exec(schema6, query)
 
         sqls = " ".join(q["sql"] for q in ctx.captured_queries)
-        self.assertIn("COUNT", sqls.upper(), "Child Prefetch queryset should contain COUNT")
+        self.assertIn(
+            "COUNT", sqls.upper(), "Child Prefetch queryset should contain COUNT"
+        )
 
         # Verify values
         for author_data in data["allAuthors"]["results"]:
@@ -689,20 +731,27 @@ class TestPrefetchGateFiresOnAnnotatedFieldsOnly(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        from tests.models import Author, Post, Comment
+        from tests.models import Author, Comment, Post
+
         a = Author.objects.create(name="E0", bio="")
         p = Post.objects.create(title="PG", author=a)
         Comment.objects.create(post=p, body="x")
 
-    @override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": False, "OPTIMIZE_ANNOTATED_FIELDS": True})
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_ONLY_FIELDS": False,
+            "OPTIMIZE_ANNOTATED_FIELDS": True,
+        }
+    )
     def test_prefetch_gate_fires_on_annotated_fields_only(self):
         """Child annotation present even when OPTIMIZE_ONLY_FIELDS is False."""
-        from tests.models import Author, Post, Comment
+        from tests.models import Author, Comment, Post
 
         _R6C = Registry()
 
         class _PostT6C(DjangoObjectType):
             comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+
             class Meta:
                 model = Post
                 registry = _R6C
@@ -734,7 +783,11 @@ class TestPrefetchGateFiresOnAnnotatedFieldsOnly(TestCase):
             data = _exec(schema6c, query)
 
         sqls = " ".join(q["sql"] for q in ctx.captured_queries)
-        self.assertIn("COUNT", sqls.upper(), "Child annotation should be present despite ONLY_FIELDS=False")
+        self.assertIn(
+            "COUNT",
+            sqls.upper(),
+            "Child annotation should be present despite ONLY_FIELDS=False",
+        )
         # Values correct
         for author_data in data["allAuthors"]["results"]:
             for post_data in author_data["posts"]:
@@ -754,12 +807,14 @@ class TestSafeModeContractStructural(TestCase):
     @classmethod
     def setUpTestData(cls):
         from tests.models import Author, Post
+
         a = Author.objects.create(name="Safe", bio="")
         Post.objects.create(title="SP", author=a)
 
     def test_safe_mode_catches_apply_optimizations_error(self):
         """With SAFE_MODE=True, FieldError from _apply_optimizations is swallowed."""
         from django.core.exceptions import FieldError
+
         from django_graphex.settings import graphql_api_settings
         from tests.models import Post
 
@@ -771,8 +826,10 @@ class TestSafeModeContractStructural(TestCase):
                 raise FieldError("test error")
             return base
 
-        with patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", True), \
-             patch("django_graphex.utils._apply_optimizations", side_effect=_raise_once):
+        with (
+            patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", True),
+            patch("django_graphex.utils._apply_optimizations", side_effect=_raise_once),
+        ):
             _R8 = Registry()
 
             class _PostT8(DjangoObjectType):
@@ -800,12 +857,14 @@ class TestSafeModeFalsePropagatesBuildError(TestCase):
     @classmethod
     def setUpTestData(cls):
         from tests.models import Author, Post
+
         a = Author.objects.create(name="Loud", bio="")
         Post.objects.create(title="LP", author=a)
 
     def test_safe_mode_false_propagates_build_error(self):
         """With SAFE_MODE=False (default), FieldError from optimization propagates."""
         from django.core.exceptions import FieldError
+
         from tests.models import Post
 
         def _raise(base, model, info, kwargs, custom_used):
@@ -838,13 +897,15 @@ class TestAliasBeforeAnnotateOrder(TestCase):
     @classmethod
     def setUpTestData(cls):
         from tests.models import Author, Post
+
         a = Author.objects.create(name="ABO", bio="")
         Post.objects.create(title="AO1", author=a)
 
     def test_alias_before_annotate_order(self):
         """alias(**aliases) must be called before annotate(**annotations) on root qs."""
-        from tests.models import Post
         from django.db.models import QuerySet
+
+        from tests.models import Post
 
         _R8C = Registry()
 
@@ -882,8 +943,10 @@ class TestAliasBeforeAnnotateOrder(TestCase):
             call_order.append("annotate")
             return _orig_annotate(self_qs, **kwargs)
 
-        with patch.object(QuerySet, "alias", _spy_alias), \
-             patch.object(QuerySet, "annotate", _spy_annotate):
+        with (
+            patch.object(QuerySet, "alias", _spy_alias),
+            patch.object(QuerySet, "annotate", _spy_annotate),
+        ):
             data = _exec(schema8c, "{ allPosts { results { id ratio } } }")
 
         alias_indices = [i for i, c in enumerate(call_order) if c == "alias"]
@@ -902,7 +965,8 @@ class TestAliasBeforeAnnotateOrder(TestCase):
         )
         # The first alias() must precede the last annotate()
         self.assertLess(
-            min(alias_indices), max(annotate_indices),
+            min(alias_indices),
+            max(annotate_indices),
             f"alias() must be called before annotate(). Order: {call_order}",
         )
         # End-to-end: the aliased AnnotatedField (ratio) must resolve to a
@@ -922,7 +986,9 @@ class TestAnnotationNameCollisionSafety(TestCase):
 
     def test_annotation_name_collision_safety(self):
         """Two AnnotatedFields on the same type use distinct _gqx_ann_* keys."""
-        field_a = AnnotatedField(graphene.Int, Count("comments"), annotation_name="explicit_a")
+        field_a = AnnotatedField(
+            graphene.Int, Count("comments"), annotation_name="explicit_a"
+        )
         field_b = AnnotatedField(graphene.Int, Count("tags"))
 
         self.assertNotEqual(
@@ -952,12 +1018,14 @@ class TestAnnotatedFieldImportable(TestCase):
     def test_annotated_field_importable(self):
         """from django_graphex import AnnotatedField works."""
         from django_graphex import AnnotatedField as AF
+
         self.assertIsNotNone(AF)
         self.assertTrue(callable(AF))
 
     def test_annotated_field_in_all(self):
         """AnnotatedField in django_graphex.__all__."""
         import django_graphex
+
         self.assertIn("AnnotatedField", django_graphex.__all__)
 
 
@@ -967,4 +1035,5 @@ class TestAnnotatedFieldsSettingAccessible(TestCase):
     def test_optimize_annotated_fields_setting(self):
         """OPTIMIZE_ANNOTATED_FIELDS accessible from graphql_api_settings."""
         from django_graphex.settings import graphql_api_settings as s
+
         self.assertIs(s.OPTIMIZE_ANNOTATED_FIELDS, True)
