@@ -251,9 +251,7 @@ def _import_from_string(value: str, setting_name: str) -> Any:
 
 
 graphql_api_settings = GraphQLAPISettings(None, DEFAULTS, IMPORT_STRINGS)
-graphene_settings = GrapheneSettings(
-    None, GRAPHENE_DEFAULTS, GRAPHENE_IMPORT_STRINGS
-)
+graphene_settings = GrapheneSettings(None, GRAPHENE_DEFAULTS, GRAPHENE_IMPORT_STRINGS)
 
 
 def reload_api_settings(*args: Any, **kwargs: Any) -> None:

@@ -10,7 +10,11 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterator
 
 from django.apps import apps
-from django.contrib.contenttypes.fields import GenericForeignKey, GenericRel, GenericRelation
+from django.contrib.contenttypes.fields import (
+    GenericForeignKey,
+    GenericRel,
+    GenericRelation,
+)
 from django.core.exceptions import ValidationError
 from django.db.models import (
     NOT_PROVIDED,
@@ -747,12 +751,10 @@ def _collect_only_fields(
                 # attnames via model meta (ct_field stores the field NAME, e.g.
                 # "content_type"; its attname is "content_type_id").
                 _only.add(
-                    _prefix
-                    + model._meta.get_field(related_field.ct_field).attname
+                    _prefix + model._meta.get_field(related_field.ct_field).attname
                 )
                 _only.add(
-                    _prefix
-                    + model._meta.get_field(related_field.fk_field).attname
+                    _prefix + model._meta.get_field(related_field.fk_field).attname
                 )
                 continue
             if kind == "select":
@@ -867,6 +869,7 @@ def _collect_only_fields_is_full_load(
 # Phase B helpers — prefetch branch column narrowing                           #
 # --------------------------------------------------------------------------- #
 
+
 def _leaf_model(model: type[Model], lookup: str) -> type[Model]:
     """Walk a dotted ORM lookup through ALL relation kinds and return the leaf model.
 
@@ -965,7 +968,7 @@ def _compute_child_only(
     if isinstance(related_field, GenericRelation):
         # Discover the child GFK matching this GenericRelation's ct/fk fields.
         ct_field_name = related_field.content_type_field_name  # e.g. "content_type"
-        fk_field_name = related_field.object_id_field_name    # e.g. "object_id"
+        fk_field_name = related_field.object_id_field_name  # e.g. "object_id"
         # Disambiguate among multiple GFKs on the child: pick the one whose
         # ct_field and fk_field match the GenericRelation's referenced fields.
         gfk = None
