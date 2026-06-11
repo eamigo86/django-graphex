@@ -195,6 +195,29 @@ class BaseDjangoGraphqlPagination:
             "paginate_queryset() function must be implemented into child classes."
         )
 
+    def prefetch_window_slice(self, **kwargs: Any) -> tuple[int, int, Any] | None:
+        """Return the (offset, limit, ordering) tuple for DB-side window slicing.
+
+        The base implementation always returns ``None``, signalling that this
+        paginator does not support DB-side window slicing and the caller should
+        fall back to the standard in-memory path.
+
+        Subclasses that can derive (offset, limit, ordering) from ``**kwargs``
+        without needing the total row count at build time SHOULD override this
+        method and return the resolved triple. They MUST return ``None``
+        whenever the slice cannot be determined without a count (e.g. negative
+        page number) or the paginator is unbounded.
+
+        Args:
+            **kwargs: The pagination arguments as extracted from the GraphQL
+                query (same names the paginator uses in ``paginate_queryset``).
+
+        Returns:
+            A ``(offset, limit, ordering)`` tuple, or ``None`` to fall back to
+            the in-memory path.
+        """
+        return None
+
 
 class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
     """Pagination implementation using limit and offset parameters."""
@@ -314,6 +337,35 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
                 qs = qs.order_by(order)
 
         return qs[offset : offset + abs(limit)]
+
+    def prefetch_window_slice(self, **kwargs: Any) -> tuple[int, int, Any] | None:
+        """Return (offset, limit, ordering) for DB-side window slicing.
+
+        Mirrors the resolution logic of ``paginate_queryset`` exactly so that
+        the window-slice math is byte-for-byte identical to the in-memory path:
+        - ``limit`` is resolved via ``_resolve_page_size`` (default + clamping).
+        - When resolved ``limit`` is ``None`` (unbounded), returns ``None`` so
+          the caller falls back to the in-memory path.
+        - ``offset`` defaults to 0.
+        - ``ordering`` falls back to ``self.ordering`` when not supplied.
+
+        Args:
+            **kwargs: Pagination arguments extracted from the GraphQL query
+                (same names as used by ``paginate_queryset``).
+
+        Returns:
+            ``(offset, limit, ordering)`` tuple, or ``None`` when unbounded.
+        """
+        limit = self._resolve_page_size(
+            kwargs.get(self.limit_query_param, None),
+            self.default_limit,
+            self.max_limit,
+        )
+        if limit is None:
+            return None
+        offset = kwargs.get(self.offset_query_param, 0) or 0
+        order = kwargs.pop(self.ordering_param, None) or self.ordering
+        return (offset, abs(limit), order)
 
 
 class PageGraphqlPagination(BaseDjangoGraphqlPagination):
@@ -465,6 +517,38 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
 
         return qs[offset : offset + page_size]
 
+    def prefetch_window_slice(self, **kwargs: Any) -> tuple[int, int, Any] | None:
+        """Return (offset, page_size, ordering) for DB-side window slicing.
+
+        Mirrors the resolution logic of ``paginate_queryset``:
+        - When ``page_size`` resolves to ``None`` (unbounded), returns ``None``.
+        - When ``page < 0`` (count-relative offset), returns ``None`` because
+          the offset cannot be computed without the total row count at build time.
+        - For ``page >= 0``, ``offset = page_size * (page - 1)``.
+
+        Args:
+            **kwargs: Pagination arguments extracted from the GraphQL query
+                (same names as used by ``paginate_queryset``).
+
+        Returns:
+            ``(offset, page_size, ordering)`` tuple, or ``None`` to fall back.
+        """
+        page = kwargs.pop(self.page_query_param, 1)
+        requested = (
+            kwargs.get(self.page_size_query_param)
+            if self.page_size_query_param
+            else None
+        )
+        page_size = self._resolve_page_size(requested, self.page_size, self.max_page_size)
+        if page_size is None:
+            return None
+        if page < 0:
+            # Count-relative offset requires total count at build time — fall back.
+            return None
+        offset = page_size * (page - 1)
+        order = kwargs.pop(self.ordering_param, None) or self.ordering
+        return (offset, page_size, order)
+
 
 class CursorPageInfo(ObjectType):
     """Forward keyset pagination metadata for "CursorGraphqlPagination"."""
@@ -532,6 +616,17 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         self.first_query_param = first_query_param
         self.page_size = page_size
         self.max_page_size = max_page_size
+
+    def prefetch_window_slice(self, **kwargs: Any) -> tuple[int, int, Any] | None:
+        """Return None — opaque keyset cursors cannot be expressed as a window offset.
+
+        DB-side ROW_NUMBER slicing requires a concrete (offset, limit) pair;
+        cursor-based pagination uses an opaque keyset boundary which is not
+        translatable to a row offset without a full table scan.  This is out of
+        scope for v1 window optimisation.
+        """
+        # Opaque keyset; DB-side window slice is out of scope for v1.
+        return None
 
     # -- cursor helpers -----------------------------------------------------
     @staticmethod

@@ -30,6 +30,11 @@ DEFAULTS = {
     # Conservative (keeps pk/FK/ordering, skips computed-field models); set to
     # False if your models read non-selected columns in properties/resolvers.
     "OPTIMIZE_ONLY_FIELDS": True,
+    # Enable DB-side ROW_NUMBER window slicing for reverse-FK nested paginated
+    # lists (LimitOffset and Page paginators). Set to False to opt out globally
+    # and fall back to the in-memory order+slice path (exact pre-Phase-C
+    # behavior).
+    "OPTIMIZE_NESTED_PAGINATION": True,
     # Subscriptions: when False (default), change notifications carry only
     # {"id": <pk>} and skip serializing the instance; set True to serialize the
     # full instance with the subscription's backend. Can be overridden

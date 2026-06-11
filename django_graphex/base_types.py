@@ -113,6 +113,7 @@ class DjangoListObjectBase:
         results: Any,
         count: int,
         results_field_name: str = "results",
+        already_paginated: bool = False,
     ) -> None:
         """Initialize the Django list object.
 
@@ -120,10 +121,14 @@ class DjangoListObjectBase:
             results: the list of result objects.
             count: total number of results.
             results_field_name: name of the field holding the results.
+            already_paginated: when True, the results list has already been
+                DB-sliced by the window-prefetch path and must not be
+                re-sliced by GenericPaginationField.
         """
         self.results = results
         self.count = count
         self.results_field_name = results_field_name
+        self.already_paginated = already_paginated
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the object to a dictionary.
