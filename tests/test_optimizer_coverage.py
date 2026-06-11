@@ -45,27 +45,19 @@ from django_graphex import (
 from django_graphex.registry import Registry
 from django_graphex.settings import graphql_api_settings
 from django_graphex.utils import (
+    PrefetchPlan,
     _collect_only_fields,
+    _collect_prefetch_only_sets,
+    _compute_child_only,
     _concrete_field_map,
+    _leaf_model,
     _merge_filtered_prefetches,
+    _narrow_plain_prefetch,
     _relation_field_map,
     _relation_optimization,
     queryset_factory,
     recursive_params,
 )
-
-try:
-    from django_graphex.utils import (
-        PrefetchPlan,
-        _collect_prefetch_only_sets,
-        _compute_child_only,
-        _leaf_model,
-        _narrow_plain_prefetch,
-    )
-
-    _PHASE_B_AVAILABLE = True
-except ImportError:
-    _PHASE_B_AVAILABLE = False
 
 from .models import Author, DummyModel, Post, Tag
 
@@ -1302,28 +1294,16 @@ class SafeModeTest(TestCase):
 # =========================================================================== #
 # Phase B — PR1 tests (tasks 1.1 – 3.9)                                       #
 # =========================================================================== #
-import unittest  # noqa: E402
-
-
-def _skip_if_no_phase_b(test_func):
-    """Decorator: skip test when Phase B symbols are not yet importable."""
-    return unittest.skipUnless(_PHASE_B_AVAILABLE, "Phase B not yet implemented")(
-        test_func
-    )
-
-
 # --------------------------------------------------------------------------- #
 # Task 1.1 / 1.2 — _leaf_model                                                #
 # --------------------------------------------------------------------------- #
 class TestLeafModel(TestCase):
-    @_skip_if_no_phase_b
     def test_leaf_model_single_segment_reverse_fk(self):
         # _leaf_model(Author, "posts") -> Post
         from .models import Author, Post
 
         self.assertIs(_leaf_model(Author, "posts"), Post)
 
-    @_skip_if_no_phase_b
     def test_leaf_model_dotted_prefetch_walk(self):
         # _leaf_model(Author, "posts__tags") walks reverse-FK then forward-M2M -> Tag
         from .models import Author, Tag
@@ -1335,13 +1315,11 @@ class TestLeafModel(TestCase):
 # Task 1.3 / 1.4 — PrefetchPlan dataclass                                     #
 # --------------------------------------------------------------------------- #
 class TestPrefetchPlan(TestCase):
-    @_skip_if_no_phase_b
     def test_prefetch_plan_dataclass_has_expected_attributes(self):
         plan = PrefetchPlan(only_cols=["id", "title"], child_select=["category"])
         self.assertEqual(plan.only_cols, ["id", "title"])
         self.assertEqual(plan.child_select, ["category"])
 
-    @_skip_if_no_phase_b
     def test_prefetch_plan_empty_defaults(self):
         plan = PrefetchPlan(only_cols=[], child_select=[])
         self.assertEqual(plan.only_cols, [])
@@ -1357,7 +1335,6 @@ class TestComputeChildOnly(TestCase):
     def _sel(self, query):
         return _parse(query)
 
-    @_skip_if_no_phase_b
     def test_reverse_fk_includes_fk_back(self):
         # Author.posts reverse FK: author_id must always be in only_cols even
         # when not requested.  Post body must NOT be present.
@@ -1374,7 +1351,6 @@ class TestComputeChildOnly(TestCase):
         self.assertIn("title", plan.only_cols)
         self.assertNotIn("body", plan.only_cols)
 
-    @_skip_if_no_phase_b
     def test_m2m_forward_no_fk_back(self):
         # Post.tags forward M2M: only pk+label+ordering, NO fk-back attname.
         from .models import Post, Tag
@@ -1393,7 +1369,6 @@ class TestComputeChildOnly(TestCase):
                 f"Unexpected FK-back {col!r} in M2M plan",
             )
 
-    @_skip_if_no_phase_b
     def test_m2m_reverse_no_crash(self):
         # Author.coauthored_posts reverse M2M (ManyToManyRel): no crash,
         # no FK-back, dispatch via many_to_many flag.
@@ -1407,7 +1382,6 @@ class TestComputeChildOnly(TestCase):
         self.assertIn("id", plan.only_cols)
         self.assertIn("title", plan.only_cols)
 
-    @_skip_if_no_phase_b
     def test_ordering_attnames_included(self):
         # Profile.Meta.ordering = ["handle"] -> handle attname kept even when not requested.
         sel, frags = _parse("{ p { notes { headline } } }")
@@ -1439,7 +1413,6 @@ class TestComputeChildOnly(TestCase):
         # "rank" is requested -> must be included
         self.assertIn("rank", plan.only_cols)
 
-    @_skip_if_no_phase_b
     def test_child_select_related_co_computed_gap1(self):
         # GAP-1: AST { posts { title category { title } } } on Author.
         # _compute_child_only must return child_select containing "category"
@@ -1457,7 +1430,6 @@ class TestComputeChildOnly(TestCase):
         # category__title also in only_cols (dotted path)
         self.assertIn("category__title", plan.only_cols)
 
-    @_skip_if_no_phase_b
     def test_full_load_fallback_on_computed_leaf(self):
         # Author.display_name is a @property -> _compute_child_only returns None
         # (full-load fallback).
@@ -1482,7 +1454,6 @@ class TestComputeChildOnly(TestCase):
 class TestCollectPrefetchOnlySets(TestCase):
     """Unit tests for _collect_prefetch_only_sets (no DB)."""
 
-    @_skip_if_no_phase_b
     def test_gfk_target_skip_no_crash_gap3(self):
         # GAP-3: content_object (GFK-target) must NOT appear in the returned map
         # and must not raise AttributeError (isinstance-GFK check before get_related_model).
@@ -1490,7 +1461,6 @@ class TestCollectPrefetchOnlySets(TestCase):
         result = _collect_prefetch_only_sets(OptNote, sel, frags)
         self.assertNotIn("content_object", result)
 
-    @_skip_if_no_phase_b
     def test_collect_reverse_fk(self):
         # Author.posts reverse FK: 'posts' key must be in result with a PrefetchPlan.
         from .models import Author
@@ -1503,7 +1473,6 @@ class TestCollectPrefetchOnlySets(TestCase):
         self.assertIn("author_id", plan.only_cols)
         self.assertIn("title", plan.only_cols)
 
-    @_skip_if_no_phase_b
     def test_collect_forward_m2m(self):
         # Post.tags forward M2M: 'tags' in result.
         from .models import Post
@@ -1514,7 +1483,6 @@ class TestCollectPrefetchOnlySets(TestCase):
         plan = result["tags"]
         self.assertIn("label", plan.only_cols)
 
-    @_skip_if_no_phase_b
     def test_collect_reverse_m2m(self):
         # Author.coauthored_posts reverse M2M (ManyToManyRel): in result.
         from .models import Author
@@ -1523,7 +1491,6 @@ class TestCollectPrefetchOnlySets(TestCase):
         result = _collect_prefetch_only_sets(Author, sel, frags)
         self.assertIn("coauthored_posts", result)
 
-    @_skip_if_no_phase_b
     def test_collect_generic_relation_ct_fk_discovery(self):
         # Profile.notes GenericRelation: 'notes' key with content_type_id + object_id
         # in only_cols (NOT raw 'content_type').
@@ -1537,7 +1504,6 @@ class TestCollectPrefetchOnlySets(TestCase):
         self.assertIn("text", plan.only_cols)
         self.assertNotIn("content_type", plan.only_cols)
 
-    @_skip_if_no_phase_b
     def test_collect_multi_gfk_disambiguation(self):
         # REQ-B2 / GAP-2: multi-GFK disambiguation.
         #
@@ -1582,7 +1548,6 @@ class TestCollectPrefetchOnlySets(TestCase):
 # Tasks 3.1–3.5 — _narrow_plain_prefetch                                      #
 # --------------------------------------------------------------------------- #
 class TestNarrowPlainPrefetch(TestCase):
-    @_skip_if_no_phase_b
     def test_lookup_not_in_map_returns_string(self):
         # lookup absent from map -> bare string returned
         from .models import Author
@@ -1590,7 +1555,6 @@ class TestNarrowPlainPrefetch(TestCase):
         result = _narrow_plain_prefetch(Author, "posts", {})
         self.assertEqual(result, "posts")
 
-    @_skip_if_no_phase_b
     def test_lookup_in_map_returns_prefetch_with_only(self):
         from django.db.models import Prefetch as DjPrefetch
 
@@ -1606,7 +1570,6 @@ class TestNarrowPlainPrefetch(TestCase):
         # mode=False means "only these fields"
         self.assertFalse(mode, "Expected only() (mode=False means only these cols)")
 
-    @_skip_if_no_phase_b
     def test_lookup_in_map_with_child_select_returns_prefetch_with_select_related(self):
         from django.db.models import Prefetch as DjPrefetch
 
@@ -1622,7 +1585,6 @@ class TestNarrowPlainPrefetch(TestCase):
         # select_related must include 'category'
         self.assertIn("category", qs.query.select_related)
 
-    @_skip_if_no_phase_b
     def test_dotted_lookup_uses_leaf_model(self):
         from django.db.models import Prefetch as DjPrefetch
 
@@ -1640,7 +1602,6 @@ class TestNarrowPlainPrefetch(TestCase):
 # Tasks 3.6–3.9 — Conversion block and SAFE_MODE                              #
 # --------------------------------------------------------------------------- #
 class TestConversionBlock(TestCase):
-    @_skip_if_no_phase_b
     def test_conversion_runs_after_merge_not_before(self):
         # REQ-B5: Passing a Prefetch object into _merge_filtered_prefetches raises
         # when there are filtered prefetches to process (which trigger string ops).
@@ -1662,7 +1623,6 @@ class TestConversionBlock(TestCase):
         with self.assertRaises((AttributeError, TypeError)):
             _merge_filtered_prefetches([plain_pf], [filtered_pf])
 
-    @_skip_if_no_phase_b
     def test_optimize_only_fields_false_no_conversion(self):
         # REQ-B4: With OPTIMIZE_ONLY_FIELDS=False, prefetch strings stay strings.
         from graphql import parse as gql_parse
@@ -1695,7 +1655,6 @@ class TestConversionBlock(TestCase):
         for p in qs._prefetch_related_lookups:
             self.assertNotIsInstance(p, DjPrefetch)
 
-    @_skip_if_no_phase_b
     def test_safe_mode_degrades_on_exception(self):
         # REQ-B4: Patch _collect_prefetch_only_sets to raise.
         # SAFE_MODE=True -> un-optimized queryset + one WARNING.
@@ -1764,7 +1723,6 @@ class TestFullLoadSiblingIsolation(TestCase):
     MUST be narrowed and the full-load branch MUST NOT be narrowed (bare string).
     """
 
-    @_skip_if_no_phase_b
     def test_full_load_sibling_isolation(self):
         from .models import Author, Post
 
@@ -1781,7 +1739,9 @@ class TestFullLoadSiblingIsolation(TestCase):
         sel_full, frags2 = _parse("{ p { co_authors { display_name } } }")
         co_sub = sel_full.selections[0].selection_set
         plan_b = _compute_child_only(Author, co_field, co_sub, frags2)
-        self.assertIsNone(plan_b, "Branch with @property leaf should be full-load (None)")
+        self.assertIsNone(
+            plan_b, "Branch with @property leaf should be full-load (None)"
+        )
 
         # Via _collect_prefetch_only_sets on Post: 'tags' (concrete) is narrowable;
         # 'co_authors' (@property) is omitted from the map (full-load).
@@ -1790,7 +1750,8 @@ class TestFullLoadSiblingIsolation(TestCase):
 
         self.assertIn("tags", only_map, "tags (concrete leaf) must be narrowable")
         self.assertNotIn(
-            "co_authors", only_map,
+            "co_authors",
+            only_map,
             "co_authors (@property leaf) must be omitted from map (full-load)",
         )
 
@@ -1804,16 +1765,18 @@ class TestREQB6RegressionNotNarrowed(TestCase):
     _narrow_plain_prefetch. Its queryset remains full-load.
     """
 
-    @_skip_if_no_phase_b
     def test_rerooted_child_stays_full_load(self):
         from django.db.models import Prefetch as DjPrefetch
+
         from .models import Post
 
         # 'posts__tags' is a plain child nested under a filtered Prefetch for 'posts'.
         # _merge_filtered_prefetches re-roots 'posts__tags' -> 'tags' into the
         # filtered queryset, so top_plain is empty and the conversion block never
         # sees it (REQ-B6 invariant).
-        filtered_pf = DjPrefetch("posts", queryset=Post.objects.filter(title__icontains=""))
+        filtered_pf = DjPrefetch(
+            "posts", queryset=Post.objects.filter(title__icontains="")
+        )
         top_plain, top_filtered = _merge_filtered_prefetches(
             ["posts__tags"], [filtered_pf]
         )
@@ -1823,7 +1786,8 @@ class TestREQB6RegressionNotNarrowed(TestCase):
         # The filtered Prefetch's queryset remains full-load (no .only() applied).
         deferred_fields, defer_mode = filtered_pf.queryset.query.deferred_loading
         self.assertEqual(
-            (deferred_fields, defer_mode), (frozenset(), True),
+            (deferred_fields, defer_mode),
+            (frozenset(), True),
             "Re-rooted child queryset must be full-load (no .only() applied)",
         )
 
@@ -1837,9 +1801,9 @@ class TestGAP4DottedNestedPrefetchFullLoad(TestCase):
     therefore stays a bare string (full-load).
     """
 
-    @_skip_if_no_phase_b
     def test_dotted_nested_prefetch_stays_bare_string(self):
         from django.db.models import Prefetch as DjPrefetch
+
         from .models import Author
 
         sel, frags = _parse("{ a { posts { title tags { label } } } }")
@@ -2274,7 +2238,7 @@ class E2EItem18GateOffAndSafeMode(E2EBaseTest):
         """
         with mock.patch.object(graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", False):
             with CaptureQueriesContext(connection) as ctx:
-                data = self._exec(query)
+                self._exec(query)
 
         post_sql = [
             q["sql"]
@@ -2289,34 +2253,38 @@ class E2EItem18GateOffAndSafeMode(E2EBaseTest):
         )
 
     def test_safe_mode_exception_degrades_gracefully(self):
-        import django_graphex.utils as utils_module
         from graphql import parse as gql_parse
         from graphql.language.ast import OperationDefinitionNode
+
+        import django_graphex.utils as utils_module
 
         gql_doc = gql_parse(
             "{ allAuthors { results { name posts { results { title } } } totalCount } }"
         )
-        op = next(d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode))
+        op = next(
+            d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode)
+        )
         field_node = op.selection_set.selections[0]
 
         class _GT:
             pass
 
         from .models import Author
+
         info = _FakeInfo(_FakeParentType(_GT), "all_authors", [field_node])
 
-        with mock.patch.object(
-            graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True
-        ), mock.patch.object(
-            graphql_api_settings, "OPTIMIZER_SAFE_MODE", True
-        ), mock.patch.object(
-            utils_module, "_collect_prefetch_only_sets",
-            side_effect=RuntimeError("safe-mode-e2e-boom"),
-        ), self.assertLogs("django_graphex.utils", level="WARNING") as cm:
+        with (
+            mock.patch.object(graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True),
+            mock.patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", True),
+            mock.patch.object(
+                utils_module,
+                "_collect_prefetch_only_sets",
+                side_effect=RuntimeError("safe-mode-e2e-boom"),
+            ),
+            self.assertLogs("django_graphex.utils", level="WARNING") as cm,
+        ):
             qs = queryset_factory(Author, None, info)
 
         self.assertEqual(qs.model, Author)
         self.assertEqual(len(cm.output), 1)
         self.assertIn("WARNING", cm.output[0])
-
-
