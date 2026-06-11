@@ -325,6 +325,14 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
 
         if not isinstance(qs, QuerySet):
             # Nested list resolved from the prefetch cache: order/slice in memory.
+            # G4 ordering parity: when no explicit ordering is given and the items
+            # are Django model instances, fall back to pk-ascending order so the
+            # in-memory path agrees with the window path (which always emits
+            # ORDER BY pk as a deterministic tiebreak).
+            if not order and qs:
+                meta = getattr(getattr(qs[0].__class__, "_meta", None), "pk", None)
+                if meta is not None:
+                    order = meta.attname
             items = _inmemory_order(qs, order) if order else list(qs)
             return items[offset : offset + abs(limit)]
 
@@ -504,6 +512,13 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
 
         if not isinstance(qs, QuerySet):
             # Nested list resolved from the prefetch cache: order/slice in memory.
+            # G4 ordering parity: when no explicit ordering is given and items are
+            # Django model instances, fall back to pk-ascending order so the
+            # in-memory path agrees with the window path.
+            if not order and qs:
+                meta = getattr(getattr(qs[0].__class__, "_meta", None), "pk", None)
+                if meta is not None:
+                    order = meta.attname
             items = _inmemory_order(qs, order) if order else list(qs)
             return items[offset : offset + page_size]
 

@@ -37,6 +37,15 @@ from .utils import (
 # ---------------------------------------------------------------------------
 SELF_NARROW_VERIFIED: bool = True
 
+# ---------------------------------------------------------------------------
+# Prefix for the to_attr used by build_window_prefetch.  Results land in
+# ``root._gqx_win_<accessor>`` (a plain list) instead of the normal
+# ``_prefetched_objects_cache``.  list_resolver checks this attr first to
+# distinguish a window-sliced empty result (offset-beyond-end) from a
+# plain zero-child parent.
+# ---------------------------------------------------------------------------
+_GQX_WIN_ATTR_PREFIX: str = "_gqx_win_"
+
 if TYPE_CHECKING:
     from django.db.models import Manager, Model
     from graphql import GraphQLResolveInfo as ResolveInfo
@@ -615,8 +624,10 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         Returns ``None`` when any applicability pre-check fails, signalling the
         caller to fall back to ``build_prefetch``.
 
-        This is a DORMANT gate in C2: the method is implemented but the live
-        walker still calls ``build_prefetch``; the switch-over is C3.
+        Wired into the live walker in C3.  Results land in
+        ``root._gqx_win_<accessor>`` via ``to_attr`` so ``list_resolver`` can
+        distinguish an offset-beyond-end empty page from a genuine zero-child
+        parent.
 
         Args:
             lookup: the ORM prefetch lookup path (e.g. ``"posts"``).
@@ -657,7 +668,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # --- Pre-check 5: all ordering terms must be concrete attnames ----------
         child = self.type._meta.model
         concrete_attnames = {f.attname for f in child._meta.concrete_fields}
-        order_terms: list[str] = list(order) if order else [child._meta.pk.attname]
+        # order may be a comma-separated string ("id,-title") or an iterable of strings.
+        # Normalize to a list of individual terms.
+        if not order:
+            order_terms: list[str] = [child._meta.pk.attname]
+        elif isinstance(order, str):
+            order_terms = [t for t in order.replace(" ", "").split(",") if t]
+        else:
+            order_terms = [t for t in order if t]
         for term in order_terms:
             col = term.lstrip("-+").split(LOOKUP_SEP)[0]
             if col not in concrete_attnames:
@@ -702,7 +720,12 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                 qs = qs.select_related(*plan.child_select)
             qs = qs.only(*plan.only_cols)
 
-        return Prefetch(lookup, queryset=qs)
+        # Use to_attr so the resolver can distinguish a window-sliced empty result
+        # (offset-beyond-end) from a plain zero-child empty prefetch cache.
+        # to_attr stores results as a list on root._gqx_win_<accessor>, separate
+        # from _prefetched_objects_cache.
+        win_attr = _GQX_WIN_ATTR_PREFIX + self.accessor
+        return Prefetch(lookup, queryset=qs, to_attr=win_attr)
 
     def list_resolver(
         self,
@@ -728,6 +751,30 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         if root is None:
             return DjangoListObjectBase(
                 count=0, results=[], results_field_name=results_field_name
+            )
+
+        # --- C3: check for window-sliced prefetch first -------------------------
+        # build_window_prefetch stores results via to_attr="_gqx_win_<accessor>"
+        # so we can distinguish an offset-beyond-end empty result (window active,
+        # no rows in this page) from a zero-child parent (never had children).
+        win_attr = _GQX_WIN_ATTR_PREFIX + self.accessor
+        win_results = getattr(root, win_attr, None)
+        if win_results is not None:
+            # Window-sliced path: rows may be empty (offset-beyond-end or zero-child).
+            if win_results:
+                # Non-empty page: partition count rides the first row.
+                count = win_results[0]._gqx_total
+            else:
+                # Empty page: ambiguous (zero-child or offset-beyond-end).
+                # Use a slice-independent count that ignores the page window.
+                # This fires only for empty-cache parents (controlled fallback).
+                manager_attr = getattr(root, self.accessor)
+                count = manager_attr.count()
+            return DjangoListObjectBase(
+                count=count,
+                results=win_results,
+                results_field_name=results_field_name,
+                already_paginated=True,
             )
 
         # If the optimizer prefetched this relation (filtered or full), use the

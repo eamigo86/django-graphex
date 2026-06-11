@@ -75,6 +75,10 @@ class GenericPaginationField(graphene.Field):
             The paginated results, or "None" when "root" is not a list base.
         """
         if isinstance(root, DjangoListObjectBase):
+            # C3: when already_paginated is True the rows are already the DB-sliced
+            # page — do NOT re-slice, just return them in order.
+            if getattr(root, "already_paginated", False):
+                return root.results
             return self.paginator_instance.paginate_queryset(root.results, **kwargs)
         return None
 
