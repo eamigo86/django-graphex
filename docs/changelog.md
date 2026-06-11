@@ -42,6 +42,24 @@ All notable changes to this library are documented here. The format is based on
   (merged `.only()` columns). See
   [Types — per-content-type narrowing](usage/types.md#per-content-type-column-narrowing-django-50).
 
+### Fixed
+
+- **Inline-fragment type-condition guard.** The query optimizer no longer
+  descends into an inline fragment whose `type_condition` names a *different*
+  concrete type than the one being walked, preventing field mis-attribution
+  against the wrong model's relation map. Inert before this release (no
+  polymorphic output types were exposed) but the correctness foundation the
+  union/interface routing above builds on.
+
+### Documentation
+
+- Optimizer docs brought up to date with the 1.1.0 internals: documented
+  `AnnotatedField`, the `OPTIMIZE_NESTED_PAGINATION` / `OPTIMIZER_SAFE_MODE` /
+  `OPTIMIZE_ANNOTATED_FIELDS` settings, GenericForeignKey prefetch, and the
+  safe-mode degrade. Corrected the nested-list pagination section, which
+  previously said nested lists were sliced "in memory" — by default they are now
+  sliced DB-side via `ROW_NUMBER()` window functions.
+
 ## 1.1.0
 
 ### Added
