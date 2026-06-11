@@ -729,7 +729,9 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # --- Phase E (AC1): apply optimize_<field> hook on filter-applied base qs
         # BEFORE pre-check 7 so a hook adding .distinct() triggers the clean
         # window opt-out (AC5). is_window=True because the final path is window.
-        qs = _apply_field_hook(qs, hook, info, filter_value=filter_value, is_window=True)
+        qs = _apply_field_hook(
+            qs, hook, info, filter_value=filter_value, is_window=True
+        )
 
         # --- Pre-check 7: G5 — filter forces .distinct() (to-many traversal) ---
         # Re-run on hook-modified qs (AC5): a hook adding .distinct() falls back.

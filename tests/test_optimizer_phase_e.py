@@ -14,6 +14,7 @@ Coverage matrix:
   AC10 — non-QuerySet return emits WARNING, uses unmodified qs
   AC11 — OPTIMIZE_QUERYSET=False skips hook; ONLY/ANNOTATED flags do NOT
 """
+
 from __future__ import annotations
 
 import graphene
@@ -122,6 +123,7 @@ class TestApplyFieldHook(TestCase):
     def _make_qs(self):
         """Return a real QuerySet for use in tests."""
         from tests.models import Post
+
         return Post.objects.all()
 
     def test_returns_qs_unchanged_when_hook_is_none(self):
@@ -173,12 +175,20 @@ class TestApplyFieldHook(TestCase):
             return None  # wrong type
 
         with self.assertLogs("django_graphex.utils", level="WARNING") as cm:
-            result = _apply_field_hook(qs, hook, None, filter_value=None, is_window=False)
+            result = _apply_field_hook(
+                qs, hook, None, filter_value=None, is_window=False
+            )
 
-        self.assertIs(result, qs, "Must return original qs when hook returns non-QuerySet")
+        self.assertIs(
+            result, qs, "Must return original qs when hook returns non-QuerySet"
+        )
         self.assertTrue(
-            any("non-QuerySet" in msg or "non_queryset" in msg.lower() or "non-queryset" in msg.lower()
-                for msg in cm.output),
+            any(
+                "non-QuerySet" in msg
+                or "non_queryset" in msg.lower()
+                or "non-queryset" in msg.lower()
+                for msg in cm.output
+            ),
             f"WARNING not found in: {cm.output}",
         )
 
@@ -193,7 +203,9 @@ class TestApplyFieldHook(TestCase):
         def hook(q, info, **kwargs):
             raise ValueError("hook error")
 
-        with self.assertRaises(ValueError, msg="Exception must propagate when SAFE_MODE=False"):
+        with self.assertRaises(
+            ValueError, msg="Exception must propagate when SAFE_MODE=False"
+        ):
             _apply_field_hook(qs, hook, None, filter_value=None, is_window=False)
 
     @override_settings(DJANGO_GRAPHEX={"OPTIMIZER_SAFE_MODE": True})
@@ -230,7 +242,9 @@ class TestApplyFieldHook(TestCase):
 _REG_WIN = {}
 
 
-def _build_window_hook_schema(parent_has_hook=True, hook_adds_distinct=False, hook_adds_gqx_rn=False):
+def _build_window_hook_schema(
+    parent_has_hook=True, hook_adds_distinct=False, hook_adds_gqx_rn=False
+):
     """Build a schema with an Author + posts field where AuthorType optionally
     declares optimize_posts.
 
@@ -248,11 +262,15 @@ def _build_window_hook_schema(parent_has_hook=True, hook_adds_distinct=False, ho
         "_WinHookPostListType",
         (DjangoListObjectType,),
         {
-            "Meta": type("Meta", (), {
-                "model": Post,
-                "pagination": LimitOffsetGraphqlPagination(default_limit=5),
-                "registry": _REG_WIN,
-            })
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "pagination": LimitOffsetGraphqlPagination(default_limit=5),
+                    "registry": _REG_WIN,
+                },
+            )
         },
     )
 
@@ -263,14 +281,17 @@ def _build_window_hook_schema(parent_has_hook=True, hook_adds_distinct=False, ho
 
     if parent_has_hook:
         if hook_adds_distinct:
+
             def optimize_posts(qs, info, **kwargs):
                 captured_kwargs.append(dict(kwargs))
                 return qs.distinct()
         elif hook_adds_gqx_rn:
+
             def optimize_posts(qs, info, **kwargs):
                 captured_kwargs.append(dict(kwargs))
                 return qs.annotate(_gqx_rn=Value(0))
         else:
+
             def optimize_posts(qs, info, **kwargs):
                 captured_kwargs.append(dict(kwargs))
                 # Use order_by to produce observable SQL change without
@@ -348,7 +369,9 @@ class TestWindowPathHook(TestCase):
         self.assertIn("authors", data)
 
         # The hook must have fired and recorded is_window=True
-        self.assertGreater(len(captured), 0, "optimize_posts hook must have been called")
+        self.assertGreater(
+            len(captured), 0, "optimize_posts hook must have been called"
+        )
         self.assertTrue(
             any(kw.get("is_window") is True for kw in captured),
             f"At least one call must have is_window=True; captured: {captured}",
@@ -356,7 +379,9 @@ class TestWindowPathHook(TestCase):
 
         # SQL must contain the ordering introduced by the hook (views column).
         all_sql = " ".join(q["sql"].upper() for q in ctx.captured_queries)
-        self.assertIn("VIEWS", all_sql, "Hook's order_by(-views) must appear in prefetch SQL")
+        self.assertIn(
+            "VIEWS", all_sql, "Hook's order_by(-views) must appear in prefetch SQL"
+        )
 
     @override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": True})
     def test_ac5_hook_adds_distinct_falls_back_to_plain(self):
@@ -365,7 +390,9 @@ class TestWindowPathHook(TestCase):
         is_window=False on fallback (FINAL path taken is plain).
         SQL must NOT contain ROW_NUMBER() (no window slicing).
         """
-        schema, captured = _build_window_hook_schema(parent_has_hook=True, hook_adds_distinct=True)
+        schema, captured = _build_window_hook_schema(
+            parent_has_hook=True, hook_adds_distinct=True
+        )
 
         query = """
         { authors { results {
@@ -376,7 +403,9 @@ class TestWindowPathHook(TestCase):
             data = _exec(schema, query)
 
         self.assertIn("authors", data)
-        self.assertGreater(len(captured), 0, "optimize_posts hook must have been called")
+        self.assertGreater(
+            len(captured), 0, "optimize_posts hook must have been called"
+        )
 
         # is_window must be False — final path is plain after fallback
         self.assertTrue(
@@ -386,7 +415,9 @@ class TestWindowPathHook(TestCase):
 
         # Must NOT use window (ROW_NUMBER absent)
         all_sql = " ".join(q["sql"].upper() for q in ctx.captured_queries)
-        self.assertNotIn("ROW_NUMBER()", all_sql, "AC5: no window SQL after hook-distinct fallback")
+        self.assertNotIn(
+            "ROW_NUMBER()", all_sql, "AC5: no window SQL after hook-distinct fallback"
+        )
 
         # Prong 2 of AC5 (customization MUST be preserved on fallback): the hook's
         # .distinct() must survive into the plain build_prefetch SQL. Without this
@@ -394,13 +425,16 @@ class TestWindowPathHook(TestCase):
         # (ROW_NUMBER absent + an is_window=False call both still hold), leaving
         # the "customization preserved" half of the spec unguarded.
         self.assertIn(
-            "DISTINCT", all_sql,
+            "DISTINCT",
+            all_sql,
             "AC5: hook .distinct() customization must survive the plain fallback",
         )
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": True,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": True,
+        }
+    )
     def test_ac6_hook_aliasing_gqx_rn_is_silently_overwritten_noop(self):
         """AC6 (revised): a hook adding ``.annotate(_gqx_rn=Value(0))`` does NOT
         actually collide with the window alias.
@@ -420,7 +454,9 @@ class TestWindowPathHook(TestCase):
           2. aliasing ``_gqx_rn`` is a benign no-op: the windowed query still
              succeeds (no errors, ROW_NUMBER window slicing intact).
         """
-        schema, captured = _build_window_hook_schema(parent_has_hook=True, hook_adds_gqx_rn=True)
+        schema, captured = _build_window_hook_schema(
+            parent_has_hook=True, hook_adds_gqx_rn=True
+        )
 
         query = """
         { authors { results {
@@ -431,12 +467,17 @@ class TestWindowPathHook(TestCase):
             result = schema.execute(query)
 
         # No collision / no 500: the alias is silently overwritten by the window.
-        self.assertIsNone(result.errors, f"AC6: aliasing _gqx_rn must be a no-op, not a 500: {result.errors}")
+        self.assertIsNone(
+            result.errors,
+            f"AC6: aliasing _gqx_rn must be a no-op, not a 500: {result.errors}",
+        )
 
         # (1) The window-path hook MUST have fired with is_window=True. This is the
         # discriminating assertion the old test lacked: it FAILS if the window hook
         # application is removed (then the hook never fires and captured is empty).
-        self.assertGreater(len(captured), 0, "optimize_posts hook must fire on the window path")
+        self.assertGreater(
+            len(captured), 0, "optimize_posts hook must fire on the window path"
+        )
         self.assertTrue(
             any(kw.get("is_window") is True for kw in captured),
             f"window-path hook must fire with is_window=True; captured: {captured}",
@@ -446,7 +487,8 @@ class TestWindowPathHook(TestCase):
         # overwritten by the Window RowNumber annotation, not the other way round).
         all_sql = " ".join(q["sql"].upper() for q in ctx.captured_queries)
         self.assertIn(
-            "ROW_NUMBER()", all_sql,
+            "ROW_NUMBER()",
+            all_sql,
             "AC6: window slicing must survive — _gqx_rn=Value(0) is overwritten by the window annotation",
         )
 
@@ -470,11 +512,15 @@ def _build_filtered_hook_schema():
         "_FiltHookPostListType",
         (DjangoListObjectType,),
         {
-            "Meta": type("Meta", (), {
-                "model": Post,
-                "filter_fields": {"title": ["exact"]},
-                "registry": _REG_FILT,
-            })
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "filter_fields": {"title": ["exact"]},
+                    "registry": _REG_FILT,
+                },
+            )
         },
     )
 
@@ -524,10 +570,12 @@ class TestFilteredPlainPathHook(TestCase):
         Post.objects.create(title="FiltPost", author=cls.author1, category=cls.cat)
         Post.objects.create(title="FiltPost", author=cls.author2, category=cls.cat)
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": False,
-        "OPTIMIZE_ONLY_FIELDS": False,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+        }
+    )
     def test_ac2_filtered_plain_hook_fires_with_is_window_false(self):
         """AC2: optimize_posts fires with is_window=False on filtered-plain path.
 
@@ -549,7 +597,11 @@ class TestFilteredPlainPathHook(TestCase):
                 data = _exec(schema, query)
 
         self.assertIn("authors", data)
-        self.assertGreater(len(captured), 0, "optimize_posts hook must have been called on filtered path")
+        self.assertGreater(
+            len(captured),
+            0,
+            "optimize_posts hook must have been called on filtered path",
+        )
         self.assertTrue(
             all(kw.get("is_window") is False for kw in captured),
             f"All calls must have is_window=False on filtered-plain; captured: {captured}",
@@ -563,7 +615,9 @@ class TestFilteredPlainPathHook(TestCase):
 
         # SQL should contain category JOIN from select_related
         all_sql = " ".join(q["sql"].upper() for q in ctx.captured_queries)
-        self.assertIn("CATEGORY", all_sql, "Hook's select_related(category) must appear in SQL")
+        self.assertIn(
+            "CATEGORY", all_sql, "Hook's select_related(category) must appear in SQL"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -585,10 +639,14 @@ def _build_unfiltered_hook_schema(has_hook=True):
         "_UnfHookPostListType",
         (DjangoListObjectType,),
         {
-            "Meta": type("Meta", (), {
-                "model": Post,
-                "registry": _REG_UNFILT,
-            })
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "registry": _REG_UNFILT,
+                },
+            )
         },
     )
 
@@ -598,6 +656,7 @@ def _build_unfiltered_hook_schema(has_hook=True):
     }
 
     if has_hook:
+
         def optimize_posts(qs, info, **kwargs):
             captured_kwargs.append(dict(kwargs))
             return qs.select_related("category")
@@ -637,10 +696,12 @@ class TestUnfilteredTopLevelHook(TestCase):
         Post.objects.create(title="UnfPost1", author=cls.author1, category=cls.cat)
         Post.objects.create(title="UnfPost2", author=cls.author2, category=cls.cat)
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": False,
-        "OPTIMIZE_ONLY_FIELDS": False,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+        }
+    )
     def test_ac2b_unfiltered_top_level_hook_fires(self):
         """AC2b SITE A: optimize_posts fires on unfiltered plain path.
 
@@ -656,14 +717,18 @@ class TestUnfilteredTopLevelHook(TestCase):
                 data = _exec(schema, query)
 
         self.assertIn("authors", data)
-        self.assertGreater(len(captured), 0, "optimize_posts hook must have been called")
+        self.assertGreater(
+            len(captured), 0, "optimize_posts hook must have been called"
+        )
         self.assertTrue(
             all(kw.get("is_window") is False for kw in captured),
             f"All calls must have is_window=False; captured: {captured}",
         )
 
         all_sql = " ".join(q["sql"].upper() for q in ctx.captured_queries)
-        self.assertIn("CATEGORY", all_sql, "Hook's select_related(category) must appear in SQL")
+        self.assertIn(
+            "CATEGORY", all_sql, "Hook's select_related(category) must appear in SQL"
+        )
 
     @override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": False})
     def test_ac2b_no_hook_is_noop(self):
@@ -675,7 +740,9 @@ class TestUnfilteredTopLevelHook(TestCase):
         # No exception; no captured kwargs
         data = _exec(schema, query)
         self.assertIn("authors", data)
-        self.assertEqual(len(captured), 0, "No hook calls when optimize_posts is not declared")
+        self.assertEqual(
+            len(captured), 0, "No hook calls when optimize_posts is not declared"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -711,7 +778,9 @@ def _build_site_b_schema():
         "_SiteBPostType",
         (DjangoObjectType,),
         {
-            "comments": DjangoNestedListObjectField(_CommentListType, accessor="comments"),
+            "comments": DjangoNestedListObjectField(
+                _CommentListType, accessor="comments"
+            ),
             "optimize_comments": staticmethod(optimize_comments),
             "Meta": type("Meta", (), {"model": Post, "registry": _REG_SITE_B}),
         },
@@ -721,11 +790,15 @@ def _build_site_b_schema():
         "_SiteBPostListType",
         (DjangoListObjectType,),
         {
-            "Meta": type("Meta", (), {
-                "model": Post,
-                "filter_fields": {"title": ["exact"]},
-                "registry": _REG_SITE_B,
-            })
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "filter_fields": {"title": ["exact"]},
+                    "registry": _REG_SITE_B,
+                },
+            )
         },
     )
 
@@ -776,10 +849,12 @@ class TestNestedUnderFilteredHook(TestCase):
             Comment.objects.create(post=post, body="siteb comment a")
             Comment.objects.create(post=post, body="siteb comment b")
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": False,
-        "OPTIMIZE_ONLY_FIELDS": False,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+        }
+    )
     def test_site_b_hook_fires_for_reroot_child(self):
         """AC2b SITE B: optimize_comments fires for re-rooted child under filtered ancestor.
 
@@ -807,7 +882,11 @@ class TestNestedUnderFilteredHook(TestCase):
                 data = _exec(schema, query)
 
         self.assertIn("authors", data)
-        self.assertGreater(len(captured), 0, "optimize_comments hook must fire for SITE B re-rooted child")
+        self.assertGreater(
+            len(captured),
+            0,
+            "optimize_comments hook must fire for SITE B re-rooted child",
+        )
 
         # is_window must be False
         self.assertTrue(
@@ -819,15 +898,24 @@ class TestNestedUnderFilteredHook(TestCase):
         # this is the assertion that genuinely discriminates batched from per-parent
         # N+1 (a single-parent fixture could not). And that one query must carry a
         # JOIN from the hook's select_related("post").
-        comment_queries = [q["sql"].upper() for q in ctx.captured_queries if "TESTS_COMMENT" in q["sql"].upper()]
+        comment_queries = [
+            q["sql"].upper()
+            for q in ctx.captured_queries
+            if "TESTS_COMMENT" in q["sql"].upper()
+        ]
         self.assertEqual(
-            len(comment_queries), 1,
+            len(comment_queries),
+            1,
             f"Comments for 2 posts must be batched into 1 query (no per-parent N+1); "
             f"got {len(comment_queries)}: {comment_queries}",
         )
         # The comment query should contain a JOIN (from select_related("post"))
         comment_sql = " ".join(comment_queries)
-        self.assertIn("JOIN", comment_sql, "Hook's select_related(post) must add a JOIN to comment query")
+        self.assertIn(
+            "JOIN",
+            comment_sql,
+            "Hook's select_related(post) must add a JOIN to comment query",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -914,10 +1002,12 @@ class TestHookThroughRelatedField(TestCase):
         Post.objects.create(title="RFPost1", author=cls.author1, category=cls.cat)
         Post.objects.create(title="RFPost2", author=cls.author2, category=cls.cat)
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": False,
-        "OPTIMIZE_ONLY_FIELDS": False,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+        }
+    )
     def test_hook_fires_through_forward_fk_relation(self):
         """optimize_posts fires for a nested list reached through the `author` FK.
 
@@ -938,7 +1028,8 @@ class TestHookThroughRelatedField(TestCase):
 
         self.assertIn("posts", data)
         self.assertGreater(
-            len(captured), 0,
+            len(captured),
+            0,
             "optimize_posts must fire for a nested list reached through a plain FK "
             "(related-field hook_map forward)",
         )
@@ -951,7 +1042,8 @@ class TestHookThroughRelatedField(TestCase):
         # (the one reached through author), proving the hook was applied there.
         all_sql = " ".join(q["sql"].upper() for q in ctx.captured_queries)
         self.assertIn(
-            "CATEGORY", all_sql,
+            "CATEGORY",
+            all_sql,
             "Hook's select_related(category) must appear in the inner posts query SQL",
         )
 
@@ -992,11 +1084,13 @@ def _build_site_b_multi_schema():
         and the select_related would raise eagerly — making a mis-pairing
         observable instead of silently passing.
         """
+
         def hook(qs, info, **kwargs):
             captured_kwargs.append({"name": name, **kwargs})
             if select_related_field is not None:
                 return qs.select_related(select_related_field)
             return qs
+
         return staticmethod(hook)
 
     _CommentListType = type(
@@ -1024,7 +1118,9 @@ def _build_site_b_multi_schema():
             # select_related("author") is valid ONLY on Post — if mis-paired onto
             # Comment/Tag this raises, exposing a broken multi-segment descent.
             "optimize_posts": _record("category_posts", "author"),
-            "Meta": type("Meta", (), {"model": Category, "registry": _REG_SITE_B_MULTI}),
+            "Meta": type(
+                "Meta", (), {"model": Category, "registry": _REG_SITE_B_MULTI}
+            ),
         },
     )
 
@@ -1034,7 +1130,9 @@ def _build_site_b_multi_schema():
         "_SBMPostType",
         (DjangoObjectType,),
         {
-            "comments": DjangoNestedListObjectField(_CommentListType, accessor="comments"),
+            "comments": DjangoNestedListObjectField(
+                _CommentListType, accessor="comments"
+            ),
             "tags": DjangoNestedListObjectField(_TagListType, accessor="tags"),
             # select_related("post") is valid ONLY on Comment; if the comments
             # zip slot is mis-paired onto the Post or Category child model the
@@ -1044,23 +1142,33 @@ def _build_site_b_multi_schema():
             # the tags slot fires).
             "optimize_comments": _record("comments", "post"),
             "optimize_tags": _record("tags"),
-            "Meta": type("Meta", (), {
-                "model": Post,
-                "registry": _REG_SITE_B_MULTI,
-                # expose category so the FK descent into Category.posts works
-                "only_fields": ["id", "title", "comments", "tags", "category"],
-            }),
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "registry": _REG_SITE_B_MULTI,
+                    # expose category so the FK descent into Category.posts works
+                    "only_fields": ["id", "title", "comments", "tags", "category"],
+                },
+            ),
         },
     )
 
     _PostListType = type(
         "_SBMPostListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {
-            "model": Post,
-            "filter_fields": {"title": ["exact"]},
-            "registry": _REG_SITE_B_MULTI,
-        })},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "filter_fields": {"title": ["exact"]},
+                    "registry": _REG_SITE_B_MULTI,
+                },
+            )
+        },
     )
 
     _AuthorType = type(
@@ -1097,17 +1205,21 @@ class TestSiteBMultiChildAndMultiSegment(TestCase):
 
         cls.cat = Category.objects.create(title="SBMCat")
         cls.author = Author.objects.create(name="SBMAuthor")
-        cls.post = Post.objects.create(title="SBMPost", author=cls.author, category=cls.cat)
+        cls.post = Post.objects.create(
+            title="SBMPost", author=cls.author, category=cls.cat
+        )
         Comment.objects.create(post=cls.post, body="c1")
         tag = Tag.objects.create(label="t1")
         cls.post.tags.add(tag)
         # A sibling post under the SAME category, to give Category.posts content.
         Post.objects.create(title="SBMSibling", author=cls.author, category=cls.cat)
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": False,
-        "OPTIMIZE_ONLY_FIELDS": False,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+        }
+    )
     def test_multiple_children_and_multi_segment_hooks_all_fire(self):
         """All three SITE B hooks fire: two single-segment children + one 2-segment.
 
@@ -1135,10 +1247,13 @@ class TestSiteBMultiChildAndMultiSegment(TestCase):
         _exec(schema, query)
 
         fired = {c["name"] for c in captured}
-        self.assertIn("comments", fired, "SITE B: optimize_comments (single-segment) must fire")
+        self.assertIn(
+            "comments", fired, "SITE B: optimize_comments (single-segment) must fire"
+        )
         self.assertIn("tags", fired, "SITE B: optimize_tags (single-segment) must fire")
         self.assertIn(
-            "category_posts", fired,
+            "category_posts",
+            fired,
             "SITE B: optimize_posts on Category (multi-segment 'category__posts') must fire",
         )
         # All SITE B re-rooted hooks run on the plain path.
@@ -1164,11 +1279,13 @@ class TestHookGateIndependence(TestCase):
         cls.author = Author.objects.create(name="GateAuthor")
         Post.objects.create(title="GatePost", author=cls.author, category=cls.cat)
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": False,
-        "OPTIMIZE_ONLY_FIELDS": False,
-        "OPTIMIZE_ANNOTATED_FIELDS": False,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+            "OPTIMIZE_ANNOTATED_FIELDS": False,
+        }
+    )
     def test_hook_fires_when_only_and_annotated_off(self):
         """AC11: hook fires even when OPTIMIZE_ONLY_FIELDS=False AND OPTIMIZE_ANNOTATED_FIELDS=False."""
         schema, captured = _build_unfiltered_hook_schema(has_hook=True)
@@ -1178,15 +1295,24 @@ class TestHookGateIndependence(TestCase):
             data = _exec(schema, query)
 
         self.assertIn("authors", data)
-        self.assertGreater(len(captured), 0,
-                           "optimize_posts must fire even when ONLY=False AND ANNOTATED=False")
+        self.assertGreater(
+            len(captured),
+            0,
+            "optimize_posts must fire even when ONLY=False AND ANNOTATED=False",
+        )
 
         all_sql = " ".join(q["sql"].upper() for q in ctx.captured_queries)
-        self.assertIn("CATEGORY", all_sql, "Hook's select_related(category) must apply even with settings off")
+        self.assertIn(
+            "CATEGORY",
+            all_sql,
+            "Hook's select_related(category) must apply even with settings off",
+        )
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_QUERYSET": False,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_QUERYSET": False,
+        }
+    )
     def test_hook_does_not_fire_when_optimize_queryset_false(self):
         """AC11: hook does NOT fire when OPTIMIZE_QUERYSET=False."""
         schema, captured = _build_unfiltered_hook_schema(has_hook=True)
@@ -1194,7 +1320,9 @@ class TestHookGateIndependence(TestCase):
         query = "{ authors { results { posts { results { id title } totalCount } } totalCount } }"
         _exec(schema, query)
 
-        self.assertEqual(len(captured), 0, "Hook must NOT fire when OPTIMIZE_QUERYSET=False")
+        self.assertEqual(
+            len(captured), 0, "Hook must NOT fire when OPTIMIZE_QUERYSET=False"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1212,12 +1340,16 @@ class TestHookSQLAndQueryCount(TestCase):
         cls.cat = Category.objects.create(title="IntCat")
         cls.author = Author.objects.create(name="IntAuthor")
         for i in range(3):
-            Post.objects.create(title=f"IntPost{i}", author=cls.author, category=cls.cat)
+            Post.objects.create(
+                title=f"IntPost{i}", author=cls.author, category=cls.cat
+            )
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": False,
-        "OPTIMIZE_ONLY_FIELDS": False,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+        }
+    )
     def test_hooked_case_has_join_control_does_not(self):
         """AC4: with hook the prefetch SQL has JOIN; without hook it does not.
 
@@ -1250,7 +1382,8 @@ class TestHookSQLAndQueryCount(TestCase):
         hook_join_count = hook_sql.count("JOIN")
         ctrl_join_count = ctrl_sql.count("JOIN")
         self.assertGreater(
-            hook_join_count, ctrl_join_count,
+            hook_join_count,
+            ctrl_join_count,
             f"Hook case ({hook_join_count} JOINs) must have more JOINs than control ({ctrl_join_count} JOINs)",
         )
 
@@ -1314,10 +1447,12 @@ class TestSafeModeDegrade(TestCase):
             )
         )
 
-    @override_settings(DJANGO_GRAPHEX={
-        "OPTIMIZE_NESTED_PAGINATION": False,
-        "OPTIMIZER_SAFE_MODE": True,
-    })
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZER_SAFE_MODE": True,
+        }
+    )
     def test_safe_mode_raising_hook_degrades_whole_resolve_coarsely(self):
         """AC9 + SAFE_MODE=True: a raising hook degrades the WHOLE resolve to the
         un-optimized base via the queryset_factory boundary (COARSE, not per-field).
@@ -1360,7 +1495,8 @@ class TestSafeModeDegrade(TestCase):
         # baseline — i.e. the prefetch was dropped for the WHOLE resolve (per-author
         # N+1), not just the hooked field. With 2 authors this is observable.
         self.assertGreater(
-            degraded_count, optimized_count,
+            degraded_count,
+            optimized_count,
             f"COARSE degrade must drop the batched prefetch (un-optimized N+1): "
             f"degraded={degraded_count} vs optimized={optimized_count}",
         )
@@ -1369,7 +1505,8 @@ class TestSafeModeDegrade(TestCase):
         if result.errors:
             for err in result.errors:
                 self.assertNotIsInstance(
-                    getattr(err, "original_error", None), ValueError,
+                    getattr(err, "original_error", None),
+                    ValueError,
                     "ValueError from hook must NOT propagate as a GraphQL error under SAFE_MODE=True",
                 )
 
