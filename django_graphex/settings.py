@@ -70,6 +70,15 @@ DEFAULTS = {
     # optimization block degrades to the un-optimized queryset and logs a WARNING
     # instead of surfacing a 500. Default False (fail loud).
     "OPTIMIZER_SAFE_MODE": False,
+    # Inject DB annotations declared via AnnotatedField only when the field is
+    # selected in the GraphQL query. This is the DEPENDABLE runtime kill-switch
+    # for annotation injection — independent of OPTIMIZE_ONLY_FIELDS.
+    # Child annotations inject even with .only() narrowing off (the prefetch-
+    # narrow pass fires on EITHER setting — see utils §6).
+    # NOTE: OPTIMIZER_SAFE_MODE does NOT cover errors from a malformed Expression
+    # that raises FieldError at SQL-eval time (outside the build boundary). Set
+    # this False to disable injection entirely without a code change.
+    "OPTIMIZE_ANNOTATED_FIELDS": True,
 }
 
 
@@ -154,6 +163,20 @@ class _BaseAPISettings:
             value = _perform_import(value, attr)
         setattr(self, attr, value)
         return value
+
+    def reload(self) -> None:
+        """Clear all cached setting values and re-read from Django on next access.
+
+        Called by ``reload_api_settings`` when ``setting_changed`` fires so that
+        ``override_settings(...)`` works correctly in tests without replacing the
+        singleton object (which would break any ``from .settings import
+        graphql_api_settings`` bindings held in other modules).
+        """
+        # Remove the cached _user_settings dict so the property re-reads from Django.
+        self.__dict__.pop("_user_settings", None)
+        # Remove any individually cached setting attributes (set via setattr in __getattr__).
+        for key in list(self.defaults):
+            self.__dict__.pop(key, None)
 
 
 class GraphQLAPISettings(_BaseAPISettings):
@@ -260,23 +283,23 @@ graphene_settings = GrapheneSettings(None, GRAPHENE_DEFAULTS, GRAPHENE_IMPORT_ST
 
 
 def reload_api_settings(*args: Any, **kwargs: Any) -> None:
-    """Rebuild the matching singleton when a watched Django setting changes.
+    """Clear the cached settings on the singleton when a watched Django setting changes.
 
     Keeps ``override_settings(...)`` working in tests for both the
     ``DJANGO_GRAPHEX`` and ``GRAPHENE`` namespaces by re-reading from Django.
+    Uses ``singleton.reload()`` rather than replacing the object so that any
+    ``from .settings import graphql_api_settings`` bindings in other modules
+    continue to reference the correct (updated) singleton.
 
     Args:
         *args: positional arguments from the "setting_changed" signal.
         **kwargs: keyword arguments from the signal, including "setting".
     """
-    global graphql_api_settings, graphene_settings
     setting = kwargs.get("setting")
     if setting == "DJANGO_GRAPHEX":
-        graphql_api_settings = GraphQLAPISettings(None, DEFAULTS, IMPORT_STRINGS)
+        graphql_api_settings.reload()
     elif setting == "GRAPHENE":
-        graphene_settings = GrapheneSettings(
-            None, GRAPHENE_DEFAULTS, GRAPHENE_IMPORT_STRINGS
-        )
+        graphene_settings.reload()
 
 
 setting_changed.connect(reload_api_settings)
