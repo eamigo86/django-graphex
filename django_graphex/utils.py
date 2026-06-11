@@ -50,10 +50,16 @@ class PrefetchPlan:
         only_cols: The list of attname/dotted paths to pass to ``.only()``.
         child_select: The list of forward-FK heads to pass to
             ``.select_related()`` on the child queryset (closes GAP-1 N+1).
+        child_annotations: Annotation expressions to inject via ``.annotate()``
+            on the child queryset (phase-d AnnotatedField support).
+        child_aliases: Alias expressions to inject via ``.alias()`` BEFORE
+            ``.annotate()`` on the child queryset.
     """
 
     only_cols: list[str]
     child_select: list[str]
+    child_annotations: dict = dataclasses.field(default_factory=dict)
+    child_aliases: dict = dataclasses.field(default_factory=dict)
 
 
 def is_valid_django_model(model: Any) -> bool:
@@ -686,6 +692,7 @@ def _collect_only_fields(
     fragments: dict[str, Any],
     _prefix: str = "",
     _only: set[str] | None = None,
+    annotated_names: set[str] | None = None,
 ) -> list[str]:
     """Collect a safe ".only()" field set across the select_related span.
 
@@ -700,6 +707,9 @@ def _collect_only_fields(
         fragments: The fragment definitions keyed by name.
         _prefix: The dotted ORM path prefix for the current model.
         _only: The accumulating set of dotted only paths.
+        annotated_names: snake_case field names of AnnotatedFields on the model's
+            graphene output type.  These leaves must NOT be added to ``.only()``
+            and must NOT trigger ``model_full=True``.
 
     Returns:
         A sorted list of dotted "only" paths.
@@ -727,11 +737,15 @@ def _collect_only_fields(
             fragment = fragments.get(field.name.value) if fragments else None
             if fragment is not None:
                 _collect_only_fields(
-                    model, fragment.selection_set, fragments, _prefix, _only
+                    model, fragment.selection_set, fragments, _prefix, _only,
+                    annotated_names=annotated_names,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
-            _collect_only_fields(model, field.selection_set, fragments, _prefix, _only)
+            _collect_only_fields(
+                model, field.selection_set, fragments, _prefix, _only,
+                annotated_names=annotated_names,
+            )
             continue
 
         name = field.name.value
@@ -770,6 +784,7 @@ def _collect_only_fields(
                         fragments,
                         _prefix + orm_name + LOOKUP_SEP,
                         _only,
+                        annotated_names=annotated_names,
                     )
             # prefetch branches use separate querysets -> not narrowed here.
             continue
@@ -784,7 +799,14 @@ def _collect_only_fields(
 
         if sub_selection is not None:
             # Wrapper field (e.g. `results`, or a renamed results field).
-            _collect_only_fields(model, sub_selection, fragments, _prefix, _only)
+            _collect_only_fields(
+                model, sub_selection, fragments, _prefix, _only,
+                annotated_names=annotated_names,
+            )
+            continue
+
+        # AnnotatedField leaf: not a concrete column, not full-load.
+        if annotated_names and (name in annotated_names or snake in annotated_names):
             continue
 
         # Unknown leaf -> computed/property/custom-named field.
@@ -803,6 +825,7 @@ def _collect_only_fields_is_full_load(
     model: type[Model],
     selection_set: Any,
     fragments: dict[str, Any],
+    annotated_names: set[str] | None = None,
 ) -> bool:
     """Return True when ``_collect_only_fields`` would trigger the full-load path.
 
@@ -817,6 +840,8 @@ def _collect_only_fields_is_full_load(
         model: The Django model class at the current span position.
         selection_set: The GraphQL selection set to walk.
         fragments: The fragment definitions keyed by name.
+        annotated_names: snake_case field names of AnnotatedFields on the model's
+            graphene output type.  These leaves do NOT trigger full-load.
 
     Returns:
         True if any unknown leaf would trigger full-load for ``model``.
@@ -829,12 +854,16 @@ def _collect_only_fields_is_full_load(
             fragment = fragments.get(field.name.value) if fragments else None
             if fragment is not None:
                 if _collect_only_fields_is_full_load(
-                    model, fragment.selection_set, fragments
+                    model, fragment.selection_set, fragments,
+                    annotated_names=annotated_names,
                 ):
                     return True
             continue
         if isinstance(field, InlineFragmentNode):
-            if _collect_only_fields_is_full_load(model, field.selection_set, fragments):
+            if _collect_only_fields_is_full_load(
+                model, field.selection_set, fragments,
+                annotated_names=annotated_names,
+            ):
                 return True
             continue
 
@@ -854,8 +883,15 @@ def _collect_only_fields_is_full_load(
 
         if sub_selection is not None:
             # Wrapper field — recurse but it doesn't trigger full-load by itself.
-            if _collect_only_fields_is_full_load(model, sub_selection, fragments):
+            if _collect_only_fields_is_full_load(
+                model, sub_selection, fragments,
+                annotated_names=annotated_names,
+            ):
                 return True
+            continue
+
+        # AnnotatedField leaf: not a concrete column, not full-load.
+        if annotated_names and (name in annotated_names or snake in annotated_names):
             continue
 
         # Unknown leaf -> triggers model_full=True.
@@ -899,6 +935,8 @@ def _compute_child_only(
     related_field: Any,
     sub_selection: Any,
     fragments: dict[str, Any],
+    child_gql_type: Any = None,
+    child_graphene_type: Any = None,
 ) -> PrefetchPlan | None:
     """Compute the `.only()` column plan for a single prefetch child queryset.
 
@@ -906,6 +944,10 @@ def _compute_child_only(
     and mandatory columns.  A full-load signal (unknown/computed leaf) is
     detected and returned as ``None`` — the caller leaves the lookup as a bare
     string (full load).
+
+    Also self-collects any AnnotatedField annotations declared on the child's
+    graphene type (phase-d).  When an annotation is present, the plan is returned
+    even if ``OPTIMIZE_ONLY_FIELDS`` is off (annotate-only mode, empty only_cols).
 
     The returned ``PrefetchPlan.child_select`` list contains the forward-FK head
     paths that MUST accompany the ``.only()`` call to avoid re-introducing N+1
@@ -917,6 +959,9 @@ def _compute_child_only(
             ManyToManyField, GenericRelation, etc.).
         sub_selection: The GraphQL SelectionSetNode for the child sub-selection.
         fragments: Fragment definitions keyed by name.
+        child_gql_type: The GraphQLObjectType for the child (optional).  When
+            provided, enables AnnotatedField self-collection on the child.
+        child_graphene_type: The graphene type for the child (optional).
 
     Returns:
         A ``PrefetchPlan`` with the column and select_related lists, or ``None``
@@ -925,15 +970,69 @@ def _compute_child_only(
     if sub_selection is None:
         return None
 
+    # --- Phase-d: self-collect child AnnotatedField annotations ---------------
+    child_annotations: dict = {}
+    child_aliases: dict = {}
+    child_ann_names: set = set()
+    if (
+        graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS
+        and child_gql_type is not None
+        and child_graphene_type is not None
+        and getattr(child_graphene_type, "_meta", None) is not None
+    ):
+        # We need a minimal info-like object that supplies .fragments.
+        # NOTE: cannot use `class Foo: fragments = fragments` because Python
+        # class bodies do not inherit enclosing-scope names when the class
+        # attribute has the same name as the outer variable.
+        _frags = fragments or {}
+
+        class _FakeInfo:
+            pass
+        _FakeInfo.fragments = _frags
+
+        _walk_annotated_fields(
+            child_gql_type, child_graphene_type, sub_selection, _FakeInfo(),
+            child_annotations, child_aliases, child_ann_names,
+        )
+
+    # --- OPTIMIZE_ONLY_FIELDS path --------------------------------------------
+    optimize_only = graphql_api_settings.OPTIMIZE_ONLY_FIELDS
+    optimize_annotated = graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS
+
+    if not optimize_only:
+        # .only() narrowing is disabled.  Return a plan only if there are
+        # annotations to inject (annotate-only mode, no column narrowing).
+        if child_annotations or child_aliases:
+            return PrefetchPlan(
+                only_cols=[],
+                child_select=[],
+                child_annotations=child_annotations,
+                child_aliases=child_aliases,
+            )
+        return None
+
     # Full-load detection: if the sub-selection contains an unknown/computed
     # leaf (e.g. a @property), mirror the root model_full contract and return
     # None (caller leaves the lookup as a bare string -> full load; no FieldError).
-    if _collect_only_fields_is_full_load(child, sub_selection, fragments):
+    # AnnotatedField leaves are NOT unknown — pass child_ann_names so they are skipped.
+    if _collect_only_fields_is_full_load(
+        child, sub_selection, fragments, annotated_names=child_ann_names
+    ):
+        # Even on full-load, if we have annotations, return a plan without .only().
+        if child_annotations or child_aliases:
+            return PrefetchPlan(
+                only_cols=[],
+                child_select=[],
+                child_annotations=child_annotations,
+                child_aliases=child_aliases,
+            )
         return None
 
     # Collect the raw only-set via the existing helper (handles ordering, pk,
     # fragment spreads, inline fragments transparently).
-    raw_cols = _collect_only_fields(child, sub_selection, fragments)
+    raw_cols = _collect_only_fields(
+        child, sub_selection, fragments, annotated_names=child_ann_names
+    )
 
     # Split raw_cols into dotted FK heads (-> child_select) and flat attnames
     # (-> only_cols).  _collect_only_fields emits dotted paths like
@@ -1006,7 +1105,12 @@ def _compute_child_only(
         if fk_attname not in only_cols:
             only_cols.append(fk_attname)
 
-    return PrefetchPlan(only_cols=only_cols, child_select=child_select)
+    return PrefetchPlan(
+        only_cols=only_cols,
+        child_select=child_select,
+        child_annotations=child_annotations,
+        child_aliases=child_aliases,
+    )
 
 
 def _collect_prefetch_only_sets(
@@ -1015,6 +1119,8 @@ def _collect_prefetch_only_sets(
     fragments: dict[str, Any],
     _prefix: str = "",
     _out: dict[str, PrefetchPlan] | None = None,
+    gql_type: Any = None,
+    promoted_lookups: "frozenset[str] | None" = None,
 ) -> dict[str, PrefetchPlan]:
     """Map each direct prefetch lookup to its child column plan.
 
@@ -1025,7 +1131,9 @@ def _collect_prefetch_only_sets(
       bare string).  **This check runs BEFORE** any ``get_related_model`` call
       (GAP-3 ordering invariant).
     - ``kind == "select"`` → recurse with dotted prefix (discover nested prefetches
-      under a select_related path).
+      under a select_related path).  If the path is in ``promoted_lookups`` (it was
+      promoted from select to prefetch due to an AnnotatedField child), also build a
+      PrefetchPlan for the path itself so the annotation is injected on the child qs.
     - ``kind == "prefetch"`` → call ``_compute_child_only``; omit if ``None`` (full-load).
 
     Args:
@@ -1034,6 +1142,12 @@ def _collect_prefetch_only_sets(
         fragments: Fragment definitions keyed by name.
         _prefix: Dotted ORM path prefix accumulated during descent.
         _out: The accumulating map mutated in place.
+        gql_type: The GraphQLObjectType at the current position (optional).
+            Enables child AnnotatedField collection when provided.
+        promoted_lookups: Set of ORM lookup paths that were promoted from
+            select_related to prefetch_related by the AnnotatedField promotion
+            pass.  These paths need a PrefetchPlan even though their Django
+            relation kind is ``"select"``.
 
     Returns:
         The completed ``{dotted_lookup: PrefetchPlan}`` dict.
@@ -1048,12 +1162,14 @@ def _collect_prefetch_only_sets(
             fragment = fragments.get(field.name.value) if fragments else None
             if fragment is not None:
                 _collect_prefetch_only_sets(
-                    model, fragment.selection_set, fragments, _prefix, _out
+                    model, fragment.selection_set, fragments, _prefix, _out,
+                    gql_type=gql_type, promoted_lookups=promoted_lookups,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
             _collect_prefetch_only_sets(
-                model, field.selection_set, fragments, _prefix, _out
+                model, field.selection_set, fragments, _prefix, _out,
+                gql_type=gql_type, promoted_lookups=promoted_lookups,
             )
             continue
 
@@ -1065,9 +1181,19 @@ def _collect_prefetch_only_sets(
         if related_field is None:
             # Concrete leaf, plumbing field, or wrapper field.
             if sub_selection is not None and name.lower() not in _PLUMBING_FIELDS:
-                # Transparent wrapper field (e.g. "results"): recurse same model.
+                # Transparent wrapper field (e.g. "results"): resolve the inner
+                # GraphQL type so child AnnotatedField detection works through the wrapper.
+                inner_gql = None
+                if gql_type is not None:
+                    field_def = gql_type.fields.get(name)
+                    if field_def is not None:
+                        inner_gql_candidate = get_named_type(field_def.type)
+                        if isinstance(inner_gql_candidate, GraphQLObjectType):
+                            inner_gql = inner_gql_candidate
                 _collect_prefetch_only_sets(
-                    model, sub_selection, fragments, _prefix, _out
+                    model, sub_selection, fragments, _prefix, _out,
+                    gql_type=inner_gql or gql_type,
+                    promoted_lookups=promoted_lookups,
                 )
             continue
 
@@ -1086,16 +1212,51 @@ def _collect_prefetch_only_sets(
         if kind == "select":
             # Descend into the select_related span to discover any nested
             # prefetch lookups under it (their dotted lookup carries the prefix).
+            child_model = get_related_model(related_field)
+            # Resolve the child's GraphQL type for AnnotatedField detection.
+            child_gql = None
+            child_graphene_for_plan = None
+            if gql_type is not None:
+                field_def = gql_type.fields.get(name) or gql_type.fields.get(snake)
+                if field_def is not None:
+                    child_gql_candidate = get_named_type(field_def.type)
+                    if isinstance(child_gql_candidate, GraphQLObjectType):
+                        child_gql = child_gql_candidate
+                        child_graphene_for_plan = getattr(child_gql, "graphene_type", None)
             if sub_selection is not None:
-                child_model = get_related_model(related_field)
                 _collect_prefetch_only_sets(
-                    child_model, sub_selection, fragments, lookup + LOOKUP_SEP, _out
+                    child_model, sub_selection, fragments, lookup + LOOKUP_SEP, _out,
+                    gql_type=child_gql, promoted_lookups=promoted_lookups,
                 )
+            # If this path was promoted to prefetch by the AnnotatedField promotion
+            # pass, also build a PrefetchPlan for it so child annotations are injected.
+            if promoted_lookups and lookup in promoted_lookups and sub_selection is not None:
+                plan = _compute_child_only(
+                    child_model, related_field, sub_selection, fragments,
+                    child_gql_type=child_gql,
+                    child_graphene_type=child_graphene_for_plan,
+                )
+                if plan is not None:
+                    _out[lookup] = plan
             continue
 
         # kind == "prefetch": reverse FK / forward M2M / reverse M2M / GenericRelation
         child_model = get_related_model(related_field)
-        plan = _compute_child_only(child_model, related_field, sub_selection, fragments)
+        # Resolve the child's GraphQL type for AnnotatedField self-collection.
+        child_gql = None
+        child_graphene = None
+        if gql_type is not None:
+            field_def = gql_type.fields.get(name) or gql_type.fields.get(snake)
+            if field_def is not None:
+                child_gql_candidate = get_named_type(field_def.type)
+                if isinstance(child_gql_candidate, GraphQLObjectType):
+                    child_gql = child_gql_candidate
+                    child_graphene = getattr(child_gql, "graphene_type", None)
+        plan = _compute_child_only(
+            child_model, related_field, sub_selection, fragments,
+            child_gql_type=child_gql,
+            child_graphene_type=child_graphene,
+        )
         if plan is not None:
             _out[lookup] = plan
 
@@ -1129,8 +1290,18 @@ def _narrow_plain_prefetch(
     qs = child._default_manager.all()
     if plan.child_select:
         qs = qs.select_related(*plan.child_select)
-    qs = qs.only(*plan.only_cols)
-    return Prefetch(lookup, queryset=qs)
+    # Phase-d: apply annotations before .only() (alias first, then annotate).
+    if plan.child_aliases:
+        qs = qs.alias(**plan.child_aliases)
+    if plan.child_annotations:
+        qs = qs.annotate(**plan.child_annotations)
+    # .only() is conditional: may be empty in annotate-only mode.
+    if plan.only_cols:
+        qs = qs.only(*plan.only_cols)
+    # Emit a Prefetch when annotations or column-narrowing is present.
+    if plan.child_annotations or plan.child_aliases or plan.only_cols:
+        return Prefetch(lookup, queryset=qs)
+    return lookup
 
 
 def _nested_list_field_instance(field_def: Any) -> Any | None:
@@ -1385,6 +1556,135 @@ def _walk_filtered_prefetches(
             )
 
 
+def _walk_annotated_fields(
+    gql_type: GraphQLObjectType,
+    graphene_type: Any,
+    selection_set: Any,
+    info: Any,
+    annotations: dict,
+    aliases: dict,
+    names: set,
+) -> None:
+    """Walk a GraphQL selection set and collect AnnotatedField declarations.
+
+    Handles FragmentSpread, InlineFragment, wrapper-field descent (DjangoListObjectType
+    ``results`` wrapper), and plain FieldNode.  Does NOT descend into relation
+    sub-selections — those are handled by the child-annotation path (§6).
+
+    Args:
+        gql_type: The GraphQLObjectType at the current position.
+        graphene_type: The matching graphene type (has ``_meta.fields``).
+        selection_set: The GraphQL SelectionSetNode to walk.
+        info: The GraphQL resolve info (for fragments).
+        annotations: Accumulator dict for ``{ann_key: expression}``.
+        aliases: Accumulator dict for ``{alias_key: expression}``.
+        names: Accumulator set of snake_case field names of selected AnnotatedFields.
+    """
+    # Lazy import avoids the fields <-> utils circular import.
+    from .fields import AnnotatedField  # noqa: PLC0415
+
+    if selection_set is None:
+        return
+
+    rel_map = _relation_field_map(
+        getattr(getattr(graphene_type, "_meta", None), "model", None) or object
+    ) if getattr(graphene_type, "_meta", None) and getattr(graphene_type._meta, "model", None) else {}
+
+    for field in selection_set.selections:
+        if isinstance(field, FragmentSpreadNode):
+            fragment = info.fragments.get(field.name.value) if info.fragments else None
+            if fragment is not None:
+                _walk_annotated_fields(
+                    gql_type, graphene_type, fragment.selection_set, info,
+                    annotations, aliases, names,
+                )
+            continue
+        if isinstance(field, InlineFragmentNode):
+            _walk_annotated_fields(
+                gql_type, graphene_type, field.selection_set, info,
+                annotations, aliases, names,
+            )
+            continue
+
+        name = field.name.value
+        snake = to_snake_case(name)
+
+        # Look up the graphene field instance on the current graphene type.
+        meta_fields = getattr(getattr(graphene_type, "_meta", None), "fields", None) or {}
+        inst = meta_fields.get(name) or meta_fields.get(snake)
+
+        if isinstance(inst, AnnotatedField):
+            # This field is an AnnotatedField and is selected — collect it.
+            ann_key = inst.annotation_name(name)
+            annotations[ann_key] = AnnotatedField.resolve_expression(inst.expression)
+            for k, v in inst.aliases.items():
+                aliases[k] = AnnotatedField.resolve_expression(v)
+            names.add(snake)
+            continue
+
+        # Not an AnnotatedField.  Check if it's a wrapper field (e.g. "results")
+        # and descend into the inner type if so.
+        sub_selection = getattr(field, "selection_set", None)
+        if sub_selection is None:
+            continue
+
+        # Skip plumbing fields and relation sub-fields (relations go to the child path).
+        if name.lower() in _PLUMBING_FIELDS or snake in _PLUMBING_FIELDS:
+            continue
+
+        is_relation = (name in rel_map) or (snake in rel_map)
+        if is_relation:
+            # Relation sub-selection: child annotations handled by prefetch path.
+            continue
+
+        # Potential wrapper field (e.g. `results`).  Try to resolve the inner type.
+        field_def = gql_type.fields.get(name) if gql_type is not None else None
+        if field_def is None:
+            continue
+        sub_gql = get_named_type(field_def.type)
+        sub_gql = sub_gql if isinstance(sub_gql, GraphQLObjectType) else None
+        sub_graphene = getattr(sub_gql, "graphene_type", None) if sub_gql is not None else None
+        if sub_gql is not None and sub_graphene is not None and getattr(sub_graphene, "_meta", None) is not None:
+            _walk_annotated_fields(
+                sub_gql, sub_graphene, sub_selection, info,
+                annotations, aliases, names,
+            )
+
+
+def _collect_annotated_fields(info: Any) -> tuple[dict, dict, set]:
+    """Collect AnnotatedField annotations for selected fields on the return type.
+
+    Returns a 3-tuple ``(annotations, aliases, annotated_names)`` where:
+    - ``annotations``: ``{ann_key: expression}`` to pass to ``.annotate()``.
+    - ``aliases``: ``{alias_key: expression}`` to pass to ``.alias()``.
+    - ``annotated_names``: snake_case field names of selected AnnotatedFields
+      (used by ``.only()`` logic to skip these leaves).
+
+    Args:
+        info: The GraphQL resolve info for the current field.
+
+    Returns:
+        A 3-tuple of (annotations dict, aliases dict, annotated_names set).
+    """
+    return_type = get_named_type(info.return_type)
+    field_nodes = info.field_nodes
+    if not field_nodes or not isinstance(return_type, GraphQLObjectType):
+        return {}, {}, set()
+    graphene_type = getattr(return_type, "graphene_type", None)
+    if graphene_type is None or getattr(graphene_type, "_meta", None) is None:
+        return {}, {}, set()
+
+    annotations: dict = {}
+    aliases: dict = {}
+    names: set = set()
+    _walk_annotated_fields(
+        return_type, graphene_type,
+        field_nodes[0].selection_set, info,
+        annotations, aliases, names,
+    )
+    return annotations, aliases, names
+
+
 def build_filtered_prefetches(info: GraphQLResolveInfo) -> list[Any]:
     """Build filtered Prefetch objects for the nested list fields in the query.
 
@@ -1549,6 +1849,122 @@ def _apply_optimizations(
             prefetch_related,
         )
 
+    # --- Phase-d §3: collect AnnotatedField annotations ----------------------
+    root_annotations: dict = {}
+    root_aliases: dict = {}
+    root_annotated_names: set = set()
+    if graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS and fields_asts:
+        try:
+            root_annotations, root_aliases, root_annotated_names = (
+                _collect_annotated_fields(info)
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade: skip annotation
+            logging.getLogger("django_graphex.utils").warning(
+                "AnnotatedField collection failed for %s; skipping annotation "
+                "injection. %r",
+                model.__name__, exc,
+            )
+            root_annotations, root_aliases, root_annotated_names = {}, {}, set()
+
+    # --- Phase-d §5: SELECT→PREFETCH promotion --------------------------------
+    # A relation currently in select_related whose child sub-selection contains
+    # an AnnotatedField MUST be promoted to prefetch_related, because annotations
+    # cannot be pushed through SQL JOINs.
+    # Promotion runs BEFORE the prefix-drop so that promoted heads re-seed the
+    # drop and orphaned grandchild select_related paths are correctly stripped.
+    annotated_promotions: set[str] = set()
+    if (
+        graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS
+        and select_related
+        and fields_asts
+    ):
+        # Detect promotions: walk selection set, check each select relation's
+        # sub-selection for AnnotatedFields on child types.
+        # Gate does NOT require root_annotated_names — only the child may have
+        # AnnotatedFields (e.g. Post has none, but Author.post_count does).
+        return_type = get_named_type(info.return_type)
+        if isinstance(return_type, GraphQLObjectType):
+
+            def _detect_promotions(
+                gql_t: Any,
+                graphene_t: Any,
+                sel_set: Any,
+                depth: int = 0,
+            ) -> None:
+                """Detect select_related paths that have an AnnotatedField child."""
+                if sel_set is None or depth > 3:
+                    return
+                from .fields import AnnotatedField  # noqa: PLC0415
+                meta_fields = getattr(getattr(graphene_t, "_meta", None), "fields", None) or {}
+                current_rel_map = _relation_field_map(
+                    getattr(getattr(graphene_t, "_meta", None), "model", None) or object
+                ) if getattr(graphene_t, "_meta", None) and getattr(graphene_t._meta, "model", None) else {}
+
+                for fnode in sel_set.selections:
+                    if isinstance(fnode, (FragmentSpreadNode, InlineFragmentNode)):
+                        continue
+                    fname = fnode.name.value
+                    fsnake = to_snake_case(fname)
+                    fsub = getattr(fnode, "selection_set", None)
+                    if fsub is None:
+                        continue
+                    # Is this a select_related field?
+                    rel_f = current_rel_map.get(fname, current_rel_map.get(fsnake))
+                    if rel_f is None:
+                        continue
+                    opt = _relation_optimization(rel_f)
+                    if opt is None or opt[0] != "select":
+                        continue
+                    orm_name = opt[1]
+                    # Check if sub-selection has any AnnotatedField.
+                    sub_meta_fields: dict = {}
+                    if gql_t is not None:
+                        fdef = gql_t.fields.get(fname)
+                        if fdef is not None:
+                            sub_gql = get_named_type(fdef.type)
+                            sub_gql = sub_gql if isinstance(sub_gql, GraphQLObjectType) else None
+                            sub_graphene = getattr(sub_gql, "graphene_type", None) if sub_gql is not None else None
+                            if sub_graphene is not None:
+                                sub_meta_fields = getattr(getattr(sub_graphene, "_meta", None), "fields", None) or {}
+                    for sel in fsub.selections:
+                        if isinstance(sel, (FragmentSpreadNode, InlineFragmentNode)):
+                            continue
+                        sname = sel.name.value
+                        ssnake = to_snake_case(sname)
+                        if isinstance(sub_meta_fields.get(sname) or sub_meta_fields.get(ssnake), AnnotatedField):
+                            if orm_name in select_related:
+                                annotated_promotions.add(orm_name)
+                            break
+
+            # Walk the root selection set for promotion detection.
+            root_graphene_type = getattr(return_type, "graphene_type", None)
+            if root_graphene_type is not None:
+                _detect_promotions(return_type, root_graphene_type, fields_asts[0].selection_set)
+                # Also walk through wrapper field (results).
+                if fields_asts[0].selection_set:
+                    for fnode in fields_asts[0].selection_set.selections:
+                        if isinstance(fnode, (FragmentSpreadNode, InlineFragmentNode)):
+                            continue
+                        fname = fnode.name.value
+                        fsub = getattr(fnode, "selection_set", None)
+                        if fsub is None or fname.lower() in _PLUMBING_FIELDS:
+                            continue
+                        fdef = return_type.fields.get(fname)
+                        if fdef is None:
+                            continue
+                        sub_gql = get_named_type(fdef.type)
+                        if not isinstance(sub_gql, GraphQLObjectType):
+                            continue
+                        sub_graphene = getattr(sub_gql, "graphene_type", None)
+                        if sub_graphene is not None:
+                            _detect_promotions(sub_gql, sub_graphene, fsub)
+
+            for promoted in annotated_promotions:
+                if promoted in select_related:
+                    select_related.remove(promoted)
+                if promoted not in prefetch_related:
+                    prefetch_related.append(promoted)
+
     # Drop any select_related path that crosses a prefetch boundary.
     # recursive_params descends unconditionally into ALL sub-selections, so a
     # query like "allAuthors { posts { category { title } } }" produces BOTH
@@ -1575,18 +1991,23 @@ def _apply_optimizations(
         prefetch_related, filtered_prefetches
     )
 
-    # Phase B: narrow each top_plain prefetch string to a Prefetch(…).only(…).
-    # STRICTLY AFTER _merge_filtered_prefetches (REQ-B5): the merge runs on
-    # plain strings; conversion happens only on the returned top_plain list.
-    # Gated identically to root .only() (OPTIMIZE_ONLY_FIELDS + not custom_used).
+    # Phase B + Phase-d §6: narrow each top_plain prefetch string to a
+    # Prefetch(…).only(…) and/or .annotate(…).
+    # Gate fires when EITHER OPTIMIZE_ONLY_FIELDS or OPTIMIZE_ANNOTATED_FIELDS
+    # is on so that child annotations work even when column narrowing is off.
+    # STRICTLY AFTER _merge_filtered_prefetches (REQ-B5).
+    root_return_gql = get_named_type(info.return_type) if fields_asts else None
+    root_return_gql = root_return_gql if isinstance(root_return_gql, GraphQLObjectType) else None
     if (
-        graphql_api_settings.OPTIMIZE_ONLY_FIELDS
+        (graphql_api_settings.OPTIMIZE_ONLY_FIELDS or graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS)
         and not custom_used
         and fields_asts
         and prefetch_related
     ):
         only_map = _collect_prefetch_only_sets(
-            model, fields_asts[0].selection_set, info.fragments
+            model, fields_asts[0].selection_set, info.fragments,
+            gql_type=root_return_gql,
+            promoted_lookups=frozenset(annotated_promotions) if annotated_promotions else None,
         )
         if only_map:
             prefetch_related = [
@@ -1602,10 +2023,25 @@ def _apply_optimizations(
 
     if graphql_api_settings.OPTIMIZE_ONLY_FIELDS and not custom_used and fields_asts:
         only_fields = _collect_only_fields(
-            model, fields_asts[0].selection_set, info.fragments
+            model, fields_asts[0].selection_set, info.fragments,
+            annotated_names=root_annotated_names,
         )
         if only_fields:  # pragma: no branch
             base = base.only(*only_fields)
+
+    # --- Phase-d §3: inject root annotations AFTER .only() to avoid FieldError -
+    if root_annotations or root_aliases:
+        try:
+            if root_aliases:
+                base = base.alias(**root_aliases)
+            if root_annotations:
+                base = base.annotate(**root_annotations)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("django_graphex.utils").warning(
+                "AnnotatedField injection failed for %s; serving without "
+                "annotation. %r",
+                model.__name__, exc,
+            )
 
     return base
 

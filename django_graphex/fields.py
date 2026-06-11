@@ -12,6 +12,7 @@ from django.db.models.expressions import Window
 from django.db.models.functions import RowNumber
 from graphene import ID, Argument, Field, List
 from graphene.types.structures import NonNull, Structure
+from graphene.utils.str_converters import to_snake_case
 
 import django_graphex.settings as _settings_module
 from django_graphex.filtering.backend import resolve_filter_backend
@@ -45,6 +46,7 @@ SELF_NARROW_VERIFIED: bool = True
 # plain zero-child parent.
 # ---------------------------------------------------------------------------
 _GQX_WIN_ATTR_PREFIX: str = "_gqx_win_"
+_GQX_ANN_ATTR_PREFIX: str = "_gqx_ann_"
 
 if TYPE_CHECKING:
     from django.db.models import Manager, Model
@@ -812,3 +814,92 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             results=results,
             results_field_name=results_field_name,
         )
+
+
+# ---------------------------------------------------------------------------
+# AnnotatedField — declarative annotation-backed GraphQL field (phase-d)
+# ---------------------------------------------------------------------------
+
+class AnnotatedField(Field):
+    """A GraphQL field backed by a Django ORM annotation injected only when selected.
+
+    The annotation is injected into the queryset as
+    ``qs.alias(**aliases).annotate(**{annotation_name: expression})`` — but ONLY
+    when the field appears in the client's selection set.  A default resolver reads
+    ``getattr(root, annotation_name, None)`` so no explicit ``resolve_<field>`` is
+    needed.
+
+    Args:
+        type_: The graphene output type (e.g. ``graphene.Int``).
+        expression: A Django ``Expression`` instance OR a zero-argument callable
+            that returns one.  Called lazily at injection time so the Expression
+            is freshly constructed per request (no Django Expression reuse issues).
+        aliases: Optional ``dict[str, Expression|callable]`` applied via
+            ``.alias()`` BEFORE ``.annotate()``.  Useful when the main expression
+            references an intermediate computed column.
+        annotation_name: Override the auto-derived ``_gqx_ann_<field_name>`` key.
+            Use this when the default name would collide with a concrete model
+            field attname.
+        **kwargs: Forwarded to ``graphene.Field``.
+    """
+
+    def __init__(
+        self,
+        type_: Any,
+        expression: Any,
+        aliases: dict | None = None,
+        annotation_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.expression = expression
+        self.aliases = aliases or {}
+        self._explicit_annotation_name = annotation_name
+        kwargs.setdefault("resolver", self._default_resolver)
+        super().__init__(type_, **kwargs)
+
+    def annotation_name(self, field_name: str) -> str:
+        """Return the ORM annotation key for this field.
+
+        Args:
+            field_name: The GraphQL/Python field name (camelCase or snake_case).
+
+        Returns:
+            ``self._explicit_annotation_name`` when set, else
+            ``_gqx_ann_<snake_field_name>``.
+        """
+        return self._explicit_annotation_name or (
+            _GQX_ANN_ATTR_PREFIX + to_snake_case(field_name)
+        )
+
+    @staticmethod
+    def resolve_expression(expr: Any) -> Any:
+        """Resolve an expression or callable to a concrete Expression.
+
+        Args:
+            expr: A Django Expression instance or a zero-argument callable.
+
+        Returns:
+            The Expression instance (called if callable).
+        """
+        return expr() if callable(expr) else expr
+
+    def _default_resolver(self, root: Any, info: Any, **kwargs: Any) -> Any:
+        """Read the annotation value from ``root``.
+
+        Derives the attribute name at resolve time from ``info.field_name`` so
+        the same instance can be shared across types without a closure-binding
+        bug.
+
+        Args:
+            root: The model instance returned by the queryset.
+            info: The GraphQL resolve info.
+            **kwargs: Unused resolver arguments.
+
+        Returns:
+            The annotation value, or ``None`` when absent (field not selected /
+            annotation not injected).
+        """
+        ann = self._explicit_annotation_name or (
+            _GQX_ANN_ATTR_PREFIX + to_snake_case(info.field_name)
+        )
+        return getattr(root, ann, None)

@@ -54,6 +54,27 @@ class Post(DummyModel):
     co_authors = models.ManyToManyField(
         Author, related_name="coauthored_posts", blank=True
     )
+    views = models.PositiveIntegerField(default=0)
+
+
+class Comment(DummyModel):
+    """Reverse-FK from Post for aggregate annotation targets (phase-d)."""
+
+    post = models.ForeignKey(Post, related_name="comments", on_delete=models.CASCADE)
+    body = models.TextField(default="")
+
+
+class AuthorProfile(DummyModel):
+    """One-to-one with Author; used for grandchild-select survival test (phase-d).
+
+    Named AuthorProfile (not Profile) to avoid collision with the Profile model
+    defined in test_optimizer_coverage.py.
+    """
+
+    author = models.OneToOneField(
+        Author, related_name="author_profile", on_delete=models.CASCADE
+    )
+    bio = models.TextField(default="")
 
 
 # --- Model used by the DjangoModelType queryset-hook tests ------------ #

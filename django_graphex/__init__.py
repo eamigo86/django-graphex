@@ -5,6 +5,7 @@ from graphene.pyutils.version import get_version
 from .cost import CostLimitValidationRule, CostReport, analyze_cost
 from .directives import all_directives
 from .fields import (
+    AnnotatedField,
     DjangoFilterListField,
     DjangoFilterPaginateListField,
     DjangoListObjectField,
@@ -46,6 +47,7 @@ __version__ = get_version(VERSION)
 __all__ = (
     "__version__",
     # FIELDS
+    "AnnotatedField",
     "DjangoObjectField",
     "DjangoFilterListField",
     "DjangoFilterPaginateListField",
