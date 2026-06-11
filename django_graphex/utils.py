@@ -2274,7 +2274,6 @@ def _apply_optimizations(
                     return
                 from .fields import AnnotatedField  # noqa: PLC0415
 
-                (getattr(getattr(graphene_t, "_meta", None), "fields", None) or {})
                 current_rel_map = (
                     _relation_field_map(
                         getattr(getattr(graphene_t, "_meta", None), "model", None)
