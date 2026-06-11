@@ -1042,6 +1042,15 @@ def _compute_child_only(
         child, sub_selection, fragments, annotated_names=child_ann_names
     ):
         # Even on full-load, if we have annotations, return a plan without .only().
+        # S3 GUARD: This annotate-only fallback (empty only_cols) masks a missing
+        # child_ann_names forward: if child_ann_names were not threaded above, the
+        # AnnotatedField leaf would be treated as an unknown computed leaf, triggering
+        # is_full_load=True and landing here — annotations would still resolve
+        # correctly, but .only() narrowing on a mixed concrete+annotated child would
+        # be silently lost (body and other unselected columns would be fetched).
+        # Any future refactor that removes child_ann_names threading (lines above)
+        # must re-verify the S1 test (TestMixedConcreteAnnotatedChildOnlyNarrowing)
+        # which specifically guards this path.
         if child_annotations or child_aliases:
             return PrefetchPlan(
                 only_cols=[],
