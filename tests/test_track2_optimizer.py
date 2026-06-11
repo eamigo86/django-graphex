@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from unittest import mock
 
+import django
 import graphene
 import pytest
 from django.db import connection
@@ -34,6 +35,15 @@ from .models import (
     Track2AccountProxy,
     Track2GfkComment,
     Track2Invoice,
+)
+
+# Per-content-type GenericPrefetch narrowing is a Django 5.0+ optimisation; on
+# < 5.0 the optimizer degrades to a bare full-load prefetch (proven by
+# test_gfk_union_degrades_to_bare_prefetch_on_django_below_5). The narrow-path
+# tests below assert that 5.0+ shape, so they skip on older Django.
+requires_generic_prefetch = pytest.mark.skipif(
+    django.VERSION < (5, 0),
+    reason="Per-content-type GenericPrefetch narrowing is Django 5.0+.",
 )
 
 
@@ -395,6 +405,7 @@ def _seed_gfk_rows():
     Track2GfkComment.objects.create(body="c4", target_ct=inv_ct, target_id=i2.pk)
 
 
+@requires_generic_prefetch
 @pytest.mark.django_db
 def test_gfk_union_builds_per_content_type_generic_prefetch_buckets():
     """OBSERVABLE: a union GFK on Django>=5.0 yields per-CT GenericPrefetch buckets,
@@ -410,9 +421,6 @@ def test_gfk_union_builds_per_content_type_generic_prefetch_buckets():
       * 4 comments over 2 distinct content types -> the union prefetch must batch
         per content type, not per row.
     """
-    import django
-
-    assert django.VERSION >= (5, 0), "this teeth-test asserts the 5.0+ narrow path"
 
     schema, _reg = _build_gfk_union_schema()
     _seed_gfk_rows()
@@ -577,6 +585,7 @@ def test_gfk_union_unresolvable_bucket_degrades_without_fielderror():
     assert result.data["allComments"]["totalCount"] == 4
 
 
+@requires_generic_prefetch
 @pytest.mark.django_db
 def test_build_generic_prefetch_dedupes_by_content_type():
     """SAFETY (critique #1): two member buckets over the SAME content type collapse
@@ -628,6 +637,7 @@ def test_build_generic_prefetch_dedupes_by_content_type():
     )
 
 
+@requires_generic_prefetch
 @pytest.mark.django_db
 def test_build_generic_prefetch_uses_gfk_for_concrete_model_flag():
     """GPM-1: the de-dup mirrors the GFK's ``for_concrete_model`` flag exactly.
@@ -670,6 +680,7 @@ def test_build_generic_prefetch_uses_gfk_for_concrete_model_flag():
     )
 
 
+@requires_generic_prefetch
 @pytest.mark.django_db
 def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror():
     """GPM-1/GPM-2 integration: two union members over the SAME concrete table
@@ -688,9 +699,6 @@ def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror():
     ValueError here; keying by the GFK's flag (True) collapses both members to one
     batched query and the query succeeds with no error.
     """
-    import django
-
-    assert django.VERSION >= (5, 0), "proxy-collapse teeth-test targets the 5.0+ path"
 
     reg = Registry()
 
