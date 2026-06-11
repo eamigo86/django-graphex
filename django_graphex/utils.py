@@ -15,7 +15,7 @@ from django.contrib.contenttypes.fields import (
     GenericRel,
     GenericRelation,
 )
-from django.core.exceptions import ValidationError
+from django.core.exceptions import FieldDoesNotExist, ValidationError
 from django.db.models import (
     NOT_PROVIDED,
     Manager,
@@ -530,7 +530,7 @@ def _apply_plain_hook(
             for part in lookup.split(LOOKUP_SEP):
                 rel = child_model._meta.get_field(part)
                 child_model = rel.related_model or rel.remote_field.model
-        except Exception:
+        except (FieldDoesNotExist, AttributeError):
             child_model = model
         pf = Prefetch(lookup, queryset=child_model._default_manager.all())
     else:
@@ -1654,13 +1654,25 @@ def _walk_filtered_prefetches(
             fragment = info.fragments.get(field.name.value) if info.fragments else None
             if fragment is not None:  # pragma: no branch
                 _walk_filtered_prefetches(
-                    gql_type, model, fragment.selection_set, prefix, info, out, seen,
+                    gql_type,
+                    model,
+                    fragment.selection_set,
+                    prefix,
+                    info,
+                    out,
+                    seen,
                     hook_map=hook_map,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
             _walk_filtered_prefetches(
-                gql_type, model, field.selection_set, prefix, info, out, seen,
+                gql_type,
+                model,
+                field.selection_set,
+                prefix,
+                info,
+                out,
+                seen,
                 hook_map=hook_map,
             )
             continue
@@ -1762,8 +1774,11 @@ def _walk_filtered_prefetches(
                     pf = Prefetch(
                         lookup,
                         queryset=_apply_field_hook(
-                            pf.queryset, hook, info,
-                            filter_value=filter_value, is_window=False,
+                            pf.queryset,
+                            hook,
+                            info,
+                            filter_value=filter_value,
+                            is_window=False,
                         ),
                     )
                 out.append(pf)
@@ -1807,7 +1822,13 @@ def _walk_filtered_prefetches(
         if field.selection_set and sub_gql is not None:
             # Wrapper field (results / pageInfo): same model and prefix.
             _walk_filtered_prefetches(
-                sub_gql, model, field.selection_set, prefix, info, out, seen,
+                sub_gql,
+                model,
+                field.selection_set,
+                prefix,
+                info,
+                out,
+                seen,
                 hook_map=hook_map,
             )
 
@@ -2011,7 +2032,13 @@ def build_filtered_prefetches(
     seen: dict[str, int] = {}
     hook_map: dict = {}
     _walk_filtered_prefetches(
-        return_type, model, field_node.selection_set, "", info, out, seen,
+        return_type,
+        model,
+        field_node.selection_set,
+        "",
+        info,
+        out,
+        seen,
         hook_map=hook_map,
     )
     # Drop lookups that appeared more than once (aliased fields with different
@@ -2103,9 +2130,7 @@ def _merge_filtered_prefetches(
 
         # The model for the filtered ancestor's queryset (= child model for
         # re-rooted children).
-        ancestor_model = (
-            pf.queryset.model if hasattr(pf.queryset, "model") else None
-        )
+        ancestor_model = pf.queryset.model if hasattr(pf.queryset, "model") else None
 
         children: list[Any] = []
         for stripped_child, abs_lookup in zip(stripped_children, abs_children):
@@ -2123,7 +2148,7 @@ def _merge_filtered_prefetches(
                         for part in stripped_child.split(LOOKUP_SEP):
                             rel = child_model._meta.get_field(part)
                             child_model = rel.related_model or rel.remote_field.model
-                    except Exception:
+                    except (FieldDoesNotExist, AttributeError):
                         child_model = ancestor_model
                 if child_model is not None:
                     child_qs = child_model._default_manager.all()
@@ -2249,6 +2274,7 @@ def _apply_optimizations(
                     return
                 from .fields import AnnotatedField  # noqa: PLC0415
 
+                (getattr(getattr(graphene_t, "_meta", None), "fields", None) or {})
                 current_rel_map = (
                     _relation_field_map(
                         getattr(getattr(graphene_t, "_meta", None), "model", None)
@@ -2414,8 +2440,7 @@ def _apply_optimizations(
     # annotations already present) and BEFORE base.prefetch_related().
     if hook_map:
         prefetch_related = [
-            _apply_plain_hook(model, item, hook_map, info)
-            for item in prefetch_related
+            _apply_plain_hook(model, item, hook_map, info) for item in prefetch_related
         ]
 
     if select_related:
