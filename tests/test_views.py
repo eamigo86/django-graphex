@@ -15,6 +15,8 @@ from django_graphex.views import GraphQLView
 class TestQuery(graphene.ObjectType):
     """Simple test query."""
 
+    __test__ = False  # GraphQL schema fixture, not a pytest test class
+
     hello = graphene.String(name=graphene.String(default_value="World"))
 
     def resolve_hello(self, info, name):
@@ -24,6 +26,8 @@ class TestQuery(graphene.ObjectType):
 
 class TestSubscription(graphene.ObjectType):
     """Simple test subscription."""
+
+    __test__ = False  # GraphQL schema fixture, not a pytest test class
 
     counter = graphene.String()
 

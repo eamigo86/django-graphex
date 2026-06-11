@@ -19,6 +19,8 @@ from .models import BasicModel
 class TestModel(models.Model):
     """Test model for converter tests."""
 
+    __test__ = False  # ORM fixture, not a pytest test class
+
     # Different field types to test conversion
     char_field = models.CharField(max_length=100, help_text="Character field")
     text_field = models.TextField(blank=True)

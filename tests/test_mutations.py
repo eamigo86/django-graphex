@@ -37,6 +37,8 @@ class UserMutationWithCustomName(DjangoModelMutation):
 class TestQuery(graphene.ObjectType):
     """Test query for mutations."""
 
+    __test__ = False  # GraphQL schema fixture, not a pytest test class
+
     hello = graphene.String(default_value="Hello World!")
 
     def resolve_hello(self, info):
@@ -45,6 +47,8 @@ class TestQuery(graphene.ObjectType):
 
 class TestMutations(graphene.ObjectType):
     """Test mutations."""
+
+    __test__ = False  # GraphQL schema fixture, not a pytest test class
 
     user_create = UserMutation.CreateField()
     user_update = UserMutation.UpdateField()
