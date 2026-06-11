@@ -1749,3 +1749,574 @@ class TestConversionBlock(TestCase):
         ):
             with self.assertRaises(RuntimeError):
                 queryset_factory(Author, None, info)
+
+
+# =========================================================================== #
+# Phase B PR2 — Tasks 4.1–4.5: Full-load sibling isolation + REQ-B6 regression#
+# =========================================================================== #
+
+
+class TestFullLoadSiblingIsolation(TestCase):
+    """Task 4.1/4.2 — per-child full-load isolation.
+
+    When one prefetch branch has an unknown/@property leaf (full-load) and a
+    sibling branch has only concrete leaves (narrowable), the narrowable branch
+    MUST be narrowed and the full-load branch MUST NOT be narrowed (bare string).
+    """
+
+    @_skip_if_no_phase_b
+    def test_full_load_sibling_isolation(self):
+        from .models import Author, Post
+
+        # Branch A — Author.posts (reverse FK), concrete leaf 'title' -> narrowable.
+        posts_field = Author._meta.get_field("posts")
+        sel_narrowable, frags = _parse("{ a { posts { title } } }")
+        posts_sub = sel_narrowable.selections[0].selection_set
+        plan_a = _compute_child_only(Post, posts_field, posts_sub, frags)
+        self.assertIsNotNone(plan_a, "Concrete-leaf branch should be narrowable")
+        self.assertIn("title", plan_a.only_cols)
+
+        # Branch B — Post.co_authors (M2M), @property leaf 'display_name' -> full-load.
+        co_field = Post._meta.get_field("co_authors")
+        sel_full, frags2 = _parse("{ p { co_authors { display_name } } }")
+        co_sub = sel_full.selections[0].selection_set
+        plan_b = _compute_child_only(Author, co_field, co_sub, frags2)
+        self.assertIsNone(plan_b, "Branch with @property leaf should be full-load (None)")
+
+        # Via _collect_prefetch_only_sets on Post: 'tags' (concrete) is narrowable;
+        # 'co_authors' (@property) is omitted from the map (full-load).
+        sel, frags = _parse("{ p { tags { label } co_authors { display_name } } }")
+        only_map = _collect_prefetch_only_sets(Post, sel, frags)
+
+        self.assertIn("tags", only_map, "tags (concrete leaf) must be narrowable")
+        self.assertNotIn(
+            "co_authors", only_map,
+            "co_authors (@property leaf) must be omitted from map (full-load)",
+        )
+
+
+class TestREQB6RegressionNotNarrowed(TestCase):
+    """Task 4.4/4.5 — REQ-B6: plain child re-rooted under filtered Prefetch stays full-load.
+
+    After Phase B, a plain child path nested under a filtered Prefetch is absorbed
+    by _merge_filtered_prefetches into pf.queryset BEFORE the conversion block runs.
+    It therefore never appears in top_plain and is never passed to
+    _narrow_plain_prefetch. Its queryset remains full-load.
+    """
+
+    @_skip_if_no_phase_b
+    def test_rerooted_child_stays_full_load(self):
+        from django.db.models import Prefetch as DjPrefetch
+        from .models import Post
+
+        # 'posts__tags' is a plain child nested under a filtered Prefetch for 'posts'.
+        # _merge_filtered_prefetches re-roots 'posts__tags' -> 'tags' into the
+        # filtered queryset, so top_plain is empty and the conversion block never
+        # sees it (REQ-B6 invariant).
+        filtered_pf = DjPrefetch("posts", queryset=Post.objects.filter(title__icontains=""))
+        top_plain, top_filtered = _merge_filtered_prefetches(
+            ["posts__tags"], [filtered_pf]
+        )
+        self.assertEqual(top_plain, [], "Re-rooted child must not appear in top_plain")
+        self.assertIn(filtered_pf, top_filtered)
+
+        # The filtered Prefetch's queryset remains full-load (no .only() applied).
+        deferred_fields, defer_mode = filtered_pf.queryset.query.deferred_loading
+        self.assertEqual(
+            (deferred_fields, defer_mode), (frozenset(), True),
+            "Re-rooted child queryset must be full-load (no .only() applied)",
+        )
+
+
+class TestGAP4DottedNestedPrefetchFullLoad(TestCase):
+    """Task 5.2 item 20 (GAP-4) — dotted nested-prefetch lookup stays full-load.
+
+    Calls ``_collect_prefetch_only_sets`` and ``_narrow_plain_prefetch`` directly
+    (no DB, no assertNumQueries). Asserts that a direct prefetch ('posts') is
+    narrowed while a dotted child ('posts__tags') is NOT in the only_map and
+    therefore stays a bare string (full-load).
+    """
+
+    @_skip_if_no_phase_b
+    def test_dotted_nested_prefetch_stays_bare_string(self):
+        from django.db.models import Prefetch as DjPrefetch
+        from .models import Author
+
+        sel, frags = _parse("{ a { posts { title tags { label } } } }")
+        only_map = _collect_prefetch_only_sets(Author, sel, frags)
+
+        # Direct prefetch 'posts' is in the map.
+        self.assertIn("posts", only_map)
+
+        top_plain = ["posts", "posts__tags"]
+        converted = [_narrow_plain_prefetch(Author, lk, only_map) for lk in top_plain]
+
+        # 'posts' is narrowed to a Prefetch with .only() applied (deferred_loading mode=False).
+        posts_item = converted[0]
+        self.assertIsInstance(posts_item, DjPrefetch)
+        self.assertEqual(posts_item.prefetch_through, "posts")
+        _, mode = posts_item.queryset.query.deferred_loading
+        self.assertFalse(mode)
+
+        # 'posts__tags' is not in the map — stays a bare string (GAP-4 limitation).
+        tags_item = converted[1]
+        self.assertIsInstance(tags_item, str)
+        self.assertEqual(tags_item, "posts__tags")
+
+
+# =========================================================================== #
+# Phase B PR2 — Task 5.1b: Author-rooted e2e schema scaffold                  #
+# =========================================================================== #
+
+RAUTHOR = Registry()
+
+
+class ECategoryType(DjangoObjectType):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Category"]).Category
+        registry = RAUTHOR
+
+
+class ETagType(DjangoObjectType):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Tag"]).Tag
+        registry = RAUTHOR
+
+
+class EAuthorType(DjangoObjectType):
+    display_name = graphene.String()
+
+    class Meta:
+        model = __import__("tests.models", fromlist=["Author"]).Author
+        registry = RAUTHOR
+
+    def resolve_display_name(self, info):
+        return self.display_name
+
+
+class EPostType(DjangoObjectType):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Post"]).Post
+        registry = RAUTHOR
+
+
+class EPostListType(DjangoListObjectType):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Post"]).Post
+        registry = RAUTHOR
+
+
+class EAuthorListType(DjangoListObjectType):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Author"]).Author
+        registry = RAUTHOR
+
+
+class ETagListType(DjangoListObjectType):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Tag"]).Tag
+        registry = RAUTHOR
+
+
+class EProfileListType(DjangoListObjectType):
+    class Meta:
+        model = Profile
+        registry = RAUTHOR
+
+
+class EProfileType(DjangoObjectType):
+    class Meta:
+        model = Profile
+        registry = RAUTHOR
+
+
+class EOptNoteType(DjangoObjectType):
+    class Meta:
+        model = OptNote
+        registry = RAUTHOR
+
+
+class EOptNoteListType(DjangoListObjectType):
+    class Meta:
+        model = OptNote
+        registry = RAUTHOR
+
+
+class EAuthorQuery(graphene.ObjectType):
+    all_authors = DjangoListObjectField(EAuthorListType)
+    all_posts = DjangoListObjectField(EPostListType)
+    all_profiles = DjangoListObjectField(EProfileListType)
+    all_notes = DjangoListObjectField(EOptNoteListType)
+    all_tags = DjangoListObjectField(ETagListType)
+
+
+e2e_schema = graphene.Schema(query=EAuthorQuery)
+
+
+# =========================================================================== #
+# Phase B PR2 — Task 5.2: End-to-end DB tests (items 11–20)                  #
+# =========================================================================== #
+
+
+class E2EBaseTest(TestCase):
+    """Shared DB fixture and schema exec helper for items 11-20."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from .models import Author, Category, Post, Tag
+
+        cls.category = Category.objects.create(title="Tech")
+        cls.author1 = Author.objects.create(name="Alice", bio="bio1")
+        cls.author2 = Author.objects.create(name="Bob", bio="bio2")
+
+        cls.tag1 = Tag.objects.create(label="python")
+        cls.tag2 = Tag.objects.create(label="django")
+
+        # 3 posts for author1
+        cls.posts = []
+        for i in range(3):
+            post = Post.objects.create(
+                title=f"Post{i}",
+                body=f"body{i}",
+                author=cls.author1,
+                category=cls.category,
+            )
+            post.tags.add(cls.tag1, cls.tag2)
+            cls.posts.append(post)
+
+        # co_authors: post0 has author2 as co-author
+        cls.posts[0].co_authors.add(cls.author2)
+
+        # author2 has 1 post
+        cls.post_b = Post.objects.create(
+            title="PostB", body="bodyB", author=cls.author2, category=cls.category
+        )
+
+        # Profile with 2 notes (for items 15/17)
+        cls.profile = Profile.objects.create(handle="ep1", headline="EPH1")
+        ct = ContentType.objects.get_for_model(Profile)
+        for j in range(2):
+            OptNote.objects.create(
+                text=f"enote{j}", content_type=ct, object_id=cls.profile.pk
+            )
+
+    def _exec(self, query):
+        result = e2e_schema.execute(query)
+        self.assertIsNone(result.errors, msg=str(result.errors))
+        return result.data
+
+
+class E2EItem11ReverseFKNarrowing(E2EBaseTest):
+    """Item 11 — Reverse-FK narrowing: posts.title SQL has title+author_id, NOT body."""
+
+    def test_reverse_fk_narrowed_sql_and_query_count(self):
+        query = """
+        { allAuthors { results { name posts { results { title } } } totalCount } }
+        """
+        with self.assertNumQueries(3):
+            with CaptureQueriesContext(connection) as ctx:
+                data = self._exec(query)
+
+        # Find the posts prefetch SQL
+        post_sql = [
+            q["sql"]
+            for q in ctx.captured_queries
+            if '"tests_post"' in q["sql"] and "COUNT(*)" not in q["sql"]
+        ]
+        self.assertTrue(post_sql, "No post SQL found")
+
+        # 'title' must be in the SELECT
+        self.assertTrue(
+            any('"tests_post"."title"' in s for s in post_sql),
+            "title must be selected in posts prefetch SQL",
+        )
+        # 'body' must NOT be selected (narrowed out)
+        self.assertFalse(
+            any('"tests_post"."body"' in s for s in post_sql),
+            "body must NOT be selected (narrowed out)",
+        )
+        # author_id must be selected (FK-back structural column)
+        self.assertTrue(
+            any('"tests_post"."author_id"' in s for s in post_sql),
+            "author_id must always be selected (FK-back structural column)",
+        )
+
+        authors = data["allAuthors"]["results"]
+        self.assertEqual(data["allAuthors"]["totalCount"], 2)
+        all_posts = [p for a in authors for p in a["posts"]["results"]]
+        self.assertTrue(len(all_posts) > 0)
+
+
+class E2EItem12GAP1ZeroExtraQueries(E2EBaseTest):
+    """Item 12 (CRITICAL) — GAP-1: category access triggers ZERO extra queries."""
+
+    def test_gap1_zero_extra_queries_and_category_narrowed(self):
+        query = """
+        { allAuthors { results {
+            name
+            posts { results { title category { title } } }
+        } } }
+        """
+        # EMPIRICALLY PINNED: 1 count (authors) + 1 authors + 1 posts prefetch = 3.
+        # With select_related('category') co-applied on the posts prefetch, category
+        # data is fetched in the SAME posts SQL (JOIN) — zero extra queries for category.
+        # Without it, each post.category access would issue a separate query (N+1).
+        with self.assertNumQueries(3):
+            with CaptureQueriesContext(connection) as ctx:
+                data = self._exec(query)
+
+        # Find the posts prefetch SQL (which should JOIN category via select_related)
+        post_sql = [
+            q["sql"]
+            for q in ctx.captured_queries
+            if '"tests_post"' in q["sql"] and "COUNT(*)" not in q["sql"]
+        ]
+        self.assertTrue(post_sql, "No post SQL found")
+
+        # category__title must be SELECTed in the posts SQL (from JOIN)
+        self.assertTrue(
+            any('"tests_category"."title"' in s for s in post_sql),
+            "category.title must be selected via JOIN in posts prefetch SQL (GAP-1)",
+        )
+
+        # Results must be correct
+        authors = data["allAuthors"]["results"]
+        all_cats = [
+            p["category"]["title"]
+            for a in authors
+            for p in a["posts"]["results"]
+            if p["category"]
+        ]
+        self.assertTrue(all(c == "Tech" for c in all_cats))
+
+
+class E2EItem13ForwardM2MNarrowing(E2EBaseTest):
+    """Item 13 — Forward M2M: allPosts.tags.label narrowed."""
+
+    def test_forward_m2m_tags_narrowed(self):
+        query = """
+        { allPosts { results { title tags { results { label } } } } }
+        """
+        with self.assertNumQueries(3):
+            with CaptureQueriesContext(connection) as ctx:
+                data = self._exec(query)
+
+        tag_sql = [
+            q["sql"]
+            for q in ctx.captured_queries
+            if '"tests_tag"' in q["sql"] and "COUNT(*)" not in q["sql"]
+        ]
+        self.assertTrue(tag_sql, "No tag SQL found")
+
+        # label must be selected
+        self.assertTrue(
+            any('"tests_tag"."label"' in s for s in tag_sql),
+            "label must be selected in tag prefetch SQL",
+        )
+        # id must be selected (pk)
+        self.assertTrue(
+            any('"tests_tag"."id"' in s for s in tag_sql),
+            "id (pk) must be selected in tag prefetch SQL",
+        )
+
+        posts = data["allPosts"]["results"]
+        self.assertTrue(len(posts) > 0)
+        some_tags = next(p["tags"]["results"] for p in posts if p["tags"]["results"])
+        self.assertTrue(any(t["label"] in ("python", "django") for t in some_tags))
+
+
+class E2EItem14ReverseManyToManyNarrowing(E2EBaseTest):
+    """Item 14 — Reverse M2M: allAuthors.coauthoredPosts narrowed; title+pk in SQL, body absent."""
+
+    def test_reverse_m2m_narrowed(self):
+        query = """
+        { allAuthors { results { name coauthoredPosts { results { title } } } } }
+        """
+        # 1 count (authors) + 1 authors + 1 coauthored_posts prefetch = 3
+        with self.assertNumQueries(3):
+            with CaptureQueriesContext(connection) as ctx:
+                data = self._exec(query)
+
+        # setUpTestData seeds post0.co_authors.add(author2), so the reverse-M2M
+        # prefetch SQL for co_authored_posts is always emitted.
+        post_sql = [
+            q["sql"]
+            for q in ctx.captured_queries
+            if '"tests_post"' in q["sql"] and "COUNT(*)" not in q["sql"]
+        ]
+        self.assertTrue(post_sql, "No post SQL found for coauthored_posts prefetch")
+
+        # title must be selected (requested leaf)
+        self.assertTrue(
+            any('"tests_post"."title"' in s for s in post_sql),
+            "title must be selected in coauthored_posts prefetch SQL",
+        )
+        # pk (id) must be selected (structural column)
+        self.assertTrue(
+            any('"tests_post"."id"' in s for s in post_sql),
+            "id (pk) must be selected in coauthored_posts prefetch SQL",
+        )
+        # body must NOT be selected (narrowed out)
+        self.assertFalse(
+            any('"tests_post"."body"' in s for s in post_sql),
+            "body must NOT be selected (narrowed out)",
+        )
+
+        authors = data["allAuthors"]["results"]
+        # author2 (Bob) is a co-author on post[0] owned by author1
+        co_posts_by_author = {
+            a["name"]: a["coauthoredPosts"]["results"] for a in authors
+        }
+        bob_co = co_posts_by_author.get("Bob", [])
+        self.assertTrue(
+            any(p["title"] == "Post0" for p in bob_co),
+            "Bob should have Post0 as a co-authored post",
+        )
+
+
+class E2EItem15GenericRelationNarrowing(E2EBaseTest):
+    """Item 15 — GenericRelation: allProfiles.notes.text narrowed, no deferred reload."""
+
+    def test_generic_relation_notes_narrowed(self):
+        query = """
+        { allProfiles { results { handle notes { results { text } } } totalCount } }
+        """
+        with self.assertNumQueries(3):
+            with CaptureQueriesContext(connection) as ctx:
+                data = self._exec(query)
+
+        note_sql = [
+            q["sql"]
+            for q in ctx.captured_queries
+            if '"tests_optnote"' in q["sql"] and "COUNT(*)" not in q["sql"]
+        ]
+        self.assertTrue(note_sql, "No OptNote SQL found")
+
+        # content_type_id and object_id must be in SELECT (structural columns)
+        self.assertTrue(
+            any('"tests_optnote"."content_type_id"' in s for s in note_sql),
+            "content_type_id must be selected (GenericRelation structural column)",
+        )
+        self.assertTrue(
+            any('"tests_optnote"."object_id"' in s for s in note_sql),
+            "object_id must be selected (GenericRelation structural column)",
+        )
+        # text must be selected (requested leaf)
+        self.assertTrue(
+            any('"tests_optnote"."text"' in s for s in note_sql),
+            "text must be selected (requested)",
+        )
+
+        total = data["allProfiles"]["totalCount"]
+        self.assertGreaterEqual(total, 1)
+        all_notes = [
+            n for r in data["allProfiles"]["results"] for n in r["notes"]["results"]
+        ]
+        self.assertTrue(len(all_notes) >= 2)
+
+
+class E2EItem16GFKTargetNoDegrade(E2EBaseTest):
+    """Item 16 (GAP-3) — GFK-target branch does NOT degrade the sibling branch."""
+
+    def test_gfk_target_sibling_still_narrowed(self):
+        # Query on OptNote: text (scalar) + contentObject (GFK-target, full-load)
+        # alongside potential narrowable siblings.
+        # The critical assertion: the query returns without error AND the notes
+        # themselves are correctly returned (GFK skip did not crash Phase B).
+        query = """
+        { allNotes { results { text contentObject { id } } totalCount } }
+        """
+        # 1 count + 1 notes + 1-3 GFK prefetches per content-type group
+        result = e2e_schema.execute(query)
+        self.assertIsNone(result.errors, msg=str(result.errors))
+        data = result.data
+        self.assertGreaterEqual(data["allNotes"]["totalCount"], 2)
+
+
+class E2EItem17FullLoadFallback(E2EBaseTest):
+    """Item 17 (REQ-B3) — @property leaf returns correct value end-to-end, no FieldError.
+
+    Requesting ``displayName`` (a @property on Author) on the ``coAuthors``
+    prefetch branch causes the full-load guard (``_collect_only_fields_is_full_load``)
+    to keep that branch as a bare-string prefetch so all columns are available.
+    This e2e confirms the @property resolves to the correct value with no crash.
+
+    The correctness of the full-load guard itself — that it isolates the
+    @property branch while still narrowing sibling branches — is unit-tested
+    by ``TestFullLoadSiblingIsolation``.
+    """
+
+    def test_property_leaf_full_load_no_field_error(self):
+        # displayName is a @property on Author — an unknown/computed leaf for
+        # the optimizer.  The full-load guard keeps co_authors as a bare-string
+        # prefetch so all Author columns are present when the resolver runs.
+        query = """
+        { allPosts { results { title coAuthors { results { displayName } } } } }
+        """
+        with self.assertNumQueries(3):
+            data = self._exec(query)
+
+        posts = data["allPosts"]["results"]
+        self.assertTrue(len(posts) > 0)
+        # post0 has coAuthors: author2 = "Bob" -> displayName = "Author: Bob"
+        post0 = next(p for p in posts if p["title"] == "Post0")
+        co = post0["coAuthors"]["results"]
+        self.assertTrue(len(co) > 0)
+        self.assertEqual(co[0]["displayName"], "Author: Bob")
+
+
+class E2EItem18GateOffAndSafeMode(E2EBaseTest):
+    """Item 18 (REQ-B4) — OPTIMIZE_ONLY_FIELDS=False + safe-mode exception handling."""
+
+    def test_flag_off_loads_full_rows(self):
+        query = """
+        { allAuthors { results { name posts { results { title } } } } }
+        """
+        with mock.patch.object(graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", False):
+            with CaptureQueriesContext(connection) as ctx:
+                data = self._exec(query)
+
+        post_sql = [
+            q["sql"]
+            for q in ctx.captured_queries
+            if '"tests_post"' in q["sql"] and "COUNT(*)" not in q["sql"]
+        ]
+        self.assertTrue(post_sql)
+        # body MUST be selected when flag is off (full rows)
+        self.assertTrue(
+            any('"tests_post"."body"' in s for s in post_sql),
+            "body must be selected when OPTIMIZE_ONLY_FIELDS=False",
+        )
+
+    def test_safe_mode_exception_degrades_gracefully(self):
+        import django_graphex.utils as utils_module
+        from graphql import parse as gql_parse
+        from graphql.language.ast import OperationDefinitionNode
+
+        gql_doc = gql_parse(
+            "{ allAuthors { results { name posts { results { title } } } totalCount } }"
+        )
+        op = next(d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode))
+        field_node = op.selection_set.selections[0]
+
+        class _GT:
+            pass
+
+        from .models import Author
+        info = _FakeInfo(_FakeParentType(_GT), "all_authors", [field_node])
+
+        with mock.patch.object(
+            graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True
+        ), mock.patch.object(
+            graphql_api_settings, "OPTIMIZER_SAFE_MODE", True
+        ), mock.patch.object(
+            utils_module, "_collect_prefetch_only_sets",
+            side_effect=RuntimeError("safe-mode-e2e-boom"),
+        ), self.assertLogs("django_graphex.utils", level="WARNING") as cm:
+            qs = queryset_factory(Author, None, info)
+
+        self.assertEqual(qs.model, Author)
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("WARNING", cm.output[0])
+
+

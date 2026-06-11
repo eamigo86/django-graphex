@@ -787,8 +787,7 @@ def _collect_only_fields(
             _collect_only_fields(model, sub_selection, fragments, _prefix, _only)
             continue
 
-        # Unknown leaf -> computed/property/custom-named field: load this model
-        # in full so the resolver does not trigger extra queries.
+        # Unknown leaf -> computed/property/custom-named field.
         model_full = True
 
     if model_full:
@@ -1405,6 +1404,22 @@ def _apply_optimizations(
             select_related,
             prefetch_related,
         )
+
+    # Drop any select_related path that crosses a prefetch boundary.
+    # recursive_params descends unconditionally into ALL sub-selections, so a
+    # query like "allAuthors { posts { category { title } } }" produces BOTH
+    # "posts" in prefetch_related AND "posts__category" in select_related.
+    # Applying select_related("posts__category") to the Author queryset raises
+    # "Invalid field name(s) given in select_related: 'posts'" because "posts"
+    # is a reverse FK (prefetch-only).  Phase B handles these sub-select_related
+    # paths at the child-queryset level via _compute_child_only's child_select
+    # derivation.  Safe to drop them here.
+    if prefetch_related and select_related:
+        prefetch_prefixes = {p + LOOKUP_SEP for p in prefetch_related}
+        select_related = [
+            sr for sr in select_related
+            if not any(sr.startswith(pfx) for pfx in prefetch_prefixes)
+        ]
 
     # Filtered nested lists are fetched once for all parents via a filtered
     # Prefetch. Anything prefetched *under* a filtered lookup is re-rooted into

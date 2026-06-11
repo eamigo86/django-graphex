@@ -126,7 +126,11 @@ class OnlyFieldsTest(TestCase):
         self.assertIn("id", only)
 
     def test_prefetch_branch_not_narrowed(self):
-        # tags is a prefetch -> its columns must NOT appear as root-qs only() paths.
+        # Phase B narrows the prefetch's OWN child queryset, not the root queryset
+        # — this test remains TRUE.  _collect_only_fields (root-only projection) must
+        # NOT emit any "tags__*" paths into the root .only() set; those columns
+        # belong to the child queryset that Phase B narrows separately via
+        # _collect_prefetch_only_sets / _narrow_plain_prefetch.
         selection_set, fragments = _parse("{ p { title tags { label } } }")
         only = _collect_only_fields(Post, selection_set, fragments)
         self.assertFalse(any(o.startswith("tags__") for o in only))
