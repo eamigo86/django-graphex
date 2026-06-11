@@ -820,6 +820,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 # AnnotatedField — declarative annotation-backed GraphQL field (phase-d)
 # ---------------------------------------------------------------------------
 
+
 class AnnotatedField(Field):
     """A GraphQL field backed by a Django ORM annotation injected only when selected.
 
@@ -851,6 +852,10 @@ class AnnotatedField(Field):
         annotation_name: str | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initialize the field with its Expression and optional aliases.
+
+        See the class docstring for the full parameter reference.
+        """
         self.expression = expression
         self.aliases = aliases or {}
         self._explicit_annotation_name = annotation_name
