@@ -1932,6 +1932,27 @@ def _build_member_queryset(member_model: type[Model], plan: PrefetchPlan) -> Que
     return qs
 
 
+def _content_type_or_none(model: type[Model], *, for_concrete_model: bool) -> Any:
+    """Return ``model``'s ``ContentType``, or ``None`` if it cannot be resolved.
+
+    A member model whose ``ContentType`` cannot be looked up (e.g. abstract or
+    otherwise malformed) yields ``None`` so the caller drops that bucket and
+    degrades it to full-load, rather than crashing the whole resolve.
+    """
+    from django.contrib.contenttypes.models import ContentType
+
+    try:
+        return ContentType.objects.get_for_model(
+            model, for_concrete_model=for_concrete_model
+        )
+    except Exception:  # noqa: BLE001 — degrade: a member with no resolvable CT.
+        logging.getLogger("django_graphex.utils").debug(
+            "GFK-union member %r has no resolvable ContentType; bucket dropped.",
+            getattr(model, "__name__", model),
+        )
+        return None
+
+
 def _build_generic_prefetch(
     lookup: str,
     buckets: dict[type[Model], PrefetchPlan],
@@ -1970,7 +1991,6 @@ def _build_generic_prefetch(
         A ``GenericPrefetch`` instance, or ``None`` if no usable bucket remains
         (caller degrades to the bare full-load string).
     """
-    from django.contrib.contenttypes.models import ContentType
     from django.contrib.contenttypes.prefetch import GenericPrefetch
 
     # Mirror Django's matching key: GenericForeignKey.for_concrete_model defaults
@@ -1982,11 +2002,8 @@ def _build_generic_prefetch(
     # collapse to a single queryset (Django forbids two qs for one content type).
     by_ct: dict[int, tuple[type[Model], PrefetchPlan]] = {}
     for member_model, plan in buckets.items():
-        try:
-            ct = ContentType.objects.get_for_model(
-                member_model, for_concrete_model=for_concrete_model
-            )
-        except Exception:  # noqa: BLE001 — degrade this bucket, never crash.
+        ct = _content_type_or_none(member_model, for_concrete_model=for_concrete_model)
+        if ct is None:
             continue
         if ct.pk not in by_ct:
             by_ct[ct.pk] = (member_model, plan)
