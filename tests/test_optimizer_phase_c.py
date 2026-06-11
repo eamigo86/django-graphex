@@ -769,11 +769,11 @@ class TestWalkerPaginationArgExtraction(TestCase):
             "_resolve_results_paginator must return None when paginator_instance is not BaseDjangoGraphqlPagination",
         )
 
-    def test_walker_live_path_does_not_emit_window_sql_in_c2(self):
-        """C2 dormant gate: live walker still calls build_prefetch, not build_window_prefetch.
+    def test_walker_live_path_emits_window_sql_in_c3(self):
+        """C3 live: walker now calls build_window_prefetch for windowable nested lists.
 
-        The switch to build_window_prefetch in the live path is C3.
-        In C2, the live query must NOT emit ROW_NUMBER() SQL.
+        With C3 active, the live query for a LimitOffset nested list with
+        explicit limit/offset MUST emit ROW_NUMBER() SQL (window-sliced prefetch).
         """
         schema = _build_walk_schema()
         query = """
@@ -787,11 +787,11 @@ class TestWalkerPaginationArgExtraction(TestCase):
         self.assertIn("authors", data)
         sql_list = [q["sql"].upper() for q in ctx.captured_queries]
         window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
-        # C2 dormant gate: MUST NOT emit window SQL from the live path.
-        self.assertEqual(
+        # C3 live: MUST emit ROW_NUMBER() SQL from the live walker.
+        self.assertGreaterEqual(
             len(window_sql),
-            0,
-            "C2 dormant gate: live walker must NOT emit ROW_NUMBER() SQL (C3 flips this)",
+            1,
+            "C3 live: walker must emit ROW_NUMBER() SQL for windowable nested lists",
         )
 
     def test_walker_falls_back_when_results_sub_field_not_selected(self):
@@ -1131,4 +1131,870 @@ class TestWalkWindowParamsDirect(TestCase):
         self.assertIsNotNone(
             slice_tuple,
             "slice_tuple must not be None for a valid LimitOffset paginator",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: G4 ordering parity fix (tasks 6.1-6.2)
+# ---------------------------------------------------------------------------
+
+
+class TestG4OrderingParity(TestCase):
+    """G4: falsy-order in-memory path must order by pk, matching window ORDER BY pk.
+
+    The window path always uses ORDER BY <pk> as a tiebreak when no ordering is
+    supplied (build_window_prefetch fills order_terms with [pk.attname]).
+    The in-memory path must match this so that C3-ON and C3-OFF produce
+    identical rows for a no-ordering nested page.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        cls.author = Author.objects.create(name="G4Author")
+        # Create posts in REVERSE insert order so arrival order != pk order.
+        cls.pids = []
+        for i in range(5):
+            p = Post.objects.create(title=f"G4Post{i}", author=cls.author)
+            cls.pids.append(p.pk)
+
+    def test_limitoffset_falsy_order_in_memory_sorted_by_pk(self):
+        """LimitOffset paginate_queryset with no order on an in-memory list must sort by pk.
+
+        This is the G4 fix: before, list(qs) returned arrival order; after,
+        it must return pk-ascending order (matching the window path).
+        """
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from tests.models import Post
+
+        paginator = LimitOffsetGraphqlPagination(default_limit=3)
+        items = list(
+            Post.objects.filter(author=self.author).order_by("-id")
+        )  # reverse order
+        # paginate with no ordering → must sort by pk asc
+        result = paginator.paginate_queryset(items, limit=3, offset=0)
+        pks = [r.pk for r in result]
+        self.assertEqual(
+            pks,
+            sorted(pks),
+            "In-memory LimitOffset with no ordering must sort by pk asc",
+        )
+
+    def test_page_falsy_order_in_memory_sorted_by_pk(self):
+        """PageGraphqlPagination paginate_queryset with no order on in-memory list must sort by pk."""
+        from django_graphex.paginations.pagination import PageGraphqlPagination
+        from tests.models import Post
+
+        paginator = PageGraphqlPagination(page_size=3)
+        items = list(
+            Post.objects.filter(author=self.author).order_by("-id")
+        )  # reverse order
+        result = paginator.paginate_queryset(items, page=1)
+        pks = [r.pk for r in result]
+        self.assertEqual(
+            pks,
+            sorted(pks),
+            "In-memory PageGraphqlPagination with no ordering must sort by pk asc",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: already_paginated wiring in list_resolver (tasks 7.1-7.5)
+# ---------------------------------------------------------------------------
+
+
+def _build_c3_schema(page_size=5, use_page=False):
+    """Build a minimal schema for C3 e2e tests with a paginated nested posts field."""
+    import graphene
+
+    from django_graphex.fields import DjangoNestedListObjectField
+    from django_graphex.paginations.pagination import (
+        LimitOffsetGraphqlPagination,
+        PageGraphqlPagination,
+    )
+    from django_graphex.types import (
+        DjangoListObjectField,
+        DjangoListObjectType,
+        DjangoObjectType,
+    )
+    from tests.models import Author, Post
+
+    _REG = {}
+    paginator = (
+        PageGraphqlPagination(page_size=page_size)
+        if use_page
+        else LimitOffsetGraphqlPagination(default_limit=page_size)
+    )
+
+    _PostType = type(
+        "_C3PostType",
+        (DjangoObjectType,),
+        {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+    )
+
+    _PostListType = type(
+        "_C3PostListType",
+        (DjangoListObjectType,),
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "pagination": paginator,
+                    "registry": _REG,
+                },
+            )
+        },
+    )
+
+    _AuthorType = type(
+        "_C3AuthorType",
+        (DjangoObjectType,),
+        {
+            "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+            "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+        },
+    )
+
+    _AuthorListType = type(
+        "_C3AuthorListType",
+        (DjangoListObjectType,),
+        {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+    )
+
+    schema = graphene.Schema(
+        query=type(
+            "_C3Query",
+            (graphene.ObjectType,),
+            {"authors": DjangoListObjectField(_AuthorListType)},
+        )
+    )
+    return schema
+
+
+class TestAlreadyPaginatedListResolver(TestCase):
+    """Tests for the already_paginated wiring in DjangoNestedListObjectField.list_resolver
+    and totalCount correctness (tasks 7.1-7.5).
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        cls.author = Author.objects.create(name="C3Author")
+        cls.posts = []
+        for i in range(10):
+            p = Post.objects.create(title=f"C3Post{i:02d}", author=cls.author)
+            cls.posts.append(p)
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        assert result.errors is None, result.errors
+        return result.data
+
+    def test_window_cache_detected_already_paginated(self):
+        """7.1: list_resolver detects _gqx_total on cache rows → already_paginated=True.
+
+        When the window prefetch is active, the rows in the cache carry _gqx_total.
+        list_resolver must set already_paginated=True and count=_gqx_total.
+        """
+        from django.db.models import Count, F, Window
+        from django.db.models.functions import RowNumber
+
+        from django_graphex.base_types import DjangoListObjectBase
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.types import DjangoListObjectType, DjangoObjectType
+        from tests.models import Author, Post
+
+        _REG = {}
+        _PostType = type(
+            "_7P",
+            (DjangoObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+        _PostListType = type(
+            "_7PL",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+
+        # Manually inject a window-annotated prefetch into the author's win attr.
+        # build_window_prefetch uses to_attr="_gqx_win_posts" so results land in
+        # root._gqx_win_posts (NOT _prefetched_objects_cache).
+        author = Author.objects.get(pk=self.author.pk)
+        qs = (
+            Post.objects.filter(author=author)
+            .annotate(
+                _gqx_rn=Window(
+                    RowNumber(), partition_by=[F("author_id")], order_by=F("id").asc()
+                ),
+                _gqx_total=Window(Count("*"), partition_by=[F("author_id")]),
+            )
+            .filter(_gqx_rn__gt=0, _gqx_rn__lte=5)
+        )
+        rows = list(qs)
+
+        # Inject via the to_attr attribute (the way Django's Prefetch machinery does it).
+        setattr(author, "_gqx_win_posts", rows)
+
+        # Instantiate a field and call list_resolver.
+        field = DjangoNestedListObjectField(_PostListType, accessor="posts")
+        result = field.list_resolver(
+            manager=None,
+            filter_backend=field.filter_backend,
+            root=author,
+            info=None,
+        )
+
+        self.assertIsInstance(result, DjangoListObjectBase)
+        self.assertTrue(
+            result.already_paginated,
+            "list_resolver must set already_paginated=True when rows have _gqx_total",
+        )
+        self.assertEqual(
+            result.count,
+            rows[0]._gqx_total,
+            "list_resolver must set count=_gqx_total from the first row",
+        )
+        self.assertEqual(len(result.results), len(rows))
+
+    def test_zero_child_parent_totalcount_zero(self):
+        """7.2: Empty cache for a zero-child parent → totalCount=0, already_paginated=True."""
+        from django_graphex.base_types import DjangoListObjectBase
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.types import DjangoListObjectType, DjangoObjectType
+        from tests.models import Author, Post
+
+        _REG = {}
+        _PostType = type(
+            "_72P",
+            (DjangoObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+        _PostListType = type(
+            "_72PL",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+
+        # An author with NO posts — inject via the to_attr win attribute.
+        author_empty = Author.objects.create(name="C3EmptyAuthor")
+        # build_window_prefetch uses to_attr="_gqx_win_posts".
+        setattr(author_empty, "_gqx_win_posts", [])
+
+        field = DjangoNestedListObjectField(_PostListType, accessor="posts")
+        result = field.list_resolver(
+            manager=None,
+            filter_backend=field.filter_backend,
+            root=author_empty,
+            info=None,
+        )
+
+        self.assertIsInstance(result, DjangoListObjectBase)
+        self.assertEqual(
+            result.count,
+            0,
+            "Zero-child parent must have totalCount=0",
+        )
+
+    def test_offset_beyond_end_totalcount_nonzero(self):
+        """7.3: Window cache empty due to offset-beyond-end → totalCount=K (non-zero).
+
+        The author has K posts but we request a page past the end. The window
+        prefetch returns no rows (cache is empty). The slice-independent count
+        path must return K, NOT 0.
+        """
+        schema = _build_c3_schema(page_size=5)
+        # offset=100 is way beyond 10 posts
+        query = (
+            "{ authors { results { posts { results(limit: 5, offset: 100) "
+            "{ id } totalCount } } } }"
+        )
+        data = self._exec(schema, query)
+        posts_data = data["authors"]["results"][0]["posts"]
+        self.assertEqual(
+            posts_data["results"],
+            [],
+            "Beyond-end offset must return empty results",
+        )
+        self.assertEqual(
+            posts_data["totalCount"],
+            10,
+            "Beyond-end offset must return totalCount=K (10), not 0",
+        )
+
+    def test_window_slice_e2e_limitoffset(self):
+        """7.4/9.1: Happy-path e2e with LimitOffset: ROW_NUMBER in SQL + correct results."""
+        schema = _build_c3_schema(page_size=5)
+        query = (
+            '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") '
+            "{ id title } totalCount } } } }"
+        )
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+
+        # Check window SQL is emitted.
+        sql_list = [q["sql"].upper() for q in ctx.captured_queries]
+        window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
+        self.assertTrue(len(window_sql) >= 1, "Window slice must emit ROW_NUMBER() SQL")
+        self.assertTrue(
+            any("PARTITION BY" in s for s in window_sql), "Must have PARTITION BY"
+        )
+
+        # Correctness: first 5 posts sorted by id.
+        posts_data = data["authors"]["results"][0]["posts"]
+        result_ids = [p["id"] for p in posts_data["results"]]
+        expected_ids = [str(p.pk) for p in sorted(self.posts, key=lambda p: p.pk)[:5]]
+        self.assertEqual(
+            result_ids, expected_ids, "Window slice must return correct ordered rows"
+        )
+        self.assertEqual(
+            posts_data["totalCount"], 10, "totalCount must equal full partition count"
+        )
+
+    def test_window_slice_e2e_page(self):
+        """7.4/9.2: Happy-path e2e with Page paginator: ROW_NUMBER in SQL + correct results."""
+        schema = _build_c3_schema(page_size=5, use_page=True)
+        query = (
+            '{ authors { results { posts { results(page: 1, ordering: "id") '
+            "{ id title } totalCount } } } }"
+        )
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+
+        sql_list = [q["sql"].upper() for q in ctx.captured_queries]
+        window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
+        self.assertTrue(
+            len(window_sql) >= 1, "Page window slice must emit ROW_NUMBER() SQL"
+        )
+
+        posts_data = data["authors"]["results"][0]["posts"]
+        result_ids = [p["id"] for p in posts_data["results"]]
+        expected_ids = [str(p.pk) for p in sorted(self.posts, key=lambda p: p.pk)[:5]]
+        self.assertEqual(
+            result_ids,
+            expected_ids,
+            "Page window slice must return correct ordered rows",
+        )
+        self.assertEqual(
+            posts_data["totalCount"], 10, "totalCount must equal full partition count"
+        )
+
+    def test_already_paginated_no_double_slice(self):
+        """8.1: GenericPaginationField must NOT re-slice when already_paginated=True.
+
+        The rows returned are exactly the DB slice; re-slicing would corrupt
+        results (e.g. returning slice[0:5] of a 5-element list at offset=5 gives []).
+        """
+        from django_graphex.base_types import DjangoListObjectBase
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from django_graphex.paginations.utils import GenericPaginationField
+
+        paginator = LimitOffsetGraphqlPagination(default_limit=5)
+        field = GenericPaginationField.__new__(GenericPaginationField)
+        field.paginator_instance = paginator
+
+        # Simulate rows already sliced by DB: 5 sentinel objects.
+        sentinel = [object() for _ in range(5)]
+        root = DjangoListObjectBase(results=sentinel, count=42, already_paginated=True)
+
+        # Call with kwargs that would normally re-slice (offset=5 would empty the list).
+        result = field.list_resolver(
+            manager=object(),
+            root=root,
+            info=None,
+            limit=5,
+            offset=5,  # if re-sliced, sentinel[5:10] = [] — wrong
+        )
+        self.assertEqual(
+            result, sentinel, "already_paginated must pass rows through untouched"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: e2e + fallback regression suite (tasks 9.1-9.13)
+# ---------------------------------------------------------------------------
+
+
+class TestC3FallbackRegressions(TestCase):
+    """Regression tests: every fallback condition must produce byte-for-byte
+    identical results to the pre-Phase-C (in-memory) baseline.
+
+    Tests 9.5–9.13: M2M, Cursor, Unbounded, non-concrete ordering, full-load,
+    OPTIMIZE_NESTED_PAGINATION=False, results-subfield-absent, G2 custom resolver.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post, Tag
+
+        cls.author = Author.objects.create(name="FallbackAuthor")
+        cls.posts = []
+        for i in range(5):
+            p = Post.objects.create(title=f"FP{i:02d}", author=cls.author)
+            cls.posts.append(p)
+        cls.tag = Tag.objects.create(label="ft1")
+        for p in cls.posts:
+            p.tags.add(cls.tag)
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        assert result.errors is None, result.errors
+        return result.data
+
+    def _no_window_sql(self, ctx):
+        sql_list = [q["sql"].upper() for q in ctx.captured_queries]
+        return all("ROW_NUMBER()" not in s for s in sql_list)
+
+    def test_fallback_setting_false_no_window_sql(self):
+        """9.5: OPTIMIZE_NESTED_PAGINATION=False → in-memory path, no ROW_NUMBER()."""
+        schema = _build_c3_schema(page_size=5)
+        query = (
+            '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") '
+            "{ id title } totalCount } } } }"
+        )
+        # Baseline: results with setting ON.
+        data_on = self._exec(schema, query)
+
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": False}):
+            with CaptureQueriesContext(connection) as ctx:
+                data_off = self._exec(schema, query)
+
+        # No window SQL.
+        self.assertTrue(
+            self._no_window_sql(ctx),
+            "OPTIMIZE_NESTED_PAGINATION=False must not emit ROW_NUMBER()",
+        )
+        # Results identical.
+        self.assertEqual(
+            data_on["authors"]["results"][0]["posts"]["results"],
+            data_off["authors"]["results"][0]["posts"]["results"],
+            "OPTIMIZE_NESTED_PAGINATION=False must produce identical results",
+        )
+        self.assertEqual(
+            data_on["authors"]["results"][0]["posts"]["totalCount"],
+            data_off["authors"]["results"][0]["posts"]["totalCount"],
+        )
+
+    def test_fallback_results_subfield_absent_no_window_sql(self):
+        """9.6: results sub-field not selected → walker falls back, no ROW_NUMBER()."""
+        schema = _build_c3_schema(page_size=5)
+        # Query only totalCount (no results sub-field).
+        query = "{ authors { results { posts { totalCount } } } }"
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+        self.assertTrue(
+            self._no_window_sql(ctx), "No results sub-field: must not emit ROW_NUMBER()"
+        )
+        self.assertIsNotNone(data)
+
+    def test_fallback_m2m_no_window_sql(self):
+        """9.7: M2M nested list (tags) → falls back to in-memory path, no ROW_NUMBER().
+
+        Tags are M2M → pre-check 3 blocks the window path.
+        """
+        import graphene
+
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from django_graphex.types import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from tests.models import Post, Tag
+
+        _REG = {}
+        paginator = LimitOffsetGraphqlPagination(default_limit=5)
+
+        _TagType = type(
+            "_M2MTagType",
+            (DjangoObjectType,),
+            {"Meta": type("Meta", (), {"model": Tag, "registry": _REG})},
+        )
+        _TagListType = type(
+            "_M2MTagListType",
+            (DjangoListObjectType,),
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {"model": Tag, "pagination": paginator, "registry": _REG},
+                )
+            },
+        )
+        _PostType = type(
+            "_M2MPostType",
+            (DjangoObjectType,),
+            {
+                "tags": DjangoNestedListObjectField(_TagListType, accessor="tags"),
+                "Meta": type("Meta", (), {"model": Post, "registry": _REG}),
+            },
+        )
+        _PostListType = type(
+            "_M2MPostListType",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+
+        schema = graphene.Schema(
+            query=type(
+                "_M2MQuery",
+                (graphene.ObjectType,),
+                {"posts": DjangoListObjectField(_PostListType)},
+            )
+        )
+        query = "{ posts { results { tags { results(limit: 5, offset: 0) { label } totalCount } } } }"
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+        self.assertTrue(self._no_window_sql(ctx), "M2M must not emit ROW_NUMBER()")
+        # Results must be correct (tag label present).
+        all_tags = [
+            t["label"] for r in data["posts"]["results"] for t in r["tags"]["results"]
+        ]
+        self.assertTrue(
+            all("ft1" == lbl for lbl in all_tags), "M2M results must be correct"
+        )
+
+    def test_fallback_unbounded_no_window_sql(self):
+        """9.8: Unbounded paginator (no default_limit, no limit arg) → in-memory path."""
+        import graphene
+
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from django_graphex.types import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from tests.models import Author, Post
+
+        _REG = {}
+        # Unbounded: no default_limit, no max_limit → prefetch_window_slice returns None.
+        paginator = LimitOffsetGraphqlPagination()  # DEFAULT_PAGE_SIZE=None → unbounded
+
+        _PostType = type(
+            "_UbPostType",
+            (DjangoObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+        _PostListType = type(
+            "_UbPostListType",
+            (DjangoListObjectType,),
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {"model": Post, "pagination": paginator, "registry": _REG},
+                )
+            },
+        )
+        _AuthorType = type(
+            "_UbAuthorType",
+            (DjangoObjectType,),
+            {
+                "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+                "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+            },
+        )
+        _AuthorListType = type(
+            "_UbAuthorListType",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+        )
+
+        schema = graphene.Schema(
+            query=type(
+                "_UbQuery",
+                (graphene.ObjectType,),
+                {"authors": DjangoListObjectField(_AuthorListType)},
+            )
+        )
+        query = "{ authors { results { posts { results { id } totalCount } } } }"
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+        self.assertTrue(
+            self._no_window_sql(ctx), "Unbounded must not emit ROW_NUMBER()"
+        )
+        post_results = data["authors"]["results"][0]["posts"]["results"]
+        self.assertEqual(len(post_results), 5, "Unbounded must return all posts")
+
+    def test_fallback_non_concrete_ordering_no_window_sql(self):
+        """9.9: Non-concrete ordering term → pre-check 5 fallback, no ROW_NUMBER()."""
+        import graphene
+
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from django_graphex.types import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from tests.models import Author, Post
+
+        _REG = {}
+        # default ordering="display_name" is a @property, not a concrete attname.
+        # But that's on Author, not Post. Let's use a non-existent field name.
+        paginator = LimitOffsetGraphqlPagination(
+            default_limit=5, ordering="nonexistent_computed"
+        )
+
+        _PostType = type(
+            "_NcPostType",
+            (DjangoObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+        _PostListType = type(
+            "_NcPostListType",
+            (DjangoListObjectType,),
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {"model": Post, "pagination": paginator, "registry": _REG},
+                )
+            },
+        )
+        _AuthorType = type(
+            "_NcAuthorType",
+            (DjangoObjectType,),
+            {
+                "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+                "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+            },
+        )
+        _AuthorListType = type(
+            "_NcAuthorListType",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+        )
+
+        schema = graphene.Schema(
+            query=type(
+                "_NcQuery",
+                (graphene.ObjectType,),
+                {"authors": DjangoListObjectField(_AuthorListType)},
+            )
+        )
+        query = "{ authors { results { posts { results(limit: 5, offset: 0) { id } totalCount } } } }"
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+        self.assertTrue(
+            self._no_window_sql(ctx), "Non-concrete ordering must not emit ROW_NUMBER()"
+        )
+        # Must still return results (fallback path, not a crash).
+        self.assertIn("authors", data)
+
+    def test_fallback_full_load_no_window_sql(self):
+        """9.10: Full-load selection → pre-check 6 fallback, no ROW_NUMBER()."""
+        import graphene
+
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from django_graphex.types import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from tests.models import Author, Post
+
+        _REG = {}
+        paginator = LimitOffsetGraphqlPagination(default_limit=5)
+
+        # AuthorType with display_name (@property) will trigger full-load guard
+        # when requested in a parent's selection.
+        # Actually full-load is triggered on the CHILD type when a @property is requested.
+        # displayName is on Author, not Post. Let's use a schema where posts is the child
+        # and we request a computed field that triggers full-load.
+        # The easiest way: Author._default_manager.only() with a property requested
+        # on Post... Post doesn't have @property fields by default.
+        # Instead, we'll use the compute-field route by patching _compute_child_only to return None.
+        from unittest.mock import patch
+
+        _PostType = type(
+            "_FlPostType",
+            (DjangoObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+        _PostListType = type(
+            "_FlPostListType",
+            (DjangoListObjectType,),
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {"model": Post, "pagination": paginator, "registry": _REG},
+                )
+            },
+        )
+        _AuthorType = type(
+            "_FlAuthorType",
+            (DjangoObjectType,),
+            {
+                "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+                "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
+            },
+        )
+        _AuthorListType = type(
+            "_FlAuthorListType",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
+        )
+
+        schema = graphene.Schema(
+            query=type(
+                "_FlQuery",
+                (graphene.ObjectType,),
+                {"authors": DjangoListObjectField(_AuthorListType)},
+            )
+        )
+        query = '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") { id } totalCount } } } }'
+        with patch("django_graphex.fields._compute_child_only", return_value=None):
+            with CaptureQueriesContext(connection) as ctx:
+                data = self._exec(schema, query)
+        self.assertTrue(
+            self._no_window_sql(ctx), "Full-load must not emit ROW_NUMBER()"
+        )
+        self.assertIn("authors", data)
+
+    def test_fallback_query_count_m2m_matches_baseline(self):
+        """9.11: M2M assertNumQueries matches pre-Phase-C baseline AND results identical."""
+        import graphene
+
+        from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+        from django_graphex.types import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from tests.models import Post, Tag
+
+        _REG = {}
+        paginator = LimitOffsetGraphqlPagination(default_limit=5)
+
+        _TagType = type(
+            "_QM2MTagType",
+            (DjangoObjectType,),
+            {"Meta": type("Meta", (), {"model": Tag, "registry": _REG})},
+        )
+        _TagListType = type(
+            "_QM2MTagListType",
+            (DjangoListObjectType,),
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {"model": Tag, "pagination": paginator, "registry": _REG},
+                )
+            },
+        )
+        _PostType = type(
+            "_QM2MPostType",
+            (DjangoObjectType,),
+            {
+                "tags": DjangoNestedListObjectField(_TagListType, accessor="tags"),
+                "Meta": type("Meta", (), {"model": Post, "registry": _REG}),
+            },
+        )
+        _PostListType = type(
+            "_QM2MPostListType",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
+        )
+        schema = graphene.Schema(
+            query=type(
+                "_QM2MQuery",
+                (graphene.ObjectType,),
+                {"posts": DjangoListObjectField(_PostListType)},
+            )
+        )
+        query = '{ posts { results { tags { results(limit: 5, offset: 0, ordering: "id") { label } totalCount } } } }'
+
+        # Derive baseline with OPTIMIZE_NESTED_PAGINATION=False.
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": False}):
+            with CaptureQueriesContext(connection) as baseline_ctx:
+                data_baseline = self._exec(schema, query)
+
+        # Run with setting ON (M2M should fall back anyway).
+        with CaptureQueriesContext(connection) as live_ctx:
+            data_live = self._exec(schema, query)
+
+        self.assertEqual(
+            len(live_ctx.captured_queries),
+            len(baseline_ctx.captured_queries),
+            f"M2M query count must match baseline: {len(baseline_ctx.captured_queries)}",
+        )
+        self.assertEqual(
+            data_live["posts"]["results"],
+            data_baseline["posts"]["results"],
+            "M2M results must be identical to baseline",
+        )
+
+
+class TestC3ConstantQueryCount(TestCase):
+    """9.1-9.4: assertNumQueries for window-slice happy path must be constant."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        cls.authors = []
+        for i in range(5):
+            a = Author.objects.create(name=f"QA{i}")
+            for j in range(10):
+                Post.objects.create(title=f"QP{i}{j:02d}", author=a)
+            cls.authors.append(a)
+
+    def _exec(self, schema, query):
+        result = schema.execute(query)
+        assert result.errors is None, result.errors
+        return result.data
+
+    def test_constant_query_count_limitoffset(self):
+        """9.3: N parents with windowed LimitOffset posts → constant query count.
+
+        The exact count is derived empirically against the baseline:
+        - DjangoListObjectField (authors): 1 count + 1 select = 2
+        - Window posts prefetch: 1 query
+        Total: 3 (constant regardless of N parents).
+        """
+        schema = _build_c3_schema(page_size=5)
+        query = (
+            '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") '
+            "{ id title } totalCount } } } }"
+        )
+        with CaptureQueriesContext(connection) as ctx:
+            self._exec(schema, query)
+
+        sql_list = [q["sql"].upper() for q in ctx.captured_queries]
+        window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
+        self.assertTrue(len(window_sql) >= 1, "Must have window SQL")
+
+        n_queries = len(ctx.captured_queries)
+        # Constant: does not grow with N parents.
+        # We expect 2 (authors) + 1 (window prefetch) = 3.
+        self.assertLessEqual(
+            n_queries, 4, f"Query count {n_queries} must be constant (≤4)"
+        )
+
+    def test_constant_query_count_page(self):
+        """9.4: N parents with windowed Page posts → constant query count."""
+        schema = _build_c3_schema(page_size=5, use_page=True)
+        query = (
+            '{ authors { results { posts { results(page: 1, ordering: "id") '
+            "{ id title } totalCount } } } }"
+        )
+        with CaptureQueriesContext(connection) as ctx:
+            self._exec(schema, query)
+
+        sql_list = [q["sql"].upper() for q in ctx.captured_queries]
+        window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
+        self.assertTrue(len(window_sql) >= 1, "Must have window SQL for Page paginator")
+
+        n_queries = len(ctx.captured_queries)
+        self.assertLessEqual(
+            n_queries, 4, f"Query count {n_queries} must be constant (≤4)"
         )

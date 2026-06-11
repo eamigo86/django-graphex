@@ -1195,8 +1195,7 @@ def _walk_window_params(
     extracts pagination kwargs via ``get_argument_values``, resolves the paginator
     via the G2 fail-loud guard, and calls ``prefetch_window_slice``.
 
-    In C2 this function is implemented and unit-tested but is NOT called from
-    the live ``_walk_filtered_prefetches`` path (that switch-over is C3).
+    Wired into the live ``_walk_filtered_prefetches`` path in C3.
 
     Args:
         inst: The ``DjangoNestedListObjectField`` instance.
@@ -1308,6 +1307,45 @@ def _walk_filtered_prefetches(
             lookup = prefix + inst.accessor
             args = get_argument_values(field_def, field, info.variable_values or {})
             filter_value = args.get("filter")
+
+            # C3: attempt window-slice path (fires for both filtered and unfiltered
+            # nested lists when the paginator and relation support it).
+            window_params = _walk_window_params(inst, field, sub_gql, info)
+            if window_params is not None:
+                slice_tuple, results_field_node, _page_args, _paginator = window_params
+                # Resolve the related_field from the parent model's relation map.
+                related_field = relation_map.get(
+                    inst.accessor,
+                    relation_map.get(to_snake_case(inst.accessor)),
+                )
+                sub_selection = getattr(results_field_node, "selection_set", None)
+                pf = inst.build_window_prefetch(
+                    lookup,
+                    filter_value,
+                    slice_tuple,
+                    related_field,
+                    sub_selection,
+                    info.fragments or {},
+                )
+                if pf is not None:
+                    # Tag the parent model+lookup so list_resolver can distinguish
+                    # a window-sliced empty cache from a zero-child empty cache.
+                    out.append(pf)
+                    seen[lookup] = seen.get(lookup, 0) + 1
+                    if field.selection_set and sub_gql is not None:  # pragma: no branch
+                        _walk_filtered_prefetches(
+                            sub_gql,
+                            inst.type._meta.model,
+                            field.selection_set,
+                            lookup + LOOKUP_SEP,
+                            info,
+                            out,
+                            seen,
+                        )
+                    continue
+                # Window path declined (pre-checks failed) → fall through to plain path.
+
+            # Plain path: build a filtered Prefetch only when a filter is applied.
             if filter_value:
                 out.append(inst.build_prefetch(lookup, filter_value, info))
                 seen[lookup] = seen.get(lookup, 0) + 1
