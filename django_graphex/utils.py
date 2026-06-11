@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import logging
 import re
@@ -9,7 +10,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterator
 
 from django.apps import apps
-from django.contrib.contenttypes.fields import GenericForeignKey, GenericRel
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRel, GenericRelation
 from django.core.exceptions import ValidationError
 from django.db.models import (
     NOT_PROVIDED,
@@ -35,6 +36,20 @@ if TYPE_CHECKING:
     from django.db.models import Field
     from graphql import GraphQLResolveInfo, GraphQLType
     from graphql.language.ast import SelectionSetNode
+
+
+@dataclasses.dataclass
+class PrefetchPlan:
+    """Column narrowing plan for a single direct prefetch branch.
+
+    Attributes:
+        only_cols: The list of attname/dotted paths to pass to ``.only()``.
+        child_select: The list of forward-FK heads to pass to
+            ``.select_related()`` on the child queryset (closes GAP-1 N+1).
+    """
+
+    only_cols: list[str]
+    child_select: list[str]
 
 
 def is_valid_django_model(model: Any) -> bool:
@@ -783,6 +798,339 @@ def _collect_only_fields(
     return sorted(_only)
 
 
+def _collect_only_fields_is_full_load(
+    model: type[Model],
+    selection_set: Any,
+    fragments: dict[str, Any],
+) -> bool:
+    """Return True when ``_collect_only_fields`` would trigger the full-load path.
+
+    Detects the case where the selection contains an unknown/computed leaf that
+    sets ``model_full=True`` in ``_collect_only_fields``.  Used by
+    ``_compute_child_only`` to decide whether to skip ``.only()`` for a prefetch
+    branch without needing to compare result sets.
+
+    This is a private helper and MUST NOT be used outside this module.
+
+    Args:
+        model: The Django model class at the current span position.
+        selection_set: The GraphQL selection set to walk.
+        fragments: The fragment definitions keyed by name.
+
+    Returns:
+        True if any unknown leaf would trigger full-load for ``model``.
+    """
+    rel_map = _relation_field_map(model)
+    concrete_map = _concrete_field_map(model)
+
+    for field in selection_set.selections:
+        if isinstance(field, FragmentSpreadNode):
+            fragment = fragments.get(field.name.value) if fragments else None
+            if fragment is not None:
+                if _collect_only_fields_is_full_load(
+                    model, fragment.selection_set, fragments
+                ):
+                    return True
+            continue
+        if isinstance(field, InlineFragmentNode):
+            if _collect_only_fields_is_full_load(model, field.selection_set, fragments):
+                return True
+            continue
+
+        name = field.name.value
+        snake = to_snake_case(name)
+        sub_selection = getattr(field, "selection_set", None)
+
+        related_field = rel_map.get(name, rel_map.get(snake, None))
+        if related_field is not None:
+            continue  # relations don't trigger full-load
+
+        if concrete_map.get(name, concrete_map.get(snake, None)) is not None:
+            continue  # known concrete field
+
+        if name.lower() in _PLUMBING_FIELDS or snake in _PLUMBING_FIELDS:
+            continue
+
+        if sub_selection is not None:
+            # Wrapper field — recurse but it doesn't trigger full-load by itself.
+            if _collect_only_fields_is_full_load(model, sub_selection, fragments):
+                return True
+            continue
+
+        # Unknown leaf -> triggers model_full=True.
+        return True
+
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# Phase B helpers — prefetch branch column narrowing                           #
+# --------------------------------------------------------------------------- #
+
+def _leaf_model(model: type[Model], lookup: str) -> type[Model]:
+    """Walk a dotted ORM lookup through ALL relation kinds and return the leaf model.
+
+    Unlike ``_collect_only_fields``, which only traverses select_related segments,
+    this helper traverses PREFETCH relations too (reverse FK, M2M, GenericRelation)
+    so that a dotted top_plain lookup like ``posts__tags`` resolves to ``Tag``.
+
+    GFK-target fields are never passed here (they are skipped in
+    ``_collect_prefetch_only_sets`` before any call to this function).
+
+    Args:
+        model: The root model class.
+        lookup: A dotted ORM path, e.g. ``"posts"`` or ``"posts__tags"``.
+
+    Returns:
+        The Django model class at the end of the lookup chain.
+    """
+    current = model
+    for segment in lookup.split(LOOKUP_SEP):
+        rel_map = _relation_field_map(current)
+        field = rel_map.get(segment) or rel_map.get(to_snake_case(segment))
+        current = get_related_model(field)
+    return current
+
+
+def _compute_child_only(
+    child: type[Model],
+    related_field: Any,
+    sub_selection: Any,
+    fragments: dict[str, Any],
+) -> PrefetchPlan | None:
+    """Compute the `.only()` column plan for a single prefetch child queryset.
+
+    Reuses ``_collect_only_fields`` as the single source of truth for requested
+    and mandatory columns.  A full-load signal (unknown/computed leaf) is
+    detected and returned as ``None`` — the caller leaves the lookup as a bare
+    string (full load).
+
+    The returned ``PrefetchPlan.child_select`` list contains the forward-FK head
+    paths that MUST accompany the ``.only()`` call to avoid re-introducing N+1
+    (GAP-1).
+
+    Args:
+        child: The child model class.
+        related_field: The Django relation field object (ManyToOneRel,
+            ManyToManyField, GenericRelation, etc.).
+        sub_selection: The GraphQL SelectionSetNode for the child sub-selection.
+        fragments: Fragment definitions keyed by name.
+
+    Returns:
+        A ``PrefetchPlan`` with the column and select_related lists, or ``None``
+        to signal a full-load branch.
+    """
+    if sub_selection is None:
+        return None
+
+    # Full-load detection: if the sub-selection contains an unknown/computed
+    # leaf (e.g. a @property), mirror the root model_full contract and return
+    # None (caller leaves the lookup as a bare string -> full load; no FieldError).
+    if _collect_only_fields_is_full_load(child, sub_selection, fragments):
+        return None
+
+    # Collect the raw only-set via the existing helper (handles ordering, pk,
+    # fragment spreads, inline fragments transparently).
+    raw_cols = _collect_only_fields(child, sub_selection, fragments)
+
+    # Split raw_cols into dotted FK heads (-> child_select) and flat attnames
+    # (-> only_cols).  _collect_only_fields emits dotted paths like
+    # ``category__id`` for select_related descents; those heads become
+    # child_select entries so the forward FK is select_related on the child
+    # queryset (GAP-1 fix).
+    only_cols: list[str] = list(raw_cols)  # keep dotted paths for .only()
+    child_select: list[str] = []
+    for col in raw_cols:
+        if LOOKUP_SEP in col:
+            # Extract the head up to the last separator.  e.g. "a__b__col" -> "a__b".
+            head = LOOKUP_SEP.join(col.split(LOOKUP_SEP)[:-1])
+            if head not in child_select:
+                child_select.append(head)
+
+    # Always-keep structural columns (§4.1) — these may already be present from
+    # _collect_only_fields, but we guarantee them unconditionally.
+    pk_attname = child._meta.pk.attname
+    if pk_attname not in only_cols:
+        only_cols.append(pk_attname)
+
+    concrete_attnames = {f.attname for f in child._meta.concrete_fields}
+    for term in child._meta.ordering or []:
+        if not isinstance(term, str):
+            continue
+        column = term.lstrip("-+").split(LOOKUP_SEP)[0]
+        if column in concrete_attnames and column not in only_cols:
+            only_cols.append(column)
+
+    # Per-relation-kind dispatch (GAP-2): add structural join columns.
+    if isinstance(related_field, GenericRelation):
+        # Discover the child GFK matching this GenericRelation's ct/fk fields.
+        ct_field_name = related_field.content_type_field_name  # e.g. "content_type"
+        fk_field_name = related_field.object_id_field_name    # e.g. "object_id"
+        # Disambiguate among multiple GFKs on the child: pick the one whose
+        # ct_field and fk_field match the GenericRelation's referenced fields.
+        gfk = None
+        for f in child._meta.get_fields():
+            if isinstance(f, GenericForeignKey):
+                if f.ct_field == ct_field_name and f.fk_field == fk_field_name:
+                    gfk = f
+                    break
+        if gfk is None:
+            # Fallback: try to find any GFK (single-GFK case).
+            for f in child._meta.get_fields():
+                if isinstance(f, GenericForeignKey):
+                    gfk = f
+                    break
+        if gfk is None:
+            # No GFK found -> full-load fallback.
+            return None
+        ct_attname = child._meta.get_field(gfk.ct_field).attname
+        fk_attname = child._meta.get_field(gfk.fk_field).attname
+        if ct_attname not in only_cols:
+            only_cols.append(ct_attname)
+        if fk_attname not in only_cols:
+            only_cols.append(fk_attname)
+
+    elif getattr(related_field, "many_to_many", False):
+        # Forward ManyToManyField + reverse ManyToManyRel: Django handles the
+        # through-table join; only pk + ordering are needed structurally.
+        pass  # already added pk + ordering above
+
+    elif getattr(related_field, "one_to_many", False):
+        # Reverse FK (ManyToOneRel): add the FK-back attname on the child.
+        fk_field = getattr(related_field, "field", None)
+        if fk_field is None:
+            return None
+        fk_attname = fk_field.attname
+        if fk_attname not in only_cols:
+            only_cols.append(fk_attname)
+
+    return PrefetchPlan(only_cols=only_cols, child_select=child_select)
+
+
+def _collect_prefetch_only_sets(
+    model: type[Model],
+    selection_set: Any,
+    fragments: dict[str, Any],
+    _prefix: str = "",
+    _out: dict[str, PrefetchPlan] | None = None,
+) -> dict[str, PrefetchPlan]:
+    """Map each direct prefetch lookup to its child column plan.
+
+    Walks the GraphQL selection set mirroring ``recursive_params`` structure
+    (handles fragments, inline fragments, wrapper fields).  For each field:
+
+    - GFK-target (``isinstance(field, GenericForeignKey)``) → skip (stays full-load
+      bare string).  **This check runs BEFORE** any ``get_related_model`` call
+      (GAP-3 ordering invariant).
+    - ``kind == "select"`` → recurse with dotted prefix (discover nested prefetches
+      under a select_related path).
+    - ``kind == "prefetch"`` → call ``_compute_child_only``; omit if ``None`` (full-load).
+
+    Args:
+        model: The Django model class at the current position.
+        selection_set: The GraphQL SelectionSetNode to walk.
+        fragments: Fragment definitions keyed by name.
+        _prefix: Dotted ORM path prefix accumulated during descent.
+        _out: The accumulating map mutated in place.
+
+    Returns:
+        The completed ``{dotted_lookup: PrefetchPlan}`` dict.
+    """
+    if _out is None:
+        _out = {}
+
+    rel_map = _relation_field_map(model)
+
+    for field in selection_set.selections:
+        if isinstance(field, FragmentSpreadNode):
+            fragment = fragments.get(field.name.value) if fragments else None
+            if fragment is not None:
+                _collect_prefetch_only_sets(
+                    model, fragment.selection_set, fragments, _prefix, _out
+                )
+            continue
+        if isinstance(field, InlineFragmentNode):
+            _collect_prefetch_only_sets(
+                model, field.selection_set, fragments, _prefix, _out
+            )
+            continue
+
+        name = field.name.value
+        snake = to_snake_case(name)
+        sub_selection = getattr(field, "selection_set", None)
+
+        related_field = rel_map.get(name, rel_map.get(snake, None))
+        if related_field is None:
+            # Concrete leaf, plumbing field, or wrapper field.
+            if sub_selection is not None and name.lower() not in _PLUMBING_FIELDS:
+                # Transparent wrapper field (e.g. "results"): recurse same model.
+                _collect_prefetch_only_sets(
+                    model, sub_selection, fragments, _prefix, _out
+                )
+            continue
+
+        # GAP-3 ordering invariant: GFK-target check MUST come FIRST, BEFORE any
+        # get_related_model / _leaf_model call (GFK.remote_field is None ->
+        # AttributeError if passed to get_related_model).
+        if isinstance(related_field, GenericForeignKey):
+            continue  # stays full-load bare string
+
+        optimization = _relation_optimization(related_field)
+        if optimization is None:
+            continue
+        kind, orm_name = optimization
+        lookup = _prefix + orm_name
+
+        if kind == "select":
+            # Descend into the select_related span to discover any nested
+            # prefetch lookups under it (their dotted lookup carries the prefix).
+            if sub_selection is not None:
+                child_model = get_related_model(related_field)
+                _collect_prefetch_only_sets(
+                    child_model, sub_selection, fragments, lookup + LOOKUP_SEP, _out
+                )
+            continue
+
+        # kind == "prefetch": reverse FK / forward M2M / reverse M2M / GenericRelation
+        child_model = get_related_model(related_field)
+        plan = _compute_child_only(child_model, related_field, sub_selection, fragments)
+        if plan is not None:
+            _out[lookup] = plan
+
+    return _out
+
+
+def _narrow_plain_prefetch(
+    model: type[Model],
+    lookup: str,
+    only_map: dict[str, PrefetchPlan],
+) -> str | Prefetch:
+    """Convert a plain-string prefetch lookup to a narrowed ``Prefetch`` if a plan exists.
+
+    Args:
+        model: The root model class (used to resolve the leaf model for dotted
+            lookups via ``_leaf_model``).
+        lookup: The plain-string prefetch lookup (may be dotted).
+        only_map: The ``{lookup: PrefetchPlan}`` map from
+            ``_collect_prefetch_only_sets``.
+
+    Returns:
+        The bare ``lookup`` string when no plan exists (full load), or a
+        ``Prefetch(lookup, queryset=...)`` with ``.only()`` (and optionally
+        ``.select_related()``) applied.
+    """
+    if lookup not in only_map:
+        return lookup
+
+    plan = only_map[lookup]
+    child = _leaf_model(model, lookup)
+    qs = child._default_manager.all()
+    if plan.child_select:
+        qs = qs.select_related(*plan.child_select)
+    qs = qs.only(*plan.only_cols)
+    return Prefetch(lookup, queryset=qs)
+
+
 def _nested_list_field_instance(field_def: Any) -> Any | None:
     """Recover the DjangoNestedListObjectField behind a GraphQL field.
 
@@ -1063,6 +1411,24 @@ def _apply_optimizations(
     prefetch_related, filtered_prefetches = _merge_filtered_prefetches(
         prefetch_related, filtered_prefetches
     )
+
+    # Phase B: narrow each top_plain prefetch string to a Prefetch(…).only(…).
+    # STRICTLY AFTER _merge_filtered_prefetches (REQ-B5): the merge runs on
+    # plain strings; conversion happens only on the returned top_plain list.
+    # Gated identically to root .only() (OPTIMIZE_ONLY_FIELDS + not custom_used).
+    if (
+        graphql_api_settings.OPTIMIZE_ONLY_FIELDS
+        and not custom_used
+        and fields_asts
+        and prefetch_related
+    ):
+        only_map = _collect_prefetch_only_sets(
+            model, fields_asts[0].selection_set, info.fragments
+        )
+        if only_map:
+            prefetch_related = [
+                _narrow_plain_prefetch(model, lk, only_map) for lk in prefetch_related
+            ]
 
     if select_related:
         base = base.select_related(*select_related)

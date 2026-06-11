@@ -53,6 +53,17 @@ from django_graphex.utils import (
     queryset_factory,
     recursive_params,
 )
+try:
+    from django_graphex.utils import (
+        PrefetchPlan,
+        _collect_prefetch_only_sets,
+        _compute_child_only,
+        _leaf_model,
+        _narrow_plain_prefetch,
+    )
+    _PHASE_B_AVAILABLE = True
+except ImportError:
+    _PHASE_B_AVAILABLE = False
 
 from .models import Author, DummyModel, Post, Tag
 
@@ -110,6 +121,34 @@ class OptNote(DummyModel):
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey("content_type", "object_id")
+
+    class Meta:
+        app_label = "tests"
+
+
+class OptTaggedItem(DummyModel):
+    """Two GFKs for multi-GFK disambiguation test (task 2.10).
+
+    content_object -> (content_type_id, object_id)
+    tagged_by      -> (tagger_ct_id,    tagger_id)
+
+    ``label`` is a plain concrete field so the selection ``{ label }`` is a
+    known leaf and does NOT trigger the full-load fallback.
+    """
+
+    label = models.CharField(max_length=100, default="")
+
+    content_type = models.ForeignKey(
+        ContentType, related_name="+", on_delete=models.CASCADE
+    )
+    object_id = models.PositiveIntegerField()
+    content_object = GenericForeignKey("content_type", "object_id")
+
+    tagger_ct = models.ForeignKey(
+        ContentType, related_name="+", on_delete=models.CASCADE
+    )
+    tagger_id = models.PositiveIntegerField()
+    tagged_by = GenericForeignKey("tagger_ct", "tagger_id")
 
     class Meta:
         app_label = "tests"
@@ -1268,3 +1307,441 @@ class SafeModeTest(TestCase):
             qs = queryset_factory(Profile, None, info)
 
         self.assertEqual(qs.model, Profile)
+
+
+# =========================================================================== #
+# Phase B — PR1 tests (tasks 1.1 – 3.9)                                       #
+# =========================================================================== #
+import unittest  # noqa: E402
+
+
+def _skip_if_no_phase_b(test_func):
+    """Decorator: skip test when Phase B symbols are not yet importable."""
+    return unittest.skipUnless(_PHASE_B_AVAILABLE, "Phase B not yet implemented")(
+        test_func
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Task 1.1 / 1.2 — _leaf_model                                                #
+# --------------------------------------------------------------------------- #
+class TestLeafModel(TestCase):
+    @_skip_if_no_phase_b
+    def test_leaf_model_single_segment_reverse_fk(self):
+        # _leaf_model(Author, "posts") -> Post
+        from .models import Author, Post
+
+        self.assertIs(_leaf_model(Author, "posts"), Post)
+
+    @_skip_if_no_phase_b
+    def test_leaf_model_dotted_prefetch_walk(self):
+        # _leaf_model(Author, "posts__tags") walks reverse-FK then forward-M2M -> Tag
+        from .models import Author, Tag
+
+        self.assertIs(_leaf_model(Author, "posts__tags"), Tag)
+
+
+# --------------------------------------------------------------------------- #
+# Task 1.3 / 1.4 — PrefetchPlan dataclass                                     #
+# --------------------------------------------------------------------------- #
+class TestPrefetchPlan(TestCase):
+    @_skip_if_no_phase_b
+    def test_prefetch_plan_dataclass_has_expected_attributes(self):
+        plan = PrefetchPlan(only_cols=["id", "title"], child_select=["category"])
+        self.assertEqual(plan.only_cols, ["id", "title"])
+        self.assertEqual(plan.child_select, ["category"])
+
+    @_skip_if_no_phase_b
+    def test_prefetch_plan_empty_defaults(self):
+        plan = PrefetchPlan(only_cols=[], child_select=[])
+        self.assertEqual(plan.only_cols, [])
+        self.assertEqual(plan.child_select, [])
+
+
+# --------------------------------------------------------------------------- #
+# Tasks 2.1–2.5 — _compute_child_only                                         #
+# --------------------------------------------------------------------------- #
+class TestComputeChildOnly(TestCase):
+    """Unit tests for _compute_child_only (no DB)."""
+
+    def _sel(self, query):
+        return _parse(query)
+
+    @_skip_if_no_phase_b
+    def test_reverse_fk_includes_fk_back(self):
+        # Author.posts reverse FK: author_id must always be in only_cols even
+        # when not requested.  Post body must NOT be present.
+        from .models import Author, Post
+
+        related_field = Author._meta.get_field("posts")  # ManyToOneRel
+        sel, frags = _parse("{ a { posts { title } } }")
+        # Descend into posts sub-selection
+        posts_sel = sel.selections[0].selection_set  # { title }
+        plan = _compute_child_only(Post, related_field, posts_sel, frags)
+        self.assertIsNotNone(plan)
+        self.assertIn("author_id", plan.only_cols)
+        self.assertIn("id", plan.only_cols)
+        self.assertIn("title", plan.only_cols)
+        self.assertNotIn("body", plan.only_cols)
+
+    @_skip_if_no_phase_b
+    def test_m2m_forward_no_fk_back(self):
+        # Post.tags forward M2M: only pk+label+ordering, NO fk-back attname.
+        from .models import Post, Tag
+
+        related_field = Post._meta.get_field("tags")  # ManyToManyField
+        sel, frags = _parse("{ p { tags { label } } }")
+        tags_sel = sel.selections[0].selection_set  # { label }
+        plan = _compute_child_only(Tag, related_field, tags_sel, frags)
+        self.assertIsNotNone(plan)
+        self.assertIn("id", plan.only_cols)
+        self.assertIn("label", plan.only_cols)
+        # No FK-back attname for forward M2M
+        for col in plan.only_cols:
+            self.assertFalse(col.endswith("_id") and "post" in col.lower(),
+                             f"Unexpected FK-back {col!r} in M2M plan")
+
+    @_skip_if_no_phase_b
+    def test_m2m_reverse_no_crash(self):
+        # Author.coauthored_posts reverse M2M (ManyToManyRel): no crash,
+        # no FK-back, dispatch via many_to_many flag.
+        from .models import Author, Post
+
+        related_field = Author._meta.get_field("coauthored_posts")  # ManyToManyRel
+        sel, frags = _parse("{ a { coauthoredPosts { title } } }")
+        cp_sel = sel.selections[0].selection_set  # { title }
+        plan = _compute_child_only(Post, related_field, cp_sel, frags)
+        self.assertIsNotNone(plan)
+        self.assertIn("id", plan.only_cols)
+        self.assertIn("title", plan.only_cols)
+
+    @_skip_if_no_phase_b
+    def test_ordering_attnames_included(self):
+        # Profile.Meta.ordering = ["handle"] -> handle attname kept even when not requested.
+        sel, frags = _parse("{ p { notes { headline } } }")
+        # We need a ManyToOneRel-like field; use Profile's notes (GenericRelation)
+        # BUT for ordering test, we just test _compute_child_only on Profile itself
+        # via a reverse-FK from Account.
+        # Account.profile is O2O -> profile is FK target. Use ordering test on
+        # a simpler reverse-FK: OrderingThing.owner is FK to Profile.
+        # Actually test using Profile ordering via collect_only_fields sub-path.
+        # Simplest approach: call _compute_child_only with a fake rev-FK from a
+        # parent to Profile, and verify handle is in only_cols.
+        # Use Account._meta.get_field("profile") -- but that's select not prefetch.
+        # So let's test the ordering column inclusion via the always-keep base:
+        # create a reverse FK scenario by inspecting Profile's own ordering.
+        #
+        # OrderingThing has ordering with F() + relation-traversing + concrete.
+        # Test that 'label' is kept and F()/relation-traversing skipped.
+        from django.db.models import ManyToOneRel
+        related_field = Profile._meta.get_field("ordering_things")  # ManyToOneRel
+        sel, frags = _parse("{ p { ordering_things { rank } } }")
+        ot_sel = sel.selections[0].selection_set  # { rank }
+        plan = _compute_child_only(OrderingThing, related_field, ot_sel, frags)
+        self.assertIsNotNone(plan)
+        # "label" is in Meta.ordering -> must be included always
+        self.assertIn("label", plan.only_cols)
+        # F() terms and relation-traversing "owner__handle" should NOT produce
+        # an "owner__handle" string in only_cols
+        self.assertNotIn("owner__handle", plan.only_cols)
+        # "rank" is requested -> must be included
+        self.assertIn("rank", plan.only_cols)
+
+    @_skip_if_no_phase_b
+    def test_child_select_related_co_computed_gap1(self):
+        # GAP-1: AST { posts { title category { title } } } on Author.
+        # _compute_child_only must return child_select containing "category"
+        # (the forward FK head), not just flat only_cols.
+        from .models import Author, Post
+
+        related_field = Author._meta.get_field("posts")  # ManyToOneRel
+        sel, frags = _parse("{ a { posts { title category { title } } } }")
+        posts_sel = sel.selections[0].selection_set  # { title category { title } }
+        plan = _compute_child_only(Post, related_field, posts_sel, frags)
+        self.assertIsNotNone(plan)
+        self.assertIn("category", plan.child_select)
+        # category_id (FK attname) must be in only_cols
+        self.assertIn("category_id", plan.only_cols)
+        # category__title also in only_cols (dotted path)
+        self.assertIn("category__title", plan.only_cols)
+
+    @_skip_if_no_phase_b
+    def test_full_load_fallback_on_computed_leaf(self):
+        # Author.display_name is a @property -> _compute_child_only returns None
+        # (full-load fallback).
+        from .models import Author, Post
+
+        # We need a relation where Author is the child, but Author has display_name
+        # property. Create a reverse FK lookup where Author is child with @property.
+        # Use Author directly: we need some parent -> Author reverse relation.
+        # Actually Author doesn't have a reverse FK parent in our models,
+        # but we can use Post.co_authors (M2M to Author) and request display_name.
+        related_field = Post._meta.get_field("co_authors")  # ManyToManyField to Author
+        sel, frags = _parse("{ p { co_authors { display_name } } }")
+        ca_sel = sel.selections[0].selection_set  # { display_name }
+        plan = _compute_child_only(Author, related_field, ca_sel, frags)
+        # display_name is a @property -> full-load -> None
+        self.assertIsNone(plan)
+
+
+# --------------------------------------------------------------------------- #
+# Tasks 2.7–2.10 — _collect_prefetch_only_sets                                #
+# --------------------------------------------------------------------------- #
+class TestCollectPrefetchOnlySets(TestCase):
+    """Unit tests for _collect_prefetch_only_sets (no DB)."""
+
+    @_skip_if_no_phase_b
+    def test_gfk_target_skip_no_crash_gap3(self):
+        # GAP-3: content_object (GFK-target) must NOT appear in the returned map
+        # and must not raise AttributeError (isinstance-GFK check before get_related_model).
+        sel, frags = _parse("{ n { text content_object { id } } }")
+        result = _collect_prefetch_only_sets(OptNote, sel, frags)
+        self.assertNotIn("content_object", result)
+
+    @_skip_if_no_phase_b
+    def test_collect_reverse_fk(self):
+        # Author.posts reverse FK: 'posts' key must be in result with a PrefetchPlan.
+        from .models import Author
+
+        sel, frags = _parse("{ a { name posts { title } } }")
+        result = _collect_prefetch_only_sets(Author, sel, frags)
+        self.assertIn("posts", result)
+        plan = result["posts"]
+        self.assertIsInstance(plan, PrefetchPlan)
+        self.assertIn("author_id", plan.only_cols)
+        self.assertIn("title", plan.only_cols)
+
+    @_skip_if_no_phase_b
+    def test_collect_forward_m2m(self):
+        # Post.tags forward M2M: 'tags' in result.
+        from .models import Post
+
+        sel, frags = _parse("{ p { title tags { label } } }")
+        result = _collect_prefetch_only_sets(Post, sel, frags)
+        self.assertIn("tags", result)
+        plan = result["tags"]
+        self.assertIn("label", plan.only_cols)
+
+    @_skip_if_no_phase_b
+    def test_collect_reverse_m2m(self):
+        # Author.coauthored_posts reverse M2M (ManyToManyRel): in result.
+        from .models import Author
+
+        sel, frags = _parse("{ a { name coauthored_posts { title } } }")
+        result = _collect_prefetch_only_sets(Author, sel, frags)
+        self.assertIn("coauthored_posts", result)
+
+    @_skip_if_no_phase_b
+    def test_collect_generic_relation_ct_fk_discovery(self):
+        # Profile.notes GenericRelation: 'notes' key with content_type_id + object_id
+        # in only_cols (NOT raw 'content_type').
+        sel, frags = _parse("{ p { handle notes { results { text } } } }")
+        result = _collect_prefetch_only_sets(Profile, sel, frags)
+        self.assertIn("notes", result)
+        plan = result["notes"]
+        self.assertIn("content_type_id", plan.only_cols)
+        self.assertIn("object_id", plan.only_cols)
+        self.assertIn("id", plan.only_cols)
+        self.assertIn("text", plan.only_cols)
+        self.assertNotIn("content_type", plan.only_cols)
+
+    @_skip_if_no_phase_b
+    def test_collect_multi_gfk_disambiguation(self):
+        # REQ-B2 / GAP-2: multi-GFK disambiguation.
+        #
+        # OptTaggedItem has two GFKs:
+        #   content_object  -> ct_field='content_type',  fk_field='object_id'
+        #   tagged_by       -> ct_field='tagger_ct',     fk_field='tagger_id'
+        #
+        # Profile.notes is a GenericRelation with content_type_field_name='content_type'
+        # and object_id_field_name='object_id'.  We call _compute_child_only with
+        # OptTaggedItem as the child and notes_field as the relation — the
+        # disambiguation must pick content_object (matching ct/fk names) and
+        # inject content_type_id + object_id into only_cols, NOT tagger_ct_id/tagger_id.
+        #
+        # The sub-selection selects 'label', a real concrete field on OptTaggedItem,
+        # so the full-load fallback is NOT triggered.
+        notes_field = Profile._meta.get_field("notes")
+        # notes_field.content_type_field_name == 'content_type'
+        # notes_field.object_id_field_name    == 'object_id'
+
+        # _parse returns the selection set one level below the top field.
+        # "{ p { notes { label } } }" -> sel = p's selection set = { notes { label } }
+        # sel.selections[0] is the 'notes' field node;
+        # sel.selections[0].selection_set = { label } — the child sub-selection.
+        sel, frags = _parse("{ p { notes { label } } }")
+        child_sel = sel.selections[0].selection_set  # { label }
+
+        plan = _compute_child_only(OptTaggedItem, notes_field, child_sel, frags)
+
+        # Disambiguation must succeed: plan is NOT None.
+        self.assertIsNotNone(plan)
+
+        # Must include the structural columns for the matched GFK (content_object).
+        self.assertIn("content_type_id", plan.only_cols)
+        self.assertIn("object_id", plan.only_cols)
+
+        # Must NOT include columns from the other GFK (tagged_by).
+        self.assertNotIn("tagger_ct_id", plan.only_cols)
+        self.assertNotIn("tagger_id", plan.only_cols)
+
+
+# --------------------------------------------------------------------------- #
+# Tasks 3.1–3.5 — _narrow_plain_prefetch                                      #
+# --------------------------------------------------------------------------- #
+class TestNarrowPlainPrefetch(TestCase):
+    @_skip_if_no_phase_b
+    def test_lookup_not_in_map_returns_string(self):
+        # lookup absent from map -> bare string returned
+        from .models import Author
+
+        result = _narrow_plain_prefetch(Author, "posts", {})
+        self.assertEqual(result, "posts")
+
+    @_skip_if_no_phase_b
+    def test_lookup_in_map_returns_prefetch_with_only(self):
+        from django.db.models import Prefetch as DjPrefetch
+        from .models import Author, Post
+
+        plan = PrefetchPlan(only_cols=["id", "title", "author_id"], child_select=[])
+        result = _narrow_plain_prefetch(Author, "posts", {"posts": plan})
+        self.assertIsInstance(result, DjPrefetch)
+        self.assertEqual(result.prefetch_through, "posts")
+        # queryset must have .only() applied
+        qs = result.queryset
+        deferred, mode = qs.query.deferred_loading
+        # mode=False means "only these fields"
+        self.assertFalse(mode, "Expected only() (mode=False means only these cols)")
+
+    @_skip_if_no_phase_b
+    def test_lookup_in_map_with_child_select_returns_prefetch_with_select_related(self):
+        from django.db.models import Prefetch as DjPrefetch
+        from .models import Author, Post
+
+        plan = PrefetchPlan(
+            only_cols=["id", "title", "author_id", "category_id", "category__title"],
+            child_select=["category"],
+        )
+        result = _narrow_plain_prefetch(Author, "posts", {"posts": plan})
+        self.assertIsInstance(result, DjPrefetch)
+        qs = result.queryset
+        # select_related must include 'category'
+        self.assertIn("category", qs.query.select_related)
+
+    @_skip_if_no_phase_b
+    def test_dotted_lookup_uses_leaf_model(self):
+        from django.db.models import Prefetch as DjPrefetch
+        from .models import Author, Tag
+
+        plan = PrefetchPlan(only_cols=["id", "label"], child_select=[])
+        result = _narrow_plain_prefetch(Author, "posts__tags", {"posts__tags": plan})
+        self.assertIsInstance(result, DjPrefetch)
+        self.assertEqual(result.prefetch_through, "posts__tags")
+        # queryset must be on Tag model
+        self.assertIs(result.queryset.model, Tag)
+
+
+# --------------------------------------------------------------------------- #
+# Tasks 3.6–3.9 — Conversion block and SAFE_MODE                              #
+# --------------------------------------------------------------------------- #
+class TestConversionBlock(TestCase):
+    @_skip_if_no_phase_b
+    def test_conversion_runs_after_merge_not_before(self):
+        # REQ-B5: Passing a Prefetch object into _merge_filtered_prefetches raises
+        # when there are filtered prefetches to process (which trigger string ops).
+        # This confirms the invariant: conversion must happen AFTER merge.
+        from django.db.models import Prefetch as DjPrefetch
+        from unittest import mock
+        from .models import Author
+
+        plain_pf = DjPrefetch("posts", queryset=Author._default_manager.all())
+        # _merge_filtered_prefetches expects plain STRINGS in the first arg.
+        # Passing a Prefetch as a plain item reaches nearest(path) which calls
+        # path.startswith(...) and must fail with AttributeError or TypeError.
+        # We need a non-empty filtered_prefetches list so it doesn't early-return.
+        qs = mock.MagicMock()
+        qs.prefetch_related.return_value = qs
+        filtered_pf = mock.MagicMock(prefetch_through="tags", queryset=qs)
+        with self.assertRaises((AttributeError, TypeError)):
+            _merge_filtered_prefetches([plain_pf], [filtered_pf])
+
+    @_skip_if_no_phase_b
+    def test_optimize_only_fields_false_no_conversion(self):
+        # REQ-B4: With OPTIMIZE_ONLY_FIELDS=False, prefetch strings stay strings.
+        from graphql import parse as gql_parse
+        from graphql.language.ast import OperationDefinitionNode
+        from .models import Author
+
+        gql_doc = gql_parse(
+            "{ allAuthors { results { name posts { title } } totalCount } }"
+        )
+        op = next(
+            d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode)
+        )
+        field_node = op.selection_set.selections[0]
+
+        class _GT:
+            pass
+
+        info = _FakeInfo(_FakeParentType(_GT), "all_authors", [field_node])
+
+        with mock.patch.object(graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", False):
+            qs = queryset_factory(Author, None, info)
+
+        # prefetch_related lookups should be bare strings (no Prefetch wrappers)
+        prefetch_names = [str(p) for p in qs._prefetch_related_lookups]
+        self.assertIn("posts", prefetch_names)
+        # None of the lookups should be Prefetch objects wrapping with .only()
+        from django.db.models import Prefetch as DjPrefetch
+        for p in qs._prefetch_related_lookups:
+            self.assertNotIsInstance(p, DjPrefetch)
+
+    @_skip_if_no_phase_b
+    def test_safe_mode_degrades_on_exception(self):
+        # REQ-B4: Patch _collect_prefetch_only_sets to raise.
+        # SAFE_MODE=True -> un-optimized queryset + one WARNING.
+        # SAFE_MODE=False -> exception propagates.
+        import django_graphex.utils as utils_module
+        from graphql import parse as gql_parse
+        from graphql.language.ast import OperationDefinitionNode
+        from .models import Author
+
+        gql_doc = gql_parse(
+            "{ allAuthors { results { name posts { title } } totalCount } }"
+        )
+        op = next(
+            d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode)
+        )
+        field_node = op.selection_set.selections[0]
+
+        class _GT:
+            pass
+
+        info = _FakeInfo(_FakeParentType(_GT), "all_authors", [field_node])
+
+        # SAFE_MODE=True: should degrade gracefully
+        with mock.patch.object(
+            graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True
+        ), mock.patch.object(
+            graphql_api_settings, "OPTIMIZER_SAFE_MODE", True
+        ), mock.patch.object(
+            utils_module, "_collect_prefetch_only_sets",
+            side_effect=RuntimeError("prefetch-boom"),
+        ), self.assertLogs("django_graphex.utils", level="WARNING") as cm:
+            qs = queryset_factory(Author, None, info)
+
+        self.assertEqual(qs.model, Author)
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("WARNING", cm.output[0])
+
+        # SAFE_MODE=False: exception should propagate
+        with mock.patch.object(
+            graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True
+        ), mock.patch.object(
+            graphql_api_settings, "OPTIMIZER_SAFE_MODE", False
+        ), mock.patch.object(
+            utils_module, "_collect_prefetch_only_sets",
+            side_effect=RuntimeError("prefetch-boom"),
+        ):
+            with self.assertRaises(RuntimeError):
+                queryset_factory(Author, None, info)
