@@ -15,7 +15,7 @@ from django.contrib.contenttypes.fields import (
     GenericRelation,
 )
 from django.db import models
-from django.db.models import Choices
+from django.db.models import Choices, JSONField
 from django.utils.encoding import force_str
 from django.utils.functional import Promise
 from django.utils.translation import override as translation_override
@@ -35,8 +35,6 @@ from graphene import (
 from graphene.types.json import JSONString
 from graphene.utils.str_converters import to_camel_case
 from graphql.pyutils import register_description
-
-from django.db.models import JSONField
 
 from .base_types import (
     Binary,

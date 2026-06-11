@@ -53,6 +53,7 @@ from django_graphex.utils import (
     queryset_factory,
     recursive_params,
 )
+
 try:
     from django_graphex.utils import (
         PrefetchPlan,
@@ -61,6 +62,7 @@ try:
         _leaf_model,
         _narrow_plain_prefetch,
     )
+
     _PHASE_B_AVAILABLE = True
 except ImportError:
     _PHASE_B_AVAILABLE = False
@@ -353,9 +355,7 @@ class GFKOnlyFieldsTest(TestCase):
             "{ allNotes { results { text contentObject { id } } totalCount } }"
         )
         op = next(
-            d
-            for d in gql_doc.definitions
-            if isinstance(d, OperationDefinitionNode)
+            d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode)
         )
         field_node = op.selection_set.selections[0]
 
@@ -624,9 +624,7 @@ class GenericRelationE2ETest(TestCase):
     def setUpTestData(cls):
         # 3 profiles, each with 2 notes.
         for i in range(3):
-            profile = Profile.objects.create(
-                handle=f"gr{i}", headline=f"headline{i}"
-            )
+            profile = Profile.objects.create(handle=f"gr{i}", headline=f"headline{i}")
             for j in range(2):
                 ct = ContentType.objects.get_for_model(Profile)
                 OptNote.objects.create(
@@ -659,8 +657,7 @@ class GenericRelationE2ETest(TestCase):
         # The schema query itself already validated there are notes; just check
         # the data has notes results.
         total_notes = sum(
-            len(r["notes"]["results"])
-            for r in data["allProfiles"]["results"]
+            len(r["notes"]["results"]) for r in data["allProfiles"]["results"]
         )
         self.assertEqual(total_notes, 6)
 
@@ -682,9 +679,7 @@ class GFKEndToEndTest(TestCase):
 
         cls.profile1 = Profile.objects.create(handle="gfk1", headline="h1")
         cls.profile2 = Profile.objects.create(handle="gfk2", headline="h2")
-        cls.account1 = Account.objects.create(
-            username="acc1", profile=cls.profile1
-        )
+        cls.account1 = Account.objects.create(username="acc1", profile=cls.profile1)
         cls.ordering_thing = OrderingThing.objects.create(
             label="ot1", owner=cls.profile1
         )
@@ -725,9 +720,7 @@ class GFKEndToEndTest(TestCase):
             "{ allNotes { results { text contentObject { id } } totalCount } }"
         )
         op = next(
-            d
-            for d in gql_doc.definitions
-            if isinstance(d, OperationDefinitionNode)
+            d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode)
         )
         field_node = op.selection_set.selections[0]  # the allNotes FieldNode
 
@@ -758,9 +751,7 @@ class GFKEndToEndTest(TestCase):
             "{ allNotes { results { text contentObject { id } } totalCount } }"
         )
         op = next(
-            d
-            for d in gql_doc.definitions
-            if isinstance(d, OperationDefinitionNode)
+            d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode)
         )
         field_node = op.selection_set.selections[0]
 
@@ -780,15 +771,9 @@ class GFKEndToEndTest(TestCase):
 
         # Per-row identity: each note's content_object must resolve to the
         # correct instance across distinct content-type groups.
-        self.assertEqual(
-            notes_by_pk[self.note_p1.pk].content_object, self.profile1
-        )
-        self.assertEqual(
-            notes_by_pk[self.note_p2.pk].content_object, self.profile2
-        )
-        self.assertEqual(
-            notes_by_pk[self.note_a1.pk].content_object, self.account1
-        )
+        self.assertEqual(notes_by_pk[self.note_p1.pk].content_object, self.profile1)
+        self.assertEqual(notes_by_pk[self.note_p2.pk].content_object, self.profile2)
+        self.assertEqual(notes_by_pk[self.note_a1.pk].content_object, self.account1)
         # Unregistered target: ORM resolves correctly even though GraphQL
         # response is null.
         self.assertEqual(
@@ -1188,15 +1173,15 @@ class SafeModeTest(TestCase):
         import django_graphex.utils as utils_module
 
         info = self._info()
-        base_qs = Profile.objects.all()
+        Profile.objects.all()
 
-        with mock.patch.object(
-            graphql_api_settings, "OPTIMIZER_SAFE_MODE", True
-        ), mock.patch.object(
-            utils_module, "_relation_field_map", side_effect=RuntimeError("boom")
-        ), self.assertLogs(
-            "django_graphex.utils", level="WARNING"
-        ) as cm:
+        with (
+            mock.patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", True),
+            mock.patch.object(
+                utils_module, "_relation_field_map", side_effect=RuntimeError("boom")
+            ),
+            self.assertLogs("django_graphex.utils", level="WARNING") as cm,
+        ):
             qs = queryset_factory(Profile, None, info)
 
         # Returns a valid queryset for the same model.
@@ -1212,10 +1197,11 @@ class SafeModeTest(TestCase):
         import django_graphex.utils as utils_module
 
         info = self._info()
-        with mock.patch.object(
-            graphql_api_settings, "OPTIMIZER_SAFE_MODE", False
-        ), mock.patch.object(
-            utils_module, "_relation_field_map", side_effect=RuntimeError("boom")
+        with (
+            mock.patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", False),
+            mock.patch.object(
+                utils_module, "_relation_field_map", side_effect=RuntimeError("boom")
+            ),
         ):
             with self.assertRaises(RuntimeError):
                 queryset_factory(Profile, None, info)
@@ -1227,13 +1213,15 @@ class SafeModeTest(TestCase):
         import django_graphex.utils as utils_module
 
         info = self._info()
-        with mock.patch.object(
-            graphql_api_settings, "OPTIMIZER_SAFE_MODE", True
-        ), mock.patch.object(
-            utils_module, "_relation_field_map", side_effect=RuntimeError("boundary")
-        ), self.assertLogs(
-            "django_graphex.utils", level="WARNING"
-        ) as cm:
+        with (
+            mock.patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", True),
+            mock.patch.object(
+                utils_module,
+                "_relation_field_map",
+                side_effect=RuntimeError("boundary"),
+            ),
+            self.assertLogs("django_graphex.utils", level="WARNING") as cm,
+        ):
             qs = queryset_factory(Profile, None, info)
 
         self.assertEqual(qs.model, Profile)
@@ -1253,7 +1241,9 @@ class SafeModeTest(TestCase):
         # build_filtered_prefetches IS reached inside _apply_optimizations, and
         # patches that function to raise — matching the REQ-2 scenario verbatim.
         import django_graphex.utils as utils_module
-        from django_graphex.utils import build_filtered_prefetches  # noqa: F401 used below
+        from django_graphex.utils import (
+            build_filtered_prefetches,  # noqa: F401 used below
+        )
 
         custom_qs = Profile.objects.filter(handle="sm")
 
@@ -1264,24 +1254,22 @@ class SafeModeTest(TestCase):
 
         # Build a real GQL document so field_nodes is populated and
         # build_filtered_prefetches is reached inside _apply_optimizations.
-        gql_doc = parse(
-            "{ x { results { handle } totalCount } }"
-        )
+        gql_doc = parse("{ x { results { handle } totalCount } }")
         op = next(
-            d
-            for d in gql_doc.definitions
-            if isinstance(d, OperationDefinitionNode)
+            d for d in gql_doc.definitions if isinstance(d, OperationDefinitionNode)
         )
         field_node = op.selection_set.selections[0]
 
         info = _FakeInfo(_FakeParentType(_GT), "x", [field_node])
 
-        with mock.patch.object(
-            graphql_api_settings, "OPTIMIZER_SAFE_MODE", True
-        ), mock.patch.object(
-            utils_module, "build_filtered_prefetches", side_effect=RuntimeError("custom-base-bfp")
-        ), self.assertLogs(
-            "django_graphex.utils", level="WARNING"
+        with (
+            mock.patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", True),
+            mock.patch.object(
+                utils_module,
+                "build_filtered_prefetches",
+                side_effect=RuntimeError("custom-base-bfp"),
+            ),
+            self.assertLogs("django_graphex.utils", level="WARNING"),
         ):
             qs = queryset_factory(Profile, None, info)
 
@@ -1296,12 +1284,14 @@ class SafeModeTest(TestCase):
         import django_graphex.utils as utils_module
 
         info = self._info()
-        with mock.patch.object(
-            graphql_api_settings, "OPTIMIZER_SAFE_MODE", True
-        ), mock.patch.object(
-            graphql_api_settings, "OPTIMIZE_QUERYSET", False
-        ), mock.patch.object(
-            utils_module, "_relation_field_map", side_effect=RuntimeError("should not reach")
+        with (
+            mock.patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", True),
+            mock.patch.object(graphql_api_settings, "OPTIMIZE_QUERYSET", False),
+            mock.patch.object(
+                utils_module,
+                "_relation_field_map",
+                side_effect=RuntimeError("should not reach"),
+            ),
         ):
             # No assertLogs — no WARNING must be emitted.
             qs = queryset_factory(Profile, None, info)
@@ -1398,8 +1388,10 @@ class TestComputeChildOnly(TestCase):
         self.assertIn("label", plan.only_cols)
         # No FK-back attname for forward M2M
         for col in plan.only_cols:
-            self.assertFalse(col.endswith("_id") and "post" in col.lower(),
-                             f"Unexpected FK-back {col!r} in M2M plan")
+            self.assertFalse(
+                col.endswith("_id") and "post" in col.lower(),
+                f"Unexpected FK-back {col!r} in M2M plan",
+            )
 
     @_skip_if_no_phase_b
     def test_m2m_reverse_no_crash(self):
@@ -1433,7 +1425,7 @@ class TestComputeChildOnly(TestCase):
         #
         # OrderingThing has ordering with F() + relation-traversing + concrete.
         # Test that 'label' is kept and F()/relation-traversing skipped.
-        from django.db.models import ManyToOneRel
+
         related_field = Profile._meta.get_field("ordering_things")  # ManyToOneRel
         sel, frags = _parse("{ p { ordering_things { rank } } }")
         ot_sel = sel.selections[0].selection_set  # { rank }
@@ -1601,7 +1593,8 @@ class TestNarrowPlainPrefetch(TestCase):
     @_skip_if_no_phase_b
     def test_lookup_in_map_returns_prefetch_with_only(self):
         from django.db.models import Prefetch as DjPrefetch
-        from .models import Author, Post
+
+        from .models import Author
 
         plan = PrefetchPlan(only_cols=["id", "title", "author_id"], child_select=[])
         result = _narrow_plain_prefetch(Author, "posts", {"posts": plan})
@@ -1616,7 +1609,8 @@ class TestNarrowPlainPrefetch(TestCase):
     @_skip_if_no_phase_b
     def test_lookup_in_map_with_child_select_returns_prefetch_with_select_related(self):
         from django.db.models import Prefetch as DjPrefetch
-        from .models import Author, Post
+
+        from .models import Author
 
         plan = PrefetchPlan(
             only_cols=["id", "title", "author_id", "category_id", "category__title"],
@@ -1631,6 +1625,7 @@ class TestNarrowPlainPrefetch(TestCase):
     @_skip_if_no_phase_b
     def test_dotted_lookup_uses_leaf_model(self):
         from django.db.models import Prefetch as DjPrefetch
+
         from .models import Author, Tag
 
         plan = PrefetchPlan(only_cols=["id", "label"], child_select=[])
@@ -1650,8 +1645,10 @@ class TestConversionBlock(TestCase):
         # REQ-B5: Passing a Prefetch object into _merge_filtered_prefetches raises
         # when there are filtered prefetches to process (which trigger string ops).
         # This confirms the invariant: conversion must happen AFTER merge.
-        from django.db.models import Prefetch as DjPrefetch
         from unittest import mock
+
+        from django.db.models import Prefetch as DjPrefetch
+
         from .models import Author
 
         plain_pf = DjPrefetch("posts", queryset=Author._default_manager.all())
@@ -1670,6 +1667,7 @@ class TestConversionBlock(TestCase):
         # REQ-B4: With OPTIMIZE_ONLY_FIELDS=False, prefetch strings stay strings.
         from graphql import parse as gql_parse
         from graphql.language.ast import OperationDefinitionNode
+
         from .models import Author
 
         gql_doc = gql_parse(
@@ -1693,6 +1691,7 @@ class TestConversionBlock(TestCase):
         self.assertIn("posts", prefetch_names)
         # None of the lookups should be Prefetch objects wrapping with .only()
         from django.db.models import Prefetch as DjPrefetch
+
         for p in qs._prefetch_related_lookups:
             self.assertNotIsInstance(p, DjPrefetch)
 
@@ -1701,9 +1700,11 @@ class TestConversionBlock(TestCase):
         # REQ-B4: Patch _collect_prefetch_only_sets to raise.
         # SAFE_MODE=True -> un-optimized queryset + one WARNING.
         # SAFE_MODE=False -> exception propagates.
-        import django_graphex.utils as utils_module
         from graphql import parse as gql_parse
         from graphql.language.ast import OperationDefinitionNode
+
+        import django_graphex.utils as utils_module
+
         from .models import Author
 
         gql_doc = gql_parse(
@@ -1720,14 +1721,16 @@ class TestConversionBlock(TestCase):
         info = _FakeInfo(_FakeParentType(_GT), "all_authors", [field_node])
 
         # SAFE_MODE=True: should degrade gracefully
-        with mock.patch.object(
-            graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True
-        ), mock.patch.object(
-            graphql_api_settings, "OPTIMIZER_SAFE_MODE", True
-        ), mock.patch.object(
-            utils_module, "_collect_prefetch_only_sets",
-            side_effect=RuntimeError("prefetch-boom"),
-        ), self.assertLogs("django_graphex.utils", level="WARNING") as cm:
+        with (
+            mock.patch.object(graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True),
+            mock.patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", True),
+            mock.patch.object(
+                utils_module,
+                "_collect_prefetch_only_sets",
+                side_effect=RuntimeError("prefetch-boom"),
+            ),
+            self.assertLogs("django_graphex.utils", level="WARNING") as cm,
+        ):
             qs = queryset_factory(Author, None, info)
 
         self.assertEqual(qs.model, Author)
@@ -1735,13 +1738,14 @@ class TestConversionBlock(TestCase):
         self.assertIn("WARNING", cm.output[0])
 
         # SAFE_MODE=False: exception should propagate
-        with mock.patch.object(
-            graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True
-        ), mock.patch.object(
-            graphql_api_settings, "OPTIMIZER_SAFE_MODE", False
-        ), mock.patch.object(
-            utils_module, "_collect_prefetch_only_sets",
-            side_effect=RuntimeError("prefetch-boom"),
+        with (
+            mock.patch.object(graphql_api_settings, "OPTIMIZE_ONLY_FIELDS", True),
+            mock.patch.object(graphql_api_settings, "OPTIMIZER_SAFE_MODE", False),
+            mock.patch.object(
+                utils_module,
+                "_collect_prefetch_only_sets",
+                side_effect=RuntimeError("prefetch-boom"),
+            ),
         ):
             with self.assertRaises(RuntimeError):
                 queryset_factory(Author, None, info)
