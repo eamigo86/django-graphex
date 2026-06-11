@@ -115,6 +115,21 @@ class Track2Invoice(DummyModel):
     note = models.CharField(max_length=50, default="")
 
 
+class Track2AccountProxy(Track2Account):
+    """A PROXY of ``Track2Account`` sharing its concrete table.
+
+    Used by the GFK-union content-type de-dup tests: a proxy and its concrete
+    base map to DIFFERENT ContentTypes under ``for_concrete_model=False`` but to
+    the SAME ContentType under ``for_concrete_model=True`` (the GFK default).
+    This is exactly the case where the de-dup must mirror the GFK's
+    ``for_concrete_model`` to avoid Django's duplicate-content-type ValueError.
+    """
+
+    class Meta:
+        app_label = "tests"
+        proxy = True
+
+
 # GFK owner for the union-converter test. A standalone model (not the phase-d
 # ``Comment`` above, which other optimizer tests depend on) carrying a single
 # GenericForeignKey ``target`` whose explicit members are the Track2 members.

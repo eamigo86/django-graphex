@@ -12,6 +12,36 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 1.2.0
+
+### Added
+
+- **`DjangoUnionType`** — a base for a GraphQL `Union` whose members are explicit
+  `DjangoObjectType`s (`Meta.gfk_types = (MemberAType, MemberBType)`). Its main
+  use is exposing a `GenericForeignKey` as a **typed** union instead of the flat
+  `GenericForeignKeyType`, so clients select per-member fields via inline
+  fragments. A GFK owner opts in with `Meta.gfk_unions = {"<fk_name>": TheUnion}`.
+  Members are explicitly enumerated — the `django_content_type` table is never
+  queried to discover them. A mandatory, provided `resolve_type` maps each row to
+  its registered type (raising a descriptive `TypeError` on an unregistered
+  model). Declaration order is load-bearing: **members → union → owner LAST**; a
+  mis-ordered declaration logs a `WARNING` and falls back to `GenericForeignKeyType`.
+  See [Types — DjangoUnionType](usage/types.md#djangouniontype-typed-genericforeignkey-targets).
+- **`DjangoInterfaceType`** — a base for a GraphQL `Interface` that shares field
+  declarations across multiple `DjangoObjectType` implementors (via the existing
+  `Meta.interfaces` kwarg). Schema-level field sharing only — no new fetch path.
+  See [Types — DjangoInterfaceType](usage/types.md#djangointerfacetype-shared-fields-across-types).
+- **Per-content-type column narrowing for union GFKs (Django 5.0+)** — when
+  `OPTIMIZE_ONLY_FIELDS` is on, a union-typed GFK is prefetched via
+  `GenericPrefetch` with **one narrowed queryset per content type**, each
+  `.only()`-restricted to that member's selected columns, batched across all
+  parents (no N+1). On **Django < 5.0** the optimizer degrades gracefully to a
+  single bare full-load `Prefetch` — it never imports `GenericPrefetch`, never
+  narrows columns, and is never slower than before. Each distinct content type
+  yields exactly one queryset; two members over one shared table are collapsed
+  (merged `.only()` columns). See
+  [Types — per-content-type narrowing](usage/types.md#per-content-type-column-narrowing-django-50).
+
 ## 1.1.0
 
 ### Added
