@@ -14,6 +14,21 @@ All notable changes to this library are documented here. The format is based on
 
 ## 1.1.0
 
+### Added
+
+- **Per-field optimize hook** (`optimize_<field>`) on parent graphene types.
+  Declare an `optimize_<snake_field>(queryset, info, **kwargs)` static method on
+  the parent `DjangoObjectType` to customize the child queryset for a specific
+  `DjangoNestedListObjectField`. The hook is applied after the optimizer builds
+  the child queryset and before Django executes it — allowing you to add
+  `select_related`, annotations, ordering, or any other queryset modification
+  without disabling the global optimizer.  Hook kwargs include `filter_value`
+  (the filter input or `None`) and `is_window` (`True` on the window-sliced
+  path, `False` on all plain paths). When no hook is declared, behavior is
+  byte-identical to the pre-1.1 baseline (purely additive). See
+  [Nested Lists — Per-field optimize hook](usage/nested-lists.md#per-field-optimize-hook)
+  for a worked example.
+
 ### Changed
 
 - **BREAKING — minimum Django is now 4.2.** Django 4.0 and 4.1 (both end-of-life)

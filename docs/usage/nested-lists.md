@@ -192,3 +192,93 @@ returned.
     This shape is applied to **all** related list fields (and mutation outputs);
     there is no flag. Clients read nested lists exactly like root lists:
     `field { results { … } totalCount }`.
+
+## Per-field optimize hook
+
+For cases where you need to customize the child queryset for a specific nested
+list field — for example to add a `select_related`, a custom annotation, or a
+default ordering — declare an **`optimize_<snake_field>`** static method on the
+**parent** graphene type:
+
+```python
+class AuthorType(DjangoObjectType):
+    class Meta:
+        model = Author
+
+    # Customize the queryset used to prefetch Author.posts.
+    # Called once per query — NOT once per parent row.
+    @staticmethod
+    def optimize_posts(queryset, info, **kwargs):
+        """Add select_related and a default ordering to the posts prefetch."""
+        filter_value = kwargs.get("filter_value")   # filter input or None
+        is_window = kwargs.get("is_window", False)  # True when DB-side windowed
+
+        # Compose freely on top of the optimizer-built queryset.
+        return queryset.select_related("category").order_by("-views", "id")
+```
+
+**Rules**
+
+- The method name is `optimize_` + the **snake_case** form of the **GraphQL field
+  name** (e.g. `blogPosts` → `optimize_blog_posts`).
+- It is declared on the **parent** type (the type that owns the nested field),
+  **not** on the child type.
+- It MUST return a `QuerySet`.  Returning anything else emits a WARNING and the
+  optimizer-built queryset is used unchanged.
+- Keyword arguments passed to the hook:
+  - `filter_value` — the filter input for this field, or `None`.
+  - `is_window` — `True` when the DB-side window-slice path is taken (i.e.
+    `OPTIMIZE_NESTED_PAGINATION=True` and the field is windowed); `False` on all
+    plain prefetch paths, including the fallback after a window opt-out.
+- When **no** `optimize_<field>` method is declared the optimizer behaves
+  byte-identically to the pre-hook baseline — purely additive, zero overhead.
+
+**Safe-mode interaction**
+
+If `OPTIMIZER_SAFE_MODE=True` (default `False`) and the hook raises an
+exception, the **entire resolve** degrades to the un-optimized base queryset
+(same boundary as all other optimizer errors) and a WARNING is logged.  With the
+default `False` setting the exception propagates normally.
+
+**What NOT to use it for**
+
+- Root queryset customization — use `resolve_<field>` on the root type instead.
+- Hooks on `DjangoFilterListField` or `DjangoFilterPaginateListField` — not
+  supported; only `DjangoNestedListObjectField` has this hook.
+- Per-field `SAFE_MODE` isolation — field-level try/except is a separate,
+  currently unspecified feature.
+
+**Full example**
+
+```python
+from django.db.models import Prefetch
+from django_graphex import DjangoObjectType, DjangoListObjectType, DjangoListObjectField
+from django_graphex.fields import DjangoNestedListObjectField
+
+class PostListType(DjangoListObjectType):
+    class Meta:
+        model = Post
+        pagination = LimitOffsetGraphqlPagination(default_limit=10)
+
+class AuthorType(DjangoObjectType):
+    posts = DjangoNestedListObjectField(PostListType, accessor="posts")
+
+    class Meta:
+        model = Author
+
+    @staticmethod
+    def optimize_posts(queryset, info, **kwargs):
+        # Add select_related so Post.category is fetched in the same query.
+        return queryset.select_related("category")
+
+class AuthorListType(DjangoListObjectType):
+    class Meta:
+        model = Author
+
+class Query(graphene.ObjectType):
+    authors = DjangoListObjectField(AuthorListType)
+```
+
+With `optimize_posts` declared, a query requesting `posts { results { title category { name } } }` will
+join the `category` table in the prefetch query instead of issuing one extra
+query per post — **without** disabling the global N+1 optimizer.
