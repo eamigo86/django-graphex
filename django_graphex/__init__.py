@@ -9,6 +9,7 @@ from .fields import (
     DjangoFilterListField,
     DjangoFilterPaginateListField,
     DjangoListObjectField,
+    DjangoNestedListObjectField,
     DjangoObjectField,
 )
 from .middleware import GraphQLDirectiveMiddleware
@@ -26,6 +27,7 @@ from .permissions import (
     IsAuthenticated,
     IsAuthenticatedOrReadOnly,
 )
+from .registry import Registry
 from .schema import DenyAllRegistry, DjangoGraphQLSchema, collect_field_names
 from .security import (
     AuthenticatedFieldsMiddleware,
@@ -50,10 +52,11 @@ __all__ = (
     "__version__",
     # FIELDS
     "AnnotatedField",
-    "DjangoObjectField",
     "DjangoFilterListField",
     "DjangoFilterPaginateListField",
     "DjangoListObjectField",
+    "DjangoNestedListObjectField",
+    "DjangoObjectField",
     # MUTATIONS
     "DjangoModelMutation",
     # PAGINATION
@@ -84,6 +87,8 @@ __all__ = (
     "DjangoGraphQLSchema",
     "collect_field_names",
     "DenyAllRegistry",
+    # REGISTRY
+    "Registry",
     # DIRECTIVES
     "all_directives",
     "GraphQLDirectiveMiddleware",
