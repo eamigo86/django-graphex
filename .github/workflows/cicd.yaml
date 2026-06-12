@@ -4,11 +4,15 @@ on:
   push:
     branches:
     - main
+    # Release tracker branches (e.g. v1.2.1) run the full test pipeline on every merge.
+    - 'v*.*.*'
     tags:
     - 'v*.*.*'
   pull_request:
     branches:
     - main
+    # PRs targeting a release tracker branch get the same checks as PRs to main.
+    - 'v*.*.*'
   workflow_dispatch:
     inputs:
       repository:
