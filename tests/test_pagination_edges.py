@@ -67,8 +67,12 @@ def test_page_size_none_returns_none():
 
 
 def test_page_zero_raises():
+    # page=0 must raise GraphQLError (explicit raise, not assert — assert is
+    # stripped under python -O and would silently accept page=0).
+    from graphql import GraphQLError
+
     p = PageGraphqlPagination(page_size=2, max_page_size=10)
-    with pytest.raises((AssertionError, ValueError)):
+    with pytest.raises(GraphQLError):
         p.paginate_queryset(_items("a", "b"), page=0)
 
 
