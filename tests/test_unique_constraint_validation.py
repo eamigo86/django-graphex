@@ -8,10 +8,8 @@ Covers:
 - parent_link OneToOneField excluded from _fk_fields (MTI guard)
 """
 
-import decimal
 from types import SimpleNamespace
 
-import pytest
 from django.db import models
 from django.db.models import Q
 from django.test import TestCase
@@ -19,7 +17,6 @@ from django.test import TestCase
 from django_graphex import DjangoModelType
 from django_graphex.native.backend import PydanticBackend
 from tests.models import DummyModel
-
 
 # ---------------------------------------------------------------------------
 # Models with UniqueConstraint (defined inline to avoid polluting tests/models.py)
@@ -194,7 +191,9 @@ class MultiFieldUniqueConstraintTest(TestCase):
     def test_update_same_row_does_not_collide(self):
         """Updating a row without changing the constrained fields is allowed."""
         obj = UCArticle.objects.create(slug="hello", language="en")
-        result = _update(UCArticleType, {"id": obj.pk, "slug": "hello", "language": "en"})
+        result = _update(
+            UCArticleType, {"id": obj.pk, "slug": "hello", "language": "en"}
+        )
         self.assertTrue(result.ok, msg=getattr(result, "errors", None))
 
     def test_error_message_mentions_constrained_fields(self):
@@ -280,17 +279,23 @@ class UniqueConstraintUnitTest(TestCase):
         UCEmail.objects.create(email="unit@example.com")
         backend = PydanticBackend(UCEmail)
         errors = backend._db_check_errors({"email": "unit@example.com"}, instance=None)
-        self.assertTrue(errors, "Expected at least one error from UniqueConstraint check")
+        self.assertTrue(
+            errors, "Expected at least one error from UniqueConstraint check"
+        )
 
     def test_single_field_constraint_ok_when_unique(self):
         backend = PydanticBackend(UCEmail)
-        errors = backend._db_check_errors({"email": "brand-new@example.com"}, instance=None)
+        errors = backend._db_check_errors(
+            {"email": "brand-new@example.com"}, instance=None
+        )
         self.assertEqual(errors, {})
 
     def test_multi_field_constraint_detected_by_db_check(self):
         UCArticle.objects.create(slug="x", language="en")
         backend = PydanticBackend(UCArticle)
-        errors = backend._db_check_errors({"slug": "x", "language": "en"}, instance=None)
+        errors = backend._db_check_errors(
+            {"slug": "x", "language": "en"}, instance=None
+        )
         self.assertIn("non_field_errors", errors)
         self.assertIn("slug", errors["non_field_errors"][0])
         self.assertIn("language", errors["non_field_errors"][0])
@@ -299,7 +304,9 @@ class UniqueConstraintUnitTest(TestCase):
         """Only one field of a multi-field constraint matching is fine."""
         UCArticle.objects.create(slug="x", language="en")
         backend = PydanticBackend(UCArticle)
-        errors = backend._db_check_errors({"slug": "x", "language": "fr"}, instance=None)
+        errors = backend._db_check_errors(
+            {"slug": "x", "language": "fr"}, instance=None
+        )
         self.assertEqual(errors, {})
 
     def test_unique_constraint_excludes_self_on_update(self):
