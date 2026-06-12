@@ -84,7 +84,9 @@ query {
 
 ### Base64GraphQLDirective
 
-Encode or decode strings using base64.
+Encode or decode strings using base64. Input is encoded as UTF-8, so
+non-ASCII characters (accented letters, emoji, etc.) are handled correctly
+without raising errors.
 
 ```python
 @base64(op: "encode")
@@ -291,7 +293,9 @@ query {
 
 ### NumberGraphQLDirective
 
-Format numbers using Python format strings.
+Format numbers using Python format strings. Format specs whose width or
+precision exceeds 100 are rejected with a field error (prevents memory
+exhaustion from client-supplied oversized specs).
 
 ```python
 @number(as: ".2f")
@@ -301,7 +305,7 @@ Format numbers using Python format strings.
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `as` | `String!` | Yes | Python format string |
+| `as` | `String!` | Yes | Python format string (width and precision capped at 100) |
 
 #### Example
 
@@ -426,7 +430,7 @@ Format dates and times using various formats.
 | Format | Description | Example |
 |--------|-------------|---------|
 | `"default"` | Standard format | "01 Dec 2023 14:30:00" |
-| `"iso"` | ISO format | "2023-Dec-01T14:30:00" |
+| `"iso"` | ISO 8601 format | "2023-12-01T14:30:00" |
 | `"javascript"` | JS Date format | "Fri Dec 01 2023 14:30:00" |
 | `"time ago"` | Relative time | "2 hours ago" |
 | `"time ago 2d"` | Relative with fallback | "Yesterday" or "Dec 01, 2023" |

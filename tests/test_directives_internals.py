@@ -96,8 +96,8 @@ def test_format_dt_named_formats():
     dt = _parse(datetime(2020, 12, 31, 10, 21, 30))
     # default -> "%d %b %Y %H:%M:%S"
     assert _format_dt(dt, "default") == "31 Dec 2020 10:21:30"
-    # iso -> "%Y-%b-%dT%H:%M:%S"
-    assert _format_dt(dt, "iso") == "2020-Dec-31T10:21:30"
+    # iso -> "%Y-%m-%dT%H:%M:%S" (real ISO 8601, numeric month)
+    assert _format_dt(dt, "iso") == "2020-12-31T10:21:30"
     # js / javascript -> "%a %b %d %Y %H:%M:%S" (2020-12-31 was a Thursday)
     assert _format_dt(dt, "js") == "Thu Dec 31 2020 10:21:30"
     assert _format_dt(dt, "javascript") == "Thu Dec 31 2020 10:21:30"

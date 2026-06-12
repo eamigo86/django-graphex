@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time as t
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -217,9 +216,13 @@ def _format_time_ago(
             if timezone.is_naive(current):
                 now = current
             else:
+                # Use Django's get_current_timezone() so that DST transitions
+                # are handled correctly.  The old code used
+                # ``time.timezone`` (a fixed, DST-unaware UTC offset) which
+                # produced a wrong delta during daylight-saving periods.
                 now = timezone.localtime(
                     current,
-                    timezone=timezone.get_fixed_timezone(-int(t.timezone / 60)),
+                    timezone=timezone.get_current_timezone(),
                 )
 
         original_dt = dt
@@ -267,7 +270,8 @@ def _format_dt(dt: Any, format: str = "default") -> str | None:
         return _format_time_ago(dt, full=True, ago_in=True, two_days=True)
 
     if format_lowered == "iso":
-        return dt.strftime("%Y-%b-%dT%H:%M:%S")
+        # ISO 8601: YYYY-MM-DDTHH:MM:SS  (numeric month, no locale abbreviation)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
 
     if format_lowered in ("js", "javascript"):
         return dt.strftime("%a %b %d %Y %H:%M:%S")

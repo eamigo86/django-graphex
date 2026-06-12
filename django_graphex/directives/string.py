@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from typing import TYPE_CHECKING, Any
 
 from django.utils.text import slugify
@@ -10,6 +11,7 @@ from graphene.utils.str_converters import to_camel_case, to_snake_case
 from graphql import (
     GraphQLArgument,
     GraphQLBoolean,
+    GraphQLError,
     GraphQLInt,
     GraphQLNonNull,
     GraphQLString,
@@ -20,6 +22,17 @@ from .base import BaseExtraGraphQLDirective
 
 if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo
+
+# Maximum allowed total width or precision in a @number format spec.
+# This bounds the maximum output string length per field and prevents
+# memory exhaustion from client-supplied specs like "1000000.5f".
+_NUMBER_FORMAT_MAX_WIDTH = 100
+
+# Regex to extract the numeric width and precision from a Python format spec.
+# Matches optional fill/align, sign, grouping option, width, .precision.
+_FORMAT_SPEC_NUMBERS_RE = re.compile(
+    r"[^0-9]*(?P<width>[0-9]*)(?:\.(?P<precision>[0-9]+))?"
+)
 
 __all__ = (
     "DefaultGraphQLDirective",
@@ -138,9 +151,9 @@ class Base64GraphQLDirective(BaseExtraGraphQLDirective):
             return None
 
         op = args.get("op") or "encode"
-        data = _as_str(value).encode("ascii")
+        data = _as_str(value).encode("utf-8")
         if op == "decode":
-            return base64.urlsafe_b64decode(data).decode("ascii")
+            return base64.urlsafe_b64decode(data).decode("utf-8")
         return base64.urlsafe_b64encode(data).decode("ascii")
 
 
@@ -181,8 +194,28 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
 
         Returns:
             The value formatted with the given Python format spec.
+
+        Raises:
+            GraphQLError: When the format spec's width or precision exceeds
+                ``_NUMBER_FORMAT_MAX_WIDTH`` (prevents memory DoS via
+                client-supplied specs like ``"1000000.5f"``).
         """
-        return format(float(value or 0), args.get("as"))
+        spec = args.get("as") or ""
+        m = _FORMAT_SPEC_NUMBERS_RE.match(spec)
+        if m:
+            raw_width = m.group("width")
+            raw_precision = m.group("precision")
+            width = int(raw_width) if raw_width else 0
+            precision = int(raw_precision) if raw_precision else 0
+            if width > _NUMBER_FORMAT_MAX_WIDTH or precision > _NUMBER_FORMAT_MAX_WIDTH:
+                raise GraphQLError(
+                    f"@number format spec width/precision must not exceed "
+                    f"{_NUMBER_FORMAT_MAX_WIDTH}; got {spec!r}"
+                )
+        try:
+            return format(float(value or 0), spec)
+        except (ValueError, TypeError) as exc:
+            raise GraphQLError(f"Invalid @number format spec {spec!r}: {exc}") from exc
 
 
 class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
