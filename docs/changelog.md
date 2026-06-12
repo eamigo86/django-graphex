@@ -12,10 +12,92 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 1.2.0
+
+### Added
+
+- **`DjangoUnionType`** — a base for a GraphQL `Union` whose members are explicit
+  `DjangoObjectType`s (`Meta.gfk_types = (MemberAType, MemberBType)`). Its main
+  use is exposing a `GenericForeignKey` as a **typed** union instead of the flat
+  `GenericForeignKeyType`, so clients select per-member fields via inline
+  fragments. A GFK owner opts in with `Meta.gfk_unions = {"<fk_name>": TheUnion}`.
+  Members are explicitly enumerated — the `django_content_type` table is never
+  queried to discover them. A mandatory, provided `resolve_type` maps each row to
+  its registered type (raising a descriptive `TypeError` on an unregistered
+  model). Declaration order is load-bearing: **members → union → owner LAST**; a
+  mis-ordered declaration logs a `WARNING` and falls back to `GenericForeignKeyType`.
+  See [Types — DjangoUnionType](usage/types.md#djangouniontype-typed-genericforeignkey-targets).
+- **`DjangoInterfaceType`** — a base for a GraphQL `Interface` that shares field
+  declarations across multiple `DjangoObjectType` implementors (via the existing
+  `Meta.interfaces` kwarg). Schema-level field sharing only — no new fetch path.
+  See [Types — DjangoInterfaceType](usage/types.md#djangointerfacetype-shared-fields-across-types).
+- **Per-content-type column narrowing for union GFKs (Django 5.0+)** — when
+  `OPTIMIZE_ONLY_FIELDS` is on, a union-typed GFK is prefetched via
+  `GenericPrefetch` with **one narrowed queryset per content type**, each
+  `.only()`-restricted to that member's selected columns, batched across all
+  parents (no N+1). On **Django < 5.0** the optimizer degrades gracefully to a
+  single bare full-load `Prefetch` — it never imports `GenericPrefetch`, never
+  narrows columns, and is never slower than before. Each distinct content type
+  yields exactly one queryset; two members over one shared table are collapsed
+  (merged `.only()` columns). See
+  [Types — per-content-type narrowing](usage/types.md#per-content-type-column-narrowing-django-50).
+
+### Fixed
+
+- **Inline-fragment type-condition guard.** The query optimizer no longer
+  descends into an inline fragment whose `type_condition` names a *different*
+  concrete type than the one being walked, preventing field mis-attribution
+  against the wrong model's relation map. Inert before this release (no
+  polymorphic output types were exposed) but the correctness foundation the
+  union/interface routing above builds on.
+- **Nested writes now expose object inputs in the GraphQL schema.** A
+  `DjangoModelMutation` (or `DjangoModelType`) declaring `Meta.nested_fields`
+  reused the model's generic cached input type, so its nested relations were
+  exposed as `[ID!]` and a client could not create children inline — even though
+  the backend supported it. The mutation now builds a distinct nested-aware input
+  (e.g. `PostCreateNestedCommentsType` with `comments: [CommentCreateInput!]`)
+  while a sibling generic mutation on the same model keeps its `[ID!]` input
+  unchanged, regardless of declaration order.
+
+### Documentation
+
+- Optimizer docs brought up to date with the 1.1.0 internals: documented
+  `AnnotatedField`, the `OPTIMIZE_NESTED_PAGINATION` / `OPTIMIZER_SAFE_MODE` /
+  `OPTIMIZE_ANNOTATED_FIELDS` settings, GenericForeignKey prefetch, and the
+  safe-mode degrade. Corrected the nested-list pagination section, which
+  previously said nested lists were sliced "in memory" — by default they are now
+  sliced DB-side via `ROW_NUMBER()` window functions.
+
 ## 1.1.0
 
 ### Added
 
+- **`OPTIMIZER_SAFE_MODE`** (default `False`) — opt-in coarse fail-safe: any
+  exception raised inside the queryset-optimization block degrades the whole
+  resolve to the un-optimized queryset and logs a `WARNING` instead of surfacing
+  a 500. Default is fail-loud. See
+  [Query Optimization — OPTIMIZER_SAFE_MODE](usage/query-optimization.md#optimizer_safe_mode-fail-safe-degrade).
+- **GenericForeignKey / GenericRelation prefetch** — `GenericForeignKey` targets
+  are added to `prefetch_related` (the parent's content-type-id and object-id
+  columns are retained so the second query resolves) and `GenericRelation`
+  reverse sides are prefetched and `.only()`-narrowed (their content-type /
+  object-id attnames kept). See
+  [Query Optimization](usage/query-optimization.md).
+- **`OPTIMIZE_NESTED_PAGINATION`** (default `True`) — DB-side
+  `ROW_NUMBER() OVER (PARTITION BY fk)` window slicing for reverse-FK nested
+  paginated lists (`LimitOffsetGraphqlPagination` / `PageGraphqlPagination`),
+  fetching only the requested page rows per parent in a single query, with a
+  filter-aware `totalCount` carried per partition. Set `False` to fall back to
+  the in-memory order+slice path. See
+  [Nested Lists — Performance (N+1)](usage/nested-lists.md#performance-n1).
+- **`AnnotatedField`** — a public, declarative GraphQL field backed by a Django
+  ORM annotation
+  (e.g. `comment_count = AnnotatedField(graphene.Int, Count("comments"))`),
+  injected only when the field is selected in the query; gated by
+  `OPTIMIZE_ANNOTATED_FIELDS` (default `True`). Forward-FK relations whose child
+  selection contains an `AnnotatedField` are auto-promoted from `select_related`
+  to `prefetch_related` (annotations can't cross a SQL JOIN). See
+  [Fields — AnnotatedField](usage/fields.md#annotatedfield).
 - **Per-field optimize hook** (`optimize_<field>`) on parent graphene types.
   Declare an `optimize_<snake_field>(queryset, info, **kwargs)` static method on
   the parent `DjangoObjectType` to customize the child queryset for a specific

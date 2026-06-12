@@ -126,8 +126,15 @@ before; now it is a list type):
     3. `SELECT COUNT(*) … FROM author` (the root `totalCount`)
 
     Without the optimizer the nested `posts` would run **one query per author**
-    (N+1). The filter is pushed into a single `Prefetch`, and `limit` / `offset` /
-    `ordering` are applied in memory over that cache — so adding authors never adds
+    (N+1). The filter is pushed into a single `Prefetch`, and by default
+    (`OPTIMIZE_NESTED_PAGINATION=True`) the page is sliced **DB-side** via a
+    `ROW_NUMBER() OVER (PARTITION BY author_id)` window inside that single
+    `Prefetch` — so each author's posts query fetches **only the requested page
+    rows**, not every post then sliced in memory. `totalCount` is the
+    per-partition filtered `COUNT(*)` carried on the row. (When the window path
+    declines, the same single `Prefetch` is reused and `limit` / `offset` /
+    `ordering` are applied in memory over its cache — see
+    [Performance (N+1)](#performance-n1) below.) Adding authors never adds
     queries. See [Query Optimization](query-optimization.md).
 
 !!! note "Deeper lists under a filtered nested list"
@@ -166,34 +173,80 @@ default paginator (`DJANGO_GRAPHEX["DEFAULT_PAGINATION_CLASS"]`, or
 
 ## Performance (N+1)
 
-Nested lists are designed to keep the [query optimizer](query-optimization.md)'s
-N+1 elimination intact — **even when filtered**:
+!!! tip "Hub"
+    This is the deep reference for DB-side window slicing. For a worked example
+    with the query and the constant-query-count payoff, see
+    [Query Optimization → DB-side nested pagination](query-optimization.md#db-side-nested-pagination-window-slicing).
 
-- An **unfiltered** nested list is read from the parent query's
-  `prefetch_related` cache and **paginated/ordered in memory** — so a list of *P*
-  parents costs **one** prefetch query for the whole level (not one per parent).
-- A **filtered** nested list is fetched with a single **filtered `Prefetch`**
-  (`Prefetch(lookup, queryset=<filtered queryset>)`) for **all** parents — also
-  **one** query for the whole level, with pagination/ordering applied in memory
-  over that cache. `totalCount` is the filtered set size.
+Nested lists are designed to keep the [query optimizer](query-optimization.md)'s
+N+1 elimination intact — **even when filtered or paginated** — and to fetch only
+the requested page rows from the database where possible:
+
+- **DB-side window slicing is on by default**, controlled by
+  `DJANGO_GRAPHEX["OPTIMIZE_NESTED_PAGINATION"]` (default `True` — see
+  [Settings](settings.md#queryset-optimization-n1)).
+- A **windowable** reverse-FK nested list (one paginated with a
+  `LimitOffsetGraphqlPagination` or `PageGraphqlPagination` paginator) is sliced
+  **DB-side**. A single `Prefetch` for **all** parents adds two window functions
+  to its queryset and filters to the page window:
+
+  ```python
+  _gqx_rn    = Window(RowNumber(), partition_by=[F("author_id")], order_by=...)
+  _gqx_total = Window(Count("*"),  partition_by=[F("author_id")])
+  # ...then .filter(_gqx_rn__gt=offset, _gqx_rn__lte=offset + limit)
+  ```
+
+  This is **one** query for the whole level (not one per parent) that fetches
+  **only each parent's page rows**, with a **filter-aware `totalCount`** read
+  from `_gqx_total` per partition.
+- This works for both **filtered** and **unfiltered** nested lists.
 
 So a query like `authors { results { posts(filter: { title: { icontains: "x" } }) { results(limit: 5) { … } totalCount } } }`
 runs a **constant** number of queries regardless of how many authors are
 returned.
 
+!!! note "When window slicing falls back to in-memory"
+    When any applicability check fails, the optimizer still uses **one**
+    `Prefetch` for the whole level but applies pagination/ordering **in memory**
+    over its prefetch cache (the exact pre-Phase-C behavior). The DB-side window
+    path declines — and the in-memory order+slice path is used — when:
+
+    - `DJANGO_GRAPHEX["OPTIMIZE_NESTED_PAGINATION"] = False` (global opt-out);
+    - the paginator is `CursorGraphqlPagination` (opaque keyset), unbounded, or
+      a negative page number;
+    - the relation is **many-to-many** or a **reverse M2M**;
+    - the child sub-selection has a **relation-traversing aggregate**
+      annotation (its `GROUP BY` cannot compose with `Window()`);
+    - any **ordering term is not a concrete column** on the child;
+    - the sub-selection is a **full-load** (an unknown/computed/property leaf);
+    - the filter (or an `optimize_<field>` hook) forces `.distinct()`;
+    - the relation was **not prefetched at all** — e.g.
+      `DJANGO_GRAPHEX["OPTIMIZE_QUERYSET"] = False`, which uses a per-parent
+      database query instead.
+
 !!! note "Fallback"
     The per-parent database query is used only when the relation was **not**
     prefetched — e.g. with `DJANGO_GRAPHEX["OPTIMIZE_QUERYSET"] = False`.
-    Pagination of a filtered nested list still loads its filtered set into memory
-    (no per-parent SQL `LIMIT`); for very large filtered sets that is the
-    trade-off of the in-memory approach.
+    In any in-memory fallback the filtered/paginated set is loaded into memory
+    (no per-parent SQL `LIMIT`); for very large sets that is the trade-off of the
+    in-memory approach. Setting `OPTIMIZE_NESTED_PAGINATION` back to its default
+    `True` restores DB-side slicing wherever the relation is windowable.
 
 !!! note "Always-on, uniform shape"
-    This shape is applied to **all** related list fields (and mutation outputs);
-    there is no flag. Clients read nested lists exactly like root lists:
+    The uniform `results` + `totalCount` **shape** is applied to **all** related
+    list fields (and mutation outputs); that shape has **no flag**. What *is*
+    configurable is the **slicing strategy**: DB-side window slicing is the
+    default and is governed by `OPTIMIZE_NESTED_PAGINATION` (default `True`),
+    which falls back to in-memory order+slice when set `False` or when a relation
+    is not windowable. Clients always read nested lists exactly like root lists:
     `field { results { … } totalCount }`.
 
 ## Per-field optimize hook
+
+!!! tip "Hub"
+    This is the authoritative reference for the hook. The
+    [query-optimization hub](query-optimization.md#per-field-optimize-hook) has a
+    short summary alongside the other optimization features.
 
 For cases where you need to customize the child queryset for a specific nested
 list field — for example to add a `select_related`, a custom annotation, or a
@@ -216,6 +269,16 @@ class AuthorType(DjangoObjectType):
         # Compose freely on top of the optimizer-built queryset.
         return queryset.select_related("category").order_by("-views", "id")
 ```
+
+!!! warning "`select_related(<fk>)` in a hook needs the client to select that relation"
+    The optimizer applies its `.only()` column narrowing to the child queryset
+    **after** the hook runs. If the client does **not** also select `category`,
+    `category_id` is deferred and `select_related("category")` raises a Django
+    `FieldError`. So a bare `select_related(<fk>)` is only safe when the relation
+    is part of the GraphQL selection; otherwise compose with an ordering instead
+    (e.g. `queryset.order_by("-id", "title")`). The example playground uses the
+    ordering form for exactly this reason — see `AuthorType.optimize_posts` in
+    `examples/playground/blog/schema.py`.
 
 **Rules**
 

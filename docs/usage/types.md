@@ -418,6 +418,133 @@ When a create/update fails validation, the mutation returns `ok: false` and an
 - `non_field_errors` is surfaced with an empty `field` (or just the nested model
   name).
 
+## `DjangoUnionType` — typed GenericForeignKey targets
+
+`DjangoUnionType` is the base for a GraphQL `Union` whose members are concrete
+`DjangoObjectType`s. Its primary use is to expose a Django
+`GenericForeignKey` (GFK) as a **typed** union instead of the flat
+`GenericForeignKeyType` scalar — so a client can select concrete fields per
+member with inline fragments (`... on AccountType { balance }`).
+
+Members are **explicitly enumerated** via `Meta.gfk_types`; the library never
+inspects the `django_content_type` table to discover them.
+
+### Required declaration order
+
+The declaration order is **load-bearing** (no lazy string forward-references in
+this release):
+
+1. Declare the **member** `DjangoObjectType`s first.
+2. Declare the `DjangoUnionType` with `Meta.gfk_types = (MemberAType, MemberBType)`.
+3. Declare the **owner** `DjangoObjectType` LAST, naming its GFK union via
+   `Meta.gfk_unions = {"<gfk_field_name>": TheUnion}`.
+
+```python
+from django_graphex import DjangoObjectType, DjangoUnionType
+
+# 1. Members first.
+class AccountType(DjangoObjectType):
+    class Meta:
+        model = Account
+
+class InvoiceType(DjangoObjectType):
+    class Meta:
+        model = Invoice
+
+# 2. The union, enumerating members explicitly.
+class CommentTargetUnion(DjangoUnionType):
+    class Meta:
+        gfk_types = (AccountType, InvoiceType)
+
+# 3. The GFK owner LAST, mapping the GFK field name -> the union.
+class CommentType(DjangoObjectType):
+    class Meta:
+        model = Comment              # has `target = GenericForeignKey(...)`
+        gfk_unions = {"target": CommentTargetUnion}
+```
+
+Querying it:
+
+```graphql
+{
+  comments {
+    target {
+      __typename
+      ... on AccountType { balance }
+      ... on InvoiceType { amount }
+    }
+  }
+}
+```
+
+If the union is declared **after** the owner (mis-ordered), the converter emits
+a `WARNING` and falls back to the flat `GenericForeignKeyType` — the schema
+still builds, but the field is not a union.
+
+### `resolve_type` is mandatory (and provided)
+
+`DjangoUnionType.resolve_type(instance, info)` maps a plain Django row to its
+registered `DjangoObjectType` via `registry.get_type_for_model(type(instance))`.
+It **raises** a descriptive `TypeError` if a row's model has no registered type
+(rather than returning `None`, which would surface GraphQL's opaque
+"Abstract type must resolve to an Object type"). You do not override it.
+
+### Per-content-type column narrowing (Django 5.0+)
+
+!!! tip "Optimizer hub"
+    For how this fits the rest of the N+1 optimizer (with the inline-fragment
+    query), see
+    [Query Optimization → Typed GenericForeignKey unions](query-optimization.md#typed-genericforeignkey-unions-per-content-type-narrowing).
+
+When `OPTIMIZE_ONLY_FIELDS` is on **and** Django is **5.0 or newer**, the
+optimizer routes the union GFK through a
+[`GenericPrefetch`](https://docs.djangoproject.com/en/stable/ref/contrib/contenttypes/#django.contrib.contenttypes.prefetch.GenericPrefetch),
+building **one narrowed queryset per content type** — each `.only()`-restricted
+to exactly the columns that member's inline fragment selected (e.g. the
+`Account` queryset fetches `balance`, the `Invoice` queryset fetches `amount`).
+This batches all parents into one query per content type (no N+1).
+
+- **Django < 5.0**: the optimizer **degrades** gracefully to a single bare,
+  full-load `Prefetch` — it never imports `GenericPrefetch`, never narrows
+  columns, and is never slower than the pre-union behaviour.
+- **Per-content-type uniqueness**: each distinct content type gets exactly one
+  queryset. Two members backed by the **same** concrete table (e.g. proxy
+  models) are collapsed into one queryset whose `.only()` columns are the union
+  of both members' selections. Divergent per-row narrowing on a single shared
+  table is out of scope; that bucket safely degrades to full-load.
+
+## `DjangoInterfaceType` — shared fields across types
+
+`DjangoInterfaceType` is the base for a GraphQL `Interface` that declares fields
+shared by several `DjangoObjectType` implementors (typically backed by a shared
+abstract Django base model). It is **schema-level field sharing only** — it
+introduces no new queryset/fetch path; each implementor's own model drives its
+column narrowing.
+
+```python
+import graphene
+from django_graphex import DjangoInterfaceType, DjangoObjectType
+
+class ProductInterface(DjangoInterfaceType):
+    name = graphene.String()
+    class Meta:
+        pass
+
+class BookType(DjangoObjectType):
+    class Meta:
+        model = Book
+        interfaces = (ProductInterface,)
+
+class MagazineType(DjangoObjectType):
+    class Meta:
+        model = Magazine
+        interfaces = (ProductInterface,)
+```
+
+Implementors declare membership with the existing graphene `Meta.interfaces`
+kwarg. Like `DjangoUnionType`, `DjangoInterfaceType` provides a mandatory
+`resolve_type` that maps each row to its concrete implementor.
+
 ## Limiting query shape: `max_deep` & `complexity`
 
 Every type above accepts two optional `Meta` options that protect your API from

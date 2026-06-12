@@ -9,7 +9,7 @@ your resolvers.
   introspection in production.
 - [`AuthenticatedFieldsMiddleware`](#field-level-authentication) — require an
   authenticated user on selected top-level fields.
-- [`DjangoGraphQLSchema`](#declaring-private-fields-extragraphqlschema) — declare
+- [`DjangoGraphQLSchema`](#declaring-private-fields-djangographqlschema) — declare
   the private fields next to the schema, with no settings duplication.
 
 !!! tip "Looking for depth & cost limits?"
@@ -79,7 +79,7 @@ A blocked field returns:
 
 The private field set is resolved from, in order:
 
-1. the registry attached by [`DjangoGraphQLSchema`](#declaring-private-fields-extragraphqlschema)
+1. the registry attached by [`DjangoGraphQLSchema`](#declaring-private-fields-djangographqlschema)
    (recommended), or
 2. `DJANGO_GRAPHEX["PROTECTED_FIELDS"]` — a list of top-level field names,
    for plain `graphene.Schema` setups.

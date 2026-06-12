@@ -33,6 +33,14 @@ class Registry:
         #: enum name -> enum type (its own namespace; never clashes with types).
         self._enums: dict[str, Any] = {}
         self._registry_directives: dict[str, Any] = {}
+        #: GraphQL type name -> DjangoUnionType subclass. Parallel to ``_types``
+        #: (which is (model, for_input)-keyed); a union has no single model so it
+        #: cannot live in ``_types`` without breaking that invariant.
+        self._union_types: dict[str, Any] = {}
+        #: GraphQL type name -> DjangoInterfaceType subclass.
+        self._interface_types: dict[str, Any] = {}
+        #: interface GraphQL name -> list of implementor DjangoObjectTypes.
+        self._interface_implementors: dict[str, list] = {}
 
     def register_enum(self, key: str, enum: Any) -> None:
         """Register an enum type with the given key.
@@ -85,7 +93,20 @@ class Registry:
             TypeError: if "cls" is not a DjangoObjectType/DjangoInputObjectType.
             ValueError: if the type's registry does not match this instance.
         """
-        from .types import DjangoInputObjectType, DjangoObjectType
+        from .types import (
+            DjangoInputObjectType,
+            DjangoInterfaceType,
+            DjangoObjectType,
+            DjangoUnionType,
+        )
+
+        # Polymorphic bases have no single (model, for_input) key; route them to
+        # their parallel stores and return BEFORE the _types write so the
+        # (model, for_input) invariant of ``_types`` is preserved.
+        if isinstance(cls, type) and issubclass(
+            cls, (DjangoUnionType, DjangoInterfaceType)
+        ):
+            return self.register_polymorphic(cls)
 
         if not issubclass(cls, (DjangoInputObjectType, DjangoObjectType)):
             raise TypeError(
@@ -111,6 +132,128 @@ class Registry:
             The registered GraphQL type, or None if absent.
         """
         return self._types.get((model, for_input))
+
+    # -- polymorphic (union / interface) types ----------------------------- #
+    def register_polymorphic(self, cls: Any) -> None:
+        """Register a DjangoUnionType or DjangoInterfaceType by its name.
+
+        Routes a union to ``_union_types`` and an interface to
+        ``_interface_types``, keyed by ``cls._meta.name`` (set by graphene's
+        ``__init_subclass_with_meta__``). Never writes ``_types``.
+
+        Idempotent by construction: a same-name re-registration overwrites the
+        existing entry harmlessly. Both the auto-registration in the base's
+        ``__init_subclass_with_meta__`` and a manual ``register()`` land here, so
+        the second is a benign overwrite.
+
+        Args:
+            cls: the polymorphic type to register.
+
+        Raises:
+            ValueError: if ``cls`` is bound to a different registry. This mirrors
+                the object-type ``register()`` guard so a union/interface built
+                in registry A cannot be silently registered into registry B
+                (which would leave its ``resolve_type`` consulting A's ``_types``).
+            TypeError: if ``cls`` is neither a DjangoUnionType nor a
+                DjangoInterfaceType, so direct misuse fails loud instead of
+                silently dropping the class from every store.
+        """
+        from .types import DjangoInterfaceType, DjangoUnionType
+
+        # Mirror the object-type registry-match guard (see ``register`` above):
+        # a polymorphic type bound to another registry must not be written here,
+        # otherwise its ``resolve_type`` would consult the wrong ``_types``.
+        bound_registry = getattr(cls, "_dgx_registry", None)
+        if bound_registry is not None and bound_registry is not self:
+            raise ValueError("Registry for a polymorphic type must match.")
+
+        name = cls._meta.name
+        if issubclass(cls, DjangoUnionType):
+            self._union_types[name] = cls
+        elif issubclass(cls, DjangoInterfaceType):
+            self._interface_types[name] = cls
+        else:
+            raise TypeError(
+                "register_polymorphic expects a DjangoUnionType or "
+                "DjangoInterfaceType, received {!r}.".format(cls.__name__)
+            )
+
+    def get_model_for_type_name(self, name: str) -> type[Model] | None:
+        """Resolve a GraphQL output-type name to its Django model.
+
+        Reverse-scans ``_types`` for the OUTPUT entry (``for_input`` is None)
+        whose value's ``_meta.name`` matches; input entries and the polymorphic
+        stores are ignored so a union name never resolves to a member model.
+
+        Args:
+            name: the GraphQL type name to resolve.
+
+        Returns:
+            The Django model class, or None if no output type matches.
+        """
+        for (model, for_input), cls in self._types.items():
+            if for_input is None and getattr(cls._meta, "name", None) == name:
+                return model
+        return None
+
+    def get_member_models(self, polymorphic_type: Any) -> list[type[Model]]:
+        """Return the ordered member models of a union or interface.
+
+        For a union: the explicitly enumerated ``_dgx_member_models`` (stable
+        order, never derived from ContentType rows).
+        For an interface: the models of every registered output DjangoObjectType
+        whose ``Meta.interfaces`` includes this interface. This is a PURE QUERY
+        HELPER with no MVP runtime consumer — it is only meaningful once the
+        schema is fully built and all implementors are registered.
+
+        Args:
+            polymorphic_type: a DjangoUnionType or DjangoInterfaceType subclass.
+
+        Returns:
+            The list of member/implementor models.
+        """
+        from .types import DjangoUnionType
+
+        if isinstance(polymorphic_type, type) and issubclass(
+            polymorphic_type, DjangoUnionType
+        ):
+            return list(getattr(polymorphic_type, "_dgx_member_models", ()))
+
+        implementors: list[type[Model]] = []
+        for (model, for_input), cls in self._types.items():
+            if for_input is not None:
+                continue
+            interfaces = getattr(cls._meta, "interfaces", ()) or ()
+            if polymorphic_type in interfaces:
+                implementors.append(model)
+        return implementors
+
+    def get_gfk_union(self, model: type[Model], fk_name: str) -> Any | None:
+        """Return the companion DjangoUnionType for a model's GFK, if declared.
+
+        Looks up the registered OUTPUT DjangoObjectType for ``model`` and reads
+        ``_meta.gfk_unions.get(fk_name)``. The returned union must itself be
+        registered (its name present in ``_union_types``); a union referenced by
+        an owning type's Meta but absent from the registry (mis-ordered
+        declaration) yields None so the caller can warn and fall back.
+
+        Args:
+            model: the GFK-owning Django model.
+            fk_name: the GenericForeignKey field name.
+
+        Returns:
+            The registered companion union, or None.
+        """
+        owner = self.get_type_for_model(model)
+        if owner is None:
+            return None
+        gfk_unions = getattr(owner._meta, "gfk_unions", None) or {}
+        union = gfk_unions.get(fk_name)
+        if union is None:
+            return None
+        if getattr(union._meta, "name", None) not in self._union_types:
+            return None
+        return union
 
     # -- list (object) types: one canonical "list" entry per model --------- #
     def register_list_type(self, model: type[Model], cls: Any) -> None:

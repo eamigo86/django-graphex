@@ -100,9 +100,21 @@ DJANGO_GRAPHEX = {
     #   "MAX_QUERY_COST": 200,
     #   "EXPOSE_QUERY_COST": True,
     # ---------------------------------------------------------------------------
-    # Queryset optimization (N+1 avoidance). Set False to feel the difference:
-    #   "OPTIMIZE_QUERYSET": False,
-    #   "OPTIMIZE_ONLY_FIELDS": False,
+    # Queryset optimization (N+1 avoidance). All five default to the values shown
+    # below, so the optimizer is fully ON out of the box. They are listed here
+    # (commented) so you can flip any of them and feel the difference — e.g. set
+    # OPTIMIZE_QUERYSET=False and watch the SQL panel / assertNumQueries explode.
+    #   "OPTIMIZE_QUERYSET": True,           # master switch: select_related /
+    #                                        # prefetch_related from the selection.
+    #   "OPTIMIZE_ONLY_FIELDS": True,        # .only() column narrowing (root span
+    #                                        # + inside each Prefetch child).
+    #   "OPTIMIZE_NESTED_PAGINATION": True,  # DB-side ROW_NUMBER() window slicing
+    #                                        # of paginated nested lists.
+    #   "OPTIMIZE_ANNOTATED_FIELDS": True,   # selection-driven AnnotatedField
+    #                                        # .alias()/.annotate() injection.
+    #   "OPTIMIZER_SAFE_MODE": False,        # False = fail loud (default); True =
+    #                                        # degrade to the un-optimized base on
+    #                                        # any optimizer exception and log a WARNING.
     # ---------------------------------------------------------------------------
     # Response caching. Flip CACHE_ACTIVE to True to enable query-result caching:
     #   "CACHE_ACTIVE": True,

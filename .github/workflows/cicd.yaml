@@ -79,6 +79,9 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
+        # Unique cache key per matrix combo: jobs sharing a key race to save it
+        # (only one can reserve it -> "Unable to reserve cache" warnings).
+        cache-suffix: ${{ matrix.toxenv }}
 
     - name: Run tests
       run: uvx --with tox-uv tox -e ${{ matrix.toxenv }}
@@ -106,6 +109,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
+        cache-suffix: base-install
 
     - name: Assert channels is absent without the extra
       run: uvx --with tox-uv tox -e base-install
@@ -125,6 +129,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
+        cache-suffix: lint-and-security
 
     - name: Run code quality checks
       run: uvx --with tox-uv tox -e quality
@@ -147,6 +152,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
+        cache-suffix: coverage
 
     - name: Run tests with coverage
       run: |
@@ -212,6 +218,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
+        cache-suffix: publish
 
     - name: Determine target repository
       id: target_repo
@@ -340,6 +347,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
       with:
         enable-cache: true
+        cache-suffix: deploy-docs
 
     - name: Install dependencies
       run: uv sync

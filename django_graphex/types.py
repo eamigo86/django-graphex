@@ -9,7 +9,18 @@ from typing import TYPE_CHECKING, Any
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager, QuerySet
 from django.utils.functional import SimpleLazyObject
-from graphene import ID, Argument, Boolean, Field, InputField, Int, List, ObjectType
+from graphene import (
+    ID,
+    Argument,
+    Boolean,
+    Field,
+    InputField,
+    Int,
+    Interface,
+    List,
+    ObjectType,
+    Union,
+)
 from graphene.types.base import BaseOptions
 from graphene.types.inputobjecttype import InputObjectType, InputObjectTypeContainer
 from graphene.types.utils import yank_fields_from_attrs
@@ -44,6 +55,8 @@ __all__ = (
     "DjangoInputObjectType",
     "DjangoListObjectType",
     "DjangoModelType",
+    "DjangoUnionType",
+    "DjangoInterfaceType",
 )
 
 
@@ -65,6 +78,10 @@ class DjangoObjectOptions(BaseOptions):
     max_deep = None
     #: Cost weight of a field returning this type (None = default weight of 1).
     complexity = None
+    #: GFK field name -> companion DjangoUnionType (Track 2). None when the type
+    #: declares no GFK unions; the GFK converter falls back to
+    #: GenericForeignKeyType in that case.
+    gfk_unions = None
 
 
 class DjangoModelTypeOptions(BaseOptions):
@@ -113,6 +130,7 @@ class DjangoObjectType(ObjectType):
         interfaces: tuple[Any, ...] = (),
         max_deep: int | None = None,
         complexity: int | None = None,
+        gfk_unions: dict | None = None,
         **options,
     ) -> None:
         """Initialize the subclass with meta options for a Django object type.
@@ -131,6 +149,10 @@ class DjangoObjectType(ObjectType):
                 by "DepthLimitValidationRule"; "None" means no per-type limit.
             complexity: Cost weight of a field returning this type, used by
                 "CostLimitValidationRule"; "None" means the default weight (1).
+            gfk_unions: Optional mapping of GenericForeignKey field name to a
+                companion "DjangoUnionType" (Track 2). When set, the GFK
+                converter emits a typed Union field for that FK instead of the
+                flat "GenericForeignKeyType".
             **options: Extra options forwarded to the parent implementation.
         """
         assert is_valid_django_model(model), (
@@ -159,6 +181,7 @@ class DjangoObjectType(ObjectType):
         _meta.fields = django_fields
         _meta.max_deep = max_deep
         _meta.complexity = complexity
+        _meta.gfk_unions = dict(gfk_unions) if gfk_unions else None
 
         super().__init_subclass_with_meta__(
             _meta=_meta, interfaces=interfaces, **options
@@ -229,6 +252,162 @@ class DjangoObjectType(ObjectType):
             return cls._meta.model.objects.get(pk=id)
         except cls._meta.model.DoesNotExist:
             return None
+
+
+def _resolve_polymorphic_type(cls: Any, instance: Any, info: ResolveInfo) -> Any:
+    """Map a plain Django model instance to its registered DjangoObjectType.
+
+    Shared by "DjangoUnionType" and "DjangoInterfaceType". Each prefetched /
+    resolved row is a CONCRETE member model, so ``type(instance)`` yields the
+    concrete class and the registry maps it to the right output type.
+
+    Args:
+        cls: the union or interface class whose registry is consulted.
+        instance: the Django model instance being resolved.
+        info: GraphQL resolve info for the current request (unused; kept for the
+            graphene ``resolve_type`` signature).
+
+    Returns:
+        The registered "DjangoObjectType" subclass for ``type(instance)``.
+
+    Raises:
+        TypeError: if no "DjangoObjectType" is registered for the instance's
+            model. This is intentional: a silent None would surface later as the
+            opaque "Abstract type must resolve to an Object type" runtime error.
+    """
+    registry = getattr(cls, "_dgx_registry", None) or get_global_registry()
+    object_type = registry.get_type_for_model(type(instance))
+    if object_type is None:
+        raise TypeError(
+            "{cls}.resolve_type: no DjangoObjectType registered for "
+            "{model!r}. Every member/implementor model must have a "
+            "DjangoObjectType registered in the same registry.".format(
+                cls=cls.__name__, model=type(instance).__name__
+            )
+        )
+    return object_type
+
+
+class DjangoUnionType(Union):
+    """A GraphQL Union over explicitly enumerated DjangoObjectType members.
+
+    Members are declared via ``Meta.gfk_types`` (a sequence of DjangoObjectType
+    subclasses); they are NEVER discovered from the ContentType table.
+    ``resolve_type`` maps a resolved Django row to its registered
+    DjangoObjectType. ``Meta.possible_types`` is intentionally NOT set (it would
+    collide with the DjangoObjectType ``is_type_of`` discrimination).
+    """
+
+    class Meta:
+        """Meta configuration for DjangoUnionType."""
+
+        abstract = True
+
+    @classmethod
+    def __init_subclass_with_meta__(
+        cls,
+        gfk_types: tuple[Any, ...] = (),
+        registry: Registry | None = None,
+        _meta: Any = None,
+        **options,
+    ) -> None:
+        """Initialize the union with its explicit member types.
+
+        Args:
+            gfk_types: the DjangoObjectType members of this union (>= 1).
+            registry: registry to self-register in; defaults to the global one.
+            _meta: optional pre-built meta options object.
+            **options: extra options forwarded to ``graphene.Union``.
+        """
+        if not registry:
+            registry = get_global_registry()
+
+        member_types = tuple(gfk_types)
+        assert member_types, (
+            "{} must declare Meta.gfk_types with at least one "
+            "DjangoObjectType member.".format(cls.__name__)
+        )
+
+        cls._dgx_member_models = tuple(t._meta.model for t in member_types)
+        cls._dgx_registry = registry
+
+        # graphene.Union requires a non-empty ``types``; feed the members in.
+        super().__init_subclass_with_meta__(types=member_types, _meta=_meta, **options)
+
+        # After super() so ``cls._meta.name`` is set.
+        registry.register_polymorphic(cls)
+
+    @classmethod
+    def resolve_type(cls, instance: Any, info: ResolveInfo) -> Any:
+        """Resolve a Django instance to its registered DjangoObjectType.
+
+        Args:
+            instance: the resolved Django model instance.
+            info: GraphQL resolve info for the current request.
+
+        Returns:
+            The matching "DjangoObjectType" subclass.
+
+        Raises:
+            TypeError: if the instance's model has no registered type.
+        """
+        return _resolve_polymorphic_type(cls, instance, info)
+
+
+class DjangoInterfaceType(Interface):
+    """A GraphQL Interface enabling shared field declarations across types.
+
+    Concrete "DjangoObjectType" subclasses declare membership via the existing
+    ``Meta.interfaces`` kwarg. Field sharing is structural (schema-level) only;
+    this MVP introduces no new queryset fetch path for interfaces.
+    ``resolve_type`` follows the same model→registry→DjangoObjectType contract
+    as "DjangoUnionType". ``Meta.possible_types`` is intentionally NOT set.
+    """
+
+    class Meta:
+        """Meta configuration for DjangoInterfaceType."""
+
+        abstract = True
+
+    @classmethod
+    def __init_subclass_with_meta__(
+        cls,
+        registry: Registry | None = None,
+        _meta: Any = None,
+        **options,
+    ) -> None:
+        """Initialize the interface and self-register it.
+
+        Args:
+            registry: registry to self-register in; defaults to the global one.
+            _meta: optional pre-built meta options object.
+            **options: extra options forwarded to ``graphene.Interface``.
+        """
+        if not registry:
+            registry = get_global_registry()
+
+        cls._dgx_registry = registry
+
+        super().__init_subclass_with_meta__(_meta=_meta, **options)
+
+        # After super() so ``cls._meta.name`` is set.
+        registry.register_polymorphic(cls)
+
+    @classmethod
+    def resolve_type(cls, instance: Any, info: ResolveInfo) -> Any:
+        """Resolve a Django instance to its registered DjangoObjectType.
+
+        Args:
+            instance: the resolved Django model instance.
+            info: GraphQL resolve info for the current request.
+
+        Returns:
+            The matching "DjangoObjectType" subclass.
+
+        Raises:
+            TypeError: if the instance's model has no registered type.
+        """
+        return _resolve_polymorphic_type(cls, instance, info)
 
 
 class DjangoInputObjectType(InputObjectType):
@@ -703,12 +882,46 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
             global_arguments.update({operation: OrderedDict()})
 
             if operation != "delete":
-                input_type = registry.get_type_for_model(model, for_input=operation)
-
-                if not input_type:
-                    input_type = factory_type(
-                        "input", DjangoInputObjectType, operation, **factory_kwargs
+                nested_map = nested_fields if isinstance(nested_fields, dict) else {}
+                if nested_map:
+                    # Mirror of the DjangoModelMutation gate (see mutation.py):
+                    # a nested ``DjangoModelType`` builds a DISTINCT input with
+                    # ``skip_registry=True`` so the generic ``(model, operation)``
+                    # slot stays pristine for plain hosts and the converter's
+                    # child lookups. The helpers live in mutation.py; importing
+                    # them lazily here avoids the module-load circular import
+                    # (mutation.py imports this module).
+                    from .mutation import (
+                        _ensure_child_generic_input,
+                        _nested_input_name,
                     )
+
+                    for child_model in nested_map.values():
+                        _ensure_child_generic_input(child_model, operation, registry)
+                    input_type = factory_type(
+                        "input",
+                        DjangoInputObjectType,
+                        operation,
+                        **{
+                            **factory_kwargs,
+                            "name": _nested_input_name(
+                                model,
+                                operation,
+                                nested_map,
+                                only_fields,
+                                exclude_fields,
+                                include_fields,
+                            ),
+                            "skip_registry": True,
+                        },
+                    )
+                else:
+                    input_type = registry.get_type_for_model(model, for_input=operation)
+
+                    if not input_type:
+                        input_type = factory_type(
+                            "input", DjangoInputObjectType, operation, **factory_kwargs
+                        )
 
                 global_arguments[operation].update(
                     {input_field_name: Argument(input_type, required=True)}

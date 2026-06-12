@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from functools import singledispatch
@@ -868,6 +869,37 @@ def convert_generic_foreign_key_to_object(
             return GenericForeignKeyInputType(
                 description="Input Type for a GenericForeignKey field",
                 required=required and input_flag == "create",
+            )
+
+        # Track 2: when the owning DjangoObjectType declares a companion union
+        # for THIS GFK via ``Meta.gfk_unions``, emit a typed Union field instead
+        # of the flat GenericForeignKeyType. Members come ONLY from the union's
+        # explicit ``Meta.gfk_types`` -- the ContentType table is never queried.
+        union_cls = registry.get_gfk_union(model, field.name)
+        if union_cls is not None:
+            return Field(
+                union_cls,
+                description="Typed union for a GenericForeignKey field",
+                required=required and input_flag == "create",
+            )
+
+        # The owner declared gfk_unions for this FK but the union is not
+        # registered (mis-ordered declaration: the owner's Meta was evaluated
+        # before the union was registered). Warn and fall back to the flat type
+        # so a mis-ordered declaration is observable, not a silent regression.
+        owner = registry.get_type_for_model(model)
+        owner_gfk_unions = getattr(getattr(owner, "_meta", None), "gfk_unions", None)
+        if owner_gfk_unions and field.name in owner_gfk_unions:
+            warnings.warn(
+                "{owner}: Meta.gfk_unions declares a union for GFK "
+                "{fk!r} but that union is not registered; falling back to "
+                "GenericForeignKeyType. Declare member ObjectTypes, then the "
+                "DjangoUnionType, then the owning type's Meta.gfk_unions "
+                "(in that order).".format(
+                    owner=getattr(owner, "__name__", model.__name__),
+                    fk=field.name,
+                ),
+                stacklevel=2,
             )
 
         _type = registry.get_type_for_enum(key)
