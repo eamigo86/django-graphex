@@ -23,11 +23,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import graphene
-import pytest
-from django.db import connection
 from django.test import TestCase, override_settings
-from django.test.utils import CaptureQueriesContext
 from graphql import (
     GraphQLArgument,
     GraphQLField,
@@ -44,18 +40,20 @@ from graphql.language.ast import FragmentDefinitionNode, OperationDefinitionNode
 from django_graphex import (
     CostLimitValidationRule,
     DepthLimitValidationRule,
-    DjangoListObjectType,
-    DjangoObjectType,
 )
 from django_graphex.cost import analyze_cost
-from django_graphex.utils import _collect_only_fields, _relation_field_map, recursive_params
+from django_graphex.utils import (
+    _collect_only_fields,
+    _relation_field_map,
+    recursive_params,
+)
 
-from .models import Author, Post
-
+from .models import Post
 
 # --------------------------------------------------------------------------- #
 # Schema helpers                                                                 #
 # --------------------------------------------------------------------------- #
+
 
 def _build_cost_schema():
     """companies(limit) -> properties(limit) -> owner -> name."""
@@ -134,6 +132,7 @@ def _only(query_str, model=Post):
 # COST: @skip/@include on FieldNode                                              #
 # ============================================================================ #
 
+
 class CostSkipIncludeFieldTest(TestCase):
     """@skip / @include on plain fields affect cost calculation."""
 
@@ -187,6 +186,7 @@ class CostSkipIncludeFieldTest(TestCase):
 # COST: @skip/@include on InlineFragmentNode                                     #
 # ============================================================================ #
 
+
 class CostSkipIncludeInlineFragmentTest(TestCase):
     @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
     def test_inline_fragment_skip_if_true_excluded(self):
@@ -236,6 +236,7 @@ class CostSkipIncludeInlineFragmentTest(TestCase):
 # ============================================================================ #
 # COST: @skip/@include on FragmentSpreadNode                                     #
 # ============================================================================ #
+
 
 class CostSkipIncludeFragmentSpreadTest(TestCase):
     @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
@@ -290,6 +291,7 @@ class CostSkipIncludeFragmentSpreadTest(TestCase):
 # COST: variable-driven directives — conservative fallback                       #
 # ============================================================================ #
 
+
 class CostVariableDirectiveTest(TestCase):
     @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
     def test_variable_skip_unresolved_at_validation_is_conservative(self):
@@ -325,12 +327,15 @@ class CostVariableDirectiveTest(TestCase):
         q = "{ companies(limit: 10) @skip(if: $flag) { properties(limit: 5) { owner { name } } } }"
         errors = validate(schema, parse(q), [CostLimitValidationRule])
         # Conservative: field counted → rule fires (cost > 1)
-        self.assertTrue(len(errors) > 0, "Expected cost-limit error for conservative variable skip")
+        self.assertTrue(
+            len(errors) > 0, "Expected cost-limit error for conservative variable skip"
+        )
 
 
 # ============================================================================ #
 # DEPTH: @skip/@include on FieldNode                                             #
 # ============================================================================ #
+
 
 class DepthSkipIncludeFieldTest(TestCase):
     def test_skip_if_true_on_nested_field_passes_depth_limit(self):
@@ -351,18 +356,23 @@ class DepthSkipIncludeFieldTest(TestCase):
         schema = _build_depth_schema()
         q = "{ root { child { child { child @skip(if: false) { name } } } } }"
         errors = _depth_errors(schema, q)
-        self.assertGreater(len(errors), 0, "Expected depth limit error for @skip(if:false)")
+        self.assertGreater(
+            len(errors), 0, "Expected depth limit error for @skip(if:false)"
+        )
 
     def test_include_if_true_still_triggers_depth_limit(self):
         schema = _build_depth_schema()
         q = "{ root { child { child { child @include(if: true) { name } } } } }"
         errors = _depth_errors(schema, q)
-        self.assertGreater(len(errors), 0, "Expected depth limit error for @include(if:true)")
+        self.assertGreater(
+            len(errors), 0, "Expected depth limit error for @include(if:true)"
+        )
 
 
 # ============================================================================ #
 # DEPTH: @skip/@include on InlineFragmentNode                                    #
 # ============================================================================ #
+
 
 class DepthSkipIncludeInlineFragmentTest(TestCase):
     def test_inline_fragment_skip_if_true_avoids_depth_violation(self):
@@ -406,6 +416,7 @@ class DepthSkipIncludeInlineFragmentTest(TestCase):
 # ============================================================================ #
 # DEPTH: @skip/@include on FragmentSpreadNode                                    #
 # ============================================================================ #
+
 
 class DepthSkipIncludeFragmentSpreadTest(TestCase):
     def test_fragment_spread_skip_if_true_avoids_depth_violation(self):
@@ -451,6 +462,7 @@ class DepthSkipIncludeFragmentSpreadTest(TestCase):
 # DEPTH: variable-driven conservative fallback                                   #
 # ============================================================================ #
 
+
 class DepthVariableDirectiveTest(TestCase):
     @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_DEPTH": 2})
     def test_variable_skip_at_validation_time_is_conservative(self):
@@ -459,12 +471,15 @@ class DepthVariableDirectiveTest(TestCase):
         # depth 3 > max 2 → should still error when $flag is unbound
         q = "{ root { child { child { child @skip(if: $flag) { name } } } } }"
         errors = _depth_errors(schema, q)
-        self.assertGreater(len(errors), 0, "Expected depth-limit error for conservative variable skip")
+        self.assertGreater(
+            len(errors), 0, "Expected depth-limit error for conservative variable skip"
+        )
 
 
 # ============================================================================ #
 # OPTIMIZER: recursive_params — @skip/@include affects select/prefetch building #
 # ============================================================================ #
+
 
 class OptimizerRecursiveParamsSkipTest(TestCase):
     """@skip/@include on fields in the optimizer walker."""
@@ -550,6 +565,7 @@ class OptimizerRecursiveParamsFragmentSkipTest(TestCase):
 # OPTIMIZER: _collect_only_fields — @skip/@include affects .only() set          #
 # ============================================================================ #
 
+
 class OptimizerOnlyFieldsSkipTest(TestCase):
     """Skipped fields must not appear in the .only() projection."""
 
@@ -587,7 +603,5 @@ class OptimizerOnlyFieldsSkipTest(TestCase):
         self.assertNotIn("title", only)
 
     def test_inline_fragment_include_if_false_field_excluded_from_only(self):
-        only = _only(
-            "{ p { ... on Post @include(if: false) { title } } }"
-        )
+        only = _only("{ p { ... on Post @include(if: false) { title } } }")
         self.assertNotIn("title", only)
