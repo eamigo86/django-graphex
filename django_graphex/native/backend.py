@@ -3,7 +3,8 @@
 DRF-free validate/save/output for a Django model, selected by ``Meta.model``.
 Reuses the model->Pydantic schema in :mod:`.fields`, validates with Pydantic,
 performs the DB-level checks Pydantic can't (FK existence, uniqueness,
-``unique_together``), persists scalars + FK + M2M, and serializes output.
+``unique_together``, and ``Meta.constraints`` :class:`~django.db.models.UniqueConstraint`
+entries), persists scalars + FK + M2M, and serializes output.
 """
 
 from __future__ import annotations
@@ -59,10 +60,22 @@ class PydanticBackend(SerializerBackend):
 
     # -- helpers --------------------------------------------------------------- #
     def _fk_fields(self) -> dict[str, models.ForeignKey]:
+        # Exclude multi-table-inheritance parent_link fields: they are injected
+        # by Django's MTI machinery and are not part of the user-supplied payload.
+        # The type converter already guards against parent_link on the output side;
+        # this mirrors that guard on the input side.
+        #
+        # Parent links are identified via _meta.parents: the dict maps each parent
+        # model class to the OneToOneField that links child -> parent table.
+        parent_link_fields: frozenset[models.Field] = frozenset(
+            link for link in self.model._meta.parents.values() if link is not None
+        )
         return {
             f.name: f
             for f in self.model._meta.get_fields()
-            if isinstance(f, (models.ForeignKey, models.OneToOneField)) and f.concrete
+            if isinstance(f, (models.ForeignKey, models.OneToOneField))
+            and f.concrete
+            and f not in parent_link_fields
         }
 
     def _m2m_names(self) -> set[str]:
@@ -119,6 +132,78 @@ class PydanticBackend(SerializerBackend):
                     errors.setdefault("non_field_errors", []).append(
                         "The fields {} must make a unique set.".format(", ".join(group))
                     )
+
+        # Validate Meta.constraints UniqueConstraint entries.
+        #
+        # Unconditional constraints (no `condition` and no `expressions`) are
+        # checked here so violations surface as structured ErrorType errors
+        # instead of propagating as an IntegrityError 500.
+        #
+        # Constraints with `condition` (partial/conditional unique) or with
+        # `expressions` (functional unique) are skipped: replicating their
+        # predicate cheaply is not feasible, so they remain DB-enforced.
+        #
+        # Single-field constraints whose field already carries `unique=True` are
+        # also skipped to avoid emitting a duplicate error message (the per-field
+        # unique loop above already handled those fields).
+        unique_field_names: set[str] = {
+            f.name
+            for f in self.model._meta.get_fields()
+            if getattr(f, "unique", False) and not getattr(f, "primary_key", False)
+        }
+        checked_field_sets: set[frozenset[str]] = {
+            frozenset([name]) for name in unique_field_names if name in payload
+        }
+        for constraint in self.model._meta.constraints:
+            if not isinstance(constraint, models.UniqueConstraint):
+                continue
+            # Skip conditional/partial constraints — cannot replicate cheaply.
+            if constraint.condition is not None:
+                continue
+            # Skip functional/expression-based constraints.
+            if constraint.expressions:
+                continue
+
+            field_set = frozenset(constraint.fields)
+
+            # Skip if a field-level unique check already covers this exact set
+            # (avoids double errors for single-field constraints where the field
+            # also has unique=True).
+            if field_set in checked_field_sets:
+                continue
+
+            # For single-field constraints: if the field has unique=True the
+            # per-field loop above already emitted an error — skip here too.
+            if len(field_set) == 1:
+                (field_name,) = field_set
+                if field_name in unique_field_names and field_name in payload:
+                    continue
+
+            lookup = {}
+            for name in constraint.fields:
+                value = payload.get(
+                    name, getattr(instance, name, None) if instance else None
+                )
+                lookup[name] = value
+            if all(v is not None for v in lookup.values()):
+                qs = self.model._default_manager.filter(**lookup)
+                if instance is not None:
+                    qs = qs.exclude(pk=instance.pk)
+                if qs.exists():
+                    field_list = ", ".join(constraint.fields)
+                    if len(constraint.fields) == 1:
+                        (field_name,) = constraint.fields
+                        errors.setdefault(field_name, []).append(
+                            "{} with this {} already exists.".format(
+                                self.model.__name__, field_name
+                            )
+                        )
+                    else:
+                        errors.setdefault("non_field_errors", []).append(
+                            "The fields {} must make a unique set.".format(field_list)
+                        )
+                    checked_field_sets.add(field_set)
+
         return errors
 
     # -- backend API ----------------------------------------------------------- #
