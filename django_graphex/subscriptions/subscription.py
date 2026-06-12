@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from channels.layers import get_channel_layer
+from django.core.cache import caches
 from graphene import (
     ID,
     Argument,
@@ -40,27 +41,53 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Channel ownership registry
+# Channel ownership registry — Django-cache backed
 # ---------------------------------------------------------------------------
-# Maps channel_name → session_key.  Populated by the consumer on connect;
-# cleared on disconnect.  Tests may call register_channel() directly to inject
-# entries without going through the consumer.
-_CHANNEL_REGISTRY: dict[str, str] = {}
+# Maps channel_name → session_key via the Django "default" cache.
+# Key format: "dgx:subchan:<channel_name>"
+# TTL: 24 h (refreshed on re-register).
+#
+# With LocMemCache (the Django default) the semantics are identical to the
+# previous in-process dict — no shared state across workers.
+# With a shared cache backend (Redis / Memcached) the guard works correctly
+# across multiple HTTP + WebSocket workers.
+#
+# Tests may call register_channel() directly to inject entries without going
+# through the consumer.  The conftest fixture clears the relevant cache keys
+# between tests.
+
+_CHANNEL_CACHE_PREFIX = "dgx:subchan:"
+_CHANNEL_CACHE_TTL = 86_400  # 24 hours in seconds
+
+
+def _channel_cache_key(channel_name: str) -> str:
+    """Build the cache key for *channel_name*.
+
+    Args:
+        channel_name: The Channels channel name.
+
+    Returns:
+        The namespaced cache key.
+    """
+    return f"{_CHANNEL_CACHE_PREFIX}{channel_name}"
 
 
 def register_channel(channel_name: str, *, session_key: str) -> None:
     """Record that *channel_name* is owned by *session_key*.
 
-    Called by ``GraphqlAPIDemultiplexer.connect`` (and by test helpers that
-    bypass the consumer).  Subsequent ``_subscribe`` calls for this channel
-    must supply the same ``_session_key`` to be accepted.
+    Stores the ownership token in Django's ``"default"`` cache with a 24-hour
+    TTL (refreshed on re-register).  Called by
+    ``GraphqlAPIDemultiplexer.connect`` (and by test helpers that bypass the
+    consumer).  Subsequent ``_subscribe`` calls for this channel must supply the
+    same ``_session_key`` to be accepted.
 
     Args:
         channel_name: The Channels channel name as sent in the handshake frame.
         session_key: An opaque per-session identifier (session key, user pk
             formatted as a string, or any stable per-connection token).
     """
-    _CHANNEL_REGISTRY[channel_name] = session_key
+    cache = caches["default"]
+    cache.set(_channel_cache_key(channel_name), session_key, _CHANNEL_CACHE_TTL)
 
 
 def unregister_channel(channel_name: str) -> None:
@@ -69,11 +96,14 @@ def unregister_channel(channel_name: str) -> None:
     Args:
         channel_name: The channel name to remove.
     """
-    _CHANNEL_REGISTRY.pop(channel_name, None)
+    cache = caches["default"]
+    cache.delete(_channel_cache_key(channel_name))
 
 
 def _validate_channel_ownership(channel_name: str, session_key: str | None) -> None:
     """Raise ``GraphQLError`` when *channel_name* is not owned by *session_key*.
+
+    Reads the ownership token from Django's ``"default"`` cache.
 
     Policy: fail-closed — an unknown (never-registered) channel is also
     rejected so an attacker cannot enumerate channels by guessing.
@@ -91,8 +121,12 @@ def _validate_channel_ownership(channel_name: str, session_key: str | None) -> N
     Raises:
         GraphQLError: When ownership cannot be confirmed.
     """
-    owner = _CHANNEL_REGISTRY.get(channel_name)
-    if owner is None:
+    cache = caches["default"]
+    # cache.get returns None for both a missing key and an explicitly stored None.
+    # We use a sentinel to distinguish "key not present" from "key stored as empty".
+    _MISSING = object()
+    owner = cache.get(_channel_cache_key(channel_name), default=_MISSING)
+    if owner is _MISSING:
         raise GraphQLError(
             "channel_id is not registered; connect a WebSocket consumer first."
         )
@@ -578,7 +612,10 @@ class Subscription(ObjectType):
             # Validate that the calling session owns the presented channel_id
             # before any group_add or group_send is performed.  This prevents
             # a client from hijacking another user's channel by guessing its ID.
-            _validate_channel_ownership(channel_name, session_key)
+            # The guard is skipped when SUBSCRIPTIONS_CHANNEL_GUARD=False (escape
+            # hatch for multi-worker deployments without a shared cache backend).
+            if graphql_api_settings.SUBSCRIPTIONS_CHANNEL_GUARD:
+                _validate_channel_ownership(channel_name, session_key)
 
             # Authorize the subscribe (may raise -> surfaced as ok=False).
             if operation == "subscribe":

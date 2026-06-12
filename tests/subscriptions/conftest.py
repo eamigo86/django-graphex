@@ -14,18 +14,18 @@ channels = pytest.importorskip("channels")
 def _fresh_channel_layer():
     """Give every test an isolated in-memory channel layer instance.
 
-    Also clears the channel ownership registry so tests do not interfere
-    with each other.
+    Also clears the channel ownership cache entries so tests do not interfere
+    with each other.  Uses the Django cache API so the fixture works regardless
+    of which cache backend is configured (LocMemCache in tests, Redis in prod).
     """
     from channels.layers import channel_layers
-
-    from django_graphex.subscriptions.subscription import _CHANNEL_REGISTRY
+    from django.core.cache import caches
 
     channel_layers.backends = {}
-    _CHANNEL_REGISTRY.clear()
+    caches["default"].clear()
     yield
     channel_layers.backends = {}
-    _CHANNEL_REGISTRY.clear()
+    caches["default"].clear()
 
 
 @pytest.fixture

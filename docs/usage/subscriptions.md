@@ -467,16 +467,45 @@ argument belongs to the requesting session **before** any
    ownership token derived from the Django session key
    (`request.session.session_key`).  Anonymous / sessionless connections
    register with an empty string token.
-2. The HTTP subscribe mutation must supply `_session_key` (injected
+2. The registration is stored in Django's **`"default"` cache** under the key
+   `dgx:subchan:<channel_name>` with a 24-hour TTL (refreshed on reconnect,
+   deleted on disconnect).
+3. The HTTP subscribe mutation must supply `_session_key` (injected
    automatically by the middleware or your own view).  If the presented token
    does not match the stored owner, the subscription is rejected with a
    `GraphQLError` and `ok: False`.
-3. On disconnect the channel entry is removed so a reconnected socket with the
+4. On disconnect the cache entry is removed so a reconnected socket with the
    same channel name cannot be claimed by a stale session.
 
 **Fail-closed policy:** an unknown (never-registered) channel is also rejected,
 so an attacker that guesses or intercepts a channel name cannot subscribe to it
 before the legitimate owner has connected.
+
+**Multi-worker deployments (important):** The guard reads and writes the
+Django `"default"` cache.  With `LocMemCache` (Django's built-in in-memory
+backend) each process has its own isolated cache, so if the WebSocket `connect`
+request is handled by a different worker than the HTTP `subscribe` request the
+guard will see the channel as unregistered and reject it.
+
+To make the guard work correctly across workers you **must** configure a
+**shared** cache backend (Redis or Memcached) in `CACHES["default"]`:
+
+```python
+# settings.py — Redis example
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379",
+    }
+}
+```
+
+If a shared cache cannot be provisioned, set
+`DJANGO_GRAPHEX["SUBSCRIPTIONS_CHANNEL_GUARD"] = False` to bypass the guard
+entirely.  This disables the channel-hijack protection — do it only as a
+temporary measure.  The failure mode with the guard **on** and no shared cache
+is a loud rejection (`ok: False`, `error: "channel_id is not registered"`),
+never a silent data leak.
 
 **Custom consumers:** if you subclass `GraphqlAPIDemultiplexer` and override
 `connect`, call `register_channel(self.channel_name, session_key=<token>)` and
