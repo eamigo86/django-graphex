@@ -451,7 +451,7 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
         old_obj = get_Object_or_None(cls._meta.model, pk=pk)
         if old_obj:
             old_obj.delete()
-            old_obj.id = pk
+            setattr(old_obj, old_obj._meta.pk.attname, pk)
             return cls.perform_mutate(old_obj, info)
         else:
             return cls.get_errors(not_found_error(cls._meta.model, pk))

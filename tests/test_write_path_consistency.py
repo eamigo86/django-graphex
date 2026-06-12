@@ -6,6 +6,7 @@ Covers:
 (b) _unwrap_enums uses isinstance(value, enum.Enum) — no substring match.
 (c) perform_mutate behavioural pin (DjangoModelMutation returns in-memory obj).
 """
+
 from __future__ import annotations
 
 import enum
@@ -20,10 +21,10 @@ from django_graphex.types import DjangoModelType
 
 from .models import CustomPKProduct
 
-
 # ---------------------------------------------------------------------------
 # Helper: minimal GraphQL resolve info stub
 # ---------------------------------------------------------------------------
+
 
 def _info():
     return SimpleNamespace(context=SimpleNamespace(META={}, FILES={}))
@@ -32,6 +33,7 @@ def _info():
 # ---------------------------------------------------------------------------
 # Mutations for the tests
 # ---------------------------------------------------------------------------
+
 
 class CustomPKProductMutation(DjangoModelMutation):
     """Mutation for a model whose PK is ``slug`` (not ``id``)."""
@@ -60,11 +62,9 @@ class CustomPKDeleteTest(TestCase):
     def test_delete_returns_correct_pk_for_custom_pk_model(self):
         """After delete, the returned object must carry the original pk value
         under the real PK attname (``slug``), not under ``id``."""
-        obj = CustomPKProduct.objects.create(slug="widget-42", title="Widget 42")
+        CustomPKProduct.objects.create(slug="widget-42", title="Widget 42")
 
-        result = CustomPKProductMutation.delete(
-            None, _info(), **{"id": "widget-42"}
-        )
+        result = CustomPKProductMutation.delete(None, _info(), **{"id": "widget-42"})
 
         self.assertTrue(result.ok, msg=getattr(result, "errors", None))
         returned_obj = getattr(result, result._meta.output_field_name)
@@ -83,7 +83,7 @@ class CustomPKDeleteTest(TestCase):
 
     def test_types_delete_returns_correct_pk_for_custom_pk_model(self):
         """DjangoModelType.delete() also uses the correct pk attname."""
-        obj = CustomPKProduct.objects.create(slug="gadget-99", title="Gadget 99")
+        CustomPKProduct.objects.create(slug="gadget-99", title="Gadget 99")
 
         result = CustomPKProductType.delete(None, _info(), **{"id": "gadget-99"})
 
