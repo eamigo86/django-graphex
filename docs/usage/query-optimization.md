@@ -447,6 +447,49 @@ per-request construction, and `aliases=` applies `.alias()` before `.annotate()`
 See [Fields → AnnotatedField](fields.md#annotatedfield) for the full signature,
 arguments table and the forward-FK promotion note.
 
+## @skip and @include directives
+
+The optimizer honors `@skip` and `@include` on every selection node — fields,
+inline fragments, and fragment spreads. A selection that is excluded is **not
+added to `select_related` / `prefetch_related`** and its columns are **not
+included in `.only()`**. This prevents over-fetching related rows that the client
+will never use.
+
+```graphql
+query GetPosts($loadAuthor: Boolean!) {
+  posts {
+    results {
+      title
+      # When $loadAuthor is false the optimizer skips the author join entirely
+      author @include(if: $loadAuthor) {
+        name
+      }
+      # tags are also skipped when @skip(if: true)
+      tags @skip(if: true) {
+        label
+      }
+    }
+  }
+}
+```
+
+In this query, when `$loadAuthor` is `false` the `author` FK is not added to
+`select_related` and `author_id` is not included in the `.only()` projection.
+When `tags` has `@skip(if: true)` the `tags` M2M is not added to
+`prefetch_related`.
+
+!!! note "Variable-driven directives"
+
+    The optimizer runs at execution time when all variables are already bound, so
+    `@skip(if: $flag)` and `@include(if: $show)` are always resolved exactly.
+
+!!! note "Output-formatting directives do not affect fetch planning"
+
+    Custom application-level directives such as `@date` and `@number` are
+    *output-formatting* directives: they transform the resolved value of an
+    already-fetched field. They have **no effect** on the optimizer's
+    select/prefetch/only planning.
+
 ## Custom resolvers
 
 If your query type defines `resolve_<field>` that returns a **`QuerySet`**, the
