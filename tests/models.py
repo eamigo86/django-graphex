@@ -130,6 +130,28 @@ class Track2AccountProxy(Track2Account):
         proxy = True
 
 
+# A GFK-union member model carrying a FORWARD FK head. Used to exercise the
+# member-level ``child_select`` merge in ``_collect_gfk_union_buckets``: when a
+# union member's narrowed plan pulls a forward-FK relation (here ``customer``),
+# ``_compute_child_only`` populates ``PrefetchPlan.child_select`` with that head,
+# so two split inline fragments over this member merge their select_related heads.
+class Track2Order(DummyModel):
+    customer = models.ForeignKey(
+        Track2Account, related_name="orders", on_delete=models.CASCADE
+    )
+    # A SECOND forward FK so two split fragments over this member can pull
+    # DISTINCT select_related heads (``customer`` vs ``invoice``); that divergence
+    # is what makes the member-level ``child_select`` merge actually APPEND.
+    invoice = models.ForeignKey(
+        Track2Invoice,
+        related_name="orders",
+        null=True,
+        on_delete=models.SET_NULL,
+    )
+    total = models.IntegerField(default=0)
+    ref = models.CharField(max_length=50, default="")
+
+
 # GFK owner for the union-converter test. A standalone model (not the phase-d
 # ``Comment`` above, which other optimizer tests depend on) carrying a single
 # GenericForeignKey ``target`` whose explicit members are the Track2 members.

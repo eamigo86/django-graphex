@@ -1632,8 +1632,11 @@ def _collect_gfk_union_buckets(
         # FILTER first (the shipped boolean guard), then RESOLVE.  At a union we
         # pass NO current identity, so the guard descends every typed fragment;
         # the RESOLVE step is what restricts each bucket to a real member model.
+        # The FILTER stage is kept for symmetry / forward-compat with future
+        # identity-aware routing, but with no identity passed the guard is
+        # ALWAYS True here, so this skip is structurally unreachable at a union.
         if not _inline_fragment_applies(frag):
-            continue
+            continue  # pragma: no cover
         target = _resolve_fragment_target(frag, sub_gql, schema)
         if target is None:
             # Unresolvable / interface / foreign type -> SKIP this bucket.  It

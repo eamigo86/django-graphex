@@ -39,6 +39,7 @@ from .models import (
     Track2GfkComment,
     Track2Invoice,
     Track2Magazine,
+    Track2Order,
 )
 
 # Per-content-type GenericPrefetch narrowing is Django 5.0+; the helpers that
@@ -819,3 +820,360 @@ def test_get_member_models_interface_skips_input_entries_and_non_implementors():
 
     members = reg.get_member_models(ProductInterface)
     assert members == [Track2Book]
+
+
+# =========================================================================== #
+# DjangoUnionType / DjangoInterfaceType — DEFAULT (global) registry path        #
+# =========================================================================== #
+def test_django_union_type_self_registers_into_global_registry_by_default():
+    """A ``DjangoUnionType`` declared with NO ``registry=`` binds to and registers
+    into the GLOBAL registry (the ``if not registry: get_global_registry()`` path).
+
+    Every other test injects an isolated ``Registry`` for hygiene, so the default
+    branch (types.py:322-323) is otherwise never walked. Here we deliberately omit
+    ``registry`` and assert the union landed in the global registry's
+    ``_union_types`` AND that its ``_dgx_registry`` IS the global singleton.
+
+    TEETH: if the default branch were dropped (or bound to a fresh throwaway
+    registry instead of the global one), ``_dgx_registry is get_global_registry()``
+    would fail and the union would be absent from the global ``_union_types`` —
+    breaking GFK-union resolution for any schema built without an explicit
+    registry. Cleanup pops the unique-named entry so no other test sees it.
+    """
+    from django_graphex import DjangoObjectType
+    from django_graphex.registry import get_global_registry
+
+    global_reg = get_global_registry()
+
+    # Members must be DjangoObjectTypes; bind THEM to the global registry too so
+    # the union's member-model resolution is internally consistent.
+    class _GlobalDefaultAccountType(DjangoObjectType):
+        class Meta:
+            model = Track2Account
+
+    class _GlobalDefaultUnion(DjangoUnionType):
+        class Meta:
+            gfk_types = (_GlobalDefaultAccountType,)
+            # NOTE: registry deliberately OMITTED -> default global path.
+
+    union_name = _GlobalDefaultUnion._meta.name
+    try:
+        # Bound to the global singleton, not some other registry.
+        assert _GlobalDefaultUnion._dgx_registry is global_reg
+        # And self-registered under its name in the global union store.
+        assert global_reg._union_types.get(union_name) is _GlobalDefaultUnion
+    finally:
+        global_reg._union_types.pop(union_name, None)
+        # Also drop the member object-type entries we leaked into the global reg.
+        for key in list(global_reg._types):
+            if global_reg._types[key] is _GlobalDefaultAccountType:
+                global_reg._types.pop(key, None)
+
+
+def test_django_interface_type_self_registers_into_global_registry_by_default():
+    """A ``DjangoInterfaceType`` declared with NO ``registry=`` binds to and
+    registers into the GLOBAL registry (types.py:386-387 default path).
+
+    TEETH: mirror of the union test. Drop the default branch and the interface's
+    ``_dgx_registry`` would not be the global singleton, and it would be absent
+    from the global ``_interface_types`` store — so a schema built without an
+    explicit registry could not resolve the interface. Cleanup pops the entry.
+    """
+    from django_graphex.registry import get_global_registry
+
+    global_reg = get_global_registry()
+
+    class _GlobalDefaultInterface(DjangoInterfaceType):
+        name = graphene.String()
+
+        class Meta:
+            # NOTE: registry deliberately OMITTED -> default global path.
+            pass
+
+    iface_name = _GlobalDefaultInterface._meta.name
+    try:
+        assert _GlobalDefaultInterface._dgx_registry is global_reg
+        assert global_reg._interface_types.get(iface_name) is _GlobalDefaultInterface
+    finally:
+        global_reg._interface_types.pop(iface_name, None)
+        global_reg._interface_implementors.pop(iface_name, None)
+
+
+# =========================================================================== #
+# _inline_fragment_applies — graceful degradation on PARTIAL type identity      #
+# =========================================================================== #
+class _FakeMeta:
+    """A stand-in for a graphene ``_meta`` with controllable identity sources."""
+
+    def __init__(self, name=None, interfaces=()):
+        self.name = name
+        self.interfaces = interfaces
+        self.model = None
+
+
+class _FakeGrapheneInstance:
+    """A graphene-type stand-in that is an INSTANCE (not a class).
+
+    ``getattr(instance, "__name__", None)`` returns ``None`` for a plain instance,
+    so this lets us drive the ``__name__``-absent FALSE branch while still
+    supplying a ``_meta`` (so the walker reaches the later guards).
+    """
+
+    def __init__(self, meta):
+        self._meta = meta
+
+
+def test_inline_fragment_descends_when_meta_name_absent_but_dunder_name_present():
+    """``_meta.name`` absent (falsy) but ``__name__`` present: the ``__name__``
+    fallback still supplies identity; a condition matching it descends (True).
+
+    This walks the ``if gql_name:`` FALSE branch (725->728): ``_meta`` exists but
+    its ``name`` is None, so no GraphQL-name identity is added there — yet the
+    class ``__name__`` (line 729-731) still provides one.
+
+    TEETH: if the ``__name__`` collection were the ONLY identity source and the
+    ``_meta.name`` guard mistakenly added a falsy/None name, the accepted-name set
+    would be polluted; here we prove the falsy ``_meta.name`` is correctly skipped
+    while ``__name__`` alone drives the positive match.
+    """
+    from django_graphex.utils import _inline_fragment_applies
+
+    class _NamedClass:
+        # A real class so ``__name__`` is defined, but its ``_meta.name`` is None.
+        _meta = _FakeMeta(name=None)
+
+    node = _inline_fragment_node("_NamedClass")
+    assert _inline_fragment_applies(node, current_graphene_type=_NamedClass) is True
+
+
+def test_inline_fragment_descends_when_dunder_name_absent_but_meta_name_present():
+    """``__name__`` absent but ``_meta.name`` present: the GraphQL-name identity is
+    supplied by ``_meta.name``; a condition matching it descends (True).
+
+    Walks the ``if gt_name:`` FALSE branch (730->737): the graphene type is an
+    INSTANCE (no ``__name__``), so ``gt_name`` is falsy and nothing is added there
+    — but ``_meta.name`` (line 724-726) already provided the identity.
+
+    TEETH: if the ``_meta.name`` collection were dropped, an instance-shaped
+    graphene type (no ``__name__``) would have NO identity and a matching
+    ``... on Foo`` could not descend. Pinning True guards the ``_meta.name`` path.
+    """
+    from django_graphex.utils import _inline_fragment_applies
+
+    graphene_type = _FakeGrapheneInstance(_FakeMeta(name="FooGqlName"))
+    node = _inline_fragment_node("FooGqlName")
+    assert _inline_fragment_applies(node, current_graphene_type=graphene_type) is True
+
+
+def test_inline_fragment_skips_unnamed_interface_in_interfaces_loop():
+    """An interface in ``Meta.interfaces`` with NO usable name is skipped, so it
+    contributes no accepted identity; a non-matching foreign condition still SKIPS.
+
+    Walks the ``if iface_name:`` FALSE branch (742->737): the interface object has
+    neither ``_meta.name`` nor ``__name__``, so ``iface_name`` is None and is NOT
+    added to ``accepted_names``. The graphene type's own ``_meta.name`` still gives
+    a reliable GraphQL identity, so a condition matching NEITHER the type name nor
+    the (unnamed) interface SKIPS (False).
+
+    TEETH: if a None ``iface_name`` were wrongly added to ``accepted_names``, the
+    set could gain a junk entry; worse, if the loop crashed on the unnamed iface,
+    the walker would blow up. We prove the unnamed interface is silently ignored
+    and the foreign-type SKIP still fires.
+    """
+    from django_graphex.utils import _inline_fragment_applies
+
+    # An interface with no name identity at all (instance, no __name__; meta.name
+    # None). It must be ignored by the interfaces loop.
+    unnamed_iface = _FakeGrapheneInstance(_FakeMeta(name=None))
+    graphene_type = _FakeGrapheneInstance(
+        _FakeMeta(name="OwnerGqlName", interfaces=(unnamed_iface,))
+    )
+
+    # The condition names neither the owner type nor any (named) interface, and a
+    # reliable GraphQL identity (OwnerGqlName) exists -> SKIP.
+    node = _inline_fragment_node("SomeForeignType")
+    assert _inline_fragment_applies(node, current_graphene_type=graphene_type) is False
+
+
+def test_inline_fragment_descends_when_model_has_no_usable_name():
+    """A ``current_model`` whose ``__name__`` is absent contributes no model-name
+    identity; with no other reliable identity the guard DESCENDS (inconclusive).
+
+    Walks the ``if model_name:`` FALSE branch (750->753): the model object is an
+    INSTANCE (no ``__name__``), so ``model_name`` is None and nothing is added.
+    Because no GraphQL-type-name identity exists either, ``have_gql_identity`` is
+    False -> the inconclusive-descent rule returns True.
+
+    TEETH: if a None ``model_name`` were added to ``accepted_names`` it would be a
+    junk entry; if the missing model name somehow drove a SKIP, a legitimately
+    typed fragment would be dropped. We pin transparent descent on partial info.
+    """
+    from django_graphex.utils import _inline_fragment_applies
+
+    class _ModelInstance:
+        # An instance has no ``__name__``; getattr(..., "__name__", None) -> None.
+        pass
+
+    node = _inline_fragment_node("AnyConditionName")
+    assert _inline_fragment_applies(node, current_model=_ModelInstance()) is True
+
+
+# =========================================================================== #
+# _collect_gfk_union_buckets — member-level child_select merge (forward-FK head) #
+# =========================================================================== #
+@requires_generic_prefetch
+def test_collect_gfk_union_buckets_merges_member_child_select_heads():
+    """Two split ``... on OrderType`` fragments — each pulling a DISTINCT forward-FK
+    relation — merge their ``child_select`` heads into one member bucket.
+
+    ``Track2Order`` carries two forward FKs: ``customer`` (-> Track2Account) and
+    ``invoice`` (-> Track2Invoice). The first fragment selects ``customer``; the
+    second selects ``customer`` AGAIN (already-present, no-op FALSE branch) plus
+    ``invoice`` (new -> the APPEND branch). ``_compute_child_only`` turns each
+    forward-FK descent into a ``child_select`` head, so the SAME-member merge both
+    skips the duplicate and appends the new head onto the first bucket.
+
+    TEETH: if the APPEND branch were dropped (second fragment overwrote the first,
+    or only ``only_cols`` merged), the surviving Order bucket would carry only ONE
+    select_related head -> the other forward FK re-introduces an N+1 at resolve
+    time. If the no-op guard were dropped, ``customer`` would be duplicated. We
+    assert BOTH heads survive AND ``customer`` appears exactly once.
+    """
+    from graphql import parse
+
+    from django_graphex.utils import _collect_gfk_union_buckets
+
+    reg = Registry()
+
+    class OrderType(DjangoObjectType):
+        class Meta:
+            model = Track2Order
+            registry = reg
+
+    class AccountType(DjangoObjectType):
+        class Meta:
+            model = Track2Account
+            registry = reg
+
+    class InvoiceType(DjangoObjectType):
+        class Meta:
+            model = Track2Invoice
+            registry = reg
+
+    class OrderTargetUnion(DjangoUnionType):
+        class Meta:
+            gfk_types = (OrderType,)
+            registry = reg
+
+    class GfkCommentType(DjangoObjectType):
+        class Meta:
+            model = Track2GfkComment
+            registry = reg
+            gfk_unions = {"target": OrderTargetUnion}
+
+    class Query(graphene.ObjectType):
+        comment = Field(GfkCommentType)
+
+    schema = graphene.Schema(
+        query=Query, types=[OrderType, AccountType, InvoiceType, GfkCommentType]
+    )
+    gql_schema = schema.graphql_schema
+    owner_gql = gql_schema.get_type("GfkCommentType")
+
+    # Two split fragments over the SAME member (OrderType). The FIRST pulls
+    # ``customer``; the SECOND pulls BOTH ``customer`` (already present -> the
+    # merge's no-op FALSE branch) AND ``invoice`` (new -> the APPEND branch). This
+    # exercises both sides of the member-level ``child_select`` merge in one go.
+    doc = parse(
+        """
+        {
+          comment {
+            target {
+              ... on OrderType { customer { id } }
+              ... on OrderType { customer { id } invoice { id } }
+            }
+          }
+        }
+        """
+    )
+    comment_field = doc.definitions[0].selection_set.selections[0]
+    target_field = comment_field.selection_set.selections[0]
+    sub_selection = target_field.selection_set
+
+    plan = _collect_gfk_union_buckets(
+        _gfk_field(),
+        "target",
+        "target",
+        sub_selection,
+        {},
+        owner_gql,
+        gql_schema,
+    )
+    assert plan is not None
+    assert set(plan.generic_buckets) == {Track2Order}
+    order_select = plan.generic_buckets[Track2Order].child_select
+    # Both split forward-FK heads survived the member-level child_select merge ...
+    assert "customer" in order_select, order_select
+    assert "invoice" in order_select, order_select
+    # ... and the duplicate ``customer`` was NOT appended twice (no-op branch).
+    assert order_select.count("customer") == 1, order_select
+
+
+# =========================================================================== #
+# _build_generic_prefetch — CT-collision child_select merge: ALREADY-PRESENT head #
+# =========================================================================== #
+@requires_generic_prefetch
+@pytest.mark.django_db
+def test_build_generic_prefetch_ct_collision_skips_duplicate_child_select_head():
+    """At a content-type collision, a ``child_select`` head ALREADY present on the
+    existing bucket is NOT appended twice (the merge's no-op FALSE branch).
+
+    Both members collide on ONE content type (mocked). They share the head
+    ``head_shared``; the second member ALSO carries a distinct ``head_extra``. The
+    merge must: skip ``head_shared`` (already present -> the 2020->2019 FALSE
+    branch) and append ``head_extra`` once. The result is a de-duplicated union.
+
+    TEETH: if the ``if sel not in existing_plan.child_select`` guard were dropped
+    (unconditional append), ``head_shared`` would appear TWICE in the merged
+    ``child_select`` -> a duplicated ``select_related`` head (redundant JOIN / a
+    Django error on some paths). We assert each head appears EXACTLY once.
+    """
+    from django.contrib.contenttypes.models import ContentType
+
+    from django_graphex import utils
+    from django_graphex.utils import PrefetchPlan, _build_generic_prefetch
+
+    buckets = {
+        Track2Account: PrefetchPlan(
+            only_cols=["id", "head_shared"], child_select=["head_shared"]
+        ),
+        Track2Invoice: PrefetchPlan(
+            only_cols=["id", "head_shared", "head_extra"],
+            child_select=["head_shared", "head_extra"],
+        ),
+    }
+
+    shared_ct = ContentType.objects.get_for_model(Track2Account)
+
+    def _shared(model, for_concrete_model=True):
+        return shared_ct
+
+    captured: dict = {}
+
+    def _capture_build(member_model, plan):
+        captured["plan"] = plan
+        return member_model._default_manager.all()
+
+    with mock.patch.object(ContentType.objects, "get_for_model", side_effect=_shared):
+        with mock.patch.object(
+            utils, "_build_member_queryset", side_effect=_capture_build
+        ):
+            gp = _build_generic_prefetch("target", buckets)
+
+    assert gp is not None
+    assert len(gp.querysets) == 1
+    merged = captured["plan"].child_select
+    # The shared head was NOT duplicated (the already-present FALSE branch fired) ...
+    assert merged.count("head_shared") == 1, merged
+    # ... and the distinct head was appended exactly once.
+    assert merged.count("head_extra") == 1, merged
