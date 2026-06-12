@@ -450,6 +450,92 @@ the shared serializer, so two clients subscribed to the same group with
 different `data` arguments each receive their own projection. (This fixes a
 global-state race present in the legacy implementation.)
 
+## Security hardening (v1.2.1)
+
+Several security defenses were added in v1.2.1.  Knowing how they work helps
+you integrate them correctly in production.
+
+### Channel ownership guard (fail-closed)
+
+The subscribe/unsubscribe HTTP mutation now verifies that the `channel_id`
+argument belongs to the requesting session **before** any
+`channel_layer.group_add` or `channel_layer.group_send` call.
+
+**How it works:**
+
+1. When the WebSocket consumer connects it registers the channel name with an
+   ownership token derived from the Django session key
+   (`request.session.session_key`).  Anonymous / sessionless connections
+   register with an empty string token.
+2. The HTTP subscribe mutation must supply `_session_key` (injected
+   automatically by the middleware or your own view).  If the presented token
+   does not match the stored owner, the subscription is rejected with a
+   `GraphQLError` and `ok: False`.
+3. On disconnect the channel entry is removed so a reconnected socket with the
+   same channel name cannot be claimed by a stale session.
+
+**Fail-closed policy:** an unknown (never-registered) channel is also rejected,
+so an attacker that guesses or intercepts a channel name cannot subscribe to it
+before the legitimate owner has connected.
+
+**Custom consumers:** if you subclass `GraphqlAPIDemultiplexer` and override
+`connect`, call `register_channel(self.channel_name, session_key=<token>)` and
+`unregister_channel(self.channel_name)` in `disconnect`.  The functions are
+importable from `django_graphex.subscriptions.subscription`.
+
+### Filter key validation
+
+Client-supplied `filters` are now validated at subscribe time: each filter key
+must **root on a declared output field** of the subscription's serialized
+payload (everything before the first `__`).  Filters like
+`{"username__icontains": "neo"}` are accepted (`username` is declared);
+filters that root on non-output fields (e.g. `{"auth_token__key": "x"}`)
+are rejected with a `GraphQLError`.
+
+**Why:** the `filters` argument executes as ORM lookups at event-delivery time.
+Without validation an attacker can use it as a boolean oracle over fields that
+are never serialized in the payload (e.g. `{"password__contains": "a"}`).
+
+**Declared fields** are the names returned by the subscription's
+`backend.output_field_names()`.  Multi-hop lookups like
+`{"groups__name": "admin"}` are accepted if `groups` is a declared output
+field; the traversal into the `Group` model is handled by Django's ORM.  If
+you need tighter control, override `subscription_scope` to enforce server-side
+filters that cannot be widened or removed by the client.
+
+### Percent-encoded index group names
+
+Subscription index fields (see `subscription_index_fields`) use `=` and `&`
+as delimiters in the group name suffix.  Starting with v1.2.1, field **values**
+are percent-encoded (`urllib.parse.quote`) before the suffix is assembled, so
+a value like `"a=b"` no longer produces a name that is ambiguous with two
+separate key-value pairs.
+
+### Asserts replaced with explicit raises
+
+The validation guards in `Subscription.__init_subclass_with_meta__` that were
+expressed as `assert` statements are now `raise TypeError(...)` calls.  Python's
+`-O` flag strips `assert` at compile time; the explicit raises survive.
+
+### Safe `async_to_sync` in signal handlers
+
+The signal binding (`SubscriptionBinding`) calls `channel_layer.group_send`
+from a synchronous Django signal handler.  Under an ASGI server a running event
+loop is already present on the calling thread; a naive `async_to_sync(…)()`
+call in that context deadlocks.
+
+`bindings.py` now detects whether a loop is running (`asyncio.get_running_loop`)
+and, if so, submits the coroutine from a worker thread via
+`asyncio.run_coroutine_threadsafe`.  The plain WSGI path (no running loop)
+continues to use `async_to_sync` unchanged.
+
+### JavaScript path escaping
+
+`SubscriptionClientView` injects `ws_path` and `http_path` into inline
+JavaScript via `json.dumps`, which escapes double quotes and backslashes.
+Injecting raw strings would allow XSS if a path contained a double-quote
+(`"`) that could close the surrounding JS string literal.
+
 ## Migrating from `graphene-django-subscriptions`
 
 The old package is now a thin, deprecated shim that re-exports from here. To

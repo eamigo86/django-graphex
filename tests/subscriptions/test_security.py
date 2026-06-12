@@ -9,6 +9,7 @@ Covers:
   (d) percent-encoded index group names — delimiter ambiguity resolved
   (e) client.py HTML escaping for ws_path / http_path
 """
+
 from __future__ import annotations
 
 import pytest
@@ -32,15 +33,13 @@ def test_missing_stream_raises_type_error():
 
         class _Bad(UserSubscription):
             class Meta:
-                model = __import__(
-                    "django.contrib.auth.models", fromlist=["User"]
-                ).User
+                model = __import__("django.contrib.auth.models", fromlist=["User"]).User
                 stream = 123  # not a str
 
 
 def test_queryset_model_mismatch_raises_type_error():
     """queryset model != backend model — TypeError raised (not AssertionError)."""
-    from django.contrib.auth.models import User, Permission
+    from django.contrib.auth.models import Permission, User
 
     with pytest.raises(TypeError, match="queryset model must correspond"):
 
@@ -58,9 +57,7 @@ def test_serialize_data_invalid_value_raises_type_error():
 
         class _Bad(UserSubscription):
             class Meta:
-                model = __import__(
-                    "django.contrib.auth.models", fromlist=["User"]
-                ).User
+                model = __import__("django.contrib.auth.models", fromlist=["User"]).User
                 stream = "bad_sd"
                 serialize_data = "yes"
 
@@ -142,14 +139,24 @@ async def test_unsubscribe_with_own_channel_succeeds():
 
 
 async def test_no_session_key_and_channel_not_registered_rejected():
-    """No _session_key supplied and channel not registered → fail-closed."""
-    result = await run_subscribe(
-        UserSubscription,
-        channel_id="some-channel",
+    """No _session_key supplied and channel not registered → fail-closed.
+
+    This test calls ``_subscribe`` directly (bypassing the auto-register logic
+    in ``run_subscribe``) to simulate a raw HTTP caller that supplies no
+    session context and whose channel was never registered.
+    """
+    # Call _subscribe directly — no channel registered, no _session_key.
+    gen = UserSubscription._subscribe(
+        None,
+        None,
+        channel_id="never-registered-xyz",
         action="create",
         operation="subscribe",
-        # no _session_key
     )
+    try:
+        result = await gen.__anext__()
+    finally:
+        await gen.aclose()
     assert result.ok is False
 
 
@@ -191,7 +198,11 @@ async def test_declared_field_with_lookup_suffix_accepted():
 
 
 async def test_undeclared_root_field_rejected():
-    """A filter whose root field is not in the output type is rejected."""
+    """A filter whose root field is not in the output type is rejected.
+
+    Uses ``logentry_set`` — a reverse relation not exposed in the serialized
+    output — to confirm that ORM traversal into undeclared fields is blocked.
+    """
     from django_graphex.subscriptions.subscription import register_channel
 
     register_channel("filter-chan-3", session_key="s3")
@@ -200,7 +211,8 @@ async def test_undeclared_root_field_rejected():
         channel_id="filter-chan-3",
         action="create",
         operation="subscribe",
-        filters={"password__icontains": "secret"},  # not in output
+        # logentry_set is a reverse relation, not in output_field_names()
+        filters={"logentry_set__action_flag": 1},
         _session_key="s3",
     )
     assert result.ok is False
@@ -208,7 +220,11 @@ async def test_undeclared_root_field_rejected():
 
 
 async def test_undeclared_root_field_no_suffix_rejected():
-    """A plain filter on an undeclared field is rejected."""
+    """A plain filter on an undeclared field is rejected.
+
+    ``logentry_set`` (reverse relation to LogEntry) is not in the serialized
+    output of UserSubscription, so it must be rejected at subscribe time.
+    """
     from django_graphex.subscriptions.subscription import register_channel
 
     register_channel("filter-chan-4", session_key="s4")
@@ -217,7 +233,8 @@ async def test_undeclared_root_field_no_suffix_rejected():
         channel_id="filter-chan-4",
         action="create",
         operation="subscribe",
-        filters={"date_joined__year": 2024},
+        # non-existent output field — probing the raw DB column name not exposed
+        filters={"logentry_set": None},
         _session_key="s4",
     )
     assert result.ok is False
@@ -286,7 +303,6 @@ def test_index_group_name_encodes_equals_in_value():
 def test_index_group_name_encodes_ampersand_in_value():
     """A value containing '&' is percent-encoded."""
     name = UserSubscription._group_name("create", index={"tag": "a&b"})
-    from django_graphex.subscriptions.mixins import _GROUP_NAME_RE
 
     # The raw '&' must not appear unencoded in the final group name.
     from django_graphex.subscriptions.mixins import safe_group_name
@@ -310,33 +326,46 @@ def test_index_group_name_plain_values_unchanged():
 # ---------------------------------------------------------------------------
 
 
-def test_client_view_escapes_single_quote_in_ws_path():
-    """ws_path containing a single-quote is JSON-escaped in the rendered HTML."""
+def test_client_view_escapes_double_quote_in_ws_path():
+    """ws_path containing a double-quote is JSON-escaped in the rendered HTML.
+
+    A raw double quote would close the JS string literal and enable XSS.
+    ``json.dumps`` escapes it as ``\\"``.
+    """
     from django_graphex.subscriptions.client import SubscriptionClientView
 
     factory = RequestFactory()
     request = factory.get("/")
-    view = SubscriptionClientView.as_view(ws_path="/ws/it's/", http_path="/graphql")
+    view = SubscriptionClientView.as_view(
+        ws_path='/ws/path"inject/', http_path="/graphql"
+    )
     response = view(request)
     content = response.content.decode()
-    # The path must appear JSON-encoded, not raw.  A raw single quote inside a
-    # JS string literal would break the script.
-    assert "it's" not in content
-    # The JSON-encoded form (' or \\') must be present.
-    assert "it" in content  # basic sanity — path is present in some form
+    # The raw double-quote must not appear unescaped inside the JS string.
+    # json.dumps encodes it as \", so the rendered page has \".
+    assert '"/ws/path"inject/' not in content
+    # The escaped form must be present.
+    assert r"path\"inject" in content or 'path\\"inject' in content
 
 
 def test_client_view_escapes_backslash_in_http_path():
-    """http_path containing a backslash is JSON-escaped."""
+    """http_path containing a backslash is JSON-escaped.
+
+    A raw backslash in a JS string literal can produce unintended escape
+    sequences (e.g. ``\\n`` → newline, ``\\x00`` → null byte).
+    ``json.dumps`` doubles the backslash so it renders as a literal backslash.
+    """
     from django_graphex.subscriptions.client import SubscriptionClientView
 
     factory = RequestFactory()
     request = factory.get("/")
-    view = SubscriptionClientView.as_view(ws_path="/ws/", http_path="/graphql\\x00")
+    view = SubscriptionClientView.as_view(ws_path="/ws/", http_path="/graphql\\path")
     response = view(request)
     content = response.content.decode()
-    # Raw backslash followed by x should not appear unescaped.
-    assert "\\x00" not in content or "\\\\x00" in content or "\\u" in content
+    # A single raw backslash in the original path must not appear as a single
+    # backslash in the JS source; it must be doubled (escaped).
+    # We look for the doubled form in the rendered HTML.
+    assert r"\\path" in content or "\\\\path" in content
 
 
 def test_client_view_normal_paths_render_correctly():
@@ -345,9 +374,7 @@ def test_client_view_normal_paths_render_correctly():
 
     factory = RequestFactory()
     request = factory.get("/")
-    view = SubscriptionClientView.as_view(
-        ws_path="/ws/graphql/", http_path="/graphql"
-    )
+    view = SubscriptionClientView.as_view(ws_path="/ws/graphql/", http_path="/graphql")
     response = view(request)
     content = response.content.decode()
     # The paths must appear in the rendered output in some form.

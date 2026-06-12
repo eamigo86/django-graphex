@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from channels.layers import get_channel_layer
 from graphene import (
@@ -24,6 +25,7 @@ from graphene import (
 from graphene.types.generic import GenericScalar
 from graphene.types.objecttype import ObjectTypeOptions
 from graphene.utils.str_converters import to_snake_case
+from graphql import GraphQLError
 
 from ..backends import resolve_backend
 from ..settings import graphql_api_settings
@@ -35,6 +37,65 @@ if TYPE_CHECKING:
 
     from django.db.models import QuerySet
     from graphql import GraphQLResolveInfo
+
+
+# ---------------------------------------------------------------------------
+# Channel ownership registry
+# ---------------------------------------------------------------------------
+# Maps channel_name → session_key.  Populated by the consumer on connect;
+# cleared on disconnect.  Tests may call register_channel() directly to inject
+# entries without going through the consumer.
+_CHANNEL_REGISTRY: dict[str, str] = {}
+
+
+def register_channel(channel_name: str, *, session_key: str) -> None:
+    """Record that *channel_name* is owned by *session_key*.
+
+    Called by ``GraphqlAPIDemultiplexer.connect`` (and by test helpers that
+    bypass the consumer).  Subsequent ``_subscribe`` calls for this channel
+    must supply the same ``_session_key`` to be accepted.
+
+    Args:
+        channel_name: The Channels channel name as sent in the handshake frame.
+        session_key: An opaque per-session identifier (session key, user pk
+            formatted as a string, or any stable per-connection token).
+    """
+    _CHANNEL_REGISTRY[channel_name] = session_key
+
+
+def unregister_channel(channel_name: str) -> None:
+    """Remove *channel_name* from the ownership registry on disconnect.
+
+    Args:
+        channel_name: The channel name to remove.
+    """
+    _CHANNEL_REGISTRY.pop(channel_name, None)
+
+
+def _validate_channel_ownership(channel_name: str, session_key: str | None) -> None:
+    """Raise ``GraphQLError`` when *channel_name* is not owned by *session_key*.
+
+    Policy: fail-closed — an unknown (never-registered) channel is also
+    rejected so an attacker cannot enumerate channels by guessing.
+
+    Args:
+        channel_name: The channel_id supplied by the subscribe caller.
+        session_key: The session key supplied by the subscribe caller, or
+            ``None`` when no session context is available.
+
+    Raises:
+        GraphQLError: When ownership cannot be confirmed.
+    """
+    owner = _CHANNEL_REGISTRY.get(channel_name)
+    if owner is None:
+        raise GraphQLError(
+            "channel_id is not registered; connect a WebSocket consumer first."
+        )
+    if owner != session_key:
+        raise GraphQLError(
+            "channel_id does not belong to the current session; subscription rejected."
+        )
+
 
 logger = logging.getLogger(__name__)
 
@@ -180,28 +241,31 @@ class Subscription(ObjectType):
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
 
-        assert isinstance(stream, str), (
-            "You need to pass a valid string stream name in {}.Meta, received "
-            '"{}"'.format(cls.__name__, stream)
-        )
+        if not isinstance(stream, str):
+            raise TypeError(
+                "You need to pass a valid string stream name in {}.Meta, received "
+                '"{}"'.format(cls.__name__, stream)
+            )
 
         if queryset is not None:
-            assert model == queryset.model, (
-                "The queryset model must correspond with the backend's model "
-                'passed on Meta class, received "{}", expected "{}"'.format(
-                    queryset.model.__name__, model.__name__
+            if model != queryset.model:
+                raise TypeError(
+                    "The queryset model must correspond with the backend's model "
+                    'passed on Meta class, received "{}", expected "{}"'.format(
+                        queryset.model.__name__, model.__name__
+                    )
                 )
-            )
 
         description = description or "Subscription Type for {} model".format(
             model.__name__
         )
 
-        assert serialize_data in (None, True, False), (
-            '{}.Meta.serialize_data must be None, True or False, received "{}"'.format(
-                cls.__name__, serialize_data
+        if serialize_data not in (None, True, False):
+            raise TypeError(
+                '{}.Meta.serialize_data must be None, True or False, received "{}"'.format(
+                    cls.__name__, serialize_data
+                )
             )
-        )
 
         index_fields = tuple(subscription_index_fields or ())
         for field_name in index_fields:
@@ -333,7 +397,18 @@ class Subscription(ObjectType):
         else:
             name = f"{cls.model_label()}-{action}"
         if index:
-            suffix = "&".join(f"{key}={index[key]}" for key in sorted(index))
+            # Percent-encode keys and values so that delimiter characters
+            # ('=', '&') inside field values cannot produce ambiguous names.
+            # safe="" encodes everything except unreserved chars; the delimiters
+            # themselves ('=' between key/value, '&' between pairs) are
+            # preserved as plain ASCII so the structure remains parseable.
+            suffix = "&".join(
+                "{}={}".format(
+                    quote(str(key), safe=""),
+                    quote(str(index[key]), safe=""),
+                )
+                for key in sorted(index)
+            )
             name = f"{name}:{suffix}"
         return safe_group_name(name)
 
@@ -400,6 +475,37 @@ class Subscription(ObjectType):
         return None
 
     @classmethod
+    def _validate_filters(cls, client_filters: dict[str, Any]) -> None:
+        """Validate that all *client_filters* keys root on declared output fields.
+
+        Each filter key may be a bare field name or a field name followed by a
+        Django ORM lookup suffix (e.g. ``username__icontains``).  The root
+        field (everything before the first ``__``) must be present in the
+        subscription's serialized output field names.  Filters whose root is
+        not declared raise ``GraphQLError`` so arbitrary ORM field probing is
+        rejected at subscribe time.
+
+        Server-forced scope filters (from ``subscription_scope``) are **not**
+        subject to this check — they originate from server code, not the client.
+
+        Args:
+            client_filters: The raw ``filters`` dict supplied by the subscriber.
+
+        Raises:
+            GraphQLError: When a filter key roots on an undeclared field.
+        """
+        if not client_filters:
+            return
+        declared: set[str] = set(cls._meta.backend.output_field_names())
+        for key in client_filters:
+            root = key.split("__")[0]
+            if root not in declared:
+                raise GraphQLError(
+                    "Subscription filter key '{}' is not a declared output field. "
+                    "Allowed fields: {}.".format(key, ", ".join(sorted(declared)))
+                )
+
+    @classmethod
     async def _subscribe(
         cls,
         root: Any,
@@ -414,7 +520,8 @@ class Subscription(ObjectType):
         Args:
             root: The root value passed to the resolver.
             info: The GraphQL resolve info.
-            **kwargs: The subscription arguments (action, operation, etc.).
+            **kwargs: The subscription arguments (action, operation, etc.) plus
+                the internal ``_session_key`` used for channel ownership checks.
 
         Yields:
             A single confirmation object describing the subscribe result.
@@ -432,6 +539,11 @@ class Subscription(ObjectType):
             client_filters = {}
         channel_name = kwargs.get("channel_id")
 
+        # _session_key is an internal kwarg injected by the consumer (or by
+        # test helpers) for ownership validation.  It is not part of the public
+        # GraphQL argument schema — strip it before forwarding to other hooks.
+        session_key: str | None = kwargs.pop("_session_key", None)
+
         response = {
             "stream": cls._meta.stream,
             "operation": operation,
@@ -446,9 +558,20 @@ class Subscription(ObjectType):
                     "subscriptions."
                 )
 
+            # --- (a) Channel ownership guard ---
+            # Validate that the calling session owns the presented channel_id
+            # before any group_add or group_send is performed.  This prevents
+            # a client from hijacking another user's channel by guessing its ID.
+            _validate_channel_ownership(channel_name, session_key)
+
             # Authorize the subscribe (may raise -> surfaced as ok=False).
             if operation == "subscribe":
                 cls.authorize_subscription(info, **kwargs)
+
+                # --- (b) Filter key validation ---
+                # Reject filters whose root field is not in the declared output
+                # so an attacker cannot probe arbitrary ORM fields (e.g. password).
+                cls._validate_filters(client_filters)
 
             # The server-forced scope is deterministic from the request, so it is
             # recomputed here for both subscribe (to register filters) and
@@ -535,4 +658,6 @@ __all__ = [
     "Subscription",
     "SubscriptionField",
     "SubscriptionOptions",
+    "register_channel",
+    "unregister_channel",
 ]

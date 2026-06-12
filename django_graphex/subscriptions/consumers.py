@@ -11,6 +11,7 @@ from django.core.exceptions import FieldError
 
 from .bindings import SubscriptionBinding
 from .mixins import project_fields, split_filters
+from .subscription import register_channel, unregister_channel
 
 if TYPE_CHECKING:
     from .subscription import Subscription
@@ -35,7 +36,13 @@ class GraphqlAPIDemultiplexer(AsyncJsonWebsocketConsumer):
     subscriptions = {}
 
     async def connect(self) -> None:
-        """Accept the socket, wire bindings and emit the handshake frame."""
+        """Accept the socket, wire bindings and emit the handshake frame.
+
+        The channel is registered in the ownership registry keyed by the
+        Django session key (or, for anonymous connections, an empty string).
+        The same key is expected in ``_session_key`` when the client sends
+        a subscribe mutation over HTTP.
+        """
         self._fields = {}
         self._filters = {}
         self._groups = set()
@@ -45,6 +52,15 @@ class GraphqlAPIDemultiplexer(AsyncJsonWebsocketConsumer):
             subscription_cls.get_binding()
 
         await self.accept()
+
+        # Derive a stable per-connection ownership token from the session.
+        # scope["session"] is an instance of channels' SessionStore which
+        # exposes .session_key; fall back to an empty string for anonymous
+        # connections without a session backend configured.
+        session = self.scope.get("session")
+        session_key: str = getattr(session, "session_key", None) or ""
+        register_channel(self.channel_name, session_key=session_key)
+
         await self.send_json({"channel_id": self.channel_name, "connect": "success"})
 
     async def disconnect(self, code: int) -> None:
@@ -53,6 +69,11 @@ class GraphqlAPIDemultiplexer(AsyncJsonWebsocketConsumer):
         Args:
             code: The WebSocket close code.
         """
+        # Remove the channel from the ownership registry so stale entries do
+        # not allow reconnected channels with the same name to be claimed by
+        # the wrong session.
+        unregister_channel(self.channel_name)
+
         for group_name in list(self._groups):
             try:
                 await self.channel_layer.group_discard(group_name, self.channel_name)

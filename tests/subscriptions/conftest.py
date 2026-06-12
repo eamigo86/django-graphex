@@ -12,12 +12,20 @@ channels = pytest.importorskip("channels")
 
 @pytest.fixture(autouse=True)
 def _fresh_channel_layer():
-    """Give every test an isolated in-memory channel layer instance."""
+    """Give every test an isolated in-memory channel layer instance.
+
+    Also clears the channel ownership registry so tests do not interfere
+    with each other.
+    """
     from channels.layers import channel_layers
 
+    from django_graphex.subscriptions.subscription import _CHANNEL_REGISTRY
+
     channel_layers.backends = {}
+    _CHANNEL_REGISTRY.clear()
     yield
     channel_layers.backends = {}
+    _CHANNEL_REGISTRY.clear()
 
 
 @pytest.fixture
