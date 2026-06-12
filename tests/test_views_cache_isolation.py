@@ -19,10 +19,10 @@ from unittest.mock import patch
 import graphene
 from django.contrib.auth.models import AnonymousUser, User
 from django.core.cache import cache
+from django.http import HttpResponse  # noqa: F401 — used in SentinelHitCheckTest
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
-
 
 # ---------------------------------------------------------------------------
 # Minimal test schema
@@ -35,7 +35,7 @@ class _Q(graphene.ObjectType):
 
     def resolve_me(root, info):
         user = info.context.user
-        if hasattr(user, "username"):
+        if getattr(user, "is_authenticated", False):
             return user.username
         return "anon"
 
@@ -119,8 +119,11 @@ class CrossUserIsolationTest(TestCase):
         resp_b = self.view(req_b)
         self.assertEqual(resp_b.status_code, 200)
         data_b = json.loads(resp_b.content)
-        self.assertEqual(data_b["data"]["me"], "bob",
-                         "User B received user A's cached response (cross-user leak)")
+        self.assertEqual(
+            data_b["data"]["me"],
+            "bob",
+            "User B received user A's cached response (cross-user leak)",
+        )
 
     def test_same_user_hits_cache_on_second_request(self):
         """The SAME user MUST benefit from caching (second call hits cache)."""
@@ -139,8 +142,11 @@ class CrossUserIsolationTest(TestCase):
             self.view(req1)
             self.view(req2)
 
-        self.assertEqual(call_count["n"], 1,
-                         "Backend was called twice for the same user+query — cache hit failed")
+        self.assertEqual(
+            call_count["n"],
+            1,
+            "Backend was called twice for the same user+query — cache hit failed",
+        )
 
     def test_anon_and_authenticated_do_not_share_cache(self):
         """Anonymous and authenticated requests for the same query body MUST be isolated."""
@@ -154,8 +160,11 @@ class CrossUserIsolationTest(TestCase):
         req_anon = _make_request(self.factory, query)  # AnonymousUser
         resp_anon = self.view(req_anon)
         data_anon = json.loads(resp_anon.content)
-        self.assertEqual(data_anon["data"]["me"], "anon",
-                         "Anonymous request received authenticated user's cached response")
+        self.assertEqual(
+            data_anon["data"]["me"],
+            "anon",
+            "Anonymous request received authenticated user's cached response",
+        )
 
 
 @override_settings(**CACHE_ON)
@@ -183,8 +192,11 @@ class AnonSharingTest(TestCase):
             self.view(req1)
             self.view(req2)
 
-        self.assertEqual(call_count["n"], 1,
-                         "Anonymous cache NOT shared: backend called twice for same query")
+        self.assertEqual(
+            call_count["n"],
+            1,
+            "Anonymous cache NOT shared: backend called twice for same query",
+        )
 
 
 @override_settings(**CACHE_ON)
@@ -227,8 +239,11 @@ class MutationScopedInvalidationTest(TestCase):
             req_b_after = _make_request(self.factory, query, user=self.user_b)
             self.view(req_b_after)
 
-        self.assertEqual(call_count["n"], 0,
-                         "User A's mutation flushed user B's cache (global cache.clear() used)")
+        self.assertEqual(
+            call_count["n"],
+            0,
+            "User A's mutation flushed user B's cache (global cache.clear() used)",
+        )
 
 
 @override_settings(**CACHE_ON)
@@ -310,15 +325,11 @@ class SentinelHitCheckTest(TestCase):
 
     def test_empty_cached_response_is_served_without_re_executing(self):
         """A falsy cached value MUST be returned as-is (sentinel cache miss check)."""
-        from django.core.cache import caches as _caches
-        from django.http import HttpResponse
-
         # Pre-seed the cache with an empty-body response (falsy content).
         empty_response = HttpResponse(b"", content_type="application/json", status=200)
-        real_cache = _caches["default"]
 
-        # We need to know what key the view will build — seed it after first call
-        # by intercepting the set and then verifying next call doesn't call backend.
+        # Seed the cache by running the view once; our patched super_call returns
+        # the empty response so that falsy value ends up in the cache.
         query = "{ hello }"
         request_seed = self.factory.post(
             "/graphql/", json.dumps({"query": query}), content_type="application/json"
@@ -330,8 +341,8 @@ class SentinelHitCheckTest(TestCase):
 
         def counting_super_call(self_view, request, *args, **kwargs):
             call_count["n"] += 1
-            result = original_super_call(self_view, request, *args, **kwargs)
-            # Return the empty response from the backend call so it gets cached.
+            # Discard real result; store an empty (falsy) response in its place.
+            original_super_call(self_view, request, *args, **kwargs)
             return empty_response
 
         with patch.object(GraphQLView, "super_call", counting_super_call):
@@ -346,7 +357,10 @@ class SentinelHitCheckTest(TestCase):
 
         call_count["n"] = 0  # Reset counter
         with patch.object(GraphQLView, "super_call", counting_super_call):
-            response = self.view(request_2)
+            self.view(request_2)
 
-        self.assertEqual(call_count["n"], 0,
-                         "Backend was called for a cached falsy response — sentinel check missing")
+        self.assertEqual(
+            call_count["n"],
+            0,
+            "Backend was called for a cached falsy response — sentinel check missing",
+        )

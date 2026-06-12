@@ -68,13 +68,54 @@ class ExtraViewBranchesTest(TestCase):
         self.assertIn("requestedCost", data["extensions"]["cost"])
 
     @patch("django_graphex.views.graphql_api_settings.CACHE_ACTIVE", True)
-    def test_mutation_clears_cache(self):
-        # A mutation must invalidate the whole response cache (the operation is
-        # an OperationType enum -> dispatch compares its .value).
-        cache.set("sentinel", "value")
-        response = self._post("mutation { createThing { ok } }")
+    def test_mutation_bumps_cache_version(self):
+        # A mutation must advance the per-user version counter so that
+        # subsequent reads by the same identity result in a cache miss.
+        # Unrelated cache entries (e.g. keys from other users or non-graphql
+        # code) MUST survive — only the namespace version is invalidated.
+        from django.core.cache import caches as _caches
+
+        _cache = _caches["default"]
+        # Seed an unrelated key to confirm it is not wiped.
+        _cache.set("sentinel", "value")
+
+        # First: cache a query result so a version counter is set.
+        view = GraphQLView.as_view(schema=_schema)
+        seed_request = self.factory.post(
+            "/graphql/", {"query": "{ hello }"}, content_type="application/json"
+        )
+        view(seed_request)
+
+        # Record the version token before mutation.
+        from django_graphex.views import GraphQLView as _GV
+
+        identity = _GV.cache_key_prefix(seed_request)
+        version_key = _GV._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
+        version_before = _cache.get(version_key)
+
+        # Send the mutation.
+        mut_request = self.factory.post(
+            "/graphql/",
+            {"query": "mutation { createThing { ok } }"},
+            content_type="application/json",
+        )
+        response = view(mut_request)
         self.assertEqual(response.status_code, 200)
-        self.assertIsNone(cache.get("sentinel"))
+
+        # Version MUST have changed for this identity.
+        version_after = _cache.get(version_key)
+        self.assertNotEqual(
+            version_before,
+            version_after,
+            "Cache version was not bumped by mutation",
+        )
+
+        # The unrelated sentinel key MUST still be present (no global clear).
+        self.assertEqual(
+            _cache.get("sentinel"),
+            "value",
+            "Mutation wiped unrelated cache entries (global cache.clear() still used)",
+        )
 
     @patch("django_graphex.views.graphql_api_settings.CACHE_ACTIVE", True)
     def test_query_cached_and_reused(self):
