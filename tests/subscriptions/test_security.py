@@ -18,9 +18,6 @@ from django.test import RequestFactory
 from .helpers import run_subscribe
 from .schema import UserSubscription
 
-pytestmark = pytest.mark.asyncio
-
-
 # ---------------------------------------------------------------------------
 # (c) assert → raise: these should work even under python -O
 # ---------------------------------------------------------------------------
@@ -67,6 +64,7 @@ def test_serialize_data_invalid_value_raises_type_error():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 async def test_own_channel_accepted():
     """A subscribe call with the channel's own ID succeeds."""
     from django_graphex.subscriptions.subscription import register_channel
@@ -83,6 +81,7 @@ async def test_own_channel_accepted():
     assert result.error is None
 
 
+@pytest.mark.asyncio
 async def test_foreign_channel_rejected():
     """Subscribing with a channel owned by a different session is rejected."""
     from django_graphex.subscriptions.subscription import register_channel
@@ -100,6 +99,7 @@ async def test_foreign_channel_rejected():
     assert result.error is not None
 
 
+@pytest.mark.asyncio
 async def test_unknown_channel_rejected():
     """Subscribing with a channel that was never registered is rejected (fail-closed)."""
     result = await run_subscribe(
@@ -113,6 +113,7 @@ async def test_unknown_channel_rejected():
     assert result.error is not None
 
 
+@pytest.mark.asyncio
 async def test_unsubscribe_with_own_channel_succeeds():
     """Unsubscribe with the correct channel ID succeeds."""
     from django_graphex.subscriptions.subscription import register_channel
@@ -138,6 +139,7 @@ async def test_unsubscribe_with_own_channel_succeeds():
     assert result.ok is True
 
 
+@pytest.mark.asyncio
 async def test_no_session_key_and_channel_not_registered_rejected():
     """No _session_key supplied and channel not registered → fail-closed.
 
@@ -165,6 +167,7 @@ async def test_no_session_key_and_channel_not_registered_rejected():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 async def test_declared_field_filter_accepted():
     """A filter on a declared output field is accepted."""
     from django_graphex.subscriptions.subscription import register_channel
@@ -181,6 +184,7 @@ async def test_declared_field_filter_accepted():
     assert result.ok is True
 
 
+@pytest.mark.asyncio
 async def test_declared_field_with_lookup_suffix_accepted():
     """Filters like ``username__icontains`` are accepted (declared root + suffix)."""
     from django_graphex.subscriptions.subscription import register_channel
@@ -197,6 +201,7 @@ async def test_declared_field_with_lookup_suffix_accepted():
     assert result.ok is True
 
 
+@pytest.mark.asyncio
 async def test_undeclared_root_field_rejected():
     """A filter whose root field is not in the output type is rejected.
 
@@ -219,6 +224,7 @@ async def test_undeclared_root_field_rejected():
     assert "filter" in result.error.lower() or "field" in result.error.lower()
 
 
+@pytest.mark.asyncio
 async def test_undeclared_root_field_no_suffix_rejected():
     """A plain filter on an undeclared field is rejected.
 
@@ -240,6 +246,7 @@ async def test_undeclared_root_field_no_suffix_rejected():
     assert result.ok is False
 
 
+@pytest.mark.asyncio
 async def test_empty_filters_accepted():
     """No filters at all is always accepted."""
     from django_graphex.subscriptions.subscription import register_channel
@@ -255,6 +262,7 @@ async def test_empty_filters_accepted():
     assert result.ok is True
 
 
+@pytest.mark.asyncio
 async def test_none_filters_accepted():
     """filters=None is always accepted (no filtering requested)."""
     from django_graphex.subscriptions.subscription import register_channel
@@ -380,3 +388,111 @@ def test_client_view_normal_paths_render_correctly():
     # The paths must appear in the rendered output in some form.
     assert "/ws/graphql/" in content
     assert "/graphql" in content
+
+
+# ---------------------------------------------------------------------------
+# (f) Cache-backed registry: register, unregister, TTL, guard-off setting
+# ---------------------------------------------------------------------------
+
+
+def test_register_channel_writes_to_cache():
+    """register_channel stores the session_key in the Django default cache."""
+    from django.core.cache import caches
+
+    from django_graphex.subscriptions.subscription import (
+        _CHANNEL_CACHE_PREFIX,
+        _CHANNEL_CACHE_TTL,
+        register_channel,
+    )
+
+    register_channel("cache-test-chan", session_key="sk-abc")
+    cache = caches["default"]
+    stored = cache.get(f"{_CHANNEL_CACHE_PREFIX}cache-test-chan")
+    assert stored == "sk-abc"
+    # TTL should be set; Django LocMemCache exposes get_or_set so we verify
+    # by re-fetching with a sentinel default — if the key is present (no expiry
+    # yet) the stored value is returned.
+    sentinel = object()
+    assert (
+        cache.get(f"{_CHANNEL_CACHE_PREFIX}cache-test-chan", default=sentinel)
+        is not sentinel
+    )
+    # Verify the expected TTL constant has the right magnitude (24 hours).
+    assert _CHANNEL_CACHE_TTL == 86_400
+
+
+def test_unregister_channel_deletes_from_cache():
+    """unregister_channel removes the cache entry so the channel is no longer owned."""
+    from django.core.cache import caches
+
+    from django_graphex.subscriptions.subscription import (
+        _CHANNEL_CACHE_PREFIX,
+        register_channel,
+        unregister_channel,
+    )
+
+    register_channel("unreg-test-chan", session_key="sk-xyz")
+    unregister_channel("unreg-test-chan")
+    cache = caches["default"]
+    sentinel = object()
+    assert (
+        cache.get(f"{_CHANNEL_CACHE_PREFIX}unreg-test-chan", default=sentinel)
+        is sentinel
+    )
+
+
+def test_unregister_nonexistent_channel_is_noop():
+    """unregister_channel on an unknown channel does not raise."""
+    from django_graphex.subscriptions.subscription import unregister_channel
+
+    # Must not raise.
+    unregister_channel("never-existed-channel-xyz")
+
+
+@pytest.mark.asyncio
+async def test_guard_off_setting_bypasses_ownership_check():
+    """With SUBSCRIPTIONS_CHANNEL_GUARD=False the guard is skipped entirely.
+
+    A subscribe on a never-registered channel must succeed when the guard is
+    disabled — demonstrating the multi-worker escape hatch works.
+    """
+    from django.test import override_settings
+
+    from .schema import UserSubscription
+
+    with override_settings(DJANGO_GRAPHEX={"SUBSCRIPTIONS_CHANNEL_GUARD": False}):
+        # Reload the settings singleton so the override is picked up.
+        from django_graphex.settings import graphql_api_settings
+
+        graphql_api_settings.reload()
+        try:
+            gen = UserSubscription._subscribe(
+                None,
+                None,
+                channel_id="unregistered-guard-off",
+                action="create",
+                operation="subscribe",
+            )
+            try:
+                result = await gen.__anext__()
+            finally:
+                await gen.aclose()
+            # ok may be False for other reasons (e.g. no channel layer), but the
+            # error must NOT be about the ownership guard.
+            if result.error:
+                assert "not registered" not in result.error
+                assert "does not belong" not in result.error
+        finally:
+            graphql_api_settings.reload()
+
+
+def test_channel_cache_key_format():
+    """_channel_cache_key produces the expected namespaced key."""
+    from django_graphex.subscriptions.subscription import (
+        _CHANNEL_CACHE_PREFIX,
+        _channel_cache_key,
+    )
+
+    key = _channel_cache_key("specific.channel.name")
+    assert key == f"{_CHANNEL_CACHE_PREFIX}specific.channel.name"
+    assert key.startswith("dgx:subchan:")
