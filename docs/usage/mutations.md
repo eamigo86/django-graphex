@@ -319,6 +319,73 @@ related objects alongside the parent. The same engine backs both
             only_fields = ["id", "title", "body"]   # no "author": injected from parent
     ```
 
+### M2M write semantics: nested path vs. top-level path
+
+The two write paths use **different M2M semantics** — this is intentional in v1.2.x and will be
+unified in v1.3.0:
+
+| Write path | M2M operation | Effect |
+|---|---|---|
+| **Nested** (`nested_fields`) | `.add(*children)` | **Additive** — existing links are kept; the submitted items are appended. Submitting an empty list is a no-op. |
+| **Top-level native backend** | `.set(pks)` | **Replace** — existing links are removed and replaced with exactly the submitted list. Submitting an empty list clears all links. |
+
+**Practical implication:** to *remove* M2M links via the nested path you currently cannot — use the
+top-level mutation instead, or issue a separate mutation that clears and re-adds.
+
+!!! note "Planned for v1.3.0"
+    A per-field `m2m_behavior = "set" | "add"` option will let you choose the semantics on the
+    nested path and align the default to `.set` (matching top-level behavior). Track the work in
+    [GitHub issue #18](https://github.com/eamigo86/django-graphex/issues/18).
+
+### Explicit-null limitation in update mutations
+
+`update()` currently treats `None` values in the input as "not provided" and skips them. This
+means you **cannot clear a nullable field or empty an M2M** by sending `null` — the field will be
+left unchanged.
+
+```graphql
+# This does NOT clear the bio field in v1.2.x:
+mutation {
+  updateUser(newUser: { id: 1, bio: null }) {
+    ok
+    user { id bio }
+  }
+}
+```
+
+**Workaround:** use a separate mutation that explicitly assigns an empty string or removes the
+M2M association via a dedicated resolver.
+
+!!! note "Planned for v1.3.0"
+    Explicit-null support requires distinguishing "omitted" from "explicitly null" at the input
+    level. The planned approach is an AST-presence check so the current partial-update behavior
+    is preserved for omitted fields while respecting intentional nulls. Track the work in
+    [GitHub issue #18](https://github.com/eamigo86/django-graphex/issues/18).
+
+### perform_mutate response shape
+
+`DjangoModelMutation.perform_mutate` and `DjangoModelType.perform_mutate` intentionally differ:
+
+| Class | Response object | Extra DB query |
+|---|---|---|
+| `DjangoModelType` | Re-reads via `get_queryset()` — picks up DB defaults, signals, annotations | Yes |
+| `DjangoModelMutation` | Returns the **in-memory** object that was just saved | No |
+
+If your mutation relies on a DB default or signal to set a field value and you need that value in
+the response, use `DjangoModelType` instead of `DjangoModelMutation`, or override
+`perform_mutate` to add an explicit `refresh_from_db()` call:
+
+```python
+class MyMutation(DjangoModelMutation):
+    class Meta:
+        model = MyModel
+
+    @classmethod
+    def perform_mutate(cls, obj, info):
+        obj.refresh_from_db()
+        return super().perform_mutate(obj, info)
+```
+
 ## Traditional GraphQL Mutations
 
 While `DjangoModelMutation` covers most use cases, you can still create traditional GraphQL mutations for custom logic:
