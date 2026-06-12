@@ -35,8 +35,28 @@ class UserType(DjangoModelType):
 It derives validation rules from the model: field types, `max_length`, `choices`
 (as an `Enum`), `Decimal` precision, required/nullable/defaults, foreign-key **pk**
 types and many-to-many (a list of pks). It also runs the DB-level checks Pydantic
-can't see — **foreign-key existence**, **uniqueness** and `unique_together` — and
-supports partial updates and nested writes (atomic, relation-aware).
+can't see — **foreign-key existence**, **field-level `unique`**, `unique_together`,
+and `Meta.constraints` `UniqueConstraint` entries — and supports partial updates
+and nested writes (atomic, relation-aware).
+
+### Uniqueness validation
+
+The backend checks all three Django uniqueness mechanisms before saving, so
+violations surface as a structured `ErrorType` in the mutation response rather than
+propagating as an `IntegrityError` HTTP 500:
+
+| Mechanism | Where errors land |
+|---|---|
+| `unique=True` on a field | `errors[].field` matching the field name |
+| `Meta.unique_together` | `errors[].field == "non_field_errors"` |
+| `Meta.constraints` `UniqueConstraint` (unconditional, single-field) | `errors[].field` matching the field name |
+| `Meta.constraints` `UniqueConstraint` (unconditional, multi-field) | `errors[].field == "non_field_errors"` |
+
+**Conditional and expression-based constraints** (`condition=Q(...)` or
+`expressions=[...]`) are **not** pre-checked: replicating their predicate
+server-side is not reliable, so they remain DB-enforced. If a conditional
+constraint is violated the database will raise an `IntegrityError`, which the
+backend does not currently catch.
 
 ### Nested writes
 
