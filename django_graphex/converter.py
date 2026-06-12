@@ -9,7 +9,6 @@ from collections.abc import Callable, Mapping
 from functools import singledispatch
 from typing import TYPE_CHECKING, Any, Iterator
 
-from django.conf import settings
 from django.contrib.contenttypes.fields import (
     GenericForeignKey,
     GenericRel,
@@ -273,7 +272,17 @@ def convert_django_field_with_choices(
             enum = Enum(name, list(named_choices), type=EnumWithDescriptionsType)
             registry.register_enum(name, enum)
 
-        if type(field).__name__ == "MultiSelectField":
+        # Detect django-multiselectfield's MultiSelectField via isinstance when the
+        # package is installed (covers subclasses); fall back to a name check only
+        # when the import fails so the converter works without the optional dep.
+        try:
+            from multiselectfield import MultiSelectField as _MSField  # noqa: PLC0415
+
+            _is_multiselect = isinstance(field, _MSField)
+        except ImportError:
+            _is_multiselect = type(field).__name__ == "MultiSelectField"
+
+        if _is_multiselect:
             return DjangoListField(
                 enum,
                 description=field.help_text or field.verbose_name,
@@ -311,13 +320,15 @@ def construct_fields(
     """
     _model_fields = get_model_fields(model)
 
-    if settings.DEBUG:
-        if input_flag == "create":
-            _model_fields = sorted(
-                _model_fields, key=lambda f: (not is_required(f[1]), f[0])
-            )
-        elif not input_flag:
-            _model_fields = sorted(_model_fields, key=lambda f: f[0])
+    # Sort unconditionally so dev and prod SDLs are identical (issue #19).
+    # Previously gated on settings.DEBUG, which caused field-order skew between
+    # environments and broke SDL snapshot tests in production.
+    if input_flag == "create":
+        _model_fields = sorted(
+            _model_fields, key=lambda f: (not is_required(f[1]), f[0])
+        )
+    elif not input_flag:
+        _model_fields = sorted(_model_fields, key=lambda f: f[0])
 
     fields = OrderedDict()
 

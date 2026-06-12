@@ -4,13 +4,13 @@
 Drives: the ``choice_enum_name`` cascade (value / label / EMPTY / A_<value>),
 the MultiSelectField list branch, the required-boolean ``NonNull`` and the
 NullBooleanField / BinaryField / decimal / uuid converters, ``construct_fields``
-DEBUG sorting, the FK/O2O inheritance skip, the GenericForeignKey ct/fk-field
-resolution, and the ArrayField/RangeField list-base branches.
+sorting (unconditional since #19), the FK/O2O inheritance skip, the
+GenericForeignKey ct/fk-field resolution, and the ArrayField/RangeField
+list-base branches.
 """
 
 import graphene
 from django.db import models
-from django.test import override_settings
 from django.utils.translation import gettext_lazy as _
 from graphene import UUID, Boolean, Dynamic, Float, List, NonNull
 
@@ -138,10 +138,10 @@ def test_unregistered_field_type_raises_typeerror():
 
 
 # --------------------------------------------------------------------------- #
-# construct_fields DEBUG sorting                                                #
+# construct_fields sorting (unconditional since #19)                           #
 # --------------------------------------------------------------------------- #
-@override_settings(DEBUG=True)
-def test_construct_fields_debug_sorts_output_alphabetically():
+def test_construct_fields_sorts_output_alphabetically():
+    """Output type fields are always alphabetical (DEBUG-independent since #19)."""
     from .models import Author
 
     registry = Registry()
@@ -150,8 +150,8 @@ def test_construct_fields_debug_sorts_output_alphabetically():
     assert names == sorted(names)
 
 
-@override_settings(DEBUG=True)
-def test_construct_fields_debug_create_sorts_required_first():
+def test_construct_fields_create_sorts_required_first():
+    """Create-input fields are required-first then alphabetical (DEBUG-independent)."""
     from .models import Author
 
     registry = Registry()
