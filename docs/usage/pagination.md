@@ -483,12 +483,66 @@ Create custom pagination for specific needs:
             )
     ```
 
+## Robustness & Error Handling
+
+### Invalid Page Numbers
+
+`PageGraphqlPagination` rejects `page=0` with a `GraphQLError` regardless of
+Python's optimisation level. Before v1.2.1 the check was an `assert` statement
+which is compiled out under `python -O` / `PYTHONOPTIMIZE=1`, causing page=0 to
+silently compute a negative offset. The validation is now an explicit raise so
+it always fires.
+
+- **`page=0`**: raises `GraphQLError("Page value for PageGraphqlPagination must be a non-zero value")`.
+- **`page < 0`**: valid — returns the last page (offset relative to the total count).
+- **`page > 0`**: valid — standard page navigation.
+
+### Tampered or Malformed Cursors
+
+`CursorGraphqlPagination` decodes opaque cursor strings from clients. If a
+cursor is corrupted, hand-crafted, or contains a value incompatible with the
+ordering field's type, the paginator raises `GraphQLError("Invalid cursor")`
+instead of propagating an unhandled `ValueError` or Django `ValidationError`.
+
+The guard covers two failure points:
+
+1. **Malformed base64 / wrong prefix** — `decode_cursor` raises `ValueError`.
+2. **Type mismatch** — the decoded value cannot be coerced by `qs.filter()` (e.g.
+   a string cursor passed to an `IntegerField` raises a Django `ValidationError`).
+
+Both are caught and re-raised as `GraphQLError`, so clients always see a clean
+error response (HTTP 200, `errors[]`) rather than an HTTP 500.
+
+!!! example "Tampered cursor response"
+    ```json
+    {
+      "data": { "events": null },
+      "errors": [{ "message": "Invalid cursor" }]
+    }
+    ```
+
+### COUNT Query Behaviour
+
+`PageGraphqlPagination` only issues a `COUNT` query when it is actually needed:
+
+| `page` value | COUNT issued? | Reason |
+|---|---|---|
+| `page > 0` | No | Offset is `page_size * (page - 1)` — no row count needed |
+| `page < 0` | Yes | Last-page navigation: offset = `total - page_size * abs(page)` |
+
+`totalCount` on the list wrapper is still resolved independently by
+`DjangoListObjectType` and always reflects the filtered queryset count. This
+change only affects the internal COUNT inside `paginate_queryset`.
+
 ## Performance Considerations
 
 ### Database Query Optimization
 
-!!! warning "Count Queries"
-    Pagination requires COUNT queries which can be expensive on large datasets. Consider caching count results for better performance.
+!!! tip "Conditional COUNT"
+    As of v1.2.1, `PageGraphqlPagination` skips the COUNT query for positive
+    page numbers. Only last-page navigation (`page < 0`) still issues a COUNT.
+    On large tables this reduces the per-request query count for the common
+    forward-pagination case.
 
 === "Efficient Ordering"
 

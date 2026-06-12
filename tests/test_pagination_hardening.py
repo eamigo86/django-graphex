@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import base64
 
+import graphene
 import pytest
-from django.test import TestCase, override_settings
+from django.db import connection
+from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from graphene import Schema
 from graphql import GraphQLError
 
@@ -46,9 +49,6 @@ class CursorHardenType(DjangoListObjectType):
 
 class _Query(Schema):
     pass
-
-
-import graphene
 
 
 class HardenQuery(graphene.ObjectType):
@@ -144,7 +144,9 @@ class TestTamperedCursorQueryset(TestCase):
         """Non-base64 string must raise GraphQLError, not ValueError."""
         p = self._paginator()
         with self.assertRaises(GraphQLError):
-            p.paginate_queryset(Author.objects.all(), cursor="!!!not-base64!!!", first=10)
+            p.paginate_queryset(
+                Author.objects.all(), cursor="!!!not-base64!!!", first=10
+            )
 
     def test_cursor_typed_field_mismatch_int_ordering(self):
         """Cursor containing non-int value on int-ordered field must raise GraphQLError.
@@ -171,9 +173,7 @@ class TestTamperedCursorQueryset(TestCase):
     def test_valid_cursor_still_paginates_correctly(self):
         """A valid cursor from a real response must still paginate correctly."""
         p = CursorGraphqlPagination(ordering="name", page_size=2)
-        first_page = list(
-            p.paginate_queryset(Author.objects.all(), first=2)
-        )
+        first_page = list(p.paginate_queryset(Author.objects.all(), first=2))
         self.assertEqual(len(first_page), 2)
         boundary = CursorGraphqlPagination.encode_cursor(first_page[-1].name)
         second_page = list(
@@ -196,9 +196,6 @@ class TestConditionalCount(TestCase):
     def test_positive_page_issues_no_count_query(self):
         """page=1 must not hit the DB with a COUNT query."""
         p = _PGP(page_size=2, max_page_size=10)
-        from django.test.utils import CaptureQueriesContext
-        from django.db import connection
-
         with CaptureQueriesContext(connection) as ctx:
             result = list(p.paginate_queryset(Author.objects.all(), page=1))
 
@@ -212,9 +209,6 @@ class TestConditionalCount(TestCase):
     def test_negative_page_issues_count_query(self):
         """page=-1 (last-page nav) MUST issue a COUNT query — it needs total rows."""
         p = _PGP(page_size=2, max_page_size=10)
-        from django.test.utils import CaptureQueriesContext
-        from django.db import connection
-
         with CaptureQueriesContext(connection) as ctx:
             result = list(p.paginate_queryset(Author.objects.all(), page=-1))
 
