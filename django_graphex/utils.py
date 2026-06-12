@@ -39,6 +39,7 @@ from graphql.execution.values import get_argument_values
 from graphql.language.ast import FragmentSpreadNode, InlineFragmentNode
 from text_unidecode import unidecode
 
+from ._directives_eval import is_selection_skipped
 from .errors import ErrorType
 from .settings import graphql_api_settings
 
@@ -935,6 +936,7 @@ def recursive_params(
     _prefix: str = "",
     current_type_name: str | None = None,
     current_model: type[Model] | None = None,
+    variable_values: dict[str, Any] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Walk a GraphQL selection set building nested select/prefetch paths.
 
@@ -958,11 +960,22 @@ def recursive_params(
             descent.
         current_model: Django model being walked, if known (GAP-5 best-effort
             inline-fragment guard by model class name).
+        variable_values: Bound GraphQL variable values (``info.variable_values``
+            at execution time, ``{}`` or ``None`` during validation/static
+            analysis).  Used to evaluate ``@skip`` / ``@include`` directives.
+            When ``None`` an empty dict is used (conservative: never skip).
 
     Returns:
         The mutated "(select_related, prefetch_related)" pair.
     """
+    _vars: dict[str, Any] = variable_values or {}
     for field in selection_set.selections:
+        # Honor @skip / @include — skip the entire subtree when the directive
+        # resolves to "not selected".  Unresolvable variable conditions default
+        # to "include" (conservative, never over-optimise by dropping a fetch).
+        if is_selection_skipped(field, _vars):
+            continue
+
         if isinstance(field, FragmentSpreadNode):
             fragment = fragments.get(field.name.value) if fragments else None
             if fragment is not None:
@@ -975,6 +988,7 @@ def recursive_params(
                     _prefix,
                     current_type_name=current_type_name,
                     current_model=current_model,
+                    variable_values=variable_values,
                 )
             continue
 
@@ -996,6 +1010,7 @@ def recursive_params(
                 _prefix,
                 current_type_name=current_type_name,
                 current_model=current_model,
+                variable_values=variable_values,
             )
             continue
 
@@ -1030,6 +1045,7 @@ def recursive_params(
                     # carry the child model for best-effort model-name matching.
                     current_type_name=None,
                     current_model=related_model,
+                    variable_values=variable_values,
                 )
         elif sub_selection is not None:
             # Wrapper field (e.g. `results`) or unknown object: stay on the same
@@ -1043,6 +1059,7 @@ def recursive_params(
                 _prefix,
                 current_type_name=current_type_name,
                 current_model=current_model,
+                variable_values=variable_values,
             )
 
     return select_related, prefetch_related
@@ -1056,6 +1073,7 @@ def _collect_only_fields(
     _only: set[str] | None = None,
     annotated_names: set[str] | None = None,
     current_type_name: str | None = None,
+    variable_values: dict[str, Any] | None = None,
 ) -> list[str]:
     """Collect a safe ".only()" field set across the select_related span.
 
@@ -1096,9 +1114,15 @@ def _collect_only_fields(
         if column in concrete_attnames:
             _only.add(_prefix + column)
 
+    _vars: dict[str, Any] = variable_values or {}
     model_full = False
     pending = []
     for field in selection_set.selections:
+        # Honor @skip / @include — exclude the field from the .only() projection
+        # when the directive resolves to "not selected".
+        if is_selection_skipped(field, _vars):
+            continue
+
         if isinstance(field, FragmentSpreadNode):
             fragment = fragments.get(field.name.value) if fragments else None
             if fragment is not None:
@@ -1110,6 +1134,7 @@ def _collect_only_fields(
                     _only,
                     annotated_names=annotated_names,
                     current_type_name=current_type_name,
+                    variable_values=variable_values,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -1128,6 +1153,7 @@ def _collect_only_fields(
                 _only,
                 annotated_names=annotated_names,
                 current_type_name=current_type_name,
+                variable_values=variable_values,
             )
             continue
 
@@ -1171,6 +1197,7 @@ def _collect_only_fields(
                         # Descending into a related model: GraphQL type name is
                         # not resolved here; the child model carries the guard.
                         current_type_name=None,
+                        variable_values=variable_values,
                     )
             # prefetch branches use separate querysets -> not narrowed here.
             continue
@@ -1193,6 +1220,7 @@ def _collect_only_fields(
                 _only,
                 annotated_names=annotated_names,
                 current_type_name=current_type_name,
+                variable_values=variable_values,
             )
             continue
 
@@ -2883,6 +2911,7 @@ def _apply_optimizations(
             prefetch_related,
             current_type_name=root_type_name,
             current_model=model,
+            variable_values=info.variable_values or {},
         )
 
     # --- Phase-d §3: collect AnnotatedField annotations ----------------------
@@ -3119,6 +3148,7 @@ def _apply_optimizations(
             info.fragments,
             annotated_names=root_annotated_names,
             current_type_name=root_type_name,
+            variable_values=info.variable_values or {},
         )
         if only_fields:  # pragma: no branch
             base = base.only(*only_fields)
