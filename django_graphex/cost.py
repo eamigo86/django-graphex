@@ -34,6 +34,7 @@ from graphql.language import (
 from graphql.validation import ValidationRule
 
 from . import settings as _settings
+from ._directives_eval import is_selection_skipped
 
 if TYPE_CHECKING:
     from graphql import (
@@ -127,6 +128,11 @@ class _CostAnalyzer:
         total = 0
 
         for selection in selection_set.selections:
+            # Honor @skip / @include directives (conservative: unresolvable
+            # variable conditions are never skipped).
+            if is_selection_skipped(selection, self._variable_values):
+                continue
+
             if isinstance(selection, FieldNode):
                 if selection.name.value.startswith("__"):
                     continue  # introspection meta-fields are free

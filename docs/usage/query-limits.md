@@ -262,3 +262,57 @@ machine-readable `extensions.code`:
 
 See [Security](security.md#error-codes) for the full table of execution-time
 error codes (auth, permissions, introspection).
+
+## @skip and @include directives
+
+Both rules honor the built-in `@skip` and `@include` directives. A field (or
+inline fragment or fragment spread) that is statically excluded is **not counted**
+toward cost or depth:
+
+```graphql
+# @skip(if: true) → the users field and its subtree are not counted
+query GetData($loadUsers: Boolean!) {
+  profile { name }
+  users(limit: 10) @skip(if: true) {
+    posts { title }
+  }
+}
+```
+
+### Literal conditions are exact
+
+| Directive | Result |
+|-----------|--------|
+| `@skip(if: true)` | Field **excluded** from cost/depth |
+| `@skip(if: false)` | Field **included** (normal counting) |
+| `@include(if: true)` | Field **included** (normal counting) |
+| `@include(if: false)` | Field **excluded** from cost/depth |
+
+### Variable conditions — conservative fallback
+
+Validation rules run **before** variables are bound. When the directive argument
+is a variable reference (`@skip(if: $flag)`) and no value is available, the
+library applies a **conservative policy**: the field is treated as included and
+counted. This prevents a query from slipping through a cost budget by hiding an
+expensive subtree behind an unknown variable.
+
+When variables are bound (the `EXPOSE_QUERY_COST` reporting path, or a direct
+call to `analyze_cost(..., variable_values={"flag": True})`), the directive is
+resolved exactly.
+
+```python
+from graphql import parse
+from django_graphex.cost import analyze_cost
+
+# With bound variables: exact evaluation
+report = analyze_cost(schema.graphql_schema, parse(query), variable_values={"flag": True})
+# flag=True → @skip(if:$flag) skips the subtree → lower cost
+```
+
+!!! note "Output-formatting directives do not affect cost"
+
+    Custom application-level directives such as `@date` and `@number` are
+    *output-formatting* directives: they transform the value of an already-fetched
+    field. They have **no effect** on whether a field is fetched, and therefore do
+    **not** affect query cost, depth limits, or the query optimizer's
+    select/prefetch/only planning.
