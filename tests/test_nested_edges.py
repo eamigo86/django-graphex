@@ -111,14 +111,13 @@ def test_relation_kind_reverse_one_for_reverse_o2o():
 # _unwrap_enums                                                                  #
 # --------------------------------------------------------------------------- #
 def test_unwrap_enums_replaces_enum_members_with_values():
-    class _FakeEnum:
-        __class__ = type("StatusEnum", (), {})  # name contains "Enum"
+    import enum
 
-    class StatusEnum:
-        def __init__(self, value):
-            self.value = value
+    class StatusEnum(enum.Enum):
+        DRAFT = "draft"
+        PUBLISHED = "published"
 
-    member = StatusEnum("draft")
+    member = StatusEnum.DRAFT
     out = NestedFieldsMixin._unwrap_enums({"status": member, "plain": 5})
     assert out["status"] == "draft"  # unwrapped to .value
     assert out["plain"] == 5  # untouched
