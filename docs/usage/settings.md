@@ -60,6 +60,42 @@ DJANGO_GRAPHEX = {
 | `CACHE_TIMEOUT` | `300` | Cache TTL in seconds. |
 | `CLEAN_RESPONSE` | `False` | Strip `null` values from the response payload. |
 
+### Security: per-user cache isolation
+
+When `CACHE_ACTIVE` is `True`, `GraphQLView` partitions cached responses by request identity so that one user's cached response is never served to a different user.
+
+**Identity partitioning rules:**
+
+- **Authenticated requests** — partitioned by `request.user.pk`.  Each user has an independent cache namespace.
+- **Token-authenticated requests** (e.g. `Authorization: Bearer …` with no resolved `request.user`) — partitioned by a short hash of the `Authorization` header.
+- **Anonymous requests** — all share a single `"anon"` partition.  Anonymous responses contain no private data so sharing is safe.
+
+**Mutation invalidation (scoped, not global):**
+
+A mutation advances a per-user version counter in the cache instead of calling `cache.clear()`.  This means:
+
+- The issuing user's cached reads are invalidated (subsequent reads see fresh data).
+- Other users' cached entries are **not** affected.
+- Non-GraphQL cache entries (e.g. keys set by application code) are **not** affected.
+
+**Customising the identity key:**
+
+Subclass `GraphQLView` and override the `cache_key_prefix` staticmethod to use a different identity source (e.g. a tenant ID or a session key):
+
+```python
+from django_graphex.views import GraphQLView
+
+class MyView(GraphQLView):
+    @staticmethod
+    def cache_key_prefix(request):
+        # Partition by tenant, then fall back to per-user within each tenant.
+        tenant = getattr(request, "tenant_id", "default")
+        user_pk = getattr(getattr(request, "user", None), "pk", "anon")
+        return f"{tenant}_{user_pk}"
+```
+
+The `fetch_cache_key` staticmethod (which hashes the request body) remains separately overridable; the two are composed in `dispatch` so overriding either one does not break the other.
+
 ## Queryset optimization (N+1)
 
 | Setting | Default | Description |
