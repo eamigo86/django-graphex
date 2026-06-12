@@ -146,28 +146,31 @@ class GraphQLViewTest(TestCase):
         # The exact behavior depends on the implementation
         self.assertIn(response.status_code, [200, 400, 405])
 
-    @patch("django.core.cache.cache.get")
-    @patch("django.core.cache.cache.set")
     @patch("django_graphex.views.graphql_api_settings.CACHE_ACTIVE", True)
-    def test_caching_enabled(self, mock_cache_set, mock_cache_get):
+    def test_caching_enabled(self):
         """Test query caching when enabled."""
-        mock_cache_get.return_value = None  # Cache miss
-
+        # Use the real local-memory cache (already cleared in setUp).
+        # First request is a cache miss -> backend is called and response stored.
         query = "{ hello }"
         request = self.factory.post(
             "/graphql/", {"query": query}, content_type="application/json"
         )
 
-        # Create view - caching is controlled by settings
         view = GraphQLView.as_view(schema=test_schema)
-
         response = view(request)
 
         self.assertEqual(response.status_code, 200)
-        # Should try to get from cache
-        mock_cache_get.assert_called()
-        # Should set cache on cache miss
-        mock_cache_set.assert_called()
+
+        # Second identical request must hit the cache (same data returned).
+        request2 = self.factory.post(
+            "/graphql/", {"query": query}, content_type="application/json"
+        )
+        response2 = view(request2)
+        self.assertEqual(response2.status_code, 200)
+        self.assertEqual(
+            json.loads(response.content)["data"],
+            json.loads(response2.content)["data"],
+        )
 
     @patch("django.core.cache.cache.get")
     @patch("django_graphex.views.graphql_api_settings.CACHE_ACTIVE", True)

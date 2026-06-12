@@ -20,6 +20,7 @@ import hashlib
 import inspect
 import json
 import re
+import uuid
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -41,7 +42,7 @@ from graphql import (
     parse,
     validate_schema,
 )
-from graphql.error import GraphQLError
+from graphql.error import GraphQLError, GraphQLSyntaxError
 from graphql.execution.middleware import MiddlewareManager
 from graphql.validation import specified_rules, validate
 
@@ -494,11 +495,16 @@ class GraphQLView(BaseGraphQLView):
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.
 
+        Returns ``None`` when there is no query or when the query is
+        syntactically invalid (a malformed document must not raise here;
+        ``dispatch`` falls through to ``super_call`` which returns a 400).
+
         Args:
             request: The incoming HTTP request.
 
         Returns:
-            The operation AST node, or None when there is no query.
+            The operation AST node, or None when there is no query or the
+            query cannot be parsed.
         """
         data = self.parse_body(request)
         query = request.GET.get("query") or data.get("query")
@@ -508,18 +514,115 @@ class GraphQLView(BaseGraphQLView):
 
         source = Source(query, name="GraphQL request")
 
-        document_ast = parse(source)
+        try:
+            document_ast = parse(source)
+        except GraphQLSyntaxError:
+            return None
+
         operation_ast = get_operation_ast(document_ast, None)
 
         return operation_ast
 
     @staticmethod
     def fetch_cache_key(request: HttpRequest) -> str:
-        """Return a hashed cache key built from the request body."""
+        """Return a hashed cache key built from the request body.
+
+        Subclasses may override this staticmethod to derive the body hash
+        differently (e.g. normalising whitespace or extracting the operation
+        name). The returned value is composed into the full cache key by
+        ``dispatch`` together with the identity prefix, so overrides do not
+        need to incorporate user identity — that is handled automatically.
+        """
         m = hashlib.sha256()
         m.update(request.body)
 
         return m.hexdigest()
+
+    @staticmethod
+    def cache_key_prefix(request: HttpRequest) -> str:
+        """Return a stable per-identity token used to namespace cache keys.
+
+        Authenticated requests are partitioned by ``request.user.pk``.
+        Anonymous requests that carry an ``Authorization`` header are
+        partitioned by a hash of that header so token-auth clients without a
+        resolved ``request.user`` are still isolated from each other.
+        Fully anonymous, credential-free requests share a single ``"anon"``
+        partition (their responses contain no private data).
+
+        Subclasses may override this staticmethod to use a different identity
+        source (e.g. a session key or a tenant identifier).
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            A short string identifying the request's principal.
+        """
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            return f"u{user.pk}"
+        auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+        if auth_header:
+            h = hashlib.sha256(auth_header.encode(), usedforsecurity=False).hexdigest()[
+                :16
+            ]
+            return f"t{h}"
+        return "anon"
+
+    #: Sentinel used by ``dispatch`` to distinguish a cache miss from a cached
+    #: falsy value (e.g. an empty-body response).  Using ``cache.get(key)``
+    #: with a default of ``None`` and then checking ``if not response:`` would
+    #: treat a legitimately cached empty response as a miss.
+    _CACHE_MISS = object()
+
+    #: Template for the per-identity namespace version counter cache key.
+    #: ``{identity}`` is substituted with the value returned by
+    #: ``cache_key_prefix``; this scopes invalidation to the issuing user's
+    #: namespace only so that a mutation by user A does not flush user B's cache.
+    _CACHE_VERSION_KEY_TEMPLATE = "_graphql_cacheversion_{identity}"
+
+    def _get_cache_version(self, _cache: Any, identity: str) -> str:
+        """Return the current namespace version token for *identity*.
+
+        If no version exists yet, initialise it to a fresh UUID and persist it.
+
+        Args:
+            _cache: The Django cache backend instance.
+            identity: The per-request identity token from ``cache_key_prefix``.
+
+        Returns:
+            The current version string (a UUID hex or an integer string).
+        """
+        version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
+        version = _cache.get(version_key)
+        if version is None:
+            version = uuid.uuid4().hex
+            _cache.set(version_key, version)
+        return str(version)
+
+    def _bump_cache_version(self, _cache: Any, identity: str) -> None:
+        """Invalidate the issuing user's cached responses by advancing their version token.
+
+        Uses ``cache.incr`` when available (atomic on Redis / Memcached) and
+        falls back to setting a fresh UUID when the backend does not support
+        atomic increment (e.g. Django's local-memory cache raises
+        ``ValueError`` on a non-existent key).
+
+        Only the requesting user's namespace is touched; other users' cache
+        entries carry a different identity prefix and are not affected.
+
+        Args:
+            _cache: The Django cache backend instance.
+            identity: The per-request identity token from ``cache_key_prefix``.
+        """
+        version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
+        try:
+            _cache.incr(version_key)
+        except (ValueError, Exception):
+            # Backend does not support incr (e.g. LocMemCache before the key
+            # exists), or the key has already expired.  A fresh UUID ensures
+            # old keys are no longer returned.
+            _cache.set(version_key, uuid.uuid4().hex)
 
     def super_call(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Call the parent dispatch method."""
@@ -528,28 +631,43 @@ class GraphQLView(BaseGraphQLView):
         return response
 
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
-        """Fetch queried data from GraphQL and return the cached response."""
+        """Fetch queried data from GraphQL and return the cached response.
+
+        When ``CACHE_ACTIVE`` is ``True``:
+
+        * Cache keys are partitioned by user identity (see
+          ``cache_key_prefix``) so one user's cached response is never served
+          to another user.
+        * Mutations advance a global namespace version counter instead of
+          calling ``cache.clear()``, which would flush unrelated cache entries
+          shared by other users or other cache clients.
+        * A sentinel object detects cache misses so a legitimately cached
+          falsy or empty body is not re-executed on every request.
+        * A malformed GraphQL document (``GraphQLSyntaxError`` during
+          ``get_operation_ast``) falls through to ``super_call``, which
+          returns the appropriate HTTP 400 response.
+        """
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
 
-        cache = caches["default"]
+        _cache = caches["default"]
+        identity = self.cache_key_prefix(request)
         operation_ast = self.get_operation_ast(request)
-        # `operation` is a graphql-core ``OperationType`` enum, so compare its
-        # value (a bare ``== "mutation"`` is always False and would skip the
-        # cache invalidation, serving stale results after a mutation).
+        # ``operation`` is a graphql-core ``OperationType`` enum; compare its
+        # ``.value`` string — a bare ``== "mutation"`` is always ``False``
+        # because the enum instance is never equal to the plain string.
         operation = getattr(getattr(operation_ast, "operation", None), "value", None)
         if operation == "mutation":
-            cache.clear()
+            self._bump_cache_version(_cache, identity)
             return self.super_call(request, *args, **kwargs)
 
-        cache_key = f"_graplql_{self.fetch_cache_key(request)}"
-        response = cache.get(cache_key)
+        version = self._get_cache_version(_cache, identity)
+        cache_key = f"_graphql_{identity}_{version}_{self.fetch_cache_key(request)}"
+        response = _cache.get(cache_key, self._CACHE_MISS)
 
-        if not response:
+        if response is self._CACHE_MISS:
             response = self.super_call(request, *args, **kwargs)
-
-            # cache key and value
-            cache.set(cache_key, response, timeout=graphql_api_settings.CACHE_TIMEOUT)
+            _cache.set(cache_key, response, timeout=graphql_api_settings.CACHE_TIMEOUT)
 
         return response
 
