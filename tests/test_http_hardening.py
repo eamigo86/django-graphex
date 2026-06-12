@@ -11,11 +11,9 @@ import json
 from unittest.mock import patch
 
 import graphene
-import pytest
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
-
 
 # ---------------------------------------------------------------------------
 # Minimal schema shared across all test cases
@@ -179,7 +177,7 @@ class TestGraphiQLSRI(TestCase):
         content = response.content.decode()
         self.assertRegex(
             content,
-            r'<link[^>]*integrity=',
+            r"<link[^>]*integrity=",
         )
 
     def test_scripts_have_crossorigin(self):
@@ -188,7 +186,7 @@ class TestGraphiQLSRI(TestCase):
         content = response.content.decode()
         import re
 
-        script_tags = re.findall(r'<script[^>]*unpkg\.com[^>]*>', content)
+        script_tags = re.findall(r"<script[^>]*unpkg\.com[^>]*>", content)
         self.assertTrue(script_tags, "No CDN script tags found")
         for tag in script_tags:
             self.assertIn("crossorigin", tag, f"Missing crossorigin in: {tag}")
@@ -201,7 +199,7 @@ class TestGraphiQLSRI(TestCase):
         import re
 
         # Match floating-version pattern: @N/ (major only) — NOT allowed.
-        floating = re.findall(r'unpkg\.com/react@\d+/', content)
+        floating = re.findall(r"unpkg\.com/react@\d+/", content)
         self.assertEqual(
             floating,
             [],
@@ -297,7 +295,9 @@ class TestASTIntrospectionDetection(TestCase):
         must still be detected as introspection by AST inspection."""
         # Indented differently — the old startswith("\n  query IntrospectionQuery")
         # would MISS this; AST detection must catch it.
-        differently_formatted = "query IntrospectionQuery { __schema { types { name } } }"
+        differently_formatted = (
+            "query IntrospectionQuery { __schema { types { name } } }"
+        )
         response = self._post(differently_formatted)
         data = json.loads(response.content)
         self.assertIn("__schema", data["data"])

@@ -114,6 +114,39 @@ The `fetch_cache_key` staticmethod (which hashes the request body) remains separ
 | `SUBSCRIPTION_SERIALIZE_DATA` | `False` | When `False`, change notifications carry only `{"id": <pk>}`; `True` serializes the full instance through the subscription's backend. Per-subscription override: `Meta.serialize_data`. See [Subscriptions](subscriptions.md). |
 | `SUBSCRIPTIONS_CHANNEL_GUARD` | `True` | When `True`, the channel ownership guard is active: the HTTP subscribe mutation verifies that `channel_id` was registered by the current session before joining any group. The guard reads from Django's `"default"` cache. **Multi-worker deployments must configure a shared cache backend (Redis / Memcached) for this to work correctly across processes.** With the default `LocMemCache` the guard works only when the WebSocket connect and HTTP subscribe land on the **same** worker. Set `False` to bypass the guard entirely — the failure mode with the guard on but no shared cache is a loud rejection (`ok: False`), never a silent data leak. See [Subscriptions → Security](subscriptions.md#channel-ownership-guard-fail-closed). |
 
+## HTTP / view hardening
+
+| Setting | Default | Description |
+|---|---|---|
+| `MAX_BATCH_SIZE` | `10` | Maximum number of operations allowed in a single [batch request](https://www.apollographql.com/blog/apollo-client/performance/batching-client-graphql-queries/). Requests exceeding this limit receive **HTTP 400**. Set to `None` to allow batches of any length (disables the guard — use only when all clients are trusted and independent rate limiting is in place). |
+
+### Choosing a `MAX_BATCH_SIZE` value
+
+The default of **10** is a pragmatic cap that covers legitimate use-cases (dashboard
+pages that batch 3–8 queries) while preventing request-amplification attacks that can
+send hundreds of operations in a single HTTP request.
+
+If your application legitimately needs larger batches, raise the limit explicitly:
+
+```python
+DJANGO_GRAPHEX = {
+    "MAX_BATCH_SIZE": 50,  # or None to disable entirely
+}
+```
+
+To restore pre-v1.2.1 behavior (no limit, any-length batch accepted):
+
+```python
+DJANGO_GRAPHEX = {
+    "MAX_BATCH_SIZE": None,
+}
+```
+
+!!! warning
+    Setting `MAX_BATCH_SIZE=None` removes the DoS protection. Ensure your API
+    gateway or reverse proxy enforces request-body size limits before doing this
+    on a public-facing endpoint.
+
 ## Security
 
 | Setting | Default | Description |

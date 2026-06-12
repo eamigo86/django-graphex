@@ -50,6 +50,14 @@ DEFAULTS = {
     # escape hatch when a shared cache cannot be provisioned; it disables the
     # channel-hijack protection.
     "SUBSCRIPTIONS_CHANNEL_GUARD": True,
+    # HTTP/view hardening
+    # Maximum number of operations permitted in a single batch request.
+    # Batch requests exceeding this limit are rejected with HTTP 400.
+    # Default 10 is a pragmatic safety cap against request-amplification DoS.
+    # Set to None to allow batches of any length (current pre-v1.2.1 behavior,
+    # not recommended for public APIs — use only when you control all clients
+    # and have independent rate limiting at the gateway/proxy level).
+    "MAX_BATCH_SIZE": 10,
     # Security middlewares
     # Allow __schema/__type introspection (DisableIntrospectionMiddleware).
     "ALLOW_INTROSPECTION": False,
