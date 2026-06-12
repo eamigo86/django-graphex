@@ -7,6 +7,8 @@ serializes the instance once and fans the payload out to the relevant groups.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +24,60 @@ if TYPE_CHECKING:
     from .subscription import Subscription
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_group_send(
+    channel_layer: Any, group_name: str, message: dict[str, Any]
+) -> None:
+    """Send *message* to *group_name* from a synchronous Django signal context.
+
+    Django post_save / post_delete signals fire in the ORM's synchronous call
+    stack.  Under a plain WSGI server there is no running event loop so the
+    standard ``async_to_sync(channel_layer.group_send)(...)`` call works fine.
+    Under an ASGI server (Daphne, Uvicorn) a loop IS running on the current
+    thread.  Calling ``async_to_sync`` in that context creates a nested-loop
+    situation that deadlocks.
+
+    Safe pattern:
+    - If no loop is running on the current thread → use ``async_to_sync``
+      (the plain WSGI / Celery / management-command path).
+    - If a loop IS running → schedule the coroutine on the running loop from a
+      separate worker thread via ``run_coroutine_threadsafe``, which enqueues
+      the coroutine safely without blocking the current thread or the loop.
+
+    Args:
+        channel_layer: The Channels channel layer to send through.
+        group_name: The group to broadcast to.
+        message: The message payload.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        # ASGI path: a loop is running on this thread.  We must NOT block the
+        # loop thread (future.result() on the same thread deadlocks).  Instead,
+        # schedule the coroutine onto the running loop from a worker thread and
+        # wait for completion there — leaving the loop thread free to process it.
+        def _send_from_thread() -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                channel_layer.group_send(group_name, message), loop
+            )
+            try:
+                future.result(timeout=5)
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    "group_send to %s timed out; message may be dropped.", group_name
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("group_send to %s raised.", group_name)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(_send_from_thread).result()
+    else:
+        # WSGI / sync path: no running loop — async_to_sync is safe here.
+        async_to_sync(channel_layer.group_send)(group_name, message)
 
 
 class SubscriptionBinding:
@@ -141,19 +197,17 @@ class SubscriptionBinding:
             group_names.append(cls._group_name(action, id=instance.pk, index=index))
 
         for group_name in group_names:
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    "type": "subscription.notify",
-                    "stream": self.stream,
-                    "group": group_name,
-                    # pk travels in the envelope (not the client payload) so the
-                    # consumer can run DB-backed filters regardless of which
-                    # fields the serializer exposes.
-                    "pk": instance.pk,
-                    "payload": payload,
-                },
-            )
+            message = {
+                "type": "subscription.notify",
+                "stream": self.stream,
+                "group": group_name,
+                # pk travels in the envelope (not the client payload) so the
+                # consumer can run DB-backed filters regardless of which
+                # fields the serializer exposes.
+                "pk": instance.pk,
+                "payload": payload,
+            }
+            _safe_group_send(channel_layer, group_name, message)
 
 
 __all__ = ["SubscriptionBinding"]

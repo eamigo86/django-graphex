@@ -40,6 +40,16 @@ DEFAULTS = {
     # full instance with the subscription's backend. Can be overridden
     # per subscription with `Meta.serialize_data`.
     "SUBSCRIPTION_SERIALIZE_DATA": False,
+    # Channel ownership guard (v1.2.1+). When True (default), the subscribe
+    # mutation verifies that the channel_id was registered by the same session
+    # that is calling subscribe, using the Django cache as the backing store.
+    # Multi-worker deployments must configure a SHARED cache backend (Redis /
+    # Memcached) so the guard works across processes; with the default LocMemCache
+    # (per-process), HTTP and WS requests must land on the same worker.
+    # Set to False to bypass the guard entirely — do this only as a temporary
+    # escape hatch when a shared cache cannot be provisioned; it disables the
+    # channel-hijack protection.
+    "SUBSCRIPTIONS_CHANNEL_GUARD": True,
     # Security middlewares
     # Allow __schema/__type introspection (DisableIntrospectionMiddleware).
     "ALLOW_INTROSPECTION": False,
