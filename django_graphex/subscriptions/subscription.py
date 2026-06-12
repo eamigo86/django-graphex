@@ -78,6 +78,11 @@ def _validate_channel_ownership(channel_name: str, session_key: str | None) -> N
     Policy: fail-closed — an unknown (never-registered) channel is also
     rejected so an attacker cannot enumerate channels by guessing.
 
+    ``None`` and ``""`` are treated as equivalent for the owner comparison so
+    that anonymous connections (no Django session) registered with ``""`` are
+    accepted by HTTP callers that have no session either.  A caller with a real
+    session key can never match an empty-string owner (and vice-versa).
+
     Args:
         channel_name: The channel_id supplied by the subscribe caller.
         session_key: The session key supplied by the subscribe caller, or
@@ -91,7 +96,10 @@ def _validate_channel_ownership(channel_name: str, session_key: str | None) -> N
         raise GraphQLError(
             "channel_id is not registered; connect a WebSocket consumer first."
         )
-    if owner != session_key:
+    # Normalise: treat None and "" as the same (anonymous / no session).
+    normalised_caller = session_key or ""
+    normalised_owner = owner or ""
+    if normalised_caller != normalised_owner:
         raise GraphQLError(
             "channel_id does not belong to the current session; subscription rejected."
         )
@@ -542,7 +550,15 @@ class Subscription(ObjectType):
         # _session_key is an internal kwarg injected by the consumer (or by
         # test helpers) for ownership validation.  It is not part of the public
         # GraphQL argument schema — strip it before forwarding to other hooks.
+        # When not explicitly provided, attempt to extract the session key from
+        # the Django HTTP request available as info.context (the real HTTP path
+        # via SubscriptionGraphQLView).
         session_key: str | None = kwargs.pop("_session_key", None)
+        if session_key is None and info is not None:
+            context = info.context
+            session = getattr(context, "session", None)
+            if session is not None:
+                session_key = getattr(session, "session_key", None) or ""
 
         response = {
             "stream": cls._meta.stream,

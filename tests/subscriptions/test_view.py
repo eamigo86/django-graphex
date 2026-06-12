@@ -24,12 +24,19 @@ subscription {
 
 
 def _post(query):
+    from django_graphex.subscriptions.subscription import register_channel
+
     factory = RequestFactory()
     request = factory.post(
         "/subscriptions/",
         data=json.dumps({"query": query}),
         content_type="application/json",
     )
+    # The HTTP view derives the session key from request.session.session_key.
+    # RequestFactory does not configure session middleware, so the session key
+    # is None (treated as "" for ownership).  Pre-register the channel so the
+    # ownership guard accepts this legitimate test caller.
+    register_channel("view-chan", session_key="")
     view = SubscriptionGraphQLView.as_view(schema=schema, graphiql=False)
     response = view(request)
     return response
