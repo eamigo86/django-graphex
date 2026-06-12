@@ -7,6 +7,7 @@ Covers:
 (c) MultiSelectField detected via isinstance with guarded import
 (d) ArrayField/RangeField inner type config preserved
 """
+
 from __future__ import annotations
 
 import graphene
@@ -24,7 +25,6 @@ from django_graphex.converter import (
 from django_graphex.fields import ArrayField
 from django_graphex.registry import Registry
 from tests.models import Author
-
 
 # --------------------------------------------------------------------------- #
 # (a) Field ordering — unconditional determinism                               #
@@ -61,10 +61,14 @@ def test_construct_fields_output_order_identical_debug_true_false():
     registry_false = Registry()
 
     with override_settings(DEBUG=True):
-        fields_debug_true = list(construct_fields(Author, registry_true, None, None, None))
+        fields_debug_true = list(
+            construct_fields(Author, registry_true, None, None, None)
+        )
 
     with override_settings(DEBUG=False):
-        fields_debug_false = list(construct_fields(Author, registry_false, None, None, None))
+        fields_debug_false = list(
+            construct_fields(Author, registry_false, None, None, None)
+        )
 
     assert fields_debug_true == fields_debug_false, (
         "Field order must be identical regardless of DEBUG; "
@@ -91,12 +95,16 @@ def test_construct_fields_create_order_identical_debug_true_false():
 
     with override_settings(DEBUG=True):
         fields_debug_true = list(
-            construct_fields(Author, registry_true, None, None, None, input_flag="create")
+            construct_fields(
+                Author, registry_true, None, None, None, input_flag="create"
+            )
         )
 
     with override_settings(DEBUG=False):
         fields_debug_false = list(
-            construct_fields(Author, registry_false, None, None, None, input_flag="create")
+            construct_fields(
+                Author, registry_false, None, None, None, input_flag="create"
+            )
         )
 
     assert fields_debug_true == fields_debug_false, (
@@ -172,6 +180,7 @@ def test_multiselectfield_subclass_with_different_name_detected():
         out = convert_django_field_with_choices(field, Registry())
         # Must be detected as a list field, not a single enum field.
         import graphene as _g
+
         assert isinstance(out, _g.Field), (
             "MultiSelectField subclass must yield a DjangoListField (isinstance path)"
         )
@@ -187,6 +196,7 @@ def test_multiselectfield_direct_class_still_detected():
     This is a regression guard — the isinstance path must fall back gracefully
     when multiselectfield package is absent and name-check is the only heuristic.
     """
+
     class MultiSelectField(models.CharField):
         pass
 
