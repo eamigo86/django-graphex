@@ -62,19 +62,50 @@ MUTATION_ERRORS_FLAG = "graphene_mutation_has_errors"
 
 #: Self-contained GraphiQL page (CDN). Avoids depending on graphene-django's
 #: bundled template + static assets. Override per view with ``graphiql_template``.
+#:
+#: CDN asset versions are PINNED to specific patch versions and protected by
+#: Subresource Integrity (SRI) hashes (sha384) so a CDN compromise or
+#: unexpected version bump cannot inject malicious JavaScript into the
+#: GraphiQL playground.
+#:
+#: Pinned versions (update SRI hashes when bumping):
+#:   react          18.3.1
+#:   react-dom      18.3.1
+#:   graphiql       3.7.1
+#:
+#: To recompute hashes after a version bump:
+#:   curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+#:   then prefix the output with "sha384-".
 GRAPHIQL_HTML = """<!DOCTYPE html>
 <html lang="en">
   <head>
     <title>GraphiQL</title>
     <style>body { height: 100%; margin: 0; width: 100%; overflow: hidden; }
       #graphiql { height: 100vh; }</style>
-    <link rel="stylesheet" href="https://unpkg.com/graphiql@3/graphiql.min.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/graphiql@3.7.1/graphiql.min.css"
+      integrity="sha384-Mq3vbRBY71jfjQAt/DcjxUIYY33ksal4cgdRt9U/hNPvHBCaT2JfJ/PTRiPKf0aM"
+      crossorigin="anonymous"
+    />
   </head>
   <body>
     <div id="graphiql">Loading...</div>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/graphiql@3/graphiql.min.js"></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+      integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"
+    ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+      integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"
+    ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/graphiql@3.7.1/graphiql.min.js"
+      integrity="sha384-w0cGClNeNvIYIRVmYrv5kmQ6CEat8jJb0XBczOFPeWlVjzeMNJBaoeEcWFD8Gad4"
+    ></script>
     <script>
       const root = ReactDOM.createRoot(document.getElementById('graphiql'));
       const fetcher = GraphiQL.createFetcher({ url: window.location.pathname });
@@ -233,6 +264,28 @@ class BaseGraphQLView(View):
                 return self.render_graphiql(request)
 
             if self.batch:
+                max_batch = graphql_api_settings.MAX_BATCH_SIZE
+                if max_batch is not None and len(data) > max_batch:
+                    raise HttpError(
+                        HttpResponseBadRequest(
+                            self.json_encode(
+                                request,
+                                {
+                                    "errors": [
+                                        {
+                                            "message": (
+                                                f"Batch size {len(data)} exceeds the "
+                                                f"MAX_BATCH_SIZE limit of {max_batch}. "
+                                                "Reduce the number of operations per "
+                                                "request or set MAX_BATCH_SIZE=None to "
+                                                "disable the limit."
+                                            )
+                                        }
+                                    ]
+                                },
+                            )
+                        )
+                    )
                 responses = [self.get_response(request, entry) for entry in data]
                 result = "[{}]".format(",".join(r[0] for r in responses))
                 status_code = responses and max(responses, key=lambda r: r[1])[1] or 200
@@ -352,8 +405,22 @@ class BaseGraphQLView(View):
         variables: Any,
         operation_name: Any,
         show_graphiql: bool = False,
+        document: Any = None,
     ) -> Any:
-        """Validate and execute a GraphQL request, returning an ExecutionResult."""
+        """Validate and execute a GraphQL request, returning an ExecutionResult.
+
+        Args:
+            request: The incoming HTTP request.
+            data: The parsed request body.
+            query: The raw GraphQL query string.
+            variables: The bound variable values.
+            operation_name: The selected operation name, if any.
+            show_graphiql: Whether the GraphiQL interface is being rendered.
+            document: An already-parsed ``DocumentNode``.  When provided,
+                ``parse()`` is not called again (avoids a double-parse per
+                request).  Pass ``None`` (the default) to parse ``query``
+                internally.
+        """
         if not query:
             if show_graphiql:
                 return None
@@ -365,10 +432,11 @@ class BaseGraphQLView(View):
         if schema_validation_errors:
             return ExecutionResult(data=None, errors=schema_validation_errors)
 
-        try:
-            document = parse(query)
-        except Exception as e:
-            return ExecutionResult(errors=[e])
+        if document is None:
+            try:
+                document = parse(query)
+            except Exception as e:
+                return ExecutionResult(errors=[e])
 
         operation_ast = get_operation_ast(document, operation_name)
 
@@ -678,6 +746,48 @@ class GraphQLView(BaseGraphQLView):
         view = csrf_exempt(view)
         return view
 
+    @staticmethod
+    def _is_introspection_document(document: Any) -> bool:
+        """Return True when *document* is an introspection query.
+
+        Detects introspection by inspecting the AST rather than matching the
+        raw query string. A document is treated as introspection when ALL of
+        its top-level selections are ``__schema`` or ``__type`` fields (the
+        two standard introspection entry-points). This correctly handles any
+        formatting, named or anonymous operations, and mixed inline fragments.
+
+        Args:
+            document: A parsed graphql-core ``DocumentNode``.
+
+        Returns:
+            ``True`` when every top-level selection is a meta-field
+            (``__schema`` / ``__type``), ``False`` otherwise.
+        """
+        if document is None:
+            return False
+        from graphql.language.ast import FieldNode, OperationDefinitionNode
+
+        for definition in document.definitions:
+            if not isinstance(definition, OperationDefinitionNode):
+                continue
+            selections = getattr(
+                getattr(definition, "selection_set", None), "selections", ()
+            )
+            if not selections:
+                continue
+            # If any top-level selection is NOT a meta-field, it's not introspection.
+            for selection in selections:
+                if isinstance(selection, FieldNode):
+                    if selection.name.value not in ("__schema", "__type"):
+                        return False
+                # InlineFragment / FragmentSpread at top level are unusual; treat
+                # conservatively (not pure introspection).
+                else:
+                    return False
+            # All selections were meta-fields for this operation — it's introspection.
+            return True
+        return False
+
     def get_response(
         self, request: HttpRequest, data: Any, show_graphiql: bool = False
     ) -> tuple[Any, int]:
@@ -693,8 +803,25 @@ class GraphQLView(BaseGraphQLView):
         """
         query, variables, operation_name, id = self.get_graphql_params(request, data)
 
+        # Parse the document once and reuse it for introspection detection,
+        # query-cost reporting, AND execution — eliminating duplicate parses.
+        parsed_document: Any = None
+        if query:
+            try:
+                parsed_document = parse(query)
+            except Exception:
+                # Malformed query: pass document=None so execute_graphql_request
+                # re-attempts and returns the proper error response.
+                pass
+
         execution_result = self.execute_graphql_request(
-            request, data, query, variables, operation_name, show_graphiql
+            request,
+            data,
+            query,
+            variables,
+            operation_name,
+            show_graphiql,
+            document=parsed_document,
         )
 
         status_code = 200
@@ -716,14 +843,24 @@ class GraphQLView(BaseGraphQLView):
                 response["id"] = id
                 response["status"] = status_code
 
-            if graphql_api_settings.CLEAN_RESPONSE and not (query or "").startswith(
-                "\n  query IntrospectionQuery"
+            # AST-based introspection detection: bypass clean_dict for queries
+            # whose top-level selections are exclusively __schema / __type.
+            # This is whitespace- and formatter-independent, unlike the previous
+            # startswith("\n  query IntrospectionQuery") string match.
+            if (
+                graphql_api_settings.CLEAN_RESPONSE
+                and not self._is_introspection_document(parsed_document)
             ):
                 if response.get("data", None):
                     response["data"] = clean_dict(response["data"])
 
             if _settings.graphql_api_settings.EXPOSE_QUERY_COST and query:
-                cost = self.get_query_cost(query, variables, operation_name)
+                # Reuse the already-parsed document to avoid a second parse()
+                # call. Fall back to string-based parsing only when
+                # parsed_document is None (malformed query — cost is skipped).
+                cost = self.get_query_cost(
+                    query, variables, operation_name, document=parsed_document
+                )
                 if cost is not None:
                     response.setdefault("extensions", {})["cost"] = cost
 
@@ -734,23 +871,32 @@ class GraphQLView(BaseGraphQLView):
         return result, status_code
 
     def get_query_cost(
-        self, query: str, variables: Any, operation_name: str | None
+        self,
+        query: str,
+        variables: Any,
+        operation_name: str | None,
+        document: Any = None,
     ) -> dict[str, Any] | None:
         """Estimate the query's cost for the ``extensions.cost`` payload.
 
         Args:
-            query: The raw GraphQL query string.
+            query: The raw GraphQL query string (used as fallback when
+                *document* is ``None``).
             variables: The bound variable values (for exact page sizes).
             operation_name: The selected operation name, if any.
+            document: An already-parsed ``DocumentNode``.  When provided,
+                ``parse()`` is not called again (avoids a double-parse per
+                request when ``EXPOSE_QUERY_COST`` is ``True``).
 
         Returns:
             A ``{"requestedCost": int, "maxCost": int | None}`` mapping, or
             ``None`` when the query can't be parsed/analyzed.
         """
         try:
+            doc = document if document is not None else parse(query)
             report = analyze_cost(
                 self.schema.graphql_schema,
-                parse(query),
+                doc,
                 operation_name,
                 variables if isinstance(variables, dict) else None,
             )

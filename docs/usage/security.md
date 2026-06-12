@@ -201,6 +201,61 @@ except Exception:
     PROTECTED = DenyAllRegistry()   # broken schema -> everything is private
 ```
 
+## HTTP view hardening (v1.2.1+)
+
+### Batch request size limit
+
+`BaseGraphQLView` (and its subclasses) enforce a per-request operation limit when
+`batch=True` is set. Requests that exceed `MAX_BATCH_SIZE` are rejected with
+**HTTP 400** before any operation is executed.
+
+See [`MAX_BATCH_SIZE`](settings.md#http--view-hardening) in the settings reference.
+
+### GraphiQL CDN Subresource Integrity
+
+When `graphiql=True`, the built-in CDN page (`GRAPHIQL_HTML`) loads React and
+GraphiQL from [unpkg.com](https://unpkg.com) with:
+
+- **Pinned patch versions** — URLs use exact `@X.Y.Z` versions, not floating
+  major tags.
+- **Subresource Integrity (SRI)** — every `<script>` and `<link>` tag carries an
+  `integrity="sha384-…"` attribute that the browser verifies before evaluating the
+  asset. A compromised CDN or unexpected version bump cannot inject malicious
+  JavaScript without the browser rejecting the asset.
+
+The pinned versions and SRI hashes are documented inline in `views.py`.
+When upgrading to a newer React or GraphiQL release, recompute the hashes:
+
+```bash
+curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+# Prepend "sha384-" to the output.
+```
+
+To serve assets from your own infrastructure (offline / strict-CSP setups), point
+the view at a custom template:
+
+```python
+GraphQLView.as_view(schema=schema, graphiql=True, graphiql_template="myapp/graphiql.html")
+```
+
+### AST-based introspection detection (`CLEAN_RESPONSE`)
+
+When `CLEAN_RESPONSE=True` is set, `GraphQLView` passes the response data through
+`clean_dict` to remove `null` fields. Introspection responses (`__schema` / `__type`
+queries) are **exempt** — applying `clean_dict` to them would corrupt the payload
+because many introspection fields legitimately return `null`.
+
+Prior to v1.2.1 the exemption relied on matching the raw query string against the
+prefix `"\n  query IntrospectionQuery"`, which failed for:
+
+- compact inline queries: `{ __schema { types { name } } }`
+- differently-indented / re-formatted clients
+- `__type` queries
+
+Since v1.2.1 the check is AST-based: a response is treated as introspection when
+**all** top-level selections are `__schema` or `__type` fields, regardless of the
+query's textual format.
+
 ## Query depth & cost limits
 
 Two **validation rules** protect your API from over-nested or over-wide queries
