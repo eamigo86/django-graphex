@@ -97,6 +97,7 @@ nav:
     - Directives: directives.md
     - Subscriptions: usage/subscriptions.md
     - Query Limits: usage/query-limits.md
+    - Caching: usage/caching.md
     - Security: usage/security.md
   - Examples & Recipes:
     - Sample Application: usage/examples/blog-schema.md
