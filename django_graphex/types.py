@@ -882,12 +882,46 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
             global_arguments.update({operation: OrderedDict()})
 
             if operation != "delete":
-                input_type = registry.get_type_for_model(model, for_input=operation)
-
-                if not input_type:
-                    input_type = factory_type(
-                        "input", DjangoInputObjectType, operation, **factory_kwargs
+                nested_map = nested_fields if isinstance(nested_fields, dict) else {}
+                if nested_map:
+                    # Mirror of the DjangoModelMutation gate (see mutation.py):
+                    # a nested ``DjangoModelType`` builds a DISTINCT input with
+                    # ``skip_registry=True`` so the generic ``(model, operation)``
+                    # slot stays pristine for plain hosts and the converter's
+                    # child lookups. The helpers live in mutation.py; importing
+                    # them lazily here avoids the module-load circular import
+                    # (mutation.py imports this module).
+                    from .mutation import (
+                        _ensure_child_generic_input,
+                        _nested_input_name,
                     )
+
+                    for child_model in nested_map.values():
+                        _ensure_child_generic_input(child_model, operation, registry)
+                    input_type = factory_type(
+                        "input",
+                        DjangoInputObjectType,
+                        operation,
+                        **{
+                            **factory_kwargs,
+                            "name": _nested_input_name(
+                                model,
+                                operation,
+                                nested_map,
+                                only_fields,
+                                exclude_fields,
+                                include_fields,
+                            ),
+                            "skip_registry": True,
+                        },
+                    )
+                else:
+                    input_type = registry.get_type_for_model(model, for_input=operation)
+
+                    if not input_type:
+                        input_type = factory_type(
+                            "input", DjangoInputObjectType, operation, **factory_kwargs
+                        )
 
                 global_arguments[operation].update(
                     {input_field_name: Argument(input_type, required=True)}

@@ -152,3 +152,50 @@ class Track2Book(DummyModel):
 class Track2Magazine(DummyModel):
     name = models.CharField(max_length=100)
     issue = models.IntegerField(default=0)
+
+
+# --- nested-input-type-fix models ----------------------------------------- #
+# A self-referential model: a category nested into itself exercises the
+# single-level recursion guard (the on-demand GENERIC child stops at [ID!]).
+class NestedTreeNode(DummyModel):
+    label = models.CharField(max_length=100)
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        related_name="children",
+        on_delete=models.CASCADE,
+    )
+
+
+# A parent whose reverse-FK accessor is a MULTI-WORD snake_case name. The
+# GraphQL surface camelCases it (``blogComments``) and graphene deserializes it
+# back to the Django attr ``blog_comments`` -- which must match the nested_fields
+# dict key so ``data.pop(field)`` finds the object payload (ISSUE 7).
+class SnakeParent(DummyModel):
+    title = models.CharField(max_length=100)
+
+
+class SnakeChild(DummyModel):
+    text = models.CharField(max_length=100)
+    snake_parent = models.ForeignKey(
+        SnakeParent,
+        related_name="blog_comments",
+        on_delete=models.CASCADE,
+    )
+
+
+# A parent/child pair used ONLY by the nested-FIRST ordering test, so the
+# GLOBAL registry slot for ``(OrderParent, "create")`` is controlled entirely
+# within that one test (no sibling test module touches these models).
+class OrderParent(DummyModel):
+    title = models.CharField(max_length=100)
+
+
+class OrderChild(DummyModel):
+    text = models.CharField(max_length=100)
+    order_parent = models.ForeignKey(
+        OrderParent,
+        related_name="kids",
+        on_delete=models.CASCADE,
+    )

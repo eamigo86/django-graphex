@@ -50,6 +50,14 @@ All notable changes to this library are documented here. The format is based on
   against the wrong model's relation map. Inert before this release (no
   polymorphic output types were exposed) but the correctness foundation the
   union/interface routing above builds on.
+- **Nested writes now expose object inputs in the GraphQL schema.** A
+  `DjangoModelMutation` (or `DjangoModelType`) declaring `Meta.nested_fields`
+  reused the model's generic cached input type, so its nested relations were
+  exposed as `[ID!]` and a client could not create children inline — even though
+  the backend supported it. The mutation now builds a distinct nested-aware input
+  (e.g. `PostCreateNestedCommentsType` with `comments: [CommentCreateInput!]`)
+  while a sibling generic mutation on the same model keeps its `[ID!]` input
+  unchanged, regardless of declaration order.
 
 ### Documentation
 
