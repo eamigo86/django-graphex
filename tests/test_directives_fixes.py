@@ -12,13 +12,13 @@ Four bugs are covered (RED phase — all tests should fail before the fix):
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import datetime
+from datetime import timezone as dt_timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import graphene
 import pytest
-from django.test import TestCase
 from graphql import GraphQLError
 
 from django_graphex import GraphQLDirectiveMiddleware, all_directives
@@ -55,9 +55,7 @@ class TestNumberFormatSpecCap:
     def test_oversized_precision_raises_graphql_error(self):
         """@number(as: '.999999f') must raise GraphQLError (precision > cap)."""
         with pytest.raises(GraphQLError):
-            NumberGraphQLDirective.resolve(
-                1.0, {"as": ".999999f"}, None, None, _info()
-            )
+            NumberGraphQLDirective.resolve(1.0, {"as": ".999999f"}, None, None, _info())
 
     def test_zero_two_f_accepted(self):
         """@number(as: '.2f') is a normal spec and must work."""
@@ -121,11 +119,23 @@ class TestISODateFormat:
         result = _format_dt(dt, "iso")
         # Month abbreviations that %b could emit
         abbrevs = [
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
         ]
         for abbrev in abbrevs:
-            assert abbrev not in result, f"Month abbrev '{abbrev}' found in ISO output: {result}"
+            assert abbrev not in result, (
+                f"Month abbrev '{abbrev}' found in ISO output: {result}"
+            )
 
     def test_iso_format_via_schema(self):
         """The 'iso' format must work end-to-end through a GraphQL schema."""
@@ -138,9 +148,7 @@ class TestISODateFormat:
 
         schema = graphene.Schema(query=_Q, directives=list(all_directives))
         middleware = [GraphQLDirectiveMiddleware()]
-        result = schema.execute(
-            '{ ts @date(format: "iso") }', middleware=middleware
-        )
+        result = schema.execute('{ ts @date(format: "iso") }', middleware=middleware)
         assert result.errors is None
         # Must be parseable as ISO
         datetime.fromisoformat(result.data["ts"])
