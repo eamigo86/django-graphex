@@ -8,7 +8,6 @@ serializes the instance once and fans the payload out to the relevant groups.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -25,23 +24,6 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-#: How long (seconds) to wait for a ``group_send`` scheduled via the executor
-#: path before logging a warning and dropping the message.
-_GROUP_SEND_TIMEOUT: float = 5.0
-
-#: Module-level singleton executor used by the ASGI/running-loop path of
-#: ``_safe_group_send``.  A single background thread is sufficient because
-#: group_send is fast (enqueue-and-forget from the perspective of the caller).
-#: Creating a new ``ThreadPoolExecutor`` per signal would spawn a new OS thread
-#: on every model save / delete and leak the executor until GC — wasteful under
-#: high write throughput.
-_GROUP_SEND_EXECUTOR: concurrent.futures.ThreadPoolExecutor = (
-    concurrent.futures.ThreadPoolExecutor(
-        max_workers=1,
-        thread_name_prefix="dgx-group-send",
-    )
-)
-
 
 def _safe_group_send(
     channel_layer: Any, group_name: str, message: dict[str, Any]
@@ -49,18 +31,20 @@ def _safe_group_send(
     """Send *message* to *group_name* from a synchronous Django signal context.
 
     Django post_save / post_delete signals fire in the ORM's synchronous call
-    stack.  Under a plain WSGI server there is no running event loop so the
-    standard ``async_to_sync(channel_layer.group_send)(...)`` call works fine.
-    Under an ASGI server (Daphne, Uvicorn) a loop IS running on the current
-    thread.  Calling ``async_to_sync`` in that context creates a nested-loop
-    situation that deadlocks.
+    stack.  Two execution environments must be handled:
 
-    Safe pattern:
-    - If no loop is running on the current thread → use ``async_to_sync``
-      (the plain WSGI / Celery / management-command path).
-    - If a loop IS running → schedule the coroutine on the running loop from a
-      separate worker thread via ``run_coroutine_threadsafe``, which enqueues
-      the coroutine safely without blocking the current thread or the loop.
+    * **No running loop on the current thread** (plain WSGI, Celery, management
+      commands): ``async_to_sync(channel_layer.group_send)(...)`` is safe and
+      is used directly.
+    * **A loop IS running on the current thread** (ASGI server — Daphne,
+      Uvicorn): calling ``async_to_sync`` would create a nested-loop deadlock.
+      Instead, the coroutine is scheduled on the running loop via
+      ``loop.create_task`` and this function returns **immediately** (fire-and-
+      forget).  The loop processes the task on its next turn without any thread
+      blocking.  The old executor + ``run_coroutine_threadsafe(...).result()``
+      pattern blocked the loop thread waiting for a future that could never
+      resolve — causing a 5-second stall and a spurious "message may be dropped"
+      warning.
 
     Args:
         channel_layer: The Channels channel layer to send through.
@@ -73,30 +57,10 @@ def _safe_group_send(
         loop = None
 
     if loop is not None:
-        # ASGI path: a loop is running on this thread.  We must NOT block the
-        # loop thread (future.result() on the same thread deadlocks).  Instead,
-        # schedule the coroutine onto the running loop from a worker thread via
-        # the module-level singleton executor and wait for completion there —
-        # leaving the loop thread free to process it.
-        #
-        # Using the module-level ``_GROUP_SEND_EXECUTOR`` avoids creating and
-        # destroying a new OS thread on every model save / delete signal.
-        def _send_from_thread() -> None:
-            future = asyncio.run_coroutine_threadsafe(
-                channel_layer.group_send(group_name, message), loop
-            )
-            try:
-                future.result(timeout=_GROUP_SEND_TIMEOUT)
-            except concurrent.futures.TimeoutError:  # pragma: no cover
-                # Network/channel-layer latency; logged, not re-raised.
-                logger.warning(
-                    "group_send to %s timed out; message may be dropped.", group_name
-                )
-            except Exception:  # noqa: BLE001  # pragma: no cover
-                # Unexpected channel-layer error; logged, not re-raised.
-                logger.exception("group_send to %s raised.", group_name)
-
-        _GROUP_SEND_EXECUTOR.submit(_send_from_thread).result()
+        # ASGI path: a loop is running on this thread.  Schedule the coroutine
+        # as a fire-and-forget task on the already-running loop and return
+        # immediately.  This avoids any blocking of the loop thread.
+        loop.create_task(channel_layer.group_send(group_name, message))
     else:
         # WSGI / sync path: no running loop — async_to_sync is safe here.
         async_to_sync(channel_layer.group_send)(group_name, message)
