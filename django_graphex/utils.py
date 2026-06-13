@@ -1405,7 +1405,11 @@ def _collect_only_fields_is_full_load(
 # --------------------------------------------------------------------------- #
 
 
-def _leaf_model(model: type[Model], lookup: str) -> type[Model]:
+def _leaf_model(
+    model: type[Model],
+    lookup: str,
+    fmap_cache: "dict[tuple[int, str], Any] | None" = None,
+) -> type[Model]:
     """Walk a dotted ORM lookup through ALL relation kinds and return the leaf model.
 
     Unlike ``_collect_only_fields``, which only traverses select_related segments,
@@ -1418,13 +1422,16 @@ def _leaf_model(model: type[Model], lookup: str) -> type[Model]:
     Args:
         model: The root model class.
         lookup: A dotted ORM path, e.g. ``"posts"`` or ``"posts__tags"``.
+        fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).  Threading it prevents redundant
+            ``_meta.get_fields()`` calls across the .only()-narrowing pass (#66).
 
     Returns:
         The Django model class at the end of the lookup chain.
     """
     current = model
     for segment in lookup.split(LOOKUP_SEP):
-        rel_map = _relation_field_map(current)
+        rel_map = _relation_field_map(current, fmap_cache)
         field = rel_map.get(segment) or rel_map.get(to_snake_case(segment))
         current = get_related_model(field)
     return current
@@ -1437,6 +1444,7 @@ def _compute_child_only(
     fragments: dict[str, Any],
     child_gql_type: Any = None,
     child_graphene_type: Any = None,
+    fmap_cache: "dict[tuple[int, str], Any] | None" = None,
 ) -> PrefetchPlan | None:
     """Compute the `.only()` column plan for a single prefetch child queryset.
 
@@ -1462,6 +1470,9 @@ def _compute_child_only(
         child_gql_type: The GraphQLObjectType for the child (optional).  When
             provided, enables AnnotatedField self-collection on the child.
         child_graphene_type: The graphene type for the child (optional).
+        fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).  Threading it prevents redundant
+            ``_meta.get_fields()`` calls from the .only()-narrowing pass (#66).
 
     Returns:
         A ``PrefetchPlan`` with the column and select_related lists, or ``None``
@@ -1499,6 +1510,7 @@ def _compute_child_only(
             child_annotations,
             child_aliases,
             child_ann_names,
+            _fmap_cache=fmap_cache,
         )
 
     # --- OPTIMIZE_ONLY_FIELDS path --------------------------------------------
@@ -1539,6 +1551,7 @@ def _compute_child_only(
         fragments,
         annotated_names=child_ann_names,
         current_type_name=child_type_name,
+        _fmap_cache=fmap_cache,
     ):
         # Even on full-load, if we have annotations, return a plan without .only().
         # S3 GUARD: This annotate-only fallback (empty only_cols) masks a missing
@@ -1569,6 +1582,7 @@ def _compute_child_only(
         fragments,
         annotated_names=child_ann_names,
         current_type_name=child_type_name,
+        _fmap_cache=fmap_cache,
     )
 
     # Split raw_cols into dotted FK heads (-> child_select) and flat attnames
@@ -1771,6 +1785,7 @@ def _collect_prefetch_only_sets(
     gql_type: Any = None,
     promoted_lookups: "frozenset[str] | None" = None,
     schema: Any = None,
+    fmap_cache: "dict[tuple[int, str], Any] | None" = None,
 ) -> dict[str, PrefetchPlan]:
     """Map each direct prefetch lookup to its child column plan.
 
@@ -1803,6 +1818,9 @@ def _collect_prefetch_only_sets(
             can be resolved to its member model.  ``None`` (the default) keeps
             every non-GFK-union path byte-identical: the GFK branch degrades to
             today's full-load ``continue`` whenever ``schema`` is ``None``.
+        fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).  Threading it prevents redundant
+            ``_meta.get_fields()`` calls from the .only()-narrowing pass (#66).
 
     Returns:
         The completed ``{dotted_lookup: PrefetchPlan}`` dict.
@@ -1810,7 +1828,7 @@ def _collect_prefetch_only_sets(
     if _out is None:
         _out = {}
 
-    rel_map = _relation_field_map(model)
+    rel_map = _relation_field_map(model, fmap_cache)
 
     # NOTE: @skip/@include guard is intentionally absent here.
     # _collect_prefetch_only_sets only narrows the `.only()` column sets for
@@ -1833,6 +1851,7 @@ def _collect_prefetch_only_sets(
                     gql_type=gql_type,
                     promoted_lookups=promoted_lookups,
                     schema=schema,
+                    fmap_cache=fmap_cache,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -1863,6 +1882,7 @@ def _collect_prefetch_only_sets(
                 gql_type=gql_type,
                 promoted_lookups=promoted_lookups,
                 schema=schema,
+                fmap_cache=fmap_cache,
             )
             continue
 
@@ -1892,6 +1912,7 @@ def _collect_prefetch_only_sets(
                     gql_type=inner_gql or gql_type,
                     promoted_lookups=promoted_lookups,
                     schema=schema,
+                    fmap_cache=fmap_cache,
                 )
             continue
 
@@ -1954,6 +1975,7 @@ def _collect_prefetch_only_sets(
                     gql_type=child_gql,
                     promoted_lookups=promoted_lookups,
                     schema=schema,
+                    fmap_cache=fmap_cache,
                 )
             # If this path was promoted to prefetch by the AnnotatedField promotion
             # pass, also build a PrefetchPlan for it so child annotations are injected.
@@ -1969,6 +1991,7 @@ def _collect_prefetch_only_sets(
                     fragments,
                     child_gql_type=child_gql,
                     child_graphene_type=child_graphene_for_plan,
+                    fmap_cache=fmap_cache,
                 )
                 if plan is not None:
                     _out[lookup] = plan
@@ -1993,6 +2016,7 @@ def _collect_prefetch_only_sets(
             fragments,
             child_gql_type=child_gql,
             child_graphene_type=child_graphene,
+            fmap_cache=fmap_cache,
         )
         if plan is not None:
             _out[lookup] = plan
@@ -2128,6 +2152,7 @@ def _narrow_plain_prefetch(
     model: type[Model],
     lookup: str,
     only_map: dict[str, PrefetchPlan],
+    fmap_cache: "dict[tuple[int, str], Any] | None" = None,
 ) -> str | Prefetch:
     """Convert a plain-string prefetch lookup to a narrowed ``Prefetch`` if a plan exists.
 
@@ -2137,6 +2162,9 @@ def _narrow_plain_prefetch(
         lookup: The plain-string prefetch lookup (may be dotted).
         only_map: The ``{lookup: PrefetchPlan}`` map from
             ``_collect_prefetch_only_sets``.
+        fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).  Threading it prevents redundant
+            ``_meta.get_fields()`` calls inside ``_leaf_model`` (#66).
 
     Returns:
         The bare ``lookup`` string when no plan exists (full load), or a
@@ -2159,7 +2187,7 @@ def _narrow_plain_prefetch(
         # bare full-load string rather than emitting an empty GenericPrefetch.
         return gp if gp is not None else lookup
 
-    child = _leaf_model(model, lookup)
+    child = _leaf_model(model, lookup, fmap_cache)
     qs = child._default_manager.all()
     if plan.child_select:
         qs = qs.select_related(*plan.child_select)
@@ -2330,6 +2358,11 @@ def _walk_filtered_prefetches(
             ``_relation_field_map``).
     """
     relation_map = _relation_field_map(model, _fmap_cache) if model is not None else {}
+    # Pre-warm the concrete-field cache entry so the .only()-narrowing pass
+    # (_collect_only_fields_is_full_load / _collect_only_fields) can reuse it
+    # without an extra _meta.get_fields() call (#66(b)).
+    if model is not None and _fmap_cache is not None:
+        _concrete_field_map(model, _fmap_cache)
     _vars: dict[str, Any] = info.variable_values or {}
 
     for field in selection_set.selections:
@@ -3230,10 +3263,12 @@ def _apply_optimizations(
             # ``schema`` attribute degrades to the full-load GFK path (schema is
             # None -> the GFK-union branch ``continue``s) instead of raising.
             schema=getattr(info, "schema", None),
+            fmap_cache=_fmap_cache,
         )
         if only_map:
             prefetch_related = [
-                _narrow_plain_prefetch(model, lk, only_map) for lk in prefetch_related
+                _narrow_plain_prefetch(model, lk, only_map, fmap_cache=_fmap_cache)
+                for lk in prefetch_related
             ]
 
     # Phase E AC2b SITE A: apply optimize_<field> hooks to unfiltered top-level

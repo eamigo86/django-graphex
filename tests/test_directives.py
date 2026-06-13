@@ -219,3 +219,88 @@ class CustomDirectiveTest(TestCase):
     def test_mask_argument_as_variable(self):
         data = self._run("query($n: Int!){ card @mask(visible: $n) }", n=4)
         self.assertEqual(data["card"], "************1234")
+
+
+# ---------------------------------------------------------------------------
+# Issue #66 (a) — all_directives static-vs-runtime type consistency
+# ---------------------------------------------------------------------------
+
+
+class TestAllDirectivesTypeConsistency(TestCase):
+    """#66(a): all_directives must be a list of GraphQLDirective *instances*,
+    not classes, with a consistent static type that mypy can verify.
+
+    Before the fix, ``all_directives`` was first bound to a tuple of directive
+    CLASSES (24 items), then immediately rebound to a list of INSTANCES (30
+    items). Mypy kept the first binding's inferred type, so callsites got
+    incorrect type inference and the count discrepancy was hidden.
+
+    After the fix, the class-tuple is stored under ``_DIRECTIVE_CLASSES``
+    (or equivalent private name) and ``all_directives`` only ever holds the
+    list of 30 instances.
+    """
+
+    def test_all_directives_is_a_list(self):
+        """all_directives must be a list (not a tuple or other sequence)."""
+        from django_graphex import all_directives
+
+        self.assertIsInstance(
+            all_directives,
+            list,
+            f"all_directives must be a list, got {type(all_directives).__name__}",
+        )
+
+    def test_all_directives_elements_are_instances_not_classes(self):
+        """Every element of all_directives must be a directive *instance*, not a class."""
+        from graphql import GraphQLDirective
+
+        from django_graphex import all_directives
+
+        for i, d in enumerate(all_directives):
+            self.assertIsInstance(
+                d,
+                GraphQLDirective,
+                f"all_directives[{i}] is {d!r} — expected a GraphQLDirective instance, got {type(d).__name__}",
+            )
+            self.assertFalse(
+                isinstance(d, type),
+                f"all_directives[{i}] is a CLASS ({d!r}), not an instance",
+            )
+
+    def test_all_directives_count_includes_default_directives(self):
+        """all_directives must include the default GraphQL built-in directives."""
+        from graphql.type.directives import specified_directives
+
+        from django_graphex import all_directives
+        from django_graphex import directives as dir_module
+
+        # Verify the total equals _DIRECTIVE_CLASSES count + default directives count.
+        expected_total = len(dir_module._DIRECTIVE_CLASSES) + len(specified_directives)
+        self.assertEqual(
+            len(all_directives),
+            expected_total,
+            f"all_directives must contain {expected_total} items "
+            f"({len(dir_module._DIRECTIVE_CLASSES)} custom + {len(specified_directives)} default), "
+            f"got {len(all_directives)}",
+        )
+
+    def test_directive_classes_tuple_available_separately(self):
+        """The private _DIRECTIVE_CLASSES tuple must exist and contain only class objects."""
+        from django_graphex import directives as dir_module
+
+        self.assertTrue(
+            hasattr(dir_module, "_DIRECTIVE_CLASSES"),
+            "directives module must export _DIRECTIVE_CLASSES (the tuple of directive classes)",
+        )
+        classes = dir_module._DIRECTIVE_CLASSES
+        self.assertIsInstance(classes, tuple, "_DIRECTIVE_CLASSES must be a tuple")
+        self.assertGreater(
+            len(classes),
+            0,
+            "_DIRECTIVE_CLASSES must be non-empty",
+        )
+        for cls in classes:
+            self.assertTrue(
+                isinstance(cls, type),
+                f"_DIRECTIVE_CLASSES element {cls!r} must be a class",
+            )

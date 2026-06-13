@@ -425,3 +425,184 @@ class NestedListDescentFmapCacheTest(TestCase):
             f"Expected < 9 (the pre-fix baseline) — _fmap_cache must be threaded "
             f"through both nested-list descent sites in _walk_filtered_prefetches.",
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #66 (b) — _fmap_cache threaded through .only()-narrowing pass
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class OnlyNarrowingFmapCacheTest(TestCase):
+    """#66(b): _fmap_cache must be threaded through _collect_prefetch_only_sets,
+    _leaf_model, and _compute_child_only so _meta.get_fields() is not re-invoked
+    redundantly during the .only()-narrowing pass.
+
+    These helpers currently call _relation_field_map(model) without a cache,
+    causing extra get_fields() calls for every nested model level during the
+    narrowing pass.  After the fix, the existing request-scoped _fmap_cache is
+    forwarded from _apply_optimizations into these helpers.
+
+    Test strategy: spy on Post._meta.get_fields, execute a query that triggers
+    the narrowing pass (OPTIMIZE_ONLY_FIELDS=True), count get_fields calls.
+    Before the fix: multiple calls for Post from the narrowing pass.
+    After the fix: fewer calls (the narrowing pass reuses the cache).
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Post
+
+        cls.author = Author.objects.create(name="NarrowCacheAuthor")
+        for i in range(3):
+            Post.objects.create(title=f"NarrowPost{i}", author=cls.author)
+
+    def test_only_narrowing_memoizes_get_fields(self):
+        """#66(b): _meta.get_fields called fewer times for Post in a narrowing query.
+
+        A query with OPTIMIZE_ONLY_FIELDS=True that prefetches posts must not
+        call Post._meta.get_fields repeatedly from the narrowing pass.  After
+        threading _fmap_cache through _collect_prefetch_only_sets and friends,
+        the call count is reduced from the pre-fix baseline.
+        """
+        from unittest.mock import patch
+
+        import graphene
+        from django.test import override_settings
+        from graphene import Schema
+
+        from django_graphex.registry import Registry
+        from django_graphex.types import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from tests.models import Author, Post
+
+        _REG = Registry()
+
+        class _NPostType(DjangoObjectType):
+            class Meta:
+                model = Post
+                registry = _REG
+
+        class _NAuthorType(DjangoObjectType):
+            class Meta:
+                model = Author
+                registry = _REG
+
+        class _NAuthorListType(DjangoListObjectType):
+            class Meta:
+                model = Author
+                registry = _REG
+
+        schema = Schema(
+            query=type(
+                "_NarrowQuery",
+                (graphene.ObjectType,),
+                {"authors": DjangoListObjectField(_NAuthorListType)},
+            )
+        )
+
+        call_counts_with: dict[str, int] = {}
+        call_counts_without: dict[str, int] = {}
+        original_get_fields = Post._meta.get_fields
+
+        def counting_with(*args, **kwargs):
+            call_counts_with["post"] = call_counts_with.get("post", 0) + 1
+            return original_get_fields(*args, **kwargs)
+
+        def counting_without(*args, **kwargs):
+            call_counts_without["post"] = call_counts_without.get("post", 0) + 1
+            return original_get_fields(*args, **kwargs)
+
+        gql = "{ authors { results { posts { results { id title } } } } }"
+
+        # Run with OPTIMIZE_ONLY_FIELDS=True (default) — triggers narrowing pass.
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
+            with patch.object(Post._meta, "get_fields", counting_with):
+                result = schema.execute(gql)
+
+        assert result.errors is None, result.errors
+
+        # Verify behavior: correct data returned despite caching.
+        authors_data = result.data["authors"]["results"]
+        self.assertTrue(len(authors_data) >= 1, "Authors must be returned")
+
+        calls_with = call_counts_with.get("post", 0)
+        # Before the fix: the narrowing pass calls _relation_field_map(Post) without
+        # cache on every iteration — typically 3+ extra calls vs the cached path.
+        # After the fix: narrowing reuses the _fmap_cache, so total < pre-fix baseline.
+        # We assert the fix reduces the count vs an uncached run as a regression guard.
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": False}):
+            with patch.object(Post._meta, "get_fields", counting_without):
+                result_off = schema.execute(gql)
+
+        assert result_off.errors is None, result_off.errors
+        calls_without = call_counts_without.get("post", 0)
+
+        # With caching: calls_with should be <= calls_without (the uncached baseline).
+        # The fix doesn't invert the count (the base walker still calls _relation_field_map
+        # once) — it just removes the redundant calls from _collect_prefetch_only_sets.
+        self.assertLessEqual(
+            calls_with,
+            calls_without,
+            f"With OPTIMIZE_ONLY_FIELDS=True, Post._meta.get_fields was called "
+            f"{calls_with} times vs {calls_without} with OFF. "
+            f"The narrowing pass must not add redundant get_fields calls after the fix.",
+        )
+
+    def test_only_narrowing_data_parity(self):
+        """#66(b) non-regression: query results identical with/without _fmap_cache in narrowing."""
+        import graphene
+        from django.test import override_settings
+        from graphene import Schema
+
+        from django_graphex.registry import Registry
+        from django_graphex.types import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from tests.models import Author, Post
+
+        _REG = Registry()
+
+        class _NPPostType(DjangoObjectType):
+            class Meta:
+                model = Post
+                registry = _REG
+
+        class _NPAuthorType(DjangoObjectType):
+            class Meta:
+                model = Author
+                registry = _REG
+
+        class _NPAuthorListType(DjangoListObjectType):
+            class Meta:
+                model = Author
+                registry = _REG
+
+        schema = Schema(
+            query=type(
+                "_NarrowParityQuery",
+                (graphene.ObjectType,),
+                {"authors": DjangoListObjectField(_NPAuthorListType)},
+            )
+        )
+
+        gql = "{ authors { results { posts { results { id title } } } } }"
+
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
+            result_on = schema.execute(gql)
+        with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": False}):
+            result_off = schema.execute(gql)
+
+        assert result_on.errors is None, result_on.errors
+        assert result_off.errors is None, result_off.errors
+
+        self.assertEqual(
+            result_on.data,
+            result_off.data,
+            "Query results must be identical with and without OPTIMIZE_ONLY_FIELDS",
+        )
