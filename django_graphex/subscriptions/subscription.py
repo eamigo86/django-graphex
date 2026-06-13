@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
+from asgiref.sync import sync_to_async
 from channels.layers import get_channel_layer
 from django.core.cache import caches
 from graphene import (
@@ -618,8 +619,15 @@ class Subscription(ObjectType):
                 _validate_channel_ownership(channel_name, session_key)
 
             # Authorize the subscribe (may raise -> surfaced as ok=False).
+            # authorize_subscription and subscription_scope are sync classmethods
+            # (the user-overridable hooks may touch the Django ORM, which raises
+            # SynchronousOnlyOperation when called directly from the async
+            # _subscribe coroutine on an ASGI server).  Wrapping them via
+            # sync_to_async runs them in a thread-pool executor so they are safe
+            # to await regardless of whether the current implementation is
+            # trivial (returns None) or performs real database access.
             if operation == "subscribe":
-                cls.authorize_subscription(info, **kwargs)
+                await sync_to_async(cls.authorize_subscription)(info, **kwargs)
 
                 # --- (b) Filter key validation ---
                 # Reject filters whose root field is not in the declared output
@@ -629,7 +637,7 @@ class Subscription(ObjectType):
             # The server-forced scope is deterministic from the request, so it is
             # recomputed here for both subscribe (to register filters) and
             # unsubscribe (to target the very same group).
-            scope = cls.subscription_scope(info, **kwargs) or {}
+            scope = await sync_to_async(cls.subscription_scope)(info, **kwargs) or {}
             filters = {**client_filters, **scope} or None
 
             # When every index field is present in the scope, route to a

@@ -575,6 +575,34 @@ without blocking the loop thread, and a done-callback logs any delivery failure
 via the module logger.  On the **WSGI / sync path** (no running loop),
 `async_to_sync` is used and errors propagate synchronously as before.
 
+### Async-safe subscription hooks (v1.2.2)
+
+`authorize_subscription` and `subscription_scope` are synchronous classmethods
+(user-overridable).  When a subscription is processed inside an ASGI server
+(Daphne, Uvicorn), the `_subscribe` coroutine runs on the event loop.
+Calling a synchronous function that touches the Django ORM directly from that
+coroutine raises `SynchronousOnlyOperation`, which is silently swallowed into
+`ok: False` — making authenticated subscriptions appear permanently rejected.
+
+Starting with v1.2.2, both hooks are lifted via `asgiref.sync_to_async` so they
+execute in a thread-pool worker regardless of whether the implementation is
+trivial or makes real ORM queries.  No change is needed in user code.
+
+### Async-safe consumer cache I/O (v1.2.2)
+
+`GraphqlAPIDemultiplexer.connect` and `disconnect` register and unregister the
+channel in Django's default cache.  Under a non-`LocMemCache` backend (Redis,
+Memcached) this is blocking network I/O.  Starting with v1.2.2, both calls are
+wrapped in `sync_to_async` so the event loop is never stalled.
+
+### Graceful disconnect without connect (v1.2.2)
+
+If the WebSocket handshake is rejected (bad headers, auth failure) before the
+`connect()` body executes, `disconnect()` is still called by Channels.  Before
+v1.2.2 this raised an `AttributeError` because `_groups`, `_fields`, and
+`_filters` were only initialized inside `connect()`.  They are now declared as
+class-level defaults, making `disconnect()` safe in all scenarios.
+
 ### JavaScript path escaping
 
 `SubscriptionClientView` injects `ws_path` and `http_path` into inline
