@@ -68,7 +68,16 @@ class NestedFieldsMixin:
         pk injected into ``data``; the parent is then saved via the backend (so
         its validation/error handling is used); reverse and M2M children
         are written last and linked to the saved parent. Any failure rolls the
-        whole transaction back.
+        whole transaction back — no orphan rows are left behind.
+
+        **Subscription broadcasts and commit-time delivery**: model saves inside
+        the ``transaction.atomic()`` block trigger ``post_save`` / ``post_delete``
+        signals, which are connected to ``SubscriptionBinding`` receivers.
+        Those receivers now defer their broadcast via ``transaction.on_commit``,
+        so subscribers only receive notifications for rows that were actually
+        persisted.  A subsequent failure within the same atomic block causes a
+        rollback and suppresses all pending broadcast callbacks, eliminating
+        phantom notifications for non-existent rows.
 
         Args:
             root: Root value passed to the resolver.

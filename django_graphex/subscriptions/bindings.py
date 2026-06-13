@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.db import transaction
 from django.db.models.signals import post_delete, post_save
 
 from .mixins import serialize_instance
@@ -160,10 +161,23 @@ class SubscriptionBinding:
         created: bool,
         **kwargs: Any,
     ) -> None:
-        self.broadcast("create" if created else "update", instance)
+        # Capture the action and a snapshot of the pk before deferring.
+        # The instance is captured by the closure — its in-memory state is
+        # consistent at signal time, and the serializer reads only already-set
+        # attributes.  Deferring via on_commit guarantees the broadcast fires
+        # only after the surrounding transaction commits; if the transaction
+        # rolls back, the callback is discarded and subscribers receive no
+        # phantom notification.  When no transaction is open, on_commit runs
+        # the callback immediately (auto-commit behaviour is unchanged).
+        action = "create" if created else "update"
+        transaction.on_commit(lambda: self.broadcast(action, instance))
 
     def _on_delete(self, sender: Any, instance: Model, **kwargs: Any) -> None:
-        self.broadcast("delete", instance)
+        # Same deferred-broadcast pattern as _on_save.  Note: post_delete fires
+        # while the row is still present in the database within the transaction;
+        # the callback runs after the DELETE commits so subscribers only see
+        # notifications for rows that were actually removed.
+        transaction.on_commit(lambda: self.broadcast("delete", instance))
 
     # -- broadcast ----------------------------------------------------------
     def broadcast(self, action: str, instance: Model) -> None:
