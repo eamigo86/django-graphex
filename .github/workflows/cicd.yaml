@@ -160,7 +160,7 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        uv sync
+        uv sync --frozen
         # pytest addopts already enables pytest-cov (--cov + --cov-report=xml),
         # so plain pytest writes coverage.xml. A separate `coverage run` here
         # double-measures and leaves an empty .coverage (~0% reported).
@@ -317,7 +317,6 @@ jobs:
         prerelease: ${{ needs.get-version.outputs.is_prerelease == 'true' }}
         files: |
           dist/*
-        generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -354,7 +353,7 @@ jobs:
         cache-suffix: deploy-docs
 
     - name: Install dependencies
-      run: uv sync
+      run: uv sync --frozen
 
     - name: Build documentation
       run: uv run zensical build --clean -f zensical.yml

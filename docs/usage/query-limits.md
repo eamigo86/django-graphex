@@ -302,7 +302,7 @@ resolved exactly.
 
 ```python
 from graphql import parse
-from django_graphex.cost import analyze_cost
+from django_graphex import analyze_cost
 
 # With bound variables: exact evaluation
 report = analyze_cost(schema.graphql_schema, parse(query), variable_values={"flag": True})

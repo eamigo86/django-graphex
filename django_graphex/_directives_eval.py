@@ -37,7 +37,7 @@ from graphql import GraphQLError
 from graphql.execution.values import get_directive_values
 from graphql.type.directives import GraphQLIncludeDirective, GraphQLSkipDirective
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from graphql.language.ast import (
         FieldNode,
         FragmentSpreadNode,

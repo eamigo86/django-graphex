@@ -59,7 +59,7 @@ DJANGO_GRAPHEX = {
 |---|---|---|
 | `CACHE_ACTIVE` | `False` | Enable response caching in `GraphQLView`. |
 | `CACHE_TIMEOUT` | `300` | Cache TTL in seconds. |
-| `CLEAN_RESPONSE` | `False` | Strip `null` values from the response payload. |
+| `CLEAN_RESPONSE` | `False` | Strip `null` values from the response payload. Introspection responses are exempt — see [AST-based introspection detection](security.md#ast-based-introspection-detection-clean_response). |
 
 ### Security: per-user cache isolation
 

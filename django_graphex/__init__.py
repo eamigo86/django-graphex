@@ -48,8 +48,10 @@ VERSION = (1, 2, 1, "final", "")
 
 try:
     __version__ = version("django-graphex")
-except PackageNotFoundError:
-    # Fallback for editable / source installs not yet installed via pip
+except PackageNotFoundError:  # pragma: no cover
+    # Fallback for editable / source installs not yet installed via pip.
+    # This path is unreachable in the test environment where the package is
+    # installed, but is essential for source checkouts that skip pip install.
     from graphene.pyutils.version import get_version
 
     __version__ = get_version(VERSION)

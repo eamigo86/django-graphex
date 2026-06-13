@@ -162,6 +162,44 @@ async def test_no_session_key_and_channel_not_registered_rejected():
     assert result.ok is False
 
 
+@pytest.mark.asyncio
+async def test_session_key_derived_from_context_session():
+    """When _session_key is not supplied but info.context.session is present,
+    the session_key is derived from context.session.session_key (line 595 of
+    subscription.py)."""
+    from types import SimpleNamespace
+
+    from django_graphex.subscriptions.subscription import register_channel
+
+    # Register the channel under the session key that will be derived.
+    register_channel("ctx-session-channel", session_key="ctx-sess-xyz")
+
+    # Build a fake info object with context.session.session_key set.
+    fake_session = SimpleNamespace(session_key="ctx-sess-xyz")
+    fake_context = SimpleNamespace(session=fake_session)
+    fake_info = SimpleNamespace(context=fake_context)
+
+    # Call _subscribe WITHOUT _session_key — the code should derive it from
+    # info.context.session.session_key.
+    gen = UserSubscription._subscribe(
+        None,
+        fake_info,
+        channel_id="ctx-session-channel",
+        action="create",
+        operation="subscribe",
+    )
+    try:
+        result = await gen.__anext__()
+    finally:
+        await gen.aclose()
+
+    # Because the session key matches, the subscribe should succeed.
+    assert result.ok is True, (
+        f"Expected ok=True when session_key derived from context.session, "
+        f"got ok={result.ok}, error={result.error}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # (b) filter key validation
 # ---------------------------------------------------------------------------

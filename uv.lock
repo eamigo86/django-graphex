@@ -586,7 +586,7 @@ wheels = [
 
 [[package]]
 name = "django-graphex"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "django" },
@@ -627,7 +627,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "channels", marker = "extra == 'subscriptions'", specifier = ">=4.0,<5.0" },
-    { name = "channels-redis", marker = "extra == 'subscriptions'", specifier = ">=4.2" },
+    { name = "channels-redis", marker = "extra == 'subscriptions'", specifier = ">=4.2,<5.0" },
     { name = "django", specifier = ">=4.2,<7.0" },
     { name = "graphene", specifier = ">=3.3,<4" },
     { name = "pydantic", specifier = ">=2,<3" },
@@ -641,7 +641,7 @@ dev = [
     { name = "bandit", specifier = ">=1.9.0,<2" },
     { name = "channels", specifier = ">=4.0,<5.0" },
     { name = "coverage", extras = ["toml"], specifier = ">=7.13.0,<8" },
-    { name = "daphne", specifier = ">=4.0" },
+    { name = "daphne", specifier = ">=4.0,<5.0" },
     { name = "factory-boy", specifier = ">=3.3.0,<4" },
     { name = "ipdb", specifier = ">=0.13.13" },
     { name = "ipython", specifier = ">=9.9.0,<10" },
