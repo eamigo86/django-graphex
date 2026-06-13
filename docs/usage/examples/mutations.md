@@ -6,11 +6,13 @@ uploads and error handling.
 
 ### Creating Records
 
-=== "Create User with Profile"
+#### Create User with Profile
+
+=== "Mutation"
 
     ```graphql
-    mutation CreateUserWithProfile($userData: UserInput!, $profileData: UserProfileInput!) {
-      createUser(newUser: $userData, profile: $profileData) {
+    mutation CreateUserWithProfile($userData: NewUser!) {
+      createUser(newUser: $userData) {
         ok
         user {
           id
@@ -41,20 +43,47 @@ uploads and error handling.
         "email": "newuser@example.com",
         "firstName": "Jane",
         "lastName": "Smith",
-        "password": "securePassword123"
-      },
-      "profileData": {
-        "bio": "I'm a web developer passionate about modern technologies",
-        "location": "New York, NY",
-        "website": "https://janesmith.dev"
+        "password": "securePassword123",
+        "profile": {
+          "bio": "I'm a web developer passionate about modern technologies",
+          "location": "New York, NY",
+          "website": "https://janesmith.dev"
+        }
       }
     }
     ```
 
-=== "Create Post"
+=== "Response"
+
+    ```json
+    {
+      "data": {
+        "createUser": {
+          "ok": true,
+          "user": {
+            "id": "42",
+            "username": "newuser123",
+            "email": "newuser@example.com",
+            "firstName": "Jane",
+            "lastName": "Smith",
+            "profile": {
+              "bio": "I'm a web developer passionate about modern technologies",
+              "location": "New York, NY",
+              "website": "https://janesmith.dev"
+            }
+          },
+          "errors": []
+        }
+      }
+    }
+    ```
+
+#### Create Post
+
+=== "Mutation"
 
     ```graphql
-    mutation CreatePost($postData: PostInput!) {
+    mutation CreatePost($postData: NewPost!) {
       createPost(newPost: $postData) {
         ok
         post {
@@ -70,7 +99,7 @@ uploads and error handling.
             name
           }
           tags {
-            name
+            results { name }
           }
         }
         errors {
@@ -93,6 +122,29 @@ uploads and error handling.
         "status": "draft",
         "category": "1",
         "tags": ["1", "2", "3"]
+      }
+    }
+    ```
+
+=== "Response"
+
+    ```json
+    {
+      "data": {
+        "createPost": {
+          "ok": true,
+          "post": {
+            "id": "7",
+            "title": "Advanced GraphQL Techniques",
+            "slug": "advanced-graphql-techniques",
+            "content": "In this post, we'll explore advanced GraphQL patterns...",
+            "status": "draft",
+            "author": { "username": "admin" },
+            "category": { "name": "Technology" },
+            "tags": { "results": [{ "name": "graphql" }, { "name": "django" }, { "name": "api" }] }
+          },
+          "errors": []
+        }
       }
     }
     ```
