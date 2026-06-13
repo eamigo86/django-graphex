@@ -28,11 +28,46 @@ if TYPE_CHECKING:
 # memory exhaustion from client-supplied specs like "1000000.5f".
 _NUMBER_FORMAT_MAX_WIDTH = 100
 
-# Regex to extract the numeric width and precision from a Python format spec.
-# Matches optional fill/align, sign, grouping option, width, .precision.
-_FORMAT_SPEC_NUMBERS_RE = re.compile(
-    r"[^0-9]*(?P<width>[0-9]*)(?:\.(?P<precision>[0-9]+))?"
+# Regex matching the body of a Python format spec *after* the optional
+# [[fill]align] prefix has been stripped.  Covers:
+#   [sign][z][#][0][width][grouping_option][.precision][type]
+# The leading [^0-9]* approach in the old regex failed when the fill char
+# was a digit (e.g. "0<1000000f"): [^0-9]* stopped before the digit, then
+# the width group captured only the fill digit (not the real width), so the
+# DoS guard saw width=0 and let the huge spec through.
+_FORMAT_SPEC_BODY_RE = re.compile(
+    r"^[+\- ]?z?#?0?(?P<width>\d+)?[,_]?(?:\.(?P<precision>\d+))?[a-zA-Z%]?$"
 )
+
+
+def _extract_width_precision(spec: str) -> tuple[int, int]:
+    """Extract the numeric width and precision from a Python format mini-language spec.
+
+    Handles the optional ``[[fill]align]`` prefix correctly so that a digit
+    fill character (e.g. ``0<1000000f``) does not bypass the width check.
+
+    Args:
+        spec: A Python format spec string as supplied to the ``@number`` directive.
+
+    Returns:
+        A ``(width, precision)`` tuple of integers (0 when absent).
+    """
+    body = spec
+    # Strip optional [[fill]align]: if the second character is an align char
+    # the first character is the fill (may be a digit or any other char).
+    if len(body) >= 2 and body[1] in "<>=^":
+        body = body[2:]
+    elif body and body[0] in "<>=^":
+        body = body[1:]
+
+    m = _FORMAT_SPEC_BODY_RE.match(body)
+    if not m:
+        return 0, 0
+    raw_width = m.group("width")
+    raw_precision = m.group("precision")
+    return (int(raw_width) if raw_width else 0), (
+        int(raw_precision) if raw_precision else 0
+    )
 
 __all__ = (
     "DefaultGraphQLDirective",
@@ -201,17 +236,12 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
                 client-supplied specs like ``"1000000.5f"``).
         """
         spec = args.get("as") or ""
-        m = _FORMAT_SPEC_NUMBERS_RE.match(spec)
-        if m:
-            raw_width = m.group("width")
-            raw_precision = m.group("precision")
-            width = int(raw_width) if raw_width else 0
-            precision = int(raw_precision) if raw_precision else 0
-            if width > _NUMBER_FORMAT_MAX_WIDTH or precision > _NUMBER_FORMAT_MAX_WIDTH:
-                raise GraphQLError(
-                    f"@number format spec width/precision must not exceed "
-                    f"{_NUMBER_FORMAT_MAX_WIDTH}; got {spec!r}"
-                )
+        width, precision = _extract_width_precision(spec)
+        if width > _NUMBER_FORMAT_MAX_WIDTH or precision > _NUMBER_FORMAT_MAX_WIDTH:
+            raise GraphQLError(
+                f"@number format spec width/precision must not exceed "
+                f"{_NUMBER_FORMAT_MAX_WIDTH}; got {spec!r}"
+            )
         # Coerce the value to float first; blame the VALUE on failure.
         try:
             float_value = float(value or 0)
