@@ -214,7 +214,10 @@ def decode_base64_file(
             "Ensure the file is base64-encoded without extra whitespace or "
             "incorrect padding."
         ) from exc
-    except UnicodeDecodeError as exc:
+    except UnicodeDecodeError as exc:  # pragma: no cover
+        # base64.b64decode(str, validate=True) cannot raise UnicodeDecodeError:
+        # it only raises binascii.Error or ValueError for str inputs. This guard
+        # is retained as a defensive catch for future callers passing bytes.
         raise GraphQLError(
             f"Upload '{filename}' contains non-UTF-8 data in the base64 string: {exc}."
         ) from exc
