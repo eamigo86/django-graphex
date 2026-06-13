@@ -36,35 +36,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        # Python 3.12 — Django floor is >=4.2 (SPEC OQ2)
-        - python-version: '3.12'
-          toxenv: 'py312-django42'
-        - python-version: '3.12'
-          toxenv: 'py312-django50'
-        - python-version: '3.12'
-          toxenv: 'py312-django51'
+        # Python 3.12 — Django floor is >=5.2; supported: 5.2 LTS + 6.0
         - python-version: '3.12'
           toxenv: 'py312-django52'
         - python-version: '3.12'
           toxenv: 'py312-django60'
         # Python 3.13
         - python-version: '3.13'
-          toxenv: 'py313-django42'
-        - python-version: '3.13'
-          toxenv: 'py313-django50'
-        - python-version: '3.13'
-          toxenv: 'py313-django51'
-        - python-version: '3.13'
           toxenv: 'py313-django52'
         - python-version: '3.13'
           toxenv: 'py313-django60'
         # Python 3.14
-        - python-version: '3.14-dev'
-          toxenv: 'py314-django42'
-        - python-version: '3.14-dev'
-          toxenv: 'py314-django50'
-        - python-version: '3.14-dev'
-          toxenv: 'py314-django51'
         - python-version: '3.14-dev'
           toxenv: 'py314-django52'
         - python-version: '3.14-dev'
@@ -80,7 +62,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
         enable-cache: true
         # Unique cache key per matrix combo: jobs sharing a key race to save it
@@ -110,7 +92,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
         enable-cache: true
         cache-suffix: base-install
@@ -130,7 +112,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
         enable-cache: true
         cache-suffix: lint-and-security
@@ -153,7 +135,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
         enable-cache: true
         cache-suffix: coverage
@@ -219,7 +201,7 @@ jobs:
         fetch-depth: 0
 
     - name: Install uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
         enable-cache: true
         cache-suffix: publish
@@ -347,7 +329,7 @@ jobs:
       uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
     - name: Install uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
         enable-cache: true
         cache-suffix: deploy-docs

@@ -28,7 +28,8 @@ to the new one.
 #### 1. Python and Django Support
 
 !!! warning "Runtime Requirements"
-    django-graphex requires **Python 3.12+** (3.12, 3.13, 3.14) and **Django 4.2–6.0**.
+    django-graphex requires **Python 3.12+** (3.12, 3.13, 3.14) and **Django 5.2 (LTS) or 6.0**.
+    Django 4.2, 5.0 and 5.1 are EOL and no longer supported as of v1.3.0.
     It depends on **graphene >=3.3,<4** directly (the
     `graphene-django` dependency was dropped) and **pydantic >=2,<3**.
     Each Django version is tested on the Python versions it officially supports.
