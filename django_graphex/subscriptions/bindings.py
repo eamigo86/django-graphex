@@ -173,18 +173,103 @@ class SubscriptionBinding:
         transaction.on_commit(lambda: self.broadcast(action, instance))
 
     def _on_delete(self, sender: Any, instance: Model, **kwargs: Any) -> None:
-        # Same deferred-broadcast pattern as _on_save.  Note: post_delete fires
-        # while the row is still present in the database within the transaction;
-        # the callback runs after the DELETE commits so subscribers only see
-        # notifications for rows that were actually removed.
-        transaction.on_commit(lambda: self.broadcast("delete", instance))
+        # Snapshot the pk and (in serialize mode) the full payload *at signal
+        # time*, before deferring to on_commit.  Django nulls instance.pk at the
+        # end of Model.delete() — before the on_commit callback fires — so any
+        # code that reads instance.pk inside the deferred lambda would see None.
+        #
+        # Two things happen at signal time that are correct here:
+        #   * instance.pk is still set (the signal fires before the ORM clears it).
+        #   * Scalar fields are still present on the in-memory instance.
+        #   * M2M rows have already been cascade-deleted, so serialize_instance
+        #     returns empty M2M lists — acceptable for a delete notification.
+        #
+        # Note: post_delete fires while the DELETE is still inside the open
+        # transaction; the callback runs only after the transaction commits, so
+        # subscribers never receive phantom notifications for rolled-back deletes.
+        pk_snapshot = instance.pk
+        if self.subscription_cls._should_serialize_data():
+            data_snapshot: dict[str, Any] | None = serialize_instance(
+                self.backend, instance
+            )
+        else:
+            data_snapshot = None
+
+        transaction.on_commit(
+            lambda: self._broadcast_delete(instance, pk_snapshot, data_snapshot)
+        )
 
     # -- broadcast ----------------------------------------------------------
+    def _broadcast_delete(
+        self,
+        instance: Model,
+        pk_snapshot: Any,
+        data_snapshot: dict[str, Any] | None,
+    ) -> None:
+        """Broadcast a delete notification using a pre-captured pk and payload.
+
+        Called from the on_commit callback registered by ``_on_delete``.  All
+        pk-dependent values are derived from *pk_snapshot* (captured at signal
+        time) rather than from ``instance.pk``, which Django sets to ``None``
+        during ``Model.delete()`` before the callback fires.
+
+        Args:
+            instance: The (now pk-less) model instance — used only for index
+                field extraction via ``_instance_index``, which reads non-pk
+                fields and is therefore safe to call with a pk-less instance.
+            pk_snapshot: The primary key captured at post_delete signal time.
+            data_snapshot: Pre-serialized payload (non-None when
+                ``serialize_data=True``), or ``None`` for id-only mode.
+        """
+        channel_layer = get_channel_layer()
+        if channel_layer is None:  # pragma: no cover - misconfiguration guard
+            logger.warning(
+                "No channel layer configured; dropping delete notification for %s.",
+                self.model_label,
+            )
+            return
+
+        if data_snapshot is not None:
+            data: dict[str, Any] = data_snapshot
+        else:
+            data = {"id": pk_snapshot}
+
+        payload = {
+            "action": "delete",
+            "model": self.model_label,
+            "data": data,
+        }
+
+        cls = self.subscription_cls
+        group_names = [
+            cls._group_name("delete"),
+            cls._group_name("delete", id=pk_snapshot),
+        ]
+        index = cls._instance_index(instance)
+        if index:
+            group_names.append(cls._group_name("delete", index=index))
+            group_names.append(cls._group_name("delete", id=pk_snapshot, index=index))
+
+        for group_name in group_names:
+            message = {
+                "type": "subscription.notify",
+                "stream": self.stream,
+                "group": group_name,
+                # pk travels in the envelope so the consumer can run DB-backed
+                # filters regardless of which fields the serializer exposes.
+                "pk": pk_snapshot,
+                "payload": payload,
+            }
+            _safe_group_send(channel_layer, group_name, message)
+
     def broadcast(self, action: str, instance: Model) -> None:
         """Serialize once and fan out to the action and per-pk groups.
 
+        Used for "create" and "update" actions.  For "delete", use
+        ``_broadcast_delete`` which accepts a pre-captured pk snapshot.
+
         Args:
-            action: The change action, one of "create", "update" or "delete".
+            action: The change action, one of "create" or "update".
             instance: The model instance that changed.
         """
         channel_layer = get_channel_layer()
