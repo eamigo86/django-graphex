@@ -475,7 +475,11 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
         if "multipart/form-data" in request_type:
             data.update({name: value for name, value in info.context.FILES.items()})
 
-        pk = data.pop("id")
+        # Use .pop('id', None) so that an update input where 'id' was excluded
+        # via only_fields/exclude_fields does not raise KeyError.  A None pk
+        # means no object can be found, so old_obj will be None and the resolver
+        # returns a clean "not found" error rather than a 500.
+        pk = data.pop("id", None)
         # Optional inputs the client omitted (relational fields especially)
         # arrive as an explicit ``null`` because the generated update input
         # gives them a ``None`` default. On a partial update treat ``null`` as

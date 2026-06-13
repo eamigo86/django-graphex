@@ -205,7 +205,9 @@ class NestedListResolverTest(TestCase):
 
     def test_none_root_returns_empty(self):
         field = self._field()
-        out = field.list_resolver(None, field.filter_backend, None, None)
+        # output_type is the 3rd positional arg (added in #58b); nested path
+        # ignores it (None is the documented sentinel for nested fields).
+        out = field.list_resolver(None, field.filter_backend, None, None, None)
         assert isinstance(out, DjangoListObjectBase)
         assert out.count == 0
 
@@ -218,7 +220,7 @@ class NestedListResolverTest(TestCase):
         author = Author.objects.prefetch_related("posts").get(pk=author.pk)
         field = self._field()
         with CaptureQueriesContext(connection) as ctx:
-            out = field.list_resolver(None, field.filter_backend, author, None)
+            out = field.list_resolver(None, field.filter_backend, None, author, None)
         assert out.count == 2
         assert len(ctx.captured_queries) == 0  # served from prefetch cache
 
@@ -233,6 +235,7 @@ class NestedListResolverTest(TestCase):
         out = field.list_resolver(
             None,
             field.filter_backend,
+            None,
             author,
             None,
             filter={"title": {"icontains": "keep"}},
@@ -245,5 +248,5 @@ class NestedListResolverTest(TestCase):
         # Fresh instance, no prefetch cache, no filter -> materialize branch.
         author = Author.objects.get(pk=author.pk)
         field = self._field()
-        out = field.list_resolver(None, field.filter_backend, author, None)
+        out = field.list_resolver(None, field.filter_backend, None, author, None)
         assert out.count == 1

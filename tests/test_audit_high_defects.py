@@ -42,6 +42,10 @@ _schema = graphene.Schema(query=_Q)
 class BumpCacheVersionPoisonHealingTest(TestCase):
     """H1: a pre-existing STRING token in the cache must be healed to an integer
     so that subsequent _bump_cache_version calls succeed (no TypeError, no HTTP 500).
+
+    Updated for issue #60: bump is deferred via transaction.on_commit;
+    captureOnCommitCallbacks(execute=True) is required to flush it in TestCase.
+    Initial/heal value is now 1 (not 0) to avoid the ambiguous zero-state.
     """
 
     def setUp(self):
@@ -50,7 +54,7 @@ class BumpCacheVersionPoisonHealingTest(TestCase):
         cache.clear()
 
     def test_happy_path_bump_increments(self):
-        """Seed via _get_cache_version → bump → bump; version goes 0→1→2."""
+        """Seed via _get_cache_version → bump → bump; version goes 1→2→3."""
         from django.core.cache import caches
 
         from django_graphex.views import GraphQLView
@@ -62,17 +66,19 @@ class BumpCacheVersionPoisonHealingTest(TestCase):
         )
 
         view._get_cache_version(_cache, "h1-happy")
-        view._bump_cache_version(_cache, "h1-happy")
+        with self.captureOnCommitCallbacks(execute=True):
+            view._bump_cache_version(_cache, "h1-happy")
         v1 = _cache.get(version_key)
-        view._bump_cache_version(_cache, "h1-happy")
+        with self.captureOnCommitCallbacks(execute=True):
+            view._bump_cache_version(_cache, "h1-happy")
         v2 = _cache.get(version_key)
 
-        assert v1 == 1, f"Expected 1 after first bump, got {v1!r}"
-        assert v2 == 2, f"Expected 2 after second bump, got {v2!r}"
+        assert v1 == 2, f"Expected 2 after first bump (seed=1), got {v1!r}"
+        assert v2 == 3, f"Expected 3 after second bump, got {v2!r}"
 
     def test_missing_key_reseeds_to_integer(self):
         """When the version key is absent, _bump_cache_version re-seeds to integer
-        0 and a subsequent bump increments cleanly."""
+        1 (not 0) and a subsequent bump increments cleanly."""
         from django.core.cache import caches
 
         from django_graphex.views import GraphQLView
@@ -87,16 +93,20 @@ class BumpCacheVersionPoisonHealingTest(TestCase):
         _cache.delete(version_key)
 
         # Must not raise.
-        view._bump_cache_version(_cache, "h1-missing")
+        with self.captureOnCommitCallbacks(execute=True):
+            view._bump_cache_version(_cache, "h1-missing")
 
         stored = _cache.get(version_key)
         assert isinstance(stored, int), (
             f"Expected integer re-seed after missing key, got {type(stored).__name__}: "
             f"{stored!r}"
         )
+        # Heal value is 1 (not 0) — zero-state is never used.
+        assert stored == 1, f"Expected heal to 1, got {stored!r}"
 
         # Subsequent bump must succeed (not raise TypeError).
-        view._bump_cache_version(_cache, "h1-missing")
+        with self.captureOnCommitCallbacks(execute=True):
+            view._bump_cache_version(_cache, "h1-missing")
         stored2 = _cache.get(version_key)
         assert isinstance(stored2, int), (
             f"Expected integer after follow-up bump, got {type(stored2).__name__}: "
@@ -127,7 +137,8 @@ class BumpCacheVersionPoisonHealingTest(TestCase):
         # Must NOT raise TypeError (this is the bug: LocMemCache.incr on a
         # string raises TypeError which the old except ValueError did not catch).
         try:
-            view._bump_cache_version(_cache, "h1-poison")
+            with self.captureOnCommitCallbacks(execute=True):
+                view._bump_cache_version(_cache, "h1-poison")
         except TypeError as exc:
             pytest.fail(
                 f"_bump_cache_version raised TypeError on a string token (H1 bug): {exc}"
@@ -141,7 +152,8 @@ class BumpCacheVersionPoisonHealingTest(TestCase):
         )
 
         # A follow-up bump must also succeed and increment.
-        view._bump_cache_version(_cache, "h1-poison")
+        with self.captureOnCommitCallbacks(execute=True):
+            view._bump_cache_version(_cache, "h1-poison")
         stored2 = _cache.get(version_key)
         assert isinstance(stored2, int), (
             f"Expected integer after follow-up bump, got {type(stored2).__name__}: "

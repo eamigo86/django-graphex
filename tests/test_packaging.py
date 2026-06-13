@@ -18,15 +18,16 @@ def test_version_matches_importlib_metadata():
     assert django_graphex.__version__ == installed, (
         f"__version__ ({django_graphex.__version__!r}) "
         f"does not match importlib.metadata ({installed!r}). "
-        "The VERSION tuple in __init__.py must match pyproject.toml."
+        "__version__ is derived from the installed package metadata "
+        "(generated from pyproject.toml) — there is no hardcoded version."
     )
 
 
 def test_version_is_current_release():
-    """For the v1.2.1 release, __version__ must equal '1.2.1'."""
-    assert django_graphex.__version__ == "1.2.1", (
-        f"Expected __version__ == '1.2.1', got {django_graphex.__version__!r}. "
-        "Update VERSION tuple in django_graphex/__init__.py to (1, 2, 1, 'final', '')."
+    """For the v1.2.2 release, __version__ must equal '1.2.2'."""
+    assert django_graphex.__version__ == "1.2.2", (
+        f"Expected __version__ == '1.2.2', got {django_graphex.__version__!r}. "
+        "Bump `version` in pyproject.toml and reinstall the package."
     )
 
 

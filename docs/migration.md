@@ -31,6 +31,7 @@ to the new one.
     django-graphex requires **Python 3.12+** (3.12, 3.13, 3.14) and **Django 4.2–6.0**.
     It depends on **graphene >=3.3,<4** directly (the
     `graphene-django` dependency was dropped) and **pydantic >=2,<3**.
+    Each Django version is tested on the Python versions it officially supports.
 
 #### 2. Django REST Framework removed — use `Meta.model`
 

@@ -50,7 +50,7 @@ This adds `channels` and `channels-redis`. See the
 !!! info "Version Support"
     - **Minimum Python version**: 3.12+
     - **Minimum Django version**: 4.2+
-    - Full compatibility tested with all combinations of supported versions
+    - Each Django version is tested on the Python versions it officially supports
 
 ## Development Installation
 
@@ -72,9 +72,8 @@ make quality
 
 ## Verify Installation
 
-You can verify the installation by importing the package:
+Confirm the installed version using the standard metadata API (no Django setup required):
 
-```python
-import django_graphex
-print(django_graphex.__version__)
+```bash
+python -c "from importlib.metadata import version; print(version('django-graphex'))"
 ```

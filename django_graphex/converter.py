@@ -252,7 +252,11 @@ def convert_django_field_with_choices(
     if choices:
         meta = field.model._meta
 
-        name = f"{meta.object_name}_{field.name}_Enum"
+        # Key enums by (app_label, object_name, field_name) so two models that
+        # share a class name across different Django apps — and carry the same
+        # choices-field name — never collide in the registry.  This mirrors the
+        # (model_class, for_input) keying used for object/input types.
+        name = f"{meta.app_label}_{meta.object_name}_{field.name}_Enum"
         if input_flag:
             name = f"{name}_{input_flag}"
         name = to_camel_case(name)
@@ -812,10 +816,13 @@ def convert_field_to_djangomodel(
 
     def dynamic_type() -> Any:
         """Resolve the related GraphQL type lazily."""
-        # Avoid create field for auto generate OneToOneField product of an inheritance
-        if isinstance(field, models.OneToOneField) and issubclass(
-            field.model, field.related_model
-        ):
+        # Skip the MTI auto-generated parent_link OneToOneField (Django sets
+        # ``remote_field.parent_link = True`` on these).  The old issubclass()
+        # guard also matched genuine self-referential O2O (spouse = O2O('self'))
+        # because issubclass(X, X) is always True — silently dropping the field
+        # from both output and input types.  Checking parent_link instead is
+        # precise: it is True only for Django-generated MTI links.
+        if getattr(getattr(field, "remote_field", None), "parent_link", False):
             return
         if input_flag and not nested_field:
             return ID(

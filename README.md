@@ -27,13 +27,13 @@ Django models — no DRF, no `graphene-django`, no `django-filter`.
 - **Subscriptions** — real-time GraphQL over Django Channels 4 (optional extra).
 
 > **Coming from `graphene-django` or `graphene-django-extras`?** See the
-> [Migration Guide](https://eamigo86.github.io/django-graphex/migration.html) for a
+> [Migration Guide](https://eamigo86.github.io/django-graphex/migration/) for a
 > step-by-step upgrade with before/after examples.
 
 ## Requirements
 
 - **Python:** 3.12+ (3.13, 3.14 supported)
-- **Django:** 4.2+ (4.2, 5.0, 5.1, 5.2, 6.0 supported)
+- **Django:** 4.2+ (4.2, 5.0, 5.1, 5.2, 6.0 supported) — each Django version tested on the Python versions it officially supports
 - **graphene:** >=3.3,<4
 - **pydantic:** >=2,<3
 

@@ -1405,7 +1405,11 @@ def _collect_only_fields_is_full_load(
 # --------------------------------------------------------------------------- #
 
 
-def _leaf_model(model: type[Model], lookup: str) -> type[Model]:
+def _leaf_model(
+    model: type[Model],
+    lookup: str,
+    fmap_cache: "dict[tuple[int, str], Any] | None" = None,
+) -> type[Model]:
     """Walk a dotted ORM lookup through ALL relation kinds and return the leaf model.
 
     Unlike ``_collect_only_fields``, which only traverses select_related segments,
@@ -1418,13 +1422,16 @@ def _leaf_model(model: type[Model], lookup: str) -> type[Model]:
     Args:
         model: The root model class.
         lookup: A dotted ORM path, e.g. ``"posts"`` or ``"posts__tags"``.
+        fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).  Threading it prevents redundant
+            ``_meta.get_fields()`` calls across the .only()-narrowing pass (#66).
 
     Returns:
         The Django model class at the end of the lookup chain.
     """
     current = model
     for segment in lookup.split(LOOKUP_SEP):
-        rel_map = _relation_field_map(current)
+        rel_map = _relation_field_map(current, fmap_cache)
         field = rel_map.get(segment) or rel_map.get(to_snake_case(segment))
         current = get_related_model(field)
     return current
@@ -1437,6 +1444,7 @@ def _compute_child_only(
     fragments: dict[str, Any],
     child_gql_type: Any = None,
     child_graphene_type: Any = None,
+    fmap_cache: "dict[tuple[int, str], Any] | None" = None,
 ) -> PrefetchPlan | None:
     """Compute the `.only()` column plan for a single prefetch child queryset.
 
@@ -1462,6 +1470,9 @@ def _compute_child_only(
         child_gql_type: The GraphQLObjectType for the child (optional).  When
             provided, enables AnnotatedField self-collection on the child.
         child_graphene_type: The graphene type for the child (optional).
+        fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).  Threading it prevents redundant
+            ``_meta.get_fields()`` calls from the .only()-narrowing pass (#66).
 
     Returns:
         A ``PrefetchPlan`` with the column and select_related lists, or ``None``
@@ -1499,6 +1510,7 @@ def _compute_child_only(
             child_annotations,
             child_aliases,
             child_ann_names,
+            _fmap_cache=fmap_cache,
         )
 
     # --- OPTIMIZE_ONLY_FIELDS path --------------------------------------------
@@ -1539,6 +1551,7 @@ def _compute_child_only(
         fragments,
         annotated_names=child_ann_names,
         current_type_name=child_type_name,
+        _fmap_cache=fmap_cache,
     ):
         # Even on full-load, if we have annotations, return a plan without .only().
         # S3 GUARD: This annotate-only fallback (empty only_cols) masks a missing
@@ -1569,6 +1582,7 @@ def _compute_child_only(
         fragments,
         annotated_names=child_ann_names,
         current_type_name=child_type_name,
+        _fmap_cache=fmap_cache,
     )
 
     # Split raw_cols into dotted FK heads (-> child_select) and flat attnames
@@ -1771,6 +1785,7 @@ def _collect_prefetch_only_sets(
     gql_type: Any = None,
     promoted_lookups: "frozenset[str] | None" = None,
     schema: Any = None,
+    fmap_cache: "dict[tuple[int, str], Any] | None" = None,
 ) -> dict[str, PrefetchPlan]:
     """Map each direct prefetch lookup to its child column plan.
 
@@ -1803,6 +1818,9 @@ def _collect_prefetch_only_sets(
             can be resolved to its member model.  ``None`` (the default) keeps
             every non-GFK-union path byte-identical: the GFK branch degrades to
             today's full-load ``continue`` whenever ``schema`` is ``None``.
+        fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).  Threading it prevents redundant
+            ``_meta.get_fields()`` calls from the .only()-narrowing pass (#66).
 
     Returns:
         The completed ``{dotted_lookup: PrefetchPlan}`` dict.
@@ -1810,7 +1828,7 @@ def _collect_prefetch_only_sets(
     if _out is None:
         _out = {}
 
-    rel_map = _relation_field_map(model)
+    rel_map = _relation_field_map(model, fmap_cache)
 
     # NOTE: @skip/@include guard is intentionally absent here.
     # _collect_prefetch_only_sets only narrows the `.only()` column sets for
@@ -1833,6 +1851,7 @@ def _collect_prefetch_only_sets(
                     gql_type=gql_type,
                     promoted_lookups=promoted_lookups,
                     schema=schema,
+                    fmap_cache=fmap_cache,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -1863,6 +1882,7 @@ def _collect_prefetch_only_sets(
                 gql_type=gql_type,
                 promoted_lookups=promoted_lookups,
                 schema=schema,
+                fmap_cache=fmap_cache,
             )
             continue
 
@@ -1892,6 +1912,7 @@ def _collect_prefetch_only_sets(
                     gql_type=inner_gql or gql_type,
                     promoted_lookups=promoted_lookups,
                     schema=schema,
+                    fmap_cache=fmap_cache,
                 )
             continue
 
@@ -1954,6 +1975,7 @@ def _collect_prefetch_only_sets(
                     gql_type=child_gql,
                     promoted_lookups=promoted_lookups,
                     schema=schema,
+                    fmap_cache=fmap_cache,
                 )
             # If this path was promoted to prefetch by the AnnotatedField promotion
             # pass, also build a PrefetchPlan for it so child annotations are injected.
@@ -1969,6 +1991,7 @@ def _collect_prefetch_only_sets(
                     fragments,
                     child_gql_type=child_gql,
                     child_graphene_type=child_graphene_for_plan,
+                    fmap_cache=fmap_cache,
                 )
                 if plan is not None:
                     _out[lookup] = plan
@@ -1993,6 +2016,7 @@ def _collect_prefetch_only_sets(
             fragments,
             child_gql_type=child_gql,
             child_graphene_type=child_graphene,
+            fmap_cache=fmap_cache,
         )
         if plan is not None:
             _out[lookup] = plan
@@ -2128,6 +2152,7 @@ def _narrow_plain_prefetch(
     model: type[Model],
     lookup: str,
     only_map: dict[str, PrefetchPlan],
+    fmap_cache: "dict[tuple[int, str], Any] | None" = None,
 ) -> str | Prefetch:
     """Convert a plain-string prefetch lookup to a narrowed ``Prefetch`` if a plan exists.
 
@@ -2137,6 +2162,9 @@ def _narrow_plain_prefetch(
         lookup: The plain-string prefetch lookup (may be dotted).
         only_map: The ``{lookup: PrefetchPlan}`` map from
             ``_collect_prefetch_only_sets``.
+        fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).  Threading it prevents redundant
+            ``_meta.get_fields()`` calls inside ``_leaf_model`` (#66).
 
     Returns:
         The bare ``lookup`` string when no plan exists (full load), or a
@@ -2159,7 +2187,7 @@ def _narrow_plain_prefetch(
         # bare full-load string rather than emitting an empty GenericPrefetch.
         return gp if gp is not None else lookup
 
-    child = _leaf_model(model, lookup)
+    child = _leaf_model(model, lookup, fmap_cache)
     qs = child._default_manager.all()
     if plan.child_select:
         qs = qs.select_related(*plan.child_select)
@@ -2330,6 +2358,11 @@ def _walk_filtered_prefetches(
             ``_relation_field_map``).
     """
     relation_map = _relation_field_map(model, _fmap_cache) if model is not None else {}
+    # Pre-warm the concrete-field cache entry so the .only()-narrowing pass
+    # (_collect_only_fields_is_full_load / _collect_only_fields) can reuse it
+    # without an extra _meta.get_fields() call (#66(b)).
+    if model is not None and _fmap_cache is not None:
+        _concrete_field_map(model, _fmap_cache)
     _vars: dict[str, Any] = info.variable_values or {}
 
     for field in selection_set.selections:
@@ -2458,6 +2491,10 @@ def _walk_filtered_prefetches(
                     out.append(pf)
                     seen[lookup] = seen.get(lookup, 0) + 1
                     if field.selection_set and sub_gql is not None:  # pragma: no branch
+                        # #57: thread _fmap_cache through window-slice descent so
+                        # _relation_field_map/_concrete_field_map are memoized at
+                        # this level too (previously omitted → fresh get_fields call
+                        # per nested level).
                         _walk_filtered_prefetches(
                             sub_gql,
                             inst.type._meta.model,
@@ -2467,6 +2504,7 @@ def _walk_filtered_prefetches(
                             out,
                             seen,
                             hook_map=hook_map,
+                            _fmap_cache=_fmap_cache,
                         )
                     continue
                 # Window path declined (pre-checks failed) → fall through to plain path.
@@ -2496,6 +2534,9 @@ def _walk_filtered_prefetches(
                     hook_map[lookup] = (gql_type, hook)
 
             if field.selection_set and sub_gql is not None:  # pragma: no branch
+                # #57: thread _fmap_cache through plain nested-list descent so
+                # _relation_field_map/_concrete_field_map are memoized at this
+                # level too (previously omitted → fresh get_fields call per level).
                 _walk_filtered_prefetches(
                     sub_gql,
                     inst.type._meta.model,
@@ -2505,6 +2546,7 @@ def _walk_filtered_prefetches(
                     out,
                     seen,
                     hook_map=hook_map,
+                    _fmap_cache=_fmap_cache,
                 )
             continue
 
@@ -3221,10 +3263,12 @@ def _apply_optimizations(
             # ``schema`` attribute degrades to the full-load GFK path (schema is
             # None -> the GFK-union branch ``continue``s) instead of raising.
             schema=getattr(info, "schema", None),
+            fmap_cache=_fmap_cache,
         )
         if only_map:
             prefetch_related = [
-                _narrow_plain_prefetch(model, lk, only_map) for lk in prefetch_related
+                _narrow_plain_prefetch(model, lk, only_map, fmap_cache=_fmap_cache)
+                for lk in prefetch_related
             ]
 
     # Phase E AC2b SITE A: apply optimize_<field> hooks to unfiltered top-level
@@ -3244,6 +3288,52 @@ def _apply_optimizations(
         base = base.prefetch_related(*prefetch_related)
     if filtered_prefetches:
         base = base.prefetch_related(*filtered_prefetches)
+
+    # --- #64: annotate parent rows with a Subquery count for each window-sliced
+    # nested list so that list_resolver can read the total in memory even when the
+    # window-sliced page is empty (offset-beyond-end or zero-child parent).
+    # Each window Prefetch that fired build_window_prefetch carries three attrs:
+    #   _gqx_cnt_qs       — filtered (but un-windowed) child queryset
+    #   _gqx_cnt_fk_attname — e.g. "author_id"
+    #   _gqx_cnt_attr     — annotation key on the parent, e.g. "_gqx_cnt_posts"
+    # We build a Subquery(Count) per nested-list and annotate the parent QS.
+    # This is ONLY for top-level filtered_prefetches (window path only emits at
+    # the root level; deeper window prefetches are re-rooted into parent
+    # querysets by _merge_filtered_prefetches and are unreachable here).
+    _window_cnt_annotations: dict[str, Any] = {}
+    for _pf in filtered_prefetches:
+        _cnt_qs = getattr(_pf, "_gqx_cnt_qs", None)
+        _cnt_fk = getattr(_pf, "_gqx_cnt_fk_attname", None)
+        _cnt_attr = getattr(_pf, "_gqx_cnt_attr", None)
+        if _cnt_qs is not None and _cnt_fk is not None and _cnt_attr is not None:
+            from django.db.models import (
+                Count as _Count,
+            )  # noqa: PLC0415
+            from django.db.models import (
+                OuterRef as _OuterRef,
+            )
+            from django.db.models import (
+                Subquery as _Subquery,
+            )
+
+            _sq = _Subquery(
+                _cnt_qs.filter(**{_cnt_fk: _OuterRef("pk")})
+                .order_by()
+                .values(_cnt_fk)
+                .annotate(_n=_Count("pk"))
+                .values("_n")[:1]
+            )
+            _window_cnt_annotations[_cnt_attr] = _sq
+    if _window_cnt_annotations:
+        try:
+            base = base.annotate(**_window_cnt_annotations)
+        except Exception as _exc:  # noqa: BLE001 — degrade gracefully; list_resolver falls back to count()
+            logging.getLogger("django_graphex.utils").debug(
+                "Window count annotation failed for %s; empty-page totalCount will "
+                "fall back to per-parent count(). %r",
+                model.__name__,
+                _exc,
+            )
 
     if graphql_api_settings.OPTIMIZE_ONLY_FIELDS and not custom_used and fields_asts:
         only_fields = _collect_only_fields(
@@ -3277,7 +3367,12 @@ def _apply_optimizations(
 
 
 def queryset_factory(
-    manager: Any, root: Any, info: GraphQLResolveInfo, **kwargs: Any
+    manager: Any,
+    root: Any,
+    info: GraphQLResolveInfo,
+    *,
+    output_type: Any = None,
+    **kwargs: Any,
 ) -> QuerySet:
     """Build a queryset optimized for the requested GraphQL selection.
 
@@ -3287,10 +3382,22 @@ def queryset_factory(
     "resolve_<field>" that returns a QuerySet. Behavior is controlled by the
     "OPTIMIZE_QUERYSET" and "OPTIMIZE_ONLY_FIELDS" settings.
 
+    When ``output_type`` is a ``DjangoObjectType`` subclass (detected via the
+    ``_dgx_has_object_type_get_queryset`` sentinel), its
+    ``get_queryset(queryset, info)`` override is called **after** the base
+    queryset is built and **before** the optimizer runs, so
+    ``select_related``/``prefetch_related`` are applied on top of the
+    already-narrowed queryset.  ``DjangoModelType`` does NOT have this sentinel
+    and is therefore unaffected (its own ``get_queryset`` / ``filter_queryset``
+    path is invoked earlier, at the CRUD-method level in ``types.py``).
+
     Args:
         manager: A Django model, manager, or queryset to start from.
         root: The root value passed to the resolver.
         info: The GraphQL resolve info for the current field.
+        output_type: Optional ``DjangoObjectType`` subclass whose
+            ``get_queryset`` hook should be applied before the optimizer.
+            Pass ``None`` (the default) to skip the hook.
         **kwargs: The resolver arguments, used to seed relation joins.
 
     Returns:
@@ -3307,6 +3414,21 @@ def queryset_factory(
             base = produced
             model = base.model
             custom_used = True
+
+    # --- DjangoObjectType.get_queryset hook -----------------------------------
+    # Apply the per-request scoping hook if the output type declares it.
+    # The sentinel ``_dgx_has_object_type_get_queryset`` is set on
+    # ``DjangoObjectType`` and inherited by every plain subclass; it is NOT
+    # present on ``DjangoModelType`` (separate hierarchy).  The check guards
+    # against accidentally calling it on unrelated types.
+    if output_type is not None and getattr(
+        output_type, "_dgx_has_object_type_get_queryset", False
+    ):
+        hooked = output_type.get_queryset(base, info)
+        if isinstance(hooked, QuerySet):
+            base = hooked
+            model = base.model
+    # -------------------------------------------------------------------------
 
     if not graphql_api_settings.OPTIMIZE_QUERYSET:
         return base

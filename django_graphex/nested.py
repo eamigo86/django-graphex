@@ -68,7 +68,16 @@ class NestedFieldsMixin:
         pk injected into ``data``; the parent is then saved via the backend (so
         its validation/error handling is used); reverse and M2M children
         are written last and linked to the saved parent. Any failure rolls the
-        whole transaction back.
+        whole transaction back — no orphan rows are left behind.
+
+        **Subscription broadcasts and commit-time delivery**: model saves inside
+        the ``transaction.atomic()`` block trigger ``post_save`` / ``post_delete``
+        signals, which are connected to ``SubscriptionBinding`` receivers.
+        Those receivers now defer their broadcast via ``transaction.on_commit``,
+        so subscribers only receive notifications for rows that were actually
+        persisted.  A subsequent failure within the same atomic block causes a
+        rollback and suppresses all pending broadcast callbacks, eliminating
+        phantom notifications for non-existent rows.
 
         Args:
             root: Root value passed to the resolver.
@@ -96,7 +105,22 @@ class NestedFieldsMixin:
 
                     kind, relation = cls._relation_kind(field)
                     if kind == "forward":
-                        item = sub_data[0] if isinstance(sub_data, list) else sub_data
+                        if isinstance(sub_data, list):
+                            if len(sub_data) > 1:
+                                raise _NestedError(
+                                    [
+                                        ErrorType(
+                                            field=field,
+                                            messages=[
+                                                f"{field!r} is a to-one relation; "
+                                                "provide a single object, not a list."
+                                            ],
+                                        )
+                                    ]
+                                )
+                            item = sub_data[0]
+                        else:
+                            item = sub_data
                         child = cls._persist_child(field, child_model, item, info)
                         data[field] = child.pk
                     elif kind is None:
@@ -183,7 +207,57 @@ class NestedFieldsMixin:
         if kind in ("reverse_one", "reverse_many"):
             fk_name = relation.field.name  # FK on the child pointing to parent
             items = sub_data if isinstance(sub_data, list) else [sub_data]
+
+            # Reverse-O2O (kind == "reverse_one") only ever allows a single
+            # child.  A list of more than one would hit a UNIQUE constraint at
+            # the DB level; reject it cleanly before any DB work.
+            if kind == "reverse_one" and len(items) > 1:
+                raise _NestedError(
+                    [
+                        ErrorType(
+                            field=field,
+                            messages=[
+                                f"{field!r} is a one-to-one relation; "
+                                "provide a single object, not a list."
+                            ],
+                        )
+                    ]
+                )
+
             for item in items:
+                # Reverse-FK ownership guard: if the client supplies a pk for
+                # an existing child, verify that child currently points to
+                # *this* parent.  Without this check a client can silently
+                # re-parent (steal) a row that belongs to a different owner.
+                if kind == "reverse_many":
+                    pk_name = child_model._meta.pk.name
+                    child_pk = item.get(pk_name) if hasattr(item, "get") else None
+                    if child_pk is None and hasattr(item, "get"):
+                        child_pk = item.get("id")
+                    if child_pk is not None:
+                        existing = child_model._default_manager.filter(
+                            pk=child_pk
+                        ).first()
+                        if existing is not None:
+                            current_owner_id = getattr(existing, f"{fk_name}_id", None)
+                            if (
+                                current_owner_id is not None
+                                and current_owner_id != parent.pk
+                            ):
+                                parent_model_name = parent.__class__.__name__
+                                raise _NestedError(
+                                    [
+                                        ErrorType(
+                                            field=field,
+                                            messages=[
+                                                f"Object {child_pk} does not "
+                                                f"belong to this "
+                                                f"{parent_model_name}."
+                                            ],
+                                        )
+                                    ]
+                                )
+
                 cls._persist_child(
                     field, child_model, item, info, save_kwargs={fk_name: parent}
                 )
@@ -222,8 +296,14 @@ class NestedFieldsMixin:
         item = cls._unwrap_enums(dict(item))
         child_backend = backend_for_nested(child_spec)
         model = child_backend.get_model()
-        pk = item.get(model._meta.pk.name) or item.get("id")
-        instance = get_Object_or_None(model, pk=pk) if pk else None
+        # Use explicit None checks so that a falsy-but-valid pk (e.g. 0 or "")
+        # is recognised as a present key and triggers an UPDATE instead of a
+        # CREATE.  The old `or` / `if pk` guards collapsed pk=0 to None.
+        pk_name = model._meta.pk.name
+        pk = item.get(pk_name)
+        if pk is None:
+            pk = item.get("id")
+        instance = get_Object_or_None(model, pk=pk) if pk is not None else None
 
         ok, result = child_backend.save_object(
             cls,
@@ -240,7 +320,13 @@ class NestedFieldsMixin:
 
     @staticmethod
     def _unwrap_enums(item: dict[str, Any]) -> dict[str, Any]:
-        """Replace graphene Enum members in a payload with their values.
+        """Replace graphene Enum members in a payload with their raw values.
+
+        Scalar Enum members are replaced with their ``.value``.  List and
+        tuple values are recursed into so that multi-valued choice fields
+        (e.g. a ``MultiSelectField`` / ``DjangoListField(enum)``) also arrive
+        at the backend with plain Python values rather than wrapped Enum
+        members.
 
         Args:
             item: The child payload.
@@ -251,6 +337,8 @@ class NestedFieldsMixin:
         for key, value in item.items():
             if isinstance(value, enum.Enum):
                 item[key] = value.value
+            elif isinstance(value, (list, tuple)):
+                item[key] = [v.value if isinstance(v, enum.Enum) else v for v in value]
         return item
 
     @staticmethod

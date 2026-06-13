@@ -349,6 +349,26 @@ related objects alongside the parent. The same engine backs both
   empty `[]` / `{}` payload is a no-op (the relation is left untouched).
 - **Errors are prefixed** — a child error is reported as `field.subfield`
   (e.g. `addresses.zip_code`).
+- **M2M pk validation** — when M2M pks are passed directly to the top-level
+  mutation (not via `nested_fields`), non-existent pks are caught *before* the
+  DB write and returned as a structured `ErrorType` (field name + message),
+  never as an `IntegrityError` 500.
+- **To-one list guard** — supplying a list to a forward `ForeignKey` /
+  `OneToOneField` nested field raises a clean error if the list contains more
+  than one item. A single-element list is accepted as a convenience.
+- **Reverse-O2O list guard** — supplying a list of more than one item to a
+  reverse `OneToOneField` nested field raises a clean error instead of hitting
+  the DB UNIQUE constraint.
+- **Reverse-FK ownership guard** — upsert of a reverse-FK child by pk is
+  rejected if that child currently belongs to a *different* parent. This
+  prevents a client from silently re-parenting (stealing) rows owned by another
+  object. The error message is `"Object <pk> does not belong to this <Model>."`.
+
+!!! warning "Reverse-FK child re-parenting"
+    Attempting to assign an existing child (by pk) to a new parent via the
+    nested write path will fail with a validation error if the child's FK already
+    points to a different parent. To genuinely re-parent a row, issue a direct
+    update mutation on the child model instead.
 
 #### Worked examples — UPDATE + nested create and UPDATE + nested update (upsert)
 
@@ -442,8 +462,7 @@ top-level mutation instead, or issue a separate mutation that clears and re-adds
 
 !!! note "Planned for v1.3.0"
     A per-field `m2m_behavior = "set" | "add"` option will let you choose the semantics on the
-    nested path and align the default to `.set` (matching top-level behavior). Track the work in
-    [GitHub issue #18](https://github.com/eamigo86/django-graphex/issues/18).
+    nested path and align the default to `.set` (matching top-level behavior).
 
 ### Explicit-null limitation in update mutations
 
@@ -467,8 +486,7 @@ M2M association via a dedicated resolver.
 !!! note "Planned for v1.3.0"
     Explicit-null support requires distinguishing "omitted" from "explicitly null" at the input
     level. The planned approach is an AST-presence check so the current partial-update behavior
-    is preserved for omitted fields while respecting intentional nulls. Track the work in
-    [GitHub issue #18](https://github.com/eamigo86/django-graphex/issues/18).
+    is preserved for omitted fields while respecting intentional nulls.
 
 ### perform_mutate response shape
 

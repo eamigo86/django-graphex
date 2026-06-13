@@ -212,7 +212,13 @@ class Base64GraphQLDirective(BaseExtraGraphQLDirective):
         op = args.get("op") or "encode"
         data = _as_str(value).encode("utf-8")
         if op == "decode":
-            return base64.urlsafe_b64decode(data).decode("utf-8")
+            try:
+                return base64.urlsafe_b64decode(data).decode("utf-8")
+            except (Exception,) as exc:
+                raise GraphQLError(
+                    "@base64 could not decode value: input is not valid base64 or "
+                    "does not decode to a UTF-8 string."
+                ) from exc
         return base64.urlsafe_b64encode(data).decode("ascii")
 
 
@@ -318,7 +324,12 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
             The value formatted as currency prefixed with the symbol.
         """
         symbol = args.get("symbol") or "$"
-        return symbol + format(float(value or 0), ",.2f")
+        try:
+            return symbol + format(float(value or 0), ",.2f")
+        except (ValueError, TypeError) as exc:
+            raise GraphQLError(
+                f"@currency could not format value {value!r}: expected a numeric value."
+            ) from exc
 
 
 class LowercaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -642,7 +653,17 @@ class CenterGraphQLDirective(BaseExtraGraphQLDirective):
             raise GraphQLError(
                 f"@center width must not exceed {_CENTER_MAX_WIDTH}; got {int_width}"
             )
-        return value.center(int_width, args.get("fillchar") or " ")
+        # Use None-check (not truthiness) so an explicit empty-string fillchar
+        # is caught by the length guard below instead of silently defaulting
+        # to a space.
+        raw_fillchar = args.get("fillchar")
+        fillchar = raw_fillchar if raw_fillchar is not None else " "
+        if len(fillchar) != 1:
+            raise GraphQLError(
+                f"@center fillchar must be exactly one character; got {fillchar!r} "
+                f"(length {len(fillchar)})."
+            )
+        return value.center(int_width, fillchar)
 
 
 class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):

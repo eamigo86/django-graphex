@@ -36,7 +36,10 @@ from .string import (
     UppercaseGraphQLDirective,
 )
 
-all_directives = (
+# Tuple of the 24 custom directive CLASSES.  Kept as a private name so that
+# ``all_directives`` (below) only ever holds the runtime list of INSTANCES,
+# giving mypy a single consistent type for the exported name.
+_DIRECTIVE_CLASSES: tuple[type, ...] = (
     # date
     DateGraphQLDirective,
     # list
@@ -68,5 +71,7 @@ all_directives = (
     SlugifyGraphQLDirective,
 )
 
-
-all_directives = [d() for d in all_directives] + [*default_directives]
+# List of 30 directive *instances*: 24 custom + 6 default GraphQL directives.
+# Typed as ``list`` so callers that do ``all_directives + [custom()]`` or
+# ``schema = Schema(..., directives=all_directives)`` get correct inference.
+all_directives: list = [d() for d in _DIRECTIVE_CLASSES] + [*default_directives]

@@ -50,6 +50,23 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
             }
     ```
 
+=== "Dict form (mixed — None for defaults)"
+
+    A dict value of `None` is equivalent to the list form: the field is included
+    with the type-derived **default lookup set**.  This lets you mix explicit
+    lookup tuples with default-lookup fields in a single declaration:
+
+    ```python
+    class UserListType(DjangoListObjectType):
+        class Meta:
+            model = User
+            filter_fields = {
+                "username": None,          # default lookups (exact, in, isnull, icontains, …)
+                "email": ("exact",),       # explicit — only `exact`
+                "is_active": None,         # default lookups
+            }
+    ```
+
 The **default lookup set** (used by the list form) is configurable with the
 `COMMON_FILTER_LOOKUPS` setting and is type-aware:
 

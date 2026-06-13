@@ -292,15 +292,22 @@ prevents the walker from mis-attributing `InvoiceType.amount` against the
       title @uppercase
       slug: title @slugify
       teaser: body @truncate(length: 40)
-      status @lowercase
+      lower_title: title @lowercase
     }
   }
 }
 ```
 
+> **Note on `@lowercase` and enum fields**: `Post.status` is a `TextChoices`
+> CharField exposed as a GraphQL enum. Applying `@lowercase` to it has no
+> visible effect because graphene re-serializes the field through the enum type
+> *after* the directive runs, always returning the enum name (`PUBLISHED`, etc.).
+> Use `@lowercase` on plain text fields (like `title` above) where the
+> transformation is visible in the response.
+
 All directives from `all_directives` are available: `@uppercase`,
-`@lowercase`, `@capitalize`, `@titleCase`, `@camelCase`, `@snakeCase`,
-`@kebabCase`, `@swapCase`, `@strip`, `@center`, `@replace`, `@truncate`,
+`@lowercase`, `@capitalize`, `@title_case`, `@camel_case`, `@snake_case`,
+`@kebab_case`, `@swap_case`, `@strip`, `@center`, `@replace`, `@truncate`,
 `@slugify`, `@base64`, `@number`, `@currency`, `@default`, `@date`, `@abs`,
 `@ceil`, `@floor`, `@round`, `@shuffle`, `@sample`, `@unique`.
 

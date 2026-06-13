@@ -33,35 +33,24 @@ _CHECK_CONSTRAINT_KW = "condition" if django.VERSION >= (5, 1) else "check"
 # ---------------------------------------------------------------------------
 
 
-def test_version_fallback_on_package_not_found(monkeypatch):
-    """When importlib.metadata.version raises PackageNotFoundError, the VERSION
-    tuple fallback must be used to set __version__ (covers lines 51, 53, 55 of
-    __init__.py).
-
-    Because `django_graphex` is already imported, we exercise the fallback
-    path by directly running the code block with a patched `version` function.
+def test_version_from_pyproject_fallback():
+    """The source-checkout fallback reads the version straight from
+    pyproject.toml and must agree with both the installed metadata and
+    ``__version__`` — pinning the single source of truth so the version can
+    never drift between pyproject.toml and the package.
     """
-    from importlib.metadata import PackageNotFoundError
+    import importlib.metadata
 
     import django_graphex
 
-    # Reproduce the exact try/except block from __init__.py so the same
-    # source lines are executed under the mock.
-    captured = {}
-    with patch("importlib.metadata.version", side_effect=PackageNotFoundError("pkg")):
-        try:
-            from importlib.metadata import version as _version
+    fallback_version = django_graphex._version_from_pyproject()
 
-            captured["v"] = _version("django-graphex")
-        except PackageNotFoundError:
-            from graphene.pyutils.version import get_version
-
-            captured["v"] = get_version(django_graphex.VERSION)
-
-    # The fallback must produce a non-empty version string.
-    assert isinstance(captured["v"], str) and captured["v"], (
-        f"get_version fallback produced empty/non-str: {captured['v']!r}"
+    assert isinstance(fallback_version, str) and fallback_version, (
+        f"_version_from_pyproject produced empty/non-str: {fallback_version!r}"
     )
+    # pyproject.toml (fallback) == build metadata == __version__ — no drift.
+    assert fallback_version == importlib.metadata.version("django-graphex")
+    assert fallback_version == django_graphex.__version__
 
 
 # ---------------------------------------------------------------------------

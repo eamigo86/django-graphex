@@ -5,9 +5,14 @@ Covers the ``SUBSCRIPTION_SERIALIZE_DATA`` setting, the ``Meta.serialize_data``
 override, and the conditional ``data`` argument. These use ``BasicModel`` so the
 bindings never clash with the (full-mode) ``UserSubscription`` of the shared
 schema.
+
+Broadcasts are deferred via ``transaction.on_commit`` — all tests that check
+captured sends must use ``pytest.mark.django_db(transaction=True)``.
 """
 
 from unittest import mock
+
+import pytest
 
 from django_graphex.subscriptions import Subscription, bindings
 from tests.models import BasicModel
@@ -49,7 +54,8 @@ def _broadcast_on_create(subscription_cls, captured, stream):
 
 
 # -- AC1: default is id-only, no serialization ------------------------------- #
-def test_default_is_id_only_and_skips_serialization(db, captured_group_sends):
+@pytest.mark.django_db(transaction=True)
+def test_default_is_id_only_and_skips_serialization(captured_group_sends):
     with mock.patch.object(
         bindings, "serialize_instance", wraps=bindings.serialize_instance
     ) as spy:
@@ -62,7 +68,8 @@ def test_default_is_id_only_and_skips_serialization(db, captured_group_sends):
 
 
 # -- AC2: global setting switches the inheriting subscription to full -------- #
-def test_global_setting_enables_full(db, captured_group_sends, serialize_full):
+@pytest.mark.django_db(transaction=True)
+def test_global_setting_enables_full(captured_group_sends, serialize_full):
     with mock.patch.object(
         bindings, "serialize_instance", wraps=bindings.serialize_instance
     ) as spy:
@@ -75,7 +82,8 @@ def test_global_setting_enables_full(db, captured_group_sends, serialize_full):
 
 
 # -- AC3: Meta override beats the global setting ----------------------------- #
-def test_meta_full_overrides_global_id_only(db, captured_group_sends):
+@pytest.mark.django_db(transaction=True)
+def test_meta_full_overrides_global_id_only(captured_group_sends):
     # Global stays at the id-only default; Meta forces full.
     instance, sends = _broadcast_on_create(
         BasicFullSubscription, captured_group_sends, "basic_full"
@@ -83,7 +91,8 @@ def test_meta_full_overrides_global_id_only(db, captured_group_sends):
     assert sends and sends[0]["payload"]["data"]["text"] == "payload"
 
 
-def test_meta_id_only_overrides_global_full(db, captured_group_sends, serialize_full):
+@pytest.mark.django_db(transaction=True)
+def test_meta_id_only_overrides_global_full(captured_group_sends, serialize_full):
     # Global forced to full; Meta forces id-only.
     instance, sends = _broadcast_on_create(
         BasicIdOnlySubscription, captured_group_sends, "basic_idonly"

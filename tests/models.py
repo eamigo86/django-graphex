@@ -229,3 +229,70 @@ class OrderChild(DummyModel):
 class CustomPKProduct(DummyModel):
     slug = models.CharField(max_length=100, primary_key=True)
     title = models.CharField(max_length=200)
+
+
+# --- Model used by the DjangoObjectType.get_queryset hook tests (#58) ------- #
+# A separate model (not HookModel) so the fix tests don't collide with the
+# DjangoModelType queryset-hook tests that also use HookModel.
+class ScopedArticle(DummyModel):
+    """Article model for testing the DjangoObjectType.get_queryset security hook."""
+
+    title = models.CharField(max_length=200)
+    is_public = models.BooleanField(default=True)
+
+
+# --- Models for issue #52: enum key collision + self-referential O2O ---------- #
+# Two concrete models sharing the same class name via object_name (``Item``) but
+# in the same Django app (app_label="tests"). We simulate the cross-app collision
+# by using *two distinct classes* with identical ``object_name`` and ``app_label``
+# but different choices on the same field name ``status``.
+# The real-world collision is ``app_a.Item`` vs ``app_b.Item``; here we test the
+# equivalent by injecting mock _meta onto the fields inside the test.
+#
+# We also add a genuine self-referential OneToOneField model (Person.spouse).
+
+
+class PersonWithSpouse(DummyModel):
+    """Model with a genuine self-referential OneToOneField.
+
+    Used to verify that converter.py's MTI-parent-link guard does NOT drop a
+    real self-referential O2O (spouse) from output and input types (#52-B).
+    """
+
+    name = models.CharField(max_length=100)
+    spouse = models.OneToOneField(
+        "self",
+        null=True,
+        blank=True,
+        related_name="spouse_of",
+        on_delete=models.SET_NULL,
+    )
+
+
+class EnumCollisionItemA(DummyModel):
+    """First 'Item'-like model with status choices A/B (for #52-A enum collision)."""
+
+    STATUS_CHOICES = [("a", "Alpha"), ("b", "Beta")]
+    status = models.CharField(max_length=1, choices=STATUS_CHOICES)
+
+
+class EnumCollisionItemB(DummyModel):
+    """Second 'Item'-like model with status choices X/Y/Z (for #52-A enum collision)."""
+
+    STATUS_CHOICES = [("x", "Xray"), ("y", "Yankee"), ("z", "Zulu")]
+    status = models.CharField(max_length=1, choices=STATUS_CHOICES)
+
+
+# --- Models for issue #65: Meta-option hygiene -------------------------------- #
+
+
+class MetaHygieneWidget(DummyModel):
+    """Model used by issue #65 tests.
+
+    Has several fields to exercise include_fields, only_fields/exclude_fields
+    omitting id, and queryset filtering.
+    """
+
+    title = models.CharField(max_length=200)
+    body = models.TextField(default="")
+    is_active = models.BooleanField(default=True)

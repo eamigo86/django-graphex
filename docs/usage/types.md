@@ -38,10 +38,53 @@ or as the output of a [mutation](mutations.md). Relations on the model are expos
 as nested lists with the uniform `results` / `totalCount` shape — see
 [Nested lists](nested-lists.md).
 
-!!! tip "Per-request queryset"
-    Override `get_queryset(cls, queryset, info)` to scope what a type returns
-    (e.g. only the current user's rows). See
-    [Custom queryset](#custom-queryset-per-request-filtering).
+### Custom queryset (per-request filtering)
+
+Override `get_queryset(cls, queryset, info)` to scope what a type exposes on a
+per-request basis — for example, to restrict rows to the current user's data:
+
+```python
+class ArticleType(DjangoObjectType):
+    class Meta:
+        model = Article
+        filter_fields = {"title": ("icontains",)}
+
+    @classmethod
+    def get_queryset(cls, queryset, info):
+        # Only expose articles owned by the requesting user.
+        return queryset.filter(owner=info.context.user)
+```
+
+The hook is called by all four top-level field types **before** the query
+optimizer runs, so `select_related` / `prefetch_related` are applied on top of
+the already-narrowed queryset — the same interplay described for
+`DjangoModelType.Meta.queryset` in the [optimizer docs](query-optimization.md):
+
+| Field type | `get_queryset` applied? |
+|---|---|
+| [`DjangoObjectField`](fields.md#djangoobjectfield) | ✅ yes |
+| [`DjangoFilterListField`](fields.md#djangofilterlistfield) | ✅ yes |
+| [`DjangoFilterPaginateListField`](fields.md#djangofilterpaginatelistfield) | ✅ yes |
+| [`DjangoListObjectField`](fields.md#djangolistobjectfield) (`results` + `totalCount`) | ✅ yes |
+
+Both `results` **and** `totalCount` reflect the hook — the hook is applied
+before the `COUNT` query is issued.
+
+!!! note "Remaining boundary: nested-relation fields"
+    Relation fields on a **parent** type that auto-expand to a nested list
+    (e.g. a `ForeignKey` reverse relation exposed as
+    `allAuthors { results { posts { results { title } } } }`) use the parent's
+    prefetch cache and do **not** call the child type's `get_queryset`.  This is
+    intentional: wiring the hook there would require rebuilding the prefetch
+    queryset inside the resolver, which conflicts with the window-pagination and
+    prefetch optimizations.  If you need per-relation row scoping, add a
+    `resolve_<relation>` method on the parent type.
+
+!!! note "DjangoModelType uses a different hook"
+    `DjangoModelType` has its own queryset-scoping API (`get_queryset` +
+    `filter_queryset`) with a different signature (`manager, info, **kwargs`).
+    That hook is called earlier, at the CRUD-method level, and is unaffected by
+    this change.  Do not mix the two APIs.
 
 ## DjangoListObjectType
 
