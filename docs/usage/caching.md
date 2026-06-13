@@ -150,6 +150,33 @@ one does not break the other.
 
 ---
 
+## Requests that bypass the cache
+
+Not all requests are eligible for caching even when `CACHE_ACTIVE=True`.  The
+following are always passed through to the underlying view uncached:
+
+| Reason | Detail |
+|--------|--------|
+| **Batch requests** | A batch body is a JSON list; individual operations cannot be cached meaningfully. |
+| **Multipart/form-data** | `parse_body` reads `request.POST` for this content type, consuming the WSGI stream. A subsequent read of `request.body` (needed to compute the cache key) raises `RawPostDataException`. Bypassing avoids an HTTP 500. Multipart GraphQL is used almost exclusively for file-upload mutations which are not idempotent queries. |
+| **Mutations** | Mutations advance the version counter instead of being cached. |
+
+---
+
+## CSRF cookies and cached responses
+
+The base `GraphQLView.dispatch` is decorated with `@ensure_csrf_cookie`, which
+sets `Set-Cookie: csrftoken=<secret>` on every response.
+
+To prevent one client's CSRF secret from being replayed to other clients in
+the same identity namespace, the cache stores **only the response body, HTTP
+status code, and content type** — not the whole `HttpResponse` object.  On a
+cache hit a fresh `HttpResponse` is constructed from those stored values;
+`ensure_csrf_cookie` is not re-applied (the GraphQL endpoint is `csrf_exempt`
+so this has no security impact on the endpoint itself).
+
+---
+
 ## `CACHE_ACTIVE=False` (default)
 
 When `CACHE_ACTIVE` is `False`, the `dispatch` method bypasses all caching

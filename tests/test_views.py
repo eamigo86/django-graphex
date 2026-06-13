@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import graphene
 from django.core.cache import cache
-from django.http import HttpResponse
 from django.test import RequestFactory, TestCase
 
 from django_graphex.views import GraphQLView
@@ -175,12 +174,20 @@ class GraphQLViewTest(TestCase):
     @patch("django.core.cache.cache.get")
     @patch("django_graphex.views.graphql_api_settings.CACHE_ACTIVE", True)
     def test_cache_hit(self, mock_cache_get):
-        """Test cache hit scenario."""
+        """Test cache hit scenario.
+
+        The cache now stores (body_bytes, status_code, content_type) rather than
+        a raw HttpResponse object so that CSRF Set-Cookie headers are never
+        replayed across clients (issue #53b).
+        """
         cached_result = {"data": {"hello": "Hello Cached!"}}
-        cached_response = HttpResponse(
-            json.dumps(cached_result), content_type="application/json"
+        # Cache entry format: (body_bytes, status_code, content_type).
+        cached_payload = (
+            json.dumps(cached_result).encode(),
+            200,
+            "application/json",
         )
-        mock_cache_get.return_value = cached_response
+        mock_cache_get.return_value = cached_payload
 
         query = "{ hello }"
         request = self.factory.post(

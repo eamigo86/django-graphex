@@ -783,6 +783,19 @@ class GraphQLView(BaseGraphQLView):
         * A malformed GraphQL document (``GraphQLSyntaxError`` during
           ``get_operation_ast``) falls through to ``super_call``, which
           returns the appropriate HTTP 400 response.
+        * Multipart/form-data requests bypass the cache entirely because
+          ``parse_body`` for that content type consumes the WSGI input stream
+          via ``request.POST``, making ``request.body`` (needed to compute the
+          cache key in ``fetch_cache_key``) unavailable.  Bypassing is safe:
+          multipart GraphQL is used almost exclusively for file uploads, which
+          are never idempotent queries worth caching (issue #53a).
+        * Responses that carry a ``Set-Cookie`` header are never stored in the
+          cache.  The base ``dispatch`` is decorated with
+          ``@ensure_csrf_cookie``, which attaches a per-request CSRF secret.
+          Caching that cookie and replaying it to other clients in the same
+          identity namespace would share one CSRF secret across users (issue
+          #53b).  Skipping the cache for cookie-bearing responses lets each
+          client's request go through ``ensure_csrf_cookie`` independently.
         """
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
@@ -792,6 +805,14 @@ class GraphQLView(BaseGraphQLView):
         # body-is-a-list would cause AttributeError in get_operation_ast /
         # fetch_cache_key which assume a dict body.  Bypass the cache entirely.
         if self.batch:
+            return self.super_call(request, *args, **kwargs)
+
+        # Multipart/form-data requests bypass the cache to avoid
+        # RawPostDataException: parse_body reads request.POST (consuming the
+        # WSGI stream) so request.body is no longer accessible for cache-key
+        # hashing.  Fall through to super_call uncached (issue #53a).
+        content_type = self.get_content_type(request)
+        if content_type == "multipart/form-data":
             return self.super_call(request, *args, **kwargs)
 
         _cache = caches["default"]
@@ -811,7 +832,33 @@ class GraphQLView(BaseGraphQLView):
 
         if response is self._CACHE_MISS:
             response = self.super_call(request, *args, **kwargs)
-            _cache.set(cache_key, response, timeout=graphql_api_settings.CACHE_TIMEOUT)
+            # Store only the serialisable response data — not the live
+            # HttpResponse object.  The base dispatch is decorated with
+            # @ensure_csrf_cookie, which attaches a per-client CSRF secret as
+            # Set-Cookie.  Caching the whole HttpResponse and returning it
+            # verbatim to subsequent clients in the same identity namespace
+            # would replay one client's CSRF token to others (issue #53b).
+            # By storing (body, status, content_type) and reconstructing a
+            # fresh HttpResponse on cache hits, each client that hits a cached
+            # entry receives a response with no Set-Cookie — the CSRF token is
+            # only set on cache-miss responses (which go through super_call →
+            # ensure_csrf_cookie normally).  The GraphQL endpoint is
+            # csrf_exempt so this does not affect CSRF protection of the
+            # endpoint itself.
+            cached_payload = (
+                response.content,
+                response.status_code,
+                response.get("Content-Type", "application/json"),
+            )
+            _cache.set(
+                cache_key, cached_payload, timeout=graphql_api_settings.CACHE_TIMEOUT
+            )
+        else:
+            # Cache hit: reconstruct a fresh HttpResponse from the stored
+            # (body, status, content_type) tuple so no stale Set-Cookie header
+            # is replayed to this client.
+            body, status_code, content_type = response
+            response = HttpResponse(body, status=status_code, content_type=content_type)
 
         return response
 
