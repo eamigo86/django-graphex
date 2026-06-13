@@ -177,13 +177,15 @@ class PydanticBackend(SerializerBackend):
             # NOTE: in practice `checked_field_sets` is pre-populated with
             # frozenset({name}) for every unique-field name that is in the
             # payload, so the `field_set in checked_field_sets` guard above
-            # already catches this case.  This block is a secondary safety
-            # net that is logically unreachable given the pre-init, but kept
-            # for defensive clarity.
-            if len(field_set) == 1:  # pragma: no cover
+            # already catches this case.  The outer `if len(field_set) == 1`
+            # branch IS reachable (exercised by single-field CheckConstraints),
+            # but the inner `continue` is unreachable because the pre-init of
+            # `checked_field_sets` means the outer guard at :172 always fires
+            # first.  Only the inner short-circuit needs the pragma.
+            if len(field_set) == 1:
                 (field_name,) = field_set
                 if field_name in unique_field_names and field_name in payload:
-                    continue
+                    continue  # pragma: no cover
 
             lookup = {}
             for name in constraint.fields:
