@@ -161,57 +161,21 @@ class CsrfCookieReplayTest(TestCase):
         return req
 
     def test_two_anonymous_clients_get_distinct_csrf_tokens(self):
-        """Two anonymous clients issuing the same query MUST get different CSRF tokens.
+        """Two anonymous clients issuing the same query MUST NOT share a CSRF token.
 
-        If the first response (which carries Set-Cookie: csrftoken=TOKEN_A) is cached
-        and returned to the second client verbatim, they both get TOKEN_A — a security
-        violation.  The fix: responses with Set-Cookie are not stored in the cache.
-        """
-        req1 = self._json_post("{ hello }")
-        req2 = self._json_post("{ hello }")
+        Regression guard: if the whole HttpResponse were cached and returned
+        verbatim the second client would receive the first client's CSRF token
+        (a security violation, issue #53b).  The fix stores only
+        (body, status_code, content_type) and reconstructs a cookie-free
+        HttpResponse on cache hits — so resp2 MUST have no Set-Cookie header.
 
-        resp1 = self.view(req1)
-        resp2 = self.view(req2)
-
-        cookie1 = resp1.cookies.get("csrftoken")
-        cookie2 = resp2.cookies.get("csrftoken")
-
-        # If neither response carries a CSRF cookie the ensure_csrf_cookie decorator
-        # did not run (possible in test settings without middleware) — skip assertion.
-        if cookie1 is None and cookie2 is None:
-            self.skipTest(
-                "ensure_csrf_cookie did not set a csrftoken cookie in this test environment; "
-                "CSRF replay test skipped."
-            )
-
-        # If only the first carries a cookie but the second does not, that's also fine
-        # (the second was served from a cookie-stripped cache entry and ensure_csrf_cookie
-        # will set a fresh one in production middleware).
-        # The failure case: BOTH carry a cookie AND they are identical.
-        if cookie1 is not None and cookie2 is not None:
-            self.assertNotEqual(
-                cookie1.value,
-                cookie2.value,
-                "Both anonymous clients received the same CSRF token — Set-Cookie was replayed "
-                "from the cached response (issue #53b).",
-            )
-
-    def test_cached_response_has_no_set_cookie(self):
-        """A cached response MUST NOT carry a Set-Cookie header.
-
-        The implementation stores only (body, status_code, content_type) in the
-        cache and reconstructs a fresh HttpResponse on cache hits.  This means
-        the first response's CSRF cookie (set by ensure_csrf_cookie) is never
-        replayed to subsequent clients.
-
-        Verify: the second client's response MUST NOT have the same CSRF cookie
-        as the first (it receives a cookie-free reconstructed response on hit,
-        or a freshly decorated one on miss — either way it does not get another
-        client's token).
+        This test MUST fail if cookie-stripping were reverted (i.e. if the
+        cached HttpResponse were returned directly, resp2 would carry cookie1's
+        token and assertNotIn would catch it).
         """
         from unittest.mock import patch
 
-        # Count how many times the backend is called.
+        # Track how many times the backend resolver is called.
         call_count = {"n": 0}
         original_super_call = GraphQLView.super_call
 
@@ -226,25 +190,83 @@ class CsrfCookieReplayTest(TestCase):
             resp1 = self.view(req1)
             resp2 = self.view(req2)
 
-        # The second request must be served from cache (backend called once).
+        # The backend MUST have been called exactly once (cache hit on req2).
         self.assertEqual(
             call_count["n"],
             1,
             "Backend was called twice — caching is not working for JSON POSTs.",
         )
 
-        # The cached response MUST NOT carry the first client's CSRF cookie.
-        # Either: resp2 has no csrftoken cookie at all (cookie-free cached response),
-        # OR: resp2 has a different csrftoken (fresh one set for this client).
-        cookie1 = resp1.cookies.get("csrftoken")
-        cookie2 = resp2.cookies.get("csrftoken")
+        # The cached response MUST NOT carry any Set-Cookie header.
+        # If the implementation regresses to caching the live HttpResponse, resp2
+        # would inherit resp1's CSRF cookie and this assertion would fail.
+        self.assertNotIn(
+            "Set-Cookie",
+            resp2,
+            "The cached response carries a Set-Cookie header — "
+            "it replays the first client's CSRF token to subsequent clients (issue #53b).",
+        )
+        self.assertEqual(
+            dict(resp2.cookies),
+            {},
+            "resp2 cookies dict is non-empty — Set-Cookie was replayed from the cache.",
+        )
 
-        if cookie1 is not None and cookie2 is not None:
-            self.assertNotEqual(
-                cookie1.value,
-                cookie2.value,
-                "The cached response replayed the first client's CSRF cookie to the second client.",
-            )
+    def test_cached_response_has_no_set_cookie(self):
+        """A cached response MUST NOT carry a Set-Cookie header.
+
+        The implementation stores only (body, status_code, content_type) and
+        reconstructs a fresh HttpResponse on cache hits — so the cache hit
+        response (resp2) carries ZERO cookies, regardless of whether the
+        original cache-miss response (resp1) carried a CSRF cookie.
+
+        Regression guard: this test MUST fail if the implementation reverted
+        to caching and replaying the live HttpResponse object (resp2 would
+        then carry resp1's CSRF cookie and assertNotIn would catch it).
+        """
+        from unittest.mock import patch
+
+        # Count how many times the backend resolver is called.
+        call_count = {"n": 0}
+        original_super_call = GraphQLView.super_call
+
+        def counting_super_call(self_view, request, *args, **kwargs):
+            call_count["n"] += 1
+            return original_super_call(self_view, request, *args, **kwargs)
+
+        req1 = self._json_post("{ hello }")
+        req2 = self._json_post("{ hello }")
+
+        with patch.object(GraphQLView, "super_call", counting_super_call):
+            resp1 = self.view(req1)  # cache miss — super_call runs, result cached
+            resp2 = self.view(req2)  # cache hit  — super_call NOT called again
+
+        # The backend MUST have been called exactly once (cache hit on req2).
+        self.assertEqual(
+            call_count["n"],
+            1,
+            "Backend was called twice — caching is not working for JSON POSTs.",
+        )
+
+        # resp2 is reconstructed from a (body, status_code, content_type) tuple
+        # and MUST have no Set-Cookie header — unconditional assertion.
+        self.assertNotIn(
+            "Set-Cookie",
+            resp2,
+            "The cached response carries a Set-Cookie header — "
+            "the live HttpResponse was returned verbatim instead of being reconstructed.",
+        )
+        self.assertEqual(
+            dict(resp2.cookies),
+            {},
+            "resp2 cookies dict is non-empty — "
+            "cookie-stripping from cached responses is broken.",
+        )
+
+        # Bonus: resp1 (cache miss) may have a CSRF cookie — that is expected
+        # behaviour (ensure_csrf_cookie ran on the real super_call response).
+        # We do not assert anything about resp1.cookies; that is not the SUT here.
+        _ = resp1  # kept in scope for clarity
 
     def test_cookie_free_response_is_still_cached(self):
         """A response WITHOUT Set-Cookie MUST still be cached normally.
