@@ -8,6 +8,7 @@ P7 (@number value vs spec errors), P10 (batch+cache), P11 (bindings executor).
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,11 @@ from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import BaseGraphQLView, GraphQLView
+
+# The subscriptions package hard-requires the optional ``channels`` extra at
+# import time, so tests that touch it must be skipped on the channels-free
+# ``base-install`` matrix cell (mirrors tests/subscriptions/conftest.py).
+_CHANNELS_AVAILABLE = importlib.util.find_spec("channels") is not None
 
 # ---------------------------------------------------------------------------
 # Shared schema
@@ -318,6 +324,10 @@ class BatchWithCacheTest(TestCase):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    not _CHANNELS_AVAILABLE,
+    reason="requires the 'subscriptions' extra (channels)",
+)
 class SafeGroupSendTest(TestCase):
     """P11: _safe_group_send must use a module-level singleton executor and
     exercise both the no-loop (async_to_sync) and loop-running (executor) paths."""
