@@ -497,3 +497,34 @@ optimizer adopts it as the base queryset and still applies `select_related` /
 `prefetch_related` on top of it. (`.only()` is skipped for custom-resolved
 querysets, since they may already shape their own columns.) Resolvers that return
 anything other than a `QuerySet` are left untouched.
+
+## Optimized mutation re-read
+
+`DjangoModelType.perform_mutate` re-reads the saved object from the database
+so the mutation response reflects the freshest DB state (annotations, default
+values, etc.).  Starting in **v1.2.1**, this re-read is **selection-aware**:
+the optimizer inspects the mutation's selection set, locates the sub-field node
+for `Meta.output_field_name` (e.g. `post` inside `{ ok post { … } }`), and
+applies `select_related` for every to-one relation (`ForeignKey`,
+`OneToOneField`) that appears in that sub-selection.
+
+This eliminates N+1 queries on mutation responses that nest related objects:
+
+```graphql
+mutation CreatePost($input: NewPostInput!) {
+  postCreate(newPost: $input) {
+    ok
+    post {
+      title
+      author { name }     # joined via select_related — no extra query
+      category { title }  # joined via select_related — no extra query
+    }
+  }
+}
+```
+
+No code changes are required; the optimization is applied automatically
+whenever `DjangoModelType.perform_mutate` is called.  If the selection set
+cannot be parsed (e.g. a custom `info` stub without field nodes), the method
+falls back to the plain unoptimized re-read so existing behaviour is
+preserved.
