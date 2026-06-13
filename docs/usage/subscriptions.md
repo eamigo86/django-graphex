@@ -575,6 +575,27 @@ without blocking the loop thread, and a done-callback logs any delivery failure
 via the module logger.  On the **WSGI / sync path** (no running loop),
 `async_to_sync` is used and errors propagate synchronously as before.
 
+### Commit-time broadcast delivery (v1.2.2)
+
+Subscription broadcasts (`_on_save`, `_on_delete`) are now deferred via
+`django.db.transaction.on_commit`.  This means:
+
+- **No phantom notifications**: if a nested write runs inside `transaction.atomic()`
+  and a later child save raises an `IntegrityError` (triggering a rollback), the
+  broadcast callbacks are discarded — subscribers never receive events for rows
+  that were rolled back.
+- **Auto-commit path unchanged**: when no explicit transaction is open, Django's
+  auto-commit mode causes `on_commit` to call the callback immediately, so
+  broadcast delivery is instant for standalone saves.
+- **Nested `atomic()` blocks**: callbacks accumulate until the outermost
+  transaction commits, matching Django's standard `on_commit` semantics.
+
+!!! note "Test setup"
+    Django's `TestCase` wraps every test in a transaction that is rolled back
+    after the test; `on_commit` callbacks never execute inside that wrapper.
+    If your subscription tests assert on `captured_group_sends`, mark them with
+    `@pytest.mark.django_db(transaction=True)` so real commits occur.
+
 ### Async-safe subscription hooks (v1.2.2)
 
 `authorize_subscription` and `subscription_scope` are synchronous classmethods

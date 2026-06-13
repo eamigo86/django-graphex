@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Native (Pydantic) subscriptions: serialize the payload without DRF."""
 
+import pytest
 from django.db import models
 
 from django_graphex.native.backend import PydanticBackend
@@ -33,7 +34,9 @@ def test_data_argument_enum_from_model_fields():
     assert {"id", "name", "note"} <= members
 
 
-def test_native_subscription_serializes_payload(db, captured_group_sends):
+@pytest.mark.django_db(transaction=True)
+def test_native_subscription_serializes_payload(captured_group_sends):
+    # transaction=True ensures on_commit fires so the broadcast is delivered.
     ThingNativeSubscription.get_binding()
     thing = SubNativeThing.objects.create(name="Widget", note="hello")
 
