@@ -67,7 +67,7 @@ All notable changes to this library are documented here. The format is based on
   `PageGraphqlPagination` is now conditional — it runs only for last-page
   navigation, removing one DB round-trip from every forward-paginated request.
   (#33, closes #17)
-- **`@date(as: "iso")`** — Now emits real ISO 8601 (`2023-12-01T14:30:00`)
+- **`@date(format: "iso")`** — Now emits real ISO 8601 (`2023-12-01T14:30:00`)
   instead of the previous locale-dependent month abbreviation format
   (`2023-Dec-01T14:30:00`) that was unparseable by `datetime.fromisoformat`.
   (#32, closes #16)
@@ -157,9 +157,9 @@ All notable changes to this library are documented here. The format is based on
 
 - **`MAX_BATCH_SIZE` default is now `10`** — Batch requests longer than 10
   entries are rejected with HTTP 400. Deployments that intentionally send large
-  batches must set `GRAPHENE["MAX_BATCH_SIZE"] = None` (unlimited) or a higher
+  batches must set `DJANGO_GRAPHEX["MAX_BATCH_SIZE"] = None` (unlimited) or a higher
   integer. (#31, closes #15)
-- **`@date(as: "iso")` output format changed** — The old output
+- **`@date(format: "iso")` output format changed** — The old output
   (`"2023-Dec-01T14:30:00"`) was locale-dependent and unparseable; the new
   output is real ISO 8601 (`"2023-12-01T14:30:00"`). If you have clients or
   tests that match the old locale-abbreviation format, update them. (#32, closes #16)
@@ -183,7 +183,7 @@ All notable changes to this library are documented here. The format is based on
   `SUBSCRIPTIONS_CHANNEL_GUARD=False` to disable the guard. (#30, closes #14)
 - **New settings introduced**: `MAX_BATCH_SIZE` (default `10`),
   `SUBSCRIPTIONS_CHANNEL_GUARD` (default `True`). Both live under the
-  `GRAPHENE` dict in `settings.py`. (#31, closes #15; #30, closes #14)
+  `DJANGO_GRAPHEX` dict in `settings.py`. (#31, closes #15; #30, closes #14)
 
 ## 1.2.0
 
