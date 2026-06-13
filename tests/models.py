@@ -229,3 +229,13 @@ class OrderChild(DummyModel):
 class CustomPKProduct(DummyModel):
     slug = models.CharField(max_length=100, primary_key=True)
     title = models.CharField(max_length=200)
+
+
+# --- Model used by the DjangoObjectType.get_queryset hook tests (#58) ------- #
+# A separate model (not HookModel) so the fix tests don't collide with the
+# DjangoModelType queryset-hook tests that also use HookModel.
+class ScopedArticle(DummyModel):
+    """Article model for testing the DjangoObjectType.get_queryset security hook."""
+
+    title = models.CharField(max_length=200)
+    is_public = models.BooleanField(default=True)

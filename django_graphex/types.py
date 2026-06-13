@@ -116,7 +116,22 @@ class DjangoModelTypeOptions(BaseOptions):
 
 
 class DjangoObjectType(ObjectType):
-    """A Django model GraphQL type with enhanced features."""
+    """A Django model GraphQL type with enhanced features.
+
+    Subclasses may override ``get_queryset(cls, queryset, info)`` to scope
+    the base queryset per-request (e.g. to the current user's rows).  The
+    override is called by ``DjangoObjectField``, ``DjangoFilterListField``,
+    and ``DjangoFilterPaginateListField`` **before** the query optimizer runs,
+    so ``select_related``/``prefetch_related`` are applied on top of the
+    already-narrowed queryset.
+    """
+
+    #: Sentinel checked by ``queryset_factory`` to distinguish a plain
+    #: ``DjangoObjectType`` subclass (``queryset, info`` contract) from a
+    #: ``DjangoModelType`` subclass (``manager, info, **kwargs`` contract).
+    #: ``DjangoModelType`` does NOT inherit from ``DjangoObjectType``, so it
+    #: never acquires this attribute.
+    _dgx_has_object_type_get_queryset: bool = True
 
     @classmethod
     def __init_subclass_with_meta__(

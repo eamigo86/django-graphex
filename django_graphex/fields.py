@@ -115,12 +115,19 @@ class DjangoObjectField(Field):
 
     @staticmethod
     def object_resolver(
-        manager: Manager, root: Any, info: ResolveInfo, **kwargs: Any
+        manager: Manager,
+        output_type: Any,
+        root: Any,
+        info: ResolveInfo,
+        **kwargs: Any,
     ) -> Any:
         """Resolve a single object by its ID, optimized for the selection.
 
         Args:
             manager: the model manager used to build the queryset.
+            output_type: the ``DjangoObjectType`` subclass for this field,
+                forwarded to ``queryset_factory`` so its ``get_queryset`` hook
+                is applied before the optimizer runs.
             root: the root value of the resolution.
             info: the GraphQL resolve info.
             **kwargs: query arguments, including the object "id".
@@ -131,7 +138,9 @@ class DjangoObjectField(Field):
         id = kwargs.pop("id", None)
 
         try:
-            qs = queryset_factory(manager, root, info, **kwargs)
+            qs = queryset_factory(
+                manager, root, info, output_type=output_type, **kwargs
+            )
             return qs.get(pk=id)
         except manager.model.DoesNotExist:
             return None
@@ -139,17 +148,31 @@ class DjangoObjectField(Field):
     def wrap_resolve(self, parent_resolver: Callable) -> Callable:
         """Honor a custom "resolver" if given, else the built-in object resolver.
 
-        The resolver receives the model manager as its first positional argument:
-        resolver(manager, root, info, **kwargs).
+        When using the built-in ``object_resolver``, the resolver receives
+        ``(manager, output_type, root, info, **kwargs)`` so the
+        ``DjangoObjectType.get_queryset`` hook can be applied inside
+        ``queryset_factory``.
+
+        When a custom resolver is provided (e.g. ``DjangoModelType.retrieve``),
+        only the manager is bound — the caller owns its own signature and
+        already manages its own queryset scoping.
 
         Args:
             parent_resolver: the resolver supplied by the parent field.
 
         Returns:
-            A partial that binds the model's default manager to the resolver.
+            A partial that binds the manager (and output type for the built-in
+            resolver) to the resolver.
         """
-        resolver = self.resolver or self.object_resolver
-        return partial(resolver, self.type._meta.model._default_manager)
+        if self.resolver:
+            # Custom resolver: bind only the manager (preserve caller's sig).
+            return partial(self.resolver, self.type._meta.model._default_manager)
+        # Built-in resolver: bind manager + output_type so the hook fires.
+        return partial(
+            self.object_resolver,
+            self.type._meta.model._default_manager,
+            self.type,
+        )
 
 
 # *********************************************** #
@@ -247,6 +270,7 @@ class DjangoFilterListField(Field):
     def list_resolver(
         manager: Manager,
         filter_backend: Any,
+        output_type: Any,
         root: Any,
         info: ResolveInfo,
         **kwargs: Any,
@@ -256,6 +280,9 @@ class DjangoFilterListField(Field):
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
+            output_type: the ``DjangoObjectType`` subclass for this field,
+                forwarded to ``queryset_factory`` so its ``get_queryset`` hook
+                is applied before the optimizer runs.
             root: the root value of the resolution.
             info: the GraphQL resolve info.
             **kwargs: query arguments, including the ``filter`` value.
@@ -281,7 +308,9 @@ class DjangoFilterListField(Field):
                 qs = None
 
         if qs is None:
-            qs = queryset_factory(manager, root, info, **kwargs)
+            qs = queryset_factory(
+                manager, root, info, output_type=output_type, **kwargs
+            )
             qs = filter_backend.apply(qs, filter_value)
 
             if root and is_valid_django_model(root._meta.model):
@@ -293,23 +322,36 @@ class DjangoFilterListField(Field):
     def wrap_resolve(self, parent_resolver: Callable) -> Callable:
         """Honor a custom "resolver" if given, else the built-in list resolver.
 
-        The resolver receives (manager, filter_backend) as its leading
-        positional arguments, then root, info, **kwargs.
+        When using the built-in ``list_resolver``, the resolver receives
+        ``(manager, filter_backend, output_type, root, info, **kwargs)`` so
+        the ``DjangoObjectType.get_queryset`` hook can be applied inside
+        ``queryset_factory``.
+
+        When a custom resolver is provided, only ``(manager, filter_backend)``
+        are bound — the caller owns its own signature.
 
         Args:
             parent_resolver: the resolver supplied by the parent field.
 
         Returns:
-            A partial that binds the manager and filter backend.
+            A partial that binds the leading positional arguments.
         """
-        resolver = self.resolver or self.list_resolver
         current_type = self.type
         while isinstance(current_type, Structure):
             current_type = current_type.of_type
+        if self.resolver:
+            # Custom resolver: bind only (manager, filter_backend).
+            return partial(
+                self.resolver,
+                current_type._meta.model._default_manager,
+                self.filter_backend,
+            )
+        # Built-in resolver: bind (manager, filter_backend, output_type).
         return partial(
-            resolver,
+            self.list_resolver,
             current_type._meta.model._default_manager,
             self.filter_backend,
+            current_type,
         )
 
 
@@ -376,7 +418,7 @@ class DjangoFilterPaginateListField(Field):
     def get_queryset(
         self, manager: Manager, root: Any, info: ResolveInfo, **kwargs: Any
     ) -> Any:
-        """Return the base queryset for this field.
+        """Return the base queryset for this field, including the output type hook.
 
         Args:
             manager: the model manager used to build the queryset.
@@ -385,9 +427,12 @@ class DjangoFilterPaginateListField(Field):
             **kwargs: query arguments.
 
         Returns:
-            The base queryset built for the request.
+            The base queryset built for the request (hook applied).
         """
-        return queryset_factory(manager, root, info, **kwargs)
+        current_type = self.type
+        while isinstance(current_type, Structure):
+            current_type = current_type.of_type
+        return queryset_factory(manager, root, info, output_type=current_type, **kwargs)
 
     def list_resolver(
         self,

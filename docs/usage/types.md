@@ -38,10 +38,44 @@ or as the output of a [mutation](mutations.md). Relations on the model are expos
 as nested lists with the uniform `results` / `totalCount` shape — see
 [Nested lists](nested-lists.md).
 
-!!! tip "Per-request queryset"
-    Override `get_queryset(cls, queryset, info)` to scope what a type returns
-    (e.g. only the current user's rows). See
-    [Custom queryset](#custom-queryset-per-request-filtering).
+### Custom queryset (per-request filtering)
+
+Override `get_queryset(cls, queryset, info)` to scope what a type exposes on a
+per-request basis — for example, to restrict rows to the current user's data:
+
+```python
+class ArticleType(DjangoObjectType):
+    class Meta:
+        model = Article
+        filter_fields = {"title": ("icontains",)}
+
+    @classmethod
+    def get_queryset(cls, queryset, info):
+        # Only expose articles owned by the requesting user.
+        return queryset.filter(owner=info.context.user)
+```
+
+The hook is called by [`DjangoObjectField`](fields.md#djangoobjectfield),
+[`DjangoFilterListField`](fields.md#djangofilterlistfield), and
+[`DjangoFilterPaginateListField`](fields.md#djangofilterpaginatelistfield)
+**before** the query optimizer runs, so `select_related` / `prefetch_related`
+are applied on top of the already-narrowed queryset — the same interplay
+described for `DjangoModelType.Meta.queryset` in the
+[optimizer docs](query-optimization.md).
+
+!!! note "Scope: top-level fields only"
+    The `get_queryset` hook fires on **top-level** `DjangoObjectField` and
+    `DjangoFilterListField` / `DjangoFilterPaginateListField` resolvers.
+    Relation fields on a parent that resolve to a `DjangoObjectType` (e.g. a
+    `ForeignKey` traversal) go through the parent's prefetch/select path and do
+    not call the child type's `get_queryset`.  If you need per-relation row
+    scoping, use a `resolve_<relation>` method on the parent type.
+
+!!! note "DjangoModelType uses a different hook"
+    `DjangoModelType` has its own queryset-scoping API (`get_queryset` +
+    `filter_queryset`) with a different signature (`manager, info, **kwargs`).
+    That hook is called earlier, at the CRUD-method level, and is unaffected by
+    this change.  Do not mix the two APIs.
 
 ## DjangoListObjectType
 

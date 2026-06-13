@@ -3277,7 +3277,12 @@ def _apply_optimizations(
 
 
 def queryset_factory(
-    manager: Any, root: Any, info: GraphQLResolveInfo, **kwargs: Any
+    manager: Any,
+    root: Any,
+    info: GraphQLResolveInfo,
+    *,
+    output_type: Any = None,
+    **kwargs: Any,
 ) -> QuerySet:
     """Build a queryset optimized for the requested GraphQL selection.
 
@@ -3287,10 +3292,22 @@ def queryset_factory(
     "resolve_<field>" that returns a QuerySet. Behavior is controlled by the
     "OPTIMIZE_QUERYSET" and "OPTIMIZE_ONLY_FIELDS" settings.
 
+    When ``output_type`` is a ``DjangoObjectType`` subclass (detected via the
+    ``_dgx_has_object_type_get_queryset`` sentinel), its
+    ``get_queryset(queryset, info)`` override is called **after** the base
+    queryset is built and **before** the optimizer runs, so
+    ``select_related``/``prefetch_related`` are applied on top of the
+    already-narrowed queryset.  ``DjangoModelType`` does NOT have this sentinel
+    and is therefore unaffected (its own ``get_queryset`` / ``filter_queryset``
+    path is invoked earlier, at the CRUD-method level in ``types.py``).
+
     Args:
         manager: A Django model, manager, or queryset to start from.
         root: The root value passed to the resolver.
         info: The GraphQL resolve info for the current field.
+        output_type: Optional ``DjangoObjectType`` subclass whose
+            ``get_queryset`` hook should be applied before the optimizer.
+            Pass ``None`` (the default) to skip the hook.
         **kwargs: The resolver arguments, used to seed relation joins.
 
     Returns:
@@ -3307,6 +3324,21 @@ def queryset_factory(
             base = produced
             model = base.model
             custom_used = True
+
+    # --- DjangoObjectType.get_queryset hook -----------------------------------
+    # Apply the per-request scoping hook if the output type declares it.
+    # The sentinel ``_dgx_has_object_type_get_queryset`` is set on
+    # ``DjangoObjectType`` and inherited by every plain subclass; it is NOT
+    # present on ``DjangoModelType`` (separate hierarchy).  The check guards
+    # against accidentally calling it on unrelated types.
+    if output_type is not None and getattr(
+        output_type, "_dgx_has_object_type_get_queryset", False
+    ):
+        hooked = output_type.get_queryset(base, info)
+        if isinstance(hooked, QuerySet):
+            base = hooked
+            model = base.model
+    # -------------------------------------------------------------------------
 
     if not graphql_api_settings.OPTIMIZE_QUERYSET:
         return base
