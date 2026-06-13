@@ -112,7 +112,6 @@ nav:
     - Mutations: api/mutations.md
     - Paginations: api/paginations.md
     - Directives: api/directives.md
-    - Utils: api/utils.md
   - Development:
     - Contributing: contributing.md
     - Changelog: changelog.md
