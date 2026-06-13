@@ -109,14 +109,19 @@ class MaxBatchSizeErrorBodyTest(TestCase):
 
 
 class CacheIncrTest(TestCase):
-    """P5: the version token must be seeded with 0 (int) so cache.incr works."""
+    """P5: the version token must be seeded with 1 (int) so cache.incr works.
+
+    Updated for issue #60: initial value is 1 (not 0), heal is 1 (not 0), and
+    bump is deferred via transaction.on_commit — captureOnCommitCallbacks is
+    required to flush the callback inside TestCase.
+    """
 
     def setUp(self):
         self.factory = RequestFactory()
         cache.clear()
 
     def test_initial_version_is_integer(self):
-        """After _get_cache_version, the stored value must be an integer."""
+        """After _get_cache_version, the stored value must be an integer (1)."""
         from django.core.cache import caches
 
         _cache = caches["default"]
@@ -130,10 +135,16 @@ class CacheIncrTest(TestCase):
             int,
             f"Expected int seed, got {type(stored).__name__}: {stored!r}",
         )
-        self.assertEqual(stored, 0)
+        # Seeded to 1 (not 0) so version 0 is never used as a live cache key.
+        self.assertEqual(stored, 1)
 
     def test_bump_increments_version(self):
-        """_bump_cache_version must increment the counter: 0 → 1 → 2."""
+        """_bump_cache_version must increment the counter: 1 → 2 → 3.
+
+        Uses captureOnCommitCallbacks(execute=True) because bump is deferred
+        via transaction.on_commit and Django's TestCase holds the test inside a
+        transaction that never commits.
+        """
         from django.core.cache import caches
 
         _cache = caches["default"]
@@ -142,17 +153,23 @@ class CacheIncrTest(TestCase):
 
         # Seed then bump twice.
         view._get_cache_version(_cache, "u2")
-        view._bump_cache_version(_cache, "u2")
+        with self.captureOnCommitCallbacks(execute=True):
+            view._bump_cache_version(_cache, "u2")
         v1 = _cache.get(version_key)
-        view._bump_cache_version(_cache, "u2")
+        with self.captureOnCommitCallbacks(execute=True):
+            view._bump_cache_version(_cache, "u2")
         v2 = _cache.get(version_key)
 
-        self.assertEqual(v1, 1)
-        self.assertEqual(v2, 2)
+        self.assertEqual(v1, 2)
+        self.assertEqual(v2, 3)
 
     def test_bump_fallback_on_incr_failure(self):
-        """When cache.incr raises ValueError, _bump must reset the key to integer 0
-        so the next incr always finds an integer and can succeed."""
+        """When cache.incr raises ValueError, _bump must reset the key to integer 1
+        so the next incr always finds an integer and can succeed.
+
+        The heal value is 1 (not 0) to avoid the ambiguous zero-state (issue #60c).
+        captureOnCommitCallbacks flushes the on_commit callback immediately.
+        """
         from django.core.cache import caches
 
         _cache = caches["default"]
@@ -162,15 +179,16 @@ class CacheIncrTest(TestCase):
         view._get_cache_version(_cache, "u3")
 
         with patch.object(_cache, "incr", side_effect=ValueError("no incr")):
-            view._bump_cache_version(_cache, "u3")
+            with self.captureOnCommitCallbacks(execute=True):
+                view._bump_cache_version(_cache, "u3")
 
         after = _cache.get(version_key)
         self.assertIsInstance(
             after,
             int,
-            f"Fallback must reset the version token to integer 0; got {after!r}",
+            f"Fallback must reset the version token to integer 1; got {after!r}",
         )
-        self.assertEqual(after, 0, "Fallback must set the token to integer 0")
+        self.assertEqual(after, 1, "Fallback must set the token to integer 1 (not 0)")
 
 
 # ---------------------------------------------------------------------------
