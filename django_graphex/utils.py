@@ -1812,6 +1812,14 @@ def _collect_prefetch_only_sets(
 
     rel_map = _relation_field_map(model)
 
+    # NOTE: @skip/@include guard is intentionally absent here.
+    # _collect_prefetch_only_sets only narrows the `.only()` column sets for
+    # lookups already chosen by recursive_params (which DOES honour the guard).
+    # Any stray only_map entries produced here for skipped relations are never
+    # consumed — the prefetch lookup itself was excluded upstream.  Adding the
+    # guard would require threading variable_values through the signature (a
+    # non-trivial API change); the existing conservative behaviour is safe.
+    # See: verify-report obs #1383 WARNING-1 / _collect_prefetch_only_sets note.
     for field in selection_set.selections:
         if isinstance(field, FragmentSpreadNode):
             fragment = fragments.get(field.name.value) if fragments else None
@@ -2322,8 +2330,16 @@ def _walk_filtered_prefetches(
             ``_relation_field_map``).
     """
     relation_map = _relation_field_map(model, _fmap_cache) if model is not None else {}
+    _vars: dict[str, Any] = info.variable_values or {}
 
     for field in selection_set.selections:
+        # Honor @skip / @include — skip the entire subtree when the directive
+        # resolves to "not selected".  Mirrors the guard in recursive_params
+        # (utils.py ~line 1015).  Unresolvable variable conditions default to
+        # "include" (conservative: never over-optimise by dropping a fetch).
+        if is_selection_skipped(field, _vars):
+            continue
+
         if isinstance(field, FragmentSpreadNode):
             fragment = info.fragments.get(field.name.value) if info.fragments else None
             if fragment is not None:  # pragma: no branch
