@@ -717,6 +717,29 @@ Directives handle errors gracefully:
     }
     ```
 
+### Input Validation (Bad Client Input)
+
+The following directives raise a clean `GraphQLError` when given bad input,
+instead of surfacing a raw Python exception (which would reach the client as
+an unhandled 500 or an opaque `errors[]` entry):
+
+| Directive | Bad input | Error raised |
+|---|---|---|
+| `@base64(op:"decode")` | Non-base64 or non-UTF-8 bytes | `GraphQLError('@base64 could not decode value: ...')` |
+| `@currency` | Non-numeric field value | `GraphQLError('@currency could not format value ...: expected a numeric value.')` |
+| `@floor`, `@ceil`, `@round`, `@abs` | Non-numeric field value | `GraphQLError('@floor/@ceil/@round/@abs could not convert value ... to a number.')` |
+| `@center` | `fillchar` length ≠ 1 (empty or multi-char) | `GraphQLError('@center fillchar must be exactly one character; got ...')` |
+
+!!! info "Null and empty values"
+    `@base64` returns `None` on an empty/null input. `@currency` returns `"$0.00"` on
+    a `None` or falsy-but-coercible value. `@floor`, `@ceil`, `@round`, and `@abs`
+    return `None` when the field value is `None`. These are NOT error conditions.
+
+!!! tip "Numeric string fields"
+    `@floor`, `@ceil`, `@round`, and `@abs` work on `String` fields that contain a
+    numeric value (e.g. `"3.7"`). A non-numeric string (e.g. `"abc"`) raises
+    `GraphQLError` rather than propagating `ValueError`.
+
 ## Best Practices
 
 !!! tip "Directive Best Practices"

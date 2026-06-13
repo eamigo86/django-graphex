@@ -5,7 +5,13 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
-from graphql import GraphQLArgument, GraphQLInt, GraphQLString, get_named_type
+from graphql import (
+    GraphQLArgument,
+    GraphQLError,
+    GraphQLInt,
+    GraphQLString,
+    get_named_type,
+)
 
 from .base import BaseExtraGraphQLDirective
 
@@ -18,6 +24,30 @@ __all__ = (
     "RoundGraphQLDirective",
     "AbsGraphQLDirective",
 )
+
+
+def _to_float(value: Any, directive_name: str) -> float:
+    """Coerce *value* to float, raising GraphQLError on failure.
+
+    Shared guard used by all numeric directives to prevent raw ``ValueError``
+    or ``TypeError`` from escaping to the GraphQL client.
+
+    Args:
+        value: The field value to coerce.
+        directive_name: The directive name shown in the error message (e.g. '@floor').
+
+    Returns:
+        The value coerced to float.
+
+    Raises:
+        GraphQLError: When the value cannot be interpreted as a number.
+    """
+    try:
+        return float(value)
+    except (ValueError, TypeError) as exc:
+        raise GraphQLError(
+            f"{directive_name} could not convert value {value!r} to a number."
+        ) from exc
 
 
 def _wants_string(info: GraphQLResolveInfo) -> bool:
@@ -71,7 +101,7 @@ class FloorGraphQLDirective(BaseExtraGraphQLDirective):
         """
         if value is None:
             return None
-        return _coerce(math.floor(float(value)), info)
+        return _coerce(math.floor(_to_float(value, "@floor")), info)
 
 
 class CeilGraphQLDirective(BaseExtraGraphQLDirective):
@@ -100,7 +130,7 @@ class CeilGraphQLDirective(BaseExtraGraphQLDirective):
         """
         if value is None:
             return None
-        return _coerce(math.ceil(float(value)), info)
+        return _coerce(math.ceil(_to_float(value, "@ceil")), info)
 
 
 class RoundGraphQLDirective(BaseExtraGraphQLDirective):
@@ -143,7 +173,7 @@ class RoundGraphQLDirective(BaseExtraGraphQLDirective):
         if value is None:
             return None
         precision = args.get("precision") or 0
-        rounded = round(float(value), int(precision))
+        rounded = round(_to_float(value, "@round"), int(precision))
         if precision <= 0:
             rounded = int(rounded)
         return _coerce(rounded, info)
@@ -175,4 +205,4 @@ class AbsGraphQLDirective(BaseExtraGraphQLDirective):
         """
         if value is None:
             return None
-        return _coerce(abs(float(value)), info)
+        return _coerce(abs(_to_float(value, "@abs")), info)

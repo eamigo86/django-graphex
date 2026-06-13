@@ -395,6 +395,16 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
         order = kwargs.pop(self.ordering_param, None) or self.ordering
         offset = kwargs.get(self.offset_query_param, 0) or 0
 
+        # Reject negative offsets before any DB or in-memory slice attempt.
+        # A negative offset causes Django's QuerySet.__getitem__ to raise a
+        # raw ValueError("Negative indexing is not supported") which escapes
+        # the resolver as an unhandled 500. Clean GraphQLError is the project
+        # standard for bad client input (see test_pagination_hardening.py).
+        if offset < 0:
+            raise GraphQLError(
+                f"Invalid offset: {offset}. Offset must be a non-negative integer."
+            )
+
         if not isinstance(qs, QuerySet):
             # Nested list resolved from the prefetch cache: order/slice in memory.
             # G4 ordering parity: when no explicit ordering is given and the items
@@ -448,6 +458,10 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
         if limit is None:
             return None
         offset = kwargs.get(self.offset_query_param, 0) or 0
+        if offset < 0:
+            raise GraphQLError(
+                f"Invalid offset: {offset}. Offset must be a non-negative integer."
+            )
         order = kwargs.pop(self.ordering_param, None) or self.ordering
         return (offset, abs(limit), order)
 
