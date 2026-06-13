@@ -564,16 +564,27 @@ class DjangoListObjectField(Field):
         The resolver receives (manager, filter_backend) as its leading
         positional arguments, then root, info, **kwargs.
 
+        When ``Meta.queryset`` is set on the list type, that queryset is used
+        as the base (in place of ``_default_manager``) so user-supplied filters
+        such as ``.filter(is_active=True)`` are applied on every request.
+
         Args:
             parent_resolver: the resolver supplied by the parent field.
 
         Returns:
-            A partial that binds the manager and filter backend.
+            A partial that binds the queryset (or manager) and filter backend.
         """
         resolver = self.resolver or self.list_resolver
+        # Prefer Meta.queryset over _default_manager when the list type declared one.
+        meta_queryset = getattr(self.type._meta, "queryset", None)
+        base = (
+            meta_queryset
+            if meta_queryset is not None
+            else self.type._meta.model._default_manager
+        )
         return partial(
             resolver,
-            self.type._meta.model._default_manager,
+            base,
             self.filter_backend,
         )
 

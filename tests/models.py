@@ -281,3 +281,18 @@ class EnumCollisionItemB(DummyModel):
 
     STATUS_CHOICES = [("x", "Xray"), ("y", "Yankee"), ("z", "Zulu")]
     status = models.CharField(max_length=1, choices=STATUS_CHOICES)
+
+
+# --- Models for issue #65: Meta-option hygiene -------------------------------- #
+
+
+class MetaHygieneWidget(DummyModel):
+    """Model used by issue #65 tests.
+
+    Has several fields to exercise include_fields, only_fields/exclude_fields
+    omitting id, and queryset filtering.
+    """
+
+    title = models.CharField(max_length=200)
+    body = models.TextField(default="")
+    is_active = models.BooleanField(default=True)
