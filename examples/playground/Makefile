@@ -20,7 +20,7 @@ collectstatic: ## Collect static files into STATIC_ROOT (for production serving)
 superuser: ## Create your own superuser (for /admin login -> private queries)
 	uv run python manage.py createsuperuser
 
-run: ## Run the ASGI server (HTTP + WebSocket) at http://127.0.0.1:8000/graphql
+run: ## Run the ASGI server (HTTP + WebSocket) at http://127.0.0.1:8000/graphql/
 	uv run daphne -b 127.0.0.1 -p 8000 config.asgi:application
 
 shell: ## Open a Django shell

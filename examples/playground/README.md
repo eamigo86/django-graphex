@@ -24,10 +24,10 @@ make install     # uv sync — installs the local library + daphne
 make migrate     # create + apply migrations (SQLite)
 make seed        # demo data: 5 authors × 4 posts × 3 comments, 3 notes,
                  #            2 accounts + 2 invoices + 4 attachments (GFK union)
-make run         # ASGI server at http://127.0.0.1:8000/graphql
+make run         # ASGI server at http://127.0.0.1:8000/graphql/
 ```
 
-Open **GraphiQL** at <http://127.0.0.1:8000/graphql>.
+Open **GraphiQL** at <http://127.0.0.1:8000/graphql/>.
 
 The seed creates superuser **`demo` / `demo12345`**.
 
@@ -102,15 +102,15 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DenyAllRegistry` | note | Fail-closed sentinel for broken schemas; not needed in a healthy project |
 | **Views** | | |
 | `BaseGraphQLView` | ✅ | base of all views |
-| `GraphQLView` (depth/cost rules, caching) | ✅ | base of `SubscriptionGraphQLView` at `/graphql` |
-| `AuthenticatedGraphQLView` | ✅ | `/graphql/secure` — rejects unauthenticated requests with HTTP 403 |
-| `SubscriptionGraphQLView` | ✅ | `/graphql` |
+| `GraphQLView` (depth/cost rules, caching) | ✅ | base of `SubscriptionGraphQLView` at `/graphql/` |
+| `AuthenticatedGraphQLView` | ✅ | `/graphql/secure/` — rejects unauthenticated requests with HTTP 403 |
+| `SubscriptionGraphQLView` | ✅ | `/graphql/` |
 | `SubscriptionClientView` | ✅ | `/graphql/client/` |
 | **Query depth / cost limiting** | | |
 | `DepthLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.max_deep = 4` activates per-type enforcement |
 | `CostLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.complexity = 2`; enable budget via `MAX_QUERY_COST` |
 | `analyze_cost` / `CostReport` | ✅ | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
-| `MAX_QUERY_DEPTH` setting | note | Commented in `config/settings.py` — uncomment to activate global depth limit |
+| `MAX_QUERY_DEPTH` setting | ✅ | **Active at depth 6** in `config/settings.py:94` — the playground rejects any query nested more than 6 levels |
 | `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note | Commented in `config/settings.py` — uncomment to block expensive queries and expose cost |
 | **Queryset optimization** | | |
 | `OPTIMIZE_QUERYSET` | ✅ | Enabled by default; `select_related`/`prefetch_related` derived from the selection. Commented in `config/settings.py` to show how to flip it |
@@ -149,7 +149,7 @@ make reset          drop the SQLite db, re-migrate, re-seed
 make clean          remove the db and caches
 ```
 
-The `make run` command starts daphne at <http://127.0.0.1:8000/graphql>.
+The `make run` command starts daphne at <http://127.0.0.1:8000/graphql/>.
 
 ---
 
@@ -391,22 +391,27 @@ a plain `postCreate`.  Passing an empty list (`comments: []`) is a no-op
 ## Query depth and cost limits
 
 Both rules are wired into `GraphQLView` (and therefore `SubscriptionGraphQLView`).
-They are **no-ops by default**; activate them by uncommenting the settings in
-`config/settings.py`:
+
+**`MAX_QUERY_DEPTH` is active** in this playground: `config/settings.py` ships
+with `"MAX_QUERY_DEPTH": 6`, so any query nested more than 6 levels deep is
+rejected immediately with a `QUERY_TOO_DEEP` error.
+
+**`MAX_QUERY_COST`** is commented out (no budget enforced). Uncomment both lines
+in `config/settings.py` to try cost analysis:
 
 ```python
 DJANGO_GRAPHEX = {
     ...
-    "MAX_QUERY_DEPTH": 6,          # reject queries nested > 6 levels
+    # MAX_QUERY_DEPTH is already active at 6 — change or remove to adjust.
     "MAX_QUERY_COST": 200,         # reject queries with estimated cost > 200
     "EXPOSE_QUERY_COST": True,     # add extensions.cost to every response
 }
 ```
 
 `PostType` already sets `max_deep = 4` and `complexity = 2` so per-type
-enforcement is active for free — even without `MAX_QUERY_DEPTH` in settings.
-A query that nests more than 4 levels under a `post` field is rejected with
-`QUERY_TOO_DEEP`, regardless of the global limit.
+enforcement is active for free. A query that nests more than 4 levels under a
+`post` field is rejected with `QUERY_TOO_DEEP`, and the global `MAX_QUERY_DEPTH`
+of 6 applies on top (most-restrictive rule wins).
 
 ---
 
@@ -451,7 +456,7 @@ Manual flow (for `wscat` / custom clients):
 
 1. `wscat -c ws://127.0.0.1:8000/ws/graphql/` — receive `{ "channel_id": "…" }`.
 
-2. Subscribe over HTTP (`/graphql`):
+2. Subscribe over HTTP (`/graphql/`):
 
    ```graphql
    subscription {
@@ -519,9 +524,9 @@ subscription {
 
 | Route | View | Notes |
 |-------|------|-------|
-| `/graphql` | `SubscriptionGraphQLView` | HTTP GraphQL + GraphiQL; handles subscribe/unsubscribe |
+| `/graphql/` | `SubscriptionGraphQLView` | HTTP GraphQL + GraphiQL; handles subscribe/unsubscribe |
 | `/graphql/client/` | `SubscriptionClientView` | Browser client for the WebSocket subscription flow |
-| `/graphql/secure` | `AuthenticatedGraphQLView` | Same schema behind **view-level** HTTP 403 auth |
+| `/graphql/secure/` | `AuthenticatedGraphQLView` | Same schema behind **view-level** HTTP 403 auth |
 
 `AuthenticatedGraphQLView` rejects unauthenticated requests before any query
 runs. Override `permission_classes` for custom gates:
