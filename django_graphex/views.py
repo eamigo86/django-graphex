@@ -322,15 +322,11 @@ class BaseGraphQLView(View):
 
                 # --- Stage 2: authoritative check on the actual body length ---
                 # This ALWAYS runs so that a spoofed-low / absent / garbage
-                # Content-Length cannot bypass the guard.
-                try:
-                    actual_length = len(request.body)
-                except Exception:
-                    # Django raised RequestDataTooBig / SuspiciousOperation or
-                    # similar — let it propagate as Django's own response rather
-                    # than masking it here.
-                    raise
-
+                # Content-Length cannot bypass the guard. If reading the body
+                # raises Django's RequestDataTooBig / SuspiciousOperation, that
+                # propagates as Django's own response (we neither mask it nor
+                # 500 on it).
+                actual_length = len(request.body)
                 if actual_length > max_body:
                     raise HttpError(
                         _HR(status=413),
