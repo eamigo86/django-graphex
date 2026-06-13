@@ -1,5 +1,8 @@
 # django-graphex — Playground
 
+> **Targets django-graphex v1.3.x** — includes v1.1.0 query-optimization,
+> v1.2.0 typed-GFK unions, and v1.2.2 `get_queryset` scoping + safe ordering.
+
 A small, runnable Django project that exercises **every major feature** of
 `django-graphex` end-to-end: queries, all three paginators, filtering,
 generic single-object fields, nested lists (N+1-safe) with nested
@@ -12,6 +15,18 @@ Channels.
 
 It installs the library from the parent checkout (editable), uses **uv**,
 **SQLite**, and a `Makefile`.
+
+### Safe ordering (anti-oracle hardening)
+
+The ordering allowlist is active on all paginated fields. It rejects
+relation-spanning and non-existent terms to prevent column-oracle attacks:
+
+| Query | Error |
+|-------|-------|
+| `posts { results(ordering: "author__user__password") { title } }` | `Relation-spanning ordering is not permitted` |
+| `posts { results(ordering: "nonexistent") { title } }` | `Invalid ordering field` |
+
+Try these in GraphiQL to see the guard in action.
 
 ---
 
