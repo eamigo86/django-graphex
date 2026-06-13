@@ -221,3 +221,11 @@ class OrderChild(DummyModel):
         related_name="kids",
         on_delete=models.CASCADE,
     )
+
+
+# --- Custom-PK model used by the delete-pk-attname fix tests (#18) --------- #
+# The PK is a slug CharField (not ``id``), which exercises the
+# ``old_obj._meta.pk.attname`` fix in mutation.py and types.py delete().
+class CustomPKProduct(DummyModel):
+    slug = models.CharField(max_length=100, primary_key=True)
+    title = models.CharField(max_length=200)

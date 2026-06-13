@@ -1,6 +1,6 @@
 [project]
 name = "django-graphex"
-version = "1.2.0"
+version = "1.2.1"
 description = "GraphQL for Django, powered by graphene and Pydantic: define types/mutations/subscriptions from your models, with nested filtering (and/or/not), pagination, permissions and directives."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
@@ -22,7 +22,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
     "django>=4.2,<7.0",
@@ -37,13 +36,13 @@ dependencies = [
 # never pull in channels (see django_graphex/subscriptions/__init__.py).
 subscriptions = [
     "channels>=4.0,<5.0",
-    "channels-redis>=4.2",
+    "channels-redis>=4.2,<5.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/eamigo86/django-graphex"
 Repository = "https://github.com/eamigo86/django-graphex"
-Documentation = "https://github.com/eamigo86/django-graphex"
+Documentation = "https://eamigo86.github.io/django-graphex/"
 
 [dependency-groups]
 dev = [
@@ -55,7 +54,7 @@ dev = [
     "factory-boy>=3.3.0,<4",
     # Subscriptions (optional extra) — needed to exercise the subscription suite
     "channels>=4.0,<5.0",
-    "daphne>=4.0",  # provides channels.testing helpers (WebsocketCommunicator)
+    "daphne>=4.0,<5.0",  # provides channels.testing helpers (WebsocketCommunicator)
     # Code quality (ruff = formatter + linter; mypy = types)
     "ruff>=0.15.0",
     "mypy>=1.19.0,<2",
@@ -80,6 +79,19 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["django_graphex"]
+
+[tool.hatch.build.targets.sdist]
+# Allowlist: only ship the library source, tests, docs assets and distribution
+# metadata. This prevents dev-local paths (.claude/, specs/) from leaking into
+# the published tarball even if they are not in .gitignore.
+include = [
+    "/django_graphex",
+    "/tests",
+    "/docs",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.ruff]
 line-length = 88
@@ -158,7 +170,8 @@ addopts = [
     "--cov=django_graphex",
     "--cov-report=term-missing",
     "--cov-report=html",
-    "--cov-report=xml"
+    "--cov-report=xml",
+    "--cov-fail-under=95"
 ]
 
 [tool.mypy]

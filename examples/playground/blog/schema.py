@@ -9,10 +9,12 @@
 
 import graphene
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from django.db.models import Count
 from django.utils import timezone
 
 from django_graphex import (
+    AllowAny,  # noqa: F401 — available for permission_classes experimentation
     AnnotatedField,
     BasePermission,
     CursorGraphqlPagination,
@@ -24,15 +26,18 @@ from django_graphex import (
     DjangoListObjectType,
     DjangoModelMutation,
     DjangoModelType,
+    DjangoNestedListObjectField,
     DjangoObjectField,
     DjangoObjectType,
     DjangoUnionType,
+    IsAdmin,  # noqa: F401 — available for permission_classes experimentation
+    IsAdminOrReadOnly,  # noqa: F401 — available for permission_classes experimentation
+    IsAuthenticated,  # noqa: F401 — available for permission_classes experimentation
     IsAuthenticatedOrReadOnly,
     LimitOffsetGraphqlPagination,
     PageGraphqlPagination,
     all_directives,
 )
-from django_graphex.fields import DjangoNestedListObjectField
 from django_graphex.subscriptions import Subscription
 
 from .models import (
@@ -221,8 +226,9 @@ class AttachmentListType(DjangoListObjectType):
 
 # --------------------------------------------------------------------------- #
 # Custom permission — demonstrates BasePermission subclassing.               #
-# AllowAny, IsAuthenticated, IsAdmin, IsAdminOrReadOnly are all imported      #
-# above and are available to use on any DjangoModelType.                      #
+# AllowAny, IsAuthenticated, IsAdmin, and IsAdminOrReadOnly are imported      #
+# above so you can assign them on any DjangoModelType.permission_classes      #
+# without adding extra imports yourself.                                      #
 # --------------------------------------------------------------------------- #
 class IsOwnerOrReadOnly(BasePermission):
     """Authenticated users may read; only the owner may write.
@@ -250,8 +256,9 @@ class IsOwnerOrReadOnly(BasePermission):
 # --------------------------------------------------------------------------- #
 class NoteModelType(DjangoModelType):
     # Anyone may read; only authenticated users may create/update/delete.
-    # Other built-in options: AllowAny, IsAuthenticated, IsAdmin,
-    # IsAdminOrReadOnly, or a custom BasePermission subclass like IsOwnerOrReadOnly.
+    # Swap to AllowAny, IsAuthenticated, IsAdmin, IsAdminOrReadOnly, or a
+    # custom BasePermission subclass like IsOwnerOrReadOnly (all imported at
+    # the top of this file) to experiment with different permission gates.
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     class Meta:
@@ -432,16 +439,36 @@ class CategoryInput(DjangoInputObjectType):
 
 
 class CreateCategory(graphene.Mutation):
-    """A hand-written mutation taking an explicit DjangoInputObjectType."""
+    """A hand-written mutation taking an explicit DjangoInputObjectType.
+
+    Teaching note — unique-constraint violations
+    --------------------------------------------
+    ``Category.name`` has a unique constraint. Without the try/except below, a
+    duplicate name raises an ``IntegrityError`` that Django bubbles up as HTTP
+    500 — a hard crash with no useful message for the client.
+
+    The idiomatic pattern for hand-written graphene mutations is to catch the
+    database error and return ``ok=False`` with a human-readable ``error``
+    string. This keeps the GraphQL response status 200 and hands the client
+    structured error information.  (``DjangoModelMutation`` and
+    ``DjangoModelType`` handle this automatically through their serialiser
+    layer; hand-written mutations must do it explicitly.)
+    """
 
     class Arguments:
         data = CategoryInput(required=True)
 
     ok = graphene.Boolean()
     category = graphene.Field(CategoryType)
+    error = graphene.String()
 
     def mutate(self, info, data):
-        category = Category.objects.create(name=data.name)
+        try:
+            category = Category.objects.create(name=data.name)
+        except IntegrityError:
+            return CreateCategory(
+                ok=False, category=None, error=f"Category '{data.name}' already exists."
+            )
         return CreateCategory(ok=True, category=category)
 
 

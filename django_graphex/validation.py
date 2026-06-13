@@ -27,6 +27,7 @@ from graphql.language import (
 from graphql.validation import ValidationRule
 
 from . import settings as _settings
+from ._directives_eval import is_selection_skipped
 
 if TYPE_CHECKING:
     from graphql import GraphQLNamedType, OperationDefinitionNode, SelectionSetNode
@@ -133,6 +134,13 @@ class DepthLimitValidationRule(ValidationRule):
         fields = getattr(parent_type, "fields", None)
 
         for selection in selection_set.selections:
+            # Honor @skip / @include directives.  Validation rules run before
+            # variable binding, so variable_values is always empty here — the
+            # conservative policy applies (unresolvable variable conditions are
+            # never skipped).
+            if is_selection_skipped(selection, {}):
+                continue
+
             if isinstance(selection, FieldNode):
                 if selection.selection_set is None or selection.name.value.startswith(
                     "__"

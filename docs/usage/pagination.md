@@ -206,8 +206,17 @@ PageGraphqlPagination(
 )
 ```
 
-!!! tip "Dynamic Page Size"
-    Set `page_size_query_param` to allow clients to control page size. If not set, page size is fixed.
+!!! tip "`page_size_query_param` semantics"
+
+    - **Non-`None` string** (e.g. `"pageSize"`) — adds a `pageSize` argument to
+      the `results(...)` subfield. Clients can request any size up to
+      `max_page_size`; values above the cap are silently clamped to `max_page_size`.
+    - **`None`** (the default) — page size is **fixed** at `page_size`; clients
+      cannot change it. The `pageSize` argument is not added to the schema.
+
+    This is **asymmetric** with `LimitOffsetGraphqlPagination.limit_query_param`,
+    which is always `"limit"` and is always present in the schema — it cannot be
+    disabled by setting it to `None`.
 
 ### Query Examples
 
@@ -390,7 +399,10 @@ query Events($first: Int!, $cursor: String) {
 
 ### Multiple Ordering Fields
 
-Both pagination types support multiple ordering fields:
+`LimitOffsetGraphqlPagination` and `PageGraphqlPagination` both support multiple
+ordering fields. `CursorGraphqlPagination` is single-field by design: keyset
+pagination requires a stable, well-defined ordering over one field (typically
+the primary key). Multi-field cursors are not supported.
 
 === "String Format"
 
@@ -483,12 +495,98 @@ Create custom pagination for specific needs:
             )
     ```
 
+## Related settings
+
+Pagination behavior is governed by three global settings under `DJANGO_GRAPHEX`.
+They serve as library-wide defaults; **instance arguments always take precedence**:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `DEFAULT_PAGINATION_CLASS` | `"django_graphex.paginations.LimitOffsetGraphqlPagination"` | Paginator class used when no `Meta.pagination` is set on a type. |
+| `DEFAULT_PAGE_SIZE` | `None` | Default page/limit size. `None` means unbounded (all rows). |
+| `MAX_PAGE_SIZE` | `None` | Maximum page/limit size the client may request. `None` means no cap. |
+
+**Precedence:** instance arg (e.g. `LimitOffsetGraphqlPagination(default_limit=25)`) > `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE`.
+
+!!! warning "Global defaults are read at import time"
+
+    `DEFAULT_PAGE_SIZE` and `MAX_PAGE_SIZE` are read as **default parameter values**
+    when the pagination class is instantiated — typically at module import time when
+    your schema is first evaluated. This means changing them via Django's
+    `override_settings` at test time (or at runtime) does **not** affect already-
+    imported paginator instances. To configure them reliably, set them in your
+    actual `settings.py` before any schema module is imported, or pass the desired
+    values directly to the paginator constructor.
+
+```python
+# settings.py
+DJANGO_GRAPHEX = {
+    "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
+    "DEFAULT_PAGE_SIZE": 20,
+    "MAX_PAGE_SIZE": 100,
+}
+```
+
+## Robustness & Error Handling
+
+### Invalid Page Numbers
+
+`PageGraphqlPagination` rejects `page=0` with a `GraphQLError` regardless of
+Python's optimisation level. Before v1.2.1 the check was an `assert` statement
+which is compiled out under `python -O` / `PYTHONOPTIMIZE=1`, causing page=0 to
+silently compute a negative offset. The validation is now an explicit raise so
+it always fires.
+
+- **`page=0`**: raises `GraphQLError("Page value for PageGraphqlPagination must be a non-zero value")`.
+- **`page < 0`**: valid — returns the last page (offset relative to the total count).
+- **`page > 0`**: valid — standard page navigation.
+
+### Tampered or Malformed Cursors
+
+`CursorGraphqlPagination` decodes opaque cursor strings from clients. If a
+cursor is corrupted, hand-crafted, or contains a value incompatible with the
+ordering field's type, the paginator raises `GraphQLError("Invalid cursor")`
+instead of propagating an unhandled `ValueError` or Django `ValidationError`.
+
+The guard covers two failure points:
+
+1. **Malformed base64 / wrong prefix** — `decode_cursor` raises `ValueError`.
+2. **Type mismatch** — the decoded value cannot be coerced by `qs.filter()` (e.g.
+   a string cursor passed to an `IntegerField` raises a Django `ValidationError`).
+
+Both are caught and re-raised as `GraphQLError`, so clients always see a clean
+error response (HTTP 200, `errors[]`) rather than an HTTP 500.
+
+!!! example "Tampered cursor response"
+    ```json
+    {
+      "data": { "events": null },
+      "errors": [{ "message": "Invalid cursor" }]
+    }
+    ```
+
+### COUNT Query Behaviour
+
+`PageGraphqlPagination` only issues a `COUNT` query when it is actually needed:
+
+| `page` value | COUNT issued? | Reason |
+|---|---|---|
+| `page > 0` | No | Offset is `page_size * (page - 1)` — no row count needed |
+| `page < 0` | Yes | Last-page navigation: offset = `total - page_size * abs(page)` |
+
+`totalCount` on the list wrapper is still resolved independently by
+`DjangoListObjectType` and always reflects the filtered queryset count. This
+change only affects the internal COUNT inside `paginate_queryset`.
+
 ## Performance Considerations
 
 ### Database Query Optimization
 
-!!! warning "Count Queries"
-    Pagination requires COUNT queries which can be expensive on large datasets. Consider caching count results for better performance.
+!!! tip "Conditional COUNT"
+    As of v1.2.1, `PageGraphqlPagination` skips the COUNT query for positive
+    page numbers. Only last-page navigation (`page < 0`) still issues a COUNT.
+    On large tables this reduces the per-request query count for the common
+    forward-pagination case.
 
 === "Efficient Ordering"
 

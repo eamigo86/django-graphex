@@ -12,6 +12,179 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 1.2.1 — 2026-06-12
+
+### Security
+
+- **Response-cache cross-user isolation** (`CACHE_ACTIVE`) — Cache keys now
+  incorporate a per-identity token (`u{pk}` for authenticated users,
+  `t{header_hash}` for token-auth, `anon` for anonymous). User A's cached
+  response is never served to User B. Mutation invalidation advances a
+  per-user version counter instead of `cache.clear()`, so one user's cache
+  miss never evicts another user's valid entries. A malformed query now returns
+  HTTP 400 even when `CACHE_ACTIVE=True` (parse guard). (#27, closes #11)
+- **Subscriptions hardening** — Channel ownership is validated before a
+  subscriber joins any group (prevents channel hijacking). Client-supplied
+  `filters` keys are now checked against declared output fields (rejects
+  arbitrary ORM field probing such as `password__contains`). Broadcast signal
+  handlers are ASGI-safe (no deadlock under a running event loop). Percent-encoded
+  index group names prevent ambiguous separators in filter values. A new
+  `SUBSCRIPTIONS_CHANNEL_GUARD` setting (default `True`) controls the ownership
+  check; set to `False` only when every worker shares the `"default"` cache
+  backend. The channel registry is backed by `caches["default"]` so multi-worker
+  deployments with a shared cache work without configuration. (#30, closes #14)
+- **`MAX_BATCH_SIZE`** (default `10`) — Batch requests with more entries than
+  this limit receive HTTP 400 before any query executes, capping amplification
+  attacks. `None` restores the previous unlimited behavior. (#31, closes #15)
+- **GraphiQL SRI pinning** — CDN assets (react@18.3.1, react-dom@18.3.1,
+  graphiql@3.7.1) are pinned with SHA-384 `integrity=` and
+  `crossorigin="anonymous"` attributes. A CDN compromise or silent version bump
+  can no longer inject JavaScript to GraphiQL users. (#31, closes #15)
+- **`@number` format-spec cap** — Client-supplied specs with width or precision
+  > 100 raise a `GraphQLError` instead of allocating gigabytes of output.
+  Normal specs (`.2f`, `,.2f`, `+.1%`) are unaffected. (#32, closes #16)
+
+### Fixed
+
+- **UniqueConstraint validation** — `model._meta.constraints` is now iterated
+  for unconditional `UniqueConstraint` entries; violations return a structured
+  `ErrorType` response instead of propagating an unhandled `IntegrityError`
+  HTTP 500. Deduplication prevents double messages when a field has both
+  `unique=True` and a `UniqueConstraint`. Conditional and expression-based
+  constraints are intentionally left to DB enforcement. MTI `parent_link`
+  fields are excluded from FK constraint checks, mirroring the guard already
+  present in the type converter. (#29, closes #13)
+- **`@skip` / `@include` honored by cost, depth, and optimizer** — Fields
+  marked `@skip(if: true)` or `@include(if: false)` are excluded from cost
+  counting, depth counting, and queryset optimization (no more false-positive
+  `QUERY_TOO_COMPLEX` / `QUERY_TOO_DEEP` errors; skipped subtrees are not
+  over-fetched). When the directive argument is an unbound variable, the
+  selection is treated as *included* (conservative fallback). (#28, closes #12)
+- **Pagination** — `page=0` now raises an explicit `GraphQLError` in all
+  Python execution modes (the previous `assert` was a no-op under
+  `python -O`). Tampered or corrupted cursors raise a clean
+  `GraphQLError("Invalid cursor")` instead of HTTP 500. The `COUNT` query in
+  `PageGraphqlPagination` is now conditional — it runs only for last-page
+  navigation, removing one DB round-trip from every forward-paginated request.
+  (#33, closes #17)
+- **`@date(format: "iso")`** — Now emits real ISO 8601 (`2023-12-01T14:30:00`)
+  instead of the previous locale-dependent month abbreviation format
+  (`2023-Dec-01T14:30:00`) that was unparseable by `datetime.fromisoformat`.
+  (#32, closes #16)
+- **`@date` time-ago DST awareness** — `_format_time_ago` now computes "now"
+  using `timezone.get_current_timezone()` instead of the fixed, DST-unaware
+  `time.timezone` offset. Daylight-saving transitions no longer produce
+  off-by-one-hour relative timestamps. (#32, closes #16)
+- **`@base64` UTF-8 support** — `.encode("ascii")` raised `UnicodeEncodeError`
+  on non-ASCII input; replaced with `.encode("utf-8")` / `.decode("utf-8")`.
+  (#32, closes #16)
+- **Custom-pk `delete` returns the correct `id`** — `mutation.py` and
+  `types.py` now resolve via `old_obj._meta.pk.attname` instead of the
+  hard-coded `old_obj.id`, so models with a custom primary key name (`pk_id`,
+  `uuid`, etc.) return the right identifier in the delete payload. (#34, closes #18)
+- **Enum unwrap in nested writes** — `_unwrap_enums` now uses
+  `isinstance(value, enum.Enum)` instead of the fragile
+  `"Enum" in type(value).__name__` substring check, matching the guard in
+  `native/backend.py`. A class whose name contains "Enum" but is not an actual
+  enum is no longer incorrectly unwrapped. (#34, closes #18)
+- **Deterministic SDL field order** — `construct_fields` now sorts fields
+  unconditionally. The previous `settings.DEBUG` gate meant dev and prod SDLs
+  had different field orders, breaking snapshot tests, federation registries,
+  and SDL diff tools. (#35, closes #19)
+- **Introspection detection by AST** — Replaces the fragile
+  `startswith("\n  query IntrospectionQuery")` string check with a proper AST
+  walk (`_is_introspection_document`). Any query whose top-level selections are
+  exclusively `__schema` or `__type` is detected as introspection regardless of
+  formatting — fixing compact inline queries and `__type` variants. (#31, closes #15)
+
+### Performance
+
+- **Request-scoped field-map memoization** — `_relation_field_map` and
+  `_concrete_field_map` accept a per-invocation `_cache` dict threaded through
+  all walker functions by `_apply_optimizations`. Each `(model, map-kind)` pair
+  calls `_meta.get_fields()` at most once per optimizer run (down from 6+ for a
+  typical two-model query). (#36, closes #20)
+- **Selection-aware mutation re-read** — `DjangoModelType.perform_mutate`
+  locates the output-field sub-node in the mutation selection set and passes it
+  through `_apply_optimizations` before the DB re-read, so forward-FK relations
+  present in the mutation response are pre-joined via `select_related`. (#36, closes #20)
+- **Single parse with `EXPOSE_QUERY_COST`** — `execute_graphql_request` accepts
+  an optional `document=` kwarg; `GraphQLView.get_response` parses once and
+  threads the document to both the executor and cost checker. With
+  `EXPOSE_QUERY_COST=True`, `parse()` is called exactly once per request. (#31, closes #15)
+- **One fewer `COUNT` per forward page** — `PageGraphqlPagination` now runs the
+  `COUNT` query only when navigating to the last page (see Fixed above). (#33, closes #17)
+
+### Packaging
+
+- **`py.typed` shipped** — PEP 561 marker file added; mypy/pyright now resolve
+  types from the installed package without additional configuration. (#37, closes #21)
+- **sdist hygiene** — `[tool.hatch.build.targets.sdist]` allowlist ensures only
+  `django_graphex/`, `tests/`, `docs/`, `README.md`, `LICENSE`, and
+  `pyproject.toml` are included in the source distribution; `.claude/` and
+  `specs/` are provably absent from the tarball. (#37, closes #21)
+- **`__version__` from `importlib.metadata`** — Single source of truth: the
+  installed package version is derived at import time; a `get_version(VERSION)`
+  fallback handles editable/source installs. (#37, closes #21)
+- **Dependency caps** — `channels-redis>=4.2,<5.0` and `daphne>=4.0,<5.0`
+  prevent accidental upgrades to as-yet-untested major versions. (#37, closes #21)
+- **Metadata fixes** — `Documentation` URL corrected; PyPy classifier removed
+  (untested in CI); stale `README.rst` reference removed from `MANIFEST.in`.
+  (#37, closes #21)
+
+### Documentation
+
+- **Overhaul** — All verified doc/code drift fixed: `only_fields`/`exclude_fields`
+  kwarg names, `ListField()` `AttributeError` warning, `Registry` public import
+  note, `DjangoUnionType` / `DjangoInterfaceType` API reference sections,
+  `CACHE_ACTIVE` default clarification. Pydantic validation docs consolidated
+  to `backends.md` (single home). Nested UPDATE worked examples, mutation
+  complete example with client tab, `DjangoNestedListObjectField` documented in
+  `fields.md`, pagination `page_size_query_param` semantics and cursor
+  single-field design noted. Directive middleware required banner relocated.
+  `docs/api/utils.md` removed. (#39, closes #23)
+- **New caching guide** — `docs/usage/caching.md` documents key anatomy,
+  per-user isolation, mutation invalidation, malformed-query handling, and
+  `cache_key_prefix` customisation. Settings page expanded with security
+  semantics. (#27, closes #11)
+
+### Behavior changes
+
+!!! warning "Upgrade actions required"
+
+    Review each item below before upgrading. Most require no action; the ones
+    marked **action required** need a one-time change in your project.
+
+- **`MAX_BATCH_SIZE` default is now `10`** — Batch requests longer than 10
+  entries are rejected with HTTP 400. Deployments that intentionally send large
+  batches must set `DJANGO_GRAPHEX["MAX_BATCH_SIZE"] = None` (unlimited) or a higher
+  integer. (#31, closes #15)
+- **`@date(format: "iso")` output format changed** — The old output
+  (`"2023-Dec-01T14:30:00"`) was locale-dependent and unparseable; the new
+  output is real ISO 8601 (`"2023-12-01T14:30:00"`). If you have clients or
+  tests that match the old locale-abbreviation format, update them. (#32, closes #16)
+- **Schema SDL field order is now deterministic everywhere** — Previously
+  `DEBUG=True` sorted fields but `DEBUG=False` did not, causing dev/prod
+  divergence. The order is now consistently alphabetical in both modes.
+  **Action required**: regenerate any SDL snapshot files once after upgrading.
+  (#35, closes #19)
+- **Cache key format changed** — The per-identity token added for cross-user
+  isolation changes the shape of every cache key. The cache will be cold after
+  upgrading; no stale cross-user entries will survive. No action required beyond
+  accepting a one-time warm-up cost. (#27, closes #11)
+- **`page=0` now raises a `GraphQLError`** — Previously `page=0` silently
+  returned an empty result set (or crashed under `python -O`). Clients that
+  sent `page=0` expecting an empty page must send `page=1` instead. (#33, closes #17)
+- **Subscriptions guard is fail-closed** — `SUBSCRIPTIONS_CHANNEL_GUARD=True`
+  (default) requires that the HTTP subscribe request and the WebSocket connect
+  reach the same worker, or that all workers share the `"default"` cache
+  backend (e.g. Redis). Single-worker / single-process deployments are
+  unaffected. Multi-worker deployments must configure a shared cache or set
+  `SUBSCRIPTIONS_CHANNEL_GUARD=False` to disable the guard. (#30, closes #14)
+- **New settings introduced**: `MAX_BATCH_SIZE` (default `10`),
+  `SUBSCRIPTIONS_CHANNEL_GUARD` (default `True`). Both live under the
+  `DJANGO_GRAPHEX` dict in `settings.py`. (#31, closes #15; #30, closes #14)
+
 ## 1.2.0
 
 ### Added
@@ -195,4 +368,10 @@ The first release. A GraphQL + Django toolkit built directly on `graphene`
   variables.
 
 ### Requirements
-- **Python** 3.12–3.14, **Django** 4.0–6.0, **graphene** >=3.3,<4, **pydantic** >=2,<3.
+- **Python** 3.12–3.14, **Django** 4.2–6.0 (LTS 4.2 and 5.2 recommended for production), **graphene** >=3.3,<4, **pydantic** >=2,<3.
+
+!!! note "Django range clarification"
+
+    The 1.0.0 release initially listed Django 4.0–6.0 in its requirements. The
+    true minimum is **Django 4.2** — Django 4.0 and 4.1 are end-of-life and were
+    never tested. From 1.1.0 onward the supported range is explicitly 4.2–6.0.

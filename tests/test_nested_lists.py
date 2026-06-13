@@ -157,8 +157,10 @@ class NestedBehaviourTest(TestCase):
         } } totalCount } }
         """
         # Constant regardless of the number of authors: authors select + a single
-        # prefetch for all authors' posts + the root Page paginator's counts.
-        with self.assertNumQueries(4):
+        # prefetch for all authors' posts. The Page paginator no longer issues an
+        # unconditional COUNT for positive pages (fix for #17c), so the expected
+        # query count is 3 (was 4 before the conditional COUNT change).
+        with self.assertNumQueries(3):
             self._exec(query)
 
     def test_filtered_nested_constant_queries(self):

@@ -45,11 +45,14 @@ the full directive reference see [Directives](../../directives.md).
 
     ```graphql
     query GetPostStats {
-      posts(filter: { status: { exact: "published" } }) {
-        id
-        title
-        viewCount @number(as: ",.0f")
-        createdAt @date(format: "YYYY-MM-DD")
+      allPosts(filter: { status: { exact: "published" } }) {
+        results {
+          id
+          title
+          viewCount @number(as: ",.0f")
+          createdAt @date(format: "YYYY-MM-DD")
+        }
+        totalCount
       }
     }
     ```
@@ -59,20 +62,23 @@ the full directive reference see [Directives](../../directives.md).
     ```json
     {
       "data": {
-        "posts": [
-          {
-            "id": "1",
-            "title": "Getting Started with GraphQL",
-            "viewCount": "1,245",
-            "createdAt": "2023-12-01"
-          },
-          {
-            "id": "2",
-            "title": "Advanced Django Techniques",
-            "viewCount": "892",
-            "createdAt": "2023-11-28"
-          }
-        ]
+        "allPosts": {
+          "results": [
+            {
+              "id": "1",
+              "title": "Getting Started with GraphQL",
+              "viewCount": "1,245",
+              "createdAt": "2023-12-01"
+            },
+            {
+              "id": "2",
+              "title": "Advanced Django Techniques",
+              "viewCount": "892",
+              "createdAt": "2023-11-28"
+            }
+          ],
+          "totalCount": 2
+        }
       }
     }
     ```
@@ -87,8 +93,29 @@ the full directive reference see [Directives](../../directives.md).
         title
         createdAt @date(format: "MMMM DD, YYYY")
         publishedAt @date(format: "DD/MM/YYYY HH:mm")
-        updatedAt @date(format: "time ago")
+        updatedAt @date(format: "iso")
       }
     }
     ```
+
+=== "Response"
+
+    ```json
+    {
+      "data": {
+        "post": {
+          "title": "Getting Started with GraphQL and Django",
+          "createdAt": "December 01, 2023",
+          "publishedAt": "01/12/2023 14:30",
+          "updatedAt": "2023-12-01T14:30:00"
+        }
+      }
+    }
+    ```
+
+    !!! note "ISO format"
+        `@date(format: "iso")` outputs the real ISO 8601 format
+        (`%Y-%m-%dT%H:%M:%S` — e.g. `"2023-12-01T14:30:00"`). Prior to v1.2.1
+        the output incorrectly used `%Y-%b-%dT%H:%M:%S` (abbreviated month name
+        such as `"2023-Dec-01T14:30:00"`), which is not valid ISO 8601.
 

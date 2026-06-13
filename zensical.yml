@@ -97,6 +97,7 @@ nav:
     - Directives: directives.md
     - Subscriptions: usage/subscriptions.md
     - Query Limits: usage/query-limits.md
+    - Caching: usage/caching.md
     - Security: usage/security.md
   - Examples & Recipes:
     - Sample Application: usage/examples/blog-schema.md
@@ -111,7 +112,6 @@ nav:
     - Mutations: api/mutations.md
     - Paginations: api/paginations.md
     - Directives: api/directives.md
-    - Utils: api/utils.md
   - Development:
     - Contributing: contributing.md
     - Changelog: changelog.md

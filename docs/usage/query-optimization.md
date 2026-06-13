@@ -308,7 +308,7 @@ To customize the child queryset for a **specific** nested list field — add a
 **`optimize_<snake_field>`** static method on the **parent** graphene type:
 
 ```python
-from django_graphex.fields import DjangoNestedListObjectField
+from django_graphex import DjangoNestedListObjectField
 
 class AuthorType(DjangoObjectType):
     posts = DjangoNestedListObjectField(PostListType, accessor="posts")
@@ -447,6 +447,49 @@ per-request construction, and `aliases=` applies `.alias()` before `.annotate()`
 See [Fields → AnnotatedField](fields.md#annotatedfield) for the full signature,
 arguments table and the forward-FK promotion note.
 
+## @skip and @include directives
+
+The optimizer honors `@skip` and `@include` on every selection node — fields,
+inline fragments, and fragment spreads. A selection that is excluded is **not
+added to `select_related` / `prefetch_related`** and its columns are **not
+included in `.only()`**. This prevents over-fetching related rows that the client
+will never use.
+
+```graphql
+query GetPosts($loadAuthor: Boolean!) {
+  posts {
+    results {
+      title
+      # When $loadAuthor is false the optimizer skips the author join entirely
+      author @include(if: $loadAuthor) {
+        name
+      }
+      # tags are also skipped when @skip(if: true)
+      tags @skip(if: true) {
+        label
+      }
+    }
+  }
+}
+```
+
+In this query, when `$loadAuthor` is `false` the `author` FK is not added to
+`select_related` and `author_id` is not included in the `.only()` projection.
+When `tags` has `@skip(if: true)` the `tags` M2M is not added to
+`prefetch_related`.
+
+!!! note "Variable-driven directives"
+
+    The optimizer runs at execution time when all variables are already bound, so
+    `@skip(if: $flag)` and `@include(if: $show)` are always resolved exactly.
+
+!!! note "Output-formatting directives do not affect fetch planning"
+
+    Custom application-level directives such as `@date` and `@number` are
+    *output-formatting* directives: they transform the resolved value of an
+    already-fetched field. They have **no effect** on the optimizer's
+    select/prefetch/only planning.
+
 ## Custom resolvers
 
 If your query type defines `resolve_<field>` that returns a **`QuerySet`**, the
@@ -454,3 +497,67 @@ optimizer adopts it as the base queryset and still applies `select_related` /
 `prefetch_related` on top of it. (`.only()` is skipped for custom-resolved
 querysets, since they may already shape their own columns.) Resolvers that return
 anything other than a `QuerySet` are left untouched.
+
+**Example** — scope a list to the current user while keeping optimizer benefits:
+
+```python
+import graphene
+from django_graphex import DjangoListObjectField, DjangoListObjectType
+
+class PostListType(DjangoListObjectType):
+    class Meta:
+        model = Post
+        pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="-id")
+
+class Query(graphene.ObjectType):
+    my_posts = DjangoListObjectField(PostListType, description="Posts by the current user")
+
+    def resolve_my_posts(self, info, **kwargs):
+        # Return a queryset — the optimizer still adds select_related / prefetch_related
+        # on top of this base. Use filter_queryset on the type for per-request scoping
+        # when you also want pagination and filtering to compose cleanly.
+        return Post.objects.filter(author=info.context.user)
+```
+
+The resolver returns a `QuerySet`, so the optimizer picks it up and adds
+`select_related("author")` / `prefetch_related("tags")` etc. based on the
+GraphQL selection. If the resolver returned a plain list, the optimizer would
+leave it untouched (no queryset to decorate).
+
+## Optimized mutation re-read
+
+`DjangoModelType.perform_mutate` re-reads the saved object from the database
+so the mutation response reflects the freshest DB state (annotations, default
+values, etc.).  Starting in **v1.2.1**, this re-read is **selection-aware**:
+the optimizer inspects the mutation's selection set, locates the sub-field node
+for `Meta.output_field_name` (e.g. `post` inside `{ ok post { … } }`), and
+applies `select_related` for every to-one relation (`ForeignKey`,
+`OneToOneField`) that appears in that sub-selection.
+
+This eliminates N+1 queries on mutation responses that nest related objects:
+
+```graphql
+mutation CreatePost($input: NewPostInput!) {
+  postCreate(newPost: $input) {
+    ok
+    post {
+      title
+      author { name }     # joined via select_related — no extra query
+      category { title }  # joined via select_related — no extra query
+    }
+  }
+}
+```
+
+No code changes are required; the optimization is applied automatically
+whenever `DjangoModelType.perform_mutate` is called.  If the selection set
+cannot be parsed (e.g. a custom `info` stub without field nodes), the method
+falls back to the plain unoptimized re-read so existing behaviour is
+preserved.
+
+!!! note "Depth limits apply to mutation selection sets too"
+
+    `MAX_QUERY_DEPTH` and `Meta.max_deep` are enforced on **all** GraphQL
+    operation types — including the mutation response selection set. A mutation
+    that requests deeper nesting than the limit permits is rejected **before**
+    any database write occurs. See [Query depth & cost limits](query-limits.md).

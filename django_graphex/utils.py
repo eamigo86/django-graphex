@@ -39,6 +39,7 @@ from graphql.execution.values import get_argument_values
 from graphql.language.ast import FragmentSpreadNode, InlineFragmentNode
 from text_unidecode import unidecode
 
+from ._directives_eval import is_selection_skipped
 from .errors import ErrorType
 from .settings import graphql_api_settings
 
@@ -880,16 +881,30 @@ def _relation_optimization(field: Any) -> tuple[str, str] | None:
     return None  # pragma: no cover
 
 
-def _relation_field_map(model: type[Model]) -> dict[str, Any]:
+def _relation_field_map(
+    model: type[Model],
+    _cache: dict[tuple[int, str], Any] | None = None,
+) -> dict[str, Any]:
     """Map relation names (with snake and accessor aliases) to their fields.
 
     Args:
         model: The Django model class to inspect.
+        _cache: Optional request-scoped memoization dict shared across all
+            walker calls within a single ``_apply_optimizations`` invocation.
+            When provided, repeated calls for the same model return the cached
+            result without re-calling ``_meta.get_fields()``.  ``None`` disables
+            caching (backwards-compatible default).
 
     Returns:
         A mapping of every GraphQL-facing relation name and alias to its
         field.
     """
+    if _cache is not None:
+        key = (id(model), "rel")
+        cached = _cache.get(key)
+        if cached is not None:
+            return cached
+
     result = {}
     for field in model._meta.get_fields():
         if _relation_optimization(field) is None:
@@ -903,18 +918,35 @@ def _relation_field_map(model: type[Model]) -> dict[str, Any]:
                 pass
         for name in names:
             result.setdefault(name, field)
+
+    if _cache is not None:
+        _cache[(id(model), "rel")] = result
     return result
 
 
-def _concrete_field_map(model: type[Model]) -> dict[str, str]:
+def _concrete_field_map(
+    model: type[Model],
+    _cache: dict[tuple[int, str], Any] | None = None,
+) -> dict[str, str]:
     """Map concrete non-relation field names and snake aliases to attnames.
 
     Args:
         model: The Django model class to inspect.
+        _cache: Optional request-scoped memoization dict shared across all
+            walker calls within a single ``_apply_optimizations`` invocation.
+            When provided, repeated calls for the same model return the cached
+            result without re-calling ``_meta.get_fields()``.  ``None`` disables
+            caching (backwards-compatible default).
 
     Returns:
         A mapping of each concrete field name and snake alias to its attname.
     """
+    if _cache is not None:
+        key = (id(model), "con")
+        cached = _cache.get(key)
+        if cached is not None:
+            return cached
+
     result = {}
     for field in model._meta.get_fields():
         if getattr(field, "is_relation", False):
@@ -923,6 +955,9 @@ def _concrete_field_map(model: type[Model]) -> dict[str, str]:
             continue  # pragma: no cover
         result.setdefault(field.name, field.attname)
         result.setdefault(to_snake_case(field.name), field.attname)
+
+    if _cache is not None:
+        _cache[(id(model), "con")] = result
     return result
 
 
@@ -935,6 +970,8 @@ def recursive_params(
     _prefix: str = "",
     current_type_name: str | None = None,
     current_model: type[Model] | None = None,
+    variable_values: dict[str, Any] | None = None,
+    _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Walk a GraphQL selection set building nested select/prefetch paths.
 
@@ -958,11 +995,26 @@ def recursive_params(
             descent.
         current_model: Django model being walked, if known (GAP-5 best-effort
             inline-fragment guard by model class name).
+        variable_values: Bound GraphQL variable values (``info.variable_values``
+            at execution time, ``{}`` or ``None`` during validation/static
+            analysis).  Used to evaluate ``@skip`` / ``@include`` directives.
+            When ``None`` an empty dict is used (conservative: never skip).
+        _fmap_cache: Optional request-scoped memoization dict created by
+            ``_apply_optimizations`` and threaded through all walker calls so
+            each ``(model, map-kind)`` is computed at most once per optimizer
+            run.  ``None`` disables caching (backwards-compatible default).
 
     Returns:
         The mutated "(select_related, prefetch_related)" pair.
     """
+    _vars: dict[str, Any] = variable_values or {}
     for field in selection_set.selections:
+        # Honor @skip / @include — skip the entire subtree when the directive
+        # resolves to "not selected".  Unresolvable variable conditions default
+        # to "include" (conservative, never over-optimise by dropping a fetch).
+        if is_selection_skipped(field, _vars):
+            continue
+
         if isinstance(field, FragmentSpreadNode):
             fragment = fragments.get(field.name.value) if fragments else None
             if fragment is not None:
@@ -975,6 +1027,8 @@ def recursive_params(
                     _prefix,
                     current_type_name=current_type_name,
                     current_model=current_model,
+                    variable_values=variable_values,
+                    _fmap_cache=_fmap_cache,
                 )
             continue
 
@@ -996,6 +1050,8 @@ def recursive_params(
                 _prefix,
                 current_type_name=current_type_name,
                 current_model=current_model,
+                variable_values=variable_values,
+                _fmap_cache=_fmap_cache,
             )
             continue
 
@@ -1021,7 +1077,7 @@ def recursive_params(
                 recursive_params(
                     sub_selection,
                     fragments,
-                    _relation_field_map(related_model),
+                    _relation_field_map(related_model, _fmap_cache),
                     select_related,
                     prefetch_related,
                     path + LOOKUP_SEP,
@@ -1030,6 +1086,8 @@ def recursive_params(
                     # carry the child model for best-effort model-name matching.
                     current_type_name=None,
                     current_model=related_model,
+                    variable_values=variable_values,
+                    _fmap_cache=_fmap_cache,
                 )
         elif sub_selection is not None:
             # Wrapper field (e.g. `results`) or unknown object: stay on the same
@@ -1043,6 +1101,8 @@ def recursive_params(
                 _prefix,
                 current_type_name=current_type_name,
                 current_model=current_model,
+                variable_values=variable_values,
+                _fmap_cache=_fmap_cache,
             )
 
     return select_related, prefetch_related
@@ -1056,6 +1116,8 @@ def _collect_only_fields(
     _only: set[str] | None = None,
     annotated_names: set[str] | None = None,
     current_type_name: str | None = None,
+    variable_values: dict[str, Any] | None = None,
+    _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> list[str]:
     """Collect a safe ".only()" field set across the select_related span.
 
@@ -1083,8 +1145,8 @@ def _collect_only_fields(
     if _only is None:
         _only = set()
 
-    rel_map = _relation_field_map(model)
-    concrete_map = _concrete_field_map(model)
+    rel_map = _relation_field_map(model, _fmap_cache)
+    concrete_map = _concrete_field_map(model, _fmap_cache)
     concrete_attnames = {field.attname for field in model._meta.concrete_fields}
 
     # Always-on columns for this model so select_related joins/ordering survive.
@@ -1096,9 +1158,15 @@ def _collect_only_fields(
         if column in concrete_attnames:
             _only.add(_prefix + column)
 
+    _vars: dict[str, Any] = variable_values or {}
     model_full = False
     pending = []
     for field in selection_set.selections:
+        # Honor @skip / @include — exclude the field from the .only() projection
+        # when the directive resolves to "not selected".
+        if is_selection_skipped(field, _vars):
+            continue
+
         if isinstance(field, FragmentSpreadNode):
             fragment = fragments.get(field.name.value) if fragments else None
             if fragment is not None:
@@ -1110,6 +1178,8 @@ def _collect_only_fields(
                     _only,
                     annotated_names=annotated_names,
                     current_type_name=current_type_name,
+                    variable_values=variable_values,
+                    _fmap_cache=_fmap_cache,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -1128,6 +1198,8 @@ def _collect_only_fields(
                 _only,
                 annotated_names=annotated_names,
                 current_type_name=current_type_name,
+                variable_values=variable_values,
+                _fmap_cache=_fmap_cache,
             )
             continue
 
@@ -1171,6 +1243,8 @@ def _collect_only_fields(
                         # Descending into a related model: GraphQL type name is
                         # not resolved here; the child model carries the guard.
                         current_type_name=None,
+                        variable_values=variable_values,
+                        _fmap_cache=_fmap_cache,
                     )
             # prefetch branches use separate querysets -> not narrowed here.
             continue
@@ -1193,6 +1267,8 @@ def _collect_only_fields(
                 _only,
                 annotated_names=annotated_names,
                 current_type_name=current_type_name,
+                variable_values=variable_values,
+                _fmap_cache=_fmap_cache,
             )
             continue
 
@@ -1218,6 +1294,7 @@ def _collect_only_fields_is_full_load(
     fragments: dict[str, Any],
     annotated_names: set[str] | None = None,
     current_type_name: str | None = None,
+    _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> bool:
     """Return True when ``_collect_only_fields`` would trigger the full-load path.
 
@@ -1240,12 +1317,14 @@ def _collect_only_fields_is_full_load(
             this full-load detector and ``_collect_only_fields`` agree on whether
             a foreign fragment is in scope; otherwise the two walkers disagree
             and a foreign fragment could silently veto ``.only()`` narrowing.
+        _fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).
 
     Returns:
         True if any unknown leaf would trigger full-load for ``model``.
     """
-    rel_map = _relation_field_map(model)
-    concrete_map = _concrete_field_map(model)
+    rel_map = _relation_field_map(model, _fmap_cache)
+    concrete_map = _concrete_field_map(model, _fmap_cache)
 
     for field in selection_set.selections:
         if isinstance(field, FragmentSpreadNode):
@@ -1257,6 +1336,7 @@ def _collect_only_fields_is_full_load(
                     fragments,
                     annotated_names=annotated_names,
                     current_type_name=current_type_name,
+                    _fmap_cache=_fmap_cache,
                 ):
                     return True
             continue
@@ -1278,6 +1358,7 @@ def _collect_only_fields_is_full_load(
                 fragments,
                 annotated_names=annotated_names,
                 current_type_name=current_type_name,
+                _fmap_cache=_fmap_cache,
             ):
                 return True
             continue
@@ -1304,6 +1385,7 @@ def _collect_only_fields_is_full_load(
                 fragments,
                 annotated_names=annotated_names,
                 current_type_name=current_type_name,
+                _fmap_cache=_fmap_cache,
             ):
                 return True
             continue
@@ -1730,6 +1812,14 @@ def _collect_prefetch_only_sets(
 
     rel_map = _relation_field_map(model)
 
+    # NOTE: @skip/@include guard is intentionally absent here.
+    # _collect_prefetch_only_sets only narrows the `.only()` column sets for
+    # lookups already chosen by recursive_params (which DOES honour the guard).
+    # Any stray only_map entries produced here for skipped relations are never
+    # consumed — the prefetch lookup itself was excluded upstream.  Adding the
+    # guard would require threading variable_values through the signature (a
+    # non-trivial API change); the existing conservative behaviour is safe.
+    # See: verify-report obs #1383 WARNING-1 / _collect_prefetch_only_sets note.
     for field in selection_set.selections:
         if isinstance(field, FragmentSpreadNode):
             fragment = fragments.get(field.name.value) if fragments else None
@@ -2221,6 +2311,7 @@ def _walk_filtered_prefetches(
     out: list[Any],
     seen: dict[str, int],
     hook_map: dict | None = None,
+    _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> None:
     """Collect filtered Prefetch objects for nested list fields with filters.
 
@@ -2235,10 +2326,20 @@ def _walk_filtered_prefetches(
             place.
         hook_map: A ``{orm_lookup -> (graphene_type, hook_callable)}`` map for
             unfiltered nested lists, mutated in place (Phase E AC2b).
+        _fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).
     """
-    relation_map = _relation_field_map(model) if model is not None else {}
+    relation_map = _relation_field_map(model, _fmap_cache) if model is not None else {}
+    _vars: dict[str, Any] = info.variable_values or {}
 
     for field in selection_set.selections:
+        # Honor @skip / @include — skip the entire subtree when the directive
+        # resolves to "not selected".  Mirrors the guard in recursive_params
+        # (utils.py ~line 1015).  Unresolvable variable conditions default to
+        # "include" (conservative: never over-optimise by dropping a fetch).
+        if is_selection_skipped(field, _vars):
+            continue
+
         if isinstance(field, FragmentSpreadNode):
             fragment = info.fragments.get(field.name.value) if info.fragments else None
             if fragment is not None:  # pragma: no branch
@@ -2251,6 +2352,7 @@ def _walk_filtered_prefetches(
                     out,
                     seen,
                     hook_map=hook_map,
+                    _fmap_cache=_fmap_cache,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -2278,6 +2380,7 @@ def _walk_filtered_prefetches(
                 out,
                 seen,
                 hook_map=hook_map,
+                _fmap_cache=_fmap_cache,
             )
             continue
 
@@ -2420,6 +2523,7 @@ def _walk_filtered_prefetches(
                     out,
                     seen,
                     hook_map=hook_map,
+                    _fmap_cache=_fmap_cache,
                 )
             continue
 
@@ -2434,6 +2538,7 @@ def _walk_filtered_prefetches(
                 out,
                 seen,
                 hook_map=hook_map,
+                _fmap_cache=_fmap_cache,
             )
 
 
@@ -2445,6 +2550,7 @@ def _walk_annotated_fields(
     annotations: dict,
     aliases: dict,
     names: set,
+    _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> None:
     """Walk a GraphQL selection set and collect AnnotatedField declarations.
 
@@ -2460,6 +2566,8 @@ def _walk_annotated_fields(
         annotations: Accumulator dict for ``{ann_key: expression}``.
         aliases: Accumulator dict for ``{alias_key: expression}``.
         names: Accumulator set of snake_case field names of selected AnnotatedFields.
+        _fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).
     """
     # Lazy import avoids the fields <-> utils circular import.
     from .fields import AnnotatedField  # noqa: PLC0415
@@ -2469,7 +2577,8 @@ def _walk_annotated_fields(
 
     rel_map = (
         _relation_field_map(
-            getattr(getattr(graphene_type, "_meta", None), "model", None) or object
+            getattr(getattr(graphene_type, "_meta", None), "model", None) or object,
+            _fmap_cache,
         )
         if getattr(graphene_type, "_meta", None)
         and getattr(graphene_type._meta, "model", None)
@@ -2488,6 +2597,7 @@ def _walk_annotated_fields(
                     annotations,
                     aliases,
                     names,
+                    _fmap_cache=_fmap_cache,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -2509,6 +2619,7 @@ def _walk_annotated_fields(
                 annotations,
                 aliases,
                 names,
+                _fmap_cache=_fmap_cache,
             )
             continue
 
@@ -2567,10 +2678,14 @@ def _walk_annotated_fields(
                 annotations,
                 aliases,
                 names,
+                _fmap_cache=_fmap_cache,
             )
 
 
-def _collect_annotated_fields(info: Any) -> tuple[dict, dict, set]:
+def _collect_annotated_fields(
+    info: Any,
+    _fmap_cache: dict[tuple[int, str], Any] | None = None,
+) -> tuple[dict, dict, set]:
     """Collect AnnotatedField annotations for selected fields on the return type.
 
     Returns a 3-tuple ``(annotations, aliases, annotated_names)`` where:
@@ -2581,6 +2696,8 @@ def _collect_annotated_fields(info: Any) -> tuple[dict, dict, set]:
 
     Args:
         info: The GraphQL resolve info for the current field.
+        _fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).
 
     Returns:
         A 3-tuple of (annotations dict, aliases dict, annotated_names set).
@@ -2604,12 +2721,14 @@ def _collect_annotated_fields(info: Any) -> tuple[dict, dict, set]:
         annotations,
         aliases,
         names,
+        _fmap_cache=_fmap_cache,
     )
     return annotations, aliases, names
 
 
 def build_filtered_prefetches(
     info: GraphQLResolveInfo,
+    _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> tuple[list[Any], dict]:
     """Build filtered Prefetch objects for the nested list fields in the query.
 
@@ -2624,6 +2743,8 @@ def build_filtered_prefetches(
 
     Args:
         info: The GraphQL resolve info for the current field.
+        _fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).
 
     Returns:
         A 2-tuple of:
@@ -2654,6 +2775,7 @@ def build_filtered_prefetches(
         out,
         seen,
         hook_map=hook_map,
+        _fmap_cache=_fmap_cache,
     )
     # Drop lookups that appeared more than once (aliased fields with different
     # filters): fall back to the per-parent path for those, for correctness.
@@ -2811,7 +2933,13 @@ def _apply_optimizations(
     Returns:
         The optimized queryset (may be the same object or a new one).
     """
-    relation_map = _relation_field_map(model)
+    # Request-scoped field-map cache — one dict per optimizer invocation,
+    # threaded through all walkers so each (model, map-kind) pair calls
+    # _meta.get_fields() at most once regardless of how many call-sites
+    # inspect the same model's field map.
+    _fmap_cache: dict[tuple[int, str], Any] = {}
+
+    relation_map = _relation_field_map(model, _fmap_cache)
     select_related: list[str] = []
     prefetch_related: list[str] = []
 
@@ -2883,6 +3011,8 @@ def _apply_optimizations(
             prefetch_related,
             current_type_name=root_type_name,
             current_model=model,
+            variable_values=info.variable_values or {},
+            _fmap_cache=_fmap_cache,
         )
 
     # --- Phase-d §3: collect AnnotatedField annotations ----------------------
@@ -2892,7 +3022,7 @@ def _apply_optimizations(
     if graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS and fields_asts:
         try:
             root_annotations, root_aliases, root_annotated_names = (
-                _collect_annotated_fields(info)
+                _collect_annotated_fields(info, _fmap_cache=_fmap_cache)
             )
         except Exception as exc:  # noqa: BLE001 — degrade: skip annotation
             logging.getLogger("django_graphex.utils").warning(
@@ -2936,7 +3066,8 @@ def _apply_optimizations(
                 current_rel_map = (
                     _relation_field_map(
                         getattr(getattr(graphene_t, "_meta", None), "model", None)
-                        or object
+                        or object,
+                        _fmap_cache,
                     )
                     if getattr(graphene_t, "_meta", None)
                     and getattr(graphene_t._meta, "model", None)
@@ -3051,7 +3182,9 @@ def _apply_optimizations(
     # different querysets), which also optimizes the deeper level.
     # Phase E: build_filtered_prefetches now returns (filtered_prefetches, hook_map).
     if fields_asts:
-        filtered_prefetches, hook_map = build_filtered_prefetches(info)
+        filtered_prefetches, hook_map = build_filtered_prefetches(
+            info, _fmap_cache=_fmap_cache
+        )
     else:
         filtered_prefetches, hook_map = [], {}
     prefetch_related, filtered_prefetches = _merge_filtered_prefetches(
@@ -3119,6 +3252,8 @@ def _apply_optimizations(
             info.fragments,
             annotated_names=root_annotated_names,
             current_type_name=root_type_name,
+            variable_values=info.variable_values or {},
+            _fmap_cache=_fmap_cache,
         )
         if only_fields:  # pragma: no branch
             base = base.only(*only_fields)

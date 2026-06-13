@@ -2,6 +2,39 @@
 
 GraphQL directives in `django-graphex` allow you to transform field values at query execution time. They provide a powerful way to format, manipulate, and transform data without modifying your underlying models or resolvers.
 
+## Middleware requirement (required for ALL directives)
+
+!!! warning "Middleware is required"
+
+    **Every directive — built-in and custom — requires `GraphQLDirectiveMiddleware`
+    to be registered in your settings.** Without it, directives parse and validate
+    in the schema but are silently ignored at execution time (no error, no transform).
+
+    Add it to your settings before using any directive:
+
+    ```python
+    GRAPHENE = {
+        "SCHEMA": "myapp.schema.schema",
+        "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
+    }
+    ```
+
+    And pass `all_directives` (or your combined directive list) to the schema:
+
+    ```python
+    from django_graphex import all_directives
+
+    schema = graphene.Schema(
+        query=Query,
+        mutation=Mutation,
+        directives=all_directives,
+    )
+    ```
+
+    The middleware coerces directive arguments and dispatches transforms to the
+    registered directive class. Both the schema `directives=` list **and** the
+    middleware entry are required — either alone does nothing.
+
 ## Overview
 
 Directives are applied to fields in your GraphQL queries and are processed after the field value is resolved. They enable you to:
@@ -138,7 +171,9 @@ Provide fallback values for empty or null fields:
 
 ### Encoding Directives
 
-Handle base64 encoding and decoding:
+Handle base64 encoding and decoding. Supports any Unicode input — non-ASCII
+characters (accented letters, emoji, etc.) are encoded as UTF-8 before
+base64 encoding:
 
 === "Base64 Operations"
 
@@ -155,6 +190,7 @@ Handle base64 encoding and decoding:
     // Input: "hello world"
     // With @base64(op: "encode"): "aGVsbG8gd29ybGQ="
     // With @base64(op: "decode"): Original string from base64
+    // Non-ASCII input (e.g. "Ñoño") is encoded as UTF-8 — no crash.
     ```
 
 ## Number Directives
@@ -162,6 +198,11 @@ Handle base64 encoding and decoding:
 Format numeric values with precision and style:
 
 ### Basic Number Formatting
+
+The `as` argument accepts any Python numeric format spec. Format specs with
+a width or precision exceeding 100 are rejected with a field error to
+prevent memory exhaustion from client-supplied oversized specs (e.g.
+`"1000000.5f"`).
 
 === "Number Directive"
 
@@ -221,7 +262,7 @@ Powerful date and time formatting with multiple options:
         createdAt @date(format: "YYYY-MM-DD")         # "2023-12-01"
         updatedAt @date(format: "MMMM DD, YYYY")      # "December 01, 2023"
         publishedAt @date(format: "DD/MM/YYYY HH:mm") # "01/12/2023 14:30"
-        timestamp @date(format: "iso")                # "2023-Dec-01T14:30:00"
+        timestamp @date(format: "iso")                # "2023-12-01T14:30:00"
         jsDate @date(format: "javascript")            # "Fri Dec 01 2023 14:30:00"
       }
     }

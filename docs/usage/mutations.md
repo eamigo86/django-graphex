@@ -280,6 +280,51 @@ Here's a complete example showing all features:
     schema = graphene.Schema(query=Query, mutation=Mutation)
     ```
 
+=== "GraphQL client"
+
+    ```graphql
+    mutation CreateUser($userData: NewUser!, $sendEmail: Boolean) {
+      createUser(newUser: $userData, sendWelcomeEmail: $sendEmail) {
+        ok
+        user {
+          id
+          username
+          email
+          profile {
+            bio
+            avatar
+          }
+          addresses {
+            totalCount
+            results { street city country }
+          }
+        }
+        errors { field messages }
+      }
+    }
+    ```
+
+=== "Variables"
+
+    ```json
+    {
+      "userData": {
+        "username": "jane_doe",
+        "email": "jane@example.com",
+        "firstName": "Jane",
+        "lastName": "Doe",
+        "profile": {
+          "bio": "Django + GraphQL enthusiast",
+          "birthDate": "1990-06-15"
+        },
+        "addresses": [
+          { "street": "123 Main St", "city": "Springfield", "country": "US" }
+        ]
+      },
+      "sendEmail": true
+    }
+    ```
+
 ### How nested writes work
 
 `nested_fields = {field_name: RelatedModel}` lets a single create/update write
@@ -305,6 +350,69 @@ related objects alongside the parent. The same engine backs both
 - **Errors are prefixed** — a child error is reported as `field.subfield`
   (e.g. `addresses.zip_code`).
 
+#### Worked examples — UPDATE + nested create and UPDATE + nested update (upsert)
+
+=== "UPDATE + nested create"
+
+    ```graphql
+    # Add a brand-new address to an existing user (no `id` on the address payload
+    # → creates a new Address row and links it to the user).
+    mutation {
+      updateUser(newUser: {
+        id: "1"
+        addresses: [
+          { street: "456 Oak Ave", city: "Shelbyville", country: "US" }
+        ]
+      }) {
+        ok
+        user {
+          addresses {
+            results { id street city country }
+            totalCount
+          }
+        }
+        errors { field messages }
+      }
+    }
+    ```
+
+    The new address is **added** to the user's existing addresses (`M2M`/reverse-FK
+    children use `.add()` semantics — existing links are kept). `totalCount` will
+    increase by 1.
+
+=== "UPDATE + nested update (upsert)"
+
+    ```graphql
+    # Update an existing address: include its `id` in the payload.
+    # Without an id → creates; with an id → updates that row in place.
+    mutation {
+      updateUser(newUser: {
+        id: "1"
+        addresses: [
+          { id: "3", street: "789 Elm St", city: "Springfield", country: "US" }
+        ]
+      }) {
+        ok
+        user {
+          addresses {
+            results { id street city country }
+          }
+        }
+        errors { field messages }
+      }
+    }
+    ```
+
+    A child payload **with `id`** updates that existing row. A child payload
+    **without `id`** creates a new one. Both can appear in the same `addresses`
+    list in a single mutation call.
+
+!!! tip "Removing M2M/reverse-FK children"
+    Nested writes are **additive only** (`.add()` — existing links are kept).
+    To remove links, issue a separate mutation that targets the child directly or
+    override the top-level mutation. See
+    [M2M write semantics](#m2m-write-semantics-nested-path-vs-top-level-path) below.
+
 !!! warning "Reverse-FK nested fields"
 
     For a **reverse** relation (the child holds the FK to the parent), the child's
@@ -318,6 +426,107 @@ related objects alongside the parent. The same engine backs both
             model = Post
             only_fields = ["id", "title", "body"]   # no "author": injected from parent
     ```
+
+### M2M write semantics: nested path vs. top-level path
+
+The two write paths use **different M2M semantics** — this is intentional in v1.2.x and will be
+unified in v1.3.0:
+
+| Write path | M2M operation | Effect |
+|---|---|---|
+| **Nested** (`nested_fields`) | `.add(*children)` | **Additive** — existing links are kept; the submitted items are appended. Submitting an empty list is a no-op. |
+| **Top-level native backend** | `.set(pks)` | **Replace** — existing links are removed and replaced with exactly the submitted list. Submitting an empty list clears all links. |
+
+**Practical implication:** to *remove* M2M links via the nested path you currently cannot — use the
+top-level mutation instead, or issue a separate mutation that clears and re-adds.
+
+!!! note "Planned for v1.3.0"
+    A per-field `m2m_behavior = "set" | "add"` option will let you choose the semantics on the
+    nested path and align the default to `.set` (matching top-level behavior). Track the work in
+    [GitHub issue #18](https://github.com/eamigo86/django-graphex/issues/18).
+
+### Explicit-null limitation in update mutations
+
+`update()` currently treats `None` values in the input as "not provided" and skips them. This
+means you **cannot clear a nullable field or empty an M2M** by sending `null` — the field will be
+left unchanged.
+
+```graphql
+# This does NOT clear the bio field in v1.2.x:
+mutation {
+  updateUser(newUser: { id: 1, bio: null }) {
+    ok
+    user { id bio }
+  }
+}
+```
+
+**Workaround:** use a separate mutation that explicitly assigns an empty string or removes the
+M2M association via a dedicated resolver.
+
+!!! note "Planned for v1.3.0"
+    Explicit-null support requires distinguishing "omitted" from "explicitly null" at the input
+    level. The planned approach is an AST-presence check so the current partial-update behavior
+    is preserved for omitted fields while respecting intentional nulls. Track the work in
+    [GitHub issue #18](https://github.com/eamigo86/django-graphex/issues/18).
+
+### perform_mutate response shape
+
+`DjangoModelMutation.perform_mutate` and `DjangoModelType.perform_mutate` intentionally differ in
+how they produce the response object after a successful write:
+
+| Class | Response object | Optimizer applied? | Extra DB query? |
+|---|---|---|---|
+| `DjangoModelType` | Re-reads via `get_queryset()` — picks up DB defaults, signals, annotations | Yes — the re-read passes through `queryset_factory` so `select_related` / `prefetch_related` / `.only()` are derived from the mutation's response selection | Yes (one re-read) |
+| `DjangoModelMutation` | Returns the **in-memory** object that was just saved | No re-read, so no optimizer pass | No |
+
+**Practical implication:** if your mutation response selects nested relations
+(e.g. `user { profile { bio } }`), `DjangoModelType` will resolve them via the
+re-read queryset — which the optimizer makes efficient. `DjangoModelMutation`
+returns the in-memory object, so relations are resolved lazily (one per field),
+unless you `refresh_from_db()` in a custom `perform_mutate`.
+
+To avoid N+1 on `DjangoModelMutation` responses with nested relations, or when you
+need DB defaults or signals to be reflected, override `perform_mutate`:
+
+```python
+class MyMutation(DjangoModelMutation):
+    class Meta:
+        model = MyModel
+
+    @classmethod
+    def perform_mutate(cls, obj, info):
+        obj.refresh_from_db()
+        return super().perform_mutate(obj, info)
+```
+
+## Mutation response: depth limits and optimizer
+
+### `MAX_QUERY_DEPTH` and `Meta.max_deep` apply to mutations
+
+Query depth limiting (`MAX_QUERY_DEPTH` global setting and `Meta.max_deep` per-type)
+is enforced on **all** operation types — including mutation response selection sets.
+The selection set validation runs before execution, so a mutation that requests
+deeper nesting than the limit permits is rejected with a validation error before
+any database writes occur.
+
+```python
+DJANGO_GRAPHEX = {
+    "MAX_QUERY_DEPTH": 5,   # enforced on query, mutation, and subscription selection sets
+}
+```
+
+The attribute name is `max_deep` (not `max_depth`) on both the global setting key
+and `Meta`:
+
+```python
+class UserModelType(DjangoModelType):
+    class Meta:
+        model = User
+        max_deep = 3   # overrides the global MAX_QUERY_DEPTH for this type
+```
+
+See [Query depth & cost limits](query-limits.md) for the full reference.
 
 ## Traditional GraphQL Mutations
 
@@ -431,30 +640,10 @@ class UserMutation(DjangoModelMutation):
 
 ### Custom Validation
 
-For field-level validation beyond automatic DB checks, supply a Pydantic model
-via `Meta.pydantic_model`:
-
-```python
-from pydantic import BaseModel, field_validator
-from django.contrib.auth.models import User
-from django_graphex import DjangoModelMutation
-
-class UserValidation(BaseModel):
-    username: str
-    email: str
-
-    @field_validator("email", check_fields=False)
-    @classmethod
-    def email_must_be_corporate(cls, v):
-        if not v.endswith("@example.com"):
-            raise ValueError("Only corporate email addresses are accepted.")
-        return v
-
-class UserMutation(DjangoModelMutation):
-    class Meta:
-        model = User
-        pydantic_model = UserValidation
-```
+For field-level validation beyond automatic DB checks (inline `validate_<field>`
+methods, object-level `validate()`, and `Meta.pydantic_model`), see the
+authoritative reference:
+[Model backend (Pydantic) — Custom validation](backends.md#custom-validation-inline-validate_field).
 
 ## Testing Mutations
 

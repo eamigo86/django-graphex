@@ -7,6 +7,7 @@ serializes the instance once and fans the payload out to the relevant groups.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -16,12 +17,81 @@ from django.db.models.signals import post_delete, post_save
 
 from .mixins import serialize_instance
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from django.db.models import Model
 
     from .subscription import Subscription
 
 logger = logging.getLogger(__name__)
+
+# Strong references to in-flight fire-and-forget tasks.  asyncio only keeps a
+# weak reference to tasks; without this set a task can be garbage-collected
+# before its done-callback fires, silently dropping the error log.
+_inflight_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+
+def _group_send_done(task: asyncio.Task) -> None:  # type: ignore[type-arg]
+    """Done-callback for fire-and-forget group_send tasks.
+
+    Retrieves any exception so asyncio does not emit 'Task exception was never
+    retrieved', and logs it via the module logger for structured diagnostics.
+    CancelledError is swallowed silently (the task was intentionally cancelled).
+    """
+    _inflight_tasks.discard(task)
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception(
+            "Unhandled exception in fire-and-forget group_send task; "
+            "message may have been dropped."
+        )
+
+
+def _safe_group_send(
+    channel_layer: Any, group_name: str, message: dict[str, Any]
+) -> None:
+    """Send *message* to *group_name* from a synchronous Django signal context.
+
+    Django post_save / post_delete signals fire in the ORM's synchronous call
+    stack.  Two execution environments must be handled:
+
+    * **No running loop on the current thread** (plain WSGI, Celery, management
+      commands): ``async_to_sync(channel_layer.group_send)(...)`` is safe and
+      is used directly.
+    * **A loop IS running on the current thread** (ASGI server — Daphne,
+      Uvicorn): calling ``async_to_sync`` would create a nested-loop deadlock.
+      Instead, the coroutine is scheduled on the running loop via
+      ``loop.create_task`` and this function returns **immediately** (fire-and-
+      forget).  The loop processes the task on its next turn without any thread
+      blocking.  The old executor + ``run_coroutine_threadsafe(...).result()``
+      pattern blocked the loop thread waiting for a future that could never
+      resolve — causing a 5-second stall and a spurious "message may be dropped"
+      warning.
+
+    Args:
+        channel_layer: The Channels channel layer to send through.
+        group_name: The group to broadcast to.
+        message: The message payload.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        # ASGI path: a loop is running on this thread.  Schedule the coroutine
+        # as a fire-and-forget task on the already-running loop and return
+        # immediately.  This avoids any blocking of the loop thread.
+        task = loop.create_task(channel_layer.group_send(group_name, message))
+        # Keep a strong reference so the task is not GC'd before the callback
+        # fires, then attach the callback that logs any failure and releases it.
+        _inflight_tasks.add(task)
+        task.add_done_callback(_group_send_done)
+    else:
+        # WSGI / sync path: no running loop — async_to_sync is safe here.
+        async_to_sync(channel_layer.group_send)(group_name, message)
 
 
 class SubscriptionBinding:
@@ -141,19 +211,17 @@ class SubscriptionBinding:
             group_names.append(cls._group_name(action, id=instance.pk, index=index))
 
         for group_name in group_names:
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    "type": "subscription.notify",
-                    "stream": self.stream,
-                    "group": group_name,
-                    # pk travels in the envelope (not the client payload) so the
-                    # consumer can run DB-backed filters regardless of which
-                    # fields the serializer exposes.
-                    "pk": instance.pk,
-                    "payload": payload,
-                },
-            )
+            message = {
+                "type": "subscription.notify",
+                "stream": self.stream,
+                "group": group_name,
+                # pk travels in the envelope (not the client payload) so the
+                # consumer can run DB-backed filters regardless of which
+                # fields the serializer exposes.
+                "pk": instance.pk,
+                "payload": payload,
+            }
+            _safe_group_send(channel_layer, group_name, message)
 
 
 __all__ = ["SubscriptionBinding"]

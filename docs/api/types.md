@@ -340,14 +340,19 @@ Return the base `DjangoObjectType` wrapped by this list type.
     from django_graphex import DjangoListObjectField
 
     class Query(graphene.ObjectType):
+        # Preferred: DjangoListObjectField takes the list type directly
         all_users = DjangoListObjectField(UserListType)
 
-        # Or use the shorthand method
-        users = UserListType.ListField()
+        # RetrieveField() shorthand is available on DjangoListObjectType
         user = UserListType.RetrieveField()
 
     schema = graphene.Schema(query=Query)
     ```
+
+    !!! warning "`ListField()` is not available on `DjangoListObjectType`"
+        `UserListType.ListField()` raises `AttributeError` — `ListField` is a
+        classmethod on `DjangoModelType`, not on `DjangoListObjectType`. Use
+        `DjangoListObjectField(UserListType)` instead.
 
 ### GraphQL Response Structure
 
@@ -540,6 +545,9 @@ registry.register(CustomUserType)
 
 ### Custom Registry
 
+`Registry` is part of the public API and can be imported directly from
+`django_graphex`:
+
 ```python
 from django_graphex import Registry
 
@@ -674,5 +682,118 @@ class UserType(DjangoObjectType):
             return queryset.filter(is_active=True)
         return queryset
 ```
+
+---
+
+## DjangoUnionType
+
+GraphQL Union over explicitly enumerated `DjangoObjectType` members.
+
+```python
+class DjangoUnionType(Union)
+```
+
+### Meta Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `gfk_types` | `tuple[DjangoObjectType, ...]` | Required (≥ 1) | Member types of the union. Members are enumerated explicitly — the `django_content_type` table is never queried to discover them. |
+
+### Declaration Order (load-bearing)
+
+1. Declare all **member** `DjangoObjectType`s first.
+2. Declare the `DjangoUnionType` with `Meta.gfk_types`.
+3. Declare the **owner** `DjangoObjectType` LAST, referencing the union via `Meta.gfk_unions`.
+
+A mis-ordered declaration logs a `WARNING` and falls back to `GenericForeignKeyType` — the schema still builds.
+
+### Methods
+
+#### `resolve_type(instance, info)` (classmethod)
+
+Maps a Django model instance to its registered `DjangoObjectType` via the
+global registry. **Raises** a descriptive `TypeError` if no type is registered
+for the instance's model (rather than returning `None`, which would surface an
+opaque GraphQL error).
+
+You do not override this method.
+
+### Example Usage
+
+```python
+from django_graphex import DjangoObjectType, DjangoUnionType
+
+class AccountType(DjangoObjectType):
+    class Meta:
+        model = Account
+
+class InvoiceType(DjangoObjectType):
+    class Meta:
+        model = Invoice
+
+class CommentTargetUnion(DjangoUnionType):
+    class Meta:
+        gfk_types = (AccountType, InvoiceType)
+
+class CommentType(DjangoObjectType):
+    class Meta:
+        model = Comment              # has `target = GenericForeignKey(...)`
+        gfk_unions = {"target": CommentTargetUnion}
+```
+
+See [Types — DjangoUnionType](../usage/types.md#djangouniontype-typed-genericforeignkey-targets) for the full usage guide including optimizer behavior.
+
+---
+
+## DjangoInterfaceType
+
+GraphQL Interface for shared field declarations across multiple
+`DjangoObjectType` implementors.
+
+```python
+class DjangoInterfaceType(Interface)
+```
+
+### Meta Options
+
+No additional Meta options beyond what `graphene.Interface` already provides.
+Implementors declare membership via the existing graphene `Meta.interfaces` kwarg.
+
+### Methods
+
+#### `resolve_type(instance, info)` (classmethod)
+
+Maps a Django model instance to its registered concrete `DjangoObjectType` implementor
+via the global registry. **Raises** `TypeError` if the instance's model has no
+registered type.
+
+You do not override this method.
+
+### Example Usage
+
+```python
+import graphene
+from django_graphex import DjangoInterfaceType, DjangoObjectType
+
+class ProductInterface(DjangoInterfaceType):
+    name = graphene.String()
+
+    class Meta:
+        pass
+
+class BookType(DjangoObjectType):
+    class Meta:
+        model = Book
+        interfaces = (ProductInterface,)
+
+class MagazineType(DjangoObjectType):
+    class Meta:
+        model = Magazine
+        interfaces = (ProductInterface,)
+```
+
+See [Types — DjangoInterfaceType](../usage/types.md#djangointerfacetype-shared-fields-across-types) for the full usage guide.
+
+---
 
 This comprehensive API reference covers all type classes in `django-graphex`, providing developers with the knowledge needed to effectively create and customize GraphQL types for their Django applications.

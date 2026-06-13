@@ -21,6 +21,7 @@ One level of nesting is supported (parent -> direct children).
 
 from __future__ import annotations
 
+import enum
 from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
@@ -248,7 +249,7 @@ class NestedFieldsMixin:
             The payload with enum members unwrapped to their raw values.
         """
         for key, value in item.items():
-            if "Enum" in type(value).__name__:
+            if isinstance(value, enum.Enum):
                 item[key] = value.value
         return item
 

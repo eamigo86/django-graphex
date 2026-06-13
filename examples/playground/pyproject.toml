@@ -20,6 +20,11 @@ django-graphex = { path = "../..", editable = true }
 # for:
 #   django-graphex = { git = "https://github.com/eamigo86/django-graphex.git", branch = "main" }
 
+# This playground is NOT a publishable package — it is a local example project.
+# The [tool.hatch.build.targets.wheel] section is required by hatchling to
+# locate the source directories when uv installs this project in editable mode
+# (via [tool.uv.sources] above). Without it hatchling cannot determine which
+# files to include and will error. Removing this section would break `make install`.
 [tool.hatch.build.targets.wheel]
 packages = ["config", "blog"]
 

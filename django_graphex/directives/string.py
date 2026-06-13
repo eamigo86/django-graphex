@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from typing import TYPE_CHECKING, Any
 
 from django.utils.text import slugify
@@ -10,6 +11,7 @@ from graphene.utils.str_converters import to_camel_case, to_snake_case
 from graphql import (
     GraphQLArgument,
     GraphQLBoolean,
+    GraphQLError,
     GraphQLInt,
     GraphQLNonNull,
     GraphQLString,
@@ -20,6 +22,76 @@ from .base import BaseExtraGraphQLDirective
 
 if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo
+
+# Maximum allowed total width or precision in a @number format spec.
+# This bounds the maximum output string length per field and prevents
+# memory exhaustion from client-supplied specs like "1000000.5f".
+_NUMBER_FORMAT_MAX_WIDTH = 100
+
+# Maximum allowed width for the @center directive.
+# str.center() accepts any non-negative int — including 2,147,483,647 (the
+# maximum GraphQL Int), which would allocate a ~2 GB string from a single
+# unauthenticated field.  We cap it at a generous but safe value.
+_CENTER_MAX_WIDTH = 10_000
+
+# Maximum digit-string length accepted by _extract_width_precision before
+# calling int().  _NUMBER_FORMAT_MAX_WIDTH is 100 (at most 3 meaningful
+# digits), so any digit run longer than this is unconditionally over the
+# cap — no need to convert it.  We use 9 (one more than the max digit count
+# for _NUMBER_FORMAT_MAX_WIDTH × 10) to give plenty of headroom while staying
+# well clear of Python 3.11+'s 4300-digit int-string conversion limit.
+_NUMBER_FORMAT_MAX_DIGIT_LEN = 9
+
+# Regex matching the body of a Python format spec *after* the optional
+# [[fill]align] prefix has been stripped.  Covers:
+#   [sign][z][#][0][width][grouping_option][.precision][type]
+# The leading [^0-9]* approach in the old regex failed when the fill char
+# was a digit (e.g. "0<1000000f"): [^0-9]* stopped before the digit, then
+# the width group captured only the fill digit (not the real width), so the
+# DoS guard saw width=0 and let the huge spec through.
+_FORMAT_SPEC_BODY_RE = re.compile(
+    r"^[+\- ]?z?#?0?(?P<width>\d+)?[,_]?(?:\.(?P<precision>\d+))?[a-zA-Z%]?$"
+)
+
+
+def _extract_width_precision(spec: str) -> tuple[int, int]:
+    """Extract the numeric width and precision from a Python format mini-language spec.
+
+    Handles the optional ``[[fill]align]`` prefix correctly so that a digit
+    fill character (e.g. ``0<1000000f``) does not bypass the width check.
+
+    Args:
+        spec: A Python format spec string as supplied to the ``@number`` directive.
+
+    Returns:
+        A ``(width, precision)`` tuple of integers (0 when absent).
+    """
+    body = spec
+    # Strip optional [[fill]align]: if the second character is an align char
+    # the first character is the fill (may be a digit or any other char).
+    if len(body) >= 2 and body[1] in "<>=^":
+        body = body[2:]
+    elif body and body[0] in "<>=^":
+        body = body[1:]
+
+    m = _FORMAT_SPEC_BODY_RE.match(body)
+    if not m:
+        return 0, 0
+    raw_width = m.group("width")
+    raw_precision = m.group("precision")
+    # Guard against Python 3.11+ int-string conversion limit (4300 digits).
+    # Any digit run longer than _NUMBER_FORMAT_MAX_DIGIT_LEN is unconditionally
+    # over _NUMBER_FORMAT_MAX_WIDTH, so return a sentinel that guarantees the
+    # width/precision guard in resolve() fires its clean GraphQLError path —
+    # never let int() touch a giant string.
+    if raw_width and len(raw_width) > _NUMBER_FORMAT_MAX_DIGIT_LEN:
+        return _NUMBER_FORMAT_MAX_WIDTH + 1, 0
+    if raw_precision and len(raw_precision) > _NUMBER_FORMAT_MAX_DIGIT_LEN:
+        return 0, _NUMBER_FORMAT_MAX_WIDTH + 1
+    return (int(raw_width) if raw_width else 0), (
+        int(raw_precision) if raw_precision else 0
+    )
+
 
 __all__ = (
     "DefaultGraphQLDirective",
@@ -138,9 +210,9 @@ class Base64GraphQLDirective(BaseExtraGraphQLDirective):
             return None
 
         op = args.get("op") or "encode"
-        data = _as_str(value).encode("ascii")
+        data = _as_str(value).encode("utf-8")
         if op == "decode":
-            return base64.urlsafe_b64decode(data).decode("ascii")
+            return base64.urlsafe_b64decode(data).decode("utf-8")
         return base64.urlsafe_b64encode(data).decode("ascii")
 
 
@@ -181,8 +253,31 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
 
         Returns:
             The value formatted with the given Python format spec.
+
+        Raises:
+            GraphQLError: When the format spec's width or precision exceeds
+                ``_NUMBER_FORMAT_MAX_WIDTH`` (prevents memory DoS via
+                client-supplied specs like ``"1000000.5f"``).
         """
-        return format(float(value or 0), args.get("as"))
+        spec = args.get("as") or ""
+        width, precision = _extract_width_precision(spec)
+        if width > _NUMBER_FORMAT_MAX_WIDTH or precision > _NUMBER_FORMAT_MAX_WIDTH:
+            raise GraphQLError(
+                f"@number format spec width/precision must not exceed "
+                f"{_NUMBER_FORMAT_MAX_WIDTH}; got {spec!r}"
+            )
+        # Coerce the value to float first; blame the VALUE on failure.
+        try:
+            float_value = float(value or 0)
+        except (ValueError, TypeError) as exc:
+            raise GraphQLError(
+                f"@number could not coerce value {value!r} to a number: {exc}"
+            ) from exc
+        # Apply the format spec; blame the SPEC on failure.
+        try:
+            return format(float_value, spec)
+        except (ValueError, TypeError) as exc:
+            raise GraphQLError(f"Invalid @number format spec {spec!r}: {exc}") from exc
 
 
 class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
@@ -542,7 +637,12 @@ class CenterGraphQLDirective(BaseExtraGraphQLDirective):
         width = args.get("width")
         if width is None:
             width = len(value)
-        return value.center(int(width), args.get("fillchar") or " ")
+        int_width = int(width)
+        if int_width > _CENTER_MAX_WIDTH:
+            raise GraphQLError(
+                f"@center width must not exceed {_CENTER_MAX_WIDTH}; got {int_width}"
+            )
+        return value.center(int_width, args.get("fillchar") or " ")
 
 
 class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):

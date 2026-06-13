@@ -10,8 +10,10 @@ import base64
 import binascii
 from typing import TYPE_CHECKING, Any
 
+from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
 from graphene import Boolean, Field, Int, ObjectType, String
+from graphql import GraphQLError
 
 from django_graphex.base_types import DjangoListObjectBase
 from django_graphex.paginations.utils import (
@@ -479,7 +481,6 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         Returns:
             The paginated slice of results, or "None" when no page size is set.
         """
-        count = _get_count(qs)
         page = kwargs.pop(self.page_query_param, 1)
         requested = (
             kwargs.get(self.page_size_query_param)
@@ -490,9 +491,13 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             requested, self.page_size, self.max_page_size
         )
 
-        assert page != 0, ValueError(
-            "Page value for PageGraphqlPagination must be a non-zero value"
-        )
+        # Use an explicit raise (not assert) so the validation survives python -O.
+        # assert statements are compiled out under python -O / PYTHONOPTIMIZE=1,
+        # which would silently accept page=0 and compute a negative offset slice.
+        if page == 0:
+            raise GraphQLError(
+                "Page value for PageGraphqlPagination must be a non-zero value"
+            )
         if page_size is None:
             """
             raise ValueError('Page_size value for PageGraphqlPagination must be a non-null value, you must set global'
@@ -502,11 +507,15 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             """
             return None
 
-        offset = (
-            max(0, int(count + page_size * page))
-            if page < 0
-            else page_size * (page - 1)
-        )
+        # COUNT is only needed for negative-page (last-page) navigation.
+        # For positive pages the offset is computed from page_size alone, so
+        # issuing an unconditional COUNT on every request is unnecessary and
+        # expensive on large tables.
+        if page < 0:
+            count = _get_count(qs)
+            offset = max(0, int(count + page_size * page))
+        else:
+            offset = page_size * (page - 1)
 
         order = kwargs.pop(self.ordering_param, None) or self.ordering
 
@@ -779,9 +788,19 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
 
         qs = qs.order_by(order_term)
         if cursor:
-            value = self.decode_cursor(cursor)
-            lookup = f"{field_name}__{'lt' if descending else 'gt'}"
-            qs = qs.filter(**{lookup: value})
+            # Wrap both decode_cursor and the subsequent qs.filter() because a
+            # tampered cursor can fail at two points:
+            #   1. decode_cursor raises ValueError for malformed base64 or bad prefix.
+            #   2. qs.filter(**{field__gt: value}) raises Django ValidationError when
+            #      the decoded string cannot be coerced to the field's type (e.g. a
+            #      string passed to an IntegerField or DateTimeField). Either should
+            #      produce a clean GraphQLError, not an unhandled HTTP 500.
+            try:
+                value = self.decode_cursor(cursor)
+                lookup = f"{field_name}__{'lt' if descending else 'gt'}"
+                qs = qs.filter(**{lookup: value})
+            except (ValueError, ValidationError) as exc:
+                raise GraphQLError("Invalid cursor") from exc
 
         return qs[:page_size]
 
@@ -864,9 +883,14 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         ordered = qs.order_by(order_term)
         page_qs = ordered
         if cursor:
-            value = self.decode_cursor(cursor)
-            lookup = f"{field_name}__{'lt' if descending else 'gt'}"
-            page_qs = page_qs.filter(**{lookup: value})
+            # Same guard as in paginate_queryset: a tampered cursor can fail at
+            # decode_cursor (malformed base64) or at filter() (type coercion).
+            try:
+                value = self.decode_cursor(cursor)
+                lookup = f"{field_name}__{'lt' if descending else 'gt'}"
+                page_qs = page_qs.filter(**{lookup: value})
+            except (ValueError, ValidationError) as exc:
+                raise GraphQLError("Invalid cursor") from exc
 
         # Fetch one extra row to detect a following page without a COUNT.
         rows = list(page_qs[: page_size + 1])

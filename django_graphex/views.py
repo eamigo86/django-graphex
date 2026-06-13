@@ -41,7 +41,7 @@ from graphql import (
     parse,
     validate_schema,
 )
-from graphql.error import GraphQLError
+from graphql.error import GraphQLError, GraphQLSyntaxError
 from graphql.execution.middleware import MiddlewareManager
 from graphql.validation import specified_rules, validate
 
@@ -61,19 +61,50 @@ MUTATION_ERRORS_FLAG = "graphene_mutation_has_errors"
 
 #: Self-contained GraphiQL page (CDN). Avoids depending on graphene-django's
 #: bundled template + static assets. Override per view with ``graphiql_template``.
+#:
+#: CDN asset versions are PINNED to specific patch versions and protected by
+#: Subresource Integrity (SRI) hashes (sha384) so a CDN compromise or
+#: unexpected version bump cannot inject malicious JavaScript into the
+#: GraphiQL playground.
+#:
+#: Pinned versions (update SRI hashes when bumping):
+#:   react          18.3.1
+#:   react-dom      18.3.1
+#:   graphiql       3.7.1
+#:
+#: To recompute hashes after a version bump:
+#:   curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+#:   then prefix the output with "sha384-".
 GRAPHIQL_HTML = """<!DOCTYPE html>
 <html lang="en">
   <head>
     <title>GraphiQL</title>
     <style>body { height: 100%; margin: 0; width: 100%; overflow: hidden; }
       #graphiql { height: 100vh; }</style>
-    <link rel="stylesheet" href="https://unpkg.com/graphiql@3/graphiql.min.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/graphiql@3.7.1/graphiql.min.css"
+      integrity="sha384-Mq3vbRBY71jfjQAt/DcjxUIYY33ksal4cgdRt9U/hNPvHBCaT2JfJ/PTRiPKf0aM"
+      crossorigin="anonymous"
+    />
   </head>
   <body>
     <div id="graphiql">Loading...</div>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/graphiql@3/graphiql.min.js"></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+      integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"
+    ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+      integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"
+    ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/graphiql@3.7.1/graphiql.min.js"
+      integrity="sha384-w0cGClNeNvIYIRVmYrv5kmQ6CEat8jJb0XBczOFPeWlVjzeMNJBaoeEcWFD8Gad4"
+    ></script>
     <script>
       const root = ReactDOM.createRoot(document.getElementById('graphiql'));
       const fetcher = GraphiQL.createFetcher({ url: window.location.pathname });
@@ -232,6 +263,21 @@ class BaseGraphQLView(View):
                 return self.render_graphiql(request)
 
             if self.batch:
+                max_batch = graphql_api_settings.MAX_BATCH_SIZE
+                if max_batch is not None and len(data) > max_batch:
+                    # Pass `message=` explicitly so the `except HttpError` handler
+                    # wraps the plain string — not a pre-encoded JSON body — into the
+                    # single outer {"errors":[{"message":"..."}]} envelope.
+                    raise HttpError(
+                        HttpResponseBadRequest(),
+                        message=(
+                            f"Batch size {len(data)} exceeds the "
+                            f"MAX_BATCH_SIZE limit of {max_batch}. "
+                            "Reduce the number of operations per "
+                            "request or set MAX_BATCH_SIZE=None to "
+                            "disable the limit."
+                        ),
+                    )
                 responses = [self.get_response(request, entry) for entry in data]
                 result = "[{}]".format(",".join(r[0] for r in responses))
                 status_code = responses and max(responses, key=lambda r: r[1])[1] or 200
@@ -321,19 +367,27 @@ class BaseGraphQLView(View):
             try:
                 request_json = json.loads(body)
                 if self.batch:
-                    assert isinstance(request_json, list), (
-                        "Batch requests should receive a list, but received {}."
-                    ).format(repr(request_json))
-                    assert len(request_json) > 0, (
-                        "Received an empty list in the batch request."
-                    )
+                    if not isinstance(request_json, list):
+                        raise HttpError(
+                            HttpResponseBadRequest(),
+                            message=(
+                                "Batch requests should receive a list, but received {}.".format(
+                                    repr(request_json)
+                                )
+                            ),
+                        )
+                    if len(request_json) == 0:
+                        raise HttpError(
+                            HttpResponseBadRequest(),
+                            message="Received an empty list in the batch request.",
+                        )
                 else:
-                    assert isinstance(request_json, dict), (
-                        "The received data is not a valid JSON query."
-                    )
+                    if not isinstance(request_json, dict):
+                        raise HttpError(
+                            HttpResponseBadRequest(),
+                            message="The received data is not a valid JSON query.",
+                        )
                 return request_json
-            except AssertionError as e:
-                raise HttpError(HttpResponseBadRequest(str(e)))
             except (TypeError, ValueError):
                 raise HttpError(HttpResponseBadRequest("POST body sent invalid JSON."))
         elif content_type in (
@@ -351,8 +405,22 @@ class BaseGraphQLView(View):
         variables: Any,
         operation_name: Any,
         show_graphiql: bool = False,
+        document: Any = None,
     ) -> Any:
-        """Validate and execute a GraphQL request, returning an ExecutionResult."""
+        """Validate and execute a GraphQL request, returning an ExecutionResult.
+
+        Args:
+            request: The incoming HTTP request.
+            data: The parsed request body.
+            query: The raw GraphQL query string.
+            variables: The bound variable values.
+            operation_name: The selected operation name, if any.
+            show_graphiql: Whether the GraphiQL interface is being rendered.
+            document: An already-parsed ``DocumentNode``.  When provided,
+                ``parse()`` is not called again (avoids a double-parse per
+                request).  Pass ``None`` (the default) to parse ``query``
+                internally.
+        """
         if not query:
             if show_graphiql:
                 return None
@@ -364,10 +432,11 @@ class BaseGraphQLView(View):
         if schema_validation_errors:
             return ExecutionResult(data=None, errors=schema_validation_errors)
 
-        try:
-            document = parse(query)
-        except Exception as e:
-            return ExecutionResult(errors=[e])
+        if document is None:
+            try:
+                document = parse(query)
+            except Exception as e:
+                return ExecutionResult(errors=[e])
 
         operation_ast = get_operation_ast(document, operation_name)
 
@@ -494,11 +563,16 @@ class GraphQLView(BaseGraphQLView):
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.
 
+        Returns ``None`` when there is no query or when the query is
+        syntactically invalid (a malformed document must not raise here;
+        ``dispatch`` falls through to ``super_call`` which returns a 400).
+
         Args:
             request: The incoming HTTP request.
 
         Returns:
-            The operation AST node, or None when there is no query.
+            The operation AST node, or None when there is no query or the
+            query cannot be parsed.
         """
         data = self.parse_body(request)
         query = request.GET.get("query") or data.get("query")
@@ -508,18 +582,152 @@ class GraphQLView(BaseGraphQLView):
 
         source = Source(query, name="GraphQL request")
 
-        document_ast = parse(source)
+        try:
+            document_ast = parse(source)
+        except GraphQLSyntaxError:
+            return None
+
         operation_ast = get_operation_ast(document_ast, None)
 
         return operation_ast
 
     @staticmethod
     def fetch_cache_key(request: HttpRequest) -> str:
-        """Return a hashed cache key built from the request body."""
+        """Return a hashed cache key built from the request body and GET params.
+
+        For POST requests the GraphQL payload lives in ``request.body``, which
+        is hashed directly.  For GET requests ``request.body`` is always
+        ``b''``, so the query, variables, and operationName query-string
+        parameters are incorporated into the hash instead.  Without this,
+        every distinct GET query for the same identity would produce
+        sha256(b'') and share a single cache slot — causing a different
+        query's cached response to be returned.
+
+        Subclasses may override this staticmethod to derive the body hash
+        differently (e.g. normalising whitespace or extracting the operation
+        name). The returned value is composed into the full cache key by
+        ``dispatch`` together with the identity prefix, so overrides do not
+        need to incorporate user identity — that is handled automatically.
+        """
         m = hashlib.sha256()
         m.update(request.body)
+        # For GET requests, request.body is b'' — incorporate the GraphQL
+        # query-string parameters so different GET queries get distinct keys.
+        get_query = request.GET.get("query") or ""
+        get_variables = request.GET.get("variables") or ""
+        get_operation = request.GET.get("operationName") or ""
+        if get_query or get_variables or get_operation:
+            m.update(get_query.encode())
+            m.update(get_variables.encode())
+            m.update(get_operation.encode())
 
         return m.hexdigest()
+
+    @staticmethod
+    def cache_key_prefix(request: HttpRequest) -> str:
+        """Return a stable per-identity token used to namespace cache keys.
+
+        Authenticated requests are partitioned by ``request.user.pk``.
+        Anonymous requests that carry an ``Authorization`` header are
+        partitioned by a hash of that header so token-auth clients without a
+        resolved ``request.user`` are still isolated from each other.
+        Fully anonymous, credential-free requests share a single ``"anon"``
+        partition (their responses contain no private data).
+
+        Subclasses may override this staticmethod to use a different identity
+        source (e.g. a session key or a tenant identifier).
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            A short string identifying the request's principal.
+        """
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            return f"u{user.pk}"
+        auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+        if auth_header:
+            h = hashlib.sha256(auth_header.encode(), usedforsecurity=False).hexdigest()[
+                :16
+            ]
+            return f"t{h}"
+        return "anon"
+
+    #: Sentinel used by ``dispatch`` to distinguish a cache miss from a cached
+    #: falsy value (e.g. an empty-body response).  Using ``cache.get(key)``
+    #: with a default of ``None`` and then checking ``if not response:`` would
+    #: treat a legitimately cached empty response as a miss.
+    _CACHE_MISS = object()
+
+    #: Template for the per-identity namespace version counter cache key.
+    #: ``{identity}`` is substituted with the value returned by
+    #: ``cache_key_prefix``; this scopes invalidation to the issuing user's
+    #: namespace only so that a mutation by user A does not flush user B's cache.
+    _CACHE_VERSION_KEY_TEMPLATE = "_graphql_cacheversion_{identity}"
+
+    def _get_cache_version(self, _cache: Any, identity: str) -> str:
+        """Return the current namespace version token for *identity*.
+
+        If no version exists yet, initialise it to ``0`` (integer) and persist
+        it.  Seeding with an integer — rather than a UUID hex string — ensures
+        that ``cache.incr`` works atomically on all standard backends (Redis,
+        Memcached, LocMemCache) without first deleting and re-setting the key.
+
+        Args:
+            _cache: The Django cache backend instance.
+            identity: The per-request identity token from ``cache_key_prefix``.
+
+        Returns:
+            The current version as a string (``"0"``, ``"1"``, …).  Integer
+            versions stringify fine and compose cleanly into the cache key.
+        """
+        version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
+        version = _cache.get(version_key)
+        if version is None:
+            version = 0
+            _cache.set(version_key, version)
+        return str(version)
+
+    def _bump_cache_version(self, _cache: Any, identity: str) -> None:
+        """Invalidate the issuing user's cached responses by advancing their version token.
+
+        Uses ``cache.incr`` for an atomic increment on Redis / Memcached /
+        LocMemCache.  Because the key is seeded with integer ``0`` by
+        ``_get_cache_version``, ``incr`` always finds an integer value and
+        succeeds on all standard backends.  Two recoverable failure modes are
+        caught and healed by resetting the key to integer ``0``:
+
+        * ``ValueError`` — the key has expired (Django's documented behaviour
+          for a missing key on all standard backends).
+        * ``TypeError`` — the key exists but holds a non-integer value (e.g. a
+          uuid-hex string from an older deploy).  LocMemCache raises
+          ``TypeError`` in this case; healing it to ``0`` lets the next incr
+          succeed on every backend.
+
+        Truly unexpected backend errors (e.g. connection failure) are not
+        suppressed and propagate normally.
+
+        Only the requesting user's namespace is touched; other users' cache
+        entries carry a different identity prefix and are not affected.
+
+        Args:
+            _cache: The Django cache backend instance.
+            identity: The per-request identity token from ``cache_key_prefix``.
+        """
+        version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
+        try:
+            _cache.incr(version_key)
+        except (ValueError, TypeError):
+            # ``ValueError``: the key has expired (or was never set) — Django's
+            # documented behaviour for a missing key on all standard backends.
+            # ``TypeError``: the key exists but holds a non-integer value, e.g.
+            # a uuid-hex string planted by an older deploy's except branch.
+            # LocMemCache.incr raises TypeError in that case, which the old
+            # ``except ValueError`` guard did not catch → HTTP 500 until TTL.
+            # Reset to integer 0 so the next incr always finds an integer and
+            # succeeds on every backend (matches the docstring promise of "fresh 0").
+            _cache.set(version_key, 0)
 
     def super_call(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Call the parent dispatch method."""
@@ -528,28 +736,50 @@ class GraphQLView(BaseGraphQLView):
         return response
 
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
-        """Fetch queried data from GraphQL and return the cached response."""
+        """Fetch queried data from GraphQL and return the cached response.
+
+        When ``CACHE_ACTIVE`` is ``True``:
+
+        * Cache keys are partitioned by user identity (see
+          ``cache_key_prefix``) so one user's cached response is never served
+          to another user.
+        * Mutations advance a global namespace version counter instead of
+          calling ``cache.clear()``, which would flush unrelated cache entries
+          shared by other users or other cache clients.
+        * A sentinel object detects cache misses so a legitimately cached
+          falsy or empty body is not re-executed on every request.
+        * A malformed GraphQL document (``GraphQLSyntaxError`` during
+          ``get_operation_ast``) falls through to ``super_call``, which
+          returns the appropriate HTTP 400 response.
+        """
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
 
-        cache = caches["default"]
-        operation_ast = self.get_operation_ast(request)
-        # `operation` is a graphql-core ``OperationType`` enum, so compare its
-        # value (a bare ``== "mutation"`` is always False and would skip the
-        # cache invalidation, serving stale results after a mutation).
-        operation = getattr(getattr(operation_ast, "operation", None), "value", None)
-        if operation == "mutation":
-            cache.clear()
+        # Batch requests contain a list body — caching individual operations
+        # inside a batch is not meaningful (each op may be different), and the
+        # body-is-a-list would cause AttributeError in get_operation_ast /
+        # fetch_cache_key which assume a dict body.  Bypass the cache entirely.
+        if self.batch:
             return self.super_call(request, *args, **kwargs)
 
-        cache_key = f"_graplql_{self.fetch_cache_key(request)}"
-        response = cache.get(cache_key)
+        _cache = caches["default"]
+        identity = self.cache_key_prefix(request)
+        operation_ast = self.get_operation_ast(request)
+        # ``operation`` is a graphql-core ``OperationType`` enum; compare its
+        # ``.value`` string — a bare ``== "mutation"`` is always ``False``
+        # because the enum instance is never equal to the plain string.
+        operation = getattr(getattr(operation_ast, "operation", None), "value", None)
+        if operation == "mutation":
+            self._bump_cache_version(_cache, identity)
+            return self.super_call(request, *args, **kwargs)
 
-        if not response:
+        version = self._get_cache_version(_cache, identity)
+        cache_key = f"_graphql_{identity}_{version}_{self.fetch_cache_key(request)}"
+        response = _cache.get(cache_key, self._CACHE_MISS)
+
+        if response is self._CACHE_MISS:
             response = self.super_call(request, *args, **kwargs)
-
-            # cache key and value
-            cache.set(cache_key, response, timeout=graphql_api_settings.CACHE_TIMEOUT)
+            _cache.set(cache_key, response, timeout=graphql_api_settings.CACHE_TIMEOUT)
 
         return response
 
@@ -559,6 +789,48 @@ class GraphQLView(BaseGraphQLView):
         view = super().as_view(*args, **kwargs)
         view = csrf_exempt(view)
         return view
+
+    @staticmethod
+    def _is_introspection_document(document: Any) -> bool:
+        """Return True when *document* is an introspection query.
+
+        Detects introspection by inspecting the AST rather than matching the
+        raw query string. A document is treated as introspection when ALL of
+        its top-level selections are ``__schema`` or ``__type`` fields (the
+        two standard introspection entry-points). This correctly handles any
+        formatting, named or anonymous operations, and mixed inline fragments.
+
+        Args:
+            document: A parsed graphql-core ``DocumentNode``.
+
+        Returns:
+            ``True`` when every top-level selection is a meta-field
+            (``__schema`` / ``__type``), ``False`` otherwise.
+        """
+        if document is None:
+            return False
+        from graphql.language.ast import FieldNode, OperationDefinitionNode
+
+        for definition in document.definitions:
+            if not isinstance(definition, OperationDefinitionNode):
+                continue
+            selections = getattr(
+                getattr(definition, "selection_set", None), "selections", ()
+            )
+            if not selections:
+                continue
+            # If any top-level selection is NOT a meta-field, it's not introspection.
+            for selection in selections:
+                if isinstance(selection, FieldNode):
+                    if selection.name.value not in ("__schema", "__type"):
+                        return False
+                # InlineFragment / FragmentSpread at top level are unusual; treat
+                # conservatively (not pure introspection).
+                else:
+                    return False
+            # All selections were meta-fields for this operation — it's introspection.
+            return True
+        return False
 
     def get_response(
         self, request: HttpRequest, data: Any, show_graphiql: bool = False
@@ -575,8 +847,25 @@ class GraphQLView(BaseGraphQLView):
         """
         query, variables, operation_name, id = self.get_graphql_params(request, data)
 
+        # Parse the document once and reuse it for introspection detection,
+        # query-cost reporting, AND execution — eliminating duplicate parses.
+        parsed_document: Any = None
+        if query:
+            try:
+                parsed_document = parse(query)
+            except Exception:  # nosec B110
+                # Malformed query: pass document=None so execute_graphql_request
+                # re-attempts and returns the proper error response.
+                pass
+
         execution_result = self.execute_graphql_request(
-            request, data, query, variables, operation_name, show_graphiql
+            request,
+            data,
+            query,
+            variables,
+            operation_name,
+            show_graphiql,
+            document=parsed_document,
         )
 
         status_code = 200
@@ -598,14 +887,24 @@ class GraphQLView(BaseGraphQLView):
                 response["id"] = id
                 response["status"] = status_code
 
-            if graphql_api_settings.CLEAN_RESPONSE and not (query or "").startswith(
-                "\n  query IntrospectionQuery"
+            # AST-based introspection detection: bypass clean_dict for queries
+            # whose top-level selections are exclusively __schema / __type.
+            # This is whitespace- and formatter-independent, unlike the previous
+            # startswith("\n  query IntrospectionQuery") string match.
+            if (
+                graphql_api_settings.CLEAN_RESPONSE
+                and not self._is_introspection_document(parsed_document)
             ):
                 if response.get("data", None):
                     response["data"] = clean_dict(response["data"])
 
             if _settings.graphql_api_settings.EXPOSE_QUERY_COST and query:
-                cost = self.get_query_cost(query, variables, operation_name)
+                # Reuse the already-parsed document to avoid a second parse()
+                # call. Fall back to string-based parsing only when
+                # parsed_document is None (malformed query — cost is skipped).
+                cost = self.get_query_cost(
+                    query, variables, operation_name, document=parsed_document
+                )
                 if cost is not None:
                     response.setdefault("extensions", {})["cost"] = cost
 
@@ -616,23 +915,32 @@ class GraphQLView(BaseGraphQLView):
         return result, status_code
 
     def get_query_cost(
-        self, query: str, variables: Any, operation_name: str | None
+        self,
+        query: str,
+        variables: Any,
+        operation_name: str | None,
+        document: Any = None,
     ) -> dict[str, Any] | None:
         """Estimate the query's cost for the ``extensions.cost`` payload.
 
         Args:
-            query: The raw GraphQL query string.
+            query: The raw GraphQL query string (used as fallback when
+                *document* is ``None``).
             variables: The bound variable values (for exact page sizes).
             operation_name: The selected operation name, if any.
+            document: An already-parsed ``DocumentNode``.  When provided,
+                ``parse()`` is not called again (avoids a double-parse per
+                request when ``EXPOSE_QUERY_COST`` is ``True``).
 
         Returns:
             A ``{"requestedCost": int, "maxCost": int | None}`` mapping, or
             ``None`` when the query can't be parsed/analyzed.
         """
         try:
+            doc = document if document is not None else parse(query)
             report = analyze_cost(
                 self.schema.graphql_schema,
-                parse(query),
+                doc,
                 operation_name,
                 variables if isinstance(variables, dict) else None,
             )

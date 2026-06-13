@@ -286,6 +286,7 @@ schema = graphene.Schema(query=Query, mutation=Mutation)
 
 ## Next Steps
 
+- Try the runnable [Playground](https://github.com/eamigo86/django-graphex/tree/main/examples/playground) — a complete Django project exercising every feature end-to-end
 - Learn more about [Fields](usage/fields.md)
 - Explore [Pagination](usage/pagination.md) options
 - Discover [Directives](directives.md) for data formatting

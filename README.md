@@ -111,6 +111,10 @@ DJANGO_GRAPHEX = {
     "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
     "DEFAULT_PAGE_SIZE": 20,
     "MAX_PAGE_SIZE": 50,
+    # Response caching. Default is False (disabled).
+    # WARNING: cache keys are identity-salted per user (v1.2.1+), but shared
+    # caches can still leak data if misconfigured. Review the caching guide
+    # before enabling in production: docs/usage/caching.md
     "CACHE_ACTIVE": True,
 }
 ```
@@ -123,6 +127,10 @@ GRAPHENE = {"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]}
 from django_graphex import all_directives
 schema = graphene.Schema(query=Query, mutation=Mutation, directives=all_directives)
 ```
+
+## Playground
+
+A fully wired example project lives in [`examples/playground/`](examples/playground/). It exercises every major feature end-to-end — types, paginators, filtering, mutations, permissions, subscriptions, and the query optimizer — and installs the library from this repo checkout (editable, no PyPI release needed).
 
 ## Documentation
 
