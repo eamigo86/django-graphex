@@ -10,6 +10,7 @@ authors = [
 ]
 keywords = ["api", "graphql", "protocol", "graphene", "django"]
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries",
     "Framework :: Django",
