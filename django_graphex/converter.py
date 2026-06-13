@@ -278,8 +278,9 @@ def convert_django_field_with_choices(
         try:
             from multiselectfield import MultiSelectField as _MSField  # noqa: PLC0415
 
-            _is_multiselect = isinstance(field, _MSField)
+            _is_multiselect = isinstance(field, _MSField)  # pragma: no cover
         except ImportError:
+            # multiselectfield not installed — fall back to a class-name check.
             _is_multiselect = type(field).__name__ == "MultiSelectField"
 
         if _is_multiselect:

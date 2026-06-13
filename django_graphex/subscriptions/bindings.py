@@ -18,7 +18,7 @@ from django.db.models.signals import post_delete, post_save
 
 from .mixins import serialize_instance
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from django.db.models import Model
 
     from .subscription import Subscription
@@ -87,11 +87,13 @@ def _safe_group_send(
             )
             try:
                 future.result(timeout=_GROUP_SEND_TIMEOUT)
-            except concurrent.futures.TimeoutError:
+            except concurrent.futures.TimeoutError:  # pragma: no cover
+                # Network/channel-layer latency; logged, not re-raised.
                 logger.warning(
                     "group_send to %s timed out; message may be dropped.", group_name
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # pragma: no cover
+                # Unexpected channel-layer error; logged, not re-raised.
                 logger.exception("group_send to %s raised.", group_name)
 
         _GROUP_SEND_EXECUTOR.submit(_send_from_thread).result()

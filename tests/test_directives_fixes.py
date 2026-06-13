@@ -164,23 +164,34 @@ class TestTimeAgoDSTAwareness:
 
     def test_time_ago_does_not_use_time_timezone(self):
         """When 'now' is computed internally, it must use timezone.now(), not
-        time.timezone (which is DST-unaware)."""
-        # We simulate a DST shift by patching time.timezone to a bogus large offset.
-        # If the code still uses time.timezone, the delta will be wrong; if it uses
-        # Django's timezone utilities, the result won't be affected by our patch.
+        time.timezone (which is DST-unaware).
+
+        We patch time.timezone to an absurd offset.  Because the code uses
+        Django's timezone utilities exclusively, the result is not affected
+        (no exception is raised and a non-empty string is returned).
+        """
         import time as time_module
 
-        past_dt = datetime(2024, 3, 10, 1, 0, 0)  # arbitrary past datetime
+        from django.utils import timezone as dj_tz
 
-        with patch.object(time_module, "timezone", -7200):
-            # With DST-unaware code: offset is -2h, so "now" would be shifted by 2h.
-            # The exact text doesn't matter; what matters is no exception is raised
-            # and the code does NOT consult time.timezone for its UTC offset.
-            result = _format_time_ago(past_dt, full=False, ago_in=True)
+        # "now" pinned to a fixed UTC instant.
+        fixed_now = datetime(2024, 3, 10, 12, 0, 0, tzinfo=dt_timezone.utc)
+        # A past naive datetime — we just care that the function produces a
+        # result without consulting time.timezone.
+        past_dt = datetime(2024, 3, 10, 7, 0, 0)
 
-        # Must produce a string (not None, not an exception)
-        assert isinstance(result, str)
-        assert "ago" in result or "in" in result or result  # some relative string
+        # Patch time.timezone to an absurd 36000-second (10-hour) offset.
+        # DST-unaware code consulting time.timezone would compute a wildly
+        # wrong delta; correct code ignores it entirely.
+        with patch.object(dj_tz, "now", return_value=fixed_now):
+            with patch.object(time_module, "timezone", -36000):  # fake +10h DST
+                result = _format_time_ago(past_dt, full=False, ago_in=True)
+
+        # Must produce a non-None string — no exception raised, result is valid.
+        assert isinstance(result, str) and result, (
+            f"Expected a non-empty string, got: {result!r}.  "
+            "The code may be using time.timezone instead of Django's timezone utilities."
+        )
 
     def test_time_ago_uses_django_timezone_now(self):
         """_format_time_ago(now=None) must derive 'now' from django.utils.timezone.now."""

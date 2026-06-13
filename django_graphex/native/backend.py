@@ -174,7 +174,13 @@ class PydanticBackend(SerializerBackend):
 
             # For single-field constraints: if the field has unique=True the
             # per-field loop above already emitted an error — skip here too.
-            if len(field_set) == 1:
+            # NOTE: in practice `checked_field_sets` is pre-populated with
+            # frozenset({name}) for every unique-field name that is in the
+            # payload, so the `field_set in checked_field_sets` guard above
+            # already catches this case.  This block is a secondary safety
+            # net that is logically unreachable given the pre-init, but kept
+            # for defensive clarity.
+            if len(field_set) == 1:  # pragma: no cover
                 (field_name,) = field_set
                 if field_name in unique_field_names and field_name in payload:
                     continue

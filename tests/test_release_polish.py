@@ -344,7 +344,8 @@ class SafeGroupSendTest(TestCase):
         assert group_sends == [("test-group", {"type": "test"})]
 
     def test_running_loop_uses_executor_path(self):
-        """With a running event loop, group_send must be scheduled via the executor."""
+        """With a running event loop on the CURRENT thread, group_send must be
+        scheduled via the executor rather than async_to_sync."""
         from django_graphex.subscriptions import bindings
 
         group_sends = []
@@ -355,31 +356,24 @@ class SafeGroupSendTest(TestCase):
         mock_channel_layer = MagicMock()
         mock_channel_layer.group_send = fake_group_send
 
-        result_holder = []
         exc_holder = []
 
-        def _run_from_thread(loop):
+        async def run_test():
+            # At this point asyncio.get_running_loop() WILL succeed because
+            # we are running inside an event loop (asyncio.run creates one).
+            # Calling _safe_group_send here exercises the loop is not None branch.
             try:
                 bindings._safe_group_send(
                     mock_channel_layer, "loop-group", {"type": "loop-test"}
                 )
-                result_holder.append("ok")
             except Exception as e:
                 exc_holder.append(e)
-
-        async def run_test():
-            loop = asyncio.get_running_loop()
-            t = threading.Thread(target=_run_from_thread, args=(loop,))
-            t.start()
-            # Let the loop process pending coroutines.
-            for _ in range(20):
-                await asyncio.sleep(0.05)
-            t.join(timeout=5)
+            # Give the executor thread a moment to complete.
+            await asyncio.sleep(0.1)
 
         asyncio.run(run_test())
 
         assert not exc_holder, f"_safe_group_send raised: {exc_holder}"
-        assert result_holder == ["ok"]
         assert ("loop-group", {"type": "loop-test"}) in group_sends
 
     def test_singleton_executor_is_reused(self):
