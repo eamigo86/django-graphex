@@ -605,3 +605,165 @@ class OptimizerOnlyFieldsSkipTest(TestCase):
     def test_inline_fragment_include_if_false_field_excluded_from_only(self):
         only = _only("{ p { ... on Post @include(if: false) { title } } }")
         self.assertNotIn("title", only)
+
+
+# ============================================================================ #
+# OPTIMIZER: _walk_filtered_prefetches — @skip/@include suppresses filtered DB  #
+# query.  Issue #12 partial gap: nested filtered list with @skip(if:true) must  #
+# NOT build or execute its Prefetch object.                                      #
+#                                                                                #
+# Query-count baseline (no directive): 3 queries                                 #
+#   1. SELECT … FROM tests_author (list)                                         #
+#   2. SELECT COUNT(*) … FROM tests_author (totalCount)                          #
+#   3. SELECT … FROM tests_post WHERE title=… AND author_id IN (…) (filtered pf) #
+# With @skip(if:true) / @include(if:false) on the posts field: query 3 MUST NOT #
+# execute → expected count == 2.                                                  #
+# ============================================================================ #
+
+
+class OptimizerFilteredPrefetchSkipTest(TestCase):
+    """@skip/@include on a nested filtered list suppresses the filtered-prefetch query."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from tests.models import Author, Category, Post
+
+        cls.cat = Category.objects.create(title="SkipFiltCat")
+        cls.author1 = Author.objects.create(name="SkipFiltAuthor1")
+        cls.author2 = Author.objects.create(name="SkipFiltAuthor2")
+        Post.objects.create(title="SkipFiltPost", author=cls.author1, category=cls.cat)
+        Post.objects.create(title="SkipFiltPost", author=cls.author2, category=cls.cat)
+
+    def _schema(self):
+        """Return the filtered-nested-list schema (reuses phase-e helper)."""
+        import graphene
+
+        from django_graphex import (
+            DjangoListObjectField,
+            DjangoListObjectType,
+            DjangoObjectType,
+        )
+        from django_graphex.fields import DjangoNestedListObjectField
+        from tests.models import Author, Post
+
+        _reg = {}
+
+        _PostListType = type(
+            "_SkipFiltPostListType",
+            (DjangoListObjectType,),
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {
+                        "model": Post,
+                        "filter_fields": {"title": ["exact"]},
+                        "registry": _reg,
+                    },
+                )
+            },
+        )
+
+        _AuthorType = type(
+            "_SkipFiltAuthorType",
+            (DjangoObjectType,),
+            {
+                "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
+                "Meta": type("Meta", (), {"model": Author, "registry": _reg}),
+            },
+        )
+
+        _AuthorListType = type(
+            "_SkipFiltAuthorListType",
+            (DjangoListObjectType,),
+            {"Meta": type("Meta", (), {"model": Author, "registry": _reg})},
+        )
+
+        return graphene.Schema(
+            query=type(
+                "_SkipFiltQuery",
+                (graphene.ObjectType,),
+                {"authors": DjangoListObjectField(_AuthorListType)},
+            )
+        )
+
+    def _exec(self, schema, query, variables=None):
+        result = schema.execute(query, variable_values=variables)
+        assert result.errors is None, result.errors
+        return result.data
+
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+        }
+    )
+    def test_skip_if_true_suppresses_filtered_prefetch_query(self):
+        """@skip(if:true) on a nested filtered list must NOT issue the filtered-prefetch query.
+
+        Without the directive the query count is 3 (list + count + filtered-prefetch).
+        With @skip(if:true) it must be 2 — the filtered-prefetch DB query is suppressed.
+        """
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        schema = self._schema()
+        query = """
+        {
+          authors {
+            results {
+              posts(filter: {title: {exact: "SkipFiltPost"}}) @skip(if: true) {
+                results { id title }
+                totalCount
+              }
+            }
+            totalCount
+          }
+        }
+        """
+        with CaptureQueriesContext(connection) as ctx:
+            self._exec(schema, query)
+
+        self.assertEqual(
+            len(ctx.captured_queries),
+            2,
+            f"Expected 2 queries (list + count), got {len(ctx.captured_queries)}. "
+            f"Filtered-prefetch query was not suppressed by @skip(if:true).\n"
+            f"Queries: {[q['sql'] for q in ctx.captured_queries]}",
+        )
+
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "OPTIMIZE_NESTED_PAGINATION": False,
+            "OPTIMIZE_ONLY_FIELDS": False,
+        }
+    )
+    def test_include_if_false_suppresses_filtered_prefetch_query(self):
+        """@include(if:false) on a nested filtered list must NOT issue the filtered-prefetch query."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        schema = self._schema()
+        query = """
+        {
+          authors {
+            results {
+              posts(filter: {title: {exact: "SkipFiltPost"}}) @include(if: false) {
+                results { id title }
+                totalCount
+              }
+            }
+            totalCount
+          }
+        }
+        """
+        with CaptureQueriesContext(connection) as ctx:
+            self._exec(schema, query)
+
+        self.assertEqual(
+            len(ctx.captured_queries),
+            2,
+            f"Expected 2 queries (list + count), got {len(ctx.captured_queries)}. "
+            f"Filtered-prefetch query was not suppressed by @include(if:false).\n"
+            f"Queries: {[q['sql'] for q in ctx.captured_queries]}",
+        )
