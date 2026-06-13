@@ -266,25 +266,18 @@ class BaseGraphQLView(View):
             if self.batch:
                 max_batch = graphql_api_settings.MAX_BATCH_SIZE
                 if max_batch is not None and len(data) > max_batch:
+                    # Pass `message=` explicitly so the `except HttpError` handler
+                    # wraps the plain string — not a pre-encoded JSON body — into the
+                    # single outer {"errors":[{"message":"..."}]} envelope.
                     raise HttpError(
-                        HttpResponseBadRequest(
-                            self.json_encode(
-                                request,
-                                {
-                                    "errors": [
-                                        {
-                                            "message": (
-                                                f"Batch size {len(data)} exceeds the "
-                                                f"MAX_BATCH_SIZE limit of {max_batch}. "
-                                                "Reduce the number of operations per "
-                                                "request or set MAX_BATCH_SIZE=None to "
-                                                "disable the limit."
-                                            )
-                                        }
-                                    ]
-                                },
-                            )
-                        )
+                        HttpResponseBadRequest(),
+                        message=(
+                            f"Batch size {len(data)} exceeds the "
+                            f"MAX_BATCH_SIZE limit of {max_batch}. "
+                            "Reduce the number of operations per "
+                            "request or set MAX_BATCH_SIZE=None to "
+                            "disable the limit."
+                        ),
                     )
                 responses = [self.get_response(request, entry) for entry in data]
                 result = "[{}]".format(",".join(r[0] for r in responses))
@@ -375,19 +368,27 @@ class BaseGraphQLView(View):
             try:
                 request_json = json.loads(body)
                 if self.batch:
-                    assert isinstance(request_json, list), (
-                        "Batch requests should receive a list, but received {}."
-                    ).format(repr(request_json))
-                    assert len(request_json) > 0, (
-                        "Received an empty list in the batch request."
-                    )
+                    if not isinstance(request_json, list):
+                        raise HttpError(
+                            HttpResponseBadRequest(),
+                            message=(
+                                "Batch requests should receive a list, but received {}.".format(
+                                    repr(request_json)
+                                )
+                            ),
+                        )
+                    if len(request_json) == 0:
+                        raise HttpError(
+                            HttpResponseBadRequest(),
+                            message="Received an empty list in the batch request.",
+                        )
                 else:
-                    assert isinstance(request_json, dict), (
-                        "The received data is not a valid JSON query."
-                    )
+                    if not isinstance(request_json, dict):
+                        raise HttpError(
+                            HttpResponseBadRequest(),
+                            message="The received data is not a valid JSON query.",
+                        )
                 return request_json
-            except AssertionError as e:
-                raise HttpError(HttpResponseBadRequest(str(e)))
             except (TypeError, ValueError):
                 raise HttpError(HttpResponseBadRequest("POST body sent invalid JSON."))
         elif content_type in (
@@ -652,29 +653,38 @@ class GraphQLView(BaseGraphQLView):
     def _get_cache_version(self, _cache: Any, identity: str) -> str:
         """Return the current namespace version token for *identity*.
 
-        If no version exists yet, initialise it to a fresh UUID and persist it.
+        If no version exists yet, initialise it to ``0`` (integer) and persist
+        it.  Seeding with an integer — rather than a UUID hex string — ensures
+        that ``cache.incr`` works atomically on all standard backends (Redis,
+        Memcached, LocMemCache) without first deleting and re-setting the key.
 
         Args:
             _cache: The Django cache backend instance.
             identity: The per-request identity token from ``cache_key_prefix``.
 
         Returns:
-            The current version string (a UUID hex or an integer string).
+            The current version as a string (``"0"``, ``"1"``, …).  Integer
+            versions stringify fine and compose cleanly into the cache key.
         """
         version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
         version = _cache.get(version_key)
         if version is None:
-            version = uuid.uuid4().hex
+            version = 0
             _cache.set(version_key, version)
         return str(version)
 
     def _bump_cache_version(self, _cache: Any, identity: str) -> None:
         """Invalidate the issuing user's cached responses by advancing their version token.
 
-        Uses ``cache.incr`` when available (atomic on Redis / Memcached) and
-        falls back to setting a fresh UUID when the backend does not support
-        atomic increment (e.g. Django's local-memory cache raises
-        ``ValueError`` on a non-existent key).
+        Uses ``cache.incr`` for an atomic increment on Redis / Memcached /
+        LocMemCache.  Because the key is seeded with integer ``0`` by
+        ``_get_cache_version``, ``incr`` always finds an integer value and
+        succeeds on all standard backends.  If the key has expired between the
+        seed and the bump (e.g. TTL ran out), ``cache.incr`` raises
+        ``ValueError`` (Django's documented behaviour for a missing key) — we
+        catch only that and set a fresh ``0`` so the next request re-seeds
+        cleanly.  Truly unexpected backend errors (e.g. connection failure)
+        are not suppressed and propagate normally.
 
         Only the requesting user's namespace is touched; other users' cache
         entries carry a different identity prefix and are not affected.
@@ -686,10 +696,12 @@ class GraphQLView(BaseGraphQLView):
         version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
         try:
             _cache.incr(version_key)
-        except (ValueError, Exception):
-            # Backend does not support incr (e.g. LocMemCache before the key
-            # exists), or the key has already expired.  A fresh UUID ensures
-            # old keys are no longer returned.
+        except ValueError:
+            # The key has expired (or was never set) — ``cache.incr`` raises
+            # ``ValueError`` for a missing key on all standard Django backends.
+            # Set a fresh UUID so old cached keys (which embed the previous
+            # version token) are no longer reachable.  A UUID avoids any
+            # collision with prior integer or UUID tokens.
             _cache.set(version_key, uuid.uuid4().hex)
 
     def super_call(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
@@ -716,6 +728,13 @@ class GraphQLView(BaseGraphQLView):
           returns the appropriate HTTP 400 response.
         """
         if not graphql_api_settings.CACHE_ACTIVE:
+            return self.super_call(request, *args, **kwargs)
+
+        # Batch requests contain a list body — caching individual operations
+        # inside a batch is not meaningful (each op may be different), and the
+        # body-is-a-list would cause AttributeError in get_operation_ast /
+        # fetch_cache_key which assume a dict body.  Bypass the cache entirely.
+        if self.batch:
             return self.super_call(request, *args, **kwargs)
 
         _cache = caches["default"]
