@@ -93,8 +93,11 @@ def _choices_enum(field: models.Field, registry: Registry) -> Any:
     """Return the registered choices Enum for a field, or ``String``.
 
     Reuses the enum the converter registers under
-    ``f"{object_name}_{field.name}_Enum"`` (camel-cased), matching the output
-    type so the same enum is shared.
+    ``f"{app_label}_{object_name}_{field.name}_Enum"`` (camel-cased), matching
+    the output type so the same enum is shared.  The ``app_label`` prefix
+    ensures that two models sharing a class name across different Django apps
+    each get their own distinct enum — mirroring the (model_class, for_input)
+    keying used for object/input types.
 
     Args:
         field: The Django model field carrying choices.
@@ -103,7 +106,8 @@ def _choices_enum(field: models.Field, registry: Registry) -> Any:
     Returns:
         The registered graphene Enum, or ``graphene.String`` when absent.
     """
-    name = to_camel_case(f"{field.model._meta.object_name}_{field.name}_Enum")
+    meta = field.model._meta
+    name = to_camel_case(f"{meta.app_label}_{meta.object_name}_{field.name}_Enum")
     enum = registry.get_type_for_enum(name)
     return enum if enum is not None else graphene.String
 
