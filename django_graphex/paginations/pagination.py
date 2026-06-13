@@ -92,9 +92,22 @@ def _validate_ordering_terms(model: Any, ordering: str | list[str]) -> None:
     else:
         terms = [t for t in ordering if t]
 
+    # Build the set of pk aliases: 'pk' plus the primary key's real attname and
+    # field name (e.g. 'id' / 'id' for an auto pk, 'slug' / 'slug' for a custom
+    # CharField pk).  These are fully supported by Django's ORM via order_by('pk')
+    # and must not be rejected even though 'pk' itself is not in concrete_attnames.
+    pk_aliases: set[str] = {"pk"}
+    if model._meta.pk is not None:  # type: ignore[union-attr]
+        pk_aliases.add(model._meta.pk.attname)  # type: ignore[union-attr]
+        pk_aliases.add(model._meta.pk.name)  # type: ignore[union-attr]
+
     for term in terms:
         # Strip direction prefix
         bare = term.lstrip("-+")
+        # Allow Django's native pk alias and the primary key's attname/name.
+        # These resolve to the pk column via the ORM and are always valid.
+        if bare in pk_aliases:
+            continue
         # Reject any relation-spanning path (contains lookup separator)
         if _LOOKUP_SEP in bare:
             raise GraphQLError(

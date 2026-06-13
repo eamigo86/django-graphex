@@ -520,3 +520,111 @@ class TestPrefetchWindowSliceNegativeOffset(TestCase):
         p = _lo(default_limit=None, max_limit=None)
         result = p.prefetch_window_slice()
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# pk alias — 'pk' and '-pk' must be accepted (regression #70)
+# ---------------------------------------------------------------------------
+
+
+class TestPkAliasAccepted(TestCase):
+    """'pk' and '-pk' are native Django ordering aliases and must be accepted.
+
+    Regression from #59: _validate_ordering_terms built its allowlist from
+    {f.attname for f in model._meta.concrete_fields}.  'pk' is NOT in that set
+    (it is an alias, not a real attname) so ordering='pk' raised GraphQLError on
+    every paginated request.
+
+    These tests MUST FAIL on unpatched code.
+    """
+
+    def setUp(self):
+        for name in ("charlie", "alice", "bob"):
+            Author.objects.create(name=name)
+
+    # -- _validate_ordering_terms unit-level ---------------------------------
+
+    def test_validate_pk_alias_accepted(self):
+        """_validate_ordering_terms must not raise for 'pk'."""
+        _validate_ordering_terms(Author, "pk")  # must not raise
+
+    def test_validate_pk_desc_alias_accepted(self):
+        """_validate_ordering_terms must not raise for '-pk'."""
+        _validate_ordering_terms(Author, "-pk")  # must not raise
+
+    def test_validate_pk_plus_prefix_accepted(self):
+        """_validate_ordering_terms must not raise for '+pk'."""
+        _validate_ordering_terms(Author, "+pk")  # must not raise
+
+    # -- LimitOffsetGraphqlPagination ----------------------------------------
+
+    def test_limitoffset_pk_ordering_accepted(self):
+        """LimitOffsetGraphqlPagination with ordering='pk' must not raise.
+
+        This test MUST FAIL on unpatched code.
+        """
+        p = _lo()
+        result = list(p.paginate_queryset(Author.objects.all(), ordering="pk"))
+        assert len(result) == 3
+
+    def test_limitoffset_pk_desc_ordering_accepted(self):
+        """LimitOffsetGraphqlPagination with ordering='-pk' must not raise."""
+        p = _lo()
+        result = list(p.paginate_queryset(Author.objects.all(), ordering="-pk"))
+        assert len(result) == 3
+
+    def test_limitoffset_pk_configured_default_ordering_accepted(self):
+        """A LimitOffset paginator configured with ordering='pk' must not raise.
+
+        This exercises the developer-configured default ordering path — the path
+        that breaks in production when ordering='pk' is set at definition time.
+
+        This test MUST FAIL on unpatched code.
+        """
+        p = _LOF(default_limit=5, max_limit=20, ordering="pk")
+        result = list(p.paginate_queryset(Author.objects.all()))
+        assert len(result) == 3
+
+    # -- PageGraphqlPagination -----------------------------------------------
+
+    def test_page_pk_ordering_accepted(self):
+        """PageGraphqlPagination with ordering='pk' must not raise.
+
+        This test MUST FAIL on unpatched code.
+        """
+        p = _pg()
+        result = list(p.paginate_queryset(Author.objects.all(), page=1, ordering="pk"))
+        assert len(result) == 3
+
+    def test_page_pk_desc_ordering_accepted(self):
+        """PageGraphqlPagination with ordering='-pk' must not raise."""
+        p = _pg()
+        result = list(p.paginate_queryset(Author.objects.all(), page=1, ordering="-pk"))
+        assert len(result) == 3
+
+    def test_page_pk_configured_default_ordering_accepted(self):
+        """A Page paginator configured with ordering='pk' must not raise.
+
+        This test MUST FAIL on unpatched code.
+        """
+        p = _PGP(page_size=5, max_page_size=20, ordering="pk")
+        result = list(p.paginate_queryset(Author.objects.all(), page=1))
+        assert len(result) == 3
+
+    # -- Security boundary: __-spanning and FK-name still rejected -----------
+
+    def test_pk_does_not_loosen_relation_spanning_rejection(self):
+        """Allowing 'pk' must not affect the '__' rejection guard."""
+        with pytest.raises(GraphQLError):
+            _validate_ordering_terms(Author, "posts__pk")
+
+    def test_pk_does_not_loosen_fk_name_rejection(self):
+        """Allowing 'pk' must not allow the FK *name* ('author') to slip through.
+
+        'author' on Post is a FK; its attname is 'author_id'.  Ordering by the
+        field name 'author' (not 'author_id') must still be rejected.
+        """
+        from .models import Post
+
+        with pytest.raises(GraphQLError):
+            _validate_ordering_terms(Post, "author")
