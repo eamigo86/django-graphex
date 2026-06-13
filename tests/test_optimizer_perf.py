@@ -143,14 +143,16 @@ class FieldMapMemoizationTest(TestCase):
 
         assert result.errors is None, result.errors
         post_calls = call_counts.get("post", 0)
-        # With memoization: get_fields called at most once per model per run.
-        # Without memoization: called multiple times (relation_map + concrete_map
-        # + _collect_only_fields etc.).  Assert <= 1.
+        # With memoization: get_fields called at most twice per model per run
+        # (once for _relation_field_map and once for _concrete_field_map — the
+        # two maps have different cache keys so each is computed once).
+        # Without memoization: called 6+ times across all walker call-sites.
+        # We assert <= 2 as the memoized ceiling.
         self.assertLessEqual(
             post_calls,
-            1,
+            2,
             f"Post._meta.get_fields called {post_calls} times in one optimizer run "
-            f"(expected <= 1 with memoization)",
+            f"(expected <= 2 with memoization — one per map kind)",
         )
 
 
