@@ -27,6 +27,9 @@ from django_graphex.settings import graphql_api_settings
 #: maximum is configured (the keyset always needs a concrete size).
 DEFAULT_CURSOR_PAGE_SIZE = 20
 
+# Separator used by Django ORM for relation traversal (e.g. "author__name").
+_LOOKUP_SEP = "__"
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -51,6 +54,56 @@ def _sort_key(value: Any) -> tuple[bool, Any]:
         A tuple ordering "None" values before other values.
     """
     return (value is None, value if value is not None else 0)
+
+
+def _validate_ordering_terms(model: Any, ordering: str | list[str]) -> None:
+    """Validate each ordering term against the model's concrete attnames.
+
+    Rejects:
+    - Terms whose root field (before '__') is not a concrete attname on the model.
+      This covers invalid fields, relation-spanning lookups, and hidden/non-exposed
+      columns (e.g. 'password', 'is_superuser').
+    - Any term that contains '__' (relation traversal), regardless of root validity,
+      to prevent arbitrary join-chain DoS.
+
+    Only the concrete attnames from ``model._meta.concrete_fields`` are allowed,
+    matching the pattern already used in ``django_graphex/fields.py:727``.
+
+    Args:
+        model: The Django model class whose ``_meta.concrete_fields`` defines the
+            allowlist.
+        ordering: A comma-separated ordering string or a list of ordering terms.
+            Leading ``-``/``+`` direction prefixes are stripped before comparison.
+
+    Raises:
+        GraphQLError: When any term is invalid, contains a relation separator, or
+            references a non-concrete/non-exposed column.
+    """
+    if not ordering:
+        return
+
+    concrete_attnames: set[str] = {
+        f.attname
+        for f in model._meta.concrete_fields  # type: ignore[union-attr]
+    }
+
+    if isinstance(ordering, str):
+        terms = [t for t in ordering.replace(" ", "").split(",") if t]
+    else:
+        terms = [t for t in ordering if t]
+
+    for term in terms:
+        # Strip direction prefix
+        bare = term.lstrip("-+")
+        # Reject any relation-spanning path (contains lookup separator)
+        if _LOOKUP_SEP in bare:
+            raise GraphQLError(
+                f"Invalid ordering field: '{bare}'. "
+                "Relation-spanning ordering is not permitted."
+            )
+        # Reject anything not in the concrete attname allowlist
+        if bare not in concrete_attnames:
+            raise GraphQLError(f"Invalid ordering field: '{bare}'.")
 
 
 def _inmemory_order(items: Iterable[Any], ordering: Any) -> list[Any]:
@@ -220,6 +273,23 @@ class BaseDjangoGraphqlPagination:
         """
         return None
 
+    def prefetch_window_slice_ordering_check(
+        self, model: Any, ordering: str | list[str]
+    ) -> None:
+        """Validate ordering terms for a given model before DB-side window slicing.
+
+        Delegates to :func:`_validate_ordering_terms`.  Exposed as a method so
+        tests and callers can exercise the guard without constructing a queryset.
+
+        Args:
+            model: The Django model class to validate against.
+            ordering: A comma-separated ordering string or a list of ordering terms.
+
+        Raises:
+            GraphQLError: When any term is invalid or relation-spanning.
+        """
+        _validate_ordering_terms(model, ordering)
+
 
 class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
     """Pagination implementation using limit and offset parameters."""
@@ -338,7 +408,11 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
             items = _inmemory_order(qs, order) if order else list(qs)
             return items[offset : offset + abs(limit)]
 
+        # Validate ordering terms against the queryset model's concrete attnames
+        # before calling qs.order_by().  An invalid term would otherwise cause
+        # Django to raise FieldError, leaking the full model field list (CWE-209).
         if order:
+            _validate_ordering_terms(qs.model, order)
             if "," in order:
                 order = order.strip(",").replace(" ", "").split(",")
                 if len(order) > 0:
@@ -531,7 +605,10 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             items = _inmemory_order(qs, order) if order else list(qs)
             return items[offset : offset + page_size]
 
+        # Validate ordering terms against the queryset model's concrete attnames
+        # before calling qs.order_by() — same security guard as LimitOffset.
         if order:
+            _validate_ordering_terms(qs.model, order)
             if "," in order:
                 order = order.strip(",").replace(" ", "").split(",")
                 if len(order) > 0:

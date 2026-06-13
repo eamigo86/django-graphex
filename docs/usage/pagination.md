@@ -131,6 +131,53 @@ LimitOffsetGraphqlPagination(
     }
     ```
 
+### Ordering Validation (Security)
+
+!!! warning "Ordering is validated against concrete model fields"
+
+    Both `LimitOffsetGraphqlPagination` and `PageGraphqlPagination` validate every
+    client-supplied `ordering` term **before** calling `qs.order_by()`.
+
+    **Why this matters:**
+
+    - An invalid field name would cause Django to raise `FieldError`, which leaks
+      the full model field list (including sensitive columns like `password`,
+      `is_superuser`) in `errors[].message` — a CWE-209 information disclosure.
+    - Relation-spanning lookups (`posts__title`, `author__name`) force Django to
+      follow join chains, which can exhaust database resources (DoS).
+
+    **Allowlist rule:** each ordering term's root (the part before `__`) must match
+    one of the model's **concrete attnames** (`model._meta.concrete_fields`).
+    Leading `-`/`+` direction prefixes are stripped before comparison.
+
+    **Rejected examples:**
+
+    ```graphql
+    # Non-existent field → GraphQLError: "Invalid ordering field: 'nonexistent'"
+    { users { results(ordering: "nonexistent") { id } } }
+
+    # Relation-spanning → GraphQLError: "Invalid ordering field: ..."
+    { users { results(ordering: "posts__title") { id } } }
+    ```
+
+    **Accepted examples (concrete attnames of the model):**
+
+    ```graphql
+    # Single ascending
+    { users { results(ordering: "username") { id } } }
+
+    # Descending
+    { users { results(ordering: "-date_joined") { id } } }
+
+    # Multi-field comma list
+    { users { results(ordering: "last_name,-date_joined") { id } } }
+    ```
+
+    If you need to allow ordering by additional (non-default) fields, ensure those
+    columns are concrete attnames on the model. You cannot order by reverse-FK names
+    (e.g. `posts`) or by relation paths (`posts__title`) — use a database index and
+    annotate the queryset instead if you need computed sort keys.
+
 ### Response Structure
 
 ```json
