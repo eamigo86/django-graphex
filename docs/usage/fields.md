@@ -282,21 +282,109 @@ is honored by its list/retrieve.
 | Type Integration | Basic | Basic | Basic | Full |
 | Caching | ❌ | ❌ | ❌ | ✅ |
 
+## DjangoNestedListObjectField
+
+`DjangoNestedListObjectField` is the field class used automatically when the
+optimizer wires a reverse-FK or M2M relation. You can also declare it
+explicitly on a parent `DjangoObjectType` to expose a nested list with custom
+accessor, filter, or pagination behavior.
+
+`DjangoNestedListObjectField` is part of the public API — import it directly:
+
+```python
+from django_graphex import DjangoNestedListObjectField
+```
+
+**Signature:**
+
+```python
+DjangoNestedListObjectField(list_type, accessor=None, fields=None, **kwargs)
+```
+
+| Argument | Meaning |
+|----------|---------|
+| `list_type` | A `DjangoListObjectType` subclass describing the nested list's shape, pagination, and filter options. |
+| `accessor` | The parent attribute name for the relation (defaults to the field name on the parent type). |
+| `fields` | Override filter configuration. Defaults to `list_type._meta.filter_fields`. Pass `None` to inherit from the type; pass `{}` or an empty dict to disable filtering on this field. |
+| `**kwargs` | Forwarded to the underlying `Field`. |
+
+**Example** — expose a per-author paginated list of posts:
+
+```python
+import graphene
+from django_graphex import (
+    DjangoObjectType,
+    DjangoListObjectType,
+    DjangoNestedListObjectField,
+    LimitOffsetGraphqlPagination,
+)
+from .models import Author, Post
+
+class PostType(DjangoObjectType):
+    class Meta:
+        model = Post
+        filter_fields = {"title": ["icontains"]}
+
+class PostListType(DjangoListObjectType):
+    class Meta:
+        model = Post
+        pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="-id")
+        filter_fields = {"title": ["icontains"]}
+
+class AuthorType(DjangoObjectType):
+    posts = DjangoNestedListObjectField(PostListType)
+
+    class Meta:
+        model = Author
+```
+
+**Usage in GraphQL:**
+
+```graphql
+{
+  author(id: 1) {
+    name
+    posts(filter: { title: { icontains: "graphql" } }) {
+      results(limit: 5, ordering: "-id") {
+        id
+        title
+      }
+      totalCount
+    }
+  }
+}
+```
+
+The optimizer automatically uses `prefetch_related` (with DB-side window slicing
+when `OPTIMIZE_NESTED_PAGINATION` is `True`). No additional `select_related` or
+`prefetch_related` calls are needed — declaring the field is enough.
+
+See [Query Optimization → DB-side nested pagination](query-optimization.md#db-side-nested-pagination-window-slicing) and [Nested Lists](nested-lists.md) for the full reference.
+
 ## Best Practices
 
 ### 1. Use DjangoListObjectField for Lists
+
+`DjangoListObjectField` pairs with `DjangoListObjectType` to give you
+pagination, filtering, and `totalCount` out of the box — without writing a
+resolver. `DjangoFilterPaginateListField` returns a flat list with no wrapper
+shape, which limits client-side pagination controls.
 
 ```python
 # ✅ Recommended
 class Query(graphene.ObjectType):
     users = DjangoListObjectField(UserListType, description='All users')
 
-# ❌ Less flexible
+# ❌ Less flexible — no totalCount, no results wrapper
 class Query(graphene.ObjectType):
     users = DjangoFilterPaginateListField(UserType)
 ```
 
 ### 2. Define Filter Fields in Types
+
+Declaring `filter_fields` on the type (rather than the field) makes the filter
+available everywhere the type is used — list fields, nested lists, and
+`RetrieveField` — without repeating the configuration.
 
 ```python
 class UserType(DjangoObjectType):
@@ -310,6 +398,10 @@ class UserType(DjangoObjectType):
 ```
 
 ### 3. Use Descriptive Names
+
+Descriptive names make the schema self-documenting and reduce the need for
+separate API docs. Include intent in the name (`active_users` > `users`) and
+always add a `description=`.
 
 ```python
 class Query(graphene.ObjectType):
@@ -326,6 +418,11 @@ class Query(graphene.ObjectType):
 ```
 
 ### 4. Combine with Permissions
+
+Keep permissions out of the schema layer — put them in a `resolver=` or
+`filter_queryset` hook so the rule is enforced regardless of which field
+triggers the query. This also keeps the field declaration clean and
+independently testable.
 
 Pass a custom `resolver=` that reuses the library's plumbing (it receives
 `manager, filter_backend, root, info, **kwargs` for list fields) and only changes

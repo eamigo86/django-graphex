@@ -308,7 +308,7 @@ To customize the child queryset for a **specific** nested list field — add a
 **`optimize_<snake_field>`** static method on the **parent** graphene type:
 
 ```python
-from django_graphex.fields import DjangoNestedListObjectField
+from django_graphex import DjangoNestedListObjectField
 
 class AuthorType(DjangoObjectType):
     posts = DjangoNestedListObjectField(PostListType, accessor="posts")
