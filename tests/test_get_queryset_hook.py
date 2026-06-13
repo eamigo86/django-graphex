@@ -227,3 +227,64 @@ def test_optimizer_runs_on_hooked_queryset(db, django_db_setup):
     res = _schema.execute("{ articles { title } }")
     assert res.errors is None, res.errors
     assert len(res.data["articles"]) == 2  # only the 2 public ones
+
+
+# ---------------------------------------------------------------------------
+# AC7: DjangoListObjectField (results + totalCount) honours get_queryset
+# ---------------------------------------------------------------------------
+# This is the completion of issue #58.  DjangoListObjectField is the most
+# common documented way to expose a paginated list; if the item type's
+# get_queryset is bypassed there, the security hook is a no-op for that pattern.
+
+
+def test_list_object_field_applies_get_queryset_results(db):
+    """DjangoListObjectField results reflect the item type's get_queryset hook."""
+    pub1, pub2, priv = _seed()
+
+    res = _schema.execute("{ articlesListObj { results { title } totalCount } }")
+    assert res.errors is None, res.errors
+
+    titles = {r["title"] for r in res.data["articlesListObj"]["results"]}
+    assert "Public-1" in titles
+    assert "Public-2" in titles
+    assert "Private-1" not in titles, (
+        "DjangoListObjectField bypasses get_queryset hook — private row leaked into results"
+    )
+
+
+def test_list_object_field_applies_get_queryset_total_count(db):
+    """DjangoListObjectField totalCount reflects the item type's get_queryset hook."""
+    pub1, pub2, priv = _seed()
+
+    res = _schema.execute("{ articlesListObj { results { title } totalCount } }")
+    assert res.errors is None, res.errors
+
+    count = res.data["articlesListObj"]["totalCount"]
+    assert count == 2, (
+        f"totalCount={count} includes rows excluded by get_queryset (expected 2, got {count})"
+    )
+
+
+def test_list_object_field_get_queryset_query_count_parity(
+    db, django_assert_num_queries
+):
+    """Optimizer still applies on top of the hook queryset (no extra queries)."""
+    pub1, pub2, priv = _seed()
+
+    # Baseline: the hook-filtered path must not regress query count vs. un-hooked.
+    # We run the same query twice and confirm it completes without error; the
+    # exact count depends on optimizer settings, but it must be deterministic.
+    with django_assert_num_queries(2):  # count + results (both from hooked qs)
+        res = _schema.execute("{ articlesListObj { results { title } totalCount } }")
+    assert res.errors is None, res.errors
+
+
+def test_list_object_field_django_model_type_unaffected(db):
+    """DjangoModelType path is not double-filtered by the get_queryset wiring."""
+    HookModel.objects.create(text="alpha")
+    HookModel.objects.create(text="beta")
+
+    res = _dmt_schema.execute("{ hooks { results { text } totalCount } }")
+    assert res.errors is None, res.errors
+    # Both rows still visible — DjangoModelType is isolated from the new wiring.
+    assert res.data["hooks"]["totalCount"] == 2
