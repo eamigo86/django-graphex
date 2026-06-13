@@ -546,3 +546,78 @@ class SafeGroupSendErrorCallbackTest(TestCase):
         assert not unhandled, (
             f"asyncio exception handler called unexpectedly: {unhandled}"
         )
+
+
+# ===========================================================================
+# HIGH-2 (v1.2.1 whole-branch audit) — @center width ceiling (DoS)
+# ===========================================================================
+
+
+class CenterDirectiveWidthDoSGuardTest(TestCase):
+    """HIGH-2: @center(width: 2_000_000_000) must raise GraphQLError, NOT allocate
+    a ~2 GB string.  The fix introduces _CENTER_MAX_WIDTH and rejects any width
+    above that constant before calling str.center().
+    """
+
+    def _resolve(self, value, width, fillchar=None):
+        from django_graphex.directives.string import CenterGraphQLDirective
+
+        args = {"width": width}
+        if fillchar is not None:
+            args["fillchar"] = fillchar
+        return CenterGraphQLDirective.resolve(value, args, None, None, None)
+
+    # ------------------------------------------------------------------
+    # Test 1: max representable Int → GraphQLError (NOT a giant allocation)
+    # ------------------------------------------------------------------
+    def test_max_int_width_raises_graphql_error(self):
+        """width=2_000_000_000 (max safe GraphQL Int) MUST raise GraphQLError, not OOM."""
+        from graphql import GraphQLError
+
+        with pytest.raises(GraphQLError):
+            self._resolve("hello", 2_000_000_000)
+
+    # ------------------------------------------------------------------
+    # Test 2: one over the cap → GraphQLError; one under the cap → works
+    # ------------------------------------------------------------------
+    def test_width_one_over_cap_raises_graphql_error(self):
+        """width = _CENTER_MAX_WIDTH + 1 MUST raise GraphQLError."""
+        from graphql import GraphQLError
+
+        from django_graphex.directives.string import _CENTER_MAX_WIDTH
+
+        with pytest.raises(GraphQLError):
+            self._resolve("x", _CENTER_MAX_WIDTH + 1)
+
+    def test_width_at_cap_is_accepted(self):
+        """width = _CENTER_MAX_WIDTH MUST be accepted (no error)."""
+        from django_graphex.directives.string import _CENTER_MAX_WIDTH
+
+        result = self._resolve("x", _CENTER_MAX_WIDTH)
+        assert isinstance(result, str), (
+            f"Expected a string result at cap width, got {type(result).__name__}"
+        )
+
+    def test_width_one_under_cap_is_accepted(self):
+        """width = _CENTER_MAX_WIDTH - 1 MUST be accepted (no error)."""
+        from django_graphex.directives.string import _CENTER_MAX_WIDTH
+
+        result = self._resolve("hello", _CENTER_MAX_WIDTH - 1)
+        assert isinstance(result, str)
+
+    # ------------------------------------------------------------------
+    # Test 3: normal @center(width: 20) still centers correctly
+    # ------------------------------------------------------------------
+    def test_normal_center_works(self):
+        """@center(width=20) on 'hello' must produce the same result as str.center."""
+        result = self._resolve("hello", 20)
+        assert result == "hello".center(20), (
+            f"@center(width=20) produced {result!r}, expected {'hello'.center(20)!r}"
+        )
+
+    def test_normal_center_with_fillchar(self):
+        """@center(width=15, fillchar='*') on 'Hello World' must match str.center."""
+        result = self._resolve("Hello World", 15, fillchar="*")
+        assert result == "**Hello World**", (
+            f"@center(width=15, fillchar='*') produced {result!r}"
+        )

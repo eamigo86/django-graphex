@@ -28,6 +28,12 @@ if TYPE_CHECKING:
 # memory exhaustion from client-supplied specs like "1000000.5f".
 _NUMBER_FORMAT_MAX_WIDTH = 100
 
+# Maximum allowed width for the @center directive.
+# str.center() accepts any non-negative int — including 2,147,483,647 (the
+# maximum GraphQL Int), which would allocate a ~2 GB string from a single
+# unauthenticated field.  We cap it at a generous but safe value.
+_CENTER_MAX_WIDTH = 10_000
+
 # Maximum digit-string length accepted by _extract_width_precision before
 # calling int().  _NUMBER_FORMAT_MAX_WIDTH is 100 (at most 3 meaningful
 # digits), so any digit run longer than this is unconditionally over the
@@ -631,7 +637,12 @@ class CenterGraphQLDirective(BaseExtraGraphQLDirective):
         width = args.get("width")
         if width is None:
             width = len(value)
-        return value.center(int(width), args.get("fillchar") or " ")
+        int_width = int(width)
+        if int_width > _CENTER_MAX_WIDTH:
+            raise GraphQLError(
+                f"@center width must not exceed {_CENTER_MAX_WIDTH}; got {int_width}"
+            )
+        return value.center(int_width, args.get("fillchar") or " ")
 
 
 class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):
