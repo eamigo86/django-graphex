@@ -2458,6 +2458,10 @@ def _walk_filtered_prefetches(
                     out.append(pf)
                     seen[lookup] = seen.get(lookup, 0) + 1
                     if field.selection_set and sub_gql is not None:  # pragma: no branch
+                        # #57: thread _fmap_cache through window-slice descent so
+                        # _relation_field_map/_concrete_field_map are memoized at
+                        # this level too (previously omitted → fresh get_fields call
+                        # per nested level).
                         _walk_filtered_prefetches(
                             sub_gql,
                             inst.type._meta.model,
@@ -2467,6 +2471,7 @@ def _walk_filtered_prefetches(
                             out,
                             seen,
                             hook_map=hook_map,
+                            _fmap_cache=_fmap_cache,
                         )
                     continue
                 # Window path declined (pre-checks failed) → fall through to plain path.
@@ -2496,6 +2501,9 @@ def _walk_filtered_prefetches(
                     hook_map[lookup] = (gql_type, hook)
 
             if field.selection_set and sub_gql is not None:  # pragma: no branch
+                # #57: thread _fmap_cache through plain nested-list descent so
+                # _relation_field_map/_concrete_field_map are memoized at this
+                # level too (previously omitted → fresh get_fields call per level).
                 _walk_filtered_prefetches(
                     sub_gql,
                     inst.type._meta.model,
@@ -2505,6 +2513,7 @@ def _walk_filtered_prefetches(
                     out,
                     seen,
                     hook_map=hook_map,
+                    _fmap_cache=_fmap_cache,
                 )
             continue
 
