@@ -2292,3 +2292,77 @@ class E2EItem18GateOffAndSafeMode(E2EBaseTest):
         self.assertEqual(qs.model, Author)
         self.assertEqual(len(cm.output), 1)
         self.assertIn("WARNING", cm.output[0])
+
+
+# --------------------------------------------------------------------------- #
+# utils.py:3330-3331 — window count annotation failure degrades gracefully     #
+# --------------------------------------------------------------------------- #
+
+
+class TestWindowCountAnnotationFailureDegradeGracefully(TestCase):
+    """Covers the degrade-gracefully except block in _apply_optimizations
+    (utils.py lines 3330-3331) that swallows annotate() failures for the
+    window-count subquery annotations.
+
+    When base.annotate(**_window_cnt_annotations) raises (e.g. because the DB
+    does not support the subquery form), the optimizer must NOT propagate the
+    error — it must debug-log it and return a usable (un-annotated) queryset.
+    The list_resolver falls back to per-parent count() in that case.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.author = Author.objects.create(name="WCAnnotFail")
+        Post.objects.create(title="WCPost1", author=cls.author)
+        Post.objects.create(title="WCPost2", author=cls.author)
+
+    def test_annotate_failure_is_swallowed_and_logged(self):
+        """When annotate(**_window_cnt_annotations) raises, the optimizer degrades
+        gracefully: the query still returns data and the error is debug-logged.
+
+        Strategy: use the full schema + GraphQL path (which exercises the window
+        prefetch and therefore builds _window_cnt_annotations), and patch
+        QuerySet.annotate so that calls with _gqx_cnt_* keys raise.  The
+        response must still succeed (no hard error) because the except block
+        catches the failure and the un-annotated base queryset is used.
+        """
+        from unittest.mock import patch
+
+        from django.db.models import QuerySet
+
+        from tests.test_optimizer_phase_c import _build_c3_schema
+
+        schema = _build_c3_schema(page_size=5)
+
+        _real_annotate = QuerySet.annotate
+
+        def _patched_annotate(self, *args, **kwargs):
+            # Raise only when the window-count annotations are being applied.
+            if any(k.startswith("_gqx_cnt_") for k in kwargs):
+                raise RuntimeError("simulated annotate failure for _gqx_cnt_ keys")
+            return _real_annotate(self, *args, **kwargs)
+
+        query = (
+            '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") '
+            "{ id title } totalCount } } } }"
+        )
+
+        with (
+            patch.object(QuerySet, "annotate", _patched_annotate),
+            self.assertLogs("django_graphex.utils", level="DEBUG") as log_cm,
+        ):
+            result = schema.execute(query)
+
+        # The query must NOT produce a hard error (degrade-gracefully).
+        self.assertIsNone(
+            result.errors,
+            f"Annotate failure must NOT propagate as a GraphQL error: {result.errors}",
+        )
+
+        # The debug log message must mention the annotation failure.
+        debug_messages = " ".join(log_cm.output)
+        self.assertIn(
+            "Window count annotation failed",
+            debug_messages,
+            "The degrade-gracefully path must emit a debug log message",
+        )
