@@ -42,6 +42,7 @@ from .types import (
     DjangoObjectType,
     DjangoUnionType,
 )
+from .uploads import Base64FileInput, decode_base64_file
 from .validation import DepthLimitValidationRule
 from .views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
 
@@ -83,6 +84,9 @@ __all__ = (
     "DjangoObjectField",
     # MUTATIONS
     "DjangoModelMutation",
+    # FILE UPLOADS (opt-in — also importable from django_graphex.uploads)
+    "Base64FileInput",
+    "decode_base64_file",
     # PAGINATION
     "LimitOffsetGraphqlPagination",
     "PageGraphqlPagination",

@@ -42,6 +42,10 @@ DJANGO_GRAPHEX = {
 
     # --- Filtering --------------------------------------------------------- #
     "COMMON_FILTER_LOOKUPS": ("exact", "in", "isnull"),
+
+    # --- File uploads (opt-in — Base64FileInput) --------------------------- #
+    "MAX_UPLOAD_SIZE": None,        # Required when Base64FileInput is used
+    "MAX_REQUEST_BODY_SIZE": None,  # Body-size guard (primary memory cap)
 }
 ```
 
@@ -172,6 +176,29 @@ See [Query Optimization](query-optimization.md) and [Security](security.md) for 
 | Setting | Default | Description |
 |---|---|---|
 | `COMMON_FILTER_LOOKUPS` | `("exact", "in", "isnull")` | The **common base** lookup set every field receives when `Meta.filter_fields` declares it in **list form**. Text fields additionally get `icontains` / `istartswith`, and ordered (number/date/datetime) fields `gt` / `gte` / `lt` / `lte` / `range`. Dict-form declarations are explicit and ignore this. See [Filtering](filtering.md). |
+
+## File uploads
+
+These settings apply to `Base64FileInput` — an opt-in input type for sending files as base64 strings inside the GraphQL body. See [Mutations → File Upload Support](mutations.md#file-upload-support).
+
+| Setting | Default | Description |
+|---|---|---|
+| `MAX_UPLOAD_SIZE` | `None` | Maximum **decoded** size (bytes) of a single `Base64FileInput` field. **Required** when `Base64FileInput` is used — raises `ImproperlyConfigured` at call time when absent and no per-field `max_size` override is given. A per-field `max_size` kwarg on `.to_uploaded_file()` or `decode_base64_file()` overrides this global cap for that specific call. Example: `5 * 1024 * 1024` (5 MB). |
+| `MAX_REQUEST_BODY_SIZE` | `None` | Maximum total HTTP request **body length** (bytes), checked in `BaseGraphQLView.dispatch` **before** JSON parsing. This is the primary memory-safety cap: the entire base64 string is already in the HTTP body before any resolver runs, so rejecting here prevents full-body allocation above the threshold. The per-field decoded-size pre-check in `decode_base64_file` is a secondary guard that saves the decode allocation for payloads that slip past (e.g. when this setting is unset). Requests that exceed the limit receive **HTTP 413**. `None` = disabled (not recommended for public-facing endpoints). Example: `20 * 1024 * 1024` (20 MB). |
+
+### Choosing values
+
+A 5 MB file uploaded as base64 occupies roughly 6.7 MB in the JSON body (base64 overhead ≈ 4/3). A safe rule of thumb:
+
+```
+MAX_REQUEST_BODY_SIZE ≥ ceil(MAX_UPLOAD_SIZE × 4/3) × max_files_per_request + json_overhead
+```
+
+For a single-file upload with a 5 MB cap and 100 KB of JSON overhead:
+```python
+MAX_UPLOAD_SIZE = 5 * 1024 * 1024          # 5 MB decoded
+MAX_REQUEST_BODY_SIZE = 20 * 1024 * 1024   # 20 MB body (comfortable margin)
+```
 
 ## How settings are read
 

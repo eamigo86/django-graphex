@@ -739,3 +739,161 @@ authoritative reference:
     ```
 
 The mutation system in `django-graphex` provides a robust foundation for handling data modifications in your GraphQL API, with built-in validation, error handling, and support for complex operations.
+
+---
+
+## File Upload Support
+
+### Base64FileInput
+
+`django-graphex` ships an **opt-in** `Base64FileInput` for sending files through the GraphQL body as base64-encoded strings. Import it explicitly — it is not wired into `DjangoModelMutation` automatically.
+
+```python
+from django_graphex import Base64FileInput           # or:
+from django_graphex.uploads import Base64FileInput, decode_base64_file
+```
+
+#### Shape
+
+```graphql
+input Base64FileInput {
+  filename: String!           # Original filename (stored / used as the key by FileField)
+  data: String!               # Base64-encoded file content
+  contentType: String         # MIME type — defaults to "application/octet-stream"
+}
+```
+
+#### Resolver usage
+
+```python
+import graphene
+from django_graphex import Base64FileInput
+
+class UploadAvatarMutation(graphene.Mutation):
+    class Arguments:
+        avatar = Base64FileInput(required=True)
+
+    ok = graphene.Boolean()
+
+    def mutate(self, info, avatar):
+        # avatar.to_uploaded_file() → Django SimpleUploadedFile
+        # Pass max_size to override the global MAX_UPLOAD_SIZE for this field:
+        uploaded = avatar.to_uploaded_file(max_size=512 * 1024)  # 512 KB cap
+        profile.avatar.save(uploaded.name, uploaded, save=True)
+        return UploadAvatarMutation(ok=True)
+```
+
+The value received by the resolver (the `avatar` argument) is a dict-like container with `.filename`, `.data`, `.content_type` attributes **and** a `.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
+
+You can also call the module-level helper directly if you hold the raw dict:
+
+```python
+from django_graphex.uploads import decode_base64_file
+
+uploaded = decode_base64_file(
+    {"filename": "report.pdf", "data": b64_string, "content_type": "application/pdf"},
+    max_size=10 * 1024 * 1024,  # 10 MB override
+)
+```
+
+#### GraphQL client example
+
+```graphql
+mutation UploadAvatar($file: Base64FileInput!) {
+  uploadAvatar(avatar: $file) { ok }
+}
+```
+
+Variables:
+```json
+{
+  "file": {
+    "filename": "photo.png",
+    "contentType": "image/png",
+    "data": "<base64 string>"
+  }
+}
+```
+
+### Settings
+
+Add both settings to your `DJANGO_GRAPHEX` dict in `settings.py`:
+
+```python
+DJANGO_GRAPHEX = {
+    # Required when Base64FileInput is used — raises ImproperlyConfigured if
+    # absent and no per-field override is given.
+    "MAX_UPLOAD_SIZE": 5 * 1024 * 1024,    # 5 MB per decoded file
+
+    # Primary memory cap: the full JSON body is rejected BEFORE parsing when
+    # this limit is exceeded. None = disabled (not recommended for public APIs).
+    # Rule of thumb: ≥ base64_overhead × MAX_UPLOAD_SIZE × expected_files_per_request
+    # (base64 encodes 3 bytes as 4 ASCII chars → overhead ≈ 4/3)
+    "MAX_REQUEST_BODY_SIZE": 20 * 1024 * 1024,  # 20 MB total body
+}
+```
+
+#### Per-field override
+
+Pass `max_size` to `.to_uploaded_file()` or `decode_base64_file()` to use a tighter (or looser) cap for a specific field:
+
+```python
+avatar.to_uploaded_file(max_size=512 * 1024)         # 512 KB — tight avatar cap
+document.to_uploaded_file(max_size=50 * 1024 * 1024) # 50 MB — loose document cap
+```
+
+Per-field `max_size` overrides the global `MAX_UPLOAD_SIZE` for that call only.
+
+### Memory-safety architecture
+
+> **Why two settings?**
+
+The base64 payload lives inside the JSON body. By the time any field resolver sees it, the entire body is already in RAM. The guards compose as follows:
+
+| Guard | Where it fires | What it saves |
+|---|---|---|
+| `MAX_REQUEST_BODY_SIZE` | `dispatch()` — BEFORE JSON parse | The entire body allocation |
+| Per-field decoded-size pre-check | Inside `decode_base64_file` — BEFORE `base64.decode` | The decoded-bytes allocation |
+
+**Peak memory** ≈ `body_size + MAX_UPLOAD_SIZE`.
+
+For batch requests, `MAX_BATCH_SIZE` (op count) + `MAX_REQUEST_BODY_SIZE` (bytes) compose naturally: operations execute sequentially so peak decoded memory is bounded by one file's size, not the whole batch.
+
+### Error handling
+
+| Condition | Result |
+|---|---|
+| Body exceeds `MAX_REQUEST_BODY_SIZE` | HTTP 413 (before parsing) |
+| Estimated decoded size > effective cap | `GraphQLError` (before decode) |
+| Invalid / malformed base64 | `GraphQLError` (never HTTP 500) |
+| `MAX_UPLOAD_SIZE` unset + no per-field override | `ImproperlyConfigured` at call time |
+
+### Content validation
+
+Magic-byte / MIME-type sniffing is **out of scope**. Use Django's `FileField` validators (e.g. `FileExtensionValidator`) or a custom model validator for content-type enforcement — that is the correct layer.
+
+### Query cost
+
+Input payload size is **not** accounted for in query-cost analysis (the `MAX_QUERY_COST` setting). The body-size guard (`MAX_REQUEST_BODY_SIZE`) is the canonical byte-level cap.
+
+### Response caching
+
+Upload mutations are not cached. The response-cache layer already skips `mutation` operations — no special configuration needed.
+
+### Batch uploads
+
+For batch requests:
+
+- `MAX_REQUEST_BODY_SIZE` caps the total body of all operations combined.
+- Per-field decoded-size pre-checks fire inside each operation's resolver.
+- No special upload-batch rejection: rely on `MAX_BATCH_SIZE` (op count) + `MAX_REQUEST_BODY_SIZE` (bytes).
+
+### REST side-channel alternative
+
+For gateway-constrained environments (e.g. an API gateway with a 10 MB payload limit), the recommended alternative is a **REST side-channel**:
+
+1. Upload the file directly to a presigned URL (S3, GCS, Azure Blob) or a separate `POST /upload/` endpoint.
+2. Receive a file key or public URL in response.
+3. Pass that reference as a plain `String` field in the GraphQL mutation.
+
+This avoids base64 overhead (≈33% size increase) entirely and scales naturally with file size.

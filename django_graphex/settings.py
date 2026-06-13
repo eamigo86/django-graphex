@@ -97,6 +97,26 @@ DEFAULTS = {
     # that raises FieldError at SQL-eval time (outside the build boundary). Set
     # this False to disable injection entirely without a code change.
     "OPTIMIZE_ANNOTATED_FIELDS": True,
+    # ---------------------------------------------------------------------------
+    # File uploads (Base64FileInput — opt-in, import from django_graphex.uploads)
+    # ---------------------------------------------------------------------------
+    # Maximum decoded size (bytes) of a single base64 upload. REQUIRED when
+    # Base64FileInput is used; raises ImproperlyConfigured if unset and no
+    # per-field override is given. A per-field max_size= kwarg on
+    # to_uploaded_file() / decode_base64_file() overrides this global cap.
+    # Example: 5 * 1024 * 1024  →  5 MB
+    "MAX_UPLOAD_SIZE": None,
+    # Maximum total HTTP request body length (bytes) enforced by
+    # BaseGraphQLView.dispatch BEFORE the JSON body is parsed. This is the
+    # primary memory-safety cap: the base64 string is already in RAM once the
+    # JSON body is parsed, so this guard prevents it from ever loading beyond
+    # the threshold. None disables the guard (not recommended for public APIs).
+    # The per-field decoded-size pre-check in decode_base64_file() is a
+    # secondary guard that saves the decode allocation. Both guards compose:
+    # peak memory ≈ body_size + MAX_UPLOAD_SIZE (batch runs sequentially).
+    # For batch requests, this cap applies to the total body of all operations.
+    # Example: 20 * 1024 * 1024  →  20 MB total body
+    "MAX_REQUEST_BODY_SIZE": None,
 }
 
 

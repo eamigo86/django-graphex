@@ -247,7 +247,18 @@ class BaseGraphQLView(View):
 
     @method_decorator(ensure_csrf_cookie)
     def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
-        """Handle a GraphQL GET/POST request (and GraphiQL/batch)."""
+        """Handle a GraphQL GET/POST request (and GraphiQL/batch).
+
+        Body-size guard
+        ---------------
+        When ``MAX_REQUEST_BODY_SIZE`` is configured (not ``None``) and the
+        request body length exceeds the limit, the request is rejected with
+        HTTP 413 (Content Too Large) **before** the JSON body is parsed.
+        This is the primary memory-safety cap for base64 file uploads: the
+        entire base64 payload sits in the JSON body, so rejecting before
+        ``parse_body`` prevents it from ever being allocated.  The per-field
+        decoded-size pre-check in ``decode_base64_file`` is a secondary guard.
+        """
         try:
             if request.method.lower() not in ("get", "post"):
                 raise HttpError(
@@ -255,6 +266,30 @@ class BaseGraphQLView(View):
                         ["GET", "POST"], "GraphQL only supports GET and POST requests."
                     )
                 )
+
+            # Body-size guard: reject before JSON parsing when
+            # MAX_REQUEST_BODY_SIZE is configured and the body exceeds it.
+            max_body = graphql_api_settings.MAX_REQUEST_BODY_SIZE
+            if max_body is not None and request.method.lower() == "post":
+                # Use Content-Length header first (O(1), no body read needed).
+                # Fall back to len(request.body) when the header is absent.
+                content_length_str = request.META.get("CONTENT_LENGTH", "")
+                try:
+                    content_length = int(content_length_str)
+                except (ValueError, TypeError):
+                    content_length = len(request.body)
+                if content_length > max_body:
+                    from django.http import HttpResponse as _HR
+
+                    err_response = _HR(status=413)
+                    raise HttpError(
+                        err_response,
+                        message=(
+                            f"Request body ({content_length} bytes) exceeds the "
+                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                            "Split the request or increase the limit."
+                        ),
+                    )
 
             data = self.parse_body(request)
             show_graphiql = self.graphiql and self.can_display_graphiql(request, data)
