@@ -593,7 +593,15 @@ class GraphQLView(BaseGraphQLView):
 
     @staticmethod
     def fetch_cache_key(request: HttpRequest) -> str:
-        """Return a hashed cache key built from the request body.
+        """Return a hashed cache key built from the request body and GET params.
+
+        For POST requests the GraphQL payload lives in ``request.body``, which
+        is hashed directly.  For GET requests ``request.body`` is always
+        ``b''``, so the query, variables, and operationName query-string
+        parameters are incorporated into the hash instead.  Without this,
+        every distinct GET query for the same identity would produce
+        sha256(b'') and share a single cache slot — causing a different
+        query's cached response to be returned.
 
         Subclasses may override this staticmethod to derive the body hash
         differently (e.g. normalising whitespace or extracting the operation
@@ -603,6 +611,15 @@ class GraphQLView(BaseGraphQLView):
         """
         m = hashlib.sha256()
         m.update(request.body)
+        # For GET requests, request.body is b'' — incorporate the GraphQL
+        # query-string parameters so different GET queries get distinct keys.
+        get_query = request.GET.get("query") or ""
+        get_variables = request.GET.get("variables") or ""
+        get_operation = request.GET.get("operationName") or ""
+        if get_query or get_variables or get_operation:
+            m.update(get_query.encode())
+            m.update(get_variables.encode())
+            m.update(get_operation.encode())
 
         return m.hexdigest()
 
