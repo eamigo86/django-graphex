@@ -107,7 +107,9 @@ class FieldMapMemoizationTest(TestCase):
         cache: dict = {}
         result1 = _relation_field_map(Post, _cache=cache)
         result2 = _relation_field_map(Post, _cache=cache)
-        self.assertIs(result1, result2, "_relation_field_map must return the cached object")
+        self.assertIs(
+            result1, result2, "_relation_field_map must return the cached object"
+        )
         self.assertEqual(set(result1.keys()), set(result2.keys()))
 
     def test_concrete_field_map_returns_same_object_with_cache(self):
@@ -115,7 +117,9 @@ class FieldMapMemoizationTest(TestCase):
         cache: dict = {}
         result1 = _concrete_field_map(Post, _cache=cache)
         result2 = _concrete_field_map(Post, _cache=cache)
-        self.assertIs(result1, result2, "_concrete_field_map must return the cached object")
+        self.assertIs(
+            result1, result2, "_concrete_field_map must return the cached object"
+        )
         self.assertEqual(set(result1.keys()), set(result2.keys()))
 
     @pytest.mark.django_db
