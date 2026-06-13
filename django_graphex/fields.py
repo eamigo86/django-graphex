@@ -19,6 +19,7 @@ from django_graphex.filtering.backend import resolve_filter_backend
 from django_graphex.settings import graphql_api_settings
 
 from .base_types import DjangoListObjectBase
+from .filtering.filter_field import apply_custom_filters
 from .paginations.pagination import BaseDjangoGraphqlPagination
 from .utils import (
     _apply_field_hook,
@@ -211,6 +212,9 @@ def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
     ``filter_fields`` via the native filter backend and stores both the backend
     and the input type on the field for the resolver to use.
 
+    Also picks up ``@filter_field``-decorated methods from the type and injects
+    them as scalar arguments in the filter input type.
+
     Args:
         field: The list field being configured.
         _type: The GraphQL object/list type carrying the model + filter config.
@@ -222,9 +226,22 @@ def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
 
     declared_fields = fields if fields is not None else _type._meta.filter_fields
     field.fields = declared_fields
-    if declared_fields:
+
+    # Pick up custom @filter_field methods registered on the type or its baseType
+    # (DjangoListObjectType wraps a DjangoObjectType as its baseType).
+    custom_filters = getattr(_type, "_dgx_custom_filters", None)
+    if custom_filters is None:
+        base_type = getattr(getattr(_type, "_meta", None), "baseType", None)
+        custom_filters = getattr(base_type, "_dgx_custom_filters", None) or []
+    field.custom_filters = custom_filters
+
+    if declared_fields or custom_filters:
+        registry = getattr(getattr(_type, "_meta", None), "registry", None)
         field.filter_type = field.filter_backend.build_input_type(
-            _type._meta.model, declared_fields, _type._meta.registry
+            _type._meta.model,
+            declared_fields,
+            registry,
+            custom_filters=custom_filters,
         )
 
 
@@ -274,6 +291,7 @@ class DjangoFilterListField(Field):
     def list_resolver(
         manager: Manager,
         filter_backend: Any,
+        custom_filters: list,
         output_type: Any,
         root: Any,
         info: ResolveInfo,
@@ -281,9 +299,16 @@ class DjangoFilterListField(Field):
     ) -> Any:
         """Resolve a filtered list of objects.
 
+        Composition order: standard ORM lookups (via ``filter_backend``) →
+        custom ``@filter_field`` methods (``custom_filters``, in declaration
+        order). The ``get_queryset`` hook fires inside ``queryset_factory``
+        before both filter stages.
+
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
+            custom_filters: list of ``(arg_name, method, metadata)`` triples
+                from ``@filter_field``-decorated methods on the output type.
             output_type: the ``DjangoObjectType`` subclass for this field,
                 forwarded to ``queryset_factory`` so its ``get_queryset`` hook
                 is applied before the optimizer runs.
@@ -308,6 +333,7 @@ class DjangoFilterListField(Field):
                     f"{getattr(field, 'related_name', None) or field.name}.all"
                 )(root)()
                 qs = filter_backend.apply(qs, filter_value)
+                qs = apply_custom_filters(qs, custom_filters, info, filter_value)
             except AttributeError:
                 qs = None
 
@@ -316,6 +342,7 @@ class DjangoFilterListField(Field):
                 manager, root, info, output_type=output_type, **kwargs
             )
             qs = filter_backend.apply(qs, filter_value)
+            qs = apply_custom_filters(qs, custom_filters, info, filter_value)
 
             if root and is_valid_django_model(root._meta.model):
                 extra_filters = get_extra_filters(root, manager.model)
@@ -327,9 +354,10 @@ class DjangoFilterListField(Field):
         """Honor a custom "resolver" if given, else the built-in list resolver.
 
         When using the built-in ``list_resolver``, the resolver receives
-        ``(manager, filter_backend, output_type, root, info, **kwargs)`` so
-        the ``DjangoObjectType.get_queryset`` hook can be applied inside
-        ``queryset_factory``.
+        ``(manager, filter_backend, custom_filters, output_type, root, info, **kwargs)``
+        so the ``DjangoObjectType.get_queryset`` hook can be applied inside
+        ``queryset_factory`` and ``@filter_field`` methods run after standard
+        lookups.
 
         When a custom resolver is provided, only ``(manager, filter_backend)``
         are bound — the caller owns its own signature.
@@ -350,11 +378,13 @@ class DjangoFilterListField(Field):
                 current_type._meta.model._default_manager,
                 self.filter_backend,
             )
-        # Built-in resolver: bind (manager, filter_backend, output_type).
+        custom_filters = getattr(self, "custom_filters", None) or []
+        # Built-in resolver: bind (manager, filter_backend, custom_filters, output_type).
         return partial(
             self.list_resolver,
             current_type._meta.model._default_manager,
             self.filter_backend,
+            custom_filters,
             current_type,
         )
 
@@ -448,6 +478,9 @@ class DjangoFilterPaginateListField(Field):
     ) -> Any:
         """Resolve a filtered and paginated list of objects.
 
+        Composition order: standard ORM lookups (via ``filter_backend``) →
+        custom ``@filter_field`` methods (from ``self.custom_filters``).
+
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
@@ -458,8 +491,13 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The filtered and paginated queryset of model instances.
         """
+        filter_value = kwargs.get("filter")
         qs = self.get_queryset(manager, root, info, **kwargs)
-        qs = filter_backend.apply(qs, kwargs.get("filter"))
+        qs = filter_backend.apply(qs, filter_value)
+
+        # Apply custom @filter_field methods in declaration order.
+        custom_filters = getattr(self, "custom_filters", None) or []
+        qs = apply_custom_filters(qs, custom_filters, info, filter_value)
 
         if root and is_valid_django_model(root._meta.model):
             extra_filters = get_extra_filters(root, manager.model)
@@ -557,8 +595,14 @@ class DjangoListObjectField(Field):
         Returns:
             A list object holding the total count and result queryset.
         """
+        filter_value = kwargs.get("filter")
         qs = queryset_factory(manager, root, info, output_type=output_type, **kwargs)
-        qs = filter_backend.apply(qs, kwargs.get("filter"))
+        qs = filter_backend.apply(qs, filter_value)
+
+        # Apply custom @filter_field methods in declaration order.
+        custom_filters = getattr(self, "custom_filters", None) or []
+        qs = apply_custom_filters(qs, custom_filters, info, filter_value)
+
         count = qs.count()
 
         return DjangoListObjectBase(

@@ -29,6 +29,7 @@ class FilterBackend:
         model: type[Model],
         filter_fields: Any,
         registry: Registry | None = None,
+        custom_filters: list | None = None,
     ) -> Any:
         """Return the GraphQL input type for a model's filter declaration.
 
@@ -36,6 +37,8 @@ class FilterBackend:
             model: The Django model to build a filter input for.
             filter_fields: The ``Meta.filter_fields`` declaration.
             registry: The registry providing related types and choices enums.
+            custom_filters: Optional list of ``(arg_name, method, metadata)``
+                triples from ``@filter_field``-decorated methods.
 
         Returns:
             A graphene ``InputObjectType`` subclass, or ``None`` when no
@@ -65,6 +68,7 @@ class NativeFilterBackend(FilterBackend):
         model: type[Model],
         filter_fields: Any,
         registry: Registry | None = None,
+        custom_filters: list | None = None,
     ) -> Any:
         """Build the recursive ``<Model>FilterInput`` type (memoized).
 
@@ -72,12 +76,14 @@ class NativeFilterBackend(FilterBackend):
             model: The Django model to build a filter input for.
             filter_fields: The ``Meta.filter_fields`` declaration.
             registry: The registry providing related types and choices enums.
+            custom_filters: Optional list of ``(arg_name, method, metadata)``
+                triples from ``@filter_field``-decorated methods.
 
         Returns:
             A graphene ``InputObjectType`` subclass, or ``None`` when no
             filterable fields are declared.
         """
-        return build_filter_input_type(model, filter_fields, registry)
+        return build_filter_input_type(model, filter_fields, registry, custom_filters=custom_filters)
 
     def apply(self, queryset: QuerySet, value: Any) -> QuerySet:
         """Filter ``queryset`` with the ``Q`` translated from ``value``.

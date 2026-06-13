@@ -6,6 +6,9 @@ field declared (directly or via a ``__`` relation path) yields either a nested
 ``and`` / ``or`` / ``not`` keys are added to every input referencing itself; as
 those names are Python keywords the class is built dynamically with a string-keyed
 namespace.
+
+Custom filters declared via ``@filter_field`` are injected as plain scalar
+arguments (not nested lookups) at the end of the input type's namespace.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import graphene
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db import models
 from graphene.utils.str_converters import to_camel_case
 
@@ -115,21 +118,35 @@ def _choices_enum(field: models.Field, registry: Registry) -> Any:
 def _normalize_filter_fields(filter_fields: Any) -> dict[str, tuple[str, ...] | None]:
     """Normalize a ``filter_fields`` declaration to ``{path: lookups | None}``.
 
+    A ``None`` value in the result means "use the default lookup set for the
+    field's type" and only ever appears when the list form is used (where the
+    caller did not specify explicit lookups).
+
     Args:
         filter_fields: A list of field paths, or a ``{path: lookups}`` dict.
 
     Returns:
         A mapping of field path to an explicit lookup tuple, or ``None`` when
         the default lookup set should apply (list form).
+
+    Raises:
+        ImproperlyConfigured: When a dict value is explicitly ``None``.
+            Previously this crashed with ``TypeError: 'NoneType' is not iterable``.
+            The correct way to declare custom per-field filters is via the
+            ``@filter_field`` decorator.
     """
     result: dict[str, tuple[str, ...] | None] = {}
     if isinstance(filter_fields, dict):
         for path, lookups in filter_fields.items():
-            # A None value means "use default lookups" — same semantics as the
-            # list form.  Calling tuple(None) would raise TypeError, so we
-            # preserve None explicitly.
-            result[path] = None if lookups is None else tuple(lookups)
+            if lookups is None:
+                raise ImproperlyConfigured(
+                    f"filter_fields[{path!r}] is None. "
+                    "Use the @filter_field decorator to declare custom per-field "
+                    "filters instead of a None sentinel in filter_fields."
+                )
+            result[path] = tuple(lookups)
     else:
+        # List form: None means "use defaults" for the downstream helpers.
         for path in filter_fields or ():
             result[path] = None
     return result
@@ -217,6 +234,7 @@ def build_filter_input_type(
     model: type[models.Model],
     filter_fields: Any,
     registry: Registry | None = None,
+    custom_filters: list | None = None,
 ) -> Any:
     """Build (or reuse) the recursive ``<Model>FilterInput`` input type.
 
@@ -225,21 +243,30 @@ def build_filter_input_type(
         filter_fields: The ``Meta.filter_fields`` declaration (list or dict).
         registry: The registry providing choices enums and related types;
             defaults to the global registry.
+        custom_filters: Optional list of ``(arg_name, method, metadata)``
+            triples from ``@filter_field``-decorated methods. Each is added as
+            a plain scalar argument to the filter input type.
 
     Returns:
         A graphene ``InputObjectType`` subclass, or ``None`` when no filterable
-        fields were declared.
+        fields were declared (and no custom filters provided).
     """
-    if not filter_fields:
+    if not filter_fields and not custom_filters:
         return None
 
     if registry is None:
         registry = get_global_registry()
 
-    normalized = _normalize_filter_fields(filter_fields)
+    normalized = _normalize_filter_fields(filter_fields) if filter_fields else {}
+
+    # Build a stable cache key that includes custom filter names + types.
+    custom_key = tuple(
+        (name, meta.get("graphene_type")) for name, _fn, meta in (custom_filters or [])
+    )
     cache_key = (
         model,
         frozenset((path, lookups) for path, lookups in normalized.items()),
+        custom_key,
     )
     cached = _INPUT_CACHE.get(cache_key)
     if cached is not None:
@@ -290,6 +317,12 @@ def build_filter_input_type(
         if related is None:
             continue
         namespace[head] = _pk_lookups_input_type(model, head, related, lookups)()
+
+    # Inject custom @filter_field arguments as plain scalar InputFields.
+    for arg_name, _fn, meta in (custom_filters or []):
+        gql_type = meta.get("graphene_type", graphene.String)
+        description = meta.get("description")
+        namespace[arg_name] = graphene.InputField(gql_type, description=description)
 
     name = to_camel_case(f"{model._meta.object_name}_FilterInput")
     # `and` / `or` / `not` are Python keywords -> build with a string-keyed
