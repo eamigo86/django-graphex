@@ -466,7 +466,9 @@ class CreateCategory(graphene.Mutation):
         try:
             category = Category.objects.create(name=data.name)
         except IntegrityError:
-            return CreateCategory(ok=False, category=None, error=f"Category '{data.name}' already exists.")
+            return CreateCategory(
+                ok=False, category=None, error=f"Category '{data.name}' already exists."
+            )
         return CreateCategory(ok=True, category=category)
 
 
