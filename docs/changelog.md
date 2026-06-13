@@ -12,6 +12,114 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 1.2.2 — 2026-06-13
+
+### Security
+
+- **`DjangoObjectType.get_queryset` now actually applied on object, list, paginated,
+  and list-object fields** — The hook was documented but never invoked on those field
+  types, making every override a silent no-op. It is now called for
+  `DjangoObjectField`, `DjangoFilterListField`, `DjangoFilterPaginateListField`, and
+  `DjangoListObjectField` (results + totalCount). (#58)
+- **Pagination `ordering` validated against exposed columns** — Client-supplied
+  `ordering` values are now checked against the field's declared column list before
+  they reach the ORM. An unknown field name can no longer trigger a `FieldError` that
+  discloses the model's full field list, nor a relation-traversal `JOIN` that enables
+  a DoS via index-missing foreign keys. (#59)
+- **Response cache skips cookie-bearing and multipart requests** — The
+  `CACHE_ACTIVE` cache no longer stores responses to requests that carry cookies or
+  are `multipart/form-data`. Previously such responses could be replayed to unrelated
+  clients (CSRF-cookie replay) or cause a 500 on multipart uploads. (#53)
+
+### Fixed
+
+- **Directives and pagination raise `GraphQLError` instead of HTTP 500 on bad client
+  input** — `@base64`, `@currency`, `@floor`, `@ceil`, `@round`, `@abs`, `@center`,
+  and negative-offset pagination now return a structured `GraphQLError` for invalid
+  arguments rather than an unhandled exception that propagates as HTTP 500. (#50)
+- **Nested-write integrity** — M2M writes with a bad primary key now return a
+  structured error instead of crashing; the reverse-FK ownership guard prevents
+  cross-owner row "stealing"; to-one fields that receive a list are rejected at
+  input validation; `pk=0` upsert correctly routes to the update path; enum values
+  inside a list input are properly unwrapped before persistence. (#62, #51)
+- **Subscriptions run `authorize`/`scope` and registry I/O via `sync_to_async`** —
+  Resolves `SynchronousOnlyOperation` errors that appeared when authenticated
+  subscriptions called ORM-backed permission or scope logic from an async context.
+  The `disconnect` handler is also now safe to call without a prior `connect`. (#61)
+- **Subscription broadcasts fire on transaction commit** — Notifications are now
+  deferred to `transaction.on_commit` rather than being sent at `save()` time. Rows
+  inserted in a rolled-back transaction no longer emit phantom notifications to
+  subscribers. (#63)
+- **Enum registry keyed by model class** — The enum registry now uses the model
+  class as the key, preventing collisions between apps that define a model with the
+  same name. Self-referential `OneToOneField` relations are no longer silently
+  dropped during schema construction. (#52)
+- **`Meta`-option hygiene** — Unknown or mistyped `Meta` options (e.g.
+  `filter_Filed` instead of `filter_fields`) now raise `ImproperlyConfigured`
+  instead of being silently ignored. `include_fields` is honored on input and list
+  types; an `id`-excluded `only_fields` no longer breaks the update mutation;
+  `DjangoListObjectType.Meta.queryset` is now consumed as the base queryset. (#65)
+- **Cache version counter uses `transaction.on_commit`** — The version-bump that
+  invalidates a user's cache is now deferred to commit, closing the pre-commit stale
+  window. Non-expiring version keys no longer resurrect after a cache flush; a cold
+  key correctly heals to `1` rather than `0`. (#60)
+
+### Performance
+
+- **Empty window-sliced nested pages skip per-parent `COUNT`** — When a
+  window-sliced nested list returns zero rows for a parent, no additional `COUNT`
+  query is issued for that parent. (#64)
+- **Request-scoped field-map cache threaded through filtered-prefetch descent and
+  `.only()`-narrowing pass** — The per-request `_cache` dict is now correctly
+  propagated through the filtered-prefetch and column-narrowing code paths,
+  preventing redundant `_meta.get_fields()` calls on queries with nested filtering
+  or `.only()` projections. (#57, #66)
+
+### Packaging / Docs
+
+- **`all_directives` static type matches runtime instances** — The type annotation
+  was broadened to match the actual runtime list of directive instances returned by
+  the function. (#66)
+- **Install "verify" snippet works on a clean install** — `docs/installation.md`
+  now uses `importlib.metadata.version('django-graphex')` (no `django.setup()`
+  required) and carries an accurate Python × Django compatibility statement.
+  Development Status classifier set to "5 - Production/Stable". (#67)
+- **README and migration link fixes** — Migration guide URL corrected from
+  `.../migration.html` to `.../migration/`; stale `#18` tracking links removed from
+  `docs/usage/mutations.md`. mypy dev dependency pinned to `>=2.1,<3` to match CI;
+  `daphne` upper bound `<5.0` restored in tox test environments;
+  `filter_fields={"field": None}` no longer raises at schema build. (#55)
+
+### Behavior changes
+
+!!! warning "Review before upgrading"
+
+    Review each item below before upgrading. Items marked **action required** need
+    a one-time change in your project.
+
+- **Subscription broadcasts now deliver on COMMIT, not at `save()` time** —
+  Downstream tests that use `@pytest.mark.django_db` (non-transactional) will not
+  observe broadcasts unless the test database wraps the write in a real transaction.
+  **Action required for test authors**: switch to
+  `@pytest.mark.django_db(transaction=True)` in any test that asserts on
+  subscription notifications. (#63)
+- **Response cache stores a `(body, status, content_type)` tuple, not a raw
+  `HttpResponse`** — Deployments that introspect or inject into the response cache
+  directly (e.g. custom cache backends that serialise the value) must account for
+  the new tuple shape. Cookie-bearing and multipart requests are never cached. (#53)
+- **Unknown `Meta` options now raise `ImproperlyConfigured`** — A previously
+  silent typo (e.g. `filter_Filed`) will now surface at server startup rather than
+  being ignored. This surfaces real bugs; review your `DjangoObjectType` and
+  `DjangoListObjectType` subclasses for typos before upgrading. (#65)
+- **`DjangoObjectType.get_queryset` is now actually invoked** — Any
+  `get_queryset` override that was previously dormant (documented as active but
+  never called on list/paginated/list-object fields) will now execute on every
+  relevant query. **Action required**: review your `get_queryset` overrides to
+  confirm they are safe to apply globally on those field types, then upgrade. (#58)
+- **mypy dev dependency moved to `>=2.1,<3`** — Projects that pin mypy via the
+  `django-graphex` dev extras should update their own mypy constraint accordingly.
+  (#55)
+
 ## 1.2.1 — 2026-06-12
 
 ### Security
