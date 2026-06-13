@@ -296,8 +296,14 @@ class NestedFieldsMixin:
         item = cls._unwrap_enums(dict(item))
         child_backend = backend_for_nested(child_spec)
         model = child_backend.get_model()
-        pk = item.get(model._meta.pk.name) or item.get("id")
-        instance = get_Object_or_None(model, pk=pk) if pk else None
+        # Use explicit None checks so that a falsy-but-valid pk (e.g. 0 or "")
+        # is recognised as a present key and triggers an UPDATE instead of a
+        # CREATE.  The old `or` / `if pk` guards collapsed pk=0 to None.
+        pk_name = model._meta.pk.name
+        pk = item.get(pk_name)
+        if pk is None:
+            pk = item.get("id")
+        instance = get_Object_or_None(model, pk=pk) if pk is not None else None
 
         ok, result = child_backend.save_object(
             cls,
@@ -314,7 +320,13 @@ class NestedFieldsMixin:
 
     @staticmethod
     def _unwrap_enums(item: dict[str, Any]) -> dict[str, Any]:
-        """Replace graphene Enum members in a payload with their values.
+        """Replace graphene Enum members in a payload with their raw values.
+
+        Scalar Enum members are replaced with their ``.value``.  List and
+        tuple values are recursed into so that multi-valued choice fields
+        (e.g. a ``MultiSelectField`` / ``DjangoListField(enum)``) also arrive
+        at the backend with plain Python values rather than wrapped Enum
+        members.
 
         Args:
             item: The child payload.
@@ -325,6 +337,8 @@ class NestedFieldsMixin:
         for key, value in item.items():
             if isinstance(value, enum.Enum):
                 item[key] = value.value
+            elif isinstance(value, (list, tuple)):
+                item[key] = [v.value if isinstance(v, enum.Enum) else v for v in value]
         return item
 
     @staticmethod
