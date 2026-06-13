@@ -147,7 +147,8 @@ LimitOffsetGraphqlPagination(
       follow join chains, which can exhaust database resources (DoS).
 
     **Allowlist rule:** each ordering term's root (the part before `__`) must match
-    one of the model's **concrete attnames** (`model._meta.concrete_fields`).
+    one of the model's **concrete attnames** (`model._meta.concrete_fields`), or be
+    Django's native `pk` alias (which resolves to the primary key column).
     Leading `-`/`+` direction prefixes are stripped before comparison.
 
     **Rejected examples:**
@@ -158,12 +159,20 @@ LimitOffsetGraphqlPagination(
 
     # Relation-spanning → GraphQLError: "Invalid ordering field: ..."
     { users { results(ordering: "posts__title") { id } } }
+
+    # FK field *name* (not attname) → GraphQLError
+    # Use 'author_id' (the concrete attname) instead of 'author'
+    { posts { results(ordering: "author") { id } } }
     ```
 
-    **Accepted examples (concrete attnames of the model):**
+    **Accepted examples:**
 
     ```graphql
-    # Single ascending
+    # Django's native pk alias (and its negated form)
+    { users { results(ordering: "pk") { id } } }
+    { users { results(ordering: "-pk") { id } } }
+
+    # Concrete attname
     { users { results(ordering: "username") { id } } }
 
     # Descending
