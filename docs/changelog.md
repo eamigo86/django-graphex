@@ -16,6 +16,33 @@ All notable changes to this library are documented here. The format is based on
 
 ### Added
 
+- **`Base64FileInput` — opt-in base64 file uploads** (#25):
+  `Base64FileInput(graphene.InputObjectType)` with `filename` (required),
+  `data` (required, base64-encoded), and `content_type` (optional, default
+  `application/octet-stream`). Call `.to_uploaded_file(max_size=None)` in any
+  mutation resolver to obtain a Django `SimpleUploadedFile` ready for
+  `FileField.save()`. Also importable as `decode_base64_file(value, *,
+  max_size=None)` for cases where you hold the raw dict.
+
+  Two new settings enforce memory safety:
+
+  - **`MAX_UPLOAD_SIZE`** (int bytes, required when `Base64FileInput` is used)
+    — global decoded-size cap. A pre-check fires before `base64.decode` to
+    save the allocation. Per-field `max_size` overrides this. Raises
+    `ImproperlyConfigured` if absent and no per-field override is given.
+  - **`MAX_REQUEST_BODY_SIZE`** (int bytes, `None` = disabled) — HTTP body-size
+    guard in `BaseGraphQLView.dispatch`, checked before JSON parsing. Rejects
+    oversized bodies with **HTTP 413**. This is the primary memory cap (the
+    base64 string is already in RAM once the body is parsed).
+
+  Malformed base64 raises `GraphQLError` (never HTTP 500). Content-type
+  validation (magic bytes) is out of scope — use `FileField` validators.
+  Batch requests: `MAX_BATCH_SIZE` (op count) + `MAX_REQUEST_BODY_SIZE`
+  (bytes) compose; no special upload-batch logic. Upload mutations bypass the
+  response cache automatically (mutations are never cached). See
+  [Mutations → File Upload Support](usage/mutations.md#file-upload-support) and
+  [Settings → File uploads](usage/settings.md#file-uploads). (#25)
+
 - **`@filter_field` decorator** — declare custom per-field GraphQL filter
   arguments directly on a `DjangoObjectType` or `DjangoModelType`, co-located
   with the resolver logic. The method name becomes the GraphQL argument name;

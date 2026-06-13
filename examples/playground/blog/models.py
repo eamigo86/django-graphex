@@ -148,3 +148,33 @@ class Attachment(models.Model):
 
     def __str__(self):
         return self.caption
+
+
+# --------------------------------------------------------------------------- #
+# Base64 file upload demo (v1.3.0).                                            #
+# Document has a FileField to showcase the Base64FileInput → FileField         #
+# round-trip. Upload a file via the uploadDocument mutation in GraphiQL.       #
+# --------------------------------------------------------------------------- #
+class Document(models.Model):
+    """A simple document with a file attachment — demos Base64FileInput (v1.3.0).
+
+    Example GraphQL mutation::
+
+        mutation {
+            uploadDocument(
+                name: "my-report.pdf"
+                file: {
+                    filename: "report.pdf"
+                    contentType: "application/pdf"
+                    data: "<base64 string here>"
+                }
+            ) { ok name }
+        }
+    """
+
+    name = models.CharField(max_length=200)
+    file = models.FileField(upload_to="documents/", blank=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name

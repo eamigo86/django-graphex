@@ -16,6 +16,7 @@ from django.utils import timezone
 from django_graphex import (
     AllowAny,  # noqa: F401 — available for permission_classes experimentation
     AnnotatedField,
+    Base64FileInput,
     BasePermission,
     CursorGraphqlPagination,
     DjangoFilterListField,
@@ -47,6 +48,7 @@ from .models import (
     Author,
     Category,
     Comment,
+    Document,
     Invoice,
     Note,
     Post,
@@ -516,6 +518,62 @@ class CreateCategory(graphene.Mutation):
         return CreateCategory(ok=True, category=category)
 
 
+# --------------------------------------------------------------------------- #
+# Base64 file upload demo (v1.3.0).                                            #
+#                                                                              #
+# UploadDocument demonstrates the full Base64FileInput pattern:                #
+#   1. Accept a Base64FileInput argument.                                      #
+#   2. Call .to_uploaded_file(max_size=...) inside the resolver.               #
+#   3. Assign the resulting SimpleUploadedFile to a model FileField.           #
+#                                                                              #
+# MAX_UPLOAD_SIZE and MAX_REQUEST_BODY_SIZE are set in config/settings.py so  #
+# the guard fires in this playground. Unset either to see ImproperlyConfigured.#
+#                                                                              #
+# Try it in GraphiQL:                                                          #
+#   import base64                                                              #
+#   data = base64.b64encode(b"hello world").decode()                           #
+#   mutation {                                                                 #
+#       uploadDocument(                                                        #
+#           name: "readme.txt"                                                 #
+#           file: {filename: "readme.txt", data: "<data>", contentType: "text/plain"} #
+#       ) { ok name }                                                          #
+#   }                                                                          #
+# --------------------------------------------------------------------------- #
+class DocumentType(DjangoObjectType):
+    class Meta:
+        model = Document
+        only_fields = ("id", "name", "created")
+
+
+class UploadDocument(graphene.Mutation):
+    """Demo: upload a base64-encoded file and attach it to a Document record.
+
+    .. note::
+        ``MAX_UPLOAD_SIZE`` must be set in ``DJANGO_GRAPHEX`` before using
+        ``Base64FileInput``. See ``config/settings.py``.
+    """
+
+    class Arguments:
+        name = graphene.String(required=True)
+        file = Base64FileInput(required=True)
+
+    ok = graphene.Boolean()
+    name = graphene.String()
+    error = graphene.String()
+
+    def mutate(self, info, name, file):
+        try:
+            # Decode: max_size here overrides (or supplements) the global cap.
+            # The global MAX_UPLOAD_SIZE from settings also applies when
+            # max_size is not passed — both are checked.
+            uploaded = file.to_uploaded_file()  # uses MAX_UPLOAD_SIZE from settings
+            doc = Document(name=name)
+            doc.file.save(uploaded.name, uploaded, save=True)
+            return UploadDocument(ok=True, name=doc.name)
+        except Exception as exc:  # noqa: BLE001
+            return UploadDocument(ok=False, name=name, error=str(exc))
+
+
 class RootMutation(graphene.ObjectType):
     note_create, note_delete, note_update = NoteModelType.MutationFields()
     post_create = PostMutation.CreateField()
@@ -528,6 +586,8 @@ class RootMutation(graphene.ObjectType):
     create_category = CreateCategory.Field()
     # Nested-write demo: single operation creates the Post + its Comment(s).
     post_with_comments_create = PostWithCommentsMutation.CreateField()
+    # Base64 file upload demo (v1.3.0).
+    upload_document = UploadDocument.Field()
 
 
 # --------------------------------------------------------------------------- #
