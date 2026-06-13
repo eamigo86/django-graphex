@@ -69,6 +69,7 @@ def _extract_width_precision(spec: str) -> tuple[int, int]:
         int(raw_precision) if raw_precision else 0
     )
 
+
 __all__ = (
     "DefaultGraphQLDirective",
     "Base64GraphQLDirective",

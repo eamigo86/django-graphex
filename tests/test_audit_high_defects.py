@@ -288,9 +288,7 @@ class SafeGroupSendNonBlockingTest(TestCase):
         elapsed = time.monotonic() - start
 
         assert ("test-group", {"type": "test"}) in group_sends
-        assert elapsed < 1.0, (
-            f"No-loop path took {elapsed:.2f}s — expected <1s"
-        )
+        assert elapsed < 1.0, f"No-loop path took {elapsed:.2f}s — expected <1s"
 
     def test_running_loop_returns_immediately_no_block(self):
         """ASGI path: called ON the loop thread → must return in <1s, NOT block ~5s.
