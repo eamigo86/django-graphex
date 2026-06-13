@@ -536,6 +536,7 @@ class DjangoListObjectField(Field):
         self,
         manager: Manager,
         filter_backend: Any,
+        output_type: Any,
         root: Any,
         info: ResolveInfo,
         **kwargs: Any,
@@ -545,6 +546,10 @@ class DjangoListObjectField(Field):
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
+            output_type: the ``DjangoObjectType`` subclass for the list items,
+                forwarded to ``queryset_factory`` so its ``get_queryset`` hook
+                is applied before the optimizer runs.  This is the *item* type
+                (``DjangoListObjectType._meta.baseType``), not the wrapper type.
             root: the root value of the resolution.
             info: the GraphQL resolve info.
             **kwargs: query arguments, including the ``filter`` value.
@@ -552,7 +557,7 @@ class DjangoListObjectField(Field):
         Returns:
             A list object holding the total count and result queryset.
         """
-        qs = queryset_factory(manager, root, info, **kwargs)
+        qs = queryset_factory(manager, root, info, output_type=output_type, **kwargs)
         qs = filter_backend.apply(qs, kwargs.get("filter"))
         count = qs.count()
 
@@ -565,8 +570,13 @@ class DjangoListObjectField(Field):
     def wrap_resolve(self, parent_resolver: Callable) -> Callable:
         """Honor a custom "resolver" if given, else the built-in list resolver.
 
-        The resolver receives (manager, filter_backend) as its leading
-        positional arguments, then root, info, **kwargs.
+        The resolver receives (manager, filter_backend, output_type) as its
+        leading positional arguments, then root, info, **kwargs.
+
+        The ``output_type`` is the *item* type
+        (``DjangoListObjectType._meta.baseType``) so that
+        ``DjangoObjectType.get_queryset`` is applied inside
+        ``queryset_factory`` before the optimizer runs.
 
         When ``Meta.queryset`` is set on the list type, that queryset is used
         as the base (in place of ``_default_manager``) so user-supplied filters
@@ -576,9 +586,9 @@ class DjangoListObjectField(Field):
             parent_resolver: the resolver supplied by the parent field.
 
         Returns:
-            A partial that binds the queryset (or manager) and filter backend.
+            A partial that binds the queryset (or manager), filter backend,
+            and item output type.
         """
-        resolver = self.resolver or self.list_resolver
         # Prefer Meta.queryset over _default_manager when the list type declared one.
         meta_queryset = getattr(self.type._meta, "queryset", None)
         base = (
@@ -586,10 +596,27 @@ class DjangoListObjectField(Field):
             if meta_queryset is not None
             else self.type._meta.model._default_manager
         )
+        if self.resolver:
+            # Custom resolver (e.g. DjangoModelType.list): bind only
+            # (manager, filter_backend) — the caller owns its own signature and
+            # manages its own queryset scoping (no output_type threading).
+            return partial(
+                self.resolver,
+                base,
+                self.filter_backend,
+            )
+        # Built-in list_resolver: also bind the item output type so that
+        # DjangoObjectType.get_queryset fires inside queryset_factory.
+        # item_type is the DjangoObjectType backing the list
+        # (DjangoListObjectType._meta.baseType).  DjangoModelType does NOT
+        # carry _dgx_has_object_type_get_queryset so it is unaffected even if
+        # the item_type lookup returns something unexpected.
+        item_type = getattr(self.type._meta, "baseType", None)
         return partial(
-            resolver,
+            self.list_resolver,
             base,
             self.filter_backend,
+            item_type,
         )
 
 
@@ -862,15 +889,24 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         self,
         manager: Manager,
         filter_backend: Any,
+        output_type: Any,
         root: Any,
         info: ResolveInfo,
         **kwargs: Any,
     ) -> DjangoListObjectBase:
         """Resolve the nested list, preferring the parent's prefetch cache.
 
+        ``output_type`` is accepted for signature compatibility with the parent
+        class but is intentionally unused here: nested-relation fields resolve
+        rows from the parent's prefetch cache or relation accessor, not from a
+        fresh top-level queryset, so the item type's ``get_queryset`` hook is
+        not applicable.
+
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
+            output_type: unused; present for signature compatibility with
+                ``DjangoListObjectField.list_resolver``.
             root: the parent instance owning the related set.
             info: the GraphQL resolve info.
             **kwargs: query arguments, including the ``filter`` value.
@@ -953,6 +989,37 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             count=len(results),
             results=results,
             results_field_name=results_field_name,
+        )
+
+    def wrap_resolve(self, parent_resolver: Callable) -> Callable:
+        """Bind (manager, filter_backend, output_type=None) to the nested resolver.
+
+        Overrides the parent ``DjangoListObjectField.wrap_resolve`` because
+        nested-relation fields obtain their rows from the parent's prefetch
+        cache or relation accessor — not from a fresh top-level queryset — so
+        the item type's ``get_queryset`` hook must NOT be applied here.
+        ``output_type`` is bound as ``None``; ``list_resolver`` accepts it for
+        signature compatibility but ignores it.
+
+        Wiring ``get_queryset`` on nested relations would require rebuilding
+        the prefetch queryset inside the resolver, which conflicts with the
+        window-pagination and prefetch optimizations.  The documented boundary
+        for per-relation row scoping is a ``resolve_<rel>`` override on the
+        parent type.
+
+        Args:
+            parent_resolver: the resolver supplied by the parent field.
+
+        Returns:
+            A partial that binds the manager, filter backend, and a ``None``
+            output type placeholder.
+        """
+        resolver = self.resolver or self.list_resolver
+        return partial(
+            resolver,
+            self.type._meta.model._default_manager,
+            self.filter_backend,
+            None,  # output_type: nested path does not apply get_queryset hook
         )
 
 

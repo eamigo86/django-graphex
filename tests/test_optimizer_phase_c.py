@@ -1344,6 +1344,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
         result = field.list_resolver(
             manager=None,
             filter_backend=field.filter_backend,
+            output_type=None,  # nested path does not apply get_queryset hook
             root=author,
             info=None,
         )
@@ -1388,6 +1389,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
         result = field.list_resolver(
             manager=None,
             filter_backend=field.filter_backend,
+            output_type=None,  # nested path does not apply get_queryset hook
             root=author_empty,
             info=None,
         )
