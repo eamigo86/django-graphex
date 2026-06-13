@@ -28,6 +28,14 @@ if TYPE_CHECKING:
 # memory exhaustion from client-supplied specs like "1000000.5f".
 _NUMBER_FORMAT_MAX_WIDTH = 100
 
+# Maximum digit-string length accepted by _extract_width_precision before
+# calling int().  _NUMBER_FORMAT_MAX_WIDTH is 100 (at most 3 meaningful
+# digits), so any digit run longer than this is unconditionally over the
+# cap — no need to convert it.  We use 9 (one more than the max digit count
+# for _NUMBER_FORMAT_MAX_WIDTH × 10) to give plenty of headroom while staying
+# well clear of Python 3.11+'s 4300-digit int-string conversion limit.
+_NUMBER_FORMAT_MAX_DIGIT_LEN = 9
+
 # Regex matching the body of a Python format spec *after* the optional
 # [[fill]align] prefix has been stripped.  Covers:
 #   [sign][z][#][0][width][grouping_option][.precision][type]
@@ -65,6 +73,15 @@ def _extract_width_precision(spec: str) -> tuple[int, int]:
         return 0, 0
     raw_width = m.group("width")
     raw_precision = m.group("precision")
+    # Guard against Python 3.11+ int-string conversion limit (4300 digits).
+    # Any digit run longer than _NUMBER_FORMAT_MAX_DIGIT_LEN is unconditionally
+    # over _NUMBER_FORMAT_MAX_WIDTH, so return a sentinel that guarantees the
+    # width/precision guard in resolve() fires its clean GraphQLError path —
+    # never let int() touch a giant string.
+    if raw_width and len(raw_width) > _NUMBER_FORMAT_MAX_DIGIT_LEN:
+        return _NUMBER_FORMAT_MAX_WIDTH + 1, 0
+    if raw_precision and len(raw_precision) > _NUMBER_FORMAT_MAX_DIGIT_LEN:
+        return 0, _NUMBER_FORMAT_MAX_WIDTH + 1
     return (int(raw_width) if raw_width else 0), (
         int(raw_precision) if raw_precision else 0
     )

@@ -349,3 +349,200 @@ class SafeGroupSendNonBlockingTest(TestCase):
             "bindings._GROUP_SEND_TIMEOUT still present — "
             "the timeout constant should have been removed in the H3 fix"
         )
+
+
+# ===========================================================================
+# R1 — digit-bomb: int() on a 5000-digit string must NOT reach the caller
+# ===========================================================================
+
+
+class NumberDirectiveDigitBombTest(TestCase):
+    """R1: _extract_width_precision must bound digit-string length BEFORE calling
+    int() to avoid Python's ValueError: "Exceeds the limit (4300 digits) for
+    integer string conversion" propagating as an uncaught exception (HTTP 500).
+
+    All over-long specs must be routed to the existing GraphQLError width/precision
+    path — never raise a raw ValueError from int().
+    """
+
+    def _resolve(self, value, spec):
+        from django_graphex.directives.string import NumberGraphQLDirective
+
+        directive = NumberGraphQLDirective()
+        return directive.resolve(value, {"as": spec}, None, None, None)
+
+    def _assert_graphql_error_not_value_error(self, spec, description=""):
+        """The spec must raise GraphQLError (not ValueError, not HTTP 500)."""
+        from graphql import GraphQLError
+
+        try:
+            result = self._resolve(42, spec)
+        except GraphQLError:
+            pass  # correct — routed through the clean error path
+        except ValueError as exc:
+            pytest.fail(
+                f"spec={spec[:30]!r}... ({description}): got raw ValueError "
+                f"instead of GraphQLError — uncaught int() digit-bomb: {exc}"
+            )
+        except Exception as exc:
+            pytest.fail(
+                f"spec={spec[:30]!r}... ({description}): unexpected "
+                f"{type(exc).__name__}: {exc}"
+            )
+        else:
+            pytest.fail(
+                f"spec={spec[:30]!r}... ({description}): expected GraphQLError "
+                f"but resolved successfully to {result!r}"
+            )
+
+    # --- digit-bomb specs: all must raise GraphQLError, NOT ValueError ---
+
+    def test_huge_plain_width_raises_graphql_error_not_value_error(self):
+        """'9'*5000 + 'f' — plain 5000-digit width — must raise GraphQLError."""
+        self._assert_graphql_error_not_value_error(
+            "9" * 5000 + "f",
+            description="plain huge width digit-bomb",
+        )
+
+    def test_huge_precision_raises_graphql_error_not_value_error(self):
+        """'.' + '9'*5000 + 'f' — 5000-digit precision — must raise GraphQLError."""
+        self._assert_graphql_error_not_value_error(
+            "." + "9" * 5000 + "f",
+            description="precision digit-bomb",
+        )
+
+    def test_fill_align_huge_width_raises_graphql_error_not_value_error(self):
+        """'0<' + '9'*5000 + 'f' — fill+align prefix + 5000-digit width."""
+        self._assert_graphql_error_not_value_error(
+            "0<" + "9" * 5000 + "f",
+            description="fill+align + huge width digit-bomb",
+        )
+
+    # --- boundary specs: width=100 allowed, width=101 rejected cleanly ---
+
+    def test_width_100_accepted(self):
+        """'100f' — exactly at the cap — must succeed."""
+        result = self._resolve(42, "100f")
+        assert result is not None
+
+    def test_width_101_rejected_cleanly(self):
+        """'101f' — one over the cap — must raise GraphQLError (existing guard)."""
+        from graphql import GraphQLError
+
+        with pytest.raises(GraphQLError, match="width/precision"):
+            self._resolve(42, "101f")
+
+
+# ===========================================================================
+# R2 — fire-and-forget error logging: done-callback must capture exceptions
+# ===========================================================================
+
+
+@pytest.mark.skipif(
+    not _CHANNELS_AVAILABLE,
+    reason="requires the 'subscriptions' extra (channels)",
+)
+class SafeGroupSendErrorCallbackTest(TestCase):
+    """R2: when the scheduled group_send coroutine raises, the module logger
+    must record the failure AND no 'Task exception was never retrieved' warning
+    must escape to the asyncio unhandled-exception handler.
+
+    The old fire-and-forget had no done-callback — so errors were silently
+    swallowed or emitted as asyncio RuntimeWarning.
+    """
+
+    def test_group_send_failure_logged_not_leaked_as_warning(self):
+        """group_send raises RuntimeError → logger.error records it; no
+        'Task exception was never retrieved' RuntimeWarning is emitted."""
+        import logging
+
+        from django_graphex.subscriptions import bindings
+
+        boom = RuntimeError("channel layer down — R2 test")
+
+        async def failing_group_send(group_name, message):
+            raise boom
+
+        mock_layer = MagicMock()
+        mock_layer.group_send = failing_group_send
+
+        unhandled = []
+
+        def capture_exception(loop, context):
+            unhandled.append(context)
+
+        logged_errors = []
+
+        async def run_test():
+            loop = asyncio.get_running_loop()
+            loop.set_exception_handler(capture_exception)
+            bindings._safe_group_send(mock_layer, "fail-group", {"type": "test"})
+            # Let the task run and the done-callback fire.
+            await asyncio.sleep(0.1)
+
+        with self.assertLogs(
+            "django_graphex.subscriptions.bindings", level=logging.ERROR
+        ) as cm:
+            asyncio.run(run_test())
+            logged_errors.extend(cm.output)
+
+        # The logger must have recorded the failure.
+        assert logged_errors, (
+            "Expected logger.error/exception to record group_send failure, but no "
+            "ERROR log was emitted. Done-callback is missing (R2 bug)."
+        )
+
+        # asyncio must NOT have received an unhandled exception (which would emit
+        # 'Task exception was never retrieved').
+        assert not unhandled, (
+            f"asyncio unhandled-exception handler was called with: {unhandled}. "
+            f"This means the done-callback is missing or not calling task.exception()."
+        )
+
+    def test_cancelled_error_not_logged_as_error(self):
+        """CancelledError must be swallowed silently — not treated as a failure."""
+        import logging
+
+        from django_graphex.subscriptions import bindings
+
+        async def cancellable_group_send(group_name, message):
+            # Simulate cancellation during execution.
+            await asyncio.sleep(10)
+
+        mock_layer = MagicMock()
+        mock_layer.group_send = cancellable_group_send
+
+        unhandled = []
+        error_records = []
+
+        class _ErrorCapture(logging.Handler):
+            def emit(self, record):
+                if record.levelno >= logging.ERROR:
+                    error_records.append(record.getMessage())
+
+        async def run_test():
+            loop = asyncio.get_running_loop()
+            loop.set_exception_handler(lambda lp, ctx: unhandled.append(ctx))
+            bindings._safe_group_send(mock_layer, "cancel-group", {"type": "test"})
+            # Cancel all tasks except the current one.
+            current = asyncio.current_task()
+            for task in asyncio.all_tasks():
+                if task is not current:
+                    task.cancel()
+            await asyncio.sleep(0.05)
+
+        handler = _ErrorCapture()
+        bindings_logger = logging.getLogger("django_graphex.subscriptions.bindings")
+        bindings_logger.addHandler(handler)
+        try:
+            asyncio.run(run_test())
+        finally:
+            bindings_logger.removeHandler(handler)
+
+        assert not error_records, (
+            f"CancelledError must NOT be logged as an error, got: {error_records}"
+        )
+        # asyncio exception handler must not have been called for CancelledError.
+        assert not unhandled, (
+            f"asyncio exception handler called unexpectedly: {unhandled}"
+        )
