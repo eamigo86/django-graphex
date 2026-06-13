@@ -669,41 +669,68 @@ class GraphQLView(BaseGraphQLView):
     def _get_cache_version(self, _cache: Any, identity: str) -> str:
         """Return the current namespace version token for *identity*.
 
-        If no version exists yet, initialise it to ``0`` (integer) and persist
-        it.  Seeding with an integer — rather than a UUID hex string — ensures
-        that ``cache.incr`` works atomically on all standard backends (Redis,
-        Memcached, LocMemCache) without first deleting and re-setting the key.
+        If no version exists yet, initialise it to ``1`` (integer) and persist
+        it with ``timeout=None`` (never expires independently of its response
+        entries).  Seeding with an integer — rather than a UUID hex string —
+        ensures that ``cache.incr`` works atomically on all standard backends
+        (Redis, Memcached, LocMemCache) without first deleting and re-setting
+        the key.
+
+        The initial value is ``1`` (not ``0``) so the first bump goes to ``2``,
+        ensuring that version ``0`` is never used as a live cache key (closes the
+        ambiguous zero-state described in issue #60c).
+
+        The key is stored with ``timeout=None`` (permanent) to prevent the
+        version counter from expiring before its associated response entries when
+        ``CACHE_TIMEOUT`` exceeds the backend's own default TTL (issue #60b).
 
         Args:
             _cache: The Django cache backend instance.
             identity: The per-request identity token from ``cache_key_prefix``.
 
         Returns:
-            The current version as a string (``"0"``, ``"1"``, …).  Integer
+            The current version as a string (``"1"``, ``"2"``, …).  Integer
             versions stringify fine and compose cleanly into the cache key.
         """
         version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
         version = _cache.get(version_key)
         if version is None:
-            version = 0
-            _cache.set(version_key, version)
+            # Seed to 1 (not 0) so the first bump reaches 2 and version 0 is
+            # never used as a live cache key.  timeout=None: the counter never
+            # expires independently (fixes TTL-skew when CACHE_TIMEOUT > backend
+            # default).
+            version = 1
+            _cache.set(version_key, version, timeout=None)
         return str(version)
 
     def _bump_cache_version(self, _cache: Any, identity: str) -> None:
         """Invalidate the issuing user's cached responses by advancing their version token.
 
+        The bump is deferred via ``transaction.on_commit`` so it only fires once
+        the mutation's database write is durable.  This eliminates the
+        bump-before-commit TOCTOU window (issue #60a) where a concurrent query
+        could cache pre-mutation data at the new version key.  If the surrounding
+        transaction is rolled back, ``on_commit`` is never invoked, so a failed
+        mutation does not advance the counter.  When there is no open transaction
+        (``ATOMIC_MUTATIONS`` is off) Django executes ``on_commit`` immediately
+        after the current statement — behaviour is unchanged for that case.
+
         Uses ``cache.incr`` for an atomic increment on Redis / Memcached /
-        LocMemCache.  Because the key is seeded with integer ``0`` by
+        LocMemCache.  Because the key is seeded with integer ``1`` by
         ``_get_cache_version``, ``incr`` always finds an integer value and
         succeeds on all standard backends.  Two recoverable failure modes are
-        caught and healed by resetting the key to integer ``0``:
+        caught and healed by resetting the key to integer ``1`` (not ``0``) so
+        the next bump never produces the ambiguous zero-state (issue #60c):
 
         * ``ValueError`` — the key has expired (Django's documented behaviour
           for a missing key on all standard backends).
         * ``TypeError`` — the key exists but holds a non-integer value (e.g. a
           uuid-hex string from an older deploy).  LocMemCache raises
-          ``TypeError`` in this case; healing it to ``0`` lets the next incr
+          ``TypeError`` in this case; healing it to ``1`` lets the next incr
           succeed on every backend.
+
+        The heal value is stored with ``timeout=None`` to match the seed policy
+        in ``_get_cache_version`` (issue #60b).
 
         Truly unexpected backend errors (e.g. connection failure) are not
         suppressed and propagate normally.
@@ -716,18 +743,23 @@ class GraphQLView(BaseGraphQLView):
             identity: The per-request identity token from ``cache_key_prefix``.
         """
         version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
-        try:
-            _cache.incr(version_key)
-        except (ValueError, TypeError):
-            # ``ValueError``: the key has expired (or was never set) — Django's
-            # documented behaviour for a missing key on all standard backends.
-            # ``TypeError``: the key exists but holds a non-integer value, e.g.
-            # a uuid-hex string planted by an older deploy's except branch.
-            # LocMemCache.incr raises TypeError in that case, which the old
-            # ``except ValueError`` guard did not catch → HTTP 500 until TTL.
-            # Reset to integer 0 so the next incr always finds an integer and
-            # succeeds on every backend (matches the docstring promise of "fresh 0").
-            _cache.set(version_key, 0)
+
+        def _do_bump() -> None:
+            try:
+                _cache.incr(version_key)
+            except (ValueError, TypeError):
+                # ``ValueError``: the key has expired (or was never set) —
+                # Django's documented behaviour for a missing key on all
+                # standard backends.
+                # ``TypeError``: the key exists but holds a non-integer value,
+                # e.g. a uuid-hex string planted by an older deploy's except
+                # branch.  LocMemCache.incr raises TypeError in that case.
+                # Heal to 1 (not 0) with timeout=None so the version counter
+                # never enters the ambiguous zero-state and never expires
+                # independently of its response entries.
+                _cache.set(version_key, 1, timeout=None)
+
+        transaction.on_commit(_do_bump)
 
     def super_call(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Call the parent dispatch method."""

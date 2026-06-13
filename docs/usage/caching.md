@@ -58,9 +58,44 @@ This has two important properties:
 2. **Unrelated cache entries survive.**  Keys set by other parts of your
    application (sessions, page fragments, etc.) are not touched.
 
+### Post-commit invalidation (TOCTOU safety)
+
+The version bump is deferred via `transaction.on_commit` so it only fires
+**after the mutation's database write is durable**.  A concurrent query that
+arrives between the start of the mutation and its commit therefore sees the
+pre-mutation version key and correctly hits (or misses) pre-mutation cache
+entries — it never caches pre-mutation data at the new, post-mutation version.
+
+If the mutation's transaction is rolled back, `on_commit` is never invoked and
+the version counter is **not** advanced.  Only successful mutations invalidate
+the cache.
+
+When `ATOMIC_MUTATIONS` is off (no open transaction), Django executes
+`on_commit` immediately after the current statement, so behaviour is unchanged
+for non-transactional deployments.
+
+### Version-counter key TTL
+
+The version counter key is stored with `timeout=None` (never expires
+independently).  If `CACHE_TIMEOUT` is set higher than your cache backend's
+own default TTL (e.g. 600 s vs. Redis's 300 s default), the counter would
+otherwise expire first, causing the version to reset and old response entries
+to be reused as if they were fresh.  The permanent timeout prevents this.
+
+### Cold-start initialisation
+
+On a cold cache (first request or after the version key expires on a backend
+that ignores `timeout=None`), the counter is initialised to `1` (not `0`).
+This ensures:
+
+- The first mutation bump reaches `2`, not `1`.
+- Version `0` is never used as a live cache key, eliminating an ambiguous
+  state where a concurrent request could cache a response at `v0` and that
+  entry would remain permanently unreachable after the first bump.
+
 Backends that support atomic `incr` (Redis, Memcached) use it; backends that
 do not (Django's local-memory cache when the key is absent) fall back to
-storing a fresh UUID.
+setting the heal value to `1` with `timeout=None`.
 
 ---
 

@@ -73,6 +73,9 @@ class ExtraViewBranchesTest(TestCase):
         # subsequent reads by the same identity result in a cache miss.
         # Unrelated cache entries (e.g. keys from other users or non-graphql
         # code) MUST survive — only the namespace version is invalidated.
+        #
+        # The bump is deferred via transaction.on_commit; captureOnCommitCallbacks
+        # is required to flush it inside Django's TestCase transaction wrapper.
         from django.core.cache import caches as _caches
 
         _cache = _caches["default"]
@@ -93,13 +96,15 @@ class ExtraViewBranchesTest(TestCase):
         version_key = _GV._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
         version_before = _cache.get(version_key)
 
-        # Send the mutation.
+        # Send the mutation inside captureOnCommitCallbacks so the on_commit
+        # callback that performs the incr is flushed immediately.
         mut_request = self.factory.post(
             "/graphql/",
             {"query": "mutation { createThing { ok } }"},
             content_type="application/json",
         )
-        response = view(mut_request)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = view(mut_request)
         self.assertEqual(response.status_code, 200)
 
         # Version MUST have changed for this identity.
