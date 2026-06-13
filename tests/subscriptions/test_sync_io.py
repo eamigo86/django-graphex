@@ -136,3 +136,53 @@ async def test_consumer_connect_and_disconnect_complete_without_blocking():
 
     # Disconnect — unregister_channel runs; must not raise.
     await communicator.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# (e) unregister_channel failure during disconnect is swallowed (lines 93-94)
+# ---------------------------------------------------------------------------
+
+
+async def test_disconnect_swallows_unregister_channel_error(monkeypatch):
+    """Consumer.disconnect() must NOT propagate an exception from unregister_channel.
+
+    Covers consumers.py lines 93-94: the `except Exception: logger.exception(...)`
+    handler inside `disconnect`.  Patching `unregister_channel` to raise verifies
+    that the error is caught, logged, and not re-raised — the connection cleanup
+    continues (best-effort design).
+    """
+    import logging
+
+    from django_graphex.subscriptions import consumers as consumers_mod
+    from django_graphex.subscriptions.consumers import GraphqlAPIDemultiplexer
+
+    # Force unregister_channel to raise every time it is called.
+    def _boom(channel_name):
+        raise RuntimeError("cache write failed")
+
+    monkeypatch.setattr(consumers_mod, "unregister_channel", _boom)
+
+    consumer = GraphqlAPIDemultiplexer()
+    consumer.channel_name = "test-unregister-fail"
+
+    # disconnect() must swallow the RuntimeError and not propagate.
+    logged_messages = []
+    original_exception = logging.Logger.exception
+
+    def _capture(self, msg, *args, **kwargs):
+        logged_messages.append(msg % args if args else msg)
+        return original_exception(self, msg, *args, **kwargs)
+
+    monkeypatch.setattr(logging.Logger, "exception", _capture)
+
+    try:
+        await consumer.disconnect(1001)
+    except Exception as exc:  # pragma: no cover — must NOT reach here
+        pytest.fail(
+            f"disconnect() propagated an exception from unregister_channel: {exc}"
+        )
+
+    # The failure must have been logged (best-effort: log but do not raise).
+    assert any("unregister" in m.lower() or "Failed" in m for m in logged_messages), (
+        "Expected a log message about the failed unregister_channel call"
+    )

@@ -39,6 +39,9 @@ from django_graphex.paginations.pagination import (
 from django_graphex.paginations.pagination import (
     PageGraphqlPagination as _PGP,
 )
+from django_graphex.paginations.pagination import (
+    _validate_ordering_terms,
+)
 
 from .models import Author
 
@@ -387,3 +390,133 @@ class TestSchemaIntegrationOrderingSecurity(TestCase):
             '{ pageList { results(ordering: "nonexistent_field") { name } } }'
         )
         assert result.errors is not None or result.data is not None
+
+
+# ---------------------------------------------------------------------------
+# _validate_ordering_terms: empty/falsy ordering (line 83) and list path (line 93)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateOrderingTermsEdges(TestCase):
+    """Unit tests for _validate_ordering_terms covering the two branches missed
+    by higher-level tests: the early-return on falsy input (line 83) and the
+    list-of-terms path (line 93)."""
+
+    # -- line 83: `if not ordering: return` ---------------------------------
+
+    def test_empty_string_ordering_is_a_noop(self):
+        """_validate_ordering_terms("") must return None without raising.
+
+        The `if not ordering: return` guard (line 83) exits early so that
+        callers with no configured ordering never enter the allowlist check.
+        """
+        result = _validate_ordering_terms(Author, "")
+        assert result is None
+
+    def test_none_ordering_is_a_noop(self):
+        """_validate_ordering_terms(None) must return None without raising."""
+        result = _validate_ordering_terms(Author, None)
+        assert result is None
+
+    def test_empty_list_ordering_is_a_noop(self):
+        """_validate_ordering_terms([]) must return None without raising."""
+        result = _validate_ordering_terms(Author, [])
+        assert result is None
+
+    # -- line 93: `else: terms = [t for t in ordering if t]` (list path) ---
+
+    def test_list_ordering_valid_terms_accepted(self):
+        """Passing ordering as a list of valid attnames must not raise.
+
+        The `else` branch (line 93) handles the case where ``ordering`` is a
+        list rather than a comma-separated string.  Every term must pass the
+        concrete-attname allowlist check.
+        """
+        _validate_ordering_terms(Author, ["name", "-id"])
+
+    def test_list_ordering_invalid_term_raises(self):
+        """Passing ordering as a list with an invalid term must raise GraphQLError."""
+        with pytest.raises(GraphQLError):
+            _validate_ordering_terms(Author, ["name", "nonexistent_field"])
+
+    def test_list_ordering_relation_spanning_term_raises(self):
+        """A list containing a relation-spanning term must raise GraphQLError."""
+        with pytest.raises(GraphQLError):
+            _validate_ordering_terms(Author, ["posts__title"])
+
+    def test_list_ordering_skips_empty_strings(self):
+        """Empty strings inside the list are filtered out (no error, no crash).
+
+        The `[t for t in ordering if t]` comprehension drops falsy elements,
+        so `["name", ""]` is equivalent to `["name"]`.
+        """
+        _validate_ordering_terms(Author, ["name", ""])
+
+    def test_list_ordering_with_direction_prefix_accepted(self):
+        """List ordering with direction prefixes (+/-) must be accepted.
+
+        The validator strips the leading +/- before checking the allowlist, so
+        both "name" and "-id" in a list are valid for the Author model.
+        """
+        _validate_ordering_terms(Author, ["+name", "-id", "id"])
+
+    def test_list_ordering_with_plus_prefix_accepted(self):
+        """A leading '+' prefix is also stripped and accepted for valid fields."""
+        _validate_ordering_terms(Author, ["+name"])
+
+    def test_list_ordering_mixed_valid_and_empty_entries(self):
+        """A list with some empty strings must not raise (empty strings are filtered).
+
+        The `[t for t in ordering if t]` comprehension on line 93 silently
+        drops any falsy entries, so mixed lists are safe.
+        """
+        _validate_ordering_terms(Author, ["name", "", None or "id"])
+
+
+# ---------------------------------------------------------------------------
+# prefetch_window_slice: negative offset raises GraphQLError (line 462)
+# ---------------------------------------------------------------------------
+
+
+class TestPrefetchWindowSliceNegativeOffset(TestCase):
+    """prefetch_window_slice must raise GraphQLError for negative offsets.
+
+    Covers line 462: the `raise GraphQLError` guard for negative offsets inside
+    LimitOffsetGraphqlPagination.prefetch_window_slice.  This branch is separate
+    from the in-memory path test; diff-cover flags it because it is new code.
+    """
+
+    def test_negative_offset_raises_graphql_error(self):
+        """prefetch_window_slice(offset=-1) must raise GraphQLError.
+
+        A negative offset would cause Django's QuerySet.__getitem__ to raise a
+        raw ValueError which escapes the resolver.  The guard must convert it
+        to a clean GraphQLError before any queryset slice occurs.
+        """
+        p = _lo(default_limit=5, max_limit=20)
+        with pytest.raises(GraphQLError, match="Offset must be a non-negative integer"):
+            p.prefetch_window_slice(**{p.offset_query_param: -1})
+
+    def test_zero_offset_is_valid(self):
+        """prefetch_window_slice(offset=0) must NOT raise."""
+        p = _lo(default_limit=5, max_limit=20)
+        result = p.prefetch_window_slice(**{p.offset_query_param: 0})
+        # Returns (offset, limit, ordering) when limit is set.
+        assert result is not None
+        offset, limit, _ = result
+        assert offset == 0
+        assert limit == 5
+
+    def test_unbounded_paginator_returns_none(self):
+        """prefetch_window_slice with no limit configured must return None.
+
+        When _resolve_page_size returns None (no default_limit, no max_limit,
+        no client-supplied limit), prefetch_window_slice returns None to signal
+        the caller to fall back to the in-memory path.  This covers the
+        `if limit is None: return None` guard (line 458-459) which is also
+        new in this diff but is naturally tested by having a truly unbounded
+        paginator configuration.
+        """
+        p = _lo(default_limit=None, max_limit=None)
+        result = p.prefetch_window_slice()
+        assert result is None
