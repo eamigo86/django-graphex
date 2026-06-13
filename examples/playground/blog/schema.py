@@ -102,6 +102,22 @@ class PostType(DjangoObjectType):
         max_deep = 4
         complexity = 2
 
+    # ---- get_queryset scoping showcase (v1.2.2) ------------------------------ #
+    # Before v1.2.2 this hook was documented but never called on list, paginated,
+    # or list-object fields — only on single-object (DjangoObjectField) lookups.
+    # v1.2.2 fix (#58): get_queryset is now invoked on ALL four top-level field
+    # types before the query optimizer runs.
+    # Try it: anonymous request → only PUBLISHED posts returned.
+    #         authenticated request (log in via /admin) → all posts visible.
+    @classmethod
+    def get_queryset(cls, queryset, info):
+        user = getattr(info.context, "user", None)
+        if user is not None and user.is_authenticated:
+            # Authenticated users see every post regardless of status.
+            return queryset
+        # Anonymous users only see published posts.
+        return queryset.filter(status=Post.Status.PUBLISHED)
+
 
 # --------------------------------------------------------------------------- #
 # List types (results + totalCount). Also used for nested lists.              #
@@ -110,13 +126,20 @@ class PostType(DjangoObjectType):
 class PostListType(DjangoListObjectType):
     class Meta:
         model = Post
+        # Safe ordering (v1.2.x): the ordering allowlist rejects relation-spanning
+        # and non-existent terms to prevent column-oracle attacks.
+        # Try in GraphQL:
+        #   posts { results(ordering: "author__user__password") { title } }
+        #     → GraphQLError: 'Relation-spanning ordering is not permitted'
+        #   posts { results(ordering: "nonexistent") { title } }
+        #     → GraphQLError: 'Invalid ordering field'
         pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="-id")
 
 
 # AuthorType is declared AFTER PostListType because it references it directly as
 # the type of its explicit nested `posts` field (DjangoNestedListObjectField).
 class AuthorType(DjangoObjectType):
-    # ---- Query-optimization showcase (v1.1.0) ---------------------------- #
+    # ---- Query-optimization showcase (v1.1.0+) --------------------------- #
     # AnnotatedField: a selection-driven DB annotation. The optimizer adds
     # `.annotate(_gqx_ann_post_count=Count('posts'))` ONLY when `postCount` is in
     # the selection; when it is not selected, no extra SQL is emitted. The default
@@ -178,7 +201,7 @@ class CommentListType(DjangoListObjectType):
 
 
 # --------------------------------------------------------------------------- #
-# Typed GenericForeignKey union (v1.2.0).                                      #
+# Typed GenericForeignKey union (v1.2.0+).                                     #
 #                                                                              #
 # Declaration order is LOAD-BEARING: members -> union -> owner LAST.           #
 #   1. AccountType / InvoiceType  — the two DjangoObjectType members.          #
