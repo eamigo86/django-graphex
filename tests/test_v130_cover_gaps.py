@@ -204,9 +204,11 @@ class TestDjangoModelTypeReservedNameCollision:
 
 
 # ---------------------------------------------------------------------------
-# 3. views.py:279-280 — ValueError/TypeError fallback for CONTENT_LENGTH
-#    When the CONTENT_LENGTH header is absent or non-numeric, the except
-#    clause falls back to len(request.body).
+# 3. views.py body-size guard — authoritative len(request.body) check
+#    Content-Length is used only for a fast-reject optimisation when it is
+#    already over the cap.  The authoritative guard always reads the actual
+#    body length so that spoofed-low / absent / garbage Content-Length
+#    values cannot bypass the limit.
 # ---------------------------------------------------------------------------
 
 
@@ -221,7 +223,7 @@ _simple_schema = graphene.Schema(query=_SimpleQuery)
 
 
 class TestContentLengthFallback(TestCase):
-    """views.py:279-280 — CONTENT_LENGTH absent or invalid falls back to body length."""
+    """Body-size guard: absent or invalid Content-Length falls back to authoritative body length."""
 
     def setUp(self):
         self.factory = RequestFactory()
@@ -280,13 +282,13 @@ class TestContentLengthFallback(TestCase):
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
     def test_invalid_content_length_over_limit_returns_413_or_400(self):
-        """When CONTENT_LENGTH is a non-numeric string, int() raises ValueError,
-        triggering the fallback len(request.body) path (lines 279-280).
-        An over-limit body must still be rejected.
+        """When CONTENT_LENGTH is a non-numeric string the fast-reject stage
+        skips it and the authoritative len(request.body) check rejects the
+        over-limit body.
 
         Note: request._body is pre-read before CONTENT_LENGTH is corrupted so
-        that Django's own request.body property (which also reads CONTENT_LENGTH)
-        does not fail when the view falls back to len(request.body).
+        that Django's own request.body property (which caches the stream) does
+        not fail when the view reads len(request.body).
         """
         from django_graphex import settings as _s
 
@@ -297,10 +299,10 @@ class TestContentLengthFallback(TestCase):
             request = self.factory.post(
                 "/graphql/", data=big_body, content_type="application/json"
             )
-            # Pre-read the body so Django caches it in request._body; after this
-            # request.body is served from the cache and does not re-parse
-            # CONTENT_LENGTH. Then corrupt CONTENT_LENGTH to force the ValueError
-            # path in the view (lines 278-280).
+            # Pre-read the body so Django caches it in request._body; after
+            # this request.body is served from cache.  Then set a non-numeric
+            # CONTENT_LENGTH so the fast-reject stage skips it and the
+            # authoritative check fires.
             _ = request.body  # populate _body cache
             request.META["CONTENT_LENGTH"] = "not-a-number"
 
@@ -311,8 +313,8 @@ class TestContentLengthFallback(TestCase):
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 5000})
     def test_invalid_content_length_under_limit_passes(self):
-        """When CONTENT_LENGTH is non-numeric and body is under the limit, the
-        fallback path is taken and the request proceeds normally.
+        """When CONTENT_LENGTH is non-numeric and body is under the limit the
+        authoritative check passes and the request proceeds normally.
 
         Note: request._body is pre-read before CONTENT_LENGTH is corrupted (same
         reason as the over-limit test above).

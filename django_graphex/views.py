@@ -258,6 +258,16 @@ class BaseGraphQLView(View):
         entire base64 payload sits in the JSON body, so rejecting before
         ``parse_body`` prevents it from ever being allocated.  The per-field
         decoded-size pre-check in ``decode_base64_file`` is a secondary guard.
+
+        The guard uses a two-stage strategy:
+
+        1. **Fast-reject** (O(1)): if ``Content-Length`` is present AND already
+           exceeds ``MAX_REQUEST_BODY_SIZE``, reject immediately without reading
+           the body — avoids buffering an honest large upload.
+        2. **Authoritative check**: always verify ``len(request.body) <=
+           max_body`` regardless of the ``Content-Length`` header.  This
+           prevents a client from spoofing a low ``Content-Length`` to bypass
+           the guard.
         """
         try:
             if request.method.lower() not in ("get", "post"):
@@ -269,23 +279,63 @@ class BaseGraphQLView(View):
 
             # Body-size guard: reject before JSON parsing when
             # MAX_REQUEST_BODY_SIZE is configured and the body exceeds it.
+            #
+            # Security note: Content-Length is a CLIENT-SUPPLIED header and
+            # MUST NOT be trusted to pass the guard.  A spoofed low value
+            # would let an oversized body bypass the check entirely.
+            #
+            # Two-stage strategy:
+            #   1. Fast-reject: if Content-Length is present AND already
+            #      exceeds the cap, reject immediately without reading the
+            #      body (avoids buffering an honest large upload).
+            #   2. Authoritative check: always verify len(request.body) ≤
+            #      max_body.  This catches spoofed-low / absent / garbage
+            #      Content-Length values.
+            #
+            # Accessing request.body here is safe: dispatch runs before
+            # parse_body, so the stream has not been consumed yet.  Django
+            # caches the result in request._body on first access.  If the
+            # body is so large that Django itself raises RequestDataTooBig /
+            # SuspiciousOperation (DATA_UPLOAD_MAX_MEMORY_SIZE), that
+            # exception surfaces as Django's own 400 response — we do not
+            # mask it, but we also do not let the guard 500 on it.
             max_body = graphql_api_settings.MAX_REQUEST_BODY_SIZE
             if max_body is not None and request.method.lower() == "post":
-                # Use Content-Length header first (O(1), no body read needed).
-                # Fall back to len(request.body) when the header is absent.
+                from django.http import HttpResponse as _HR
+
+                # --- Stage 1: fast-reject on honest oversized Content-Length ---
                 content_length_str = request.META.get("CONTENT_LENGTH", "")
                 try:
-                    content_length = int(content_length_str)
+                    declared_length = int(content_length_str)
                 except (ValueError, TypeError):
-                    content_length = len(request.body)
-                if content_length > max_body:
-                    from django.http import HttpResponse as _HR
+                    declared_length = None
 
-                    err_response = _HR(status=413)
+                if declared_length is not None and declared_length > max_body:
                     raise HttpError(
-                        err_response,
+                        _HR(status=413),
                         message=(
-                            f"Request body ({content_length} bytes) exceeds the "
+                            f"Request body ({declared_length} bytes) exceeds the "
+                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                            "Split the request or increase the limit."
+                        ),
+                    )
+
+                # --- Stage 2: authoritative check on the actual body length ---
+                # This ALWAYS runs so that a spoofed-low / absent / garbage
+                # Content-Length cannot bypass the guard.
+                try:
+                    actual_length = len(request.body)
+                except Exception:
+                    # Django raised RequestDataTooBig / SuspiciousOperation or
+                    # similar — let it propagate as Django's own response rather
+                    # than masking it here.
+                    raise
+
+                if actual_length > max_body:
+                    raise HttpError(
+                        _HR(status=413),
+                        message=(
+                            f"Request body ({actual_length} bytes) exceeds the "
                             f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
                             "Split the request or increase the limit."
                         ),

@@ -318,6 +318,97 @@ class TestMaxRequestBodySizeGuard(TestCase):
             _s.graphql_api_settings.reload()
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
+    def test_spoofed_low_content_length_still_rejected(self):
+        """DECISIVE: spoofed-low Content-Length must NOT bypass the guard.
+
+        A client that sends CONTENT_LENGTH: 10 but a real body larger than
+        MAX_REQUEST_BODY_SIZE must receive 413.  The old code trusted the
+        header and skipped the body-length check, letting the request through.
+        """
+        from django_graphex import settings as _s
+
+        _s.graphql_api_settings.reload()
+        try:
+            view = self._make_view()
+            # Real body is 200 bytes — well over the 50-byte cap.
+            big_body = b"x" * 200
+            rf = RequestFactory()
+            request = rf.post(
+                "/graphql/", data=big_body, content_type="application/json"
+            )
+            # Spoof a low Content-Length that would pass the old check.
+            request.META["CONTENT_LENGTH"] = "10"
+            # Pre-populate _body cache so Django serves it without re-parsing headers.
+            _ = request.body
+            response = view(request)
+            assert response.status_code == 413, (
+                f"Expected 413 for spoofed-low CL but got {response.status_code}. "
+                "The guard must check len(request.body), not trust Content-Length."
+            )
+        finally:
+            _s.graphql_api_settings.reload()
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
+    def test_honest_large_body_fast_reject_413(self):
+        """Honest large body with accurate CL → fast-reject via CL check (413)."""
+        from django_graphex import settings as _s
+
+        _s.graphql_api_settings.reload()
+        try:
+            view = self._make_view()
+            big_body = b"x" * 200
+            rf = RequestFactory()
+            request = rf.post(
+                "/graphql/", data=big_body, content_type="application/json"
+            )
+            # Accurate CL — triggers fast-reject path.
+            request.META["CONTENT_LENGTH"] = str(len(big_body))
+            response = view(request)
+            assert response.status_code == 413
+        finally:
+            _s.graphql_api_settings.reload()
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
+    def test_absent_content_length_over_cap_rejected(self):
+        """No Content-Length header + body over cap → authoritative check rejects (413)."""
+        from django_graphex import settings as _s
+
+        _s.graphql_api_settings.reload()
+        try:
+            view = self._make_view()
+            big_body = b"x" * 200
+            rf = RequestFactory()
+            request = rf.post(
+                "/graphql/", data=big_body, content_type="application/json"
+            )
+            request.META.pop("CONTENT_LENGTH", None)
+            _ = request.body  # pre-populate cache
+            response = view(request)
+            assert response.status_code == 413
+        finally:
+            _s.graphql_api_settings.reload()
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
+    def test_garbage_content_length_over_cap_rejected(self):
+        """Garbage Content-Length + body over cap → authoritative check rejects (413)."""
+        from django_graphex import settings as _s
+
+        _s.graphql_api_settings.reload()
+        try:
+            view = self._make_view()
+            big_body = b"x" * 200
+            rf = RequestFactory()
+            request = rf.post(
+                "/graphql/", data=big_body, content_type="application/json"
+            )
+            _ = request.body  # pre-populate cache
+            request.META["CONTENT_LENGTH"] = "garbage"
+            response = view(request)
+            assert response.status_code == 413
+        finally:
+            _s.graphql_api_settings.reload()
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
     def test_batch_over_limit_returns_413_or_400(self):
         """A batch request body over the limit is rejected before parsing."""
         from django_graphex import settings as _s
