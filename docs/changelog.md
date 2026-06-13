@@ -12,6 +12,27 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 1.2.3 — 2026-06-13
+
+!!! note "Hotfix"
+
+    Corrective release only — no behavior changes beyond restoring the two
+    pre-1.2.2 behaviors described below.
+
+### Fixed
+
+- **Subscription delete broadcasts no longer send `pk=None`** — `_on_delete`
+  now snapshots the pk (and the serialized payload in `serialize_data=True`
+  mode) at signal time before deferring via `transaction.on_commit`, instead
+  of capturing the live instance whose pk Django nulls before the callback
+  runs. Fixes misrouted per-object delete notifications in the default
+  id-only mode and a `ValueError` that escaped the user's transaction in
+  `serialize_data=True` mode. Regression from 1.2.2 (#63). (#69)
+- **Pagination `ordering` now accepts the idiomatic `pk` / `-pk` alias** —
+  The 1.2.2 ordering allowlist (#59) rejected it, breaking any paginator
+  configured with `ordering="pk"` on every request. Relation-spanning (`__`)
+  ordering remains rejected. Regression from 1.2.2. (#70)
+
 ## 1.2.2 — 2026-06-13
 
 ### Security
