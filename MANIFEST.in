@@ -1,3 +1,6 @@
+# NOTE: This project uses hatchling as the build backend.
+# hatchling does not read MANIFEST.in; sdist contents are controlled via
+# [tool.hatch.build.targets.sdist] in pyproject.toml.
+# This file is kept for compatibility with tools that read it (e.g. check-manifest).
 include README.md
-include README.rst
 include LICENSE
