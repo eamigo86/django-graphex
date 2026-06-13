@@ -202,6 +202,17 @@ LimitOffsetGraphqlPagination(
 }
 ```
 
+### Offset Validation
+
+`LimitOffsetGraphqlPagination` raises a clean `GraphQLError` when the client
+supplies a **negative** `offset` value (e.g. `offset: -5`). The raw Django
+`ValueError("Negative indexing is not supported")` is never exposed.
+
+```graphql
+# Raises GraphQLError: "Invalid offset: -5. Offset must be a non-negative integer."
+{ users { results(offset: -5, limit: 10) { id } } }
+```
+
 ## PageGraphqlPagination
 
 Page-number based pagination, similar to Django's built-in pagination.
