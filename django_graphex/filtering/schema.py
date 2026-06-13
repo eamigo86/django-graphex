@@ -125,7 +125,10 @@ def _normalize_filter_fields(filter_fields: Any) -> dict[str, tuple[str, ...] | 
     result: dict[str, tuple[str, ...] | None] = {}
     if isinstance(filter_fields, dict):
         for path, lookups in filter_fields.items():
-            result[path] = tuple(lookups)
+            # A None value means "use default lookups" — same semantics as the
+            # list form.  Calling tuple(None) would raise TypeError, so we
+            # preserve None explicitly.
+            result[path] = None if lookups is None else tuple(lookups)
     else:
         for path in filter_fields or ():
             result[path] = None

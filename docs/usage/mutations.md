@@ -462,8 +462,7 @@ top-level mutation instead, or issue a separate mutation that clears and re-adds
 
 !!! note "Planned for v1.3.0"
     A per-field `m2m_behavior = "set" | "add"` option will let you choose the semantics on the
-    nested path and align the default to `.set` (matching top-level behavior). Track the work in
-    [GitHub issue #18](https://github.com/eamigo86/django-graphex/issues/18).
+    nested path and align the default to `.set` (matching top-level behavior).
 
 ### Explicit-null limitation in update mutations
 
@@ -487,8 +486,7 @@ M2M association via a dedicated resolver.
 !!! note "Planned for v1.3.0"
     Explicit-null support requires distinguishing "omitted" from "explicitly null" at the input
     level. The planned approach is an AST-presence check so the current partial-update behavior
-    is preserved for omitted fields while respecting intentional nulls. Track the work in
-    [GitHub issue #18](https://github.com/eamigo86/django-graphex/issues/18).
+    is preserved for omitted fields while respecting intentional nulls.
 
 ### perform_mutate response shape
 
