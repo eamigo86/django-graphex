@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import graphene
 import pytest
@@ -18,7 +17,6 @@ from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import BaseGraphQLView, GraphQLView
-
 
 # ---------------------------------------------------------------------------
 # Shared schema
@@ -63,11 +61,13 @@ class MaxBatchSizeErrorBodyTest(TestCase):
     @patch("django_graphex.views.graphql_api_settings.MAX_BATCH_SIZE", 2)
     def test_batch_size_exceeded_returns_single_encoded_error(self):
         view = BaseGraphQLView.as_view(schema=_schema, batch=True)
-        body = json.dumps([
-            {"query": "{ hello }"},
-            {"query": "{ hello }"},
-            {"query": "{ hello }"},  # 3 > limit 2
-        ])
+        body = json.dumps(
+            [
+                {"query": "{ hello }"},
+                {"query": "{ hello }"},
+                {"query": "{ hello }"},  # 3 > limit 2
+            ]
+        )
         request = self.factory.post("/graphql/", body, content_type="application/json")
         response = view(request)
         self.assertEqual(response.status_code, 400)
@@ -213,7 +213,6 @@ class NumberDirectiveErrorMessagesTest(TestCase):
 
     def test_non_coercible_value_blames_value(self):
         """value='abc' with a valid spec must mention the value, not the spec."""
-        import graphene
         from graphql import GraphQLError
 
         from django_graphex.directives.string import NumberGraphQLDirective
@@ -272,10 +271,12 @@ class BatchWithCacheTest(TestCase):
 
     def test_batch_with_cache_active_returns_200(self):
         view = GraphQLView.as_view(schema=_schema, batch=True)
-        body = json.dumps([
-            {"query": "{ hello }"},
-            {"query": "{ hello }"},
-        ])
+        body = json.dumps(
+            [
+                {"query": "{ hello }"},
+                {"query": "{ hello }"},
+            ]
+        )
         request = self.factory.post("/graphql/", body, content_type="application/json")
         response = view(request)
         self.assertEqual(response.status_code, 200)
@@ -378,11 +379,11 @@ class SafeGroupSendTest(TestCase):
 
     def test_singleton_executor_is_reused(self):
         """The module-level executor must be a single instance (not created per call)."""
-        from django_graphex.subscriptions import bindings
-
         # The executor should be a module-level singleton after first use.
         # We just verify the attribute exists and is a ThreadPoolExecutor.
         import concurrent.futures
+
+        from django_graphex.subscriptions import bindings
 
         assert hasattr(bindings, "_GROUP_SEND_EXECUTOR"), (
             "bindings must expose a module-level _GROUP_SEND_EXECUTOR"

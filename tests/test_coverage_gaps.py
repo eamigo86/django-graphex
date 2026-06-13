@@ -22,7 +22,6 @@ from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
 
-
 # ---------------------------------------------------------------------------
 # __init__.py — PackageNotFoundError fallback
 # ---------------------------------------------------------------------------
@@ -220,12 +219,16 @@ class CacheKeyPrefixAuthHeaderTest(TestCase):
         body = json.dumps({"query": "{ hello }"})
 
         req1 = self.factory.post(
-            "/graphql/", body, content_type="application/json",
-            HTTP_AUTHORIZATION="Bearer tok-123"
+            "/graphql/",
+            body,
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer tok-123",
         )
         req2 = self.factory.post(
-            "/graphql/", body, content_type="application/json",
-            HTTP_AUTHORIZATION="Bearer tok-123"
+            "/graphql/",
+            body,
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer tok-123",
         )
 
         resp1 = view(req1)
@@ -381,7 +384,6 @@ def test_multiselect_field_import_fallback():
     """
     # Simulate multiselectfield not being installed.
     import builtins
-    import importlib
 
     real_import = builtins.__import__
 
