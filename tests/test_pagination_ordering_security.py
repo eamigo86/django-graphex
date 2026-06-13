@@ -35,11 +35,12 @@ from django_graphex import (
 )
 from django_graphex.paginations.pagination import (
     LimitOffsetGraphqlPagination as _LOF,
+)
+from django_graphex.paginations.pagination import (
     PageGraphqlPagination as _PGP,
 )
 
-from .models import Author, BasicModel
-
+from .models import Author
 
 # ---------------------------------------------------------------------------
 # Schema helpers — full GraphQL integration
@@ -105,7 +106,9 @@ class TestInvalidFieldRaisesGraphQLError(TestCase):
 
         p = _lo()
         try:
-            list(p.paginate_queryset(Author.objects.all(), ordering="nonexistent_field"))
+            list(
+                p.paginate_queryset(Author.objects.all(), ordering="nonexistent_field")
+            )
             pytest.fail("Expected an exception")
         except GraphQLError:
             pass  # correct
@@ -133,7 +136,9 @@ class TestInvalidFieldRaisesGraphQLError(TestCase):
         """PageGraphqlPagination: invalid field → GraphQLError."""
         p = _pg()
         with pytest.raises(GraphQLError):
-            p.paginate_queryset(Author.objects.all(), page=1, ordering="nonexistent_field")
+            p.paginate_queryset(
+                Author.objects.all(), page=1, ordering="nonexistent_field"
+            )
 
     def test_page_invalid_field_does_not_leak_field_list(self):
         """Error message must NOT contain 'Choices are:' (the Django field dump)."""
@@ -294,7 +299,9 @@ class TestLegitimateOrderingsWork(TestCase):
     def test_page_valid_asc_field(self):
         """PageGraphqlPagination: ascending ordering must work."""
         p = _pg()
-        result = list(p.paginate_queryset(Author.objects.all(), page=1, ordering="name"))
+        result = list(
+            p.paginate_queryset(Author.objects.all(), page=1, ordering="name")
+        )
         names = [a.name for a in result]
         assert names == sorted(names)
 
@@ -343,9 +350,7 @@ class TestPrefetchWindowSliceOrderingValidation(TestCase):
         """prefetch_window_slice must reject relation-spanning term."""
         p = _lo()
         with pytest.raises(GraphQLError):
-            p.prefetch_window_slice_ordering_check(
-                Author.objects.model, "posts__title"
-            )
+            p.prefetch_window_slice_ordering_check(Author.objects.model, "posts__title")
 
     def test_limitoffset_prefetch_window_slice_valid_term_ok(self):
         """prefetch_window_slice must accept valid concrete attname."""

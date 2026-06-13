@@ -15,9 +15,6 @@ from django.db.models import QuerySet
 from graphene import Boolean, Field, Int, ObjectType, String
 from graphql import GraphQLError
 
-# Separator used by Django ORM for relation traversal (e.g. "author__name").
-_LOOKUP_SEP = "__"
-
 from django_graphex.base_types import DjangoListObjectBase
 from django_graphex.paginations.utils import (
     GenericPaginationField,
@@ -29,6 +26,9 @@ from django_graphex.settings import graphql_api_settings
 #: Final fallback page size for cursor pagination when neither a default nor a
 #: maximum is configured (the keyset always needs a concrete size).
 DEFAULT_CURSOR_PAGE_SIZE = 20
+
+# Separator used by Django ORM for relation traversal (e.g. "author__name").
+_LOOKUP_SEP = "__"
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -83,7 +83,8 @@ def _validate_ordering_terms(model: Any, ordering: str | list[str]) -> None:
         return
 
     concrete_attnames: set[str] = {
-        f.attname for f in model._meta.concrete_fields  # type: ignore[union-attr]
+        f.attname
+        for f in model._meta.concrete_fields  # type: ignore[union-attr]
     }
 
     if isinstance(ordering, str):
@@ -102,9 +103,7 @@ def _validate_ordering_terms(model: Any, ordering: str | list[str]) -> None:
             )
         # Reject anything not in the concrete attname allowlist
         if bare not in concrete_attnames:
-            raise GraphQLError(
-                f"Invalid ordering field: '{bare}'."
-            )
+            raise GraphQLError(f"Invalid ordering field: '{bare}'.")
 
 
 def _inmemory_order(items: Iterable[Any], ordering: Any) -> list[Any]:
