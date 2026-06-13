@@ -31,7 +31,10 @@ class ParentTest:
 
 class DjangoListObjectFieldTest(ParentTest, TestCase):
     query = queries.ALL_USERS
-    expected_return_payload = {"data": {"allUsers": {"results": [{"id": "1"}]}}}
+
+    @property
+    def expected_return_payload(self):
+        return {"data": {"allUsers": {"results": [{"id": str(self.user.id)}]}}}
 
     def test_field(self):
         self.assertEqual(
@@ -41,30 +44,36 @@ class DjangoListObjectFieldTest(ParentTest, TestCase):
 
 class DjangoFilterPaginateListFieldTest(ParentTest, TestCase):
     query = queries.ALL_USERS1
-    expected_return_payload = {
-        "data": {
-            "allUsers1": [
-                {
-                    "id": "1",
-                    "username": "graphql",
-                    "firstName": "Ernesto",
-                    "lastName": "Perez Amigo",
-                    "email": "eamigop86@gmail.com",
-                }
-            ]
+
+    @property
+    def expected_return_payload(self):
+        return {
+            "data": {
+                "allUsers1": [
+                    {
+                        "id": str(self.user.id),
+                        "username": self.user.username,
+                        "firstName": self.user.first_name,
+                        "lastName": self.user.last_name,
+                        "email": self.user.email,
+                    }
+                ]
+            }
         }
-    }
 
 
 class DjangoFilterListFieldTest(ParentTest, TestCase):
     query = queries.ALL_USERS2
-    expected_return_payload = {"data": {"allUsers2": [{"username": "graphql"}]}}
+
+    @property
+    def expected_return_payload(self):
+        return {"data": {"allUsers2": [{"username": self.user.username}]}}
 
 
 class DjangoListObjectFieldWithFilterSetTest(ParentTest, TestCase):
-    expected_return_payload = {
-        "data": {"allUsers3": {"results": [{"username": "graphql"}]}}
-    }
+    @property
+    def expected_return_payload(self):
+        return {"data": {"allUsers3": {"results": [{"username": self.user.username}]}}}
 
     @property
     def query(self):
@@ -105,16 +114,22 @@ class DjangoListObjectFieldWithFilterSetTest(ParentTest, TestCase):
 
 
 class DjangoModelTypeTest(ParentTest, TestCase):
-    expected_return_payload = {
-        "data": {
-            "users": {
-                "results": [
-                    {"id": "1", "username": "graphql", "email": "eamigop86@gmail.com"}
-                ],
-                "totalCount": 1,
+    @property
+    def expected_return_payload(self):
+        return {
+            "data": {
+                "users": {
+                    "results": [
+                        {
+                            "id": str(self.user.id),
+                            "username": self.user.username,
+                            "email": self.user.email,
+                        }
+                    ],
+                    "totalCount": 1,
+                }
             }
         }
-    }
 
     @property
     def query(self):
