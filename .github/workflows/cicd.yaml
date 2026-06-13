@@ -337,6 +337,10 @@ jobs:
     - name: Install dependencies
       run: uv sync --frozen
 
+    - name: Set docs copyright year to the build year
+      run: |
+        sed -i -E "s/(Copyright &copy; )[0-9]{4}/\1$(date -u +%Y)/" zensical.yml
+
     - name: Build documentation
       run: uv run zensical build --clean -f zensical.yml
 
