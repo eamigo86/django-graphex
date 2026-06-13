@@ -141,5 +141,53 @@ class UserType(DjangoModelType):
 
 ## Current limits of the native backend
 
-- Exotic field types (file/image, Postgres array/hstore/range, GIS,
-  `GenericForeignKey`) fall back to a permissive type.
+### Exotic field types fall back to a permissive scalar
+
+File/image fields, Postgres-specific field types (`ArrayField`, `HStoreField`,
+range fields), GIS geometry fields, and `GenericForeignKey` are not natively
+modeled by the Pydantic schema the backend derives. They are accepted as-is
+(permissive scalar) without type or length validation.
+
+**In practice:** a file upload is handled by the multipart middleware, not
+Pydantic; other exotic fields pass through without constraint checks. If you need
+validation on these, use a `validate_<field>()` method.
+
+### Conditional and expression-based `UniqueConstraint` entries are DB-enforced only
+
+`Meta.constraints` entries with a `condition=Q(...)` or `expressions=[...]`
+argument are **not** pre-checked by the backend. Replicating these predicates
+server-side is unreliable (they may reference database functions or
+non-deterministic expressions), so the backend skips them deliberately.
+
+**What breaks:** if a conditional unique constraint is violated, the database
+raises an `IntegrityError` that is **not** caught by the backend. This propagates
+as an HTTP 500 instead of a structured `{ ok: false, errors: [...] }` response.
+
+**Workaround:** add a `validate_<field>()` or `validate()` method that queries
+for the conflict and raises `ValueError` before the backend reaches the DB
+write.
+
+**Unconditional single-field `UniqueConstraint`** entries (no `condition`, no
+`expressions`) are fully pre-checked and surfaced as a structured `ErrorType`.
+See [Uniqueness validation](#uniqueness-validation) above.
+
+### `unique_together` reports to `non_field_errors`
+
+Multi-field `Meta.unique_together` violations (and multi-field unconditional
+`UniqueConstraint` entries) are reported under `errors[].field == "non_field_errors"`,
+not on the individual field names. This matches Django's own `ValidationError`
+behavior for multi-field uniqueness.
+
+**Example mutation response:**
+
+```json
+{
+  "ok": false,
+  "errors": [
+    {
+      "field": "non_field_errors",
+      "messages": ["User with this username and email already exists."]
+    }
+  ]
+}
+```

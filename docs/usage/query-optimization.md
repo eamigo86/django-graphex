@@ -308,7 +308,7 @@ To customize the child queryset for a **specific** nested list field — add a
 **`optimize_<snake_field>`** static method on the **parent** graphene type:
 
 ```python
-from django_graphex.fields import DjangoNestedListObjectField
+from django_graphex import DjangoNestedListObjectField
 
 class AuthorType(DjangoObjectType):
     posts = DjangoNestedListObjectField(PostListType, accessor="posts")
@@ -498,6 +498,32 @@ optimizer adopts it as the base queryset and still applies `select_related` /
 querysets, since they may already shape their own columns.) Resolvers that return
 anything other than a `QuerySet` are left untouched.
 
+**Example** — scope a list to the current user while keeping optimizer benefits:
+
+```python
+import graphene
+from django_graphex import DjangoListObjectField, DjangoListObjectType
+
+class PostListType(DjangoListObjectType):
+    class Meta:
+        model = Post
+        pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="-id")
+
+class Query(graphene.ObjectType):
+    my_posts = DjangoListObjectField(PostListType, description="Posts by the current user")
+
+    def resolve_my_posts(self, info, **kwargs):
+        # Return a queryset — the optimizer still adds select_related / prefetch_related
+        # on top of this base. Use filter_queryset on the type for per-request scoping
+        # when you also want pagination and filtering to compose cleanly.
+        return Post.objects.filter(author=info.context.user)
+```
+
+The resolver returns a `QuerySet`, so the optimizer picks it up and adds
+`select_related("author")` / `prefetch_related("tags")` etc. based on the
+GraphQL selection. If the resolver returned a plain list, the optimizer would
+leave it untouched (no queryset to decorate).
+
 ## Optimized mutation re-read
 
 `DjangoModelType.perform_mutate` re-reads the saved object from the database
@@ -528,3 +554,10 @@ whenever `DjangoModelType.perform_mutate` is called.  If the selection set
 cannot be parsed (e.g. a custom `info` stub without field nodes), the method
 falls back to the plain unoptimized re-read so existing behaviour is
 preserved.
+
+!!! note "Depth limits apply to mutation selection sets too"
+
+    `MAX_QUERY_DEPTH` and `Meta.max_deep` are enforced on **all** GraphQL
+    operation types — including the mutation response selection set. A mutation
+    that requests deeper nesting than the limit permits is rejected **before**
+    any database write occurs. See [Query depth & cost limits](query-limits.md).

@@ -173,6 +173,21 @@ subscription. The generated subscription supports the same arguments — includi
 [`filters`](#filtering-notifications). Setting `Meta.stream` is required to use
 `SubscriptionField()` / `subscription_type()`.
 
+!!! note "Demultiplexer auto-calls `subscription_type()`"
+
+    When you pass a `DjangoModelType` directly to the demultiplexer's
+    `subscriptions` dict (or set), `GraphqlAPIDemultiplexer` automatically calls
+    `subscription_type()` on it to retrieve the generated `Subscription` class.
+    You do **not** need to call `UserModelType.subscription_type()` yourself
+    before passing the type — passing the `DjangoModelType` directly is the
+    correct and intended pattern:
+
+    ```python
+    class AppDemultiplexer(GraphqlAPIDemultiplexer):
+        subscriptions = {UserModelType}   # ✅ correct — auto-resolved
+        # NOT: subscriptions = {UserModelType.subscription_type()}  # redundant
+    ```
+
 ### Authorization and row-scoping
 
 The generated subscription honors the type's authorization and scoping:

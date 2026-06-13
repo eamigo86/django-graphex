@@ -2,6 +2,39 @@
 
 GraphQL directives in `django-graphex` allow you to transform field values at query execution time. They provide a powerful way to format, manipulate, and transform data without modifying your underlying models or resolvers.
 
+## Middleware requirement (required for ALL directives)
+
+!!! warning "Middleware is required"
+
+    **Every directive — built-in and custom — requires `GraphQLDirectiveMiddleware`
+    to be registered in your settings.** Without it, directives parse and validate
+    in the schema but are silently ignored at execution time (no error, no transform).
+
+    Add it to your settings before using any directive:
+
+    ```python
+    GRAPHENE = {
+        "SCHEMA": "myapp.schema.schema",
+        "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
+    }
+    ```
+
+    And pass `all_directives` (or your combined directive list) to the schema:
+
+    ```python
+    from django_graphex import all_directives
+
+    schema = graphene.Schema(
+        query=Query,
+        mutation=Mutation,
+        directives=all_directives,
+    )
+    ```
+
+    The middleware coerces directive arguments and dispatches transforms to the
+    registered directive class. Both the schema `directives=` list **and** the
+    middleware entry are required — either alone does nothing.
+
 ## Overview
 
 Directives are applied to fields in your GraphQL queries and are processed after the field value is resolved. They enable you to:

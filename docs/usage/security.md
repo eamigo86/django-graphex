@@ -209,7 +209,7 @@ except Exception:
 `batch=True` is set. Requests that exceed `MAX_BATCH_SIZE` are rejected with
 **HTTP 400** before any operation is executed.
 
-See [`MAX_BATCH_SIZE`](settings.md#http--view-hardening) in the settings reference.
+See [`MAX_BATCH_SIZE`](settings.md#http-view-hardening) in the settings reference.
 
 ### GraphiQL CDN Subresource Integrity
 

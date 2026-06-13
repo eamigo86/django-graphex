@@ -206,8 +206,17 @@ PageGraphqlPagination(
 )
 ```
 
-!!! tip "Dynamic Page Size"
-    Set `page_size_query_param` to allow clients to control page size. If not set, page size is fixed.
+!!! tip "`page_size_query_param` semantics"
+
+    - **Non-`None` string** (e.g. `"pageSize"`) — adds a `pageSize` argument to
+      the `results(...)` subfield. Clients can request any size up to
+      `max_page_size`; values above the cap are silently clamped to `max_page_size`.
+    - **`None`** (the default) — page size is **fixed** at `page_size`; clients
+      cannot change it. The `pageSize` argument is not added to the schema.
+
+    This is **asymmetric** with `LimitOffsetGraphqlPagination.limit_query_param`,
+    which is always `"limit"` and is always present in the schema — it cannot be
+    disabled by setting it to `None`.
 
 ### Query Examples
 
@@ -390,7 +399,10 @@ query Events($first: Int!, $cursor: String) {
 
 ### Multiple Ordering Fields
 
-Both pagination types support multiple ordering fields:
+`LimitOffsetGraphqlPagination` and `PageGraphqlPagination` both support multiple
+ordering fields. `CursorGraphqlPagination` is single-field by design: keyset
+pagination requires a stable, well-defined ordering over one field (typically
+the primary key). Multi-field cursors are not supported.
 
 === "String Format"
 
@@ -482,6 +494,38 @@ Create custom pagination for specific needs:
                 **kwargs
             )
     ```
+
+## Related settings
+
+Pagination behavior is governed by three global settings under `DJANGO_GRAPHEX`.
+They serve as library-wide defaults; **instance arguments always take precedence**:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `DEFAULT_PAGINATION_CLASS` | `"django_graphex.paginations.LimitOffsetGraphqlPagination"` | Paginator class used when no `Meta.pagination` is set on a type. |
+| `DEFAULT_PAGE_SIZE` | `None` | Default page/limit size. `None` means unbounded (all rows). |
+| `MAX_PAGE_SIZE` | `None` | Maximum page/limit size the client may request. `None` means no cap. |
+
+**Precedence:** instance arg (e.g. `LimitOffsetGraphqlPagination(default_limit=25)`) > `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE`.
+
+!!! warning "Global defaults are read at import time"
+
+    `DEFAULT_PAGE_SIZE` and `MAX_PAGE_SIZE` are read as **default parameter values**
+    when the pagination class is instantiated — typically at module import time when
+    your schema is first evaluated. This means changing them via Django's
+    `override_settings` at test time (or at runtime) does **not** affect already-
+    imported paginator instances. To configure them reliably, set them in your
+    actual `settings.py` before any schema module is imported, or pass the desired
+    values directly to the paginator constructor.
+
+```python
+# settings.py
+DJANGO_GRAPHEX = {
+    "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
+    "DEFAULT_PAGE_SIZE": 20,
+    "MAX_PAGE_SIZE": 100,
+}
+```
 
 ## Robustness & Error Handling
 

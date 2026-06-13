@@ -195,4 +195,10 @@ The first release. A GraphQL + Django toolkit built directly on `graphene`
   variables.
 
 ### Requirements
-- **Python** 3.12–3.14, **Django** 4.0–6.0, **graphene** >=3.3,<4, **pydantic** >=2,<3.
+- **Python** 3.12–3.14, **Django** 4.2–6.0 (LTS 4.2 and 5.2 recommended for production), **graphene** >=3.3,<4, **pydantic** >=2,<3.
+
+!!! note "Django range clarification"
+
+    The 1.0.0 release initially listed Django 4.0–6.0 in its requirements. The
+    true minimum is **Django 4.2** — Django 4.0 and 4.1 are end-of-life and were
+    never tested. From 1.1.0 onward the supported range is explicitly 4.2–6.0.

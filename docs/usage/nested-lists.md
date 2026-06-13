@@ -315,8 +315,7 @@ default `False` setting the exception propagates normally.
 
 ```python
 from django.db.models import Prefetch
-from django_graphex import DjangoObjectType, DjangoListObjectType, DjangoListObjectField
-from django_graphex.fields import DjangoNestedListObjectField
+from django_graphex import DjangoObjectType, DjangoListObjectType, DjangoListObjectField, DjangoNestedListObjectField
 
 class PostListType(DjangoListObjectType):
     class Meta:

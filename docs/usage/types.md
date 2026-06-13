@@ -104,18 +104,28 @@ class UserListType(DjangoListObjectType):
         queryset = User.objects.select_related('profile')
 
         # Field restrictions
-        fields = ("id", "username", "email", "first_name", "last_name")
-        exclude = ("password",)
+        only_fields = ("id", "username", "email", "first_name", "last_name")
+        exclude_fields = ("password",)
 ```
 
 ### Helper Methods
 
 ```python
+import graphene
+from django_graphex import DjangoListObjectField
+
 class Query(graphene.ObjectType):
-    # Get both list and retrieve fields
-    users = UserListType.ListField(description="List all users")
+    # Preferred: use DjangoListObjectField directly
+    users = DjangoListObjectField(UserListType, description="List all users")
+    # Or use the RetrieveField shorthand for a single object
     user = UserListType.RetrieveField(description="Get single user")
 ```
+
+!!! warning "`ListField()` belongs to `DjangoModelType`, not `DjangoListObjectType`"
+
+    `UserListType.ListField()` raises `AttributeError` — `ListField` is a
+    classmethod on `DjangoModelType`, not on `DjangoListObjectType`. Use
+    `DjangoListObjectField(UserListType)` instead.
 
 ## DjangoInputObjectType
 
@@ -129,9 +139,9 @@ class UserInput(DjangoInputObjectType):
     class Meta:
         description = "User input for mutations"
         model = User
-        fields = ("username", "email", "first_name", "last_name")
+        only_fields = ("username", "email", "first_name", "last_name")
         # or exclude specific fields
-        # exclude = ("password", "date_joined", "last_login")
+        # exclude_fields = ("password", "date_joined", "last_login")
 ```
 
 ### Advanced Configuration
@@ -148,7 +158,7 @@ class UserCreateInput(DjangoInputObjectType):
 
     class Meta:
         model = User
-        fields = ("username", "email", "first_name", "last_name", "password")
+        only_fields = ("username", "email", "first_name", "last_name", "password")
         description = "Input type for user creation"
 
 class UserUpdateInput(DjangoInputObjectType):
@@ -156,7 +166,7 @@ class UserUpdateInput(DjangoInputObjectType):
 
     class Meta:
         model = User
-        fields = ("email", "first_name", "last_name")
+        only_fields = ("email", "first_name", "last_name")
         description = "Input type for user updates"
 ```
 
@@ -186,6 +196,11 @@ class CreateUserMutation(graphene.Mutation):
     integrity checks (FK existence, uniqueness, `unique_together`) are handled
     automatically.
 
+    Setting `Meta.stream` also auto-generates a subscription via
+    `SubscriptionField()`. This requires the `[subscriptions]` extra
+    (`pip install "django-graphex[subscriptions]"`). See
+    [Subscriptions](subscriptions.md#from-a-djangomodeltype-one-definition).
+
 ```python
 from django.contrib.auth.models import User
 from django_graphex import DjangoModelType
@@ -211,6 +226,17 @@ class UserModelType(DjangoModelType):
     Pass a `Meta.queryset` to scope every retrieve/list to a base queryset
     (e.g. `queryset = User.objects.filter(is_active=True)`). It is honored by the
     generated `RetrieveField()` / `ListField()`.
+
+!!! tip "Optimizer and `Meta.queryset` interplay"
+
+    The query optimizer applies `select_related` / `prefetch_related` / `.only()`
+    **on top of** the `Meta.queryset` (or the value returned by `get_queryset`).
+    Any manual `select_related`/`prefetch_related` you add in `Meta.queryset` may
+    be *replaced* by the optimizer's own derived version — this is intentional and
+    typically reduces queries further. If you rely on specific prefetch options
+    (e.g. a custom `Prefetch` queryset), use a `per-field optimize_<field>` hook
+    on the parent type instead of embedding them in `Meta.queryset`. See
+    [Query Optimization](query-optimization.md).
 
 ### Custom queryset & per-request filtering
 
@@ -374,34 +400,12 @@ class Mutation(graphene.ObjectType):
     update_user = UserModelType.UpdateField(description='Update user')
 ```
 
-### Custom validation with Pydantic
+### Custom validation
 
-To add field-level validation beyond the automatic DB checks, supply a Pydantic
-model via `Meta.pydantic_model`. Validators use the standard
-`@field_validator` decorator with `check_fields=False` so the model can be kept
-slim:
-
-```python
-from pydantic import BaseModel, field_validator
-from django.contrib.auth.models import User
-from django_graphex import DjangoModelType
-
-class UserValidation(BaseModel):
-    username: str
-    email: str
-
-    @field_validator("email", check_fields=False)
-    @classmethod
-    def email_must_be_corporate(cls, v):
-        if not v.endswith("@example.com"):
-            raise ValueError("Only corporate email addresses are accepted.")
-        return v
-
-class UserModelType(DjangoModelType):
-    class Meta:
-        model = User
-        pydantic_model = UserValidation
-```
+For field-level validation beyond the automatic DB checks, see
+[Model backend (Pydantic)](backends.md) — the authoritative reference for
+inline `validate_<field>()` validators and `Meta.pydantic_model`. All
+validation patterns are documented there in one place.
 
 ### Validation errors
 
@@ -689,8 +693,8 @@ class UserListType(DjangoListObjectType):
         # Optimize database queries
         queryset = User.objects.select_related('profile').prefetch_related('groups')
 
-        # Limit exposed fields
-        fields = ("id", "username", "email", "first_name", "last_name")
+        # Limit exposed fields (use only_fields / exclude_fields, not fields / exclude)
+        only_fields = ("id", "username", "email", "first_name", "last_name")
 
         # Enable caching for expensive queries
         # (Configure in settings)
