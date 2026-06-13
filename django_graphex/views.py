@@ -20,7 +20,6 @@ import hashlib
 import inspect
 import json
 import re
-import uuid
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -679,12 +678,18 @@ class GraphQLView(BaseGraphQLView):
         Uses ``cache.incr`` for an atomic increment on Redis / Memcached /
         LocMemCache.  Because the key is seeded with integer ``0`` by
         ``_get_cache_version``, ``incr`` always finds an integer value and
-        succeeds on all standard backends.  If the key has expired between the
-        seed and the bump (e.g. TTL ran out), ``cache.incr`` raises
-        ``ValueError`` (Django's documented behaviour for a missing key) — we
-        catch only that and set a fresh ``0`` so the next request re-seeds
-        cleanly.  Truly unexpected backend errors (e.g. connection failure)
-        are not suppressed and propagate normally.
+        succeeds on all standard backends.  Two recoverable failure modes are
+        caught and healed by resetting the key to integer ``0``:
+
+        * ``ValueError`` — the key has expired (Django's documented behaviour
+          for a missing key on all standard backends).
+        * ``TypeError`` — the key exists but holds a non-integer value (e.g. a
+          uuid-hex string from an older deploy).  LocMemCache raises
+          ``TypeError`` in this case; healing it to ``0`` lets the next incr
+          succeed on every backend.
+
+        Truly unexpected backend errors (e.g. connection failure) are not
+        suppressed and propagate normally.
 
         Only the requesting user's namespace is touched; other users' cache
         entries carry a different identity prefix and are not affected.
@@ -696,13 +701,16 @@ class GraphQLView(BaseGraphQLView):
         version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
         try:
             _cache.incr(version_key)
-        except ValueError:
-            # The key has expired (or was never set) — ``cache.incr`` raises
-            # ``ValueError`` for a missing key on all standard Django backends.
-            # Set a fresh UUID so old cached keys (which embed the previous
-            # version token) are no longer reachable.  A UUID avoids any
-            # collision with prior integer or UUID tokens.
-            _cache.set(version_key, uuid.uuid4().hex)
+        except (ValueError, TypeError):
+            # ``ValueError``: the key has expired (or was never set) — Django's
+            # documented behaviour for a missing key on all standard backends.
+            # ``TypeError``: the key exists but holds a non-integer value, e.g.
+            # a uuid-hex string planted by an older deploy's except branch.
+            # LocMemCache.incr raises TypeError in that case, which the old
+            # ``except ValueError`` guard did not catch → HTTP 500 until TTL.
+            # Reset to integer 0 so the next incr always finds an integer and
+            # succeeds on every backend (matches the docstring promise of "fresh 0").
+            _cache.set(version_key, 0)
 
     def super_call(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Call the parent dispatch method."""

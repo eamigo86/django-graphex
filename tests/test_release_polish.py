@@ -151,7 +151,8 @@ class CacheIncrTest(TestCase):
         self.assertEqual(v2, 2)
 
     def test_bump_fallback_on_incr_failure(self):
-        """When cache.incr raises ValueError, _bump must still change the version."""
+        """When cache.incr raises ValueError, _bump must reset the key to integer 0
+        so the next incr always finds an integer and can succeed."""
         from django.core.cache import caches
 
         _cache = caches["default"]
@@ -159,13 +160,17 @@ class CacheIncrTest(TestCase):
         version_key = GraphQLView._CACHE_VERSION_KEY_TEMPLATE.format(identity="u3")
 
         view._get_cache_version(_cache, "u3")
-        before = _cache.get(version_key)
 
         with patch.object(_cache, "incr", side_effect=ValueError("no incr")):
             view._bump_cache_version(_cache, "u3")
 
         after = _cache.get(version_key)
-        self.assertNotEqual(before, after, "Fallback must change the version token")
+        self.assertIsInstance(
+            after,
+            int,
+            f"Fallback must reset the version token to integer 0; got {after!r}",
+        )
+        self.assertEqual(after, 0, "Fallback must set the token to integer 0")
 
 
 # ---------------------------------------------------------------------------
@@ -329,8 +334,9 @@ class BatchWithCacheTest(TestCase):
     reason="requires the 'subscriptions' extra (channels)",
 )
 class SafeGroupSendTest(TestCase):
-    """P11: _safe_group_send must use a module-level singleton executor and
-    exercise both the no-loop (async_to_sync) and loop-running (executor) paths."""
+    """P11 (updated for H3 fix): _safe_group_send must use fire-and-forget
+    create_task on the running-loop path (no blocking executor) and
+    async_to_sync on the no-loop path."""
 
     def test_no_running_loop_uses_async_to_sync(self):
         """With no running event loop, group_send must be called via async_to_sync."""
@@ -354,9 +360,11 @@ class SafeGroupSendTest(TestCase):
         bindings._safe_group_send(mock_channel_layer, "test-group", {"type": "test"})
         assert group_sends == [("test-group", {"type": "test"})]
 
-    def test_running_loop_uses_executor_path(self):
-        """With a running event loop on the CURRENT thread, group_send must be
-        scheduled via the executor rather than async_to_sync."""
+    def test_running_loop_fire_and_forget(self):
+        """With a running event loop on the CURRENT thread, _safe_group_send must
+        return immediately (fire-and-forget via create_task) — not block ~5s."""
+        import time
+
         from django_graphex.subscriptions import bindings
 
         group_sends = []
@@ -367,38 +375,36 @@ class SafeGroupSendTest(TestCase):
         mock_channel_layer = MagicMock()
         mock_channel_layer.group_send = fake_group_send
 
+        elapsed_holder = []
         exc_holder = []
 
         async def run_test():
-            # At this point asyncio.get_running_loop() WILL succeed because
-            # we are running inside an event loop (asyncio.run creates one).
-            # Calling _safe_group_send here exercises the loop is not None branch.
+            start = time.monotonic()
             try:
                 bindings._safe_group_send(
                     mock_channel_layer, "loop-group", {"type": "loop-test"}
                 )
             except Exception as e:
                 exc_holder.append(e)
-            # Give the executor thread a moment to complete.
-            await asyncio.sleep(0.1)
+            elapsed_holder.append(time.monotonic() - start)
+            # Give the scheduled task a chance to execute.
+            await asyncio.sleep(0.05)
 
         asyncio.run(run_test())
 
         assert not exc_holder, f"_safe_group_send raised: {exc_holder}"
+        assert elapsed_holder[0] < 1.0, (
+            f"Running-loop path blocked for {elapsed_holder[0]:.2f}s "
+            f"(expected fire-and-forget <1s)"
+        )
         assert ("loop-group", {"type": "loop-test"}) in group_sends
 
-    def test_singleton_executor_is_reused(self):
-        """The module-level executor must be a single instance (not created per call)."""
-        # The executor should be a module-level singleton after first use.
-        # We just verify the attribute exists and is a ThreadPoolExecutor.
-        import concurrent.futures
-
+    def test_no_executor_on_bindings_module(self):
+        """After the H3 fix, the singleton ThreadPoolExecutor is removed.
+        _GROUP_SEND_EXECUTOR must NOT be present on the bindings module."""
         from django_graphex.subscriptions import bindings
 
-        assert hasattr(bindings, "_GROUP_SEND_EXECUTOR"), (
-            "bindings must expose a module-level _GROUP_SEND_EXECUTOR"
+        assert not hasattr(bindings, "_GROUP_SEND_EXECUTOR"), (
+            "bindings._GROUP_SEND_EXECUTOR still present — "
+            "the executor was removed in the H3 fix"
         )
-        assert isinstance(
-            bindings._GROUP_SEND_EXECUTOR,
-            concurrent.futures.ThreadPoolExecutor,
-        ), f"Expected ThreadPoolExecutor, got {type(bindings._GROUP_SEND_EXECUTOR)}"
