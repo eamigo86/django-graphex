@@ -224,37 +224,47 @@ so its filter, `limit`, `offset` and `ordering` all stay on the field (no
    # subscriptions: pip install "django-graphex[subscriptions]"
    ```
 
-   Update imports from `graphene_django_extras` to `django_graphex`.
-
    You can also **drop** `djangorestframework`, `django-filter` and
    `graphene-django` from your requirements — none of them are dependencies
    anymore.
-3. **Drop DRF from your types/mutations.** Replace `Meta.serializer_class` with
+3. **Update imports from `graphene_django_extras` to `django_graphex`.** Every
+   `import graphene_django_extras` and `from graphene_django_extras import …`
+   must become `django_graphex`:
+
+    - `from graphene_django_extras import DjangoSerializerType` →
+      `from django_graphex import DjangoModelType`
+    - `from graphene_django_extras import DjangoSerializerMutation` →
+      `from django_graphex import DjangoModelMutation`
+    - `from graphene_django_extras.views import ExtraGraphQLView` →
+      `from django_graphex import GraphQLView`
+    - Settings: `GRAPHENE_DJANGO_EXTRAS = {…}` → `DJANGO_GRAPHEX = {…}`
+
+4. **Drop DRF from your types/mutations.** Replace `Meta.serializer_class` with
    `Meta.model`, and move serializer validation to inline `validate_<field>()` /
    object-level `validate()` (or `Meta.pydantic_model`). See
    [section 2](#2-django-rest-framework-removed-use-metamodel).
-4. **Rename the base classes.** `DjangoSerializerType` → `DjangoModelType`,
+5. **Rename the base classes.** `DjangoSerializerType` → `DjangoModelType`,
    `DjangoSerializerMutation` → `DjangoModelMutation`; update imports and
    `nested_fields` values to **model classes**.
-5. **Rename the views.** `ExtraGraphQLView` → `GraphQLView` (now top-level);
+6. **Rename the views.** `ExtraGraphQLView` → `GraphQLView` (now top-level);
    adopt `AuthenticatedGraphQLView` if you want an endpoint-level auth gate, and
    `graphiql_template` for offline/CSP GraphiQL. See
    [section 3](#3-views-consolidated-and-renamed).
-6. **Convert filtering to the nested `filter:` argument** with `and` / `or` /
+7. **Convert filtering to the nested `filter:` argument** with `and` / `or` /
    `not` (and `id: { exact / in }`); delete any `filterset_class` /
    `GraphqlIDFilter` and move custom `FilterSet` logic to
    `get_queryset` / `filter_queryset`. See
    [section 6](#6-filtering-a-single-nested-filter-argument-django-filter-removed).
-7. **Update nested-list queries** to read `results` / `totalCount`
+8. **Update nested-list queries** to read `results` / `totalCount`
    (see [section 4](#4-nested-lists-always-return-results-totalcount)).
-8. **Move pagination/ordering arguments** (`limit`/`offset`, `page`,
+9. **Move pagination/ordering arguments** (`limit`/`offset`, `page`,
    `first`/`cursor`, `ordering`) onto the `results(...)` subfield; keep filter
    arguments on the list field (see
    [section 7](#7-paginationordering-arguments-moved-onto-results)).
-9. **Migrate subscriptions** into this package's `[subscriptions]` extra: drop
-   `graphene-django-subscriptions`, remove `depromise_subscription`, rename
-   `consumers={stream: ...}` → `subscriptions={stream: Subscription}` and
-   `.consumer` → `.subscription_cls`. See
-   [section 5](#5-subscriptions-now-live-in-this-package).
-10. **Test your GraphQL queries and mutations.**
+10. **Migrate subscriptions** into this package's `[subscriptions]` extra: drop
+    `graphene-django-subscriptions`, remove `depromise_subscription`, rename
+    `consumers={stream: ...}` → `subscriptions={stream: Subscription}` and
+    `.consumer` → `.subscription_cls`. See
+    [section 5](#5-subscriptions-now-live-in-this-package).
+11. **Test your GraphQL queries and mutations.**
 
