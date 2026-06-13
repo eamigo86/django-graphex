@@ -25,6 +25,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: How long (seconds) to wait for a ``group_send`` scheduled via the executor
+#: path before logging a warning and dropping the message.
+_GROUP_SEND_TIMEOUT: float = 5.0
+
+#: Module-level singleton executor used by the ASGI/running-loop path of
+#: ``_safe_group_send``.  A single background thread is sufficient because
+#: group_send is fast (enqueue-and-forget from the perspective of the caller).
+#: Creating a new ``ThreadPoolExecutor`` per signal would spawn a new OS thread
+#: on every model save / delete and leak the executor until GC — wasteful under
+#: high write throughput.
+_GROUP_SEND_EXECUTOR: concurrent.futures.ThreadPoolExecutor = (
+    concurrent.futures.ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="dgx-group-send",
+    )
+)
+
 
 def _safe_group_send(
     channel_layer: Any, group_name: str, message: dict[str, Any]
@@ -58,14 +75,18 @@ def _safe_group_send(
     if loop is not None:
         # ASGI path: a loop is running on this thread.  We must NOT block the
         # loop thread (future.result() on the same thread deadlocks).  Instead,
-        # schedule the coroutine onto the running loop from a worker thread and
-        # wait for completion there — leaving the loop thread free to process it.
+        # schedule the coroutine onto the running loop from a worker thread via
+        # the module-level singleton executor and wait for completion there —
+        # leaving the loop thread free to process it.
+        #
+        # Using the module-level ``_GROUP_SEND_EXECUTOR`` avoids creating and
+        # destroying a new OS thread on every model save / delete signal.
         def _send_from_thread() -> None:
             future = asyncio.run_coroutine_threadsafe(
                 channel_layer.group_send(group_name, message), loop
             )
             try:
-                future.result(timeout=5)
+                future.result(timeout=_GROUP_SEND_TIMEOUT)
             except concurrent.futures.TimeoutError:
                 logger.warning(
                     "group_send to %s timed out; message may be dropped.", group_name
@@ -73,8 +94,7 @@ def _safe_group_send(
             except Exception:  # noqa: BLE001
                 logger.exception("group_send to %s raised.", group_name)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            pool.submit(_send_from_thread).result()
+        _GROUP_SEND_EXECUTOR.submit(_send_from_thread).result()
     else:
         # WSGI / sync path: no running loop — async_to_sync is safe here.
         async_to_sync(channel_layer.group_send)(group_name, message)
