@@ -29,14 +29,13 @@ import json
 from unittest.mock import patch
 
 import pytest
-from django.contrib.auth.models import AnonymousUser, User
+from django.contrib.auth.models import User
 from django.core.cache import caches
 from django.core.management import call_command
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
-
-from tests.cache_helpers import CACHE_ON, graphql_post, minimal_cache_schema
+from tests.cache_helpers import graphql_post, minimal_cache_schema
 
 # ---------------------------------------------------------------------------
 # Backend parametrization
@@ -192,7 +191,9 @@ class _CacheBackendBehaviourBase:
                 # Mutation — bumps version counter via on_commit.
                 # captureOnCommitCallbacks flushes on_commit within the test.
                 with self.captureOnCommitCallbacks(execute=True):  # type: ignore[attr-defined]
-                    view(graphql_post(factory, "mutation { doThing { ok } }", user=user))
+                    view(
+                        graphql_post(factory, "mutation { doThing { ok } }", user=user)
+                    )
 
                 # Second query — version changed, MUST re-execute.
                 view(graphql_post(factory, "{ hello }", user=user))

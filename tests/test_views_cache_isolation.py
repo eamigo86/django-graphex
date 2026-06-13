@@ -27,7 +27,8 @@ from django_graphex.views import GraphQLView
 
 # Shared minimal schema and helpers avoid duplication across the ~9 cache/view
 # test files that previously defined identical scaffolding independently.
-from tests.cache_helpers import CACHE_ON, graphql_post, minimal_cache_schema as _schema
+from tests.cache_helpers import CACHE_ON, graphql_post
+from tests.cache_helpers import minimal_cache_schema as _schema
 
 
 def _make_request(factory, query, user=None, method="post"):

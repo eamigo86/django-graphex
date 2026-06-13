@@ -42,7 +42,6 @@ from django.db import transaction
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
-
 from tests.cache_helpers import CACHE_ON, graphql_post, minimal_cache_schema
 
 # ---------------------------------------------------------------------------
@@ -247,7 +246,10 @@ class BumpVsServeOrderingTest(TestCase):
                 def immediate_on_commit(func, using=None):
                     func()
 
-                with patch("django_graphex.views.transaction.on_commit", side_effect=immediate_on_commit):
+                with patch(
+                    "django_graphex.views.transaction.on_commit",
+                    side_effect=immediate_on_commit,
+                ):
                     view_instance._bump_cache_version(cache, identity)
                 barrier_2.wait()  # Signal thread B: version bumped.
             except Exception as exc:

@@ -34,6 +34,8 @@ from tests.cache_helpers import (
     CACHE_ON,
     CACHE_ON_LONG_TIMEOUT,
     graphql_post,
+)
+from tests.cache_helpers import (
     minimal_cache_schema as _schema,
 )
 

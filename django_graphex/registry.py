@@ -293,5 +293,3 @@ def get_global_registry() -> Registry:
     if not registry:
         registry = Registry()
     return registry
-
-
