@@ -11,11 +11,10 @@ TDD suite covering:
 
 from __future__ import annotations
 
-import pytest
 import graphene
+import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
-from graphql import build_ast_schema, parse
 
 from django_graphex import DjangoObjectType, filter_field
 from django_graphex.filtering import filter_field as ff_from_filtering
@@ -24,7 +23,6 @@ from django_graphex.filtering.schema import build_filter_input_type
 from django_graphex.registry import Registry
 
 from .models import Author, Post
-
 
 # ---------------------------------------------------------------------------
 # Helper model / type for filter_field tests (isolated from shared schema)
@@ -93,7 +91,10 @@ class TestFilterFieldBasic:
         field = filter_input._meta.fields["search"]
         # graphene InputField holds the graphene type
         from graphene import String
-        assert field.type is String or (isinstance(field.type, type) and issubclass(field.type, String))
+
+        assert field.type is String or (
+            isinstance(field.type, type) and issubclass(field.type, String)
+        )
 
     def test_description_flows_to_schema(self):
         """The description kwarg on @filter_field flows to the GraphQL arg."""
@@ -139,7 +140,10 @@ class TestFilterFieldTypeOverride:
         )
         field = filter_input._meta.fields["min_views"]
         from graphene import Int
-        assert field.type is Int or (isinstance(field.type, type) and issubclass(field.type, Int))
+
+        assert field.type is Int or (
+            isinstance(field.type, type) and issubclass(field.type, Int)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -175,9 +179,15 @@ class TestFilterFieldCompositionOrder:
     def test_composition_order(self, db):
         # Create Authors and Posts in the DB
         author = Author.objects.create(name="Alice")
-        p1 = Post.objects.create(title="Alpha Beta", body="content", author=author, views=10)
-        _p2 = Post.objects.create(title="Gamma Delta", body="content", author=author, views=20)
-        p3 = Post.objects.create(title="Alpha Gamma", body="content", author=author, views=5)
+        p1 = Post.objects.create(
+            title="Alpha Beta", body="content", author=author, views=10
+        )
+        _p2 = Post.objects.create(
+            title="Gamma Delta", body="content", author=author, views=20
+        )
+        p3 = Post.objects.create(
+            title="Alpha Gamma", body="content", author=author, views=5
+        )
 
         from django_graphex.filtering.filter_field import apply_custom_filters
 
@@ -215,7 +225,17 @@ class TestFilterFieldReservedNameCollision:
 
     @pytest.mark.parametrize(
         "reserved_name",
-        ["limit", "offset", "ordering", "page", "page_size", "first", "cursor", "filter", "id"],
+        [
+            "limit",
+            "offset",
+            "ordering",
+            "page",
+            "page_size",
+            "first",
+            "cursor",
+            "filter",
+            "id",
+        ],
     )
     def test_reserved_name_raises(self, reserved_name):
         registry = Registry()
@@ -270,15 +290,11 @@ class TestFilterFieldsNoneRaisesImproperlyConfigured:
 
 
 class TestFilterFieldExports:
-    def test_exported_from_root(self):
-        """filter_field is importable from django_graphex directly."""
-        import django_graphex
-        assert hasattr(django_graphex, "filter_field")
-
-    def test_exported_from_filtering(self):
-        """filter_field is importable from django_graphex.filtering."""
-        import django_graphex.filtering
-        assert hasattr(django_graphex.filtering, "filter_field")
+    def test_exported_from_root_and_filtering_are_same(self):
+        """filter_field from django_graphex, django_graphex.filtering, and
+        the direct module path all refer to the same callable."""
+        assert filter_field is ff_from_filtering
+        assert filter_field is ff_direct
 
     def test_decorator_marks_method(self):
         """@filter_field attaches _dgx_filter_field metadata to the function."""
@@ -295,7 +311,7 @@ class TestFilterFieldExports:
     def test_decorator_no_description(self):
         """@filter_field without description defaults to None."""
 
-        @filter_field(graphene.String)
+        @ff_from_filtering(graphene.String)
         def my_filter(cls, queryset, info, value):
             return queryset
 
@@ -304,7 +320,7 @@ class TestFilterFieldExports:
     def test_decorator_default_type_is_string(self):
         """@filter_field() (no type) defaults to graphene.String."""
 
-        @filter_field()
+        @ff_direct()
         def my_filter(cls, queryset, info, value):
             return queryset
 

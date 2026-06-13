@@ -4,7 +4,6 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .cost import CostLimitValidationRule, CostReport, analyze_cost
 from .directives import all_directives
-from .filtering.filter_field import filter_field
 from .fields import (
     AnnotatedField,
     DjangoFilterListField,
@@ -13,6 +12,7 @@ from .fields import (
     DjangoNestedListObjectField,
     DjangoObjectField,
 )
+from .filtering.filter_field import filter_field
 from .middleware import GraphQLDirectiveMiddleware
 from .mutation import DjangoModelMutation
 from .paginations import (

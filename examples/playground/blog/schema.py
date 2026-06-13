@@ -37,6 +37,7 @@ from django_graphex import (
     LimitOffsetGraphqlPagination,
     PageGraphqlPagination,
     all_directives,
+    filter_field,
 )
 from django_graphex.subscriptions import Subscription
 
@@ -101,6 +102,26 @@ class PostType(DjangoObjectType):
         # complexity: cost weight for CostLimitValidationRule (default is 1).
         max_deep = 4
         complexity = 2
+
+    # ---- @filter_field showcase (v1.3.0) ------------------------------------- #
+    # A custom GraphQL filter argument that isn't a plain model-field lookup.
+    # The arg name (`search`) becomes the GraphQL argument; the method returns
+    # a filtered queryset. The decorator handles classmethod semantics — do NOT
+    # stack @classmethod.
+    #
+    # Try it:
+    #   { posts(filter: { search: "django" }) { results { id title } totalCount } }
+    #
+    # Composition order at query time:
+    #   1. Standard lookups (id, title, status, author from filter_fields)
+    #   2. @filter_field methods in declaration order  ← search runs here
+    #   3. filter_queryset (see get_queryset below)    ← applied last
+    @filter_field(graphene.String, description="Full-text search over title and body")
+    def search(cls, queryset, info, value):
+        """Filter posts whose title OR body contains the search term."""
+        from django.db.models import Q
+
+        return queryset.filter(Q(title__icontains=value) | Q(body__icontains=value))
 
     # ---- get_queryset scoping showcase (v1.2.2) ------------------------------ #
     # Before v1.2.2 this hook was documented but never called on list, paginated,

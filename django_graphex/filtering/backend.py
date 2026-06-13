@@ -83,7 +83,9 @@ class NativeFilterBackend(FilterBackend):
             A graphene ``InputObjectType`` subclass, or ``None`` when no
             filterable fields are declared.
         """
-        return build_filter_input_type(model, filter_fields, registry, custom_filters=custom_filters)
+        return build_filter_input_type(
+            model, filter_fields, registry, custom_filters=custom_filters
+        )
 
     def apply(self, queryset: QuerySet, value: Any) -> QuerySet:
         """Filter ``queryset`` with the ``Q`` translated from ``value``.

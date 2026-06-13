@@ -12,6 +12,25 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 1.3.0 — Unreleased
+
+### Added
+
+- **`@filter_field` decorator** — declare custom per-field GraphQL filter
+  arguments directly on a `DjangoObjectType` or `DjangoModelType`, co-located
+  with the resolver logic. The method name becomes the GraphQL argument name;
+  the graphene type (default `graphene.String`) and an optional description are
+  configurable. Composition order at query time: standard lookups →
+  `@filter_field` methods (declaration order) → `filter_queryset` (last).
+  (#26)
+
+### Changed
+
+- **`filter_fields = {"field": None}` now raises `ImproperlyConfigured`** —
+  The `None` sentinel (which previously applied the default lookup set) was
+  un-Pythonic and has been replaced by the `@filter_field` decorator. The
+  error message directs users to the new API. (#26)
+
 ## 1.2.3 — 2026-06-13
 
 !!! note "Hotfix"

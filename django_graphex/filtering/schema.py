@@ -319,7 +319,7 @@ def build_filter_input_type(
         namespace[head] = _pk_lookups_input_type(model, head, related, lookups)()
 
     # Inject custom @filter_field arguments as plain scalar InputFields.
-    for arg_name, _fn, meta in (custom_filters or []):
+    for arg_name, _fn, meta in custom_filters or []:
         gql_type = meta.get("graphene_type", graphene.String)
         description = meta.get("description")
         namespace[arg_name] = graphene.InputField(gql_type, description=description)
