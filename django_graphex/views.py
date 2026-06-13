@@ -809,7 +809,7 @@ class GraphQLView(BaseGraphQLView):
         if query:
             try:
                 parsed_document = parse(query)
-            except Exception:
+            except Exception:  # nosec B110
                 # Malformed query: pass document=None so execute_graphql_request
                 # re-attempts and returns the proper error response.
                 pass

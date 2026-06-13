@@ -1065,7 +1065,9 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
                     {},
                     False,
                 )
-            except Exception:  # pragma: no cover — degrade gracefully
+            except Exception:  # pragma: no cover — degrade gracefully  # nosec B110
+                # Best-effort optimization: an optimizer failure must never
+                # break the mutation; the unoptimized re-read is still correct.
                 pass
 
         refreshed = base_qs.first()
