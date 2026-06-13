@@ -663,7 +663,7 @@ class UserListType(DjangoListObjectType):
 class UserInput(DjangoInputObjectType):
     class Meta:
         model = User
-        fields = ("username", "email")
+        only_fields = ("username", "email")
 
 # ✅ For rapid prototyping
 class UserModelType(DjangoModelType):
@@ -725,5 +725,5 @@ class UserRegistrationInput(DjangoInputObjectType):
 
     class Meta:
         model = User
-        fields = ("username", "email", "password")
+        only_fields = ("username", "email", "password")
 ```
