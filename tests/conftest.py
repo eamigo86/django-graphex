@@ -86,11 +86,19 @@ def pytest_configure(config):
         },
         AUTHENTICATION_BACKENDS=(
             "django.contrib.auth.backends.ModelBackend",
-            "guardian.backends.ObjectPermissionBackend",
+            # django-guardian is NOT a dependency of this library. The
+            # ObjectPermissionBackend entry was a leftover from an earlier
+            # development snapshot. Object-permission support is not part of
+            # django-graphex's public API or test surface.
         ),
     )
 
-    # FIXME(eclar): necessary ?
+    # --no-pkgroot: strips the project root from sys.path so that pytest imports
+    # django_graphex from the *installed* site-packages rather than the source
+    # tree. This verifies the built distribution is self-contained and does not
+    # silently depend on editable-install artefacts. The option is intentionally
+    # not wired into tox or CI (it requires a prior `pip install dist/...` step),
+    # so it serves as a manual distribution-smoke hook only.
     if config.getoption("--no-pkgroot"):
         sys.path.pop(0)
 

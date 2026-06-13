@@ -3,14 +3,10 @@ from django.contrib.auth.models import User
 
 
 class UserFactory(factory.django.DjangoModelFactory):
-    # username = factory.Faker("user_name")
-    username = "graphql"
-    # first_name = factory.Faker("first_name")
-    first_name = "Ernesto"
-    # last_name = factory.Faker("last_name")
-    last_name = "Perez Amigo"
-    # email = factory.Faker("email")
-    email = "eamigop86@gmail.com"
+    username = factory.Sequence(lambda n: f"user_{n}")
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
+    email = factory.LazyAttribute(lambda o: f"{o.username}@example.com")
 
     class Meta:
         model = User
