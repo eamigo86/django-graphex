@@ -98,7 +98,7 @@ from graphene_django_extras.views import ExtraGraphQLView
 path("graphql", ExtraGraphQLView.as_view(graphiql=True))
 
 # After
-from graphene_django_extras import GraphQLView   # also top-level now
+from django_graphex import GraphQLView   # also top-level now
 path("graphql", GraphQLView.as_view(graphiql=True))
 ```
 
