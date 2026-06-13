@@ -105,7 +105,22 @@ class NestedFieldsMixin:
 
                     kind, relation = cls._relation_kind(field)
                     if kind == "forward":
-                        item = sub_data[0] if isinstance(sub_data, list) else sub_data
+                        if isinstance(sub_data, list):
+                            if len(sub_data) > 1:
+                                raise _NestedError(
+                                    [
+                                        ErrorType(
+                                            field=field,
+                                            messages=[
+                                                f"{field!r} is a to-one relation; "
+                                                "provide a single object, not a list."
+                                            ],
+                                        )
+                                    ]
+                                )
+                            item = sub_data[0]
+                        else:
+                            item = sub_data
                         child = cls._persist_child(field, child_model, item, info)
                         data[field] = child.pk
                     elif kind is None:
@@ -192,7 +207,57 @@ class NestedFieldsMixin:
         if kind in ("reverse_one", "reverse_many"):
             fk_name = relation.field.name  # FK on the child pointing to parent
             items = sub_data if isinstance(sub_data, list) else [sub_data]
+
+            # Reverse-O2O (kind == "reverse_one") only ever allows a single
+            # child.  A list of more than one would hit a UNIQUE constraint at
+            # the DB level; reject it cleanly before any DB work.
+            if kind == "reverse_one" and len(items) > 1:
+                raise _NestedError(
+                    [
+                        ErrorType(
+                            field=field,
+                            messages=[
+                                f"{field!r} is a one-to-one relation; "
+                                "provide a single object, not a list."
+                            ],
+                        )
+                    ]
+                )
+
             for item in items:
+                # Reverse-FK ownership guard: if the client supplies a pk for
+                # an existing child, verify that child currently points to
+                # *this* parent.  Without this check a client can silently
+                # re-parent (steal) a row that belongs to a different owner.
+                if kind == "reverse_many":
+                    pk_name = child_model._meta.pk.name
+                    child_pk = item.get(pk_name) if hasattr(item, "get") else None
+                    if child_pk is None and hasattr(item, "get"):
+                        child_pk = item.get("id")
+                    if child_pk is not None:
+                        existing = child_model._default_manager.filter(
+                            pk=child_pk
+                        ).first()
+                        if existing is not None:
+                            current_owner_id = getattr(existing, f"{fk_name}_id", None)
+                            if (
+                                current_owner_id is not None
+                                and current_owner_id != parent.pk
+                            ):
+                                parent_model_name = parent.__class__.__name__
+                                raise _NestedError(
+                                    [
+                                        ErrorType(
+                                            field=field,
+                                            messages=[
+                                                f"Object {child_pk} does not "
+                                                f"belong to this "
+                                                f"{parent_model_name}."
+                                            ],
+                                        )
+                                    ]
+                                )
+
                 cls._persist_child(
                     field, child_model, item, info, save_kwargs={fk_name: parent}
                 )

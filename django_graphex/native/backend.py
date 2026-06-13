@@ -101,6 +101,30 @@ class PydanticBackend(SerializerBackend):
                     f'Invalid pk "{pk}" - object does not exist.'
                 )
 
+        # M2M pk existence — mirrors the FK loop above.  A non-existent M2M pk
+        # would otherwise reach getattr(obj, name).set(pks) and raise an
+        # uncaught IntegrityError (HTTP 500).
+        for field in self.model._meta.get_fields():
+            if not isinstance(field, models.ManyToManyField):
+                continue
+            pks = payload.get(field.name)
+            if not isinstance(pks, (list, tuple)) or not pks:
+                continue
+            unique_pks = list(dict.fromkeys(pks))  # deduplicate, preserve order
+            existing_count = field.related_model._default_manager.filter(
+                pk__in=unique_pks
+            ).count()
+            if existing_count != len(unique_pks):
+                missing = [
+                    pk
+                    for pk in unique_pks
+                    if not field.related_model._default_manager.filter(pk=pk).exists()
+                ]
+                for pk in missing:
+                    errors.setdefault(field.name, []).append(
+                        f'Invalid pk "{pk}" - object does not exist.'
+                    )
+
         for field in self.model._meta.get_fields():
             if (
                 getattr(field, "unique", False)
