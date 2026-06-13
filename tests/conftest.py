@@ -123,3 +123,31 @@ def pytest_configure(config):
 
     if config.getoption("--staticfiles"):
         management.call_command("collectstatic", verbosity=0, interactive=False)
+
+
+# ---------------------------------------------------------------------------
+# Global registry isolation strategy
+#
+# django_graphex.registry.get_global_registry() returns a process-wide
+# singleton that is populated at *import time* when DjangoObjectType subclasses
+# are defined (the metaclass registers each type on class creation).
+#
+# The suite relies on this populated singleton: many tests call
+# get_global_registry() and expect to find the types registered by the
+# test models defined in tests/models.py, tests/schema.py, and elsewhere.
+#
+# reset_global_registry() was a dead helper (zero call sites) that would have
+# cleared the singleton and broken those tests.  It has been removed (see issue
+# #73).
+#
+# Test-order independence is therefore provided by:
+#   1. DjangoObjectType metaclass registration happens once at import time;
+#      it is idempotent (re-importing does not duplicate registrations).
+#   2. Tests that need a clean registry use a *local* Registry() instance
+#      rather than the global one (see test_registry.py).
+#   3. Cache and view tests call cache.clear() in setUp / override_settings,
+#      which is the correct per-test isolation scope for the cache layer.
+#
+# Follow-up: add pytest-randomly to CI to validate shuffle-order independence
+# as a separate issue.  Do NOT add it as part of #73.
+# ---------------------------------------------------------------------------

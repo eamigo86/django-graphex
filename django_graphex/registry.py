@@ -293,9 +293,3 @@ def get_global_registry() -> Registry:
     if not registry:
         registry = Registry()
     return registry
-
-
-def reset_global_registry() -> None:
-    """Reset the global registry to None."""
-    global registry
-    registry = None
