@@ -37,6 +37,13 @@ class UserType(DjangoObjectType):
 | `max_deep` | `int` | `None` | Max nested-object depth below this type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of a field returning this type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 
+!!! warning "Unknown Meta options raise ImproperlyConfigured (v1.2.2+)"
+    Since v1.2.2 (#65), any key not in the table above is rejected at server
+    startup with `django.core.exceptions.ImproperlyConfigured`. A previously
+    silent typo (e.g. `filter_Filed`) now surfaces immediately. Review your
+    `DjangoObjectType` and `DjangoListObjectType` subclasses before upgrading
+    from pre-1.2.2. See also [Meta options are validated](../usage/types.md#meta-options-validated).
+
 ### Methods
 
 #### `resolve_id(info)`

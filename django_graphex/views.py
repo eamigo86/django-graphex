@@ -789,13 +789,15 @@ class GraphQLView(BaseGraphQLView):
           cache key in ``fetch_cache_key``) unavailable.  Bypassing is safe:
           multipart GraphQL is used almost exclusively for file uploads, which
           are never idempotent queries worth caching (issue #53a).
-        * Responses that carry a ``Set-Cookie`` header are never stored in the
-          cache.  The base ``dispatch`` is decorated with
-          ``@ensure_csrf_cookie``, which attaches a per-request CSRF secret.
-          Caching that cookie and replaying it to other clients in the same
-          identity namespace would share one CSRF secret across users (issue
-          #53b).  Skipping the cache for cookie-bearing responses lets each
-          client's request go through ``ensure_csrf_cookie`` independently.
+        * Only ``(body, status_code, content_type)`` is stored — never the
+          live ``HttpResponse`` object.  The base ``dispatch`` is decorated
+          with ``@ensure_csrf_cookie``, which attaches a per-request CSRF
+          secret as a ``Set-Cookie`` header.  By storing a bare tuple and
+          reconstructing a fresh ``HttpResponse`` on cache hits, the CSRF
+          cookie is stripped from all cached responses (it only appears on the
+          original cache-miss response).  Subsequent clients in the same
+          identity namespace therefore never receive another client's CSRF
+          token (issue #53b).
         """
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
