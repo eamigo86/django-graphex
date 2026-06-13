@@ -7,6 +7,7 @@ generation and translation.
 from __future__ import annotations
 
 from .backend import FilterBackend, NativeFilterBackend, resolve_filter_backend
+from .filter_field import RESERVED_FILTER_ARGS, apply_custom_filters, filter_field
 from .lookups import (
     ALL_LOOKUPS,
     BASIC_LOOKUPS,
@@ -28,6 +29,9 @@ __all__ = (
     "resolve_filter_backend",
     "build_filter_input_type",
     "to_q",
+    "filter_field",
+    "apply_custom_filters",
+    "RESERVED_FILTER_ARGS",
     "ALL_LOOKUPS",
     "BASIC_LOOKUPS",
     "COMMON_LOOKUPS",

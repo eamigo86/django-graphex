@@ -131,22 +131,22 @@ def test_lookups_input_choices_field_uses_enum(db):
     assert "status" in built._meta.fields
 
 
-def test_filter_fields_dict_with_none_value_does_not_raise():
-    # filter_fields={"field": None} must not raise TypeError at schema build.
-    # None is treated as "use default lookups" (same as the list form).
+def test_filter_fields_dict_with_none_value_raises_improperly_configured():
+    # filter_fields={"field": None} must now raise ImproperlyConfigured with a
+    # helpful message pointing to @filter_field (not crash with TypeError).
+    from django.core.exceptions import ImproperlyConfigured
+
     R = Registry()
-    built = build_filter_input_type(FilterModel, {"name": None}, registry=R)
-    assert built is not None
-    # The field is included with default lookups applied.
-    assert "name" in built._meta.fields
+    with pytest.raises(ImproperlyConfigured, match="filter_field"):
+        build_filter_input_type(FilterModel, {"name": None}, registry=R)
 
 
-def test_filter_fields_dict_with_none_value_uses_default_lookups():
-    # When a dict value is None the resulting lookups must match the list form.
+def test_filter_fields_list_with_none_uses_default_lookups():
+    # The LIST form (not dict) still works and uses default lookups.
     R = Registry()
-    built_dict = build_filter_input_type(FilterModel, {"name": None}, registry=R)
     built_list = build_filter_input_type(FilterModel, ["name"], registry=R)
-    assert set(built_dict._meta.fields) == set(built_list._meta.fields)
+    assert built_list is not None
+    assert "name" in built_list._meta.fields
 
 
 # --------------------------------------------------------------------------- #

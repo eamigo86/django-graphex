@@ -89,6 +89,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | **Filtering** | | |
 | `filter_fields` on object types | ✅ | All `DjangoObjectType` subclasses |
 | Filtering on list fields | ✅ | `posts(filter: { status: { exact: PUBLISHED }, title: { icontains: "…" } })` |
+| `@filter_field` custom per-field filter (v1.3.0) | ✅ | `schema.py` — `PostType.search`; try: `posts(filter: { search: "django" }) { results { id title } totalCount }` |
 | Filtered nested lists | ✅ | `authors { results { posts(filter: { title: { icontains: "…" } }) } }` |
 | **Nested lists (N+1-safe)** | | |
 | `results` / `totalCount` wrapper | ✅ | Every list field |

@@ -12,6 +12,7 @@ from .fields import (
     DjangoNestedListObjectField,
     DjangoObjectField,
 )
+from .filtering.filter_field import filter_field
 from .middleware import GraphQLDirectiveMiddleware
 from .mutation import DjangoModelMutation
 from .paginations import (
@@ -110,6 +111,8 @@ __all__ = (
     "DjangoGraphQLSchema",
     "collect_field_names",
     "DenyAllRegistry",
+    # FILTERING
+    "filter_field",
     # REGISTRY
     "Registry",
     # DIRECTIVES
