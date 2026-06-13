@@ -212,8 +212,16 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
                     f"@number format spec width/precision must not exceed "
                     f"{_NUMBER_FORMAT_MAX_WIDTH}; got {spec!r}"
                 )
+        # Coerce the value to float first; blame the VALUE on failure.
         try:
-            return format(float(value or 0), spec)
+            float_value = float(value or 0)
+        except (ValueError, TypeError) as exc:
+            raise GraphQLError(
+                f"@number could not coerce value {value!r} to a number: {exc}"
+            ) from exc
+        # Apply the format spec; blame the SPEC on failure.
+        try:
+            return format(float_value, spec)
         except (ValueError, TypeError) as exc:
             raise GraphQLError(f"Invalid @number format spec {spec!r}: {exc}") from exc
 
