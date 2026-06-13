@@ -128,6 +128,10 @@ from django_graphex import all_directives
 schema = graphene.Schema(query=Query, mutation=Mutation, directives=all_directives)
 ```
 
+## Playground
+
+A fully wired example project lives in [`examples/playground/`](examples/playground/). It exercises every major feature end-to-end — types, paginators, filtering, mutations, permissions, subscriptions, and the query optimizer — and installs the library from this repo checkout (editable, no PyPI release needed).
+
 ## Documentation
 
 📚 **[Full documentation](https://eamigo86.github.io/django-graphex/)** — including the
