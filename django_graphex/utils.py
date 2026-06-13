@@ -1713,14 +1713,8 @@ def _collect_gfk_union_buckets(
     if schema is None:
         return None
 
-    # VERSION GATE: GenericPrefetch (and per-CT narrowing) is 5.0+ only.  On
-    # < 5.0 we DEGRADE to the bare full-load prefetch and NEVER import or build a
-    # bucket.  ``continue``/full-load is identical to the pre-Track-2 path.
-    import django
-
-    if django.VERSION < (5, 0):
-        return None
-
+    # GenericPrefetch (and per-CT narrowing) requires Django 5.0+.
+    # Floor is >=5.2, so this path is always reachable.
     buckets: dict[type[Model], PrefetchPlan] = {}
     for frag in sub_selection.selections:
         if not isinstance(frag, InlineFragmentNode):

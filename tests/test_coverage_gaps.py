@@ -15,7 +15,6 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import django
 import graphene
 import pytest
 from django.db import models
@@ -23,10 +22,9 @@ from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
 
-# ``CheckConstraint`` renamed its predicate kwarg ``check`` -> ``condition`` in
-# Django 5.1 (``check`` removed in 6.0). Pick the right one for the running
-# version so this module imports across the whole 4.2–6.0 support matrix.
-_CHECK_CONSTRAINT_KW = "condition" if django.VERSION >= (5, 1) else "check"
+# Django 5.1 renamed ``CheckConstraint`` kwarg ``check`` -> ``condition``;
+# ``check`` was removed in 6.0. Floor is >=5.2, so always use ``condition``.
+_CHECK_CONSTRAINT_KW = "condition"
 
 # ---------------------------------------------------------------------------
 # __init__.py — PackageNotFoundError fallback

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from unittest import mock
 
-import django
 import graphene
 import pytest
 from django.db import connection
@@ -37,13 +36,11 @@ from .models import (
     Track2Invoice,
 )
 
-# Per-content-type GenericPrefetch narrowing is a Django 5.0+ optimisation; on
-# < 5.0 the optimizer degrades to a bare full-load prefetch (proven by
-# test_gfk_union_degrades_to_bare_prefetch_on_django_below_5). The narrow-path
-# tests below assert that 5.0+ shape, so they skip on older Django.
+# Per-content-type GenericPrefetch narrowing requires Django 5.0+.
+# Floor is >=5.2, so these tests always run; marker is a no-op kept for symmetry.
 requires_generic_prefetch = pytest.mark.skipif(
-    django.VERSION < (5, 0),
-    reason="Per-content-type GenericPrefetch narrowing is Django 5.0+.",
+    False,
+    reason="Per-content-type GenericPrefetch narrowing is Django 5.0+ (floor is 5.2).",
 )
 
 
@@ -503,55 +500,6 @@ def test_gfk_union_no_n_plus_one_across_parents():
             result = schema.execute(_GFK_QUERY)
 
     assert result.errors is None, result.errors
-
-
-@pytest.mark.django_db
-def test_gfk_union_degrades_to_bare_prefetch_on_django_below_5():
-    """DEGRADE: with ``django.VERSION`` mocked to (4,2,0), the union GFK uses a
-    bare full-load Prefetch, imports NO GenericPrefetch, and raises nothing.
-
-    TEETH: if the version gate were missing, GenericPrefetch (a 5.0+ symbol) would
-    still be imported/used; here we both assert the symbol is never imported AND
-    that no GenericPrefetch instance reaches Django's prefetch machinery — the
-    SELECTs must be the un-narrowed full-load shape.
-    """
-    schema, _reg = _build_gfk_union_schema()
-    _seed_gfk_rows()
-
-    import builtins
-
-    from django.test.utils import override_settings
-
-    import_calls: list[str] = []
-    real_import = builtins.__import__
-
-    def _tracking_import(name, *args, **kwargs):
-        if "contenttypes.prefetch" in name:
-            import_calls.append(name)
-        return real_import(name, *args, **kwargs)
-
-    with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
-        with mock.patch.object(__import__("django"), "VERSION", (4, 2, 0, "final", 0)):
-            with mock.patch("builtins.__import__", side_effect=_tracking_import):
-                with CaptureQueriesContext(connection) as ctx:
-                    result = schema.execute(_GFK_QUERY)
-
-    assert result.errors is None, result.errors
-    # No GenericPrefetch module import happened under the <5.0 gate.
-    assert import_calls == [], (
-        f"GenericPrefetch must not be imported on <5.0; got {import_calls}"
-    )
-
-    # Full-load degrade: the Account SELECT carries the un-narrowed columns
-    # (``label`` present), proving no per-CT narrowing was attempted.
-    sqls = [q["sql"].lower() for q in ctx.captured_queries]
-    acct_selects = [
-        s for s in sqls if "track2account" in s and s.lstrip().startswith("select")
-    ]
-    assert acct_selects, f"expected an Account SELECT (full-load); got {sqls}"
-    assert any("label" in s for s in acct_selects), (
-        "on <5.0 the Account bucket must be full-load (label column present)"
-    )
 
 
 @pytest.mark.django_db
