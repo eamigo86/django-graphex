@@ -48,6 +48,10 @@ SELF_NARROW_VERIFIED: bool = True
 # ---------------------------------------------------------------------------
 _GQX_WIN_ATTR_PREFIX: str = "_gqx_win_"
 _GQX_ANN_ATTR_PREFIX: str = "_gqx_ann_"
+# Prefix for the parent-annotation that carries the filtered child count.
+# Applied by _apply_optimizations as a Subquery so list_resolver can read the
+# count in memory instead of issuing a per-parent COUNT query for empty pages.
+_GQX_CNT_ATTR_PREFIX: str = "_gqx_cnt_"
 
 if TYPE_CHECKING:
     from django.db.models import Manager, Model
@@ -833,7 +837,26 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # to_attr stores results as a list on root._gqx_win_<accessor>, separate
         # from _prefetched_objects_cache.
         win_attr = _GQX_WIN_ATTR_PREFIX + self.accessor
-        return Prefetch(lookup, queryset=qs, to_attr=win_attr)
+        pf = Prefetch(lookup, queryset=qs, to_attr=win_attr)
+
+        # --- #64: attach count-subquery metadata so _apply_optimizations can
+        # annotate the parent queryset with a Subquery count.  This lets
+        # list_resolver read the count in memory (zero extra queries) when the
+        # window-sliced page is empty (offset-beyond-end or zero-child parent).
+        #
+        # We store a *factory* callable rather than a pre-built expression so
+        # the Subquery is freshly constructed per request when needed.  The
+        # factory captures the FK-attname and filter-applied queryset; the
+        # caller (_apply_optimizations) supplies OuterRef('pk') at annotation time.
+        # The filter-applied base queryset (before window exprs) is stored on
+        # the Prefetch so the annotation uses the SAME filter as the window path.
+        _cnt_base_qs = child._default_manager.all()
+        _cnt_base_qs = self.filter_backend.apply(_cnt_base_qs, filter_value)
+        pf._gqx_cnt_qs = _cnt_base_qs
+        pf._gqx_cnt_fk_attname = fk_attname
+        pf._gqx_cnt_attr = _GQX_CNT_ATTR_PREFIX + self.accessor
+
+        return pf
 
     def list_resolver(
         self,
@@ -877,14 +900,25 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                 count = win_results[0]._gqx_total
             else:
                 # Empty page: ambiguous (zero-child or offset-beyond-end).
-                # Use a slice-independent count that ignores the page window but
-                # MUST apply the same user filter that build_window_prefetch used.
-                # Without the filter, the count would reflect the unfiltered partition
-                # size (all children) rather than the filtered K that the user
-                # requested — a correctness regression for filtered nested lists.
-                manager_qs = getattr(root, self.accessor).all()
-                filtered_qs = filter_backend.apply(manager_qs, filter_value)
-                count = filtered_qs.count()
+                # --- #64 fix: prefer the pre-computed Subquery annotation ------
+                # _apply_optimizations annotates the parent QS with a Subquery
+                # count under `_gqx_cnt_<accessor>` so we read it in memory
+                # instead of issuing a per-parent COUNT (N+1 elimination).
+                cnt_attr = _GQX_CNT_ATTR_PREFIX + self.accessor
+                _sentinel: Any = object()
+                annotated_cnt = getattr(root, cnt_attr, _sentinel)
+                if annotated_cnt is not _sentinel:
+                    # Annotation is present: Subquery returns None when the parent
+                    # has zero children → normalise to 0.
+                    count = int(annotated_cnt) if annotated_cnt is not None else 0
+                else:
+                    # Fallback: issue a count() for backwards compatibility when
+                    # the annotation is absent (e.g. OPTIMIZE_QUERYSET=False,
+                    # custom resolver that bypassed _apply_optimizations).
+                    # MUST apply the same user filter that build_window_prefetch used.
+                    manager_qs = getattr(root, self.accessor).all()
+                    filtered_qs = filter_backend.apply(manager_qs, filter_value)
+                    count = filtered_qs.count()
             return DjangoListObjectBase(
                 count=count,
                 results=win_results,

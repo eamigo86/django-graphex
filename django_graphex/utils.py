@@ -3245,6 +3245,52 @@ def _apply_optimizations(
     if filtered_prefetches:
         base = base.prefetch_related(*filtered_prefetches)
 
+    # --- #64: annotate parent rows with a Subquery count for each window-sliced
+    # nested list so that list_resolver can read the total in memory even when the
+    # window-sliced page is empty (offset-beyond-end or zero-child parent).
+    # Each window Prefetch that fired build_window_prefetch carries three attrs:
+    #   _gqx_cnt_qs       — filtered (but un-windowed) child queryset
+    #   _gqx_cnt_fk_attname — e.g. "author_id"
+    #   _gqx_cnt_attr     — annotation key on the parent, e.g. "_gqx_cnt_posts"
+    # We build a Subquery(Count) per nested-list and annotate the parent QS.
+    # This is ONLY for top-level filtered_prefetches (window path only emits at
+    # the root level; deeper window prefetches are re-rooted into parent
+    # querysets by _merge_filtered_prefetches and are unreachable here).
+    _window_cnt_annotations: dict[str, Any] = {}
+    for _pf in filtered_prefetches:
+        _cnt_qs = getattr(_pf, "_gqx_cnt_qs", None)
+        _cnt_fk = getattr(_pf, "_gqx_cnt_fk_attname", None)
+        _cnt_attr = getattr(_pf, "_gqx_cnt_attr", None)
+        if _cnt_qs is not None and _cnt_fk is not None and _cnt_attr is not None:
+            from django.db.models import (
+                Count as _Count,
+            )  # noqa: PLC0415
+            from django.db.models import (
+                OuterRef as _OuterRef,
+            )
+            from django.db.models import (
+                Subquery as _Subquery,
+            )
+
+            _sq = _Subquery(
+                _cnt_qs.filter(**{_cnt_fk: _OuterRef("pk")})
+                .order_by()
+                .values(_cnt_fk)
+                .annotate(_n=_Count("pk"))
+                .values("_n")[:1]
+            )
+            _window_cnt_annotations[_cnt_attr] = _sq
+    if _window_cnt_annotations:
+        try:
+            base = base.annotate(**_window_cnt_annotations)
+        except Exception as _exc:  # noqa: BLE001 — degrade gracefully; list_resolver falls back to count()
+            logging.getLogger("django_graphex.utils").debug(
+                "Window count annotation failed for %s; empty-page totalCount will "
+                "fall back to per-parent count(). %r",
+                model.__name__,
+                _exc,
+            )
+
     if graphql_api_settings.OPTIMIZE_ONLY_FIELDS and not custom_used and fields_asts:
         only_fields = _collect_only_fields(
             model,
