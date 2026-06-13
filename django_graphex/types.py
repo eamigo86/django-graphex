@@ -61,6 +61,59 @@ __all__ = (
 )
 
 
+# Options that graphene's base classes or the factory_type helper pass through
+# in **options; these are legitimately forwarded to super() and must not be
+# flagged as unknown.
+_GRAPHENE_BASE_OPTIONS: frozenset[str] = frozenset(
+    {
+        # graphene ObjectType / InputObjectType base class options
+        "_meta",
+        "interfaces",
+        "possible_types",
+        "default_resolver",
+        "container",
+        # graphene SubclassWithMeta options consumed by the metaclass
+        "name",
+        "description",
+    }
+)
+
+
+def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
+    """Raise ImproperlyConfigured for any unknown Meta options.
+
+    After all recognised django-graphex options are consumed from **options,
+    only keys that graphene's own base classes accept should remain.  Any other
+    key is almost certainly a typo (e.g. ``max_dep`` instead of ``max_deep``)
+    that would otherwise be silently swallowed.
+
+    Private names (those starting with an underscore) are ignored: they may
+    arise from ``from app.models import Foo as _Foo`` inside a ``Meta`` class
+    body, where the import alias leaks as a class attribute.
+
+    Args:
+        cls_name: the name of the class being constructed (for error messages).
+        remaining: the leftover **options dict after consuming dgx options.
+
+    Raises:
+        ImproperlyConfigured: if any public key in *remaining* is not a known
+            graphene base option.
+    """
+    # Filter out private names (underscore-prefix) — these are conventional
+    # aliases from ``import ... as _X`` inside Meta bodies, not user typos.
+    unknown = sorted(
+        k for k in set(remaining) - _GRAPHENE_BASE_OPTIONS if not k.startswith("_")
+    )
+    if unknown:
+        raise ImproperlyConfigured(
+            "{cls}: unknown Meta option(s) {opts!r}. "
+            "Check for typos — e.g. 'max_dep' instead of 'max_deep'.".format(
+                cls=cls_name,
+                opts=unknown,
+            )
+        )
+
+
 class DjangoObjectOptions(BaseOptions):
     """Meta options container for Django object and list GraphQL types."""
 
@@ -171,6 +224,8 @@ class DjangoObjectType(ObjectType):
                 flat "GenericForeignKeyType".
             **options: Extra options forwarded to the parent implementation.
         """
+        _check_unknown_options(cls.__name__, options)
+
         assert is_valid_django_model(model), (
             'You need to pass a valid Django Model in {}.Meta, received "{}".'
         ).format(cls.__name__, model)
@@ -440,6 +495,7 @@ class DjangoInputObjectType(InputObjectType):
         use_connection: Any = None,
         only_fields: tuple[str, ...] = (),
         exclude_fields: tuple[str, ...] = (),
+        include_fields: tuple[str, ...] = (),
         filter_fields: Any = None,
         input_for: str = "create",
         nested_fields: Any = (),
@@ -458,12 +514,16 @@ class DjangoInputObjectType(InputObjectType):
             use_connection: Whether to use a connection for this input type.
             only_fields: Model field names to include exclusively.
             exclude_fields: Model field names to exclude.
+            include_fields: Extra model field names to force-include regardless
+                of only_fields / exclude_fields filters.
             filter_fields: Field names usable for filtering.
             input_for: Operation the input is built for ("create", "update"
                 or "delete").
             nested_fields: Nested fields to build into the input type.
             **options: Extra options forwarded to the parent implementation.
         """
+        _check_unknown_options(cls.__name__, options)
+
         assert is_valid_django_model(model), (
             'You need to pass a valid Django Model in {}.Meta, received "{}".'
         ).format(cls.__name__, model)
@@ -487,7 +547,7 @@ class DjangoInputObjectType(InputObjectType):
                 model,
                 registry,
                 only_fields,
-                None,
+                include_fields,
                 exclude_fields,
                 input_for,
                 nested_fields,
@@ -552,6 +612,7 @@ class DjangoListObjectType(ObjectType):
         pagination: Any = None,
         only_fields: tuple[str, ...] = (),
         exclude_fields: tuple[str, ...] = (),
+        include_fields: tuple[str, ...] = (),
         filter_fields: Any = None,
         queryset: QuerySet | None = None,
         max_deep: int | None = None,
@@ -569,6 +630,8 @@ class DjangoListObjectType(ObjectType):
             pagination: Pagination instance to apply to the list.
             only_fields: Model field names to include exclusively.
             exclude_fields: Model field names to exclude.
+            include_fields: Extra model field names to force-include regardless
+                of only_fields / exclude_fields filters.
             filter_fields: Field names usable for filtering.
             queryset: Base queryset used to build the list type.
             max_deep: Max nested-object depth allowed below this list type,
@@ -577,6 +640,8 @@ class DjangoListObjectType(ObjectType):
                 "CostLimitValidationRule"; "None" means the default weight (1).
             **options: Extra options forwarded to the parent implementation.
         """
+        _check_unknown_options(cls.__name__, options)
+
         assert is_valid_django_model(model), (
             'You need to pass a valid Django Model in {}.Meta, received "{}".'
         ).format(cls.__name__, model)
@@ -597,6 +662,7 @@ class DjangoListObjectType(ObjectType):
             factory_kwargs = {
                 "model": model,
                 "only_fields": only_fields,
+                "include_fields": include_fields,
                 "exclude_fields": exclude_fields,
                 "filter_fields": filter_fields,
                 "pagination": pagination,
@@ -800,8 +866,11 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
             **options: Extra options forwarded to the parent implementation.
 
         Raises:
-            ImproperlyConfigured: If "Meta.model" is not provided.
+            ImproperlyConfigured: If "Meta.model" is not provided, or if any
+                unknown Meta option is supplied.
         """
+        _check_unknown_options(cls.__name__, options)
+
         pydantic_model = build_validator_model(cls, model, pydantic_model)
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
@@ -1276,7 +1345,11 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         if "multipart/form-data" in request_type:
             data.update({name: value for name, value in info.context.FILES.items()})
 
-        pk = data.pop("id")
+        # Use .pop('id', None) so that an update input where 'id' was excluded
+        # via only_fields/exclude_fields does not raise KeyError.  A None pk
+        # means no object can be found, so old_obj will be None and the resolver
+        # returns a clean "not found" error rather than a 500.
+        pk = data.pop("id", None)
         old_obj = get_Object_or_None(cls._meta.model, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(
