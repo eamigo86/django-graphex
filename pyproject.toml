@@ -1,6 +1,6 @@
 [project]
 name = "django-graphex"
-version = "1.2.2"
+version = "1.2.3"
 description = "GraphQL for Django, powered by graphene and Pydantic: define types/mutations/subscriptions from your models, with nested filtering (and/or/not), pagination, permissions and directives."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
