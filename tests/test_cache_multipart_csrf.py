@@ -17,42 +17,15 @@
 
 import json
 
-import graphene
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
 
-# ---------------------------------------------------------------------------
-# Minimal schema
-# ---------------------------------------------------------------------------
-
-
-class _Q(graphene.ObjectType):
-    hello = graphene.String()
-
-    def resolve_hello(root, info):
-        return "world"
-
-
-class _Mut(graphene.Mutation):
-    class Arguments:
-        pass
-
-    ok = graphene.Boolean()
-
-    def mutate(root, info):
-        return _Mut(ok=True)
-
-
-class _MutationRoot(graphene.ObjectType):
-    do_thing = _Mut.Field()
-
-
-_schema = graphene.Schema(query=_Q, mutation=_MutationRoot)
-
-CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
+# Shared minimal schema and helpers avoid duplication across the ~9 cache/view
+# test files that previously defined identical scaffolding independently.
+from tests.cache_helpers import CACHE_ON, minimal_cache_schema as _schema
 
 
 # ---------------------------------------------------------------------------

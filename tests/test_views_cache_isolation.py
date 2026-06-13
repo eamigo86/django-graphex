@@ -18,7 +18,6 @@ Covers:
 import json
 from unittest.mock import patch
 
-import graphene
 from django.contrib.auth.models import AnonymousUser, User
 from django.core.cache import cache
 from django.http import HttpResponse  # noqa: F401 — used in SentinelHitCheckTest
@@ -26,66 +25,17 @@ from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
 
-# ---------------------------------------------------------------------------
-# Minimal test schema
-# ---------------------------------------------------------------------------
-
-
-class _Q(graphene.ObjectType):
-    me = graphene.String()
-    hello = graphene.String()
-
-    def resolve_me(root, info):
-        user = info.context.user
-        if getattr(user, "is_authenticated", False):
-            return user.username
-        return "anon"
-
-    def resolve_hello(root, info):
-        return "world"
-
-
-class _M(graphene.ObjectType):
-    touch = graphene.Field(lambda: _MutationResult)
-
-    def resolve_touch(root, info):  # pragma: no cover
-        pass
-
-
-class _MutationResult(graphene.ObjectType):
-    ok = graphene.Boolean()
-
-
-class _Mut(graphene.Mutation):
-    class Arguments:
-        pass
-
-    ok = graphene.Boolean()
-
-    def mutate(root, info):
-        return _Mut(ok=True)
-
-
-class _MutationRoot(graphene.ObjectType):
-    do_thing = _Mut.Field()
-
-
-_schema = graphene.Schema(query=_Q, mutation=_MutationRoot)
-
-CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
+# Shared minimal schema and helpers avoid duplication across the ~9 cache/view
+# test files that previously defined identical scaffolding independently.
+from tests.cache_helpers import CACHE_ON, graphql_post, minimal_cache_schema as _schema
 
 
 def _make_request(factory, query, user=None, method="post"):
     """Build a POST or GET request, optionally with an authenticated user."""
     if method == "post":
-        body = json.dumps({"query": query})
-        req = factory.post("/graphql/", body, content_type="application/json")
-    else:
-        req = factory.get("/graphql/", {"query": query})
-    if user is not None:
-        req.user = user
-    else:
-        req.user = AnonymousUser()
+        return graphql_post(factory, query, user=user)
+    req = factory.get("/graphql/", {"query": query})
+    req.user = user if user is not None else AnonymousUser()
     return req
 
 

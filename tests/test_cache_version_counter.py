@@ -23,57 +23,24 @@ Three independent bugs in GraphQLView._get_cache_version / _bump_cache_version:
 
 from unittest.mock import patch
 
-import graphene
-from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
 
-# ---------------------------------------------------------------------------
-# Minimal schema
-# ---------------------------------------------------------------------------
+# Shared minimal schema and helpers avoid duplication across the ~9 cache/view
+# test files that previously defined identical scaffolding independently.
+from tests.cache_helpers import (
+    CACHE_ON,
+    CACHE_ON_LONG_TIMEOUT,
+    graphql_post,
+    minimal_cache_schema as _schema,
+)
 
 
-class _Q(graphene.ObjectType):
-    hello = graphene.String()
-
-    def resolve_hello(root, info):
-        return "world"
-
-
-class _Mut(graphene.Mutation):
-    class Arguments:
-        pass
-
-    ok = graphene.Boolean()
-
-    def mutate(root, info):
-        return _Mut(ok=True)
-
-
-class _MutationRoot(graphene.ObjectType):
-    do_thing = _Mut.Field()
-
-
-_schema = graphene.Schema(query=_Q, mutation=_MutationRoot)
-
-CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
-CACHE_ON_LONG_TIMEOUT = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 600}}
-
-
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-
+# _post is a local alias for the shared helper (shorter call-site name).
 def _post(factory, query, user=None):
-    import json
-
-    body = json.dumps({"query": query})
-    req = factory.post("/graphql/", body, content_type="application/json")
-    req.user = user if user is not None else AnonymousUser()
-    return req
+    return graphql_post(factory, query, user=user)
 
 
 # ---------------------------------------------------------------------------
