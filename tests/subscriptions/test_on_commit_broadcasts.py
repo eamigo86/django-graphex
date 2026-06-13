@@ -13,6 +13,9 @@ Covers:
       because Django nulls instance.pk at the end of Model.delete()).
   (e) A committed delete in serialize_data=True mode does not raise an exception
       (regression: #69 — serialize_instance hit M2M on a pk-less instance).
+  (f) A committed delete on an indexed subscription emits the index-scoped delete
+      group names (bindings.py:250-251 — the ``if index:`` branch in
+      ``_broadcast_delete``), and every message carries the real (non-None) pk.
 
 Django's test runner wraps every test in a transaction (TestCase) so
 on_commit callbacks never fire by default.  We use:
@@ -27,7 +30,7 @@ import pytest
 from django.db import transaction
 
 from django_graphex.subscriptions import Subscription
-from tests.models import BasicModel
+from tests.models import BasicModel, HookModel
 
 from .schema import UserSubscription
 
@@ -230,4 +233,94 @@ def test_committed_delete_serialize_mode_no_exception(
     for group, message in user_sends:
         assert message["pk"] == real_pk, (
             f"Envelope pk is {message['pk']!r}; expected {real_pk!r}."
+        )
+
+
+# ---------------------------------------------------------------------------
+# (f) Committed delete — indexed subscription — index-scoped groups appear
+# ---------------------------------------------------------------------------
+
+
+class _IndexedDeleteSubscription(Subscription):
+    """Indexed id-only subscription over HookModel (index field: text).
+
+    Used to exercise bindings.py:250-251 — the ``if index:`` branch inside
+    ``_broadcast_delete`` that appends the coarse-index and per-pk-index group
+    names when the subscription declares ``subscription_index_fields``.
+    """
+
+    class Meta:
+        model = HookModel
+        stream = "hookmodel_indexed_delete"
+        serialize_data = False
+        subscription_index_fields = ("text",)
+
+
+@pytest.fixture()
+def _arm_indexed_binding():
+    """Wire the indexed delete subscription and tear it down after the test."""
+    binding = _IndexedDeleteSubscription.get_binding()
+    binding.register()
+    yield binding
+    binding.unregister()
+
+
+def test_committed_delete_indexed_subscription_emits_index_scoped_groups(
+    captured_group_sends, _arm_indexed_binding
+):
+    """A committed delete on an indexed subscription must emit index-scoped group names.
+
+    Exercises bindings.py:250-251 — the ``if index:`` branch in
+    ``_broadcast_delete`` that calls::
+
+        group_names.append(cls._group_name("delete", index=index))
+        group_names.append(cls._group_name("delete", id=pk_snapshot, index=index))
+
+    The delete is wrapped in explicit atomic() so that the on_commit callback
+    fires after the block exits (same pattern as tests (d) and (e) above).
+    Every message in the stream must carry the real (non-None) pk snapshot.
+    """
+    instance = HookModel.objects.create(text="indexed-val")
+    real_pk = instance.pk
+    captured_group_sends.clear()  # discard the create broadcast
+
+    def _stream_sends():
+        return [
+            (g, m)
+            for g, m in captured_group_sends
+            if m.get("stream") == "hookmodel_indexed_delete"
+        ]
+
+    with transaction.atomic():
+        instance.delete()
+
+    sends = _stream_sends()
+    assert sends, "Expected at least one delete broadcast but got none"
+
+    # Build expected index-scoped group names via the same helper the binding uses.
+    index = _IndexedDeleteSubscription._instance_index(
+        HookModel(text="indexed-val", pk=real_pk)
+    )
+    expected_index_group = _IndexedDeleteSubscription._group_name("delete", index=index)
+    expected_index_pk_group = _IndexedDeleteSubscription._group_name(
+        "delete", id=real_pk, index=index
+    )
+
+    groups = {g for g, _ in sends}
+
+    # (i) Both index-scoped group names must be present (bindings.py:250-251).
+    assert expected_index_group in groups, (
+        f"Index-scoped group {expected_index_group!r} not in {groups!r}. "
+        "bindings.py:250 was not executed."
+    )
+    assert expected_index_pk_group in groups, (
+        f"Per-pk index-scoped group {expected_index_pk_group!r} not in {groups!r}. "
+        "bindings.py:251 was not executed."
+    )
+
+    # (ii) Every message envelope must carry the real pk — not None.
+    for group, message in sends:
+        assert message["pk"] == real_pk, (
+            f"Envelope pk is {message['pk']!r} in group {group!r}; "
+            f"expected {real_pk!r}."
         )
