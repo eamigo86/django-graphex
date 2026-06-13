@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.exceptions import FieldError
@@ -35,6 +36,12 @@ class GraphqlAPIDemultiplexer(AsyncJsonWebsocketConsumer):
     #: Mapping of stream to "Subscription" subclass. Set by the subclass.
     subscriptions = {}
 
+    # Per-connection state initialized here so that disconnect() is safe even
+    # when connect() never ran (e.g. handshake rejected before the body executes).
+    _fields: dict[str, Any] = {}
+    _filters: dict[str, Any] = {}
+    _groups: set[str] = set()
+
     async def connect(self) -> None:
         """Accept the socket, wire bindings and emit the handshake frame.
 
@@ -59,7 +66,12 @@ class GraphqlAPIDemultiplexer(AsyncJsonWebsocketConsumer):
         # connections without a session backend configured.
         session = self.scope.get("session")
         session_key: str = getattr(session, "session_key", None) or ""
-        register_channel(self.channel_name, session_key=session_key)
+        # register_channel performs synchronous cache I/O; lift it off the
+        # event loop so that non-LocMemCache backends (Redis, Memcached) do not
+        # block the loop thread.
+        await sync_to_async(register_channel)(
+            self.channel_name, session_key=session_key
+        )
 
         await self.send_json({"channel_id": self.channel_name, "connect": "success"})
 
@@ -72,7 +84,17 @@ class GraphqlAPIDemultiplexer(AsyncJsonWebsocketConsumer):
         # Remove the channel from the ownership registry so stale entries do
         # not allow reconnected channels with the same name to be claimed by
         # the wrong session.
-        unregister_channel(self.channel_name)
+        # unregister_channel performs synchronous cache I/O; lift it off the
+        # event loop so that non-LocMemCache backends (Redis, Memcached) do not
+        # block the loop thread.  The call is best-effort — a failure here must
+        # never propagate: a stale registry entry expires after 24 h anyway.
+        try:
+            await sync_to_async(unregister_channel)(self.channel_name)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to unregister channel %s from ownership registry",
+                self.channel_name,
+            )
 
         for group_name in list(self._groups):
             try:
