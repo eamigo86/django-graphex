@@ -472,16 +472,22 @@ M2M association via a dedicated resolver.
 
 ### perform_mutate response shape
 
-`DjangoModelMutation.perform_mutate` and `DjangoModelType.perform_mutate` intentionally differ:
+`DjangoModelMutation.perform_mutate` and `DjangoModelType.perform_mutate` intentionally differ in
+how they produce the response object after a successful write:
 
-| Class | Response object | Extra DB query |
-|---|---|---|
-| `DjangoModelType` | Re-reads via `get_queryset()` — picks up DB defaults, signals, annotations | Yes |
-| `DjangoModelMutation` | Returns the **in-memory** object that was just saved | No |
+| Class | Response object | Optimizer applied? | Extra DB query? |
+|---|---|---|---|
+| `DjangoModelType` | Re-reads via `get_queryset()` — picks up DB defaults, signals, annotations | Yes — the re-read passes through `queryset_factory` so `select_related` / `prefetch_related` / `.only()` are derived from the mutation's response selection | Yes (one re-read) |
+| `DjangoModelMutation` | Returns the **in-memory** object that was just saved | No re-read, so no optimizer pass | No |
 
-If your mutation relies on a DB default or signal to set a field value and you need that value in
-the response, use `DjangoModelType` instead of `DjangoModelMutation`, or override
-`perform_mutate` to add an explicit `refresh_from_db()` call:
+**Practical implication:** if your mutation response selects nested relations
+(e.g. `user { profile { bio } }`), `DjangoModelType` will resolve them via the
+re-read queryset — which the optimizer makes efficient. `DjangoModelMutation`
+returns the in-memory object, so relations are resolved lazily (one per field),
+unless you `refresh_from_db()` in a custom `perform_mutate`.
+
+To avoid N+1 on `DjangoModelMutation` responses with nested relations, or when you
+need DB defaults or signals to be reflected, override `perform_mutate`:
 
 ```python
 class MyMutation(DjangoModelMutation):
@@ -521,36 +527,6 @@ class UserModelType(DjangoModelType):
 ```
 
 See [Query depth & cost limits](query-limits.md) for the full reference.
-
-### Optimizer behavior on mutation payloads
-
-`DjangoModelType` and `DjangoModelMutation` differ in how they produce the
-response object after a successful write:
-
-| Class | Response object | Optimizer applied? | Extra DB query? |
-|---|---|---|---|
-| `DjangoModelType` | Re-reads via `get_queryset()` — picks up DB defaults, signals, annotations | Yes — the re-read passes through `queryset_factory` so `select_related` / `prefetch_related` / `.only()` are derived from the mutation's response selection | Yes (one re-read) |
-| `DjangoModelMutation` | Returns the **in-memory** object that was just saved | No re-read, so no optimizer pass | No |
-
-**Practical implication:** if your mutation response selects nested relations
-(e.g. `user { profile { bio } }`), `DjangoModelType` will resolve them via the
-re-read queryset — which the optimizer makes efficient. `DjangoModelMutation`
-returns the in-memory object, so relations are resolved lazily (one per field),
-unless you `refresh_from_db()` in a custom `perform_mutate`.
-
-To avoid N+1 on `DjangoModelMutation` responses with nested relations, override
-`perform_mutate`:
-
-```python
-class MyMutation(DjangoModelMutation):
-    class Meta:
-        model = MyModel
-
-    @classmethod
-    def perform_mutate(cls, obj, info):
-        obj.refresh_from_db()
-        return super().perform_mutate(obj, info)
-```
 
 ## Traditional GraphQL Mutations
 

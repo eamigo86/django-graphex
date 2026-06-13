@@ -46,10 +46,13 @@ the full directive reference see [Directives](../../directives.md).
     ```graphql
     query GetPostStats {
       posts(filter: { status: { exact: "published" } }) {
-        id
-        title
-        viewCount @number(as: ",.0f")
-        createdAt @date(format: "YYYY-MM-DD")
+        results {
+          id
+          title
+          viewCount @number(as: ",.0f")
+          createdAt @date(format: "YYYY-MM-DD")
+        }
+        totalCount
       }
     }
     ```
@@ -59,20 +62,23 @@ the full directive reference see [Directives](../../directives.md).
     ```json
     {
       "data": {
-        "posts": [
-          {
-            "id": "1",
-            "title": "Getting Started with GraphQL",
-            "viewCount": "1,245",
-            "createdAt": "2023-12-01"
-          },
-          {
-            "id": "2",
-            "title": "Advanced Django Techniques",
-            "viewCount": "892",
-            "createdAt": "2023-11-28"
-          }
-        ]
+        "posts": {
+          "results": [
+            {
+              "id": "1",
+              "title": "Getting Started with GraphQL",
+              "viewCount": "1,245",
+              "createdAt": "2023-12-01"
+            },
+            {
+              "id": "2",
+              "title": "Advanced Django Techniques",
+              "viewCount": "892",
+              "createdAt": "2023-11-28"
+            }
+          ],
+          "totalCount": 2
+        }
       }
     }
     ```
