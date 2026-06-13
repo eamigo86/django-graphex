@@ -568,10 +568,12 @@ from a synchronous Django signal handler.  Under an ASGI server a running event
 loop is already present on the calling thread; a naive `async_to_sync(…)()`
 call in that context deadlocks.
 
-`bindings.py` now detects whether a loop is running (`asyncio.get_running_loop`)
-and, if so, submits the coroutine from a worker thread via
-`asyncio.run_coroutine_threadsafe`.  The plain WSGI path (no running loop)
-continues to use `async_to_sync` unchanged.
+`bindings.py` detects whether a loop is running (`asyncio.get_running_loop`).
+On the **ASGI path** (loop present), the coroutine is scheduled as a
+fire-and-forget task via `loop.create_task` — the call returns immediately
+without blocking the loop thread, and a done-callback logs any delivery failure
+via the module logger.  On the **WSGI / sync path** (no running loop),
+`async_to_sync` is used and errors propagate synchronously as before.
 
 ### JavaScript path escaping
 

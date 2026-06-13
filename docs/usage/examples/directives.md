@@ -45,7 +45,7 @@ the full directive reference see [Directives](../../directives.md).
 
     ```graphql
     query GetPostStats {
-      posts(filter: { status: { exact: "published" } }) {
+      allPosts(filter: { status: { exact: "published" } }) {
         results {
           id
           title
@@ -62,7 +62,7 @@ the full directive reference see [Directives](../../directives.md).
     ```json
     {
       "data": {
-        "posts": {
+        "allPosts": {
           "results": [
             {
               "id": "1",
