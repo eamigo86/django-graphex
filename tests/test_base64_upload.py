@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import tempfile
-from unittest.mock import patch
 
 import graphene
 import pytest
@@ -89,7 +87,8 @@ class TestDecodeBase64File:
         """Incorrectly padded base64 → GraphQLError."""
         with pytest.raises(GraphQLError):
             decode_base64_file(
-                {"filename": "bad.txt", "data": "YWJj=="}, max_size=1024  # extra pad
+                {"filename": "bad.txt", "data": "YWJj=="},
+                max_size=1024,  # extra pad
             )
 
     def test_over_limit_raises_graphql_error(self):
@@ -100,7 +99,9 @@ class TestDecodeBase64File:
 
     def test_under_limit_succeeds(self):
         """Payload under max_size → decoded normally."""
-        result = decode_base64_file({"filename": "ok.bin", "data": _HELLO_B64}, max_size=100)
+        result = decode_base64_file(
+            {"filename": "ok.bin", "data": _HELLO_B64}, max_size=100
+        )
         assert result.read() == _HELLO_BYTES
 
     def test_global_max_upload_size_enforced(self):
@@ -323,11 +324,9 @@ class TestMaxRequestBodySizeGuard(TestCase):
 
         _s.graphql_api_settings.reload()
         try:
-            schema = self._make_schema()
-            view = BaseGraphQLView_batch = None
-
             from django_graphex.views import BaseGraphQLView
 
+            schema = self._make_schema()
             view = BaseGraphQLView.as_view(schema=schema, batch=True)
             big_body = b"x" * 200
             rf = RequestFactory()
@@ -359,7 +358,6 @@ class TestFileFieldRoundTrip(TestCase):
     @override_settings(MEDIA_ROOT=None)
     def test_round_trip(self):
         """File is saved to disk and readable back with correct content."""
-        import django.core.files.storage as storage_module
         from django.core.files.storage import FileSystemStorage
 
         storage = FileSystemStorage(location=self.tmp_dir)
