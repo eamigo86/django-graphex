@@ -44,17 +44,32 @@ from .types import (
 from .validation import DepthLimitValidationRule
 from .views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
 
-VERSION = (1, 2, 1, "final", "")
+
+def _version_from_pyproject() -> str:
+    """Read the project version straight from ``pyproject.toml``.
+
+    Used only as a fallback for source checkouts that were never installed via
+    pip (build metadata absent, but ``pyproject.toml`` present in the tree).
+    Never used for an installed package — ``pyproject.toml`` is not shipped in
+    the wheel.
+    """
+    import pathlib
+    import tomllib
+
+    pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    return str(data["project"]["version"])
+
 
 try:
+    # Single source of truth: the installed package metadata, which the build
+    # backend (hatchling) generates from ``pyproject.toml``.
     __version__ = version("django-graphex")
-except PackageNotFoundError:  # pragma: no cover
-    # Fallback for editable / source installs not yet installed via pip.
-    # This path is unreachable in the test environment where the package is
-    # installed, but is essential for source checkouts that skip pip install.
-    from graphene.pyutils.version import get_version
-
-    __version__ = get_version(VERSION)
+except PackageNotFoundError:  # pragma: no cover - source checkout, not installed
+    try:
+        __version__ = _version_from_pyproject()
+    except Exception:  # noqa: BLE001 - last-resort dev fallback
+        __version__ = "0.0.0"
 
 __all__ = (
     "__version__",
