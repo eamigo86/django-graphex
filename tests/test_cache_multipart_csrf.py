@@ -187,7 +187,7 @@ class CsrfCookieReplayTest(TestCase):
         req2 = self._json_post("{ hello }")
 
         with patch.object(GraphQLView, "super_call", counting_super_call):
-            resp1 = self.view(req1)
+            self.view(req1)  # warm the cache (response intentionally unused)
             resp2 = self.view(req2)
 
         # The backend MUST have been called exactly once (cache hit on req2).
