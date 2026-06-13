@@ -39,6 +39,7 @@ from .paginations.pagination import BaseDjangoGraphqlPagination
 from .registry import Registry, get_global_registry
 from .settings import graphql_api_settings
 from .utils import (
+    _apply_optimizations,
     get_Object_or_None,
     is_valid_django_model,
     maybe_queryset,
@@ -1009,6 +1010,12 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         yields nothing (e.g. "filter_queryset" excludes it), so a mutation
         never returns null for an object it just wrote.
 
+        When the mutation selection set contains a sub-field for the output
+        object (named by "Meta.output_field_name"), the re-read queryset is
+        passed through the query optimizer using that sub-selection.  This
+        eliminates N+1 queries for to-one relations (e.g. ForeignKey,
+        OneToOneField) that are selected in the mutation response.
+
         Args:
             obj: Model instance produced by the mutation.
             info: GraphQL resolve info for the current request.
@@ -1016,13 +1023,54 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         Returns:
             An instance of this type flagged as "ok" carrying the object.
         """
-        refreshed = (
-            cls.get_queryset(cls._meta.model._default_manager, info, obj=obj)
-            .filter(pk=obj.pk)
-            .first()
-        )
+        base_qs = cls.get_queryset(
+            cls._meta.model._default_manager, info, obj=obj
+        ).filter(pk=obj.pk)
+
+        # Locate the sub-field node for the output object within the mutation
+        # selection set (e.g. "post" inside "{ ok post { title author { name } } }").
+        # If found, optimise the re-read queryset using that sub-selection so
+        # to-one relations are joined via select_related instead of lazy-loading.
+        output_field_name = cls._meta.output_field_name
+        sub_field_node = None
+        try:
+            root_node = info.field_nodes[0] if info.field_nodes else None
+            if root_node is not None and getattr(root_node, "selection_set", None):
+                for sel in root_node.selection_set.selections:
+                    sel_name = getattr(getattr(sel, "name", None), "value", None)
+                    if sel_name == output_field_name:
+                        sub_field_node = sel
+                        break
+        except Exception:  # pragma: no cover — defensive; never raise on best-effort
+            sub_field_node = None
+
+        if sub_field_node is not None and getattr(
+            sub_field_node, "selection_set", None
+        ):
+            from types import SimpleNamespace
+
+            sub_info = SimpleNamespace(
+                field_nodes=[sub_field_node],
+                fragments=getattr(info, "fragments", {}),
+                variable_values=getattr(info, "variable_values", {}) or {},
+                return_type=None,
+                schema=getattr(info, "schema", None),
+                context=getattr(info, "context", None),
+            )
+            try:
+                base_qs = _apply_optimizations(
+                    base_qs,
+                    cls._meta.model,
+                    sub_info,  # type: ignore[arg-type]
+                    {},
+                    False,
+                )
+            except Exception:  # pragma: no cover — degrade gracefully
+                pass
+
+        refreshed = base_qs.first()
         resp = {
-            cls._meta.output_field_name: refreshed or obj,
+            output_field_name: refreshed or obj,
             "ok": True,
             "errors": None,
         }
