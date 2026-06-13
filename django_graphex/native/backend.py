@@ -268,11 +268,18 @@ class PydanticBackend(SerializerBackend):
         # Only client-provided fields (so Django defaults apply on create and
         # untouched fields are left alone on update).
         payload = validated.model_dump(include=set(validated.model_fields_set))
+
         # Unwrap enum (choices) members to their stored value.
-        payload = {
-            key: (value.value if isinstance(value, enum.Enum) else value)
-            for key, value in payload.items()
-        }
+        # List/tuple values are also recursed into so that multi-valued choice
+        # fields (e.g. DjangoListField(enum)) arrive with plain Python values.
+        def _unwrap(value: Any) -> Any:
+            if isinstance(value, enum.Enum):
+                return value.value
+            if isinstance(value, (list, tuple)):
+                return [v.value if isinstance(v, enum.Enum) else v for v in value]
+            return value
+
+        payload = {key: _unwrap(value) for key, value in payload.items()}
 
         errors = self._db_check_errors(payload, instance)
         if errors:
