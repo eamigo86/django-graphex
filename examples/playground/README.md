@@ -1,5 +1,8 @@
 # django-graphex — Playground
 
+> **Targets django-graphex v1.3.x** — includes v1.1.0 query-optimization,
+> v1.2.0 typed-GFK unions, and v1.2.2 `get_queryset` scoping + safe ordering.
+
 A small, runnable Django project that exercises **every major feature** of
 `django-graphex` end-to-end: queries, all three paginators, filtering,
 generic single-object fields, nested lists (N+1-safe) with nested
@@ -12,6 +15,18 @@ Channels.
 
 It installs the library from the parent checkout (editable), uses **uv**,
 **SQLite**, and a `Makefile`.
+
+### Safe ordering (anti-oracle hardening)
+
+The ordering allowlist is active on all paginated fields. It rejects
+relation-spanning and non-existent terms to prevent column-oracle attacks:
+
+| Query | Error |
+|-------|-------|
+| `posts { results(ordering: "author__user__password") { title } }` | `Relation-spanning ordering is not permitted` |
+| `posts { results(ordering: "nonexistent") { title } }` | `Invalid ordering field` |
+
+Try these in GraphiQL to see the guard in action.
 
 ---
 
@@ -74,6 +89,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | **Filtering** | | |
 | `filter_fields` on object types | ✅ | All `DjangoObjectType` subclasses |
 | Filtering on list fields | ✅ | `posts(filter: { status: { exact: PUBLISHED }, title: { icontains: "…" } })` |
+| `@filter_field` custom per-field filter (v1.3.0) | ✅ | `schema.py` — `PostType.search`; try: `posts(filter: { search: "django" }) { results { id title } totalCount }` |
 | Filtered nested lists | ✅ | `authors { results { posts(filter: { title: { icontains: "…" } }) } }` |
 | **Nested lists (N+1-safe)** | | |
 | `results` / `totalCount` wrapper | ✅ | Every list field |
@@ -123,6 +139,10 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `GenericForeignKey` exposed as a typed `DjangoUnionType` | ✅ | `schema.py` — `AttachmentType.target` via `AttachmentTargetUnion` (`Meta.gfk_types`) + `Meta.gfk_unions` |
 | Per-content-type `GenericPrefetch` narrowing (Django 5.0+) | ✅ | One `.only()`-narrowed queryset per content type (`AccountType.balance`, `InvoiceType.amount`), batched across all attachments |
 | `GenericForeignKey` / `GenericRelation` prefetch | ✅ / wired | `Attachment.target` (GFK) exercised by the seed; `Post.attachments` (reverse `GenericRelation`) is wired but left empty so the GFK-union demo stays runnable |
+| **File uploads (v1.3.0)** | | |
+| `Base64FileInput` (opt-in) | ✅ | `schema.py` — `UploadDocument` mutation; `Document` model has a `FileField`. Try: `mutation { uploadDocument(name: "readme" file: {filename: "readme.txt" data: "<base64>" contentType: "text/plain"}) { ok name } }` |
+| `MAX_UPLOAD_SIZE` | ✅ | `config/settings.py` — `5 * 1024 * 1024` (5 MB) |
+| `MAX_REQUEST_BODY_SIZE` | ✅ | `config/settings.py` — `20 * 1024 * 1024` (20 MB body guard, fires before JSON parse) |
 | **Response caching** | | |
 | `CACHE_ACTIVE` / `CACHE_TIMEOUT` | note | Commented in `config/settings.py` — uncomment to activate query-result caching |
 | **Subscriptions** | | |

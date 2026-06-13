@@ -24,9 +24,9 @@ def test_version_matches_importlib_metadata():
 
 
 def test_version_is_current_release():
-    """For the v1.2.3 release, __version__ must equal '1.2.3'."""
-    assert django_graphex.__version__ == "1.2.3", (
-        f"Expected __version__ == '1.2.3', got {django_graphex.__version__!r}. "
+    """For the v1.3.0 release, __version__ must equal '1.3.0'."""
+    assert django_graphex.__version__ == "1.3.0", (
+        f"Expected __version__ == '1.3.0', got {django_graphex.__version__!r}. "
         "Bump `version` in pyproject.toml and reinstall the package."
     )
 

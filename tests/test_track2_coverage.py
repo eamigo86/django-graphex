@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from unittest import mock
 
-import django
 import graphene
 import pytest
 from graphene import Field
@@ -42,12 +41,11 @@ from .models import (
     Track2Order,
 )
 
-# Per-content-type GenericPrefetch narrowing is Django 5.0+; the helpers that
-# assemble it (``_build_generic_prefetch`` / ``_build_member_queryset``) are only
-# ever reached there.  Tests that call them assert that 5.0+ shape.
+# Per-content-type GenericPrefetch narrowing requires Django 5.0+.
+# Floor is >=5.2, so these tests always run; marker is a no-op kept for symmetry.
 requires_generic_prefetch = pytest.mark.skipif(
-    django.VERSION < (5, 0),
-    reason="Per-content-type GenericPrefetch narrowing is Django 5.0+.",
+    False,
+    reason="Per-content-type GenericPrefetch narrowing is Django 5.0+ (floor is 5.2).",
 )
 
 

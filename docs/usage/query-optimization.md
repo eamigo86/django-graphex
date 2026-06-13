@@ -381,7 +381,7 @@ optimizer routes the union GFK through a `GenericPrefetch` that builds **one
     type than the one being walked, so `... on InvoiceType { amount }` is never
     mis-attributed against the `Account` relation map (which would yield wrong
     `.only()` columns and a Django `FieldError`). See the
-    [1.2.0 changelog](../changelog.md#120).
+    [1.2.0 changelog](../changelog.md).
 
 The type-side declaration order is **load-bearing** (members → union → owner
 LAST). See [Types → DjangoUnionType](types.md#djangouniontype-typed-genericforeignkey-targets)

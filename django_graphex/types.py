@@ -33,6 +33,10 @@ from .base_types import DjangoListObjectBase, factory_type
 from .converter import construct_fields
 from .errors import ErrorType
 from .fields import DjangoListField, DjangoListObjectField, DjangoObjectField
+from .filtering.filter_field import (
+    RESERVED_FILTER_ARGS,
+    collect_custom_filters,
+)
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .paginations.pagination import BaseDjangoGraphqlPagination
@@ -237,6 +241,21 @@ class DjangoObjectType(ObjectType):
             "The attribute registry in {} needs to be an instance of "
             'Registry, received "{}".'
         ).format(cls.__name__, registry)
+
+        # Collect @filter_field-decorated methods and validate reserved names.
+        custom_filters = collect_custom_filters(cls)
+        for arg_name, _fn, _meta_ff in custom_filters:
+            if arg_name in RESERVED_FILTER_ARGS:
+                raise ImproperlyConfigured(
+                    "{cls}: @filter_field method name {name!r} collides with a "
+                    "reserved pagination / ordering argument. Choose a different "
+                    "name. Reserved names: {reserved}.".format(
+                        cls=cls.__name__,
+                        name=arg_name,
+                        reserved=sorted(RESERVED_FILTER_ARGS),
+                    )
+                )
+        cls._dgx_custom_filters = custom_filters
 
         django_fields = yank_fields_from_attrs(
             construct_fields(
@@ -871,6 +890,21 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         """
         _check_unknown_options(cls.__name__, options)
 
+        # Collect @filter_field-decorated methods and validate reserved names.
+        custom_filters = collect_custom_filters(cls)
+        for arg_name, _fn, _meta_ff in custom_filters:
+            if arg_name in RESERVED_FILTER_ARGS:
+                raise ImproperlyConfigured(
+                    "{cls}: @filter_field method name {name!r} collides with a "
+                    "reserved pagination / ordering argument. Choose a different "
+                    "name. Reserved names: {reserved}.".format(
+                        cls=cls.__name__,
+                        name=arg_name,
+                        reserved=sorted(RESERVED_FILTER_ARGS),
+                    )
+                )
+        cls._dgx_custom_filters = custom_filters
+
         pydantic_model = build_validator_model(cls, model, pydantic_model)
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
@@ -1400,6 +1434,10 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
     ) -> DjangoListObjectBase:
         """List objects with filtering and pagination support.
 
+        Composition order: standard ORM lookups (via filter_backend) →
+        custom ``@filter_field`` methods (in declaration order) →
+        ``filter_queryset`` (called via get_queryset, last).
+
         Args:
             manager: Default manager or queryset to list from.
             filter_backend: The native filter backend applied to the queryset.
@@ -1410,11 +1448,19 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         Returns:
             A list result container with the count and matching objects.
         """
+        from .filtering.filter_field import apply_custom_filters
+
         cls.authorize(info, "list")
         base = cls.get_queryset(manager, info, **kwargs)
         qs = queryset_factory(base, root, info, **kwargs)
 
-        qs = filter_backend.apply(qs, kwargs.get("filter"))
+        filter_value = kwargs.get("filter")
+        qs = filter_backend.apply(qs, filter_value)
+
+        # Apply custom @filter_field methods in declaration order.
+        custom_filters = getattr(cls, "_dgx_custom_filters", None) or []
+        qs = apply_custom_filters(qs, custom_filters, info, filter_value)
+
         count = qs.count()
 
         return DjangoListObjectBase(

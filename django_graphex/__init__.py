@@ -12,6 +12,7 @@ from .fields import (
     DjangoNestedListObjectField,
     DjangoObjectField,
 )
+from .filtering.filter_field import filter_field
 from .middleware import GraphQLDirectiveMiddleware
 from .mutation import DjangoModelMutation
 from .paginations import (
@@ -41,6 +42,7 @@ from .types import (
     DjangoObjectType,
     DjangoUnionType,
 )
+from .uploads import Base64FileInput, decode_base64_file
 from .validation import DepthLimitValidationRule
 from .views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
 
@@ -82,6 +84,9 @@ __all__ = (
     "DjangoObjectField",
     # MUTATIONS
     "DjangoModelMutation",
+    # FILE UPLOADS (opt-in — also importable from django_graphex.uploads)
+    "Base64FileInput",
+    "decode_base64_file",
     # PAGINATION
     "LimitOffsetGraphqlPagination",
     "PageGraphqlPagination",
@@ -110,6 +115,8 @@ __all__ = (
     "DjangoGraphQLSchema",
     "collect_field_names",
     "DenyAllRegistry",
+    # FILTERING
+    "filter_field",
     # REGISTRY
     "Registry",
     # DIRECTIVES

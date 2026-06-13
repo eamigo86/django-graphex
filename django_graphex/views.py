@@ -247,7 +247,28 @@ class BaseGraphQLView(View):
 
     @method_decorator(ensure_csrf_cookie)
     def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
-        """Handle a GraphQL GET/POST request (and GraphiQL/batch)."""
+        """Handle a GraphQL GET/POST request (and GraphiQL/batch).
+
+        Body-size guard
+        ---------------
+        When ``MAX_REQUEST_BODY_SIZE`` is configured (not ``None``) and the
+        request body length exceeds the limit, the request is rejected with
+        HTTP 413 (Content Too Large) **before** the JSON body is parsed.
+        This is the primary memory-safety cap for base64 file uploads: the
+        entire base64 payload sits in the JSON body, so rejecting before
+        ``parse_body`` prevents it from ever being allocated.  The per-field
+        decoded-size pre-check in ``decode_base64_file`` is a secondary guard.
+
+        The guard uses a two-stage strategy:
+
+        1. **Fast-reject** (O(1)): if ``Content-Length`` is present AND already
+           exceeds ``MAX_REQUEST_BODY_SIZE``, reject immediately without reading
+           the body — avoids buffering an honest large upload.
+        2. **Authoritative check**: always verify ``len(request.body) <=
+           max_body`` regardless of the ``Content-Length`` header.  This
+           prevents a client from spoofing a low ``Content-Length`` to bypass
+           the guard.
+        """
         try:
             if request.method.lower() not in ("get", "post"):
                 raise HttpError(
@@ -255,6 +276,66 @@ class BaseGraphQLView(View):
                         ["GET", "POST"], "GraphQL only supports GET and POST requests."
                     )
                 )
+
+            # Body-size guard: reject before JSON parsing when
+            # MAX_REQUEST_BODY_SIZE is configured and the body exceeds it.
+            #
+            # Security note: Content-Length is a CLIENT-SUPPLIED header and
+            # MUST NOT be trusted to pass the guard.  A spoofed low value
+            # would let an oversized body bypass the check entirely.
+            #
+            # Two-stage strategy:
+            #   1. Fast-reject: if Content-Length is present AND already
+            #      exceeds the cap, reject immediately without reading the
+            #      body (avoids buffering an honest large upload).
+            #   2. Authoritative check: always verify len(request.body) ≤
+            #      max_body.  This catches spoofed-low / absent / garbage
+            #      Content-Length values.
+            #
+            # Accessing request.body here is safe: dispatch runs before
+            # parse_body, so the stream has not been consumed yet.  Django
+            # caches the result in request._body on first access.  If the
+            # body is so large that Django itself raises RequestDataTooBig /
+            # SuspiciousOperation (DATA_UPLOAD_MAX_MEMORY_SIZE), that
+            # exception surfaces as Django's own 400 response — we do not
+            # mask it, but we also do not let the guard 500 on it.
+            max_body = graphql_api_settings.MAX_REQUEST_BODY_SIZE
+            if max_body is not None and request.method.lower() == "post":
+                from django.http import HttpResponse as _HR
+
+                # --- Stage 1: fast-reject on honest oversized Content-Length ---
+                content_length_str = request.META.get("CONTENT_LENGTH", "")
+                try:
+                    declared_length = int(content_length_str)
+                except (ValueError, TypeError):
+                    declared_length = None
+
+                if declared_length is not None and declared_length > max_body:
+                    raise HttpError(
+                        _HR(status=413),
+                        message=(
+                            f"Request body ({declared_length} bytes) exceeds the "
+                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                            "Split the request or increase the limit."
+                        ),
+                    )
+
+                # --- Stage 2: authoritative check on the actual body length ---
+                # This ALWAYS runs so that a spoofed-low / absent / garbage
+                # Content-Length cannot bypass the guard. If reading the body
+                # raises Django's RequestDataTooBig / SuspiciousOperation, that
+                # propagates as Django's own response (we neither mask it nor
+                # 500 on it).
+                actual_length = len(request.body)
+                if actual_length > max_body:
+                    raise HttpError(
+                        _HR(status=413),
+                        message=(
+                            f"Request body ({actual_length} bytes) exceeds the "
+                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                            "Split the request or increase the limit."
+                        ),
+                    )
 
             data = self.parse_body(request)
             show_graphiql = self.graphiql and self.can_display_graphiql(request, data)
@@ -789,13 +870,15 @@ class GraphQLView(BaseGraphQLView):
           cache key in ``fetch_cache_key``) unavailable.  Bypassing is safe:
           multipart GraphQL is used almost exclusively for file uploads, which
           are never idempotent queries worth caching (issue #53a).
-        * Responses that carry a ``Set-Cookie`` header are never stored in the
-          cache.  The base ``dispatch`` is decorated with
-          ``@ensure_csrf_cookie``, which attaches a per-request CSRF secret.
-          Caching that cookie and replaying it to other clients in the same
-          identity namespace would share one CSRF secret across users (issue
-          #53b).  Skipping the cache for cookie-bearing responses lets each
-          client's request go through ``ensure_csrf_cookie`` independently.
+        * Only ``(body, status_code, content_type)`` is stored — never the
+          live ``HttpResponse`` object.  The base ``dispatch`` is decorated
+          with ``@ensure_csrf_cookie``, which attaches a per-request CSRF
+          secret as a ``Set-Cookie`` header.  By storing a bare tuple and
+          reconstructing a fresh ``HttpResponse`` on cache hits, the CSRF
+          cookie is stripped from all cached responses (it only appears on the
+          original cache-miss response).  Subsequent clients in the same
+          identity namespace therefore never receive another client's CSRF
+          token (issue #53b).
         """
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)

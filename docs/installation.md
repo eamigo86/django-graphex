@@ -43,13 +43,24 @@ This adds `channels` and `channels-redis`. See the
 ## Requirements
 
 - **Python**: 3.12, 3.13, 3.14
-- **Django**: 4.2, 5.0, 5.1, 5.2, 6.0
+- **Django**: 5.2 (LTS), 6.0
 - **graphene**: >=3.3,<4
 - **pydantic**: >=2,<3
 
+!!! warning "Django 4.x / 5.0 / 5.1 users"
+    **django-graphex 1.3.0+ requires Django >= 5.2.**
+    If your project is still on **Django 4.2, 5.0, or 5.1**, use
+    **django-graphex 1.2.3** — the last release that supports those versions:
+
+    ```bash
+    uv add "django-graphex==1.2.3"
+    # or
+    pip install "django-graphex==1.2.3"
+    ```
+
 !!! info "Version Support"
     - **Minimum Python version**: 3.12+
-    - **Minimum Django version**: 4.2+
+    - **Minimum Django version**: 5.2 (LTS) — Django 4.2, 5.0 and 5.1 are EOL and no longer supported
     - Each Django version is tested on the Python versions it officially supports
 
 ## Development Installation

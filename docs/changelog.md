@@ -12,6 +12,116 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 1.3.0 — 2026-06-13
+
+### Added
+
+- **`@filter_field` decorator** (#26) — declare custom per-field GraphQL filter
+  arguments directly on a `DjangoObjectType` or `DjangoModelType`, co-located
+  with the resolver logic. The method name becomes the GraphQL argument name;
+  the graphene type (default `graphene.String`) and an optional description are
+  configurable. `filter_fields` continues to work for model-field lookups; custom
+  logic is now exclusively via `@filter_field`. Composition order at query time:
+  standard lookups → `@filter_field` methods (declaration order) →
+  `filter_queryset` (last). (#26)
+
+- **`Base64FileInput` — opt-in base64 file uploads** (#25) —
+  `Base64FileInput(graphene.InputObjectType)` with `filename` (required),
+  `data` (required, base64-encoded), and `content_type` (optional, default
+  `application/octet-stream`). Call `.to_uploaded_file(max_size=None)` in any
+  mutation resolver to obtain a Django `SimpleUploadedFile` ready for
+  `FileField.save()`. Also importable as `decode_base64_file(value, *,
+  max_size=None)` for cases where you hold the raw dict.
+
+  Two new settings enforce memory safety:
+
+  - **`MAX_UPLOAD_SIZE`** (int bytes, required when `Base64FileInput` is used)
+    — global decoded-size cap. A pre-check fires before base64 decoding to
+    avoid the allocation. Per-field `max_size` overrides this. Raises
+    `ImproperlyConfigured` if absent and no per-field override is given.
+  - **`MAX_REQUEST_BODY_SIZE`** (int bytes, `None` = disabled) — HTTP body-size
+    guard in `BaseGraphQLView.dispatch`, checked before JSON parsing. Rejects
+    oversized bodies with **HTTP 413**. This is the primary memory cap (the
+    base64 string is already in RAM once the body is parsed).
+
+  Malformed base64 raises `GraphQLError` (never HTTP 500). Content-type
+  validation (magic bytes) is out of scope — use `FileField` validators.
+  Batch requests: `MAX_BATCH_SIZE` (op count) + `MAX_REQUEST_BODY_SIZE`
+  (bytes) compose; no special upload-batch logic. Upload mutations bypass the
+  response cache automatically (mutations are never cached). See
+  [Mutations → File Upload Support](usage/mutations.md#file-upload-support) and
+  [Settings → File uploads](usage/settings.md#file-uploads). (#25)
+
+### Changed
+
+- **BREAKING — minimum Django raised to 5.2** (#75) — Django 4.2, 5.0, and 5.1
+  are no longer supported (all end-of-life). The supported matrix is now
+  **Django 5.2 (LTS) + 6.0** × **Python 3.12–3.14**. Tooling: `pytest-asyncio`
+  pinned to `>=1.0`, `ruff` constraint updated, CI uses `setup-uv` v8.
+
+- **`filter_fields = {"field": None}` now raises `ImproperlyConfigured`** (#26) —
+  The `None` sentinel (which previously applied the default lookup set and crashed
+  with `TypeError`) was un-Pythonic and has been replaced by the `@filter_field`
+  decorator. The error message directs users to the new API.
+
+### Fixed
+
+- **Docs accuracy** (#71) — Five follow-up fixes: migration guide import corrected
+  (`graphene_django_extras` → `django_graphex`); fragile changelog anchor removed
+  from query-optimization guide; `Meta` validation options table added to types
+  docs; `!!! warning` callout added to API types reference; `BaseGraphQLView`
+  views docstring reworded to match the actual tuple-store/reconstruct caching
+  mechanism.
+
+- **TTL and CSRF-replay tests now have teeth** (#72) — The TTL test previously
+  read `_cache[raw_key]` (LocMemCache stores expiry in `_expire_info`, not in the
+  value tuple), making the assertion vacuous. Replaced with a `cache.get()`
+  presence check plus `_expire_info` TTL assertion. The CSRF-replay test's
+  `if`-gated `assertNotEqual` was replaced with an unconditional
+  `assertNotIn('Set-Cookie', resp2)` plus a super-call count assertion that
+  verifies the cache hit.
+
+- **Test infrastructure hardened** (#73) — Multi-backend cache fixture covering
+  both `LocMemCache` and `DatabaseCache`; concurrency test for parallel mutation
+  invalidation; dead `reset_global_registry` call removed; fixture deduplication.
+
+- **Playground updated** (#74) — `PostType.get_queryset` scoping example (anonymous
+  → published only, authenticated → all); safe-ordering comment on `PostListType`;
+  version signal markers updated; README banner added ("Targets django-graphex
+  v1.3.x") with safe-ordering table.
+
+### New settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `MAX_UPLOAD_SIZE` | `None` | Global decoded-size cap for `Base64FileInput` (bytes). Required when using uploads unless a per-field `max_size` is set. |
+| `MAX_REQUEST_BODY_SIZE` | `None` | HTTP body-size guard (bytes). Requests exceeding this limit are rejected with HTTP 413 before JSON parsing. |
+
+### Behavior changes
+
+!!! warning "Review before upgrading"
+
+    Review each item below before upgrading.
+
+- **Django < 5.2 is no longer supported** — Upgrade Django to ≥ 5.2 before
+  upgrading `django-graphex` to 1.3.0. Projects on Django 4.2, 5.0, or 5.1 must
+  stay on `django-graphex` 1.2.x. (#75)
+
+- **`filter_fields = {"field": None}` now raises `ImproperlyConfigured`** —
+  Previously this crashed with `TypeError`; the error is now explicit and
+  directive. Replace `None` entries with a `@filter_field`-decorated method on
+  the same type. (#26)
+
+- **Custom filters are now declared exclusively via `@filter_field`** — Passing
+  callable values through `filter_fields` is no longer supported. Use the
+  `@filter_field` decorator instead; it co-locates the filter logic with the
+  declaration. (#26)
+
+- **`Base64FileInput` requires `MAX_UPLOAD_SIZE` or a per-field `max_size`** —
+  Using `Base64FileInput` without either a global `MAX_UPLOAD_SIZE` setting or a
+  per-field `max_size` kwarg raises `ImproperlyConfigured` at resolution time.
+  (#25)
+
 ## 1.2.3 — 2026-06-13
 
 !!! note "Hotfix"

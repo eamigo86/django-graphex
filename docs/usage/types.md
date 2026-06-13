@@ -38,6 +38,32 @@ or as the output of a [mutation](mutations.md). Relations on the model are expos
 as nested lists with the uniform `results` / `totalCount` shape — see
 [Nested lists](nested-lists.md).
 
+### Custom per-field filter arguments — `@filter_field`
+
+*Added in v1.3.0.* Use the `@filter_field` decorator to expose a **custom
+GraphQL filter argument** directly on the type, co-located with its logic:
+
+```python
+import graphene
+from django.db.models import Q
+from django_graphex import DjangoObjectType, filter_field
+
+class PostType(DjangoObjectType):
+    class Meta:
+        model = Post
+        filter_fields = {"title": ("exact", "icontains")}
+
+    @filter_field(graphene.String, description="Full-text search")
+    def search(cls, queryset, info, value):
+        return queryset.filter(
+            Q(title__icontains=value) | Q(body__icontains=value)
+        )
+```
+
+See [Filtering — `@filter_field`](filtering.md#custom-per-field-filters-filter_field)
+for the full reference including type override, composition order, and reserved
+argument names.
+
 ### Custom queryset (per-request filtering)
 
 Override `get_queryset(cls, queryset, info)` to scope what a type exposes on a
@@ -85,6 +111,31 @@ before the `COUNT` query is issued.
     `filter_queryset`) with a different signature (`manager, info, **kwargs`).
     That hook is called earlier, at the CRUD-method level, and is unaffected by
     this change.  Do not mix the two APIs.
+
+### Meta options are validated { #meta-options-validated }
+
+Since v1.2.2 (#65), unknown or mistyped `Meta` options raise
+`ImproperlyConfigured` at server startup instead of being silently ignored.
+For example, a typo like `filter_Filed` (capital F) is caught immediately.
+
+The full set of recognised options for `DjangoObjectType.Meta` is:
+
+| Option | Description |
+|--------|-------------|
+| `model` | Django model class (required) |
+| `registry` | Type registry instance |
+| `skip_registry` | Skip automatic registration |
+| `only_fields` | Include only the listed model fields |
+| `exclude_fields` | Exclude the listed model fields |
+| `include_fields` | Additional fields to include |
+| `filter_fields` | Field filtering configuration |
+| `interfaces` | GraphQL interfaces to implement |
+| `max_deep` | Max nested-object depth below this type |
+| `complexity` | Cost weight for query cost analysis |
+| `description` | Type description exposed in the schema |
+
+Any key not in this table is rejected at startup. Review your `DjangoObjectType`
+and `DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
 
 ## DjangoListObjectType
 

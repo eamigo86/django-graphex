@@ -16,6 +16,7 @@ from django.utils import timezone
 from django_graphex import (
     AllowAny,  # noqa: F401 — available for permission_classes experimentation
     AnnotatedField,
+    Base64FileInput,
     BasePermission,
     CursorGraphqlPagination,
     DjangoFilterListField,
@@ -37,6 +38,7 @@ from django_graphex import (
     LimitOffsetGraphqlPagination,
     PageGraphqlPagination,
     all_directives,
+    filter_field,
 )
 from django_graphex.subscriptions import Subscription
 
@@ -46,6 +48,7 @@ from .models import (
     Author,
     Category,
     Comment,
+    Document,
     Invoice,
     Note,
     Post,
@@ -102,6 +105,42 @@ class PostType(DjangoObjectType):
         max_deep = 4
         complexity = 2
 
+    # ---- @filter_field showcase (v1.3.0) ------------------------------------- #
+    # A custom GraphQL filter argument that isn't a plain model-field lookup.
+    # The arg name (`search`) becomes the GraphQL argument; the method returns
+    # a filtered queryset. The decorator handles classmethod semantics — do NOT
+    # stack @classmethod.
+    #
+    # Try it:
+    #   { posts(filter: { search: "django" }) { results { id title } totalCount } }
+    #
+    # Composition order at query time:
+    #   1. Standard lookups (id, title, status, author from filter_fields)
+    #   2. @filter_field methods in declaration order  ← search runs here
+    #   3. filter_queryset (see get_queryset below)    ← applied last
+    @filter_field(graphene.String, description="Full-text search over title and body")
+    def search(cls, queryset, info, value):
+        """Filter posts whose title OR body contains the search term."""
+        from django.db.models import Q
+
+        return queryset.filter(Q(title__icontains=value) | Q(body__icontains=value))
+
+    # ---- get_queryset scoping showcase (v1.2.2) ------------------------------ #
+    # Before v1.2.2 this hook was documented but never called on list, paginated,
+    # or list-object fields — only on single-object (DjangoObjectField) lookups.
+    # v1.2.2 fix (#58): get_queryset is now invoked on ALL four top-level field
+    # types before the query optimizer runs.
+    # Try it: anonymous request → only PUBLISHED posts returned.
+    #         authenticated request (log in via /admin) → all posts visible.
+    @classmethod
+    def get_queryset(cls, queryset, info):
+        user = getattr(info.context, "user", None)
+        if user is not None and user.is_authenticated:
+            # Authenticated users see every post regardless of status.
+            return queryset
+        # Anonymous users only see published posts.
+        return queryset.filter(status=Post.Status.PUBLISHED)
+
 
 # --------------------------------------------------------------------------- #
 # List types (results + totalCount). Also used for nested lists.              #
@@ -110,13 +149,20 @@ class PostType(DjangoObjectType):
 class PostListType(DjangoListObjectType):
     class Meta:
         model = Post
+        # Safe ordering (v1.2.x): the ordering allowlist rejects relation-spanning
+        # and non-existent terms to prevent column-oracle attacks.
+        # Try in GraphQL:
+        #   posts { results(ordering: "author__user__password") { title } }
+        #     → GraphQLError: 'Relation-spanning ordering is not permitted'
+        #   posts { results(ordering: "nonexistent") { title } }
+        #     → GraphQLError: 'Invalid ordering field'
         pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="-id")
 
 
 # AuthorType is declared AFTER PostListType because it references it directly as
 # the type of its explicit nested `posts` field (DjangoNestedListObjectField).
 class AuthorType(DjangoObjectType):
-    # ---- Query-optimization showcase (v1.1.0) ---------------------------- #
+    # ---- Query-optimization showcase (v1.1.0+) --------------------------- #
     # AnnotatedField: a selection-driven DB annotation. The optimizer adds
     # `.annotate(_gqx_ann_post_count=Count('posts'))` ONLY when `postCount` is in
     # the selection; when it is not selected, no extra SQL is emitted. The default
@@ -178,7 +224,7 @@ class CommentListType(DjangoListObjectType):
 
 
 # --------------------------------------------------------------------------- #
-# Typed GenericForeignKey union (v1.2.0).                                      #
+# Typed GenericForeignKey union (v1.2.0+).                                     #
 #                                                                              #
 # Declaration order is LOAD-BEARING: members -> union -> owner LAST.           #
 #   1. AccountType / InvoiceType  — the two DjangoObjectType members.          #
@@ -472,6 +518,62 @@ class CreateCategory(graphene.Mutation):
         return CreateCategory(ok=True, category=category)
 
 
+# --------------------------------------------------------------------------- #
+# Base64 file upload demo (v1.3.0).                                            #
+#                                                                              #
+# UploadDocument demonstrates the full Base64FileInput pattern:                #
+#   1. Accept a Base64FileInput argument.                                      #
+#   2. Call .to_uploaded_file(max_size=...) inside the resolver.               #
+#   3. Assign the resulting SimpleUploadedFile to a model FileField.           #
+#                                                                              #
+# MAX_UPLOAD_SIZE and MAX_REQUEST_BODY_SIZE are set in config/settings.py so  #
+# the guard fires in this playground. Unset either to see ImproperlyConfigured.#
+#                                                                              #
+# Try it in GraphiQL:                                                          #
+#   import base64                                                              #
+#   data = base64.b64encode(b"hello world").decode()                           #
+#   mutation {                                                                 #
+#       uploadDocument(                                                        #
+#           name: "readme.txt"                                                 #
+#           file: {filename: "readme.txt", data: "<data>", contentType: "text/plain"} #
+#       ) { ok name }                                                          #
+#   }                                                                          #
+# --------------------------------------------------------------------------- #
+class DocumentType(DjangoObjectType):
+    class Meta:
+        model = Document
+        only_fields = ("id", "name", "created")
+
+
+class UploadDocument(graphene.Mutation):
+    """Demo: upload a base64-encoded file and attach it to a Document record.
+
+    .. note::
+        ``MAX_UPLOAD_SIZE`` must be set in ``DJANGO_GRAPHEX`` before using
+        ``Base64FileInput``. See ``config/settings.py``.
+    """
+
+    class Arguments:
+        name = graphene.String(required=True)
+        file = Base64FileInput(required=True)
+
+    ok = graphene.Boolean()
+    name = graphene.String()
+    error = graphene.String()
+
+    def mutate(self, info, name, file):
+        try:
+            # Decode: max_size here overrides (or supplements) the global cap.
+            # The global MAX_UPLOAD_SIZE from settings also applies when
+            # max_size is not passed — both are checked.
+            uploaded = file.to_uploaded_file()  # uses MAX_UPLOAD_SIZE from settings
+            doc = Document(name=name)
+            doc.file.save(uploaded.name, uploaded, save=True)
+            return UploadDocument(ok=True, name=doc.name)
+        except Exception as exc:  # noqa: BLE001
+            return UploadDocument(ok=False, name=name, error=str(exc))
+
+
 class RootMutation(graphene.ObjectType):
     note_create, note_delete, note_update = NoteModelType.MutationFields()
     post_create = PostMutation.CreateField()
@@ -484,6 +586,8 @@ class RootMutation(graphene.ObjectType):
     create_category = CreateCategory.Field()
     # Nested-write demo: single operation creates the Post + its Comment(s).
     post_with_comments_create = PostWithCommentsMutation.CreateField()
+    # Base64 file upload demo (v1.3.0).
+    upload_document = UploadDocument.Field()
 
 
 # --------------------------------------------------------------------------- #

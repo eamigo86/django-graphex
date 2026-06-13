@@ -87,6 +87,23 @@ DJANGO_GRAPHEX = {
     # id-only). Per-subscription Meta.serialize_data can override this.
     "SUBSCRIPTION_SERIALIZE_DATA": True,
     # ---------------------------------------------------------------------------
+    # Base64 file uploads (v1.3.0, opt-in via Base64FileInput).
+    #
+    # MAX_UPLOAD_SIZE — maximum decoded size (bytes) of a single upload field.
+    # REQUIRED when Base64FileInput is used; raises ImproperlyConfigured if
+    # absent and no per-field override is given in the resolver.
+    # 5 MB is a reasonable default for the playground demo.
+    "MAX_UPLOAD_SIZE": 5 * 1024 * 1024,  # 5 MB per file
+    #
+    # MAX_REQUEST_BODY_SIZE — total HTTP body limit (bytes), enforced in
+    # BaseGraphQLView.dispatch BEFORE JSON parsing. This is the primary memory
+    # cap: the entire base64 payload is already in the body before any field
+    # resolver runs, so rejecting here prevents full-body allocation above the
+    # limit. None = disabled (not recommended for public APIs).
+    # 20 MB allows a single 5 MB file (base64 overhead ~4/3 × 5 MB ≈ 6.7 MB)
+    # plus JSON scaffolding, with margin for a batch of smaller files.
+    "MAX_REQUEST_BODY_SIZE": 20 * 1024 * 1024,  # 20 MB total body
+    # ---------------------------------------------------------------------------
     # Query depth limiting (DepthLimitValidationRule — wired in GraphQLView).
     # Reject queries that nest objects more than N levels deep.
     # None = no global limit; per-type max_deep still applies on top.
@@ -134,3 +151,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"  # collectstatic target
 STATICFILES_DIRS = [BASE_DIR / "static"]  # project-level static sources
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Media files (uploaded by Base64FileInput demo mutations).
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
