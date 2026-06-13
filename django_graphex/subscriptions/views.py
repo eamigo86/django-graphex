@@ -47,6 +47,7 @@ class SubscriptionGraphQLView(BaseGraphQLView):
         variables: dict[str, Any] | None,
         operation_name: str | None,
         show_graphiql: bool = False,
+        document: Any = None,
     ) -> ExecutionResult | None:
         """Route subscription operations through subscribe; delegate the rest.
 
@@ -57,6 +58,7 @@ class SubscriptionGraphQLView(BaseGraphQLView):
             variables: The query variable values.
             operation_name: The operation name to execute.
             show_graphiql: Whether the GraphiQL interface is being shown.
+            document: An already-parsed document, reused to avoid re-parsing.
 
         Returns:
             The execution result, or whatever the base view returns for
@@ -64,15 +66,16 @@ class SubscriptionGraphQLView(BaseGraphQLView):
         """
         if not query:
             return super().execute_graphql_request(
-                request, data, query, variables, operation_name, show_graphiql
+                request, data, query, variables, operation_name, show_graphiql, document
             )
 
         schema = self.schema.graphql_schema
 
-        try:
-            document = parse(query)
-        except Exception as exc:  # invalid syntax -> let the base view format it
-            return ExecutionResult(errors=[exc])
+        if document is None:
+            try:
+                document = parse(query)
+            except Exception as exc:  # invalid syntax -> let the base view format it
+                return ExecutionResult(errors=[exc])
 
         operation_ast = get_operation_ast(document, operation_name)
         if (
@@ -80,7 +83,7 @@ class SubscriptionGraphQLView(BaseGraphQLView):
             or operation_ast.operation != OperationType.SUBSCRIPTION
         ):
             return super().execute_graphql_request(
-                request, data, query, variables, operation_name, show_graphiql
+                request, data, query, variables, operation_name, show_graphiql, document
             )
 
         validation_errors = validate(
