@@ -1,3 +1,7 @@
+# AI/planning config — never commit to the repository
+.claude/
+specs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

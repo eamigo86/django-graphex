@@ -19,8 +19,11 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from graphene import Schema
-from graphql import build_schema, parse
-from graphql.language.ast import FieldNode, FragmentDefinitionNode, OperationDefinitionNode
+from graphql import parse
+from graphql.language.ast import (
+    FragmentDefinitionNode,
+    OperationDefinitionNode,
+)
 
 from django_graphex import DjangoModelType, DjangoObjectField, DjangoObjectType
 from django_graphex.registry import Registry
@@ -29,8 +32,7 @@ from django_graphex.utils import (
     _relation_field_map,
 )
 
-from .models import Author, Category, Post, Tag
-
+from .models import Author, Category, Post
 
 # ---------------------------------------------------------------------------
 # AST helpers for building fake field_nodes
@@ -248,9 +250,7 @@ class MutationReReadOptimizationTest(TestCase):
 
     def test_perform_mutate_scalar_only_no_regression(self):
         """Requesting only scalar fields (no relations) still works correctly."""
-        result, queries = self._perform_mutate_with_selection(
-            "{ ok post { title } }"
-        )
+        result, queries = self._perform_mutate_with_selection("{ ok post { title } }")
 
         self.assertTrue(result.ok)
         output_obj = getattr(result, PostMutType._meta.output_field_name)
