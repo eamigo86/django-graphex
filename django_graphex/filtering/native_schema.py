@@ -27,9 +27,14 @@ The cardinal footgun (see design D5 / explore risk #3):
 
 WU3 scope: scalar/relation lookups, ``out_name`` on every field, choices enum,
 ``extensions['gdx']`` invariant (D8), custom ``@filter_field`` args (typed via
-the native scalar bridge). The recursive ``and`` / ``or`` / ``not`` combinators,
-the ``_INPUT_CACHE`` cache-before-eval recursion guard, and the build-time
-completeness assertion land in WU4.
+the native scalar bridge).
+
+WU4 scope (here): the recursive ``and`` / ``or`` / ``not`` combinators (added
+inside the field thunk so they close over the cached self-reference — the
+``_NATIVE_INPUT_CACHE`` cache-before-thunk recursion guard, D5), and the
+build-time completeness assertion ``_assert_filter_type_complete`` (A6) wired
+into ``build_filter_input_type`` to catch the silent empty-``.fields`` footgun
+that a circular thunk would otherwise ship unnoticed.
 """
 
 from __future__ import annotations
@@ -62,7 +67,7 @@ from .schema import _normalize_filter_fields, _relation_model
 if TYPE_CHECKING:
     from django_graphex.registry import Registry
 
-__all__ = ("build_filter_input_type",)
+__all__ = ("build_filter_input_type", "_assert_filter_type_complete")
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +146,8 @@ class GdxFilterInputSpec:
 
 #: Memo of generated native input types keyed by ``(model, frozenset(filter_fields))``.
 #: Separate from the graphene ``schema._INPUT_CACHE`` so the two backends never
-#: cross-contaminate. WU4 uses this for the and/or/not cache-before-eval guard.
+#: cross-contaminate. The and/or/not combinators (WU4) close over the cached
+#: reference registered here BEFORE the field thunk evaluates (cache-before-thunk).
 _NATIVE_INPUT_CACHE: dict[tuple[Any, Any, Any], GraphQLInputObjectType] = {}
 
 
@@ -406,6 +412,16 @@ def build_filter_input_type(
                 gql_type, out_name=arg_name, description=meta.get("description")
             )
 
+        # Recursive logical combinators. They reference THIS very input type, so
+        # they close over ``input_type`` — which is registered in the cache
+        # BEFORE this thunk can evaluate (cache-before-thunk recursion guard,
+        # D5). ``and`` / ``or`` -> ``[<Self>]``; ``not`` -> ``<Self>``. Mirrors
+        # the graphene builder (``filtering/schema.py:334-336``) for SDL parity.
+        # ``out_name`` carries the snake combinator key so ``to_q`` reads it.
+        out["and"] = GraphQLInputField(GraphQLList(input_type), out_name="and")
+        out["or"] = GraphQLInputField(GraphQLList(input_type), out_name="or")
+        out["not"] = GraphQLInputField(input_type, out_name="not")
+
         return out
 
     input_type = GraphQLInputObjectType(
@@ -413,10 +429,42 @@ def build_filter_input_type(
         fields=_fields,
         extensions={"gdx": GdxFilterInputSpec(model=model, name=name)},
     )
-    # Register BEFORE returning so a future and/or/not thunk (WU4) can close over
-    # the cached reference without re-entering the builder.
+    # Register BEFORE returning (and before the field thunk above can evaluate)
+    # so the and/or/not combinators close over the cached reference without
+    # re-entering the builder — the cache-before-thunk recursion guard (D5).
     _NATIVE_INPUT_CACHE[cache_key] = input_type
+    # A6: force thunk evaluation NOW and raise if the type resolved to empty
+    # ``.fields`` (the silent circular-reference footgun — a thunk that captured
+    # an incomplete type would otherwise ship an empty input type unnoticed).
+    _assert_filter_type_complete(input_type)
     return input_type
+
+
+def _assert_filter_type_complete(gql_input_type: GraphQLInputObjectType) -> None:
+    """Force thunk evaluation and assert the input type has non-empty fields.
+
+    The deferred-fields ``lambda`` means a filter input can be constructed and
+    cached BEFORE its fields exist. If a recursive combinator (and/or/not) or a
+    nested relation thunk captured an *incomplete* type — e.g. the circular
+    ``Category -> parent -> Category`` case where the inner type's thunk hadn't
+    populated yet — the resulting ``.fields`` could silently resolve to empty and
+    the schema would ship a useless input type with NO error.
+
+    Calling this at build time forces ``.fields`` to evaluate and raises if the
+    result is empty, turning the silent footgun into a loud build-time failure.
+
+    Args:
+        gql_input_type: The native filter input type to validate.
+
+    Raises:
+        AssertionError: If the type's ``.fields`` evaluates to an empty dict.
+    """
+    fields = dict(gql_input_type.fields)  # forces the thunk to evaluate
+    assert fields, (
+        f"native filter input {gql_input_type.name!r} resolved to EMPTY .fields "
+        "— a thunk likely captured an incomplete (circular) type before its "
+        "fields were populated. Check the cache-before-thunk ordering."
+    )
 
 
 def _custom_filter_gql_type(meta: dict[str, Any]) -> Any:
