@@ -48,7 +48,7 @@ from graphql.validation import specified_rules, validate
 from . import settings as _settings
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
-from .settings import graphene_settings, graphql_api_settings
+from .settings import graphex_or_graphene_settings, graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule
 
@@ -203,10 +203,10 @@ class BaseGraphQLView(View):
         Args mirror graphene-django's ``GraphQLView`` (plus ``graphiql_template``).
         """
         if not schema:
-            schema = graphene_settings.SCHEMA
+            schema = graphex_or_graphene_settings.SCHEMA
 
         if middleware is None:
-            middleware = graphene_settings.MIDDLEWARE
+            middleware = graphex_or_graphene_settings.MIDDLEWARE
 
         self.schema = schema or self.schema
         if middleware is not None:
@@ -223,7 +223,7 @@ class BaseGraphQLView(View):
             execution_context_class or self.execution_context_class
         )
         if subscription_path is None:
-            self.subscription_path = graphene_settings.SUBSCRIPTION_PATH
+            self.subscription_path = graphex_or_graphene_settings.SUBSCRIPTION_PATH
         else:
             self.subscription_path = subscription_path
 
@@ -541,7 +541,7 @@ class BaseGraphQLView(View):
             schema,
             document,
             self.validation_rules,
-            graphene_settings.MAX_VALIDATION_ERRORS,
+            graphex_or_graphene_settings.MAX_VALIDATION_ERRORS,
         )
         if validation_errors:
             return ExecutionResult(data=None, errors=validation_errors)
@@ -563,7 +563,7 @@ class BaseGraphQLView(View):
                 operation_ast is not None
                 and operation_ast.operation == OperationType.MUTATION
                 and (
-                    graphene_settings.ATOMIC_MUTATIONS is True
+                    graphex_or_graphene_settings.ATOMIC_MUTATIONS is True
                     or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
                 )
             ):

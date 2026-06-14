@@ -148,3 +148,41 @@ async def test_subscribe_once_handles_empty_stream(monkeypatch):
     result = await SubscriptionGraphQLView._subscribe_once(None, None)
     assert result.data is None
     assert result.errors is None
+
+
+def test_subscription_view_reads_max_validation_errors_via_shim(monkeypatch):
+    """The subscription HTTP view reads MAX_VALIDATION_ERRORS through the shim.
+
+    Regression for the missed 6th consumer: subscriptions/views.py previously
+    imported ``graphene_settings`` directly, so a project-level
+    ``GRAPHEX={"MAX_VALIDATION_ERRORS": N}`` resolved N for the HTTP view but the
+    legacy value for subscriptions (split resolution). The subscription path must
+    read MAX_VALIDATION_ERRORS via ``graphex_or_graphene_settings`` so GRAPHEX
+    precedence applies uniformly.
+    """
+    from django_graphex.subscriptions import views as views_module
+
+    # The shim singleton the subscription view must consult.
+    from django_graphex.settings import graphex_or_graphene_settings
+
+    # 1. The module must reference the shim, not graphene_settings.
+    assert hasattr(views_module, "graphex_or_graphene_settings")
+    assert not hasattr(views_module, "graphene_settings")
+
+    # 2. The validate() call must receive the value resolved through the shim.
+    captured = {}
+
+    def _spy_validate(schema, document, rules, max_errors):
+        captured["max_errors"] = max_errors
+        return []  # no validation errors -> proceed
+
+    monkeypatch.setattr(views_module, "validate", _spy_validate)
+    monkeypatch.setattr(
+        graphex_or_graphene_settings, "MAX_VALIDATION_ERRORS", 7, raising=False
+    )
+
+    _post(SUBSCRIBE_QUERY)
+
+    assert captured["max_errors"] == 7, (
+        "subscription view must pass the shim's MAX_VALIDATION_ERRORS to validate()"
+    )
