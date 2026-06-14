@@ -138,3 +138,142 @@ def test_gdx_meta_works_with_native_type_alias():
     assert result is FakeGdxPayload._meta, (
         "_gdx_meta via alias should return extensions['gdx']._meta"
     )
+
+
+# ---------------------------------------------------------------------------
+# TDD 1.5 RED — _adapt_self (native/_compat.py)
+# ---------------------------------------------------------------------------
+
+
+def test_adapt_self_wraps_self_first_fn_and_warns():
+    """_adapt_self wraps a self-first function and emits DeprecationWarning."""
+    import warnings
+    from django_graphex.native._compat import _adapt_self
+
+    def mutate(self, info, pk=None):
+        return (self, info, pk)
+
+    adapted = _adapt_self(mutate)
+
+    fake_root = object()
+    fake_info = object()
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = adapted(fake_root, fake_info, pk=42)
+
+    assert result == (fake_root, fake_info, 42), (
+        "_adapt_self shim should call the underlying fn with (root, info, **kw)"
+    )
+    assert len(w) == 1, "_adapt_self should emit exactly one DeprecationWarning"
+    assert issubclass(w[0].category, DeprecationWarning)
+
+
+def test_adapt_self_warns_exactly_once_per_call():
+    """_adapt_self emits DeprecationWarning exactly once per invocation."""
+    import warnings
+    from django_graphex.native._compat import _adapt_self
+
+    def mutate(self, info):
+        return "ok"
+
+    adapted = _adapt_self(mutate)
+
+    # Call twice — should warn once per call (not globally suppressed)
+    for _ in range(2):
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            adapted(object(), object())
+        assert len(w) == 1, "Each call should emit exactly one warning"
+
+
+def test_adapt_self_classmethod_passthrough_no_shim():
+    """_adapt_self returns classmethods unmodified (no shim, no warning)."""
+    import inspect
+    import warnings
+    from django_graphex.native._compat import _adapt_self
+
+    class Owner:
+        @classmethod
+        def create(cls, root, info, **kw):
+            return (cls, root, info)
+
+    bound_method = Owner.create  # inspect.ismethod(Owner.create) is True
+
+    adapted = _adapt_self(bound_method)
+
+    assert adapted is bound_method, (
+        "_adapt_self must return the original classmethod unmodified"
+    )
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = adapted(object(), object())
+    assert len(w) == 0, "No warning should be emitted for classmethods"
+
+
+def test_adapt_self_staticmethod_passthrough():
+    """_adapt_self passes through a plain (root, info) function without shimming."""
+    import warnings
+    from django_graphex.native._compat import _adapt_self
+
+    def resolver(root, info, **kw):
+        return (root, info)
+
+    adapted = _adapt_self(resolver)
+
+    fake_root = object()
+    fake_info = object()
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = adapted(fake_root, fake_info)
+
+    assert result == (fake_root, fake_info), (
+        "_adapt_self must not modify a (root, info) function"
+    )
+    assert len(w) == 0, "No DeprecationWarning for (root, info) functions"
+
+
+def test_adapt_self_bare_root_info_fn_passthrough():
+    """_adapt_self does NOT shim a function whose first param is NOT 'self'."""
+    import warnings
+    from django_graphex.native._compat import _adapt_self
+
+    def mutate(root, info, name=None):
+        return (root, info, name)
+
+    adapted = _adapt_self(mutate)
+
+    # Should be identity passthrough
+    assert adapted is mutate, (
+        "_adapt_self should return the original function when first param != 'self'"
+    )
+
+
+def test_adapt_self_no_params_passthrough():
+    """_adapt_self passes through a zero-param function unchanged."""
+    from django_graphex.native._compat import _adapt_self
+
+    def no_params():
+        return "noop"
+
+    adapted = _adapt_self(no_params)
+    assert adapted is no_params, (
+        "_adapt_self must passthrough functions with no parameters"
+    )
+
+
+def test_adapt_self_meta_view_setattr_coverage():
+    """_MetaView.__setattr__ delegates to the wrapped Options object."""
+    from django_graphex._options import DjangoObjectOptions, _MetaView
+
+    class FakeCls:
+        pass
+
+    opts = DjangoObjectOptions(FakeCls)
+    view = _MetaView(opts)
+
+    # This exercises _MetaView.__setattr__
+    view.model = "TestModel"
+    assert opts.model == "TestModel"
