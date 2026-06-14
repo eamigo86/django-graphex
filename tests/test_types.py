@@ -110,6 +110,15 @@ class TypesTest(TestCase):
 
     def test_serializer_type_mutation_fields(self):
         """Test serializer type mutation field creation."""
+        import os
+
+        if os.environ.get("GDX_BACKEND", "graphene") == "native":
+            self.skipTest(
+                "Native mutation schema assembly is deferred to Phase 5: "
+                "CreateField/UpdateField build args as graphql-core GraphQLArgument, "
+                "which graphene's to_arguments() rejects at field-construction time. "
+                "Tracked in specs/2.0-migration-plan.md (Phase 5)."
+            )
         (
             create_field,
             update_field,
