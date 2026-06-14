@@ -9,17 +9,23 @@ attaches it to the underlying graphql-core schema, where the
 
 from __future__ import annotations
 
+import os
 import warnings
 from typing import TYPE_CHECKING, Any
 
 import graphene
 from django.conf import settings
 from graphene.utils.str_converters import to_camel_case
+from graphql import GraphQLError
 
 if TYPE_CHECKING:
     from graphene import ObjectType
 
 __all__ = ("collect_field_names", "DenyAllRegistry", "DjangoGraphQLSchema")
+
+# Backend flag read once at import time, consistent with every other
+# GDX_BACKEND check in the codebase (the flag is never toggled per-call).
+_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 
 def collect_field_names(
@@ -129,17 +135,26 @@ class DjangoGraphQLSchema(graphene.Schema):
         if args and query is None:  # support the Schema(Query, ...) positional idiom
             query, args = args[0], args[1:]
 
-        query = self._merge_root("Query", query, private_query)
-        mutation = self._merge_root("Mutation", mutation, private_mutation)
-        subscription = self._merge_root(
+        # A query root is REQUIRED on BOTH backends. Native graphql-core raises
+        # naturally when query is missing; graphene historically built a
+        # query-less schema silently — guard explicitly so the failure is loud
+        # and consistent across backends.
+        if query is None:
+            raise GraphQLError(
+                "DjangoGraphQLSchema requires a 'query' root ObjectType; got None."
+            )
+
+        merged_query = self._merge_root("Query", query, private_query)
+        merged_mutation = self._merge_root("Mutation", mutation, private_mutation)
+        merged_subscription = self._merge_root(
             "Subscription", subscription, private_subscription
         )
 
         super().__init__(
             *args,
-            query=query,
-            mutation=mutation,
-            subscription=subscription,
+            query=merged_query,
+            mutation=merged_mutation,
+            subscription=merged_subscription,
             **kwargs,
         )
 
@@ -153,6 +168,24 @@ class DjangoGraphQLSchema(graphene.Schema):
         # info.schema._gde_protected_fields (info.schema is self.graphql_schema).
         self.graphql_schema._gde_protected_fields = frozenset(protected)
 
+        # NATIVE PATH (WU2/C11): rebuild self.graphql_schema as a graphql-core
+        # GraphQLSchema assembled DIRECTLY from the native root compiler. The
+        # merged graphene roots above give us the unioned _meta.fields; the
+        # native compiler turns those into a GraphQLObjectType whose field types
+        # are the CANONICAL native instances (extensions['gdx'], identity).
+        #
+        # NO try/except fallback to graphene: if native assembly fails it MUST
+        # raise (loud). A NotImplementedError for a not-yet-built field kind
+        # (list/filter/pagination — WU3/WU5/WU6) propagates by design.
+        if _NATIVE_BACKEND:
+            native_schema = self._build_native_graphql_schema(
+                merged_query, merged_mutation, merged_subscription, **kwargs
+            )
+            # Carry the protected-field marker onto the native schema too
+            # (legacy reader compatibility; WU7 migrates to extensions).
+            native_schema._gde_protected_fields = frozenset(protected)
+            self.graphql_schema = native_schema
+
         if (
             private_query or private_mutation or private_subscription
         ) and not _auth_middleware_configured():
@@ -164,6 +197,65 @@ class DjangoGraphQLSchema(graphene.Schema):
                 RuntimeWarning,
                 stacklevel=2,
             )
+
+    @staticmethod
+    def _build_native_graphql_schema(
+        query: type[ObjectType] | None,
+        mutation: type[ObjectType] | None,
+        subscription: type[ObjectType] | None,
+        **kwargs: Any,
+    ) -> Any:
+        """Assemble a graphql-core ``GraphQLSchema`` from the native root compiler.
+
+        BYPASSES graphene.Schema for the graphql_schema: each merged graphene
+        root is compiled into a native ``GraphQLObjectType`` whose field types are
+        the canonical native instances (``extensions['gdx']``, identity-stable),
+        eliminating the duplicate-name TypeError the first WU2 attempt hit.
+
+        Args:
+            query: The merged graphene query root (required, never ``None`` here).
+            mutation: The merged graphene mutation root (or ``None``).
+            subscription: The merged graphene subscription root (or ``None``).
+            **kwargs: Extra graphene.Schema kwargs (currently unused on the native
+                path; reserved for ``directives`` etc. wired by later WUs).
+
+        Returns:
+            A ``graphql.GraphQLSchema``.
+
+        Raises:
+            NotImplementedError: Propagated from the native root compiler for a
+                field kind whose native builder does not exist yet (WU3/WU5/WU6).
+                NEVER swallowed by a graphene fallback.
+        """
+        from graphql import GraphQLSchema
+
+        from django_graphex.native.schema_compiler import compile_native_root
+
+        def _root_name(root: Any, default: str) -> str:
+            """Use the graphene root's GraphQL type name (class name by default).
+
+            graphene names the root after ``_meta.name`` and renders an explicit
+            ``schema { query: <Name> }`` block; matching that name keeps the
+            native SDL byte-identical to graphene.
+            """
+            if root is None:
+                return default
+            meta_name = getattr(getattr(root, "_meta", None), "name", None)
+            return meta_name or getattr(root, "__name__", None) or default
+
+        native_query = compile_native_root(query, name=_root_name(query, "Query"))
+        native_mutation = compile_native_root(
+            mutation, name=_root_name(mutation, "Mutation")
+        )
+        native_subscription = compile_native_root(
+            subscription, name=_root_name(subscription, "Subscription")
+        )
+
+        return GraphQLSchema(
+            query=native_query,
+            mutation=native_mutation,
+            subscription=native_subscription,
+        )
 
     @staticmethod
     def _merge_root(

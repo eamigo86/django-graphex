@@ -422,10 +422,19 @@ def _get_custom_resolver(info: GraphQLResolveInfo) -> Any | None:
     Returns:
         The custom resolver callable, or None if none is defined.
     """
+    from django_graphex.native.compat import _gdx_graphene_type
+
     parent = info.parent_type
+    # Dual-backend: graphene carries the source class as ``parent.graphene_type``;
+    # native carries it as ``parent.extensions['gdx']._meta.graphene_type``. The
+    # bridge tries graphene first, then native, returning None when neither is
+    # present (so a root with no custom resolver resolves uniformly).
+    parent_graphene_type = _gdx_graphene_type(parent)
+    if parent_graphene_type is None:
+        return None
     custom_resolver_name = f"resolve_{to_snake_case(info.field_name)}"
-    if hasattr(parent.graphene_type, custom_resolver_name):
-        return getattr(parent.graphene_type, custom_resolver_name)
+    if hasattr(parent_graphene_type, custom_resolver_name):
+        return getattr(parent_graphene_type, custom_resolver_name)
     return None
 
 

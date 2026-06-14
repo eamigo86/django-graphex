@@ -79,6 +79,9 @@ _GDX_ALLOWLIST: frozenset[str] = frozenset(
         "types",
         # Phase 3: native output compile attrs
         "graphql_output_type",
+        # Phase 5 WU2: source graphene class back-reference (dual-backend
+        # read-sites recover resolve_<field>/optimize_<field> methods).
+        "graphene_type",
     }
 )
 
