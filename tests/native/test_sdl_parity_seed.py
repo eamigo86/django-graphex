@@ -145,3 +145,57 @@ def test_filter_seed_native_subprocess_uses_native_builder():
         "ANTI-TAUTOLOGY FAILURE: native filter seed did NOT use the native "
         f"filter builder.\nSTDERR:\n{proc.stderr}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Slices B + C — OUTPUT scalar NAME + nullability cross-process SDL parity     #
+# (#1494 nullability + scalar-NAME parity sibling)                            #
+# --------------------------------------------------------------------------- #
+def test_cross_process_scalar_node_sdl_parity():
+    """The OUTPUT node type with Date/DateTime/Time/UUID/Decimal/JSON +
+    non-null CharField is byte-equal between graphene and native.
+
+    This is the Slice B + C binding deliverable: it proves the native output
+    compiler renders the SAME scalar NAMES (``CustomDate`` / ``CustomDateTime``
+    / ``CustomTime`` / ``UUID`` / ``Float`` for Decimal / ``JSONString``) and the
+    SAME nullability (model scalars nullable, pk ``id: ID!``) as graphene-django.
+
+    Before the fix this FAILS: native emits ``GdxDate!`` / ``GdxDecimal!`` /
+    ``String!`` while graphene emits ``CustomDate`` / ``Float`` / ``String``.
+    """
+    from tests.native.conftest import normalize_sdl
+
+    graphene_sdl = _run_seed("graphene", seed="node_scalars")
+    native_sdl = _run_seed("native", seed="node_scalars")
+
+    graphene_norm = normalize_sdl(graphene_sdl)
+    native_norm = normalize_sdl(native_sdl)
+
+    assert graphene_norm == native_norm, (
+        "Cross-process scalar-node SDL parity FAILED (Slices B+C).\n"
+        f"--- graphene (normalized) ---\n{graphene_norm}\n"
+        f"--- native (normalized) ---\n{native_norm}\n"
+    )
+
+
+def test_scalar_node_seed_native_subprocess_uses_native_assembly():
+    """ANTI-TAUTOLOGY: the native scalar-node seed's SDL must come from native
+    assembly (the gdx-bearing canonical output type), not a graphene fallback.
+    """
+    env = dict(os.environ)
+    env["GDX_BACKEND"] = "native"
+    env["GDX_SEED"] = "node_scalars"
+    env["PYTHONPATH"] = _REPO_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+    env["GDX_SEED_TRACE"] = "1"
+    proc = subprocess.run(
+        [sys.executable, "-m", "tests.native._sdl_parity_seed"],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "GDX_SEED_PATH=native" in proc.stderr, (
+        "ANTI-TAUTOLOGY FAILURE: native scalar-node seed did NOT take the "
+        f"native assembly path.\nSTDERR:\n{proc.stderr}"
+    )

@@ -129,6 +129,96 @@ def build_seed_sdl() -> str:
     return print_schema(graphene_schema.graphql_schema)
 
 
+def build_scalar_node_seed_sdl() -> str:
+    """Build the Slice-B/C OUTPUT scalar+nullability parity seed SDL.
+
+    This is the deliverable that PROVES the native output compiler matches the
+    graphene v1 contract for the FULL scalar surface (#1494 nullability + the
+    scalar-NAME parity sibling). It builds a node OUTPUT type carrying:
+
+    * ``title`` — a NON-NULL ``CharField`` (proves the #1494 nullability fix:
+      graphene renders ``String`` nullable; native must NOT emit ``String!``).
+    * ``when_date`` / ``when_dt`` / ``when_time`` — Date/DateTime/Time fields
+      (proves the date scalar NAMES: graphene-django uses the ``CustomDate`` /
+      ``CustomDateTime`` / ``CustomTime`` subclasses, NOT bare ``Date`` etc.).
+    * ``ext_id`` — ``UUIDField`` -> ``UUID``.
+    * ``amount`` — ``DecimalField``: graphene-django COLLAPSES Decimal to
+      ``Float`` on output (converter.py registers DecimalField on
+      ``convert_field_to_float``), so native must emit ``Float`` here too.
+    * ``payload`` — ``JSONField`` -> ``JSONString``.
+
+    The whole node type must be byte-identical (names + nullability) between the
+    two backends after ``normalize_sdl`` (ordering/description only).
+    """
+    _configure_django()
+
+    from django.db import models
+    import graphene
+    from graphql.utilities import print_schema
+
+    from django_graphex.fields import DjangoObjectField
+    from django_graphex.types import DjangoObjectType
+
+    backend = os.environ.get("GDX_BACKEND", "graphene")
+
+    class SeedScalarModel(models.Model):
+        title = models.CharField(max_length=100)  # NON-NULL CharField (#1494)
+        when_date = models.DateField()
+        when_dt = models.DateTimeField()
+        when_time = models.TimeField()
+        ext_id = models.UUIDField()
+        amount = models.DecimalField(max_digits=10, decimal_places=2)
+        payload = models.JSONField()
+
+        class Meta:
+            app_label = "tests"
+
+    _OUTPUT_FIELDS = (
+        "id",
+        "title",
+        "when_date",
+        "when_dt",
+        "when_time",
+        "ext_id",
+        "amount",
+        "payload",
+    )
+
+    class SeedScalarType(DjangoObjectType):
+        class Meta:
+            model = SeedScalarModel
+            only_fields = _OUTPUT_FIELDS
+
+    class SeedQuery(graphene.ObjectType):
+        scalar_node = DjangoObjectField(SeedScalarType)
+
+    if backend == "native":
+        from django_graphex.native.base import get_shared_output_registry
+        from django_graphex.native.registry_compiler import compile_all_outputs
+        from django_graphex.schema import DjangoGraphQLSchema
+
+        compile_all_outputs()
+        schema = DjangoGraphQLSchema(query=SeedQuery)
+        if os.environ.get("GDX_SEED_TRACE"):
+            query_type = schema.graphql_schema.query_type
+            field_type = query_type.fields["scalarNode"].type
+            canonical = get_shared_output_registry().get_compiled(SeedScalarModel)
+            is_native = field_type is canonical and "gdx" in (
+                field_type.extensions or {}
+            )
+            sys.stderr.write(
+                "GDX_SEED_PATH=native\n"
+                if is_native
+                else "GDX_SEED_PATH=graphene-fallback\n"
+            )
+        return print_schema(schema.graphql_schema)
+
+    graphene_schema = graphene.Schema(query=SeedQuery)
+    if os.environ.get("GDX_SEED_TRACE"):
+        sys.stderr.write("GDX_SEED_PATH=graphene\n")
+    return print_schema(graphene_schema.graphql_schema)
+
+
 def build_filter_seed_sdl() -> str:
     """Build the WU4 ``ArticleFilterInput`` filter-input seed SDL for the backend.
 
@@ -149,17 +239,14 @@ def build_filter_seed_sdl() -> str:
     the seed renders only the INPUT surface, never the output node type with its
     non-null scalars.
 
-    SCOPE NOTE (tracked debt, NOT a WU4 deliverable): the seed deliberately
-    avoids Date/DateTime/Time/Decimal/UUID/JSONField fields. The native scalar
-    SINGLETONS are named ``GdxDate`` / ``GdxDecimal`` / ``GdxUUID`` / ... whereas
-    graphene-django renders ``Date`` / ``Decimal`` / ``UUID`` — a scalar-NAME
-    divergence in the native SCALAR LAYER (sibling to the nullability divergence
-    #1494) that affects EVERY native type with such a field (output, input, and
-    filter alike), not the filtering recursion this slice owns. Reconciling the
-    native scalar names with the graphene v1 contract is a dedicated scalar-layer
-    slice (with its own golden-contract re-baseline) scheduled before WU10's
-    full-schema parity. Including a date field here would test that separate
-    subsystem's debt, not WU4's filtering machinery.
+    SCOPE NOTE (WU4 deliverable boundary): this filter seed deliberately stays
+    on String/choices/Int/FK fields so it exercises the FILTERING recursion only.
+    The OUTPUT scalar NAME + nullability parity (Date/DateTime/Time -> CustomDate
+    /CustomDateTime/CustomTime, UUID, DecimalField -> Float, JSONString; model
+    scalars nullable, pk ``id: ID!``) is now RESOLVED and proven by the dedicated
+    ``node_scalars`` seed (Slices B + C, #1494 + #1508). The native ``Decimal``
+    scalar singleton (name ``Decimal``) is reserved for the input/filter path,
+    matching graphene's filter-input ``Decimal`` for DecimalField lookups.
     """
     _configure_django()
 
@@ -284,6 +371,8 @@ def main() -> int:
     seed = os.environ.get("GDX_SEED", "node")
     if seed == "filter":
         sys.stdout.write(build_filter_seed_sdl())
+    elif seed == "node_scalars":
+        sys.stdout.write(build_scalar_node_seed_sdl())
     else:
         sys.stdout.write(build_seed_sdl())
     return 0

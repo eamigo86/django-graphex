@@ -39,7 +39,6 @@ from graphql import (
 from django_graphex.native.scalars import (
     GdxDate,
     GdxDateTime,
-    GdxDecimal,
     GdxJSONString,
     GdxTime,
     GdxUUID,
@@ -103,8 +102,12 @@ def _build_django_to_gql() -> dict:
         models.BigAutoField: GraphQLID,
         models.SmallAutoField: GraphQLID,
         models.FloatField: GraphQLFloat,
-        models.DecimalField: GdxDecimal,
-        models.DurationField: GraphQLString,
+        # graphene-django collapses DecimalField AND DurationField to OUTPUT
+        # ``Float`` (converter.py convert_field_to_float). Match that exactly for
+        # SDL parity — the ``Decimal`` scalar is reserved for the input/filter
+        # path. (See #1508.)
+        models.DecimalField: GraphQLFloat,
+        models.DurationField: GraphQLFloat,
         # Boolean
         models.BooleanField: GraphQLBoolean,
         # Date/Time
@@ -258,16 +261,20 @@ def _to_graphql_field(
         # Unknown field type — skip gracefully
         return {}
 
-    # Determine nullability: required = NonNull, nullable = as-is
-    is_nullable = getattr(field, "null", False) or getattr(field, "blank", False)
-    # Primary keys and auto fields are always non-null in output
+    # Nullability (#1494 parity): graphene-django renders OUTPUT model-scalar
+    # fields as ALWAYS NULLABLE (converter passes
+    # ``required=is_required(field) and input_flag == 'create'`` — output's
+    # input_flag is None, so required is always False). Native MUST match: do
+    # NOT reflect the DB NOT NULL constraint on output. The ONLY non-null
+    # OUTPUT scalar is the primary key, which graphene renders ``id: ID!``.
+    # NOTE: this is OUTPUT-only; INPUT / filter-input nullability is owned by
+    # the input compiler / filtering builder and is unchanged.
     is_pk = getattr(field, "primary_key", False)
-    is_auto = hasattr(field, "auto_created") and field.auto_created
 
-    if is_nullable and not is_pk:
-        gql_type: Any = gql_scalar
+    if is_pk:
+        gql_type: Any = GraphQLNonNull(gql_scalar)
     else:
-        gql_type = GraphQLNonNull(gql_scalar)
+        gql_type = gql_scalar
 
     def _default_resolver(
         root: Any,

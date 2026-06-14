@@ -93,7 +93,11 @@ def _date_parse_literal(ast: Any, variable_values: Any = None) -> datetime.date:
 
 
 GdxDate = GraphQLScalarType(
-    name="GdxDate",
+    # GraphQL name MUST match graphene-django's output/input contract. The
+    # library uses the ``CustomDate`` graphene subclass (base_types.py), so the
+    # rendered scalar name is ``CustomDate`` — NOT ``Date``. (See discovery
+    # #1508: probed via print_type under GDX_BACKEND=graphene.)
+    name="CustomDate",
     description="ISO 8601 date scalar (YYYY-MM-DD). Supports CustomDateFormat bypass.",
     serialize=_date_serialize,
     parse_value=_date_parse_value,
@@ -132,7 +136,8 @@ def _datetime_parse_literal(ast: Any, variable_values: Any = None) -> datetime.d
 
 
 GdxDateTime = GraphQLScalarType(
-    name="GdxDateTime",
+    # Matches graphene-django's ``CustomDateTime`` subclass (see #1508).
+    name="CustomDateTime",
     description="ISO 8601 datetime scalar. Supports CustomDateFormat bypass.",
     serialize=_datetime_serialize,
     parse_value=_datetime_parse_value,
@@ -173,7 +178,8 @@ def _time_parse_literal(ast: Any, variable_values: Any = None) -> datetime.time:
 
 
 GdxTime = GraphQLScalarType(
-    name="GdxTime",
+    # Matches graphene-django's ``CustomTime`` subclass (see #1508).
+    name="CustomTime",
     description="ISO 8601 time scalar (HH:MM:SS). Supports CustomDateFormat bypass.",
     serialize=_time_serialize,
     parse_value=_time_parse_value,
@@ -208,7 +214,11 @@ def _decimal_parse_literal(ast: Any, variable_values: Any = None) -> decimal.Dec
 
 
 GdxDecimal = GraphQLScalarType(
-    name="GdxDecimal",
+    # graphene exposes a ``Decimal`` scalar (used by the filter/input path for
+    # DecimalField lookups). On OUTPUT, graphene-django collapses DecimalField
+    # to ``Float`` (converter.py convert_field_to_float), so this singleton is
+    # NOT used by the output compiler — only the input/filter path. (See #1508.)
+    name="Decimal",
     description="Arbitrary-precision decimal scalar. Serializes as string.",
     serialize=_decimal_serialize,
     parse_value=_decimal_parse_value,
@@ -244,7 +254,8 @@ def _uuid_parse_literal(ast: Any, variable_values: Any = None) -> _uuid_module.U
 
 
 GdxUUID = GraphQLScalarType(
-    name="GdxUUID",
+    # Matches graphene's ``UUID`` scalar name (see #1508).
+    name="UUID",
     description="UUID scalar. Serializes as lowercase hyphenated string.",
     serialize=_uuid_serialize,
     parse_value=_uuid_parse_value,
@@ -281,7 +292,8 @@ def _json_parse_literal(ast: Any, variable_values: Any = None) -> Any:
 
 
 GdxJSONString = GraphQLScalarType(
-    name="GdxJSONString",
+    # Matches graphene's ``JSONString`` scalar name (see #1508).
+    name="JSONString",
     description="Arbitrary JSON scalar. Serializes Python objects as JSON strings.",
     serialize=_json_serialize,
     parse_value=_json_parse_value,
@@ -316,7 +328,8 @@ def _generic_parse_literal(ast: Any, variable_values: Any = None) -> Any:
 
 
 GdxGenericScalar = GraphQLScalarType(
-    name="GdxGenericScalar",
+    # Matches graphene's ``GenericScalar`` name (see #1508).
+    name="GenericScalar",
     description="Generic scalar: passes values through as-is. Accepts any JSON-compatible type.",
     serialize=_generic_serialize,
     parse_value=_generic_parse_value,
@@ -328,15 +341,20 @@ GdxGenericScalar = GraphQLScalarType(
 # GDX_SCALAR_MAP — 7 custom + 5 graphql-core builtins
 # ---------------------------------------------------------------------------
 
+# Keys are the GraphQL scalar NAMES as graphene renders them — this is what
+# ``_unwrap_graphene_type`` looks up via ``gtype._meta.name`` and what the
+# native compiler seeds into ``_TYPE_CACHE``. The Python symbol names keep the
+# ``Gdx`` prefix (so callers importing ``GdxDate`` etc. are unaffected); only the
+# GraphQL ``.name`` and these map KEYS match graphene. (See #1508.)
 GDX_SCALAR_MAP: dict[str, GraphQLScalarType] = {
-    # Custom singletons
-    "GdxDate": GdxDate,
-    "GdxDateTime": GdxDateTime,
-    "GdxTime": GdxTime,
-    "GdxDecimal": GdxDecimal,
-    "GdxUUID": GdxUUID,
-    "GdxJSONString": GdxJSONString,
-    "GdxGenericScalar": GdxGenericScalar,
+    # Custom singletons (keyed by graphene scalar name)
+    "CustomDate": GdxDate,
+    "CustomDateTime": GdxDateTime,
+    "CustomTime": GdxTime,
+    "Decimal": GdxDecimal,
+    "UUID": GdxUUID,
+    "JSONString": GdxJSONString,
+    "GenericScalar": GdxGenericScalar,
     # graphql-core builtins
     "String": GraphQLString,
     "Int": GraphQLInt,

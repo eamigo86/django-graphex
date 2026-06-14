@@ -462,22 +462,25 @@ class TestGoldenSDL:
         assert "created_at" not in sdl
 
     def test_all_7_custom_scalars_in_map_sdl(self):
-        """When all 7 custom scalars are referenced, they appear in SDL."""
+        """When all 7 custom scalars are referenced, they appear in SDL.
+
+        TypeRef names are GDX_SCALAR_MAP keys = graphene scalar names (#1508).
+        """
         spec = TypeSpec(
             name="Query",
             fields=(
-                FieldSpec(name="date_val", type=TypeRef(name="GdxDate")),
-                FieldSpec(name="datetime_val", type=TypeRef(name="GdxDateTime")),
-                FieldSpec(name="time_val", type=TypeRef(name="GdxTime")),
-                FieldSpec(name="decimal_val", type=TypeRef(name="GdxDecimal")),
-                FieldSpec(name="uuid_val", type=TypeRef(name="GdxUUID")),
-                FieldSpec(name="json_val", type=TypeRef(name="GdxJSONString")),
-                FieldSpec(name="generic_val", type=TypeRef(name="GdxGenericScalar")),
+                FieldSpec(name="date_val", type=TypeRef(name="CustomDate")),
+                FieldSpec(name="datetime_val", type=TypeRef(name="CustomDateTime")),
+                FieldSpec(name="time_val", type=TypeRef(name="CustomTime")),
+                FieldSpec(name="decimal_val", type=TypeRef(name="Decimal")),
+                FieldSpec(name="uuid_val", type=TypeRef(name="UUID")),
+                FieldSpec(name="json_val", type=TypeRef(name="JSONString")),
+                FieldSpec(name="generic_val", type=TypeRef(name="GenericScalar")),
             ),
         )
         schema = compile_schema(types=[spec], enums=[], query=spec)
         sdl = print_schema(schema)
-        for scalar_name in ("GdxDate", "GdxDateTime", "GdxTime", "GdxDecimal", "GdxUUID", "GdxJSONString", "GdxGenericScalar"):
+        for scalar_name in ("CustomDate", "CustomDateTime", "CustomTime", "Decimal", "UUID", "JSONString", "GenericScalar"):
             assert scalar_name in sdl, f"Missing scalar {scalar_name} in SDL"
 
     def test_nonnull_list_in_sdl(self):
@@ -602,13 +605,16 @@ class TestBridge:
 
 class TestScalarCacheSeeding:
     def test_gdx_date_in_schema_type_map(self):
-        """GdxDate scalar is reachable in the type_map after compile_schema."""
+        """The date scalar is reachable in the type_map after compile_schema.
+
+        Keyed by the graphene scalar name ``CustomDate`` (#1508).
+        """
         spec = TypeSpec(
             name="Query",
-            fields=(FieldSpec(name="birthday", type=TypeRef(name="GdxDate")),),
+            fields=(FieldSpec(name="birthday", type=TypeRef(name="CustomDate")),),
         )
         schema = compile_schema(types=[spec], enums=[], query=spec)
-        assert "GdxDate" in schema.type_map
+        assert "CustomDate" in schema.type_map
 
     def test_standard_string_scalar_resolves(self):
         """Standard String scalar works without explicit TypeSpec."""
