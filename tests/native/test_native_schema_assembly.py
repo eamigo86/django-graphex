@@ -220,3 +220,174 @@ def test_native_schema_build_failure_raises_not_silent_fallback():
             DjangoGraphQLSchema(query=_ListQuery)
     finally:
         schema_compiler._DEFERRED_FIELD_KINDS.pop("DjangoListObjectField", None)
+
+
+# --------------------------------------------------------------------------- #
+# types= forwarding — native DjangoGraphQLSchema must thread types= into the   #
+# graphql-core GraphQLSchema exactly as graphene.Schema does (else silent drop) #
+# --------------------------------------------------------------------------- #
+@pytest.mark.django_db
+def test_native_schema_forwards_unreferenced_plain_object_type():
+    """An UNREFERENCED plain ``graphene.ObjectType`` passed via ``types=`` lands
+    in the native schema's ``type_map`` (graphene parity).
+
+    Against the unfixed assembly this FAILS: the native ``GraphQLSchema(...)``
+    call did NOT forward ``types=``, so the unreferenced type is dropped (it is
+    not reachable from Query). graphene's ``graphene.Schema`` forwards ``types=``
+    to its graphql-core schema, so the type IS present there. After the fix the
+    native type_map contains the forwarded type as a gdx-bearing native instance.
+    """
+    import graphene
+    from graphql import GraphQLObjectType
+
+    from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    class _UnreferencedType(graphene.ObjectType):
+        secret = graphene.String()
+
+    class _TypesQuery(graphene.ObjectType):
+        # Does NOT reference _UnreferencedType.
+        hello = graphene.String()
+
+    compile_all_outputs()
+
+    schema = DjangoGraphQLSchema(query=_TypesQuery, types=[_UnreferencedType])
+    type_map = schema.graphql_schema.type_map
+
+    assert "_UnreferencedType" in type_map, (
+        "types= forwarding FAILED: the unreferenced type was dropped from the "
+        "native schema type_map (native did not forward types= to GraphQLSchema)."
+    )
+    forwarded = type_map["_UnreferencedType"]
+    assert isinstance(forwarded, GraphQLObjectType)
+    # The forwarded entry is the canonical native (gdx-bearing) instance, NOT a
+    # graphene-built type smuggled in.
+    assert "gdx" in (forwarded.extensions or {}), (
+        "types= forwarding produced a non-native type (no extensions['gdx']) — "
+        "native fell back to graphene for the forwarded type."
+    )
+
+
+@pytest.mark.django_db
+def test_native_schema_forwards_django_object_type_canonical_instance():
+    """A ``DjangoObjectType`` passed via ``types=`` reuses its CANONICAL native
+    output instance (identity-stable) and lands in the type_map."""
+    import graphene
+    from graphql import GraphQLObjectType
+
+    from django_graphex.native.base import get_shared_output_registry
+    from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.schema import DjangoGraphQLSchema
+    from django_graphex.types import DjangoObjectType
+    from tests.models import Category
+
+    class _TypesCatType(DjangoObjectType):
+        class Meta:
+            model = Category
+
+    class _TypesQuery2(graphene.ObjectType):
+        hello = graphene.String()
+
+    compile_all_outputs()
+
+    schema = DjangoGraphQLSchema(query=_TypesQuery2, types=[_TypesCatType])
+    type_map = schema.graphql_schema.type_map
+
+    assert "_TypesCatType" in type_map
+    forwarded = type_map["_TypesCatType"]
+    assert isinstance(forwarded, GraphQLObjectType)
+    canonical = get_shared_output_registry().get_compiled(Category)
+    assert forwarded is canonical, (
+        "types= forwarding did NOT reuse the canonical native instance for the "
+        "DjangoObjectType — it must be identity-stable, not a recompile."
+    )
+
+
+@pytest.mark.django_db
+def test_native_schema_types_referenced_and_listed_no_duplicate_name():
+    """IDENTITY INVARIANT: a type that is BOTH referenced by a field AND listed
+    in ``types=`` must NOT raise a duplicate-name TypeError.
+
+    The forwarded native type for a class must be the SAME instance the rest of
+    the schema uses (the canonical ``_meta.graphql_output_type``), so listing it
+    in ``types=`` while a field also references it does not create a second
+    same-named type.
+    """
+    import graphene
+
+    from django_graphex.fields import DjangoObjectField
+    from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.schema import DjangoGraphQLSchema
+    from django_graphex.types import DjangoObjectType
+    from tests.models import Category
+
+    class _DupCatType(DjangoObjectType):
+        class Meta:
+            model = Category
+
+    class _DupQuery(graphene.ObjectType):
+        category = DjangoObjectField(_DupCatType)  # references _DupCatType
+
+    compile_all_outputs()
+
+    # _DupCatType is BOTH referenced by `category` AND listed in types=. This
+    # must NOT raise "Schema must contain uniquely named types ...".
+    schema = DjangoGraphQLSchema(query=_DupQuery, types=[_DupCatType])
+    type_map = schema.graphql_schema.type_map
+    cat_names = [n for n in type_map if n == "_DupCatType"]
+    assert cat_names == ["_DupCatType"], (
+        "types= referenced+listed produced a duplicate-name divergence: "
+        f"{cat_names!r}"
+    )
+
+
+@pytest.mark.django_db
+def test_native_schema_forwards_scalar_type_via_types():
+    """A graphene SCALAR class passed via ``types=`` maps to its native scalar
+    singleton and lands in the type_map (graphene parity)."""
+    import graphene
+
+    from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.native.scalars import GdxUUID
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    class _ScalarTypesQuery(graphene.ObjectType):
+        hello = graphene.String()
+
+    compile_all_outputs()
+
+    schema = DjangoGraphQLSchema(query=_ScalarTypesQuery, types=[graphene.UUID])
+    type_map = schema.graphql_schema.type_map
+
+    assert "UUID" in type_map, (
+        "types= forwarding dropped the graphene scalar class (UUID)."
+    )
+    assert type_map["UUID"] is GdxUUID, (
+        "types= forwarding mapped the graphene scalar to a non-canonical native "
+        "scalar instance."
+    )
+
+
+@pytest.mark.django_db
+def test_native_schema_types_unsupported_kind_raises_not_implemented():
+    """An UNSUPPORTED graphene type kind passed via ``types=`` raises a clear
+    ``NotImplementedError`` naming the type — NEVER a silent drop (honest, no
+    silent SDL divergence)."""
+    import graphene
+
+    from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    class _SomeInput(graphene.InputObjectType):
+        value = graphene.String()
+
+    class _UnsupportedQuery(graphene.ObjectType):
+        hello = graphene.String()
+
+    compile_all_outputs()
+
+    with pytest.raises(NotImplementedError) as exc:
+        DjangoGraphQLSchema(query=_UnsupportedQuery, types=[_SomeInput])
+    # The error must name the offending type so the failure is honest.
+    assert "_SomeInput" in str(exc.value)

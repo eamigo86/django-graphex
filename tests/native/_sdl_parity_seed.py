@@ -25,6 +25,13 @@ Several seeds are exposed, selected by the ``GDX_SEED`` env var:
   schema (every query field, pagination containers, filter inputs, auto-derived
   list types, and the full ``all_directives`` directive block) built under each
   backend and printed. This is the Phase-5 closing full-schema SDL parity gate.
+* ``GDX_SEED=types_unreferenced`` — the ``types=`` forwarding parity seed: a
+  Query plus a plain ``graphene.ObjectType`` that is NOT reachable from Query,
+  injected via ``DjangoGraphQLSchema(query=Query, types=[Unreferenced])``.
+  graphene's ``graphene.Schema`` forwards ``types=`` to its graphql-core
+  ``GraphQLSchema`` so the unreferenced type appears in the SDL; the native
+  assembly must forward it too or the type is SILENTLY dropped (an SDL-parity
+  divergence). After ``normalize_sdl`` the two SDLs MUST be byte-equal.
 
 Usage::
 
@@ -593,6 +600,78 @@ def build_full_schema_sdl() -> str:
     return print_schema(graphene_schema.graphql_schema)
 
 
+def build_types_unreferenced_seed_sdl() -> str:
+    """Build the ``types=`` forwarding parity seed SDL for the active backend.
+
+    Renders a Query with a single scalar field plus an UNREFERENCED plain
+    ``graphene.ObjectType`` (``SeedUnreferencedType``) that is NOT reachable from
+    Query, injected via the ``types=`` kwarg.
+
+    graphene's ``graphene.Schema`` forwards ``types=`` (a list of graphene type
+    CLASSES of types to FORCE into the schema even when unreferenced) through its
+    ``TypeMap`` into the underlying graphql-core ``GraphQLSchema(..., types=...)``,
+    so the unreferenced type appears in BOTH the type_map and the printed SDL.
+    The native ``DjangoGraphQLSchema`` assembly must forward ``types=`` identically
+    (mapping each graphene class to its canonical native graphql-core type) or the
+    unreferenced type is SILENTLY dropped — an SDL-parity divergence.
+
+    After ``normalize_sdl`` (ordering only) the two backends MUST be byte-equal:
+    ``SeedUnreferencedType`` appears in BOTH.
+    """
+    _configure_django()
+
+    import graphene
+    from graphql.utilities import print_schema
+
+    backend = os.environ.get("GDX_BACKEND", "graphene")
+
+    class SeedUnreferencedType(graphene.ObjectType):
+        # A plain ObjectType NOT reachable from Query — only forced into the
+        # schema via the ``types=`` kwarg. The whole point of ``types=``.
+        secret = graphene.String()
+        count = graphene.Int(description="an unreferenced count field")
+
+    class SeedQuery(graphene.ObjectType):
+        # Deliberately does NOT reference SeedUnreferencedType.
+        hello = graphene.String()
+
+    if backend == "native":
+        from graphql import GraphQLObjectType
+
+        from django_graphex.native.registry_compiler import compile_all_outputs
+        from django_graphex.schema import DjangoGraphQLSchema
+
+        compile_all_outputs()
+        schema = DjangoGraphQLSchema(
+            query=SeedQuery, types=[SeedUnreferencedType]
+        )
+        if os.environ.get("GDX_SEED_TRACE"):
+            # Anti-tautology sentinel: prove (a) the native assembly path was
+            # taken (query root is a gdx-bearing graphql-core type, no graphene
+            # _meta) and (b) the forwarded ``types=`` entry is the native
+            # compiled instance present in the type_map.
+            qt = schema.graphql_schema.query_type
+            forwarded = schema.graphql_schema.type_map.get("SeedUnreferencedType")
+            is_native = (
+                isinstance(qt, GraphQLObjectType)
+                and not hasattr(qt, "_meta")
+                and "gdx" in (qt.extensions or {})
+                and isinstance(forwarded, GraphQLObjectType)
+                and "gdx" in (forwarded.extensions or {})
+            )
+            sys.stderr.write(
+                "GDX_SEED_PATH=native\n"
+                if is_native
+                else "GDX_SEED_PATH=graphene-fallback\n"
+            )
+        return print_schema(schema.graphql_schema)
+
+    graphene_schema = graphene.Schema(query=SeedQuery, types=[SeedUnreferencedType])
+    if os.environ.get("GDX_SEED_TRACE"):
+        sys.stderr.write("GDX_SEED_PATH=graphene\n")
+    return print_schema(graphene_schema.graphql_schema)
+
+
 def main() -> int:
     seed = os.environ.get("GDX_SEED", "node")
     if seed == "filter":
@@ -603,6 +682,8 @@ def main() -> int:
         sys.stdout.write(build_relation_node_seed_sdl())
     elif seed == "full":
         sys.stdout.write(build_full_schema_sdl())
+    elif seed == "types_unreferenced":
+        sys.stdout.write(build_types_unreferenced_seed_sdl())
     else:
         sys.stdout.write(build_seed_sdl())
     return 0

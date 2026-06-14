@@ -258,21 +258,33 @@ class DjangoGraphQLSchema(graphene.Schema):
                 class, or ``None``).
             protected_fields: The frozenset of protected top-level field names to
                 store on ``schema.extensions['gdx_protected_fields']`` (C14).
-            **kwargs: Extra graphene.Schema kwargs. ``directives`` is consumed
-                here and forwarded to ``GraphQLSchema`` EXACTLY as graphene does
-                (``GraphQLSchema(..., directives=<list>)``): a non-None list
-                REPLACES the graphql-core spec built-ins, so the native SDL's
-                directive block matches graphene's byte-for-byte (e.g.
-                ``directives=all_directives``). ``None`` keeps graphql-core's
-                ``specified_directives`` default.
+            **kwargs: Extra graphene.Schema kwargs. Two are consumed here and
+                forwarded to ``GraphQLSchema`` EXACTLY as graphene does:
+
+                * ``directives`` — forwarded as ``GraphQLSchema(..., directives=
+                  <list>)``: a non-None list REPLACES the graphql-core spec
+                  built-ins, so the native SDL's directive block matches
+                  graphene's byte-for-byte (e.g. ``directives=all_directives``).
+                  ``None`` keeps graphql-core's ``specified_directives`` default.
+                * ``types`` — a list of graphene type CLASSES of types to FORCE
+                  into the schema even when UNREFERENCED by any field. graphene's
+                  ``graphene.Schema`` threads ``types=`` through its ``TypeMap``
+                  into ``GraphQLSchema(..., types=<list>)``; native must do the
+                  same or unreferenced types are SILENTLY dropped from the SDL (a
+                  parity divergence). Each graphene class is mapped to its
+                  CANONICAL native graphql-core type (see
+                  ``_native_types_for_forwarding``) so the same type referenced by
+                  a field AND listed in ``types=`` does not duplicate-name.
+                  ``None`` / empty keeps graphql-core's defaults.
 
         Returns:
             A ``graphql.GraphQLSchema``.
 
         Raises:
             NotImplementedError: Propagated from the native root compiler for a
-                field kind whose native builder does not exist yet. NEVER
-                swallowed by a graphene fallback.
+                field kind whose native builder does not exist yet, OR from
+                ``types=`` forwarding for a graphene type kind with no clean
+                native mapping. NEVER swallowed by a graphene fallback.
         """
         from graphql import GraphQLObjectType, GraphQLSchema
 
@@ -319,13 +331,127 @@ class DjangoGraphQLSchema(graphene.Schema):
         # graphql-core default.
         directives = kwargs.get("directives")
 
+        # Forward ``types`` exactly like graphene: each graphene type CLASS of an
+        # (possibly UNREFERENCED) type is mapped to its CANONICAL native
+        # graphql-core type and threaded into ``GraphQLSchema(..., types=<list>)``
+        # so it is forced into the schema/SDL even when no field references it.
+        # Without this, native silently DROPS unreferenced ``types=`` entries —
+        # an SDL-parity break vs graphene. ``None`` / empty keeps graphql-core's
+        # defaults; the canonical-instance mapping keeps a type referenced by a
+        # field AND listed in ``types=`` from duplicate-naming.
+        native_types = DjangoGraphQLSchema._native_types_for_forwarding(
+            kwargs.get("types")
+        )
+
         return GraphQLSchema(
             query=native_query,
             mutation=native_mutation,
             subscription=native_subscription,
             directives=directives,
+            types=native_types,
             extensions=extensions,
         )
+
+    @staticmethod
+    def _native_types_for_forwarding(
+        types: Any,
+    ) -> list[Any] | None:
+        """Map graphene ``types=`` entries to their canonical native types.
+
+        graphene's ``types=`` is a list of graphene type CLASSES of types to
+        FORCE into the schema even when unreferenced. graphql-core's ``types=``
+        expects ``GraphQLNamedType`` INSTANCES, so each entry is mapped to its
+        canonical native graphql-core equivalent — the SAME instance the rest of
+        the schema uses, so a type both referenced by a field AND listed here
+        does not duplicate-name:
+
+        * an entry already a graphql-core ``GraphQLNamedType`` (object type,
+          scalar, enum, …) → passed through unchanged;
+        * a ``DjangoObjectType`` / ``DjangoListObjectType`` (carries the canonical
+          ``_meta.graphql_output_type``) → that canonical instance (identity-
+          stable; NOT recompiled);
+        * a plain ``graphene.ObjectType`` (not a django-graphex output type) →
+          compiled via the memoized ``_compile_plain_object_type`` (the SAME
+          instance the dispatch path uses, so no duplicate-name);
+        * a graphene scalar / enum class (its ``_meta.name`` resolves in
+          ``GDX_SCALAR_MAP``) → the canonical native scalar singleton;
+        * any other kind (input / interface / union / unmapped scalar) → a clear
+          ``NotImplementedError`` naming the type and its kind. NO silent drop:
+          dropping a forwarded type is exactly the SDL divergence this method
+          fixes, so an unhandled kind fails loudly rather than diverging.
+
+        Args:
+            types: The raw ``types=`` value from ``graphene.Schema`` kwargs
+                (a list of graphene type classes, or ``None``).
+
+        Returns:
+            A list of native ``GraphQLNamedType`` instances, or ``None`` when
+            ``types`` is empty/``None`` (so graphql-core keeps its defaults).
+
+        Raises:
+            NotImplementedError: For a graphene type kind with no clean native
+                mapping. NEVER swallowed by a graphene fallback.
+        """
+        if not types:
+            return None
+
+        import inspect
+
+        from graphql import GraphQLNamedType
+
+        from django_graphex.native.scalars import GDX_SCALAR_MAP
+        from django_graphex.native.schema_compiler import (
+            _compile_plain_object_type,
+            _is_plain_object_type,
+            _plain_django_output_type,
+        )
+
+        native: list[Any] = []
+        for entry in types:
+            # 1) Already a graphql-core named type → pass through.
+            if isinstance(entry, GraphQLNamedType):
+                native.append(entry)
+                continue
+
+            # 2) DjangoObjectType / DjangoListObjectType → canonical instance.
+            canonical = _plain_django_output_type(entry)
+            if canonical is not None:
+                native.append(canonical)
+                continue
+
+            # 3) Plain graphene.ObjectType → memoized on-the-fly native type
+            #    (the SAME instance the dispatch path compiles, so no dup-name).
+            if _is_plain_object_type(entry):
+                native.append(_compile_plain_object_type(entry))
+                continue
+
+            # 4) graphene scalar / enum class whose name resolves in the scalar
+            #    map → the canonical native scalar singleton.
+            meta_name = getattr(getattr(entry, "_meta", None), "name", None)
+            if meta_name is not None and meta_name in GDX_SCALAR_MAP:
+                native.append(GDX_SCALAR_MAP[meta_name])
+                continue
+
+            # 5) Unsupported kind (input / interface / union / unmapped scalar):
+            #    raise loudly — silently dropping it is the exact SDL divergence
+            #    this forwarding fixes.
+            kind = (
+                getattr(entry, "__name__", None)
+                if inspect.isclass(entry)
+                else type(entry).__name__
+            )
+            raise NotImplementedError(
+                f"DjangoGraphQLSchema cannot forward types= entry {entry!r} "
+                f"(name={meta_name!r}, kind={kind!r}) to the native schema: no "
+                "native mapping exists for this graphene type kind. Supported "
+                "kinds: graphql-core GraphQLNamedType instances, DjangoObjectType "
+                "/ DjangoListObjectType, plain graphene.ObjectType, and graphene "
+                "scalar/enum classes mapped in GDX_SCALAR_MAP. Map this kind to a "
+                "native type or remove it from types= (it must NOT be silently "
+                "dropped — that would diverge the native SDL from graphene)."
+            )
+
+        return native or None
 
     @staticmethod
     def _merge_root(

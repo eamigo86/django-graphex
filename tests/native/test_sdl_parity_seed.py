@@ -354,3 +354,70 @@ def test_full_schema_parity_is_not_vacuous():
     # Pagination container + filter input are present (B/A clusters).
     assert "TotalCount" in graphene_norm or "totalCount" in graphene_norm
     assert "Filter" in graphene_norm
+
+
+# --------------------------------------------------------------------------- #
+# types= forwarding — UNREFERENCED type cross-process SDL parity               #
+# (graphene forwards types= to graphql-core; native must too or silently drop) #
+# --------------------------------------------------------------------------- #
+def test_cross_process_types_unreferenced_sdl_parity():
+    """A schema built with ``types=[Unreferenced]`` is byte-equal between
+    graphene and native — the ``types=`` forwarding parity gate.
+
+    graphene's ``graphene.Schema`` forwards the ``types=`` kwarg (a list of
+    graphene type CLASSES of UNREFERENCED types to force into the schema) to its
+    underlying graphql-core ``GraphQLSchema``, so an unreferenced type appears in
+    the printed SDL. The native ``DjangoGraphQLSchema`` assembly must forward
+    ``types=`` identically (mapping each graphene class to its canonical native
+    graphql-core type).
+
+    Before the fix this FAILS: native drops the unreferenced type entirely (it
+    does not forward ``types=`` to ``GraphQLSchema``), so the native SDL is
+    MISSING ``SeedUnreferencedType`` while graphene's SDL contains it — a silent
+    SDL-parity divergence. After the fix the unreferenced type appears in BOTH.
+    """
+    from tests.native.conftest import normalize_sdl
+
+    graphene_sdl = _run_seed("graphene", seed="types_unreferenced")
+    native_sdl = _run_seed("native", seed="types_unreferenced")
+
+    graphene_norm = normalize_sdl(graphene_sdl)
+    native_norm = normalize_sdl(native_sdl)
+
+    # Substance floor: the unreferenced type MUST be present in graphene's SDL,
+    # else the parity comparison would be vacuous.
+    assert "SeedUnreferencedType" in graphene_norm, (
+        "Substance check FAILED: graphene SDL is missing the unreferenced type; "
+        "the types= parity comparison would be vacuous."
+    )
+
+    assert graphene_norm == native_norm, (
+        "Cross-process types= forwarding SDL parity FAILED.\n"
+        f"--- graphene (normalized) ---\n{graphene_norm}\n"
+        f"--- native (normalized) ---\n{native_norm}\n"
+    )
+
+
+def test_types_unreferenced_seed_native_subprocess_uses_native_assembly():
+    """ANTI-TAUTOLOGY (cross-process): the native types= seed's SDL must come
+    from native assembly (gdx-bearing query root AND a gdx-bearing forwarded
+    ``types=`` entry in the type_map), not a graphene fallback.
+    """
+    env = dict(os.environ)
+    env["GDX_BACKEND"] = "native"
+    env["GDX_SEED"] = "types_unreferenced"
+    env["PYTHONPATH"] = _REPO_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+    env["GDX_SEED_TRACE"] = "1"
+    proc = subprocess.run(
+        [sys.executable, "-m", "tests.native._sdl_parity_seed"],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "GDX_SEED_PATH=native" in proc.stderr, (
+        "ANTI-TAUTOLOGY FAILURE: types= native seed did NOT take the native "
+        f"assembly path (or the forwarded type is not the native instance).\n"
+        f"STDERR:\n{proc.stderr}"
+    )
