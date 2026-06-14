@@ -44,6 +44,7 @@ from .types import (
 )
 from .uploads import Base64FileInput, decode_base64_file
 from .native.base import InputType
+from .native.mutation import Mutation
 from .validation import DepthLimitValidationRule
 from .views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
 
@@ -129,4 +130,6 @@ __all__ = (
     "AuthenticatedGraphQLView",
     # NATIVE INPUT (Phase 2)
     "InputType",
+    # NATIVE MUTATION BASE (Phase 4 WU-2)
+    "Mutation",
 )
