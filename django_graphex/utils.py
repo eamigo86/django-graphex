@@ -2250,9 +2250,17 @@ def _resolve_results_paginator(
     from .paginations.pagination import BaseDjangoGraphqlPagination
 
     resolve_fn = getattr(results_field_def, "resolve", None)
+    # GRAPHENE path: resolve is partial(GenericPaginationField.list_resolver, …);
+    # the field (carrying paginator_instance) is func.__self__.
     func = getattr(resolve_fn, "func", None)  # functools.partial → bound method
     bound = getattr(func, "__self__", None)  # the GenericPaginationField, or None
     paginator = getattr(bound, "paginator_instance", None)
+    # NATIVE path (WU6b): NativePaginationField.wrap_resolve returns a PLAIN
+    # closure (not a partial) with ``paginator_instance`` set directly on it.
+    # Read it off the resolve callable itself so the window optimizer can recover
+    # the paginator under GDX_BACKEND=native.
+    if paginator is None:
+        paginator = getattr(resolve_fn, "paginator_instance", None)
     if not isinstance(paginator, BaseDjangoGraphqlPagination):
         return None
     return paginator
@@ -2472,7 +2480,17 @@ def _walk_filtered_prefetches(
                         _inner_candidate = get_named_type(_res_field_def.type)
                         if isinstance(_inner_candidate, GraphQLObjectType):
                             inner_gql = _inner_candidate
-                            inner_graphene = getattr(inner_gql, "graphene_type", None)
+                            # Dual-backend (WU6b): graphene carries the row class
+                            # as ``inner_gql.graphene_type``; native carries it on
+                            # ``extensions['gdx']._meta``. ``_gdx_graphene_type``
+                            # reads either so child AnnotatedField self-collection
+                            # and GAP-5 .only()-narrowing identity work on the
+                            # native window path too (graceful None when absent).
+                            from django_graphex.native.compat import (
+                                _gdx_graphene_type,
+                            )
+
+                            inner_graphene = _gdx_graphene_type(inner_gql)
 
                 # Phase E (AC1): pass hook + info into build_window_prefetch so the
                 # hook is applied on the filter-applied base qs before pre-check 7.
@@ -2805,8 +2823,17 @@ def build_filtered_prefetches(
     if not field_node.selection_set:
         return [], {}
 
-    graphene_type = getattr(return_type, "graphene_type", None)
-    model = getattr(getattr(graphene_type, "_meta", None), "model", None)
+    # Dual-backend (WU6b): graphene carries the source class as
+    # ``return_type.graphene_type``; native carries it on
+    # ``extensions['gdx']._meta``. ``_gdx_meta`` reads either, so the root model
+    # is recovered under GDX_BACKEND=native too — without it ``model`` is None
+    # and the walker never finds nested list fields (window-prefetch never fires).
+    from django_graphex.native.compat import _gdx_meta
+
+    try:
+        model = getattr(_gdx_meta(return_type), "model", None)
+    except AttributeError:
+        model = None
 
     out: list[Any] = []
     seen: dict[str, int] = {}

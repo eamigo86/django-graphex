@@ -83,6 +83,48 @@ _GRAPHENE_BASE_OPTIONS: frozenset[str] = frozenset(
 )
 
 
+def _compile_declared_list_fields(src_cls: type) -> dict[str, Any]:
+    """Compile DECLARED list/nested-list fields on a ``DjangoObjectType`` (WU6b).
+
+    The native output compiler (``compile_output_fields``) only derives fields
+    from ``model._meta.get_fields()``. A declared list field — e.g.
+    ``posts = DjangoNestedListObjectField(PostList, accessor="posts")`` — is a
+    graphene class attribute that never enters the model meta, so it would be
+    silently dropped from the native ``GraphQLObjectType``.
+
+    This recovers those declared fields from the source class's graphene
+    ``_meta.fields`` and compiles each into a native list-container
+    ``GraphQLField`` via the SAME builder the root compiler uses
+    (``schema_compiler._build_list_object_field``). That builder wires the
+    pagination args + slicing resolver onto the container's results field, so a
+    nested paginated list under ``GDX_BACKEND=native`` is reachable AND its
+    page is DB-side window-sliced by the optimizer (the WU6b seam).
+
+    Only list-shaped fields are injected; plain relation/scalar fields are
+    already handled by ``compile_output_fields`` and must NOT be duplicated here.
+
+    Args:
+        src_cls: The source ``DjangoObjectType`` subclass.
+
+    Returns:
+        A ``{camelCase_name: GraphQLField}`` dict of declared list fields
+        (empty when the class declares none).
+    """
+    from graphene.utils.str_converters import to_camel_case
+
+    from .fields import DjangoListObjectField
+    from .native.schema_compiler import _build_list_object_field
+
+    meta_fields = getattr(getattr(src_cls, "_meta", None), "fields", None) or {}
+    out: dict[str, Any] = {}
+    for field_name, field in meta_fields.items():
+        # DjangoNestedListObjectField is a subclass of DjangoListObjectField, so
+        # this single isinstance covers both the nested and the flat list field.
+        if isinstance(field, DjangoListObjectField):
+            out[to_camel_case(field_name)] = _build_list_object_field(field)
+    return out
+
+
 def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
     """Raise ImproperlyConfigured for any unknown Meta options.
 
@@ -366,13 +408,27 @@ class DjangoObjectType(ObjectType):
                 _reg: Any = _shared_registry,
                 _only_f: list[str] | None = _only,
                 _excl_f: list[str] | None = _excl,
+                _src_cls: type = cls,
             ) -> dict:
-                return compile_output_fields(
+                _fields = compile_output_fields(
                     _model,
                     _reg,
                     only_fields=_only_f,
                     exclude_fields=_excl_f,
                 )
+                # WU6b: inject DECLARED nested-list fields (e.g. a
+                # ``DjangoNestedListObjectField`` class attribute such as
+                # ``posts = DjangoNestedListObjectField(PostList, accessor=...)``).
+                # compile_output_fields above only derives fields from
+                # ``model._meta.get_fields()`` — a declared list field is a
+                # graphene class attribute that never enters the model meta, so
+                # without this injection a nested paginated list is SILENTLY
+                # DROPPED ("Cannot query field 'posts'"). Reuses the same native
+                # list-container builder the root compiler uses (WU6a), so the
+                # window-prefetch resolver + pagination args land on the nested
+                # field's results container too (the WU6b DB-side window seam).
+                _fields.update(_compile_declared_list_fields(_src_cls))
+                return _fields
 
             _graphql_output_type = GraphQLObjectType(
                 name=cls.__name__,
