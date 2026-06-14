@@ -27,6 +27,15 @@ if TYPE_CHECKING:
     from graphene import Field as GrapheneField
     from graphql import GraphQLResolveInfo
 
+# ---------------------------------------------------------------------------
+# Backend-keyed native field registry (WU-3)
+# ---------------------------------------------------------------------------
+# Keys: (model, operation, "native")  e.g. (Category, "create", "native")
+# Values: GraphQLField built during __init_subclass_with_meta__
+# Graphene fields are NEVER stored here; they live on the class directly.
+# Phase 7 removes the graphene path; this registry is then the only path.
+_NATIVE_FIELD_REGISTRY: dict[tuple, Any] = {}
+
 
 def _projection_signature(
     only_fields: Any, exclude_fields: Any, include_fields: Any
@@ -365,15 +374,31 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
                         {input_field_name: Argument(input_type, required=True)}
                     )
             else:
-                global_arguments[operation].update(
-                    {
-                        "id": Argument(
-                            ID,
-                            required=True,
-                            description="Django object unique identification field",
-                        )
-                    }
-                )
+                if _os.environ.get("GDX_BACKEND", "graphene") == "native":
+                    # Native path: use graphql-core GraphQLArgument for 'id'.
+                    from graphql import GraphQLArgument as _GraphQLArgument
+                    from graphql import GraphQLID as _GraphQLID
+                    from graphql import GraphQLNonNull as _GraphQLNonNull
+
+                    global_arguments[operation].update(
+                        {
+                            "id": _GraphQLArgument(
+                                _GraphQLNonNull(_GraphQLID),
+                                description="Django object unique identification field",
+                                out_name="id",
+                            )
+                        }
+                    )
+                else:
+                    global_arguments[operation].update(
+                        {
+                            "id": Argument(
+                                ID,
+                                required=True,
+                                description="Django object unique identification field",
+                            )
+                        }
+                    )
             global_arguments[operation].update(arguments)
 
         _meta = SerializerMutationOptions(cls)
@@ -391,6 +416,44 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
         super().__init_subclass_with_meta__(
             _meta=_meta, description=description, **options
         )
+
+        # ---------------------------------------------------------------------------
+        # Native field construction (WU-3): build GraphQLField per operation and
+        # store in the backend-keyed registry so *Field() can retrieve them.
+        # This runs only under GDX_BACKEND=native; the graphene path is unaffected.
+        # Phase 7 removes the else-branch; for now both coexist behind the guard.
+        # ---------------------------------------------------------------------------
+        if _os.environ.get("GDX_BACKEND", "graphene") == "native":
+            from graphql import GraphQLField as _GraphQLField
+
+            # R7: NEVER pass cls._meta.output (a graphene/Pydantic class) to
+            # graphql-core.  Read _meta.graphql_output_type (a compiled
+            # GraphQLObjectType) from the already-built output_type class.
+            # graphql-core's GraphQLField validates the type synchronously
+            # (is_output_type), so we pass the resolved object directly.
+            _gql_output_type = output_type._meta.graphql_output_type
+
+            from django_graphex.native._compat import _adapt_self
+
+            op_to_resolver = {
+                "create": cls.create,
+                "delete": cls.delete,
+                "update": cls.update,
+            }
+            for _op in model_operations:
+                _args = global_arguments.get(_op, {})
+                _resolver = op_to_resolver.get(_op)
+                if _resolver is None:
+                    continue  # pragma: no cover — model_operations already validated
+                # classmethods are bound (inspect.ismethod → True), passthrough
+                _resolver = _adapt_self(_resolver, owner=cls)
+                _gql_field = _GraphQLField(
+                    _gql_output_type,
+                    args=_args,
+                    resolve=_resolver,
+                    description=description or f"Native {_op} mutation for {model.__name__}",
+                )
+                _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
 
     @classmethod
     def get_errors(cls, errors: list[Any]) -> DjangoModelMutation:
@@ -523,20 +586,25 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
             return cls.get_errors(not_found_error(cls._meta.model, pk))
 
     @classmethod
-    def CreateField(cls, *args: Any, **kwargs: Any) -> GrapheneField:
+    def CreateField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the create mutation.
+
+        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
+        Under graphene (default) returns a graphene Field.
 
         Args:
             *args: Positional arguments (unused).
-            **kwargs: Extra keyword arguments forwarded to the field.
+            **kwargs: Extra keyword arguments forwarded to the field (graphene only).
 
         Returns:
-            The graphene field resolving to the create mutation.
+            The field resolving to the create mutation.
 
         Raises:
             AttributeError: If "create" is not in Meta.model_operations.
         """
         cls._assert_operation("create")
+        if _os.environ.get("GDX_BACKEND", "graphene") == "native":
+            return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "create", "native")]
         return Field(
             cls._meta.output,
             args=cls._meta.arguments["create"],
@@ -545,20 +613,25 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
         )
 
     @classmethod
-    def DeleteField(cls, *args: Any, **kwargs: Any) -> GrapheneField:
+    def DeleteField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the delete mutation.
+
+        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
+        Under graphene (default) returns a graphene Field.
 
         Args:
             *args: Positional arguments (unused).
-            **kwargs: Extra keyword arguments forwarded to the field.
+            **kwargs: Extra keyword arguments forwarded to the field (graphene only).
 
         Returns:
-            The graphene field resolving to the delete mutation.
+            The field resolving to the delete mutation.
 
         Raises:
             AttributeError: If "delete" is not in Meta.model_operations.
         """
         cls._assert_operation("delete")
+        if _os.environ.get("GDX_BACKEND", "graphene") == "native":
+            return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "delete", "native")]
         return Field(
             cls._meta.output,
             args=cls._meta.arguments["delete"],
@@ -567,20 +640,25 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
         )
 
     @classmethod
-    def UpdateField(cls, *args: Any, **kwargs: Any) -> GrapheneField:
+    def UpdateField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the update mutation.
+
+        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
+        Under graphene (default) returns a graphene Field.
 
         Args:
             *args: Positional arguments (unused).
-            **kwargs: Extra keyword arguments forwarded to the field.
+            **kwargs: Extra keyword arguments forwarded to the field (graphene only).
 
         Returns:
-            The graphene field resolving to the update mutation.
+            The field resolving to the update mutation.
 
         Raises:
             AttributeError: If "update" is not in Meta.model_operations.
         """
         cls._assert_operation("update")
+        if _os.environ.get("GDX_BACKEND", "graphene") == "native":
+            return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "update", "native")]
         return Field(
             cls._meta.output,
             args=cls._meta.arguments["update"],

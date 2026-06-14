@@ -1,5 +1,9 @@
-"""Tests for WU-B task 2.4: native compile path for the 6 factory_type('input',...)
-call sites — _meta.arguments[op] is a dict[str, GraphQLArgument] under native.
+"""Tests for native mutation field construction (WU-3) and prior arg-wiring (WU-B).
+
+Covers:
+- WU-B / task 2.4: factory_type("input",...) call sites produce GraphQLArgument under native.
+- WU-3 / tasks 3.1-3.3: DjangoModelMutation.*Field() and DjangoModelType.*Field() return
+  GraphQLField instances with correct args and resolvers under GDX_BACKEND=native.
 
 Tests run under GDX_BACKEND=native via native_only mark.
 """
@@ -199,3 +203,306 @@ def test_django_model_mutation_update_arg_is_graphql_argument():
                 f"GraphQLInputObjectType, got {type(arg_type)}"
             )
             break
+
+
+# ---------------------------------------------------------------------------
+# WU-3 task 3.1: DjangoModelMutation.*Field() returns GraphQLField under native
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_create_field_returns_graphql_field():
+    """Under GDX_BACKEND=native, DjangoModelMutation.CreateField() must return
+    a graphql-core GraphQLField, not a graphene Field.
+    """
+    from graphql import GraphQLField
+    from django_graphex.mutation import DjangoModelMutation
+    from tests.models import Category
+
+    class _WU3CategoryMutation(DjangoModelMutation):
+        class Meta:
+            model = Category
+
+    field = _WU3CategoryMutation.CreateField()
+    assert isinstance(field, GraphQLField), (
+        f"CreateField() must return GraphQLField under native, got {type(field)}"
+    )
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_create_field_args_are_graphql_arguments():
+    """Under native, CreateField().args must be dict[str, GraphQLArgument]."""
+    from graphql import GraphQLArgument, GraphQLField
+    from django_graphex.mutation import DjangoModelMutation
+    from tests.models import Category
+
+    class _WU3CategoryMutationArgs(DjangoModelMutation):
+        class Meta:
+            model = Category
+
+    field = _WU3CategoryMutationArgs.CreateField()
+    assert isinstance(field, GraphQLField)
+    for name, arg in field.args.items():
+        assert isinstance(arg, GraphQLArgument), (
+            f"CreateField arg '{name}' must be GraphQLArgument, got {type(arg)}"
+        )
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_create_field_type_is_graphql_object_type():
+    """Under native, CreateField().type must resolve to a GraphQLObjectType,
+    not a graphene class (R7: NEVER pass cls itself to graphql-core).
+    """
+    from graphql import GraphQLField, GraphQLNonNull, GraphQLObjectType
+    from django_graphex.mutation import DjangoModelMutation
+    from tests.models import Category
+
+    class _WU3CategoryMutationType(DjangoModelMutation):
+        class Meta:
+            model = Category
+
+    field = _WU3CategoryMutationType.CreateField()
+    assert isinstance(field, GraphQLField)
+
+    # Resolve the type (may be a thunk)
+    field_type = field.type
+    if callable(field_type) and not isinstance(field_type, GraphQLObjectType):
+        field_type = field_type()
+    # Unwrap NonNull if present
+    if isinstance(field_type, GraphQLNonNull):
+        field_type = field_type.of_type
+
+    assert isinstance(field_type, GraphQLObjectType), (
+        f"CreateField output type must be GraphQLObjectType, got {type(field_type)}. "
+        "R7: NEVER pass cls._meta.output (a graphene/Pydantic class) to graphql-core."
+    )
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_create_field_resolve_dispatches_to_create():
+    """Under native, CreateField().resolve must dispatch to cls.create."""
+    import inspect
+    from graphql import GraphQLField
+    from django_graphex.mutation import DjangoModelMutation
+    from tests.models import Category
+
+    class _WU3CategoryResolve(DjangoModelMutation):
+        class Meta:
+            model = Category
+
+    field = _WU3CategoryResolve.CreateField()
+    assert isinstance(field, GraphQLField)
+    # The resolve function should be cls.create (or a shim wrapping it).
+    assert field.resolve is not None, "CreateField must have a resolver"
+    resolve_fn = field.resolve
+    # Unwrap _adapt_self shim if present
+    inner = getattr(resolve_fn, "__wrapped__", resolve_fn)
+    # Bound classmethods create a new object each access; compare __func__ instead
+    create_func = _WU3CategoryResolve.create.__func__
+    inner_func = getattr(inner, "__func__", None)
+    resolve_func = getattr(resolve_fn, "__func__", None)
+    assert inner_func is create_func or resolve_func is create_func, (
+        "CreateField resolver must be cls.create or a shim wrapping it"
+    )
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_delete_field_returns_graphql_field():
+    """Under GDX_BACKEND=native, DjangoModelMutation.DeleteField() must return
+    a GraphQLField with a GraphQLArgument for 'id'.
+    """
+    from graphql import GraphQLArgument, GraphQLField
+    from django_graphex.mutation import DjangoModelMutation
+    from tests.models import Category
+
+    class _WU3CategoryDeleteField(DjangoModelMutation):
+        class Meta:
+            model = Category
+
+    field = _WU3CategoryDeleteField.DeleteField()
+    assert isinstance(field, GraphQLField), (
+        f"DeleteField() must return GraphQLField under native, got {type(field)}"
+    )
+    # The 'id' arg must be a GraphQLArgument, not a graphene Argument
+    assert "id" in field.args, "DeleteField must have an 'id' arg"
+    assert isinstance(field.args["id"], GraphQLArgument), (
+        f"DeleteField 'id' arg must be GraphQLArgument, got {type(field.args['id'])}"
+    )
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_update_field_returns_graphql_field():
+    """Under GDX_BACKEND=native, DjangoModelMutation.UpdateField() must return
+    a GraphQLField.
+    """
+    from graphql import GraphQLField
+    from django_graphex.mutation import DjangoModelMutation
+    from tests.models import Category
+
+    class _WU3CategoryUpdateField(DjangoModelMutation):
+        class Meta:
+            model = Category
+
+    field = _WU3CategoryUpdateField.UpdateField()
+    assert isinstance(field, GraphQLField), (
+        f"UpdateField() must return GraphQLField under native, got {type(field)}"
+    )
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_native_slot_keyed_by_backend():
+    """Under GDX_BACKEND=native, the field registry uses (model, op, 'native') key.
+    The (model, op, 'graphene') slot must be absent.
+    """
+    from django_graphex.mutation import DjangoModelMutation, _NATIVE_FIELD_REGISTRY
+    from tests.models import Author
+
+    class _WU3AuthorMutation(DjangoModelMutation):
+        class Meta:
+            model = Author
+
+    # Native slot must be populated
+    assert (Author, "create", "native") in _NATIVE_FIELD_REGISTRY, (
+        "DjangoModelMutation must register (model, op, 'native') slot under native"
+    )
+    # Graphene slot for same (model, op) must be absent
+    assert (Author, "create", "graphene") not in _NATIVE_FIELD_REGISTRY, (
+        "DjangoModelMutation must NOT register (model, op, 'graphene') slot under native"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WU-3 task 3.3: DjangoModelType.*Field() returns GraphQLField under native
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_django_model_type_create_field_returns_graphql_field():
+    """Under GDX_BACKEND=native, DjangoModelType.CreateField() must return
+    a GraphQLField, not a graphene Field.
+    """
+    from graphql import GraphQLField
+    from django_graphex.types import DjangoModelType
+    from tests.models import Category
+
+    class _WU3ModelTypeCreate(DjangoModelType):
+        class Meta:
+            model = Category
+
+    field = _WU3ModelTypeCreate.CreateField()
+    assert isinstance(field, GraphQLField), (
+        f"DjangoModelType.CreateField() must return GraphQLField under native, "
+        f"got {type(field)}"
+    )
+
+
+@pytest.mark.django_db
+def test_django_model_type_create_field_args_are_graphql_arguments():
+    """Under native, DjangoModelType.CreateField().args must be GraphQLArgument."""
+    from graphql import GraphQLArgument, GraphQLField
+    from django_graphex.types import DjangoModelType
+    from tests.models import Category
+
+    class _WU3ModelTypeCreateArgs(DjangoModelType):
+        class Meta:
+            model = Category
+
+    field = _WU3ModelTypeCreateArgs.CreateField()
+    assert isinstance(field, GraphQLField)
+    for name, arg in field.args.items():
+        assert isinstance(arg, GraphQLArgument), (
+            f"DjangoModelType.CreateField arg '{name}' must be GraphQLArgument, "
+            f"got {type(arg)}"
+        )
+
+
+@pytest.mark.django_db
+def test_django_model_type_create_field_type_is_graphql_object_type():
+    """Under native, DjangoModelType.CreateField().type must resolve to
+    GraphQLObjectType (R7 compliance).
+    """
+    from graphql import GraphQLField, GraphQLNonNull, GraphQLObjectType
+    from django_graphex.types import DjangoModelType
+    from tests.models import Category
+
+    class _WU3ModelTypeCreateType(DjangoModelType):
+        class Meta:
+            model = Category
+
+    field = _WU3ModelTypeCreateType.CreateField()
+    assert isinstance(field, GraphQLField)
+
+    field_type = field.type
+    if callable(field_type) and not isinstance(field_type, GraphQLObjectType):
+        field_type = field_type()
+    if isinstance(field_type, GraphQLNonNull):
+        field_type = field_type.of_type
+
+    assert isinstance(field_type, GraphQLObjectType), (
+        f"DjangoModelType.CreateField output must be GraphQLObjectType, "
+        f"got {type(field_type)}. R7 violation."
+    )
+
+
+@pytest.mark.django_db
+def test_django_model_type_delete_field_returns_graphql_field():
+    """Under native, DjangoModelType.DeleteField() must return GraphQLField."""
+    from graphql import GraphQLArgument, GraphQLField
+    from django_graphex.types import DjangoModelType
+    from tests.models import Category
+
+    class _WU3ModelTypeDelete(DjangoModelType):
+        class Meta:
+            model = Category
+
+    field = _WU3ModelTypeDelete.DeleteField()
+    assert isinstance(field, GraphQLField), (
+        f"DjangoModelType.DeleteField() must return GraphQLField under native, "
+        f"got {type(field)}"
+    )
+    assert "id" in field.args
+    assert isinstance(field.args["id"], GraphQLArgument)
+
+
+@pytest.mark.django_db
+def test_django_model_type_update_field_returns_graphql_field():
+    """Under native, DjangoModelType.UpdateField() must return GraphQLField."""
+    from graphql import GraphQLField
+    from django_graphex.types import DjangoModelType
+    from tests.models import Category
+
+    class _WU3ModelTypeUpdate(DjangoModelType):
+        class Meta:
+            model = Category
+
+    field = _WU3ModelTypeUpdate.UpdateField()
+    assert isinstance(field, GraphQLField), (
+        f"DjangoModelType.UpdateField() must return GraphQLField under native, "
+        f"got {type(field)}"
+    )
+
+
+@pytest.mark.django_db
+def test_django_model_type_create_field_resolve_is_create_classmethod():
+    """Under native, DjangoModelType.CreateField().resolve must dispatch to cls.create."""
+    from graphql import GraphQLField
+    from django_graphex.types import DjangoModelType
+    from tests.models import Category
+
+    class _WU3ModelTypeResolve(DjangoModelType):
+        class Meta:
+            model = Category
+
+    field = _WU3ModelTypeResolve.CreateField()
+    assert isinstance(field, GraphQLField)
+    assert field.resolve is not None
+    resolve_fn = field.resolve
+    # Unwrap _adapt_self shim if present
+    inner = getattr(resolve_fn, "__wrapped__", resolve_fn)
+    # Bound classmethods create a new object each access; compare __func__ instead
+    create_func = _WU3ModelTypeResolve.create.__func__
+    inner_func = getattr(inner, "__func__", None)
+    resolve_func = getattr(resolve_fn, "__func__", None)
+    assert inner_func is create_func or resolve_func is create_func, (
+        "DjangoModelType.CreateField resolver must be cls.create or a shim wrapping it"
+    )
