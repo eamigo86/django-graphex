@@ -77,6 +77,8 @@ _GDX_ALLOWLIST: frozenset[str] = frozenset(
         "node",
         "queryset",
         "types",
+        # Phase 3: native output compile attrs
+        "graphql_output_type",
     }
 )
 

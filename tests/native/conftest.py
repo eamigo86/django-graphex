@@ -140,3 +140,26 @@ def pytest_configure(config: object) -> None:
         "markers",
         "native_only: mark test as native-backend only (excluded from graphene CI job)",
     )
+
+
+def pytest_collection_modifyitems(config: object, items: list) -> None:  # type: ignore[type-arg]
+    """Auto-skip native_only tests when GDX_BACKEND != native.
+
+    This prevents the WU-A misdiagnosis: if someone runs
+    ``pytest tests/native`` without GDX_BACKEND=native, the native-only
+    tests are skipped with a clear message instead of failing confusingly.
+
+    Gate: tests/native/ MUST be run with:
+        GDX_BACKEND=native .venv/bin/python -m pytest tests/native/ -q
+    """
+    import pytest as _pytest
+    if os.environ.get("GDX_BACKEND", "graphene") != "native":
+        skip_native = _pytest.mark.skip(
+            reason=(
+                "GDX_BACKEND != native — native_only tests skipped. "
+                "Run with: GDX_BACKEND=native pytest tests/native/"
+            )
+        )
+        for item in items:
+            if "native_only" in item.keywords:
+                item.add_marker(skip_native)

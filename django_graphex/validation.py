@@ -28,6 +28,7 @@ from graphql.validation import ValidationRule
 
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
+from .native.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
     from graphql import GraphQLNamedType, OperationDefinitionNode, SelectionSetNode
@@ -47,8 +48,10 @@ class _Constraint(NamedTuple):
 def _type_max_deep(named_type: GraphQLNamedType) -> int | None:
     """Return the ``max_deep`` declared on a type, or ``None``.
 
-    Reads it off the graphene type graphene attaches to the graphql-core type
-    (``graphql_type.graphene_type._meta.max_deep``).
+    Reads it via the ``_gdx_meta`` shim, which tries
+    ``graphene_type._meta`` first (graphene path) and falls back to
+    ``extensions["gdx"]._meta`` (native path).  This ensures both backends
+    work through a single read-site.
 
     Args:
         named_type: The unwrapped (named) graphql-core type.
@@ -56,7 +59,10 @@ def _type_max_deep(named_type: GraphQLNamedType) -> int | None:
     Returns:
         The non-negative depth limit, or ``None`` when not configured/invalid.
     """
-    meta = getattr(getattr(named_type, "graphene_type", None), "_meta", None)
+    try:
+        meta = _native_gdx_meta(named_type)
+    except AttributeError:
+        return None
     value = getattr(meta, "max_deep", None)
     if value is None:
         return None
