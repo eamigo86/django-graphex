@@ -2,12 +2,22 @@
 
 Tests verify:
 - DjangoInputObjectType subclass with model + input_for="create" has
-  _meta.graphql_input_type after native compile.
+  _meta.graphql_input_type after native compile (Phase-2 deliverable).
 - Update form → all fields nullable (partial model).
-- _meta.container access raises AttributeError (removed under native).
+- Model-free _GdxInputMeta does NOT expose 'container' (container-free meta for
+  native model-free path). NOTE: DjangoInputObjectType._meta.container STILL
+  EXISTS in Phase 2 (graphene.Schema reads it at build time; removal is Phase 7).
 - assert input_flag is not None fires for the output branch.
-- type(PostInput) is ModelMetaclass for BOTH model-coupled and model-free.
-- _meta.graphql_input_type is non-None after __init_subclass_with_meta__.
+- type(InputType subclass) is ModelMetaclass (model-FREE metaclass identity —
+  the Phase-2 deliverable for model-free types).
+  NOTE: type(DjangoInputObjectType subclass) is NOT ModelMetaclass in Phase 2.
+  DjangoInputObjectType subclasses graphene's InputObjectType; a class has
+  exactly one metaclass fixed at class-definition time —
+  type(DjangoInputObjectType subclass) is SubclassWithMeta_Meta (graphene),
+  NOT pydantic.ModelMetaclass. Model-coupled metaclass identity is RE-SCOPED
+  to Phase 7 (graphene deletion).
+- _meta.graphql_input_type is GraphQLInputObjectType after __init_subclass_with_meta__
+  (the real Phase-2 model-coupled deliverable).
 - Accessing _meta.bogus_attr raises AttributeError.
 
 All tests run under GDX_BACKEND=native via the native_only mark.
@@ -88,9 +98,15 @@ def test_django_input_object_type_graphql_input_type_update_all_nullable():
 
 
 @pytest.mark.django_db
-def test_meta_container_absent_under_native():
-    """_meta.container must raise AttributeError (container removed in native path)."""
-    # We test through _GdxInputMeta directly — it should not expose 'container'
+def test_model_free_meta_container_absent():
+    """Model-free _GdxInputMeta does NOT expose 'container' — the native model-free
+    metaclass has no container slot.
+
+    SCOPE: this tests the model-FREE path (_GdxInputMeta / _GdxInputOptions).
+    It does NOT test DjangoInputObjectType._meta, which is a DjangoObjectOptions
+    instance and DOES still expose .container in Phase 2 (graphene.Schema reads
+    _meta.container at build time; container removal is Phase 7 work).
+    """
     from django_graphex.native.base import _GdxInputOptions, _GdxInputMeta
 
     opts = _GdxInputOptions()
@@ -98,6 +114,34 @@ def test_meta_container_absent_under_native():
 
     with pytest.raises(AttributeError):
         _ = meta.container  # type: ignore[attr-defined]
+
+
+@pytest.mark.django_db
+def test_django_input_object_type_meta_container_present_phase2():
+    """DjangoInputObjectType._meta.container IS accessible in Phase 2.
+
+    This is the honest inverse of the model-free container test above.
+    DjangoInputObjectType inherits from graphene.InputObjectType; graphene.Schema
+    reads _meta.container at build time, so the native path MUST set it too
+    (types.py line ~626). Removing it is Phase 7 (graphene deletion).
+
+    Phase-7 will change this assertion to expect AttributeError.
+    """
+    from django_graphex.types import DjangoInputObjectType
+    from tests.models import Category
+
+    class _ContainerPhase2Test(DjangoInputObjectType):
+        class Meta:
+            model = Category
+            input_for = "create"
+
+    # container MUST be present in Phase 2 — graphene requires it
+    assert hasattr(_ContainerPhase2Test._meta, "container"), (
+        "DjangoInputObjectType._meta.container must be present in Phase 2 "
+        "(graphene.Schema reads it; removal is Phase 7)"
+    )
+    # It must be a class (the InputObjectTypeContainer subclass)
+    assert isinstance(_ContainerPhase2Test._meta.container, type)
 
 
 @pytest.mark.django_db
@@ -159,8 +203,13 @@ def test_gdx_input_meta_unknown_attr_raises():
         _ = meta.bogus_attr  # type: ignore[attr-defined]
 
 
-def test_type_of_model_coupled_input_is_model_metaclass():
-    """type(InputType subclass) must be pydantic.ModelMetaclass."""
+def test_type_of_model_free_input_is_model_metaclass():
+    """type(InputType subclass) is pydantic.ModelMetaclass — Phase-2 deliverable
+    for model-free types.
+
+    InputType is a pure pydantic.BaseModel; its metaclass is ModelMetaclass.
+    This is the Phase-2 metaclass-identity deliverable for the MODEL-FREE path.
+    """
     from pydantic._internal._model_construction import ModelMetaclass
     from django_graphex.native.base import InputType
 
@@ -175,16 +224,67 @@ def test_type_of_model_coupled_input_is_model_metaclass():
 
 
 @pytest.mark.django_db
-def test_type_of_model_coupled_input_via_pydantic():
-    """Model-coupled input compiled via Pydantic → type is ModelMetaclass."""
+def test_build_model_schema_returns_pydantic_model():
+    """build_model_schema returns an intermediate Pydantic model class.
+
+    This tests the INTERMEDIATE Pydantic model produced by build_model_schema,
+    NOT the public DjangoInputObjectType subclass. The inner model IS a
+    pydantic.BaseModel subclass, so type(...) is ModelMetaclass is true for it.
+
+    This is an internal-pipeline test, not a public-API metaclass claim.
+    The public Phase-2 deliverable for model-coupled types is
+    _meta.graphql_input_type being a real GraphQLInputObjectType
+    (see test_django_input_object_type_meta_graphql_input_type_is_graphql_type).
+    """
     from pydantic._internal._model_construction import ModelMetaclass
     from django_graphex.native.fields import build_model_schema
     from tests.models import Post
 
-    # build_model_schema returns a Pydantic model; type must be ModelMetaclass
+    # build_model_schema returns an INTERMEDIATE Pydantic model; type IS ModelMetaclass
     pydantic_model = build_model_schema(Post, partial=False)
     assert type(pydantic_model) is ModelMetaclass, (
-        "build_model_schema must return a class with pydantic.ModelMetaclass"
+        "build_model_schema must return a class with pydantic.ModelMetaclass "
+        "(this is the intermediate Pydantic model, NOT the DjangoInputObjectType subclass)"
+    )
+
+
+@pytest.mark.django_db
+def test_model_coupled_metaclass_is_phase7():
+    """type(DjangoInputObjectType subclass) is NOT pydantic.ModelMetaclass in Phase 2.
+
+    This is the HONEST Phase-2 boundary test. DjangoInputObjectType subclasses
+    graphene's InputObjectType. A Python class has exactly ONE metaclass, fixed at
+    class-definition time. Because the graphene base class is present, the metaclass
+    is graphene's SubclassWithMeta_Meta — NOT pydantic.ModelMetaclass.
+
+    The model-coupled metaclass identity (type(PostInput) is ModelMetaclass) is
+    RE-SCOPED to Phase 7 (graphene deletion), when the graphene base class is removed
+    and DjangoInputObjectType will subclass pydantic.BaseModel directly.
+
+    This test is intentionally asserting the CURRENT (Phase-2) reality, not the
+    eventual goal, so that the test suite is never tautological.
+    """
+    from pydantic._internal._model_construction import ModelMetaclass
+    from django_graphex.types import DjangoInputObjectType
+    from tests.models import Category
+
+    class _Phase2ModelCoupledInput(DjangoInputObjectType):
+        class Meta:
+            model = Category
+            input_for = "create"
+
+    # In Phase 2: metaclass is graphene's SubclassWithMeta_Meta, NOT ModelMetaclass
+    assert type(_Phase2ModelCoupledInput) is not ModelMetaclass, (
+        "In Phase 2, type(DjangoInputObjectType subclass) is graphene's "
+        "SubclassWithMeta_Meta — NOT pydantic.ModelMetaclass. "
+        "Model-coupled metaclass identity is a Phase-7 (graphene-deletion) concern."
+    )
+
+    # Phase-2 real deliverable: _meta.graphql_input_type IS a GraphQLInputObjectType
+    from graphql import GraphQLInputObjectType
+    assert isinstance(_Phase2ModelCoupledInput._meta.graphql_input_type, GraphQLInputObjectType), (
+        "Phase-2 model-coupled deliverable: _meta.graphql_input_type must be a "
+        "GraphQLInputObjectType (the native compile path must be wired)"
     )
 
 
