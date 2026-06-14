@@ -23,7 +23,9 @@ class DjangoGraphexConfig(AppConfig):
     verbose_name = "Django GraphEx"
 
     def ready(self) -> None:
-        """Compile all registered InputType subclasses into GraphQL input types."""
+        """Compile all registered InputType and OutputType subclasses into GraphQL types."""
         from django_graphex.native.base import compile_all_inputs
+        from django_graphex.native.registry_compiler import compile_all_outputs
 
         compile_all_inputs()
+        compile_all_outputs()

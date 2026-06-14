@@ -290,3 +290,115 @@ def compile_all(registry: NativeOutputRegistry) -> None:
                 f"compiled via compile_all to receive GdxPayload. "
                 f"If this is an intentional test, use skip_gdx=True only in tests."
             )
+
+
+# ---------------------------------------------------------------------------
+# compile_all_outputs — global output registry compilation
+# ---------------------------------------------------------------------------
+
+
+def compile_all_outputs() -> None:
+    """Populate/validate the single per-CLASS ``GraphQLObjectType`` instances
+    registered in the global ``_gdx_output_registry``.
+
+    Called by ``DjangoGraphexConfig.ready()`` after ``compile_all_inputs()``.
+
+    IDENTITY INVARIANT (the whole point of this function): there is EXACTLY ONE
+    ``GraphQLObjectType`` per ``DjangoObjectType`` class, created ONCE at class
+    definition (``DjangoObjectType.__init_subclass_with_meta__`` native branch)
+    with relation-field THUNKS bound to the SHARED global registry
+    (``get_shared_output_registry()``).  This function MUST:
+
+    - REUSE those existing per-class instances (read from
+      ``cls._meta.graphql_output_type``) — it NEVER creates a second
+      ``GraphQLObjectType``.  (A second instance with the same name poisons the
+      mutation-pinned reference and makes ``GraphQLSchema`` raise "multiple
+      types named '<TypeName>'".)
+    - Register each model's CANONICAL instance in the module-level
+      ``_in_progress`` cycle guard so relation thunks resolve cross-type
+      references (A→B→A) to the related type's real ``GraphQLObjectType``
+      instead of a ``GraphQLString`` fallback.
+    - FORCE thunk evaluation (read ``.fields``) — after invalidating any stale
+      ``@cached_property`` from a premature class-def read — so silent build
+      errors surface deterministically at app-ready, not lazily on first query.
+    - Assert every per-class instance carries ``extensions['gdx']``.
+
+    ``_in_progress`` is cleared at BOTH entry and exit (``finally``) so no stale
+    stubs leak into later reads via ``_get_related_type``.
+
+    Note on multiple classes per model: distinct DjangoObjectType classes may
+    wrap the same model (different ``only_fields`` / ``complexity`` / …).  Each
+    keeps its OWN per-class instance on ``_meta``; the SHARED registry holds the
+    model's CANONICAL (last-registered, non-``skip_registry``) instance, mirroring
+    the graphene ``Registry.get_type_for_model(model)`` rule that mutations and
+    relation fields both consult.
+
+    Raises:
+        BuildError: If any registered class has no instance or lacks
+            ``extensions['gdx']``.
+    """
+    from django_graphex.native.base import (
+        _gdx_output_registry,
+        get_shared_output_registry,
+    )
+
+    _reset_in_progress()
+
+    if not _gdx_output_registry:
+        return
+
+    # The SAME shared registry the class-def compile used.  Each model's
+    # canonical instance is already registered there (last-wins).
+    shared_registry = get_shared_output_registry()
+
+    def _class_instance(entry: Any) -> GraphQLObjectType:
+        """Return the per-class GraphQLObjectType built at class-def time."""
+        meta = getattr(entry.cls, "_meta", None)
+        inst = getattr(meta, "graphql_output_type", None)
+        if inst is None:
+            raise BuildError(
+                f"compile_all_outputs: {entry.gql_name!r} "
+                f"(model: {entry.model.__name__!r}) has no compiled "
+                f"GraphQLObjectType on _meta. The class-def native branch must "
+                f"create the single per-class instance before compile_all_outputs()."
+            )
+        return inst
+
+    try:
+        # ── Phase 1: register each model's CANONICAL instance in the cycle guard
+        # so relation thunks of OTHER classes resolve A→B→A to that object.  We
+        # do NOT create any new instance — the canonical one was set at class-def.
+        for entry in _gdx_output_registry:
+            canonical = shared_registry.get_compiled(entry.model)
+            if canonical is None:
+                # No non-skip_registry class claimed the model slot (e.g. every
+                # class for it used skip_registry=True).  Fall back to this
+                # class's own instance so relations still resolve to a real type.
+                canonical = _class_instance(entry)
+                shared_registry.set_compiled(entry.model, canonical)
+            _in_progress[id(entry.model)] = canonical
+
+        # ── Phase 2: force thunk evaluation on EACH per-class instance against
+        # the now-complete shared registry.  graphql-core's
+        # ``GraphQLObjectType.fields`` is a @cached_property: a premature
+        # class-def read (e.g. a test) may have cached a GraphQLString fallback
+        # for a relation whose target was not yet registered.  Invalidate that
+        # cache first, then re-evaluate so relations resolve to real types.
+        for entry in _gdx_output_registry:
+            inst = _class_instance(entry)
+            inst.__dict__.pop("fields", None)  # drop stale cached_property
+            _ = inst.fields  # noqa: F841 — force eval + warm correct cache
+
+        # ── Phase 3: assertion — every per-class instance must carry gdx ─────
+        for entry in _gdx_output_registry:
+            inst = _class_instance(entry)
+            if "gdx" not in (inst.extensions or {}):
+                raise BuildError(
+                    f"compile_all_outputs: type {entry.gql_name!r} "
+                    f"(model: {entry.model.__name__!r}) is missing "
+                    f"extensions['gdx']."
+                )
+    finally:
+        # Reset at exit too: no stale stubs leak into later reads via
+        # _get_related_type / a subsequent compile_all() run.
+        _reset_in_progress()

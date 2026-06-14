@@ -287,29 +287,65 @@ class DjangoObjectType(ObjectType):
             registry.register(cls)
 
         # ----------------------------------------------------------------
-        # NATIVE PATH: compile a GraphQLObjectType via the native pipeline.
-        # The graphene base/_meta machinery stays live (Phase 7 removes it).
-        # Mirrors the Phase-2 DjangoInputObjectType native branch pattern.
+        # NATIVE PATH: create EXACTLY ONE GraphQLObjectType per DjangoObjectType,
+        # ONCE, here at class definition — identity-stable.  Its relation fields
+        # are LAZY THUNKS that resolve against the SHARED GLOBAL output registry
+        # (django_graphex.native.base.get_shared_output_registry()), NEVER a
+        # per-class local registry.
+        #
+        # Why a single instance + shared-registry thunks: relations CANNOT be
+        # resolved at class-definition time (the related type may be defined
+        # later).  By closing the field thunk over the GLOBAL registry, the
+        # relation lookup runs lazily — after compile_all_outputs() has
+        # registered every type's stub — so it resolves to the related type's
+        # real GraphQLObjectType instead of degrading to GraphQLString.
+        #
+        # compile_all_outputs() (called at app-ready) POPULATES/validates these
+        # existing instances against the SAME shared registry.  It NEVER creates
+        # a second GraphQLObjectType for an already-registered type, so the
+        # instance pinned by mutation.py (mutation.py:434/456) at mutation
+        # class-def time is the SAME object that ends up in the assembled
+        # GraphQLSchema — eliminating the duplicate-name TypeError hazard.
+        #
+        # Phase 7 removes the graphene base/_meta machinery.
         # ----------------------------------------------------------------
         import os as _os_output
         if _os_output.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+            from django_graphex.native.base import (
+                _GdxOutputEntry,
+                _gdx_output_registry,
+                get_shared_output_registry,
+            )
             from django_graphex.native.bridge import GdxPayload
             from django_graphex.native.ir import GdxMeta
             from django_graphex.native.output_compiler import compile_output_fields
-            from django_graphex.native.registry_compiler import (
-                NativeOutputRegistry,
-                compile_all,
-            )
             from graphql import GraphQLObjectType
 
-            _native_registry = NativeOutputRegistry()
-            _native_registry.register(
-                cls.__name__,
-                model,
-                related_models=[],
+            # Register in the global entry list for compile_all_outputs() at
+            # app-ready (carries projection / depth / complexity metadata).
+            _entry = _GdxOutputEntry(
+                cls=cls,
+                gql_name=cls.__name__,
+                model=model,
+                only_fields=list(only_fields) if only_fields else None,
+                exclude_fields=list(exclude_fields) if exclude_fields else None,
+                max_deep=max_deep,
+                complexity=complexity,
             )
-            # Pre-populate the registry with a compiled stub for the model so
-            # compile_output_fields can resolve relations via the same registry.
+            _gdx_output_registry.append(_entry)
+
+            # SHARED registry: the single source of truth for relation thunks.
+            # Keyed by MODEL with last-registration-wins semantics, mirroring the
+            # graphene Registry (registry.get_type_for_model(model)).  Relation
+            # thunks of OTHER types resolve a FK/M2M to whatever instance is the
+            # canonical (last-registered) type for the related model — exactly
+            # what mutation.py pins and the query root uses for that model.
+            _shared_registry = get_shared_output_registry()
+
+            # EXACTLY ONE instance PER CLASS, created ONCE here.  Distinct
+            # classes wrapping the same model (e.g. different only_fields /
+            # complexity) each get their OWN identity-stable instance; the GraphQL
+            # type NAME is the class name so there is no name collision.
             _gdx_meta_obj = GdxMeta(
                 name=cls.__name__,
                 model=model,
@@ -318,19 +354,41 @@ class DjangoObjectType(ObjectType):
             )
             _gdx_payload = GdxPayload(_gdx_meta_obj)
 
-            # Build real fields using the output compiler (handles scalars + relations)
-            _output_fields = compile_output_fields(
-                model,
-                _native_registry,
-                only_fields=list(only_fields) if only_fields else None,
-                exclude_fields=list(exclude_fields) if exclude_fields else None,
-            )
+            _only = list(only_fields) if only_fields else None
+            _excl = list(exclude_fields) if exclude_fields else None
+
+            # LAZY field thunk bound to the SHARED registry.  Evaluated on first
+            # `.fields` access; by app-ready (compile_all_outputs) every model's
+            # canonical instance is in the shared registry so relation lookups
+            # resolve to the real related GraphQLObjectType (not GraphQLString).
+            def _make_output_thunk(
+                _model: type = model,
+                _reg: Any = _shared_registry,
+                _only_f: list[str] | None = _only,
+                _excl_f: list[str] | None = _excl,
+            ) -> dict:
+                return compile_output_fields(
+                    _model,
+                    _reg,
+                    only_fields=_only_f,
+                    exclude_fields=_excl_f,
+                )
 
             _graphql_output_type = GraphQLObjectType(
                 name=cls.__name__,
-                fields=lambda f=_output_fields: f,
+                fields=_make_output_thunk,
                 extensions={"gdx": _gdx_payload},
             )
+
+            # Last-wins: make THIS class's instance the canonical one for the
+            # model so relation thunks resolve to it — consistent with the
+            # graphene Registry's (model, None) last-registration-wins rule and
+            # with registry.register(cls) above.  When skip_registry=True the
+            # class is NOT canonical in the graphene Registry, so do not let it
+            # claim the shared slot either.
+            if not skip_registry:
+                _shared_registry.set_compiled(model, _graphql_output_type)
+
             # graphene freezes Options after super().__init_subclass_with_meta__.
             # Use object.__setattr__ to bypass the freeze (same pattern as
             # Phase-2 input compiler; Phase 7 removes the graphene path).

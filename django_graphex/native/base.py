@@ -94,6 +94,66 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
 
 _gdx_input_registry: list[type["InputType"]] = []
 
+# ---------------------------------------------------------------------------
+# Module-level registry of all DjangoObjectType / DjangoListObjectType subclasses
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _GdxOutputEntry:
+    """Registration record stored in ``_gdx_output_registry``.
+
+    Created by ``DjangoObjectType.__init_subclass_with_meta__`` (and the
+    ``DjangoListObjectType`` equivalent) when ``GDX_BACKEND=native``.
+    ``compile_all_outputs()`` reads these entries to perform the deferred
+    compilation at app-ready time.
+    """
+
+    cls: type  # the DjangoObjectType / DjangoListObjectType subclass
+    gql_name: str  # GraphQL type name (cls.__name__)
+    model: type  # Django model class
+    only_fields: list[str] | None
+    exclude_fields: list[str] | None
+    max_deep: int | None
+    complexity: int | None
+
+
+_gdx_output_registry: list[_GdxOutputEntry] = []
+
+# ---------------------------------------------------------------------------
+# Shared output registry singleton
+# ---------------------------------------------------------------------------
+# A SINGLE process-wide ``NativeOutputRegistry`` shared by BOTH the class-def
+# compile (``DjangoObjectType.__init_subclass_with_meta__`` native branch) AND
+# ``compile_all_outputs()``.  This is the heart of the identity invariant:
+# exactly ONE ``GraphQLObjectType`` instance per ``DjangoObjectType``, created
+# once at class definition with relation-field THUNKS that resolve against this
+# shared registry.  ``compile_all_outputs()`` POPULATES/validates the existing
+# instances against this same registry — it NEVER creates a second instance for
+# an already-registered type.  Relations therefore resolve to the related
+# type's real ``GraphQLObjectType`` (not a ``GraphQLString`` fallback), because
+# every type is registered in the same registry before any thunk evaluates.
+#
+# Typed as ``Any`` to avoid importing ``registry_compiler`` (which imports
+# graphql/bridge/ir) at ``base`` import time.
+_gdx_shared_output_registry: Any = None
+
+
+def get_shared_output_registry() -> Any:
+    """Return the process-wide shared ``NativeOutputRegistry`` singleton.
+
+    Lazily created on first use so ``base`` has no import-time dependency on
+    ``registry_compiler``.  Both the class-def native compile and
+    ``compile_all_outputs()`` MUST use this single instance so relation thunks
+    resolve cross-type references against the same registry (identity-stable).
+    """
+    global _gdx_shared_output_registry
+    if _gdx_shared_output_registry is None:
+        from django_graphex.native.registry_compiler import NativeOutputRegistry
+
+        _gdx_shared_output_registry = NativeOutputRegistry()
+    return _gdx_shared_output_registry
+
 
 # ---------------------------------------------------------------------------
 # InputType base (model-free inputs)
