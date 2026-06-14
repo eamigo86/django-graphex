@@ -5,7 +5,7 @@ module imports ``django_graphex`` (the backend flag is read at import/class-def
 time, so it can only be flipped per-process — D7). Prints the SDL of a MINIMAL
 seed schema to stdout.
 
-Two seeds are exposed, selected by the ``GDX_SEED`` env var:
+Several seeds are exposed, selected by the ``GDX_SEED`` env var:
 
 * ``GDX_SEED=node`` (default) — a Query with ONE ``DjangoObjectField`` on a real
   Django model (the WU2 ROOT-compiler parity seed).
@@ -14,6 +14,13 @@ Two seeds are exposed, selected by the ``GDX_SEED`` env var:
   renders it as an argument so ``print_schema`` emits the full nested filter
   input shape (scalar lookups, choices enum, nested relation filter, and the
   recursive ``and`` / ``or`` / ``not`` combinators).
+* ``GDX_SEED=node_scalars`` — the Slices B+C OUTPUT scalar NAME + nullability
+  parity seed (Date/DateTime/Time -> Custom*, UUID, Decimal -> Float, JSONString;
+  model scalars nullable, pk ``id: ID!``).
+* ``GDX_SEED=relations`` — the Slices D+E + FK-relation-nullability OUTPUT
+  field/relation parity seed: declared non-model fields, a required FK and a
+  nullable FK (both nullable on output), M2M + reverse-FK to-many relations
+  rendered as the ``<Model>ListType`` results/totalCount container.
 
 Usage::
 
@@ -219,6 +226,142 @@ def build_scalar_node_seed_sdl() -> str:
     return print_schema(graphene_schema.graphql_schema)
 
 
+def build_relation_node_seed_sdl() -> str:
+    """Build the Slice-D/E OUTPUT field/relation parity seed SDL.
+
+    This is the deliverable that PROVES the native output compiler matches the
+    graphene v1 contract for the FULL field/relation surface (Slices D + E +
+    the FK-relation-output-nullability divergence). It builds an output node
+    type carrying:
+
+    * ``extra`` — a DECLARED ``graphene.String()`` non-model field (Slice D:
+      graphene captures it via ``_meta.fields``; native must emit it too,
+      matching name + type + nullability).
+    * ``computed`` — a DECLARED ``graphene.Int(description=...)`` non-model
+      field (Slice D).
+    * ``author`` — a REQUIRED (non-null DB) ``ForeignKey``. graphene renders
+      OUTPUT FK ALWAYS NULLABLE (``author: AuthorType``); native must NOT wrap
+      it in ``GraphQLNonNull`` (the FK-relation-output-nullability fix).
+    * ``category`` — a NULLABLE ``ForeignKey`` (``category: CategoryType``).
+    * ``tags`` / ``co_authors`` — ``ManyToManyField`` (Slice E: graphene renders
+      the auto-derived ``<Model>ListType`` results/totalCount container, NOT a
+      plain ``[Node]`` list).
+    * ``comments`` — a REVERSE FK (``ManyToOneRel``) (Slice E: ``CommentListType``
+      container via the reverse accessor).
+    * ``author_profile`` (on ``SeedAuthorType``) — a REVERSE O2O
+      (``OneToOneRel``, the reverse side of ``AuthorProfile.author``). graphene
+      renders this as a SINGLE nullable Field (``authorProfile:
+      SeedAuthorProfileType``) via ``convert_onetoone_field_to_djangomodel``, NOT
+      a ``<Model>ListType`` container. ``OneToOneRel`` subclasses
+      ``ManyToOneRel``, so the native ``_is_many_relation`` check must EXCLUDE it
+      or it would wrongly render as ``authorProfile: AuthorProfileListType`` — a
+      reverse-O2O parity regression this seed pins.
+
+    Uses the REAL ``tests`` models so the auto-derived list-type NAMES
+    (``AuthorListType`` / ``CommentListType`` / ``TagListType``) and FK target
+    type names are identical between the two backends. The whole reachable graph
+    must be byte-identical (names + nullability + args) after ``normalize_sdl``.
+    """
+    _configure_django()
+
+    import graphene
+    from graphql.utilities import print_schema
+
+    from django_graphex.fields import DjangoObjectField
+    from django_graphex.registry import Registry
+    from django_graphex.types import DjangoObjectType
+    from tests.models import Author, AuthorProfile, Category, Comment, Post, Tag
+
+    backend = os.environ.get("GDX_BACKEND", "graphene")
+
+    # Isolated registry so this seed's types never collide with other seeds'
+    # types registered in the global registry within the same process.
+    seed_registry = Registry()
+
+    class SeedAuthorProfileType(DjangoObjectType):
+        class Meta:
+            model = AuthorProfile
+            registry = seed_registry
+            only_fields = ("id", "bio")
+
+    class SeedAuthorType(DjangoObjectType):
+        class Meta:
+            model = Author
+            registry = seed_registry
+            # ``author_profile`` is a reverse O2O (OneToOneRel): graphene renders
+            # it as a SINGLE nullable Field, NOT a list container. Pins the
+            # OneToOneRel-misclassification fix in ``_is_many_relation``.
+            only_fields = ("id", "name", "author_profile")
+
+    class SeedCategoryType(DjangoObjectType):
+        class Meta:
+            model = Category
+            registry = seed_registry
+            only_fields = ("id", "title")
+
+    class SeedTagType(DjangoObjectType):
+        class Meta:
+            model = Tag
+            registry = seed_registry
+            only_fields = ("id", "label")
+
+    class SeedCommentType(DjangoObjectType):
+        class Meta:
+            model = Comment
+            registry = seed_registry
+            only_fields = ("id", "body")
+
+    class SeedPostType(DjangoObjectType):
+        # Slice D: DECLARED non-model fields (never enter model._meta).
+        extra = graphene.String()
+        computed = graphene.Int(description="declared int")
+
+        class Meta:
+            model = Post
+            registry = seed_registry
+            only_fields = (
+                "id",
+                "title",
+                "author",  # required FK -> nullable on output
+                "category",  # nullable FK
+                "tags",  # M2M -> TagListType container
+                "co_authors",  # M2M -> AuthorListType container
+                "comments",  # reverse FK -> CommentListType container
+            )
+
+        def resolve_extra(self, info: object) -> str:
+            return "x"
+
+    class SeedQuery(graphene.ObjectType):
+        post = DjangoObjectField(SeedPostType)
+
+    if backend == "native":
+        from django_graphex.native.base import get_shared_output_registry
+        from django_graphex.native.registry_compiler import compile_all_outputs
+        from django_graphex.schema import DjangoGraphQLSchema
+
+        compile_all_outputs()
+        schema = DjangoGraphQLSchema(query=SeedQuery)
+        if os.environ.get("GDX_SEED_TRACE"):
+            query_type = schema.graphql_schema.query_type
+            field_type = query_type.fields["post"].type
+            canonical = get_shared_output_registry().get_compiled(Post)
+            is_native = field_type is canonical and "gdx" in (
+                field_type.extensions or {}
+            )
+            sys.stderr.write(
+                "GDX_SEED_PATH=native\n"
+                if is_native
+                else "GDX_SEED_PATH=graphene-fallback\n"
+            )
+        return print_schema(schema.graphql_schema)
+
+    graphene_schema = graphene.Schema(query=SeedQuery)
+    if os.environ.get("GDX_SEED_TRACE"):
+        sys.stderr.write("GDX_SEED_PATH=graphene\n")
+    return print_schema(graphene_schema.graphql_schema)
+
+
 def build_filter_seed_sdl() -> str:
     """Build the WU4 ``ArticleFilterInput`` filter-input seed SDL for the backend.
 
@@ -373,6 +516,8 @@ def main() -> int:
         sys.stdout.write(build_filter_seed_sdl())
     elif seed == "node_scalars":
         sys.stdout.write(build_scalar_node_seed_sdl())
+    elif seed == "relations":
+        sys.stdout.write(build_relation_node_seed_sdl())
     else:
         sys.stdout.write(build_seed_sdl())
     return 0

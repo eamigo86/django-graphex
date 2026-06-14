@@ -120,14 +120,22 @@ def test_get_related_model_returns_none_when_no_attrs():
 
 
 # ---------------------------------------------------------------------------
-# output_compiler.py:197 — nullable is_many (list + null)
+# Slice E — to-many relations are SKIPPED by the unit field compiler
 # ---------------------------------------------------------------------------
 
 
-def test_to_graphql_field_many_relation_is_nullable_by_default():
-    """Many-to-many/reverse FK doesn't get NonNull wrapper (many relations are nullable)."""
+def test_to_graphql_field_many_relation_is_skipped():
+    """A to-many relation (M2M / reverse FK) is SKIPPED by ``_to_graphql_field``.
+
+    graphene-django renders a to-many relation as the related model's auto-
+    derived ``<Model>ListType`` results/totalCount CONTAINER, NOT a plain
+    ``[Node]`` list. The container needs the graphene ``Registry`` (not available
+    to the unit field compiler), so ``_to_graphql_field`` returns ``{}`` for
+    to-many relations and the container is injected by
+    ``types._compile_relation_list_fields``. (Previously this asserted a
+    divergent ``GraphQLList(Node)``; corrected to match graphene's container.)
+    """
     from django_graphex.native.output_compiler import _to_graphql_field
-    from graphql import GraphQLList, GraphQLNonNull
     import django.db.models as models
 
     class TagM2(models.Model):
@@ -150,14 +158,10 @@ def test_to_graphql_field_many_relation_is_nullable_by_default():
 
     field = ArticleM2._meta.get_field("tags2")
     field_map = _to_graphql_field(field, StubReg())
-    assert len(field_map) >= 1
-    key, gql_field = next(iter(field_map.items()))
-    gql_type = gql_field.type
-    # Many relations: should be list, not wrapped in NonNull at top level
-    # The code path: is_many=True → resolved_type = GraphQLList(...)
-    # Then: if not is_nullable and not is_many → skip NonNull wrapping
-    # So M2M is never wrapped in NonNull
-    assert isinstance(gql_type, GraphQLList) or not isinstance(gql_type, GraphQLNonNull)
+    assert field_map == {}, (
+        "M2M (to-many) must be skipped by _to_graphql_field (rendered as a "
+        f"<Model>ListType container via the relation-list injection), got {field_map!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

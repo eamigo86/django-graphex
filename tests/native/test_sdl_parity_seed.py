@@ -199,3 +199,66 @@ def test_scalar_node_seed_native_subprocess_uses_native_assembly():
         "ANTI-TAUTOLOGY FAILURE: native scalar-node seed did NOT take the "
         f"native assembly path.\nSTDERR:\n{proc.stderr}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Slices D + E + FK-relation-nullability — OUTPUT field/relation parity        #
+# (declared non-model fields; to-many list containers; required FK nullable)   #
+# --------------------------------------------------------------------------- #
+def test_cross_process_relation_node_sdl_parity():
+    """The OUTPUT node graph with a declared non-model field, a required FK, a
+    nullable FK, M2M relations, and a reverse FK is byte-equal between graphene
+    and native.
+
+    This is the Slice D + E + FK-relation-nullability binding deliverable. It
+    proves the native output compiler:
+
+    * EMITS declared non-model fields (``extra: String`` / ``computed: Int``) —
+      Slice D (native previously DROPPED them).
+    * Renders to-many relations as the auto-derived ``<Model>ListType``
+      results/totalCount container (``tags: TagListType`` /
+      ``comments: CommentListType``) — Slice E (native previously emitted a
+      plain ``[Node]`` list).
+    * Renders a REQUIRED FK as NULLABLE (``author: SeedAuthorType``) — the
+      FK-relation-output-nullability fix (native previously emitted
+      ``SeedAuthorType!``).
+
+    Before the fix this FAILS: native drops the declared fields, emits
+    ``[Node]`` for to-many, and ``Type!`` for the required FK.
+    """
+    from tests.native.conftest import normalize_sdl
+
+    graphene_sdl = _run_seed("graphene", seed="relations")
+    native_sdl = _run_seed("native", seed="relations")
+
+    graphene_norm = normalize_sdl(graphene_sdl)
+    native_norm = normalize_sdl(native_sdl)
+
+    assert graphene_norm == native_norm, (
+        "Cross-process relation-node SDL parity FAILED (Slices D+E+FK-null).\n"
+        f"--- graphene (normalized) ---\n{graphene_norm}\n"
+        f"--- native (normalized) ---\n{native_norm}\n"
+    )
+
+
+def test_relation_node_seed_native_subprocess_uses_native_assembly():
+    """ANTI-TAUTOLOGY: the native relation-node seed's SDL must come from native
+    assembly (the gdx-bearing canonical output type), not a graphene fallback.
+    """
+    env = dict(os.environ)
+    env["GDX_BACKEND"] = "native"
+    env["GDX_SEED"] = "relations"
+    env["PYTHONPATH"] = _REPO_ROOT + os.pathsep + env.get("PYTHONPATH", "")
+    env["GDX_SEED_TRACE"] = "1"
+    proc = subprocess.run(
+        [sys.executable, "-m", "tests.native._sdl_parity_seed"],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "GDX_SEED_PATH=native" in proc.stderr, (
+        "ANTI-TAUTOLOGY FAILURE: native relation-node seed did NOT take the "
+        f"native assembly path.\nSTDERR:\n{proc.stderr}"
+    )

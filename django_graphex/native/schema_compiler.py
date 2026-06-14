@@ -304,43 +304,79 @@ def _compile_plain_object_fields(graphene_cls: type) -> dict[str, GraphQLField]:
     Returns:
         A ``{camelCase_name: GraphQLField}`` dict.
     """
-    from django_graphex.native._args import (
-        graphene_arg_to_graphql_argument,
-    )
-
     fields: dict[str, GraphQLField] = {}
     meta_fields = getattr(getattr(graphene_cls, "_meta", None), "fields", None) or {}
     for field_name, field in meta_fields.items():
-        field_type = getattr(field, "type", None)
-        if _is_plain_object_type(field_type):
-            gql_type: Any = _compile_plain_object_type(field_type)
-        else:
-            target = _plain_django_output_type(field_type)
-            if target is not None:
-                gql_type = target
-            else:
-                # A graphene List/NonNull wrapper around a plain ObjectType
-                # (e.g. ``errors: [ErrorType]`` on a mutation payload) must
-                # compile the inner plain type and preserve the wrapper shape;
-                # _unwrap_graphene_type only handles scalar leaves and would
-                # raise a GDX_SCALAR_MAP KeyError for an inner ObjectType.
-                gql_type = _compile_wrapped_field_type(field_type)
-
-        args = {}
-        if getattr(field, "args", None):
-            args = {
-                arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
-                for arg_name, arg in field.args.items()
-            }
-
-        resolve = field.wrap_resolve(_resolver_for(graphene_cls, field_name))
-        fields[to_camel_case(field_name)] = GraphQLField(
-            gql_type,
-            args=args,
-            resolve=resolve,
-            description=getattr(field, "description", None),
+        fields[to_camel_case(field_name)] = compile_declared_field(
+            graphene_cls, field_name, field
         )
     return fields
+
+
+def compile_declared_field(
+    source_cls: type, field_name: str, field: Any
+) -> GraphQLField:
+    """Convert a single DECLARED graphene field to a native ``GraphQLField``.
+
+    Shared by ``_compile_plain_object_fields`` (plain ObjectType compilation) and
+    by ``types._compile_declared_fields`` (Slice D: declared NON-model fields on a
+    ``DjangoObjectType`` — ``graphene.String()`` / ``graphene.Field(PlainType)`` /
+    ``graphene.Int()`` / custom-resolver fields — that never enter ``model._meta``
+    and so are not derived by ``compile_output_fields``).
+
+    The field's mounted type is dispatched EXACTLY like graphene's TypeMap:
+
+    - a nested plain ``graphene.ObjectType`` -> on-the-fly native type;
+    - a ``DjangoObjectType`` / ``DjangoListObjectType`` -> its canonical
+      ``_meta.graphql_output_type``;
+    - a ``List`` / ``NonNull`` wrapper -> the inner leaf compiled, wrapper shape
+      preserved;
+    - any other leaf (scalar / enum) -> ``_unwrap_graphene_type``.
+
+    Resolvers are wired EXACTLY like graphene: the field's own ``resolver`` wins,
+    else the source class' ``resolve_<field_name>`` method, else graphql-core's
+    default attribute/dict resolver.
+
+    Args:
+        source_cls: The class declaring the field (for the ``resolve_<name>``
+            lookup).
+        field_name: The snake_case declared field name.
+        field: The mounted graphene field (``graphene.Field`` / scalar / etc.).
+
+    Returns:
+        A graphql-core ``GraphQLField`` mirroring the graphene declaration.
+    """
+    from django_graphex.native._args import graphene_arg_to_graphql_argument
+
+    field_type = getattr(field, "type", None)
+    if _is_plain_object_type(field_type):
+        gql_type: Any = _compile_plain_object_type(field_type)
+    else:
+        target = _plain_django_output_type(field_type)
+        if target is not None:
+            gql_type = target
+        else:
+            # A graphene List/NonNull wrapper around a plain ObjectType
+            # (e.g. ``errors: [ErrorType]`` on a mutation payload) must
+            # compile the inner plain type and preserve the wrapper shape;
+            # _unwrap_graphene_type only handles scalar leaves and would
+            # raise a GDX_SCALAR_MAP KeyError for an inner ObjectType.
+            gql_type = _compile_wrapped_field_type(field_type)
+
+    args = {}
+    if getattr(field, "args", None):
+        args = {
+            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            for arg_name, arg in field.args.items()
+        }
+
+    resolve = field.wrap_resolve(_resolver_for(source_cls, field_name))
+    return GraphQLField(
+        gql_type,
+        args=args,
+        resolve=resolve,
+        description=getattr(field, "description", None),
+    )
 
 
 def _compile_wrapped_field_type(field_type: Any) -> Any:
