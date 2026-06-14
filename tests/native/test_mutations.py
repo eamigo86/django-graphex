@@ -130,3 +130,72 @@ def test_graphene_argument_import_absent_conceptually():
     assert native_arg.__class__.__module__.startswith("graphql"), (
         "Native arg must be from graphql-core, not graphene"
     )
+
+
+# ---------------------------------------------------------------------------
+# INTEGRATED WIRING TESTS (corrective WU-B apply)
+# Verify DjangoModelMutation._meta.arguments[op] holds GraphQLArgument under native.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_create_arg_is_graphql_argument():
+    """Under GDX_BACKEND=native, DjangoModelMutation._meta.arguments['create']
+    must hold GraphQLArgument values, not graphene.Argument values.
+
+    This tests the integrated mutation call-site wiring, not isolated compilation.
+    """
+    from graphql import GraphQLArgument
+    from django_graphex.mutation import DjangoModelMutation
+    from tests.models import Category
+
+    class _IntegCategoryMutation(DjangoModelMutation):
+        class Meta:
+            model = Category
+
+    create_args = _IntegCategoryMutation._meta.arguments.get("create", {})
+    assert create_args, "DjangoModelMutation must have 'create' arguments"
+
+    # The input argument (not 'id') must be a GraphQLArgument under native
+    for key, val in create_args.items():
+        if key != "id":
+            assert isinstance(val, GraphQLArgument), (
+                f"DjangoModelMutation 'create' arg '{key}' must be GraphQLArgument "
+                f"under GDX_BACKEND=native, got {type(val)}"
+            )
+            break
+
+
+@pytest.mark.django_db
+def test_django_model_mutation_update_arg_is_graphql_argument():
+    """Under GDX_BACKEND=native, DjangoModelMutation._meta.arguments['update']
+    must hold GraphQLArgument for the input (partial model path).
+    """
+    from graphql import GraphQLArgument, GraphQLInputObjectType
+    from django_graphex.mutation import DjangoModelMutation
+    from tests.models import Category
+
+    class _IntegCategoryMutationUpdate(DjangoModelMutation):
+        class Meta:
+            model = Category
+
+    update_args = _IntegCategoryMutationUpdate._meta.arguments.get("update", {})
+    assert update_args, "DjangoModelMutation must have 'update' arguments"
+
+    for key, val in update_args.items():
+        if key != "id":
+            assert isinstance(val, GraphQLArgument), (
+                f"DjangoModelMutation 'update' arg '{key}' must be GraphQLArgument "
+                f"under GDX_BACKEND=native, got {type(val)}"
+            )
+            # The type of that argument may be wrapped in GraphQLNonNull
+            # (required=True); unwrap to check the underlying input type.
+            from graphql import GraphQLNonNull
+            arg_type = val.type
+            if isinstance(arg_type, GraphQLNonNull):
+                arg_type = arg_type.of_type
+            assert isinstance(arg_type, GraphQLInputObjectType), (
+                f"DjangoModelMutation 'update' arg underlying type must be "
+                f"GraphQLInputObjectType, got {type(arg_type)}"
+            )
+            break

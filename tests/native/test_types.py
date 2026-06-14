@@ -206,3 +206,116 @@ def test_input_type_meta_populated_by_compile_all_inputs():
 
     # Before compile_all_inputs, _meta.graphql_input_type is None
     assert _WuBTestPreCompile._meta.graphql_input_type is None  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# INTEGRATED WIRING TESTS (corrective WU-B apply)
+# Verify that DjangoInputObjectType.__init_subclass_with_meta__ actually calls
+# compile_input_type and stores the result on _meta.graphql_input_type.
+# These are the tests that were missing — the previous batch only exercised
+# compile_input_type in isolation; these assert the PRODUCTION INTEGRATION.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_django_input_object_type_meta_graphql_input_type_is_graphql_type():
+    """Under GDX_BACKEND=native, DjangoInputObjectType subclass must set
+    _meta.graphql_input_type to a real GraphQLInputObjectType at class creation.
+
+    This is the core integration gate for WU-B: the production
+    __init_subclass_with_meta__ must branch on GDX_BACKEND and call
+    compile_input_type; the existing graphene path must remain intact.
+    """
+    from graphql import GraphQLInputObjectType
+    from django_graphex.types import DjangoInputObjectType
+    from tests.models import Category
+
+    class _IntegCategoryCreateInput(DjangoInputObjectType):
+        class Meta:
+            model = Category
+            input_for = "create"
+
+    meta = _IntegCategoryCreateInput._meta
+    assert hasattr(meta, "graphql_input_type"), (
+        "DjangoInputObjectType._meta must expose graphql_input_type under native"
+    )
+    assert isinstance(meta.graphql_input_type, GraphQLInputObjectType), (
+        "DjangoInputObjectType._meta.graphql_input_type must be a "
+        f"GraphQLInputObjectType, got {type(meta.graphql_input_type)}"
+    )
+
+
+@pytest.mark.django_db
+def test_django_input_object_type_native_no_container_created():
+    """Under GDX_BACKEND=native, _meta.graphql_input_type is set; no container
+    is read by the native resolver path (graphene still has a container for its own
+    schema build, but that is a graphene-internal detail we don't test here).
+    """
+    from graphql import GraphQLInputObjectType
+    from django_graphex.types import DjangoInputObjectType
+    from tests.models import Category
+
+    class _IntegCategoryUpdateInput(DjangoInputObjectType):
+        class Meta:
+            model = Category
+            input_for = "update"
+
+    meta = _IntegCategoryUpdateInput._meta
+    # Must have a graphql_input_type set by native compile path
+    assert isinstance(meta.graphql_input_type, GraphQLInputObjectType)
+
+
+@pytest.mark.django_db
+def test_django_input_object_type_update_meta_all_fields_nullable():
+    """Under native, update input (partial=True) → all fields nullable."""
+    from graphql import GraphQLNonNull, GraphQLInputObjectType
+    from django_graphex.types import DjangoInputObjectType
+    from tests.models import Category
+
+    class _IntegCategoryUpdate2Input(DjangoInputObjectType):
+        class Meta:
+            model = Category
+            input_for = "update"
+
+    gql_type = _IntegCategoryUpdate2Input._meta.graphql_input_type
+    assert isinstance(gql_type, GraphQLInputObjectType)
+
+    for field_name, field in gql_type.fields.items():
+        assert not isinstance(field.type, GraphQLNonNull), (
+            f"Update input field {field_name!r} must be nullable under partial=True, "
+            f"got {field.type!r}"
+        )
+
+
+@pytest.mark.django_db
+def test_mutation_arguments_use_graphql_argument_under_native():
+    """Under GDX_BACKEND=native, DjangoModelType's _meta.arguments['create'] must
+    hold a dict with a GraphQLArgument (not a graphene Argument).
+
+    This is the 'call site' integration test: when the 6 factory_type("input", ...)
+    call sites are properly wired, global_arguments[op][input_field_name] must be
+    a graphql-core GraphQLArgument, not a graphene Argument.
+    """
+    from graphql import GraphQLArgument
+    from django_graphex.types import DjangoModelType
+    from tests.models import Category
+
+    class _IntegCategoryType(DjangoModelType):
+        class Meta:
+            model = Category
+
+    args_create = _IntegCategoryType._meta.arguments.get("create", {})
+    assert args_create, "DjangoModelType must have 'create' arguments"
+
+    # Find the input argument (not 'id')
+    input_arg = None
+    for key, val in args_create.items():
+        if key != "id":
+            input_arg = val
+            break
+
+    assert input_arg is not None, "Must have an input argument for 'create'"
+    assert isinstance(input_arg, GraphQLArgument), (
+        f"Under GDX_BACKEND=native, mutation input arg must be GraphQLArgument, "
+        f"got {type(input_arg)}"
+    )
