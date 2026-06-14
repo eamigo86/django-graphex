@@ -85,11 +85,11 @@ def _scalar_by_internal() -> dict[str, GraphQLScalarType]:
     the native backend is inactive.
     """
     from django_graphex.native.scalars import (
-        GdxDate,
-        GdxDateTime,
         GdxDecimal,
+        GdxFilterDate,
+        GdxFilterDateTime,
+        GdxFilterTime,
         GdxJSONString,
-        GdxTime,
         GdxUUID,
     )
 
@@ -116,9 +116,14 @@ def _scalar_by_internal() -> dict[str, GraphQLScalarType]:
         "NullBooleanField": GraphQLBoolean,
         "FloatField": GraphQLFloat,
         "DecimalField": GdxDecimal,
-        "DateField": GdxDate,
-        "DateTimeField": GdxDateTime,
-        "TimeField": GdxTime,
+        # Date/DateTime/Time use PLAIN-named filter-input scalars (Date /
+        # DateTime / Time) to match graphene's filter-input map — NOT the
+        # CustomDate-named OUTPUT singletons. graphene-django is internally
+        # inconsistent here (CustomDate output, Date filter); native matches
+        # graphene PER-PATH for full-schema SDL parity (discovery #1509).
+        "DateField": GdxFilterDate,
+        "DateTimeField": GdxFilterDateTime,
+        "TimeField": GdxFilterTime,
         "DurationField": GraphQLString,
         "UUIDField": GdxUUID,
         "BinaryField": GraphQLString,

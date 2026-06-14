@@ -56,6 +56,35 @@ from django_graphex.native.ir import GdxMeta
 _DEFERRED_FIELD_KINDS: dict[str, str] = {}
 
 
+def _rendered_field_name(field: Any, attr_name: str) -> str:
+    """Return the wire name graphene would render for a declared field.
+
+    graphene's ``MountedType`` carries an explicit ``name`` attribute (the
+    ``name=`` kwarg, e.g. ``CustomDate(name="date")``). When set, graphene uses
+    it VERBATIM as the final SDL field name — NO camelCase pass is applied (the
+    explicit name is already the wire name). When unset (``None``), graphene
+    camelCases the snake_case attribute name under ``auto_camelcase=True``.
+
+    Mirroring this is REQUIRED for full-schema SDL parity: the test schema
+    declares ``date_ = CustomDate(name="date")`` / ``datetime_`` / ``time_`` to
+    dodge the Python keyword-collision trailing underscore; graphene renders
+    ``date`` / ``datetime`` / ``time`` while a naive ``to_camel_case(attr)``
+    would render ``date_`` / ``datetime_`` / ``time_`` — an SDL divergence.
+
+    Args:
+        field: The mounted graphene field (may expose an explicit ``.name``).
+        attr_name: The snake_case attribute name under which the field is
+            declared on the root.
+
+    Returns:
+        The explicit ``field.name`` when set, else ``to_camel_case(attr_name)``.
+    """
+    explicit = getattr(field, "name", None)
+    if explicit:
+        return explicit
+    return to_camel_case(attr_name)
+
+
 def _collect_root_attrs(root: type) -> dict[str, Any]:
     """Collect native mutation ``GraphQLField`` attributes graphene dropped.
 
@@ -703,29 +732,33 @@ def compile_native_root(root: type, *, name: str) -> GraphQLObjectType:
                 f"of kind {kind!r} on root {name!r}. The native field builder "
                 f"for this kind is owned by {_DEFERRED_FIELD_KINDS[kind]}."
             )
+        # The wire name honors an explicit ``name=`` kwarg (e.g.
+        # ``CustomDate(name="date")``) exactly as graphene does; the snake
+        # ``field_name`` is still used for the ``resolve_<field_name>`` lookup.
+        wire_name = _rendered_field_name(field, field_name)
         if isinstance(field, DjangoObjectField):
-            fields[to_camel_case(field_name)] = _build_object_field(field)
+            fields[wire_name] = _build_object_field(field)
         elif isinstance(field, DjangoListObjectField):
             # DjangoListObjectField (and DjangoNestedListObjectField) → the WU1b
             # list-container output type; pagination args/resolver live on the
             # container's results field (WU6a), filter arg on this field.
-            fields[to_camel_case(field_name)] = _build_list_object_field(field)
+            fields[wire_name] = _build_list_object_field(field)
         elif isinstance(field, (DjangoFilterListField, DjangoFilterPaginateListField)):
             # Plain filtered list ([Node] / [Node!]); pagination (when present)
             # slices inside the field's own list_resolver (args on this field).
-            fields[to_camel_case(field_name)] = _build_filter_list_field(field)
+            fields[wire_name] = _build_filter_list_field(field)
         elif _is_plain_object_type(getattr(field, "type", None)):
             # Slice A: a plain graphene.ObjectType field (NOT a DjangoObjectType,
             # NOT a scalar) compiles on-the-fly to a single-instance native
             # GraphQLObjectType (recurses; carries extensions['gdx']). Without
             # this it would fall to _build_scalar_field → _unwrap_graphene_type →
             # GDX_SCALAR_MAP KeyError (e.g. the test_security `_Nested` field).
-            fields[to_camel_case(field_name)] = _build_plain_object_field(
+            fields[wire_name] = _build_plain_object_field(
                 field, source_cls=root, field_name=field_name
             )
         else:
             # Plain graphene scalar/enum field (e.g. CustomDateTime).
-            fields[to_camel_case(field_name)] = _build_scalar_field(
+            fields[wire_name] = _build_scalar_field(
                 field, source_cls=root, field_name=field_name
             )
 

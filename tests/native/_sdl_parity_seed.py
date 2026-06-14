@@ -21,6 +21,10 @@ Several seeds are exposed, selected by the ``GDX_SEED`` env var:
   field/relation parity seed: declared non-model fields, a required FK and a
   nullable FK (both nullable on output), M2M + reverse-FK to-many relations
   rendered as the ``<Model>ListType`` results/totalCount container.
+* ``GDX_SEED=full`` — the WU10 BINDING gate: the ENTIRE ``tests/schema.py``
+  schema (every query field, pagination containers, filter inputs, auto-derived
+  list types, and the full ``all_directives`` directive block) built under each
+  backend and printed. This is the Phase-5 closing full-schema SDL parity gate.
 
 Usage::
 
@@ -382,14 +386,17 @@ def build_filter_seed_sdl() -> str:
     the seed renders only the INPUT surface, never the output node type with its
     non-null scalars.
 
-    SCOPE NOTE (WU4 deliverable boundary): this filter seed deliberately stays
-    on String/choices/Int/FK fields so it exercises the FILTERING recursion only.
-    The OUTPUT scalar NAME + nullability parity (Date/DateTime/Time -> CustomDate
-    /CustomDateTime/CustomTime, UUID, DecimalField -> Float, JSONString; model
-    scalars nullable, pk ``id: ID!``) is now RESOLVED and proven by the dedicated
-    ``node_scalars`` seed (Slices B + C, #1494 + #1508). The native ``Decimal``
-    scalar singleton (name ``Decimal``) is reserved for the input/filter path,
-    matching graphene's filter-input ``Decimal`` for DecimalField lookups.
+    WU10 EXTENSION (#1509 filter-input date scalars): the seed now ALSO carries
+    Date/DateTime/Time lookup fields. graphene-django is internally inconsistent
+    on date scalar names — its OUTPUT converter uses ``CustomDate`` /
+    ``CustomDateTime`` / ``CustomTime`` while its FILTER-INPUT map uses PLAIN
+    ``Date`` / ``DateTime`` / ``Time``. Native must match graphene PER-PATH: the
+    native filter-input map references plain-named filter date scalars (distinct
+    from the CustomDate-named output singletons). This seed pins that per-path
+    reconciliation; the OUTPUT scalar names are covered by the ``node_scalars``
+    seed (Slices B + C, #1494 + #1508). The native ``Decimal`` scalar singleton
+    (name ``Decimal``) matches graphene's filter-input ``Decimal`` for
+    DecimalField lookups.
     """
     _configure_django()
 
@@ -406,6 +413,13 @@ def build_filter_seed_sdl() -> str:
         title = models.CharField(max_length=200)
         status = models.CharField(max_length=20, choices=STATUS, default="draft")
         views = models.IntegerField(default=0)
+        # Date/DateTime/Time lookups exercise the filter-input date scalar names
+        # (#1509): graphene renders PLAIN ``Date`` / ``DateTime`` / ``Time`` on
+        # the filter-input path (NOT the CustomDate output names), so native must
+        # too. Pins the per-path date-scalar reconciliation.
+        published_on = models.DateField(null=True)
+        published_at = models.DateTimeField(null=True)
+        published_time = models.TimeField(null=True)
         author = models.ForeignKey(
             Author, related_name="seed_articles", on_delete=models.CASCADE
         )
@@ -417,6 +431,9 @@ def build_filter_seed_sdl() -> str:
         "title": ("exact", "icontains"),
         "status": ("exact", "in"),
         "views": ("exact", "gt", "gte", "lt", "lte", "range", "in", "isnull"),
+        "published_on": ("exact", "gt", "lt", "range", "isnull"),
+        "published_at": ("exact", "gt", "lt", "range"),
+        "published_time": ("exact", "gt", "lt"),
         "author__name": ("exact", "icontains"),
     }
 
@@ -510,6 +527,72 @@ def build_filter_seed_sdl() -> str:
     return print_schema(graphene_schema.graphql_schema)
 
 
+def build_full_schema_sdl() -> str:
+    """Build the ENTIRE ``tests/schema.py`` schema SDL for the active backend.
+
+    This is the WU10 BINDING Phase-5 closing gate (D7): the full production test
+    schema — every query field (``all_users`` / ``all_users1..4`` / ``user`` /
+    ``user1`` / ``user2`` / ``users`` / the explicit-name ``datetime`` / ``date``
+    / ``time`` scalar fields), the ``LimitOffset`` pagination containers, the
+    ``UserType`` filter inputs, the auto-derived list-object types, AND the full
+    ``all_directives`` directive block — assembled under each backend in a
+    SEPARATE process and printed via ``print_schema``.
+
+    Under ``native`` the schema assembles through ``DjangoGraphQLSchema`` (the
+    native root compiler + native output registry + native filter builder +
+    forwarded directives), bypassing ``graphene.Schema`` entirely. Under
+    ``graphene`` it uses the already-built ``tests.schema.schema``. After
+    ``normalize_sdl`` (ordering only) the two MUST be byte-identical.
+
+    The native path passes ``directives=all_directives`` exactly as
+    ``tests/schema.py`` does for the graphene schema, so the directive block
+    matches; and it honors each field's explicit ``name=`` kwarg (e.g.
+    ``CustomDate(name="date")``) so ``date`` / ``datetime`` / ``time`` render
+    identically (not ``date_`` / ``datetime_`` / ``time_``).
+    """
+    _configure_django()
+
+    from graphql.utilities import print_schema
+
+    backend = os.environ.get("GDX_BACKEND", "graphene")
+
+    if backend == "native":
+        from django_graphex import all_directives
+        from django_graphex.native.registry_compiler import compile_all_outputs
+        from django_graphex.schema import DjangoGraphQLSchema
+        from tests.schema import Query
+
+        # Compile every registered output type (app-ready normally does this;
+        # the seed process must do it explicitly before native assembly).
+        compile_all_outputs()
+        schema = DjangoGraphQLSchema(query=Query, directives=all_directives)
+        if os.environ.get("GDX_SEED_TRACE"):
+            # Anti-tautology sentinel: prove the native query root is a
+            # graphql-core GraphQLObjectType carrying extensions['gdx'] (the
+            # native assembly path), NOT a graphene-built root smuggled in.
+            from graphql import GraphQLObjectType
+
+            qt = schema.graphql_schema.query_type
+            is_native = (
+                isinstance(qt, GraphQLObjectType)
+                and not hasattr(qt, "_meta")
+                and "gdx" in (qt.extensions or {})
+            )
+            sys.stderr.write(
+                "GDX_SEED_PATH=native\n"
+                if is_native
+                else "GDX_SEED_PATH=graphene-fallback\n"
+            )
+        return print_schema(schema.graphql_schema)
+
+    # Graphene path: the real production test schema, built with all_directives.
+    from tests.schema import schema as graphene_schema
+
+    if os.environ.get("GDX_SEED_TRACE"):
+        sys.stderr.write("GDX_SEED_PATH=graphene\n")
+    return print_schema(graphene_schema.graphql_schema)
+
+
 def main() -> int:
     seed = os.environ.get("GDX_SEED", "node")
     if seed == "filter":
@@ -518,6 +601,8 @@ def main() -> int:
         sys.stdout.write(build_scalar_node_seed_sdl())
     elif seed == "relations":
         sys.stdout.write(build_relation_node_seed_sdl())
+    elif seed == "full":
+        sys.stdout.write(build_full_schema_sdl())
     else:
         sys.stdout.write(build_seed_sdl())
     return 0

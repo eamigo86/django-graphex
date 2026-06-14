@@ -258,8 +258,13 @@ class DjangoGraphQLSchema(graphene.Schema):
                 class, or ``None``).
             protected_fields: The frozenset of protected top-level field names to
                 store on ``schema.extensions['gdx_protected_fields']`` (C14).
-            **kwargs: Extra graphene.Schema kwargs (currently unused on the native
-                path; reserved for ``directives`` etc. wired by later WUs).
+            **kwargs: Extra graphene.Schema kwargs. ``directives`` is consumed
+                here and forwarded to ``GraphQLSchema`` EXACTLY as graphene does
+                (``GraphQLSchema(..., directives=<list>)``): a non-None list
+                REPLACES the graphql-core spec built-ins, so the native SDL's
+                directive block matches graphene's byte-for-byte (e.g.
+                ``directives=all_directives``). ``None`` keeps graphql-core's
+                ``specified_directives`` default.
 
         Returns:
             A ``graphql.GraphQLSchema``.
@@ -308,10 +313,17 @@ class DjangoGraphQLSchema(graphene.Schema):
             # C14: canonical native read location for protected top-level fields.
             extensions["gdx_protected_fields"] = protected_fields
 
+        # Forward ``directives`` exactly like graphene: a non-None custom list
+        # REPLACES graphql-core's specified_directives (so SDL parity holds for
+        # schemas built with ``directives=all_directives``); None keeps the
+        # graphql-core default.
+        directives = kwargs.get("directives")
+
         return GraphQLSchema(
             query=native_query,
             mutation=native_mutation,
             subscription=native_subscription,
+            directives=directives,
             extensions=extensions,
         )
 

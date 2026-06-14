@@ -188,6 +188,46 @@ GdxTime = GraphQLScalarType(
 
 
 # ---------------------------------------------------------------------------
+# Filter-input date scalars (PLAIN names: Date / DateTime / Time)
+# ---------------------------------------------------------------------------
+#
+# graphene-django is INTERNALLY INCONSISTENT on date scalar names (discovery
+# #1509): its OUTPUT converter uses the ``CustomDate`` / ``CustomDateTime`` /
+# ``CustomTime`` subclasses, but its FILTER-INPUT scalar map
+# (filtering/schema.py) uses PLAIN ``graphene.Date`` / ``graphene.DateTime`` /
+# ``graphene.Time`` (SDL names ``Date`` / ``DateTime`` / ``Time``). To match
+# graphene PER-PATH for full-schema SDL parity (WU10), the native FILTER-INPUT
+# map must reference these plain-named singletons — distinct from the
+# ``CustomDate``-named OUTPUT singletons above. The serialize/parse behaviour is
+# identical; only the GraphQL ``.name`` differs. Reusing the same coercers keeps
+# a single source of truth for date/time round-tripping.
+
+GdxFilterDate = GraphQLScalarType(
+    name="Date",
+    description="ISO 8601 date scalar (YYYY-MM-DD) for filter-input lookups.",
+    serialize=_date_serialize,
+    parse_value=_date_parse_value,
+    parse_literal=_date_parse_literal,
+)
+
+GdxFilterDateTime = GraphQLScalarType(
+    name="DateTime",
+    description="ISO 8601 datetime scalar for filter-input lookups.",
+    serialize=_datetime_serialize,
+    parse_value=_datetime_parse_value,
+    parse_literal=_datetime_parse_literal,
+)
+
+GdxFilterTime = GraphQLScalarType(
+    name="Time",
+    description="ISO 8601 time scalar (HH:MM:SS) for filter-input lookups.",
+    serialize=_time_serialize,
+    parse_value=_time_parse_value,
+    parse_literal=_time_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
 # GdxDecimal
 # ---------------------------------------------------------------------------
 
