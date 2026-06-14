@@ -937,6 +937,93 @@ class DjangoListObjectType(ObjectType):
         # reuse it (honoring this type's pagination/filter config). Last one wins.
         registry.register_list_type(model, cls)
 
+        # ----------------------------------------------------------------
+        # NATIVE PATH: create EXACTLY ONE GraphQLObjectType for the list
+        # container (results + totalCount), identity-stable, following the
+        # same single-instance/shared-registry/thunk pattern as DjangoObjectType
+        # above (types.py ~289-395).
+        #
+        # The results field's element type is resolved LAZILY via the SHARED
+        # GLOBAL output registry so it always yields the node type's single
+        # canonical GraphQLObjectType (identity-stable, not a GraphQLString
+        # fallback), regardless of definition order.
+        #
+        # compile_all_outputs() POPULATES/validates the existing instance via
+        # the same Phase-2 thunk-eval + Phase-3 gdx assertion already in place
+        # for DjangoObjectType entries — no second instance is ever created.
+        # ----------------------------------------------------------------
+        import os as _os_list
+        if _os_list.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+            from django_graphex.native.base import (
+                _GdxOutputEntry,
+                _gdx_output_registry,
+                get_shared_output_registry,
+            )
+            from django_graphex.native.bridge import GdxPayload
+            from django_graphex.native.ir import GdxMeta
+            from graphql import GraphQLField, GraphQLInt, GraphQLList, GraphQLObjectType
+
+            _shared_registry = get_shared_output_registry()
+
+            # Capture loop variables via default-arg idiom.
+            _list_model = model
+            _list_rfn = results_field_name  # e.g. "results" or "items"
+
+            def _make_list_fields_thunk(
+                _m: type = _list_model,
+                _rfn: str = _list_rfn,
+                _reg: Any = _shared_registry,
+            ) -> dict:
+                """Lazily build results + totalCount fields.
+
+                Results element type is resolved from the shared registry so
+                it is the same canonical GraphQLObjectType as the node type's
+                _meta.graphql_output_type — identity-stable, no String fallback.
+                """
+                node_gql = _reg.get_compiled(_m)
+                if node_gql is None:
+                    # Fallback: build a placeholder (should never happen after
+                    # compile_all_outputs() registers all nodes first).
+                    from graphql import GraphQLString as _S
+                    node_gql = _S  # type: ignore[assignment]
+
+                return {
+                    _rfn: GraphQLField(GraphQLList(node_gql)),
+                    "totalCount": GraphQLField(GraphQLInt),
+                }
+
+            _list_gdx_meta = GdxMeta(
+                name=cls.__name__,
+                model=model,
+                results_field_name=results_field_name,
+                max_deep=max_deep,
+                complexity=complexity,
+            )
+            _list_gdx_payload = GdxPayload(_list_gdx_meta)
+
+            _list_gql_type = GraphQLObjectType(
+                name=cls.__name__,
+                fields=_make_list_fields_thunk,
+                extensions={"gdx": _list_gdx_payload},
+            )
+
+            # Register entry so compile_all_outputs() validates (thunk-eval +
+            # gdx assertion) this container alongside DjangoObjectType entries.
+            _list_entry = _GdxOutputEntry(
+                cls=cls,
+                gql_name=cls.__name__,
+                model=model,
+                only_fields=None,
+                exclude_fields=None,
+                max_deep=max_deep,
+                complexity=complexity,
+            )
+            _gdx_output_registry.append(_list_entry)
+
+            # Store on _meta (graphene freezes Options after super().__init_subclass_with_meta__
+            # so we bypass with object.__setattr__, matching DjangoObjectType pattern).
+            object.__setattr__(_meta, "graphql_output_type", _list_gql_type)
+
     @classmethod
     def RetrieveField(cls, *args, **kwargs) -> DjangoObjectField:
         """Create a field for retrieving a single object.
