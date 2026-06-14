@@ -1,0 +1,346 @@
+"""Native GraphQL scalar singletons for the output compiler.
+
+7 owned ``GraphQLScalarType`` singletons + ``GDX_SCALAR_MAP``.
+
+CustomDateFormat bypass:
+    All three date/time scalars honour a ``CustomDateFormat`` wrapper FIRST —
+    if the value is an instance, ``date_str`` is returned verbatim without any
+    ISO-format coercion.  This is ported verbatim from
+    ``django_graphex.base_types`` (lines 259, 289, 316).
+
+Error contract:
+    ``serialize``, ``parse_value``, and ``parse_literal`` raise ``GraphQLError``
+    (never ``ValueError`` / ``AssertionError``) on invalid input so callers
+    never see a 500.
+
+No imports from ``django`` or ``graphene``.
+"""
+
+from __future__ import annotations
+
+import datetime
+import decimal
+import json
+import uuid as _uuid_module
+from typing import Any
+
+from graphql import (
+    GraphQLBoolean,
+    GraphQLError,
+    GraphQLFloat,
+    GraphQLID,
+    GraphQLInt,
+    GraphQLScalarType,
+    GraphQLString,
+)
+from graphql.language.ast import (
+    BooleanValueNode,
+    FloatValueNode,
+    IntValueNode,
+    NullValueNode,
+    StringValueNode,
+)
+
+
+# ---------------------------------------------------------------------------
+# CustomDateFormat (owned here, no graphene import)
+# ---------------------------------------------------------------------------
+
+class CustomDateFormat:
+    """Pre-formatted date/time string bypass wrapper.
+
+    Ported verbatim from ``django_graphex.base_types``.
+    When a scalar's ``serialize`` receives an instance of this class it returns
+    ``date_str`` immediately, bypassing all ISO-format logic.
+    """
+
+    __slots__ = ("date_str",)
+
+    def __init__(self, date: str) -> None:
+        self.date_str = date
+
+
+# ---------------------------------------------------------------------------
+# GdxDate
+# ---------------------------------------------------------------------------
+
+def _date_serialize(value: Any) -> str:
+    if isinstance(value, CustomDateFormat):
+        return value.date_str
+    try:
+        if isinstance(value, datetime.datetime):
+            value = value.date()
+        if not isinstance(value, datetime.date):
+            raise GraphQLError(f"Date cannot represent value: {value!r}")
+        return value.isoformat()
+    except (ValueError, TypeError) as exc:
+        raise GraphQLError(f"Date cannot represent value: {value!r}") from exc
+
+
+def _date_parse_value(value: Any) -> datetime.date:
+    if not isinstance(value, str):
+        raise GraphQLError(f"Date cannot represent non-string value: {value!r}")
+    try:
+        return datetime.date.fromisoformat(value)
+    except (ValueError, TypeError) as exc:
+        raise GraphQLError(f"Date cannot represent value: {value!r}") from exc
+
+
+def _date_parse_literal(ast: Any, variable_values: Any = None) -> datetime.date:
+    if not isinstance(ast, StringValueNode):
+        raise GraphQLError(f"Date cannot represent non-string literal: {ast!r}")
+    return _date_parse_value(ast.value)
+
+
+GdxDate = GraphQLScalarType(
+    name="GdxDate",
+    description="ISO 8601 date scalar (YYYY-MM-DD). Supports CustomDateFormat bypass.",
+    serialize=_date_serialize,
+    parse_value=_date_parse_value,
+    parse_literal=_date_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
+# GdxDateTime
+# ---------------------------------------------------------------------------
+
+def _datetime_serialize(value: Any) -> str:
+    if isinstance(value, CustomDateFormat):
+        return value.date_str
+    try:
+        if not isinstance(value, (datetime.datetime, datetime.date)):
+            raise GraphQLError(f"DateTime cannot represent value: {value!r}")
+        return value.isoformat()
+    except (ValueError, TypeError) as exc:
+        raise GraphQLError(f"DateTime cannot represent value: {value!r}") from exc
+
+
+def _datetime_parse_value(value: Any) -> datetime.datetime:
+    if not isinstance(value, str):
+        raise GraphQLError(f"DateTime cannot represent non-string value: {value!r}")
+    try:
+        return datetime.datetime.fromisoformat(value)
+    except (ValueError, TypeError) as exc:
+        raise GraphQLError(f"DateTime cannot represent value: {value!r}") from exc
+
+
+def _datetime_parse_literal(ast: Any, variable_values: Any = None) -> datetime.datetime:
+    if not isinstance(ast, StringValueNode):
+        raise GraphQLError(f"DateTime cannot represent non-string literal: {ast!r}")
+    return _datetime_parse_value(ast.value)
+
+
+GdxDateTime = GraphQLScalarType(
+    name="GdxDateTime",
+    description="ISO 8601 datetime scalar. Supports CustomDateFormat bypass.",
+    serialize=_datetime_serialize,
+    parse_value=_datetime_parse_value,
+    parse_literal=_datetime_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
+# GdxTime
+# ---------------------------------------------------------------------------
+
+def _time_serialize(value: Any) -> str:
+    if isinstance(value, CustomDateFormat):
+        return value.date_str
+    try:
+        if isinstance(value, datetime.datetime):
+            value = value.time()
+        if not isinstance(value, datetime.time):
+            raise GraphQLError(f"Time cannot represent value: {value!r}")
+        return value.isoformat()
+    except (ValueError, TypeError) as exc:
+        raise GraphQLError(f"Time cannot represent value: {value!r}") from exc
+
+
+def _time_parse_value(value: Any) -> datetime.time:
+    if not isinstance(value, str):
+        raise GraphQLError(f"Time cannot represent non-string value: {value!r}")
+    try:
+        return datetime.time.fromisoformat(value)
+    except (ValueError, TypeError) as exc:
+        raise GraphQLError(f"Time cannot represent value: {value!r}") from exc
+
+
+def _time_parse_literal(ast: Any, variable_values: Any = None) -> datetime.time:
+    if not isinstance(ast, StringValueNode):
+        raise GraphQLError(f"Time cannot represent non-string literal: {ast!r}")
+    return _time_parse_value(ast.value)
+
+
+GdxTime = GraphQLScalarType(
+    name="GdxTime",
+    description="ISO 8601 time scalar (HH:MM:SS). Supports CustomDateFormat bypass.",
+    serialize=_time_serialize,
+    parse_value=_time_parse_value,
+    parse_literal=_time_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
+# GdxDecimal
+# ---------------------------------------------------------------------------
+
+def _decimal_serialize(value: Any) -> str:
+    if isinstance(value, decimal.Decimal):
+        return str(value)
+    try:
+        return str(decimal.Decimal(value))
+    except (decimal.InvalidOperation, ValueError, TypeError) as exc:
+        raise GraphQLError(f"Decimal cannot represent value: {value!r}") from exc
+
+
+def _decimal_parse_value(value: Any) -> decimal.Decimal:
+    try:
+        return decimal.Decimal(str(value))
+    except (decimal.InvalidOperation, ValueError, TypeError) as exc:
+        raise GraphQLError(f"Decimal cannot represent value: {value!r}") from exc
+
+
+def _decimal_parse_literal(ast: Any, variable_values: Any = None) -> decimal.Decimal:
+    if isinstance(ast, (StringValueNode, IntValueNode, FloatValueNode)):
+        return _decimal_parse_value(ast.value)
+    raise GraphQLError(f"Decimal cannot represent non-numeric literal: {ast!r}")
+
+
+GdxDecimal = GraphQLScalarType(
+    name="GdxDecimal",
+    description="Arbitrary-precision decimal scalar. Serializes as string.",
+    serialize=_decimal_serialize,
+    parse_value=_decimal_parse_value,
+    parse_literal=_decimal_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
+# GdxUUID
+# ---------------------------------------------------------------------------
+
+def _uuid_serialize(value: Any) -> str:
+    if isinstance(value, _uuid_module.UUID):
+        return str(value)
+    try:
+        # Validate by round-tripping through UUID
+        return str(_uuid_module.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise GraphQLError(f"UUID cannot represent value: {value!r}") from exc
+
+
+def _uuid_parse_value(value: Any) -> _uuid_module.UUID:
+    try:
+        return _uuid_module.UUID(str(value))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise GraphQLError(f"UUID cannot represent value: {value!r}") from exc
+
+
+def _uuid_parse_literal(ast: Any, variable_values: Any = None) -> _uuid_module.UUID:
+    if not isinstance(ast, StringValueNode):
+        raise GraphQLError(f"UUID cannot represent non-string literal: {ast!r}")
+    return _uuid_parse_value(ast.value)
+
+
+GdxUUID = GraphQLScalarType(
+    name="GdxUUID",
+    description="UUID scalar. Serializes as lowercase hyphenated string.",
+    serialize=_uuid_serialize,
+    parse_value=_uuid_parse_value,
+    parse_literal=_uuid_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
+# GdxJSONString
+# ---------------------------------------------------------------------------
+
+def _json_serialize(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise GraphQLError(f"JSONString cannot represent value: {value!r}") from exc
+
+
+def _json_parse_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        raise GraphQLError(f"JSONString cannot represent non-string value: {value!r}")
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise GraphQLError(f"JSONString cannot parse: {value!r}") from exc
+
+
+def _json_parse_literal(ast: Any, variable_values: Any = None) -> Any:
+    if not isinstance(ast, StringValueNode):
+        raise GraphQLError(f"JSONString cannot represent non-string literal: {ast!r}")
+    return _json_parse_value(ast.value)
+
+
+GdxJSONString = GraphQLScalarType(
+    name="GdxJSONString",
+    description="Arbitrary JSON scalar. Serializes Python objects as JSON strings.",
+    serialize=_json_serialize,
+    parse_value=_json_parse_value,
+    parse_literal=_json_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
+# GdxGenericScalar
+# ---------------------------------------------------------------------------
+
+def _generic_serialize(value: Any) -> Any:
+    return value
+
+
+def _generic_parse_value(value: Any) -> Any:
+    return value
+
+
+def _generic_parse_literal(ast: Any, variable_values: Any = None) -> Any:
+    if isinstance(ast, StringValueNode):
+        return ast.value
+    if isinstance(ast, IntValueNode):
+        return int(ast.value)
+    if isinstance(ast, FloatValueNode):
+        return float(ast.value)
+    if isinstance(ast, BooleanValueNode):
+        return ast.value
+    if isinstance(ast, NullValueNode):
+        return None
+    raise GraphQLError(f"GenericScalar cannot represent literal: {ast!r}")
+
+
+GdxGenericScalar = GraphQLScalarType(
+    name="GdxGenericScalar",
+    description="Generic scalar: passes values through as-is. Accepts any JSON-compatible type.",
+    serialize=_generic_serialize,
+    parse_value=_generic_parse_value,
+    parse_literal=_generic_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
+# GDX_SCALAR_MAP — 7 custom + 5 graphql-core builtins
+# ---------------------------------------------------------------------------
+
+GDX_SCALAR_MAP: dict[str, GraphQLScalarType] = {
+    # Custom singletons
+    "GdxDate": GdxDate,
+    "GdxDateTime": GdxDateTime,
+    "GdxTime": GdxTime,
+    "GdxDecimal": GdxDecimal,
+    "GdxUUID": GdxUUID,
+    "GdxJSONString": GdxJSONString,
+    "GdxGenericScalar": GdxGenericScalar,
+    # graphql-core builtins
+    "String": GraphQLString,
+    "Int": GraphQLInt,
+    "Float": GraphQLFloat,
+    "Boolean": GraphQLBoolean,
+    "ID": GraphQLID,
+}
