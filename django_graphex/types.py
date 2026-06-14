@@ -525,7 +525,8 @@ class DjangoInputObjectType(InputObjectType):
         Args:
             model: Django model this input type represents.
             container: Container class used to hold input values; one is
-                generated when None.
+                generated when None. Retained for graphene-path compatibility
+                until Phase 7 removes the graphene path entirely.
             registry: Registry to register this type in; defaults to the
                 global registry.
             skip_registry: When True, do not register this type.
@@ -580,6 +581,11 @@ class DjangoInputObjectType(InputObjectType):
                 yank_fields_from_attrs(base.__dict__, _as=InputField)
             )
 
+        # The graphene path still requires a container on _meta for graphene
+        # schema-build time (graphene.Schema.create_inputobjecttype reads it).
+        # This container is removed in Phase 7 when the graphene path is deleted.
+        # Under the native path, _meta.container is ignored — resolvers receive
+        # validated Pydantic BaseModel instances, never container objects.
         if container is None:
             container = type(cls.__name__, (InputObjectTypeContainer, cls), {})
 
