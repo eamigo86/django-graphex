@@ -67,9 +67,12 @@ class AuthenticatedFieldsMiddleware:
 
     The protected field set comes from (in order):
 
-    1. the registry attached by "DjangoGraphQLSchema"
-       (the "info.schema._gde_protected_fields" attribute), or
-    2. the "DJANGO_GRAPHEX['PROTECTED_FIELDS']" setting.
+    1. the native schema extensions
+       ("info.schema.extensions['gdx_protected_fields']", set by
+       "DjangoGraphQLSchema" under GDX_BACKEND=native), or
+    2. the legacy registry attribute attached by "DjangoGraphQLSchema"
+       (the "info.schema._gde_protected_fields" attribute, graphene path), or
+    3. the "DJANGO_GRAPHEX['PROTECTED_FIELDS']" setting.
 
     Nothing is protected unless declared. Override "get_protected_fields" /
     "get_error_extensions" to source the field set differently or to enrich
@@ -113,9 +116,16 @@ class AuthenticatedFieldsMiddleware:
     def get_protected_fields(self, info: GraphQLResolveInfo) -> Any:
         """Return the set of protected top-level field names for this request."""
         schema = getattr(info, "schema", None)
+        # 1) Native canonical location: schema.extensions['gdx_protected_fields'].
+        extensions = getattr(schema, "extensions", None) or {}
+        from_extensions = extensions.get("gdx_protected_fields")
+        if from_extensions is not None:
+            return from_extensions
+        # 2) Legacy attribute (graphene path / dual-backend fallback).
         attached = getattr(schema, "_gde_protected_fields", None)
         if attached is not None:
             return attached
+        # 3) Settings fallback.
         return set(graphql_api_settings.PROTECTED_FIELDS or ())
 
     def get_error_extensions(

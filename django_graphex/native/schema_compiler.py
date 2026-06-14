@@ -135,11 +135,16 @@ def _build_object_field(field: Any) -> GraphQLField:
     )
 
 
-def _build_scalar_field(field: Any) -> GraphQLField:
+def _build_scalar_field(
+    field: Any, *, source_cls: type | None = None, field_name: str | None = None
+) -> GraphQLField:
     """Convert a plain graphene scalar field to a graphql-core ``GraphQLField``.
 
     Args:
         field: A plain ``graphene.Field`` whose mounted type is a scalar/enum.
+        source_cls: The source ObjectType class declaring the field; used to
+            recover a ``resolve_<field_name>`` parent resolver (graphene parity).
+        field_name: The snake_case field name (for the ``resolve_<name>`` lookup).
 
     Returns:
         A graphql-core ``GraphQLField``.
@@ -155,9 +160,236 @@ def _build_scalar_field(field: Any) -> GraphQLField:
             arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
             for arg_name, arg in field.args.items()
         }
-    resolve = field.wrap_resolve(default_field_resolver)
+    parent_resolver = _resolver_for(source_cls, field_name)
+    resolve = field.wrap_resolve(parent_resolver)
     return GraphQLField(
         gql_type,
+        args=args,
+        resolve=resolve,
+        description=getattr(field, "description", None),
+    )
+
+
+def _resolver_for(source_cls: type | None, field_name: str | None) -> Any:
+    """Return the graphene parent resolver for a field, or the default resolver.
+
+    Mirrors graphene's TypeMap wiring: the source ObjectType's
+    ``resolve_<field_name>`` (unbound) when declared, else graphql-core's default
+    attribute/dict resolver. ``field.wrap_resolve`` still prefers a field-level
+    resolver over this fallback.
+
+    Args:
+        source_cls: The ObjectType class declaring the field (may be ``None``).
+        field_name: The snake_case field name (may be ``None``).
+
+    Returns:
+        The parent resolver callable.
+    """
+    if source_cls is None or field_name is None:
+        return default_field_resolver
+    from graphene.utils.get_unbound_function import get_unbound_function
+
+    method = getattr(source_cls, f"resolve_{field_name}", None)
+    if method is not None:
+        return get_unbound_function(method)
+    return default_field_resolver
+
+
+# Module-level memo so repeated references to the same plain graphene ObjectType
+# (within one schema build OR across roots) compile to ONE native instance —
+# identity-stable, no duplicate-name TypeError. Keyed by the source class.
+_PLAIN_OBJECT_TYPE_CACHE: dict[type, GraphQLObjectType] = {}
+
+
+def _is_plain_object_type(graphene_cls: Any) -> bool:
+    """Return whether *graphene_cls* is a plain ``graphene.ObjectType`` subclass.
+
+    "Plain" excludes the django-graphex output container/model types
+    (``DjangoObjectType`` / ``DjangoListObjectType``), which carry their own
+    canonical ``_meta.graphql_output_type`` and are compiled by the output
+    registry — NOT on-the-fly here. It also excludes scalars/enums (handled by
+    ``_build_scalar_field``) and non-class field types (wrappers).
+
+    Args:
+        graphene_cls: The mounted field ``type`` (``field.type``).
+
+    Returns:
+        ``True`` when *graphene_cls* is a class that subclasses
+        ``graphene.ObjectType`` but is NOT a django-graphex output type.
+    """
+    import inspect
+
+    import graphene
+
+    if not inspect.isclass(graphene_cls):
+        return False
+    if not issubclass(graphene_cls, graphene.ObjectType):
+        return False
+
+    # Exclude django-graphex output types — they own a canonical compiled type.
+    from django_graphex.types import DjangoListObjectType, DjangoObjectType
+
+    if issubclass(graphene_cls, (DjangoObjectType, DjangoListObjectType)):
+        return False
+    return True
+
+
+def _compile_plain_object_type(graphene_cls: type) -> GraphQLObjectType:
+    """Compile a plain ``graphene.ObjectType`` to a native type (memoized).
+
+    Single-instance, on-the-fly. Each declared field becomes a native field:
+    - a nested plain ``graphene.ObjectType`` field recurses through this builder
+      (so ``Field(Plain)`` chains compile fully native, never falling into the
+      scalar arm);
+    - a ``DjangoObjectType`` / ``DjangoListObjectType`` field reuses its
+      canonical ``_meta.graphql_output_type``;
+    - anything else is a scalar/enum converted via ``_unwrap_graphene_type``.
+
+    Resolvers are wired EXACTLY like graphene's TypeMap: the field's own
+    ``resolver`` wins; otherwise the source class' ``resolve_<name>`` method (if
+    any) or graphql-core's default attribute/dict resolver. The compiled type
+    carries ``extensions['gdx']`` (D8) with the source graphene class so
+    dual-backend read-sites can recover ``resolve_<field>`` methods.
+
+    Args:
+        graphene_cls: A plain ``graphene.ObjectType`` subclass.
+
+    Returns:
+        The canonical (memoized) native ``GraphQLObjectType`` for *graphene_cls*.
+    """
+    cached = _PLAIN_OBJECT_TYPE_CACHE.get(graphene_cls)
+    if cached is not None:
+        return cached
+
+    type_name = (
+        getattr(getattr(graphene_cls, "_meta", None), "name", None)
+        or graphene_cls.__name__
+    )
+
+    def _make_fields(
+        _cls: type = graphene_cls,
+    ) -> dict[str, GraphQLField]:
+        # Built lazily via a thunk so a self-referential plain ObjectType
+        # (A → A) closes through the cache entry registered below BEFORE this
+        # thunk evaluates — mirroring the GraphQLInputObjectType cache-before-eval
+        # pattern (D5) on the output side.
+        return _compile_plain_object_fields(_cls)
+
+    native_type = GraphQLObjectType(
+        name=type_name,
+        fields=_make_fields,
+        extensions={
+            "gdx": GdxPayload(GdxMeta(name=type_name, graphene_type=graphene_cls))
+        },
+    )
+    # Register BEFORE returning so recursive references resolve to this instance.
+    _PLAIN_OBJECT_TYPE_CACHE[graphene_cls] = native_type
+    return native_type
+
+
+def _compile_plain_object_fields(graphene_cls: type) -> dict[str, GraphQLField]:
+    """Build the native field dict for a plain ``graphene.ObjectType`` subclass.
+
+    Args:
+        graphene_cls: A plain ``graphene.ObjectType`` subclass.
+
+    Returns:
+        A ``{camelCase_name: GraphQLField}`` dict.
+    """
+    from django_graphex.native._args import (
+        _unwrap_graphene_type,
+        graphene_arg_to_graphql_argument,
+    )
+
+    fields: dict[str, GraphQLField] = {}
+    meta_fields = getattr(getattr(graphene_cls, "_meta", None), "fields", None) or {}
+    for field_name, field in meta_fields.items():
+        field_type = getattr(field, "type", None)
+        if _is_plain_object_type(field_type):
+            gql_type: Any = _compile_plain_object_type(field_type)
+        else:
+            target = _plain_django_output_type(field_type)
+            gql_type = target if target is not None else _unwrap_graphene_type(field_type)
+
+        args = {}
+        if getattr(field, "args", None):
+            args = {
+                arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+                for arg_name, arg in field.args.items()
+            }
+
+        resolve = field.wrap_resolve(_resolver_for(graphene_cls, field_name))
+        fields[to_camel_case(field_name)] = GraphQLField(
+            gql_type,
+            args=args,
+            resolve=resolve,
+            description=getattr(field, "description", None),
+        )
+    return fields
+
+
+def _plain_django_output_type(field_type: Any) -> GraphQLObjectType | None:
+    """Return the canonical native output type for a django-graphex output field.
+
+    A plain ObjectType may reference a ``DjangoObjectType`` /
+    ``DjangoListObjectType`` whose canonical native type lives on
+    ``_meta.graphql_output_type``. Reuse it (identity-stable) instead of
+    recompiling. Returns ``None`` for non-django types.
+
+    Args:
+        field_type: The mounted field ``type``.
+
+    Returns:
+        The canonical container ``GraphQLObjectType`` or ``None``.
+    """
+    import inspect
+
+    if not inspect.isclass(field_type):
+        return None
+    from django_graphex.types import DjangoListObjectType, DjangoObjectType
+
+    if issubclass(field_type, (DjangoObjectType, DjangoListObjectType)):
+        compiled = getattr(
+            getattr(field_type, "_meta", None), "graphql_output_type", None
+        )
+        return compiled
+    return None
+
+
+def _build_plain_object_field(
+    field: Any, *, source_cls: type | None = None, field_name: str | None = None
+) -> GraphQLField:
+    """Build a native ``GraphQLField`` for a plain ``graphene.ObjectType`` field.
+
+    Compiles the field's target plain ObjectType on-the-fly (single-instance,
+    memoized) and converts the field's args. The resolver is wired via the
+    field's own ``wrap_resolve`` so a field-level resolver still wins; otherwise
+    the source class' ``resolve_<field_name>`` (graphene parity) or graphql-core's
+    default attribute/dict resolver.
+
+    Args:
+        field: A ``graphene.Field`` whose ``type`` is a plain ``graphene.ObjectType``.
+        source_cls: The ObjectType class declaring the field (for the
+            ``resolve_<field_name>`` parent-resolver lookup).
+        field_name: The snake_case field name.
+
+    Returns:
+        A graphql-core ``GraphQLField``.
+    """
+    from django_graphex.native._args import graphene_arg_to_graphql_argument
+
+    output_type = _compile_plain_object_type(field.type)
+
+    args = {}
+    if getattr(field, "args", None):
+        args = {
+            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            for arg_name, arg in field.args.items()
+        }
+
+    resolve = field.wrap_resolve(_resolver_for(source_cls, field_name))
+    return GraphQLField(
+        output_type,
         args=args,
         resolve=resolve,
         description=getattr(field, "description", None),
@@ -390,9 +622,20 @@ def compile_native_root(root: type, *, name: str) -> GraphQLObjectType:
             # Plain filtered list ([Node] / [Node!]); pagination (when present)
             # slices inside the field's own list_resolver (args on this field).
             fields[to_camel_case(field_name)] = _build_filter_list_field(field)
+        elif _is_plain_object_type(getattr(field, "type", None)):
+            # Slice A: a plain graphene.ObjectType field (NOT a DjangoObjectType,
+            # NOT a scalar) compiles on-the-fly to a single-instance native
+            # GraphQLObjectType (recurses; carries extensions['gdx']). Without
+            # this it would fall to _build_scalar_field → _unwrap_graphene_type →
+            # GDX_SCALAR_MAP KeyError (e.g. the test_security `_Nested` field).
+            fields[to_camel_case(field_name)] = _build_plain_object_field(
+                field, source_cls=root, field_name=field_name
+            )
         else:
             # Plain graphene scalar/enum field (e.g. CustomDateTime).
-            fields[to_camel_case(field_name)] = _build_scalar_field(field)
+            fields[to_camel_case(field_name)] = _build_scalar_field(
+                field, source_cls=root, field_name=field_name
+            )
 
     # 2) raw native mutation fields graphene dropped from _meta.fields.
     for attr_name, gql_field in _collect_root_attrs(root).items():

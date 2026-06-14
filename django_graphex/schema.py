@@ -29,23 +29,32 @@ _NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 
 def collect_field_names(
-    *object_types: type[ObjectType] | None, camelcase: bool = True
+    *object_types: Any, camelcase: bool = True
 ) -> frozenset[str]:
     """Return the (camelCased) field names declared on the given ObjectTypes.
 
-    Names are taken from "ObjectType._meta.fields" and camelCased to match
-    "info.field_name" under the default "auto_camelcase=True".
+    Reads field names from EITHER a native graphql-core ``GraphQLObjectType``
+    (its ``.fields`` keys are ALREADY camelCase — no second ``to_camel_case``
+    pass) OR a graphene ``ObjectType`` (snake_case ``_meta.fields`` keys,
+    camelCased here to match ``info.field_name`` under ``auto_camelcase=True``).
 
     Args:
-        *object_types: The graphene ObjectTypes to collect field names from.
-        camelcase: Whether to camelCase the collected field names.
+        *object_types: The native ``GraphQLObjectType`` or graphene ObjectTypes
+            to collect field names from.
+        camelcase: Whether to camelCase graphene snake_case keys (ignored for
+            native types whose keys are already camelCase).
 
     Returns:
         The set of collected field names.
     """
-    names = set()
+    names: set[str] = set()
     for object_type in object_types:
         if object_type is None:
+            continue
+        # Native graphql-core type: keys are already camelCase — read as-is.
+        native_fields = getattr(object_type, "fields", None)
+        if native_fields is not None and not hasattr(object_type, "_meta"):
+            names.update(native_fields.keys())
             continue
         fields = getattr(getattr(object_type, "_meta", None), "fields", None) or {}
         for key in fields:
@@ -144,9 +153,13 @@ class DjangoGraphQLSchema(graphene.Schema):
                 "DjangoGraphQLSchema requires a 'query' root ObjectType; got None."
             )
 
-        merged_query = self._merge_root("Query", query, private_query)
-        merged_mutation = self._merge_root("Mutation", mutation, private_mutation)
-        merged_subscription = self._merge_root(
+        # graphene.Schema ALWAYS needs graphene roots; the native field-union +
+        # collision check is performed separately on the native path (C12).
+        merged_query = self._graphene_merge_root("Query", query, private_query)
+        merged_mutation = self._graphene_merge_root(
+            "Mutation", mutation, private_mutation
+        )
+        merged_subscription = self._graphene_merge_root(
             "Subscription", subscription, private_subscription
         )
 
@@ -168,21 +181,32 @@ class DjangoGraphQLSchema(graphene.Schema):
         # info.schema._gde_protected_fields (info.schema is self.graphql_schema).
         self.graphql_schema._gde_protected_fields = frozenset(protected)
 
-        # NATIVE PATH (WU2/C11): rebuild self.graphql_schema as a graphql-core
-        # GraphQLSchema assembled DIRECTLY from the native root compiler. The
-        # merged graphene roots above give us the unioned _meta.fields; the
-        # native compiler turns those into a GraphQLObjectType whose field types
-        # are the CANONICAL native instances (extensions['gdx'], identity).
+        # NATIVE PATH (WU2/C11 + WU7/C12-C14): rebuild self.graphql_schema as a
+        # graphql-core GraphQLSchema assembled DIRECTLY from the native root
+        # compiler. _merge_root (native) field-unions public + private into a
+        # native GraphQLObjectType, RAISING ValueError on a field-name collision
+        # (the inverse-MRO security hazard graphene silently shadows). Protected
+        # fields land on schema.extensions['gdx_protected_fields'] (C14).
         #
         # NO try/except fallback to graphene: if native assembly fails it MUST
         # raise (loud). A NotImplementedError for a not-yet-built field kind
-        # (list/filter/pagination — WU3/WU5/WU6) propagates by design.
+        # propagates by design.
         if _NATIVE_BACKEND:
+            native_query = self._merge_root("Query", query, private_query)
+            native_mutation = self._merge_root("Mutation", mutation, private_mutation)
+            native_subscription = self._merge_root(
+                "Subscription", subscription, private_subscription
+            )
             native_schema = self._build_native_graphql_schema(
-                merged_query, merged_mutation, merged_subscription, **kwargs
+                native_query,
+                native_mutation,
+                native_subscription,
+                protected_fields=frozenset(protected),
+                **kwargs,
             )
             # Carry the protected-field marker onto the native schema too
-            # (legacy reader compatibility; WU7 migrates to extensions).
+            # (legacy reader compatibility) — the canonical native read location
+            # is schema.extensions['gdx_protected_fields'] (set at build, C14).
             native_schema._gde_protected_fields = frozenset(protected)
             self.graphql_schema = native_schema
 
@@ -200,22 +224,32 @@ class DjangoGraphQLSchema(graphene.Schema):
 
     @staticmethod
     def _build_native_graphql_schema(
-        query: type[ObjectType] | None,
-        mutation: type[ObjectType] | None,
-        subscription: type[ObjectType] | None,
+        query: Any,
+        mutation: Any,
+        subscription: Any,
+        *,
+        protected_fields: frozenset[str] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Assemble a graphql-core ``GraphQLSchema`` from the native root compiler.
 
-        BYPASSES graphene.Schema for the graphql_schema: each merged graphene
-        root is compiled into a native ``GraphQLObjectType`` whose field types are
-        the canonical native instances (``extensions['gdx']``, identity-stable),
-        eliminating the duplicate-name TypeError the first WU2 attempt hit.
+        BYPASSES graphene.Schema for the graphql_schema: each merged root is
+        either ALREADY a native ``GraphQLObjectType`` (the C12 field-union case,
+        produced by ``_merge_root`` under native) or a graphene root class
+        (short-circuit cases) compiled here into a native ``GraphQLObjectType``
+        whose field types are the canonical native instances (``extensions['gdx']``,
+        identity-stable), eliminating the duplicate-name TypeError the first WU2
+        attempt hit.
 
         Args:
-            query: The merged graphene query root (required, never ``None`` here).
-            mutation: The merged graphene mutation root (or ``None``).
-            subscription: The merged graphene subscription root (or ``None``).
+            query: The merged query root — a native ``GraphQLObjectType`` or a
+                graphene root class (required, never ``None`` here).
+            mutation: The merged mutation root (native type, graphene class, or
+                ``None``).
+            subscription: The merged subscription root (native type, graphene
+                class, or ``None``).
+            protected_fields: The frozenset of protected top-level field names to
+                store on ``schema.extensions['gdx_protected_fields']`` (C14).
             **kwargs: Extra graphene.Schema kwargs (currently unused on the native
                 path; reserved for ``directives`` etc. wired by later WUs).
 
@@ -224,15 +258,15 @@ class DjangoGraphQLSchema(graphene.Schema):
 
         Raises:
             NotImplementedError: Propagated from the native root compiler for a
-                field kind whose native builder does not exist yet (WU3/WU5/WU6).
-                NEVER swallowed by a graphene fallback.
+                field kind whose native builder does not exist yet. NEVER
+                swallowed by a graphene fallback.
         """
-        from graphql import GraphQLSchema
+        from graphql import GraphQLObjectType, GraphQLSchema
 
         from django_graphex.native.schema_compiler import compile_native_root
 
         def _root_name(root: Any, default: str) -> str:
-            """Use the graphene root's GraphQL type name (class name by default).
+            """Use the root's GraphQL type name (class name by default).
 
             graphene names the root after ``_meta.name`` and renders an explicit
             ``schema { query: <Name> }`` block; matching that name keeps the
@@ -240,30 +274,163 @@ class DjangoGraphQLSchema(graphene.Schema):
             """
             if root is None:
                 return default
+            if isinstance(root, GraphQLObjectType):
+                return root.name
             meta_name = getattr(getattr(root, "_meta", None), "name", None)
             return meta_name or getattr(root, "__name__", None) or default
 
-        native_query = compile_native_root(query, name=_root_name(query, "Query"))
-        native_mutation = compile_native_root(
-            mutation, name=_root_name(mutation, "Mutation")
-        )
-        native_subscription = compile_native_root(
-            subscription, name=_root_name(subscription, "Subscription")
-        )
+        def _native_root(root: Any, default: str) -> Any:
+            """Return the native ``GraphQLObjectType`` for a merged root.
+
+            Already-native roots (the C12 union) pass through unchanged; graphene
+            root classes (short-circuit cases) are compiled on the spot.
+            """
+            if root is None:
+                return None
+            if isinstance(root, GraphQLObjectType):
+                return root
+            return compile_native_root(root, name=_root_name(root, default))
+
+        native_query = _native_root(query, "Query")
+        native_mutation = _native_root(mutation, "Mutation")
+        native_subscription = _native_root(subscription, "Subscription")
+
+        extensions: dict[str, Any] = {}
+        if protected_fields is not None:
+            # C14: canonical native read location for protected top-level fields.
+            extensions["gdx_protected_fields"] = protected_fields
 
         return GraphQLSchema(
             query=native_query,
             mutation=native_mutation,
             subscription=native_subscription,
+            extensions=extensions,
         )
 
     @staticmethod
     def _merge_root(
         name: str,
+        public: Any,
+        private: Any,
+    ) -> Any:
+        """Union a public root with its private counterpart.
+
+        Backend-aware (C12). On the native backend this performs the field-union
+        DIRECTLY on the compiled native roots and RAISES ``ValueError`` on a
+        field-name collision between public and private — the inverse-MRO security
+        hazard graphene silently shadows (one root quietly overrides the other).
+        On the graphene backend it delegates to :meth:`_graphene_merge_root`
+        (MRO-based union, unchanged).
+
+        The short-circuits are preserved on BOTH backends:
+        - no private root -> public unchanged
+        - no public root -> private
+        - public is private -> public
+        - private fields are a SUBSET of public (the "full root + marker subset"
+          idiom) -> public unchanged (only protection is recorded)
+
+        Args:
+            name: The GraphQL name for the merged root ("Query" / "Mutation" /
+                "Subscription").
+            public: The public root ObjectType (or ``None``).
+            private: The private root ObjectType (or ``None``).
+
+        Returns:
+            On graphene: the merged graphene ObjectType (or ``None``). On native:
+            a native ``GraphQLObjectType`` for the genuine union, or the graphene
+            root class for short-circuit cases (compiled later by
+            ``_build_native_graphql_schema``), or ``None``.
+
+        Raises:
+            ValueError: On the native backend when public and private declare a
+                field with the same name (collision).
+        """
+        if not _NATIVE_BACKEND:
+            return DjangoGraphQLSchema._graphene_merge_root(name, public, private)
+
+        # --- NATIVE field-union with collision guard (C12) -------------------
+        if private is None:
+            return public
+        if public is None:
+            return private
+        if public is private:
+            return public
+
+        def _field_names(obj: Any) -> set:
+            return set(getattr(getattr(obj, "_meta", None), "fields", None) or {})
+
+        public_names = _field_names(public)
+        private_names = _field_names(private)
+
+        # The "full root + marker subset" idiom: the private root MARKS fields
+        # already present in the public root, so there is no real union and no
+        # collision. Two signals identify it:
+        #   1. public is a SUBCLASS of private (e.g. ``class Root(Private, ...)``)
+        #      — the public root is built FROM the private one (inheritance);
+        #   2. private fields are a PROPER subset of public — every private field
+        #      intentionally marks an existing public field.
+        # In both cases the schema root needs no change; only protection is
+        # recorded.
+        is_inheritance_marker = isinstance(private, type) and issubclass(
+            public, private
+        )
+        if is_inheritance_marker or private_names < public_names:
+            return public
+
+        # Genuine union of two INDEPENDENT roots: a name appearing in BOTH is a
+        # security hazard (one root silently shadows the other under graphene's
+        # inverse MRO). Native must NOT shadow — RAISE.
+        collisions = sorted(public_names & private_names)
+        if collisions:
+            raise ValueError(
+                f"DjangoGraphQLSchema cannot merge root {name!r}: field-name "
+                f"collision between public and private roots: {collisions}. "
+                "A colliding field would let one root silently shadow the other "
+                "(a field-level authorization hazard); declare distinct field "
+                "names or move the field into a single root."
+            )
+
+        # Compile both sides natively, then field-union into one GraphQLObjectType
+        # using the cache-before-eval thunk pattern so a self-referential field
+        # closes through the registered instance.
+        from graphql import GraphQLObjectType
+
+        from django_graphex.native.bridge import GdxPayload
+        from django_graphex.native.ir import GdxMeta
+        from django_graphex.native.schema_compiler import compile_native_root
+
+        public_native = compile_native_root(
+            public, name=DjangoGraphQLSchema._root_type_name(public, name)
+        )
+        private_native = compile_native_root(
+            private, name=DjangoGraphQLSchema._root_type_name(private, name)
+        )
+
+        def _merged_fields(
+            _pub: GraphQLObjectType = public_native,
+            _priv: GraphQLObjectType = private_native,
+        ) -> dict:
+            return {**_pub.fields, **_priv.fields}
+
+        return GraphQLObjectType(
+            name=name,
+            fields=_merged_fields,
+            extensions={"gdx": GdxPayload(GdxMeta(name=name, graphene_type=public))},
+        )
+
+    @staticmethod
+    def _root_type_name(root: Any, default: str) -> str:
+        """Return the GraphQL type name for a graphene root class."""
+        meta_name = getattr(getattr(root, "_meta", None), "name", None)
+        return meta_name or getattr(root, "__name__", None) or default
+
+    @staticmethod
+    def _graphene_merge_root(
+        name: str,
         public: type[ObjectType] | None,
         private: type[ObjectType] | None,
     ) -> type[ObjectType] | None:
-        """Union a public root with its private counterpart for the schema.
+        """Union a public root with its private counterpart (graphene backend).
 
         Args:
             name: The GraphQL name for the merged root ("Query" / "Mutation" /
