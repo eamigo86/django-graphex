@@ -248,7 +248,15 @@ def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
 
     if declared_fields or custom_filters:
         registry = getattr(getattr(_type, "_meta", None), "registry", None)
-        field.filter_type = field.filter_backend.build_input_type(
+        # This is the GRAPHENE field path: the result is wrapped in a graphene
+        # ``Argument`` below, so it MUST be a graphene input type even under
+        # ``GDX_BACKEND=native``. The native (graphql-core) filter input is
+        # consumed by the native compiler field path (WU5/WU6), not here.
+        from django_graphex.filtering.schema import (
+            build_filter_input_type as _graphene_build_filter_input_type,
+        )
+
+        field.filter_type = _graphene_build_filter_input_type(
             _type._meta.model,
             declared_fields,
             registry,
@@ -763,7 +771,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         declared_fields = fields if fields is not None else _type._meta.filter_fields
         self.fields = declared_fields
         if declared_fields:
-            self.filter_type = self.filter_backend.build_input_type(
+            # GRAPHENE field path: wrapped in a graphene ``Argument`` below, so
+            # build a graphene input type even under ``GDX_BACKEND=native`` (the
+            # native filter input is consumed by the native compiler, WU5/WU6).
+            from django_graphex.filtering.schema import (
+                build_filter_input_type as _graphene_build_filter_input_type,
+            )
+
+            self.filter_type = _graphene_build_filter_input_type(
                 _type._meta.model, declared_fields, _type._meta.registry
             )
             if self.filter_type is not None:
