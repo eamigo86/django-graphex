@@ -43,6 +43,7 @@ from .types import (
     DjangoUnionType,
 )
 from .uploads import Base64FileInput, decode_base64_file
+from .native.base import InputType
 from .validation import DepthLimitValidationRule
 from .views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
 
@@ -126,4 +127,6 @@ __all__ = (
     "BaseGraphQLView",
     "GraphQLView",
     "AuthenticatedGraphQLView",
+    # NATIVE INPUT (Phase 2)
+    "InputType",
 )
