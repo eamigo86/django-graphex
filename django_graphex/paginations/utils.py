@@ -6,6 +6,7 @@ a generic pagination field class for reusable pagination logic.
 
 from __future__ import annotations
 
+import os
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,9 @@ from ..base_types import DjangoListObjectBase
 
 if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo
+
+#: True when GDX_BACKEND=native is set in the process environment.
+_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 
 class GenericPaginationField(graphene.Field):
@@ -36,7 +40,12 @@ class GenericPaginationField(graphene.Field):
 
         self.paginator_instance = paginator_instance
 
-        kwargs.update(self.paginator_instance.to_graphql_fields())
+        # Under GDX_BACKEND=native, to_graphql_fields() returns native
+        # GraphQLArgument instances that graphene's to_arguments() cannot sort.
+        # The native compiler (WU6a) will wire these args directly; skip them
+        # here so the graphene.Field init stays clean.
+        if not _NATIVE_BACKEND:
+            kwargs.update(self.paginator_instance.to_graphql_fields())
         kwargs.update(
             {
                 "description": "{} list, paginated by {}".format(

@@ -466,10 +466,16 @@ class DjangoFilterPaginateListField(Field):
                 'You need to pass a valid DjangoGraphqlPagination in DjangoFilterPaginateListField, received "{}".'
             ).format(pagination)
 
-            pagination_kwargs = pagination.to_graphql_fields()
-
             self.pagination = pagination
-            kwargs.update(**pagination_kwargs)
+
+            # Under GDX_BACKEND=native, to_graphql_fields() returns native
+            # GraphQLArgument instances that graphene's to_arguments() cannot
+            # sort. The native compiler (WU6a) wires args directly; skip here.
+            import os as _os_fields_pag
+
+            if _os_fields_pag.environ.get("GDX_BACKEND", "graphene") != "native":
+                pagination_kwargs = pagination.to_graphql_fields()
+                kwargs.update(**pagination_kwargs)
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"

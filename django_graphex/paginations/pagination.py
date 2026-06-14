@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import os
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ValidationError
@@ -22,6 +23,10 @@ from django_graphex.paginations.utils import (
     _positive_int,
 )
 from django_graphex.settings import graphql_api_settings
+
+#: True when GDX_BACKEND=native is set in the process environment.
+#: Read once at import time (the flag is process-global and set before import).
+_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 #: Final fallback page size for cursor pagination when neither a default nor a
 #: maximum is configured (the keyset always needs a concrete size).
@@ -39,7 +44,70 @@ __all__ = (
     "LimitOffsetGraphqlPagination",
     "PageGraphqlPagination",
     "CursorGraphqlPagination",
+    "NATIVE_CURSOR_PAGE_INFO",
 )
+
+# ---------------------------------------------------------------------------
+# B7 — Native CursorPageInfo (GDX_BACKEND=native only)
+# ---------------------------------------------------------------------------
+# Built eagerly at module import time (only runs when GDX_BACKEND=native so the
+# graphql-core types are always available). The graphene CursorPageInfo class
+# below stays on the graphene path; this singleton is used by the native
+# compiler when assembling the CursorGraphqlPagination pageInfo field (WU6a).
+
+if _NATIVE_BACKEND:
+    from graphql import (
+        GraphQLBoolean,
+        GraphQLField,
+        GraphQLNonNull,
+        GraphQLObjectType,
+        GraphQLString,
+    )
+
+    from django_graphex.native.bridge import GdxPayload
+    from django_graphex.native.ir import GdxMeta
+
+    NATIVE_CURSOR_PAGE_INFO: Any = GraphQLObjectType(
+        name="CursorPageInfo",
+        fields=lambda: {
+            "hasNextPage": GraphQLField(
+                GraphQLNonNull(GraphQLBoolean),
+                description=(
+                    "True if at least one row exists after the last row of the page."
+                ),
+            ),
+            "hasPreviousPage": GraphQLField(
+                GraphQLNonNull(GraphQLBoolean),
+                description=(
+                    "True if at least one row exists before the first row of the page."
+                ),
+            ),
+            "startCursor": GraphQLField(
+                GraphQLString,
+                description=(
+                    "Cursor of the first row of the page (null if the page is empty)."
+                ),
+            ),
+            "endCursor": GraphQLField(
+                GraphQLString,
+                description=(
+                    "Cursor of the last row of the page (null if the page is empty)."
+                ),
+            ),
+        },
+        description="Forward keyset pagination metadata.",
+        extensions={
+            "gdx": GdxPayload(
+                GdxMeta(
+                    name="CursorPageInfo",
+                )
+            )
+        },
+    )
+else:
+    # Graphene path: NATIVE_CURSOR_PAGE_INFO is not used; set to None so import
+    # sites that guard on _NATIVE_BACKEND don't need a separate check.
+    NATIVE_CURSOR_PAGE_INFO = None
 
 
 def _sort_key(value: Any) -> tuple[bool, Any]:
@@ -365,9 +433,41 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
     def to_graphql_fields(self) -> dict[str, Any]:
         """Convert limit/offset parameters to GraphQL field arguments.
 
+        Under GDX_BACKEND=native returns ``{name: GraphQLArgument}`` instances
+        so the native compiler can embed them directly as field args.
+        Under the graphene path returns graphene scalar instances (unchanged).
+
         Returns:
             A mapping of argument names to GraphQL field definitions.
         """
+        if _NATIVE_BACKEND:
+            from graphql import GraphQLArgument, GraphQLInt, GraphQLString
+
+            return {
+                self.limit_query_param: GraphQLArgument(
+                    GraphQLInt,
+                    default_value=self.default_limit,
+                    description=(
+                        "Number of results to return per page. Default "
+                        "'default_limit': {}, and 'max_limit': {}".format(
+                            self.default_limit, self.max_limit
+                        )
+                    ),
+                ),
+                self.offset_query_param: GraphQLArgument(
+                    GraphQLInt,
+                    description=(
+                        "The initial index from which to return the results. Default: 0"
+                    ),
+                ),
+                self.ordering_param: GraphQLArgument(
+                    GraphQLString,
+                    description=(
+                        "A string or comma delimited string value that indicates the "
+                        "default ordering when obtaining lists of objects."
+                    ),
+                ),
+            }
         return {
             self.limit_query_param: Int(
                 default_value=self.default_limit,
@@ -547,9 +647,38 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
     def to_graphql_fields(self) -> dict[str, Any]:
         """Convert page pagination parameters to GraphQL field arguments.
 
+        Under GDX_BACKEND=native returns ``{name: GraphQLArgument}`` instances.
+        Under the graphene path returns graphene scalar instances (unchanged).
+
         Returns:
             A mapping of argument names to GraphQL field definitions.
         """
+        if _NATIVE_BACKEND:
+            from graphql import GraphQLArgument, GraphQLInt, GraphQLString
+
+            paginator_dict: dict[str, Any] = {
+                self.page_query_param: GraphQLArgument(
+                    GraphQLInt,
+                    default_value=1,
+                    description=(
+                        "A page number within the result paginated set. Default: 1"
+                    ),
+                ),
+                self.ordering_param: GraphQLArgument(
+                    GraphQLString,
+                    description=(
+                        "A string or comma delimited string value that indicates the "
+                        "default ordering when obtaining lists of objects."
+                    ),
+                ),
+            }
+            if self.page_size_query_param:
+                paginator_dict[self.page_size_query_param] = GraphQLArgument(
+                    GraphQLInt,
+                    description=self.page_size_query_description,
+                )
+            return paginator_dict
+
         paginator_dict = {
             self.page_query_param: Int(
                 default_value=1,
@@ -841,9 +970,25 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
     def to_graphql_fields(self) -> dict[str, Any]:
         """Convert cursor pagination parameters to GraphQL field arguments.
 
+        Under GDX_BACKEND=native returns ``{name: GraphQLArgument}`` instances.
+        Under the graphene path returns graphene scalar instances (unchanged).
+
         Returns:
             A mapping of argument names to GraphQL field definitions.
         """
+        if _NATIVE_BACKEND:
+            from graphql import GraphQLArgument, GraphQLInt, GraphQLString
+
+            return {
+                self.first_query_param: GraphQLArgument(
+                    GraphQLInt,
+                    description=self.first_query_description,
+                ),
+                self.cursor_query_param: GraphQLArgument(
+                    GraphQLString,
+                    description=self.cursor_query_description,
+                ),
+            }
         return {
             self.first_query_param: Int(description=self.first_query_description),
             self.cursor_query_param: String(description=self.cursor_query_description),
