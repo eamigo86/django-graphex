@@ -8,6 +8,7 @@ layer is swappable and isolated. The package ships a single
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 from .schema import build_filter_input_type
@@ -80,9 +81,19 @@ class NativeFilterBackend(FilterBackend):
                 triples from ``@filter_field``-decorated methods.
 
         Returns:
-            A graphene ``InputObjectType`` subclass, or ``None`` when no
-            filterable fields are declared.
+            Under ``GDX_BACKEND=native`` a ``GraphQLInputObjectType`` (or
+            ``None``); under graphene a ``graphene.InputObjectType`` subclass
+            (or ``None``) when no filterable fields are declared.
         """
+        if os.environ.get("GDX_BACKEND", "graphene") == "native":
+            # Native (graphql-core) builder — keeps the graphene path untouched.
+            from .native_schema import (
+                build_filter_input_type as native_build_filter_input_type,
+            )
+
+            return native_build_filter_input_type(
+                model, filter_fields, registry, custom_filters=custom_filters
+            )
         return build_filter_input_type(
             model, filter_fields, registry, custom_filters=custom_filters
         )

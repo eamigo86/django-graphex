@@ -23,7 +23,7 @@ Design contracts:
 from __future__ import annotations
 
 import re
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from graphql import (
     GraphQLBoolean,
@@ -31,7 +31,6 @@ from graphql import (
     GraphQLFloat,
     GraphQLID,
     GraphQLInt,
-    GraphQLList,
     GraphQLNonNull,
     GraphQLString,
 )
@@ -39,14 +38,13 @@ from graphql import (
 from django_graphex.native.scalars import (
     GdxDate,
     GdxDateTime,
-    GdxDecimal,
     GdxJSONString,
     GdxTime,
     GdxUUID,
 )
 
 if TYPE_CHECKING:
-    from django.db.models import Field as DjangoField, Model
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +101,12 @@ def _build_django_to_gql() -> dict:
         models.BigAutoField: GraphQLID,
         models.SmallAutoField: GraphQLID,
         models.FloatField: GraphQLFloat,
-        models.DecimalField: GdxDecimal,
-        models.DurationField: GraphQLString,
+        # graphene-django collapses DecimalField AND DurationField to OUTPUT
+        # ``Float`` (converter.py convert_field_to_float). Match that exactly for
+        # SDL parity — the ``Decimal`` scalar is reserved for the input/filter
+        # path. (See #1508.)
+        models.DecimalField: GraphQLFloat,
+        models.DurationField: GraphQLFloat,
         # Boolean
         models.BooleanField: GraphQLBoolean,
         # Date/Time
@@ -142,8 +144,7 @@ def _is_relation_field(field: Any) -> bool:
     Fallback: ``field.is_relation`` attribute (covers exotic custom field types
     that subclass neither but still declare the standard ``is_relation`` sentinel).
     """
-    from django.db.models.fields.related import RelatedField
-    from django.db.models.fields.related import ForeignObjectRel
+    from django.db.models.fields.related import ForeignObjectRel, RelatedField
     if isinstance(field, (RelatedField, ForeignObjectRel)):
         return True
     # Fallback: check for the is_relation attribute (all relation fields have it)
@@ -164,8 +165,26 @@ def _get_related_model(field: Any) -> type | None:
 
 
 def _is_many_relation(field: Any) -> bool:
-    """Return True if this is a to-many relation (M2M, reverse FK, etc.)."""
-    from django.db.models import ManyToManyField, ManyToManyRel, ManyToOneRel
+    """Return True if this is a to-many relation (M2M, reverse FK, etc.).
+
+    IMPORTANT: ``OneToOneRel`` (the reverse side of a forward ``OneToOneField``)
+    is a SUBCLASS of ``ManyToOneRel`` (``issubclass(OneToOneRel, ManyToOneRel)``
+    is True), so a naive ``isinstance(field, ManyToOneRel)`` check would
+    misclassify a reverse O2O as to-many and render it as a ``<Model>ListType``
+    container. graphene-django renders a reverse O2O as a SINGLE nullable Field
+    (``converter.convert_onetoone_field_to_djangomodel``, registered on
+    ``models.OneToOneRel``), NOT a list container. We must therefore EXCLUDE
+    ``OneToOneRel`` BEFORE the ``ManyToOneRel`` check so reverse O2O flows
+    through the to-ONE relation arm of ``_to_graphql_field``.
+    """
+    from django.db.models import (
+        ManyToManyField,
+        ManyToManyRel,
+        ManyToOneRel,
+        OneToOneRel,
+    )
+    if isinstance(field, OneToOneRel):
+        return False
     return isinstance(field, (ManyToManyField, ManyToManyRel, ManyToOneRel))
 
 
@@ -193,32 +212,43 @@ def _to_graphql_field(
     field_name: str = field.name if hasattr(field, "name") else field.attname
     camel_name: str = _to_camel_case(field_name)
 
-    # --- Relation fields: zero-arg lambda thunk resolved via registry --------
+    # --- Relation fields ------------------------------------------------------
     if _is_relation_field(field):
         related_cls = _get_related_model(field)
         if related_cls is None:
             return {}
 
-        is_many = _is_many_relation(field)
+        # To-MANY relations (M2M / reverse FK / reverse M2M) are NOT compiled
+        # here. graphene-django renders a to-many relation as the related model's
+        # auto-derived ``<Model>ListType`` results/totalCount CONTAINER (NOT a
+        # plain ``[Node]`` list) — see converter.convert_field_to_list_or_connection
+        # / convert_many_rel_to_djangomodel -> _nested_list_object_field. That
+        # container needs the graphene ``Registry`` (get_or_create_list_object_type),
+        # which is not available to this compiler (it only has get_compiled). The
+        # to-many container fields are therefore injected by
+        # ``types._compile_relation_list_fields`` inside the output thunk, which
+        # reuses the SAME native list-container builder the root compiler uses.
+        # Returning ``{}`` here avoids emitting a divergent ``[Node]`` field.
+        if _is_many_relation(field):
+            return {}
 
-        # Default-arg captures the current related_cls (loop-capture fix)
+        # To-ONE relation (FK / O2O): a zero-arg lambda thunk resolved via the
+        # registry. graphene-django renders the OUTPUT FK field ALWAYS NULLABLE —
+        # ``Field(_type, required=is_required(field) and input_flag == 'create')``
+        # with ``input_flag is None`` for output makes ``required`` always False
+        # (converter.convert_field_to_djangomodel). Native MUST match: do NOT
+        # wrap the FK output in ``GraphQLNonNull``, even when the DB column is
+        # NOT NULL. (This mirrors the model-scalar #1494 OUTPUT nullability rule;
+        # input/filter FK nullability is owned by the input/filter path.)
         def _make_relation_type(
             _cls: type = related_cls,
-            _many: bool = is_many,
         ) -> Any:
             compiled = registry.get_compiled(_cls)
             if compiled is None:
                 return GraphQLString  # fallback for unregistered relations
-            if _many:
-                return GraphQLList(compiled)
             return compiled
 
-        # Nullable for FK (has null), NonNull otherwise based on field.null
-        is_nullable = getattr(field, "null", True)
         resolved_type = _make_relation_type()
-
-        if not is_nullable and not is_many:
-            resolved_type = GraphQLNonNull(resolved_type)
 
         def _default_resolver(
             root: Any,
@@ -250,16 +280,20 @@ def _to_graphql_field(
         # Unknown field type — skip gracefully
         return {}
 
-    # Determine nullability: required = NonNull, nullable = as-is
-    is_nullable = getattr(field, "null", False) or getattr(field, "blank", False)
-    # Primary keys and auto fields are always non-null in output
+    # Nullability (#1494 parity): graphene-django renders OUTPUT model-scalar
+    # fields as ALWAYS NULLABLE (converter passes
+    # ``required=is_required(field) and input_flag == 'create'`` — output's
+    # input_flag is None, so required is always False). Native MUST match: do
+    # NOT reflect the DB NOT NULL constraint on output. The ONLY non-null
+    # OUTPUT scalar is the primary key, which graphene renders ``id: ID!``.
+    # NOTE: this is OUTPUT-only; INPUT / filter-input nullability is owned by
+    # the input compiler / filtering builder and is unchanged.
     is_pk = getattr(field, "primary_key", False)
-    is_auto = hasattr(field, "auto_created") and field.auto_created
 
-    if is_nullable and not is_pk:
-        gql_type: Any = gql_scalar
+    if is_pk:
+        gql_type: Any = GraphQLNonNull(gql_scalar)
     else:
-        gql_type = GraphQLNonNull(gql_scalar)
+        gql_type = gql_scalar
 
     def _default_resolver(
         root: Any,

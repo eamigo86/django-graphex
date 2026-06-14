@@ -264,6 +264,69 @@ def test_adapt_self_no_params_passthrough():
     )
 
 
+# ---------------------------------------------------------------------------
+# W1 debt: _adapt_self un-inspectable-callable defensive branch (closes the
+# 93.55% coverage gap on native/_compat.py — the except (ValueError, TypeError)
+# guard around inspect.signature was previously dead/untested).
+# ---------------------------------------------------------------------------
+
+
+def test_adapt_self_uninspectable_callable_passthrough():
+    """_adapt_self returns an un-inspectable callable unchanged (no raise).
+
+    Some C-level builtins have NO Python signature: ``inspect.signature(fn)``
+    raises ``ValueError``. The shim's ``except (ValueError, TypeError)`` guard
+    must treat such a callable as a plain passthrough (it cannot have a ``self``
+    first parameter that needs adapting). ``breakpoint`` is a builtin whose
+    ``inspect.signature`` reliably raises ``ValueError`` on CPython, exercising
+    exactly this defensive branch.
+    """
+    import inspect
+    import warnings
+
+    from django_graphex.native._compat import _adapt_self
+
+    # Sanity-pin the precondition: breakpoint is genuinely un-inspectable.
+    with pytest.raises((ValueError, TypeError)):
+        inspect.signature(breakpoint)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        adapted = _adapt_self(breakpoint)
+
+    assert adapted is breakpoint, (
+        "_adapt_self must return an un-inspectable callable unchanged "
+        "(identity passthrough via the except (ValueError, TypeError) guard)"
+    )
+    assert len(w) == 0, "No DeprecationWarning for an un-inspectable callable"
+
+
+def test_adapt_self_typeerror_signature_passthrough():
+    """_adapt_self also passes through a callable whose signature raises TypeError.
+
+    A callable INSTANCE whose ``__call__`` is a descriptor that does not apply to
+    the instance makes ``inspect.signature`` raise ``TypeError`` — the second arm
+    of the ``except (ValueError, TypeError)`` guard. Pins both raise kinds.
+    """
+    import inspect
+
+    from django_graphex.native._compat import _adapt_self
+
+    class Uninspectable:
+        # A slot-wrapper descriptor that does not apply to this instance type;
+        # inspect.signature(instance) raises TypeError.
+        __call__ = dict.update
+
+    fn = Uninspectable()
+    with pytest.raises((ValueError, TypeError)):
+        inspect.signature(fn)
+
+    adapted = _adapt_self(fn)
+    assert adapted is fn, (
+        "_adapt_self must passthrough a callable whose signature raises TypeError"
+    )
+
+
 def test_adapt_self_meta_view_setattr_coverage():
     """_MetaView.__setattr__ delegates to the wrapped Options object."""
     from django_graphex._options import DjangoObjectOptions, _MetaView

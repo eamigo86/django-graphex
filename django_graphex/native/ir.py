@@ -55,6 +55,12 @@ class GdxMeta:
     model_operations: Any = None
     registry: Any = None
     graphql_input_type: Any = None
+    # Source graphene class (root ObjectType or DjangoObjectType) this native
+    # type was compiled from. Lets dual-backend read-sites recover the class to
+    # look up ``resolve_<field>`` / ``optimize_<field>`` methods under native,
+    # mirroring graphene's ``graphene_type`` back-reference. None for types with
+    # no graphene source (e.g. model-free native ObjectTypes).
+    graphene_type: Any = None
 
 
 @dataclass(frozen=True)

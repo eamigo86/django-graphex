@@ -56,9 +56,12 @@ from django_graphex.native.scalars import (
 
 class TestGdxScalarMap:
     def test_has_7_custom_scalars(self):
+        # Map keys are the GraphQL scalar NAMES as graphene renders them (the
+        # Python symbols keep the Gdx prefix; only .name + map keys match
+        # graphene). See discovery #1508.
         custom_names = {
-            "GdxDate", "GdxDateTime", "GdxTime",
-            "GdxDecimal", "GdxUUID", "GdxJSONString", "GdxGenericScalar",
+            "CustomDate", "CustomDateTime", "CustomTime",
+            "Decimal", "UUID", "JSONString", "GenericScalar",
         }
         for name in custom_names:
             assert name in GDX_SCALAR_MAP, f"Missing {name} in GDX_SCALAR_MAP"
@@ -77,14 +80,29 @@ class TestGdxScalarMap:
         assert len(GDX_SCALAR_MAP) == 12  # 7 custom + 5 builtins
 
     def test_singleton_identity(self):
-        """The map references the module-level singletons."""
-        assert GDX_SCALAR_MAP["GdxDate"] is GdxDate
-        assert GDX_SCALAR_MAP["GdxDateTime"] is GdxDateTime
-        assert GDX_SCALAR_MAP["GdxTime"] is GdxTime
-        assert GDX_SCALAR_MAP["GdxDecimal"] is GdxDecimal
-        assert GDX_SCALAR_MAP["GdxUUID"] is GdxUUID
-        assert GDX_SCALAR_MAP["GdxJSONString"] is GdxJSONString
-        assert GDX_SCALAR_MAP["GdxGenericScalar"] is GdxGenericScalar
+        """The map references the module-level singletons (keyed by graphene name)."""
+        assert GDX_SCALAR_MAP["CustomDate"] is GdxDate
+        assert GDX_SCALAR_MAP["CustomDateTime"] is GdxDateTime
+        assert GDX_SCALAR_MAP["CustomTime"] is GdxTime
+        assert GDX_SCALAR_MAP["Decimal"] is GdxDecimal
+        assert GDX_SCALAR_MAP["UUID"] is GdxUUID
+        assert GDX_SCALAR_MAP["JSONString"] is GdxJSONString
+        assert GDX_SCALAR_MAP["GenericScalar"] is GdxGenericScalar
+
+    def test_singleton_graphql_names_match_graphene(self):
+        """The GraphQL .name of each singleton matches graphene's contract.
+
+        Date/DateTime/Time use the graphene ``Custom*`` subclass names;
+        UUID/JSONString/GenericScalar/Decimal match the plain graphene names.
+        See discovery #1508 (probed via print_type under GDX_BACKEND=graphene).
+        """
+        assert GdxDate.name == "CustomDate"
+        assert GdxDateTime.name == "CustomDateTime"
+        assert GdxTime.name == "CustomTime"
+        assert GdxDecimal.name == "Decimal"
+        assert GdxUUID.name == "UUID"
+        assert GdxJSONString.name == "JSONString"
+        assert GdxGenericScalar.name == "GenericScalar"
 
 
 # ---------------------------------------------------------------------------

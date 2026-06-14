@@ -74,7 +74,9 @@ class BaseViewBranchesTest(TestCase):
     def test_middleware_none_is_left_unset(self):
         # When the resolved middleware is None, the `is not None` guard skips
         # assignment and middleware stays the class default (188->193).
-        with patch("django_graphex.views.graphene_settings.MIDDLEWARE", None):
+        # WU8: views now reads from graphex_or_graphene_settings, not directly
+        # from graphene_settings, so patch the shim instead.
+        with patch("django_graphex.views.graphex_or_graphene_settings.MIDDLEWARE", None):
             view = BaseGraphQLView(schema=_schema)
         self.assertIsNone(view.middleware)
 
@@ -167,7 +169,8 @@ class AtomicMutationTest(TestCase):
     def test_atomic_mutation_rolls_back_on_flag(self):
         # With ATOMIC_MUTATIONS on and the mutation flagging errors, the atomic
         # block sets rollback; the response still comes back 200 with ok:false.
-        with patch("django_graphex.views.graphene_settings.ATOMIC_MUTATIONS", True):
+        # WU8: views now reads ATOMIC_MUTATIONS from graphex_or_graphene_settings.
+        with patch("django_graphex.views.graphex_or_graphene_settings.ATOMIC_MUTATIONS", True):
             view = BaseGraphQLView.as_view(schema=_schema)
             request = self.factory.post(
                 "/graphql/",
@@ -183,7 +186,8 @@ class AtomicMutationTest(TestCase):
     def test_atomic_mutation_commits_without_flag(self):
         # ATOMIC_MUTATIONS on, mutation does NOT flag errors -> the atomic block
         # runs but does not set rollback (429->431 false branch).
-        with patch("django_graphex.views.graphene_settings.ATOMIC_MUTATIONS", True):
+        # WU8: views now reads ATOMIC_MUTATIONS from graphex_or_graphene_settings.
+        with patch("django_graphex.views.graphex_or_graphene_settings.ATOMIC_MUTATIONS", True):
             view = BaseGraphQLView.as_view(schema=_schema)
             request = self.factory.post(
                 "/graphql/",

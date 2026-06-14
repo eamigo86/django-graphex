@@ -292,6 +292,20 @@ def test_collect_field_names():
     assert collect_field_names(None) == frozenset()
 
 
+def test_django_graphql_schema_query_none_raises_graphql_error():
+    """DjangoGraphQLSchema(query=None) raises GraphQLError on the graphene path.
+
+    Previously graphene silently built a schema with no query root; the explicit
+    guard makes the failure loud and consistent with the native backend.
+    """
+    from graphql import GraphQLError
+
+    import pytest
+
+    with pytest.raises(GraphQLError):
+        DjangoGraphQLSchema(query=None)
+
+
 def test_deny_all_registry():
     registry = DenyAllRegistry()
     assert "anything" in registry and "another" in registry

@@ -83,6 +83,219 @@ _GRAPHENE_BASE_OPTIONS: frozenset[str] = frozenset(
 )
 
 
+def _compile_declared_list_fields(src_cls: type) -> dict[str, Any]:
+    """Compile DECLARED list/nested-list fields on a ``DjangoObjectType`` (WU6b).
+
+    The native output compiler (``compile_output_fields``) only derives fields
+    from ``model._meta.get_fields()``. A declared list field — e.g.
+    ``posts = DjangoNestedListObjectField(PostList, accessor="posts")`` — is a
+    graphene class attribute that never enters the model meta, so it would be
+    silently dropped from the native ``GraphQLObjectType``.
+
+    This recovers those declared fields from the source class's graphene
+    ``_meta.fields`` and compiles each into a native list-container
+    ``GraphQLField`` via the SAME builder the root compiler uses
+    (``schema_compiler._build_list_object_field``). That builder wires the
+    pagination args + slicing resolver onto the container's results field, so a
+    nested paginated list under ``GDX_BACKEND=native`` is reachable AND its
+    page is DB-side window-sliced by the optimizer (the WU6b seam).
+
+    Only list-shaped fields are injected; plain relation/scalar fields are
+    already handled by ``compile_output_fields`` and must NOT be duplicated here.
+
+    Args:
+        src_cls: The source ``DjangoObjectType`` subclass.
+
+    Returns:
+        A ``{camelCase_name: GraphQLField}`` dict of declared list fields
+        (empty when the class declares none).
+    """
+    from graphene.utils.str_converters import to_camel_case
+
+    from .fields import DjangoListObjectField
+    from .native.schema_compiler import _build_list_object_field
+
+    meta_fields = getattr(getattr(src_cls, "_meta", None), "fields", None) or {}
+    out: dict[str, Any] = {}
+    for field_name, field in meta_fields.items():
+        # DjangoNestedListObjectField is a subclass of DjangoListObjectField, so
+        # this single isinstance covers both the nested and the flat list field.
+        if isinstance(field, DjangoListObjectField):
+            out[to_camel_case(field_name)] = _build_list_object_field(field)
+    return out
+
+
+def _model_field_names(model: type) -> set[str]:
+    """Return the set of names Django derives for *model* (Slice D/E helper).
+
+    Includes concrete + relation fields AND reverse-relation accessor names, so a
+    DECLARED graphene field can be told apart from a model-derived one. Used to
+    avoid double-emitting model fields (already handled by the output compiler /
+    relation-list injection) when scanning ``_meta.fields`` for declared fields.
+    """
+    names: set[str] = set()
+    try:
+        all_fields = model._meta.get_fields(include_parents=False)
+    except Exception:  # pragma: no cover — defensive
+        all_fields = model._meta.concrete_fields
+    for f in all_fields:
+        name = getattr(f, "name", None) or getattr(f, "attname", None)
+        if name:
+            names.add(name)
+        # Reverse relations expose their parent accessor via get_accessor_name().
+        get_accessor = getattr(f, "get_accessor_name", None)
+        if callable(get_accessor):
+            try:
+                names.add(get_accessor())
+            except Exception:  # pragma: no cover — defensive
+                pass
+    return names
+
+
+def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
+    """Compile DECLARED non-model, non-list fields on a ``DjangoObjectType`` (Slice D).
+
+    ``compile_output_fields`` only derives fields from ``model._meta.get_fields()``;
+    the WU6b ``_compile_declared_list_fields`` recovers declared LIST fields. Still
+    dropped under native: declared NON-model scalar / object fields — e.g.
+    ``extra = graphene.String()``, ``computed = graphene.Int()``,
+    ``profile = graphene.Field(SomePlainType)``, or a custom-resolver field. graphene
+    captures these via ``_meta.fields`` and renders them on the output type; native
+    must MATCH (same name + type + nullability + resolver).
+
+    This scans the class's graphene ``_meta.fields`` and compiles each field that
+    is (a) NOT a Django list field (already handled by
+    ``_compile_declared_list_fields``) and (b) NOT a model-derived field name
+    (already handled by ``compile_output_fields`` / the relation-list injection).
+    Each surviving declared field is converted via the SAME per-field graphene->
+    native converter the plain-ObjectType compiler uses, so resolver wiring and
+    type dispatch are byte-identical to graphene.
+
+    Args:
+        src_cls: The source ``DjangoObjectType`` subclass.
+
+    Returns:
+        A ``{camelCase_name: GraphQLField}`` dict of declared non-model fields
+        (empty when the class declares none).
+    """
+    from graphene.utils.str_converters import to_camel_case
+
+    from .fields import DjangoListObjectField
+    from .native.schema_compiler import compile_declared_field
+
+    meta = getattr(src_cls, "_meta", None)
+    meta_fields = getattr(meta, "fields", None) or {}
+    model = getattr(meta, "model", None)
+    model_names = _model_field_names(model) if model is not None else set()
+
+    out: dict[str, Any] = {}
+    for field_name, field in meta_fields.items():
+        # Skip declared LIST fields — owned by _compile_declared_list_fields.
+        if isinstance(field, DjangoListObjectField):
+            continue
+        # Skip model-derived fields — owned by compile_output_fields / the
+        # to-many relation-list injection. Only genuinely DECLARED (non-model)
+        # graphene attributes survive this filter.
+        if field_name in model_names:
+            continue
+        out[to_camel_case(field_name)] = compile_declared_field(
+            src_cls, field_name, field
+        )
+    return out
+
+
+def _compile_relation_list_fields(
+    src_cls: type,
+    model: type,
+    registry: Any,
+    *,
+    only_fields: list[str] | None = None,
+    exclude_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    """Compile AUTO-DERIVED to-many relation fields as list containers (Slice E).
+
+    graphene-django renders a model's to-many relations (``ManyToManyField`` /
+    reverse FK ``ManyToOneRel`` / reverse M2M ``ManyToManyRel`` / ``GenericRel``)
+    as the related model's auto-derived ``<Model>ListType`` results/totalCount
+    CONTAINER — NOT a plain ``[Node]`` list (see
+    ``converter.convert_field_to_list_or_connection`` /
+    ``convert_many_rel_to_djangomodel`` -> ``_nested_list_object_field``). The
+    native output compiler deliberately SKIPS to-many relations
+    (``output_compiler._to_graphql_field``) because building the container needs
+    the graphene ``Registry`` (``get_or_create_list_object_type``), which it does
+    not have. This helper injects those container fields, reusing the EXACT same
+    ``_nested_list_object_field`` -> ``DjangoNestedListObjectField`` ->
+    ``_build_list_object_field`` path the graphene converter and the WU6b declared
+    list-field injection use — so the native to-many SDL is byte-identical to
+    graphene (container name, ``results``/``totalCount`` shape, pagination args).
+
+    Honors ``only_fields`` / ``exclude_fields`` exactly as
+    ``compile_output_fields`` does (filtering on the relation NAME, mirroring
+    graphene's ``construct_fields`` projection) so projected types stay consistent.
+
+    Args:
+        src_cls: The source ``DjangoObjectType`` subclass.
+        model: The Django model the type wraps.
+        registry: The graphene ``Registry`` (needed to resolve / auto-create the
+            related model's ``DjangoListObjectType`` container).
+        only_fields: Restrict to these field names, or ``None`` for all.
+        exclude_fields: Drop these field names.
+
+    Returns:
+        A ``{camelCase_name: GraphQLField}`` dict of to-many container fields
+        (empty when the model has none / they are all projected out).
+    """
+    from graphene.utils.str_converters import to_camel_case
+
+    from .converter import _nested_list_object_field
+    from .native.output_compiler import _get_related_model, _is_many_relation
+    from .native.schema_compiler import _build_list_object_field
+
+    only_set = set(only_fields) if only_fields else None
+    exclude_set = set(exclude_fields) if exclude_fields else None
+
+    try:
+        all_fields = model._meta.get_fields(include_parents=False)
+    except Exception:  # pragma: no cover — defensive
+        all_fields = model._meta.concrete_fields
+
+    out: dict[str, Any] = {}
+    for field in all_fields:
+        if not _is_many_relation(field):
+            continue
+        related_cls = _get_related_model(field)
+        if related_cls is None:
+            continue
+        # Resolve the parent accessor name (reverse relations use
+        # get_accessor_name(); forward M2M uses field.name).
+        get_accessor = getattr(field, "get_accessor_name", None)
+        if callable(get_accessor):
+            try:
+                accessor = get_accessor()
+            except Exception:  # pragma: no cover — defensive
+                accessor = getattr(field, "name", None)
+        else:
+            accessor = getattr(field, "name", None)
+        if accessor is None:
+            continue
+        # Projection: also gate on field.name (forward M2M projects by name;
+        # reverse relations are typically named by their accessor).
+        field_name = getattr(field, "name", accessor)
+        if only_set is not None and accessor not in only_set and field_name not in only_set:
+            continue
+        if exclude_set is not None and (accessor in exclude_set or field_name in exclude_set):
+            continue
+
+        nested = _nested_list_object_field(
+            field, related_cls, registry, accessor=accessor
+        )
+        if nested is None:
+            # Related node type not registered — graphene skips it too.
+            continue
+        out[to_camel_case(accessor)] = _build_list_object_field(nested)
+    return out
+
+
 def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
     """Raise ImproperlyConfigured for any unknown Meta options.
 
@@ -287,50 +500,154 @@ class DjangoObjectType(ObjectType):
             registry.register(cls)
 
         # ----------------------------------------------------------------
-        # NATIVE PATH: compile a GraphQLObjectType via the native pipeline.
-        # The graphene base/_meta machinery stays live (Phase 7 removes it).
-        # Mirrors the Phase-2 DjangoInputObjectType native branch pattern.
+        # NATIVE PATH: create EXACTLY ONE GraphQLObjectType per DjangoObjectType,
+        # ONCE, here at class definition — identity-stable.  Its relation fields
+        # are LAZY THUNKS that resolve against the SHARED GLOBAL output registry
+        # (django_graphex.native.base.get_shared_output_registry()), NEVER a
+        # per-class local registry.
+        #
+        # Why a single instance + shared-registry thunks: relations CANNOT be
+        # resolved at class-definition time (the related type may be defined
+        # later).  By closing the field thunk over the GLOBAL registry, the
+        # relation lookup runs lazily — after compile_all_outputs() has
+        # registered every type's stub — so it resolves to the related type's
+        # real GraphQLObjectType instead of degrading to GraphQLString.
+        #
+        # compile_all_outputs() (called at app-ready) POPULATES/validates these
+        # existing instances against the SAME shared registry.  It NEVER creates
+        # a second GraphQLObjectType for an already-registered type, so the
+        # instance pinned by mutation.py (mutation.py:434/456) at mutation
+        # class-def time is the SAME object that ends up in the assembled
+        # GraphQLSchema — eliminating the duplicate-name TypeError hazard.
+        #
+        # Phase 7 removes the graphene base/_meta machinery.
         # ----------------------------------------------------------------
         import os as _os_output
         if _os_output.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+            from django_graphex.native.base import (
+                _GdxOutputEntry,
+                _gdx_output_registry,
+                get_shared_output_registry,
+            )
             from django_graphex.native.bridge import GdxPayload
             from django_graphex.native.ir import GdxMeta
             from django_graphex.native.output_compiler import compile_output_fields
-            from django_graphex.native.registry_compiler import (
-                NativeOutputRegistry,
-                compile_all,
-            )
             from graphql import GraphQLObjectType
 
-            _native_registry = NativeOutputRegistry()
-            _native_registry.register(
-                cls.__name__,
-                model,
-                related_models=[],
+            # Resolve the GraphQL type NAME the SAME way graphene does: an
+            # explicit ``Meta.name`` (forwarded via **options) wins, otherwise the
+            # class name. Auto-generated types (factory_type) set ``Meta.name``
+            # (e.g. ``<Model>GenericType``); honoring it keeps native type NAMES
+            # byte-identical to graphene's. Without this the native type would be
+            # named ``GenericType`` while graphene names it ``<Model>GenericType``.
+            _gql_name = options.get("name") or cls.__name__
+
+            # Register in the global entry list for compile_all_outputs() at
+            # app-ready (carries projection / depth / complexity metadata).
+            _entry = _GdxOutputEntry(
+                cls=cls,
+                gql_name=_gql_name,
+                model=model,
+                only_fields=list(only_fields) if only_fields else None,
+                exclude_fields=list(exclude_fields) if exclude_fields else None,
+                max_deep=max_deep,
+                complexity=complexity,
             )
-            # Pre-populate the registry with a compiled stub for the model so
-            # compile_output_fields can resolve relations via the same registry.
+            _gdx_output_registry.append(_entry)
+
+            # SHARED registry: the single source of truth for relation thunks.
+            # Keyed by MODEL with last-registration-wins semantics, mirroring the
+            # graphene Registry (registry.get_type_for_model(model)).  Relation
+            # thunks of OTHER types resolve a FK/M2M to whatever instance is the
+            # canonical (last-registered) type for the related model — exactly
+            # what mutation.py pins and the query root uses for that model.
+            _shared_registry = get_shared_output_registry()
+
+            # EXACTLY ONE instance PER CLASS, created ONCE here.  Distinct
+            # classes wrapping the same model (e.g. different only_fields /
+            # complexity) each get their OWN identity-stable instance; the GraphQL
+            # type NAME is the resolved name so there is no name collision.
             _gdx_meta_obj = GdxMeta(
-                name=cls.__name__,
+                name=_gql_name,
                 model=model,
                 max_deep=max_deep,
                 complexity=complexity,
             )
             _gdx_payload = GdxPayload(_gdx_meta_obj)
 
-            # Build real fields using the output compiler (handles scalars + relations)
-            _output_fields = compile_output_fields(
-                model,
-                _native_registry,
-                only_fields=list(only_fields) if only_fields else None,
-                exclude_fields=list(exclude_fields) if exclude_fields else None,
-            )
+            _only = list(only_fields) if only_fields else None
+            _excl = list(exclude_fields) if exclude_fields else None
+
+            # LAZY field thunk bound to the SHARED registry.  Evaluated on first
+            # `.fields` access; by app-ready (compile_all_outputs) every model's
+            # canonical instance is in the shared registry so relation lookups
+            # resolve to the real related GraphQLObjectType (not GraphQLString).
+            def _make_output_thunk(
+                _model: type = model,
+                _reg: Any = _shared_registry,
+                _graphene_reg: Any = registry,
+                _only_f: list[str] | None = _only,
+                _excl_f: list[str] | None = _excl,
+                _src_cls: type = cls,
+            ) -> dict:
+                _fields = compile_output_fields(
+                    _model,
+                    _reg,
+                    only_fields=_only_f,
+                    exclude_fields=_excl_f,
+                )
+                # Slice E: inject AUTO-DERIVED to-many relations as the related
+                # model's ``<Model>ListType`` results/totalCount CONTAINER (NOT a
+                # plain ``[Node]`` list — that was a native-vs-graphene divergence).
+                # compile_output_fields deliberately SKIPS to-many relations; this
+                # reuses the SAME ``_nested_list_object_field`` ->
+                # ``_build_list_object_field`` path graphene's converter uses, so
+                # the container name + shape + pagination args are byte-identical.
+                _fields.update(
+                    _compile_relation_list_fields(
+                        _src_cls,
+                        _model,
+                        _graphene_reg,
+                        only_fields=_only_f,
+                        exclude_fields=_excl_f,
+                    )
+                )
+                # WU6b: inject DECLARED nested-list fields (e.g. a
+                # ``DjangoNestedListObjectField`` class attribute such as
+                # ``posts = DjangoNestedListObjectField(PostList, accessor=...)``).
+                # compile_output_fields above only derives fields from
+                # ``model._meta.get_fields()`` — a declared list field is a
+                # graphene class attribute that never enters the model meta, so
+                # without this injection a nested paginated list is SILENTLY
+                # DROPPED ("Cannot query field 'posts'"). Reuses the same native
+                # list-container builder the root compiler uses (WU6a), so the
+                # window-prefetch resolver + pagination args land on the nested
+                # field's results container too (the WU6b DB-side window seam).
+                _fields.update(_compile_declared_list_fields(_src_cls))
+                # Slice D: inject DECLARED non-model, non-list fields (e.g.
+                # ``extra = graphene.String()`` / ``graphene.Field(PlainType)``).
+                # These graphene class attributes never enter ``model._meta`` so
+                # compile_output_fields drops them; graphene renders them via
+                # ``_meta.fields``. Added LAST so a declared field overrides a
+                # same-named model-derived field, matching graphene's precedence.
+                _fields.update(_compile_declared_fields(_src_cls))
+                return _fields
 
             _graphql_output_type = GraphQLObjectType(
-                name=cls.__name__,
-                fields=lambda f=_output_fields: f,
+                name=_gql_name,
+                fields=_make_output_thunk,
                 extensions={"gdx": _gdx_payload},
             )
+
+            # Last-wins: make THIS class's instance the canonical one for the
+            # model so relation thunks resolve to it — consistent with the
+            # graphene Registry's (model, None) last-registration-wins rule and
+            # with registry.register(cls) above.  When skip_registry=True the
+            # class is NOT canonical in the graphene Registry, so do not let it
+            # claim the shared slot either.
+            if not skip_registry:
+                _shared_registry.set_compiled(model, _graphql_output_type)
+
             # graphene freezes Options after super().__init_subclass_with_meta__.
             # Use object.__setattr__ to bypass the freeze (same pattern as
             # Phase-2 input compiler; Phase 7 removes the graphene path).
@@ -878,6 +1195,148 @@ class DjangoListObjectType(ObjectType):
         # Register as the model's canonical `list` type so nested relations can
         # reuse it (honoring this type's pagination/filter config). Last one wins.
         registry.register_list_type(model, cls)
+
+        # ----------------------------------------------------------------
+        # NATIVE PATH: create EXACTLY ONE GraphQLObjectType for the list
+        # container (results + totalCount), identity-stable, following the
+        # same single-instance/shared-registry/thunk pattern as DjangoObjectType
+        # above (types.py ~289-395).
+        #
+        # The results field's element type is resolved LAZILY via the SHARED
+        # GLOBAL output registry so it always yields the node type's single
+        # canonical GraphQLObjectType (identity-stable, not a GraphQLString
+        # fallback), regardless of definition order.
+        #
+        # compile_all_outputs() POPULATES/validates the existing instance via
+        # the same Phase-2 thunk-eval + Phase-3 gdx assertion already in place
+        # for DjangoObjectType entries — no second instance is ever created.
+        # ----------------------------------------------------------------
+        import os as _os_list
+        if _os_list.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+            from django_graphex.native.base import (
+                _GdxOutputEntry,
+                _gdx_output_registry,
+                get_shared_output_registry,
+            )
+            from django_graphex.native.bridge import GdxPayload
+            from django_graphex.native.ir import GdxMeta
+            from graphql import GraphQLField, GraphQLInt, GraphQLList, GraphQLObjectType
+
+            _shared_registry = get_shared_output_registry()
+
+            # Resolve the GraphQL list-type NAME the SAME way graphene does:
+            # ``Meta.name`` (forwarded via **options) wins, else the class name.
+            # Auto-generated list types (factory_type "list") set ``Meta.name`` to
+            # ``<Model>ListType`` (e.g. ``TagListType``); the class name is the
+            # opaque ``GenericListType``. Honoring ``Meta.name`` makes the native
+            # auto-derived to-many CONTAINER name byte-identical to graphene's.
+            _list_gql_name = options.get("name") or cls.__name__
+
+            # Capture loop variables via default-arg idiom.
+            _list_model = model
+            _list_rfn = results_field_name  # e.g. "results" or "items"
+            _list_paginator = paginator  # may be None (plain list, no pagination)
+
+            def _make_list_fields_thunk(
+                _m: type = _list_model,
+                _rfn: str = _list_rfn,
+                _reg: Any = _shared_registry,
+                _pg: Any = _list_paginator,
+            ) -> dict:
+                """Lazily build results + totalCount (+ pageInfo) fields.
+
+                Results element type is resolved from the shared registry so
+                it is the same canonical GraphQLObjectType as the node type's
+                _meta.graphql_output_type — identity-stable, no String fallback.
+
+                WU6a: when a paginator is configured the ``results`` field carries
+                the paginator's native args (limit/offset/ordering | page/... |
+                first/cursor) AND a slicing resolver so the SDL-visible args
+                ACTUALLY slice (no silent no-op). Cursor paginators also add a
+                native ``pageInfo`` field.
+                """
+                node_gql = _reg.get_compiled(_m)
+                if node_gql is None:
+                    # Fallback: build a placeholder (should never happen after
+                    # compile_all_outputs() registers all nodes first).
+                    from graphql import GraphQLString as _S
+                    node_gql = _S  # type: ignore[assignment]
+
+                from django_graphex.paginations.utils import NativePaginationField
+
+                _results_args: dict = {}
+                _results_resolve = None
+                if _pg is not None:
+                    # Native pagination args wired directly onto the results field
+                    # (the build-not-wired seam WU6a closes). _NativePaginationField_
+                    # extracts the already_paginated-aware slicing resolver.
+                    _results_args = _pg.to_graphql_fields(native=True)
+                    _native_field = NativePaginationField(type=node_gql, paginator=_pg)
+                    from graphql.execution import default_field_resolver as _dfr
+
+                    _results_resolve = _native_field.wrap_resolve(_dfr)
+
+                def _total_count_resolve(root: Any, info: Any, **_kw: Any) -> Any:
+                    """Read the total count off the DjangoListObjectBase root.
+
+                    The container's GraphQL field is ``totalCount`` but the root
+                    object exposes it as ``count`` (graphene mapped the ``count``
+                    field via ``name="totalCount"``); the default field resolver
+                    would read ``root.totalCount`` and get ``None``.
+                    """
+                    return getattr(root, "count", None)
+
+                fields: dict = {
+                    _rfn: GraphQLField(
+                        GraphQLList(node_gql),
+                        args=_results_args,
+                        resolve=_results_resolve,
+                    ),
+                    "totalCount": GraphQLField(
+                        GraphQLInt, resolve=_total_count_resolve
+                    ),
+                }
+
+                # Opt-in pagination metadata: cursor paginators expose a native
+                # pageInfo field carrying the same first/cursor args + resolver.
+                if _pg is not None:
+                    _native_page_info = _pg.get_native_page_info_field(node_gql)
+                    if _native_page_info is not None:
+                        fields["pageInfo"] = _native_page_info
+
+                return fields
+
+            _list_gdx_meta = GdxMeta(
+                name=_list_gql_name,
+                model=model,
+                results_field_name=results_field_name,
+                max_deep=max_deep,
+                complexity=complexity,
+            )
+            _list_gdx_payload = GdxPayload(_list_gdx_meta)
+
+            _list_gql_type = GraphQLObjectType(
+                name=_list_gql_name,
+                fields=_make_list_fields_thunk,
+                extensions={"gdx": _list_gdx_payload},
+            )
+
+            # Register entry so compile_all_outputs() validates (thunk-eval +
+            # gdx assertion) this container alongside DjangoObjectType entries.
+            _list_entry = _GdxOutputEntry(
+                cls=cls,
+                gql_name=_list_gql_name,
+                model=model,
+                only_fields=None,
+                exclude_fields=None,
+                max_deep=max_deep,
+                complexity=complexity,
+            )
+            _gdx_output_registry.append(_list_entry)
+
+            # Store on _meta (graphene freezes Options after super().__init_subclass_with_meta__
+            # so we bypass with object.__setattr__, matching DjangoObjectType pattern).
+            object.__setattr__(_meta, "graphql_output_type", _list_gql_type)
 
     @classmethod
     def RetrieveField(cls, *args, **kwargs) -> DjangoObjectField:
@@ -1671,30 +2130,99 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         """Build a graphql-core GraphQLField for the given mutation operation.
 
         Used by CreateField / DeleteField / UpdateField under GDX_BACKEND=native.
-        R7: reads ``_meta.output_type._meta.graphql_output_type`` (a compiled
-        GraphQLObjectType) — NEVER passes the graphene/Pydantic class directly.
+
+        WU9 parity fix — this path now mirrors the DjangoModelMutation native
+        field (mutation.py) and graphene's own DjangoModelType mutation shape:
+
+        1. **Output is the PAYLOAD, not the node.** Graphene mounts
+           ``cls._meta.mutation_output`` (= ``cls``) as the field type, so the SDL
+           is ``create(...): <ThisType>`` where ``<ThisType>`` is the wrapper
+           carrying ``ok`` / ``errors`` + the output field (the node).  The prior
+           code used ``_meta.output_type._meta.graphql_output_type`` (the bare
+           node) — ``ok`` / ``errors`` were unqueryable.  We now compile ``cls``
+           itself (a plain graphene ObjectType subclass) via
+           ``_compile_plain_object_type`` → the payload GraphQLObjectType.
+        2. **camelCase wire arg keys.** graphql-core does NOT auto-camelCase arg
+           names; the dict keys must be the camelCase WIRE names while each
+           GraphQLArgument keeps ``out_name`` = the snake Python kwarg (already
+           set when the arg was built in ``__init_subclass_with_meta__``).
+        3. **Registration.** The built field is stored in
+           ``_NATIVE_FIELD_REGISTRY[(model, operation, "native")]`` so the native
+           root compiler's ``_collect_root_attrs`` (gated on registry membership)
+           mounts it onto the native Mutation root.  The SAME instance is cached
+           and returned on repeat calls so the mounted field IS the registered
+           field (identity), exactly like the DjangoModelMutation path.
 
         Args:
             operation: One of ``"create"``, ``"delete"``, or ``"update"``.
 
         Returns:
-            A ``GraphQLField`` whose ``.args`` are ``GraphQLArgument`` instances
-            and whose ``.resolve`` is the corresponding classmethod (adapted via
-            ``_adapt_self`` for forward-compat).
+            A ``GraphQLField`` whose ``.type`` is the compiled mutation payload,
+            whose ``.args`` are ``GraphQLArgument`` instances keyed by camelCase
+            wire names, and whose ``.resolve`` is the corresponding classmethod
+            (adapted via ``_adapt_self``).
         """
+        from graphene.utils.str_converters import to_camel_case as _to_camel
         from graphql import GraphQLField as _GQLField
+
+        from django_graphex.mutation import (
+            _NATIVE_FIELD_IDENTITIES,
+            _NATIVE_FIELD_REGISTRY,
+        )
         from django_graphex.native._compat import _adapt_self
+        from django_graphex.native.schema_compiler import (
+            _compile_plain_object_type,
+        )
+
+        model = cls._meta.model
+        _reg_key = (model, operation, "native")
+
+        # Per-CLASS idempotency: repeated *Field() calls on THIS exact subclass
+        # return the SAME field instance (identity-stable so the mounted field is
+        # the registered one). Keyed on the class — NOT on (model, op) — so two
+        # distinct DjangoModelType subclasses for the same model each build their
+        # OWN field (their resolvers/payloads differ). The shared
+        # ``_NATIVE_FIELD_REGISTRY`` slot is still keyed by model+op and is
+        # OVERWRITTEN below (last-built wins) to mirror the DjangoModelMutation
+        # registration semantics; ``_collect_root_attrs`` recovers whichever
+        # field instance is mounted via identity, so a root assembled from THIS
+        # class always finds THIS class' field.
+        _cache: dict[str, Any] = cls.__dict__.get("_dgx_native_mutation_fields", {})
+        if "_dgx_native_mutation_fields" not in cls.__dict__:
+            cls._dgx_native_mutation_fields = _cache
+        cached = _cache.get(operation)
+        if cached is not None:
+            # Re-assert this class' slot in the shared registry (a sibling
+            # subclass for the same model may have overwritten it since).
+            _NATIVE_FIELD_REGISTRY[_reg_key] = cached
+            return cached
 
         _resolver_map = {
             "create": cls.create,
             "delete": cls.delete,
             "update": cls.update,
         }
-        return _GQLField(
-            cls._meta.output_type._meta.graphql_output_type,
-            args=cls._meta.arguments[operation],
+
+        # Output type = the compiled PAYLOAD (this wrapper class), not the node.
+        _gql_output_type = _compile_plain_object_type(cls)
+
+        # camelCase the wire arg keys; each GraphQLArgument keeps out_name=snake.
+        _args = {
+            _to_camel(_arg_name): _arg
+            for _arg_name, _arg in cls._meta.arguments[operation].items()
+        }
+
+        _gql_field = _GQLField(
+            _gql_output_type,
+            args=_args,
             resolve=_adapt_self(_resolver_map[operation], owner=cls),
+            description=getattr(cls._meta, "description", None)
+            or f"Native {operation} mutation for {model.__name__}",
         )
+        _cache[operation] = _gql_field
+        _NATIVE_FIELD_REGISTRY[_reg_key] = _gql_field
+        _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
+        return _gql_field
 
     @classmethod
     def CreateField(cls, *args, **kwargs) -> Any:

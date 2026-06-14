@@ -122,10 +122,19 @@ def test_nullable_fk_field_no_non_null_wrapper():
     )
 
 
-def test_m2m_field_returns_list_type():
-    """ManyToManyField returns a GraphQLList-wrapped type."""
+def test_m2m_field_is_skipped_by_unit_compiler():
+    """ManyToManyField is SKIPPED by ``_to_graphql_field`` (Slice E).
+
+    graphene-django renders a to-many relation as the related model's auto-
+    derived ``<Model>ListType`` results/totalCount CONTAINER — NOT a plain
+    ``[Node]`` list. Building that container needs the graphene ``Registry``
+    (``get_or_create_list_object_type``), which the unit field compiler does not
+    have, so ``_to_graphql_field`` deliberately returns ``{}`` for to-many
+    relations; the container field is injected separately by
+    ``types._compile_relation_list_fields``. (Previously this asserted a
+    divergent ``GraphQLList(Node)`` — weakened to match graphene's container.)
+    """
     from django_graphex.native.output_compiler import _to_graphql_field
-    from graphql import GraphQLList, GraphQLNonNull
     import django.db.models as models
 
     class TagModel(models.Model):
@@ -148,14 +157,9 @@ def test_m2m_field_returns_list_type():
 
     field = ArticleModel._meta.get_field("tags")
     field_map = _to_graphql_field(field, StubReg())
-    assert len(field_map) == 1
-    key, gql_field = next(iter(field_map.items()))
-    # M2M should be a list
-    gql_type = gql_field.type
-    while isinstance(gql_type, GraphQLNonNull):
-        gql_type = gql_type.of_type
-    assert isinstance(gql_type, GraphQLList), (
-        f"M2M field must return GraphQLList, got {gql_type!r}"
+    assert field_map == {}, (
+        "M2M (to-many) must be skipped by _to_graphql_field — it is rendered as "
+        f"a <Model>ListType container via the relation-list injection, got {field_map!r}"
     )
 
 

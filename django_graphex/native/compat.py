@@ -79,6 +79,48 @@ def _gdx_meta(t: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# _gdx_graphene_type — graphene-first source-class recovery helper
+# ---------------------------------------------------------------------------
+
+
+def _gdx_graphene_type(t: Any) -> Any:
+    """Return the source graphene class for ``t`` under either backend, or ``None``.
+
+    Graphene path: ``t.graphene_type`` (graphene ObjectType back-reference).
+    Native path:   ``t.extensions["gdx"]._meta.graphene_type`` (the source
+        graphene class carried on ``GdxMeta`` at native compile time).
+
+    The graphene path is tried first so the graphene baseline is unaffected.
+    Returns ``None`` (never raises) when no source class is recoverable, so
+    callers can treat "no custom resolver / hook declared" uniformly across
+    backends.
+
+    Args:
+        t: A ``GraphQLObjectType`` (or graphene type) — typically
+           ``info.parent_type`` at a read-site.
+
+    Returns:
+        The source graphene class (root ObjectType or DjangoObjectType), or
+        ``None`` when none is carried.
+    """
+    # Graphene-first: a real graphene_type back-reference.
+    graphene_type = getattr(t, "graphene_type", None)
+    if graphene_type is not None:
+        return graphene_type
+
+    # Native fallback: t.extensions["gdx"]._meta.graphene_type.
+    extensions = getattr(t, "extensions", None)
+    if extensions is not None:
+        gdx = extensions.get("gdx")
+        if gdx is not None:
+            try:
+                return gdx._meta.graphene_type
+            except AttributeError:
+                return None
+    return None
+
+
+# ---------------------------------------------------------------------------
 # NativeTypeAliasMixin — graphene_type property alias for native types
 # ---------------------------------------------------------------------------
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import operator
+import os
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -32,6 +33,12 @@ from .utils import (
     maybe_queryset,
     queryset_factory,
 )
+
+#: True when GDX_BACKEND=native is set in the process environment. Read once at
+#: import time (the flag is process-global and set before import — D7). Mirrors
+#: the same constant in paginations/utils.py and paginations/pagination.py so the
+#: WU5/WU6a callsites share one source of truth instead of re-reading os.environ.
+_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 # ---------------------------------------------------------------------------
 # G3 spike result: does .only() survive Window + filter(_gqx_rn) wrapping?
@@ -248,7 +255,15 @@ def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
 
     if declared_fields or custom_filters:
         registry = getattr(getattr(_type, "_meta", None), "registry", None)
-        field.filter_type = field.filter_backend.build_input_type(
+        # This is the GRAPHENE field path: the result is wrapped in a graphene
+        # ``Argument`` below, so it MUST be a graphene input type even under
+        # ``GDX_BACKEND=native``. The native (graphql-core) filter input is
+        # consumed by the native compiler field path (WU5/WU6), not here.
+        from django_graphex.filtering.schema import (
+            build_filter_input_type as _graphene_build_filter_input_type,
+        )
+
+        field.filter_type = _graphene_build_filter_input_type(
             _type._meta.model,
             declared_fields,
             registry,
@@ -458,10 +473,16 @@ class DjangoFilterPaginateListField(Field):
                 'You need to pass a valid DjangoGraphqlPagination in DjangoFilterPaginateListField, received "{}".'
             ).format(pagination)
 
-            pagination_kwargs = pagination.to_graphql_fields()
-
             self.pagination = pagination
-            kwargs.update(**pagination_kwargs)
+
+            # Under GDX_BACKEND=native, to_graphql_fields() returns native
+            # GraphQLArgument instances that graphene's to_arguments() cannot
+            # sort. The native compiler (WU6a) wires args directly; skip here.
+            # Reuse the module-level _NATIVE_BACKEND constant (WU5 SUGGESTION a)
+            # instead of re-reading os.environ at field-construction time.
+            if not _NATIVE_BACKEND:
+                pagination_kwargs = pagination.to_graphql_fields()
+                kwargs.update(**pagination_kwargs)
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
@@ -763,7 +784,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         declared_fields = fields if fields is not None else _type._meta.filter_fields
         self.fields = declared_fields
         if declared_fields:
-            self.filter_type = self.filter_backend.build_input_type(
+            # GRAPHENE field path: wrapped in a graphene ``Argument`` below, so
+            # build a graphene input type even under ``GDX_BACKEND=native`` (the
+            # native filter input is consumed by the native compiler, WU5/WU6).
+            from django_graphex.filtering.schema import (
+                build_filter_input_type as _graphene_build_filter_input_type,
+            )
+
+            self.filter_type = _graphene_build_filter_input_type(
                 _type._meta.model, declared_fields, _type._meta.registry
             )
             if self.filter_type is not None:

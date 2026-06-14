@@ -6,7 +6,9 @@ Spec coverage:
 - R8 positive: DjangoModelMutation's GraphQLField output type carries extensions["gdx"]
   (set by DjangoModelType's native branch in types.py).
 - R6 public-export: django_graphex.Mutation is in __all__ (WU-2 done; this test guards regression).
-- R9 honest-skip guard: test_serializer_type_mutation_fields is still SKIPPED (Phase-5 boundary).
+- R9 (WU9 update): the Phase-5 boundary skip on test_serializer_type_mutation_fields
+  is REMOVED — native mutation schema assembly is delivered in Phase 5 / WU9, so the
+  test now runs and asserts the native GraphQLField shape.
 
 REUSE rule (spec + design):
   The ONE owned assertion lives in native/bridge.py::assert_gdx_bridge.
@@ -46,6 +48,7 @@ def test_assert_gdx_bridge_raises_for_mutation_output_type_missing_gdx():
         GraphQLSchema,
         GraphQLString,
     )
+
     from django_graphex.native.bridge import assert_gdx_bridge
 
     # Build a bare mutation output type (no extensions["gdx"]) —
@@ -87,16 +90,17 @@ def test_assert_gdx_bridge_passes_for_mutation_output_type_with_gdx():
     """assert_gdx_bridge does NOT raise when a mutation output type carries
     extensions['gdx'] — the happy path for a properly compiled mutation result type.
     """
+    # Build a mutation output type WITH extensions["gdx"]
+    from types import SimpleNamespace
+
     from graphql import (
         GraphQLField,
         GraphQLObjectType,
         GraphQLSchema,
         GraphQLString,
     )
-    from django_graphex.native.bridge import assert_gdx_bridge, GdxPayload
 
-    # Build a mutation output type WITH extensions["gdx"]
-    from types import SimpleNamespace
+    from django_graphex.native.bridge import GdxPayload, assert_gdx_bridge
     gdx_payload = GdxPayload(SimpleNamespace(name="CreateUserPayload"))
 
     mutation_output = GraphQLObjectType(
@@ -136,6 +140,7 @@ def test_django_model_mutation_output_type_carries_gdx():
     mutation output types correctly attaches the bridge payload.
     """
     from graphql import GraphQLField, GraphQLNonNull, GraphQLObjectType
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -170,6 +175,7 @@ def test_django_model_type_create_field_output_carries_gdx():
     carries extensions['gdx'].
     """
     from graphql import GraphQLField, GraphQLNonNull, GraphQLObjectType
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 
@@ -207,6 +213,7 @@ def test_assert_gdx_bridge_is_defined_once_in_bridge():
     in mutation.py, types.py, or any other module (spec R8 / design REUSE rule).
     """
     import inspect
+
     from django_graphex.native import bridge
     from django_graphex.native.bridge import assert_gdx_bridge
 
@@ -236,35 +243,37 @@ def test_mutation_in_public_all():
 
 
 # ---------------------------------------------------------------------------
-# R9: honest skip guard — test_serializer_type_mutation_fields still SKIPPED
+# R9 (WU9): the Phase-5 boundary skip is REMOVED — native mutation schema
+# assembly is now a delivered Phase-5 deliverable, so the formerly-skipped
+# test_serializer_type_mutation_fields runs and asserts the native field shape.
 # ---------------------------------------------------------------------------
 
 
-def test_honest_skip_preserved_for_phase5_boundary():
-    """test_serializer_type_mutation_fields in tests/test_types.py must remain
-    a pytest.skip (Phase-5 boundary) — never claim native mutation schema assembly
-    as a Phase-4 deliverable.
+def test_serializer_mutation_fields_test_is_unskipped_in_phase5():
+    """``test_serializer_type_mutation_fields`` in tests/test_types.py is no
+    longer skipped under native (WU9): the Phase-4 honest skip deferred native
+    mutation schema assembly to Phase 5, and Phase 5 / WU9 delivers it.
 
-    This test reads the source file directly and confirms the skip marker is present.
+    Reads the source directly and confirms the native branch now ASSERTS the
+    GraphQLField shape rather than skipping it.
     """
-    import ast
     import pathlib
 
-    test_types_path = (
-        pathlib.Path(__file__).parent.parent / "test_types.py"
-    )
+    test_types_path = pathlib.Path(__file__).parent.parent / "test_types.py"
     assert test_types_path.exists(), f"test_types.py not found at {test_types_path}"
 
     source = test_types_path.read_text(encoding="utf-8")
 
-    # The honest skip must mention Phase 5
-    assert "Phase 5" in source or "phase 5" in source.lower(), (
-        "tests/test_types.py must contain a Phase 5 boundary skip"
-    )
-    # The skipTest must be inside test_serializer_type_mutation_fields
+    # The test still exists.
     assert "test_serializer_type_mutation_fields" in source, (
         "test_serializer_type_mutation_fields must still exist in test_types.py"
     )
-    assert "skipTest" in source or "pytest.skip" in source, (
-        "The test must contain a skipTest / pytest.skip call"
+    # WU9: the native branch no longer skips — it asserts GraphQLField/GraphQLArgument.
+    assert "self.skipTest(" not in source, (
+        "The Phase-5 boundary skip must be REMOVED in WU9 (native mutation "
+        "schema assembly is delivered): no self.skipTest() in test_types.py"
+    )
+    assert "GraphQLArgument" in source and "GraphQLField" in source, (
+        "The un-skipped native branch must assert the native GraphQLField shape "
+        "(GraphQLField output + GraphQLArgument args)"
     )

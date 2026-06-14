@@ -217,3 +217,512 @@ def test_input_cache_reuses_built_type():
     first = build_filter_input_type(FilterModel, ["name"], registry=R)
     second = build_filter_input_type(FilterModel, ["name"], registry=R)
     assert first is second
+
+
+# --------------------------------------------------------------------------- #
+# WU3 — native FilterInput builder (GDX_BACKEND=native only)                   #
+# --------------------------------------------------------------------------- #
+import os as _os
+
+NATIVE = _os.environ.get("GDX_BACKEND", "graphene") == "native"
+pytestmark_native = pytest.mark.skipif(
+    not NATIVE,
+    reason="GDX_BACKEND != native — native FilterInput builder tests skipped.",
+)
+
+
+@pytestmark_native
+def test_native_build_filter_input_type_returns_graphql_input_object_type():
+    from graphql import GraphQLInputObjectType
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    R = Registry()
+    built = native_build(
+        FilterModel,
+        {"name": ("exact", "icontains"), "rating": ("exact", "gt")},
+        registry=R,
+    )
+    assert isinstance(built, GraphQLInputObjectType)
+
+
+@pytestmark_native
+def test_native_filter_input_fields_are_non_empty():
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    R = Registry()
+    built = native_build(
+        FilterModel,
+        {"name": ("exact", "icontains"), "rating": ("exact", "gt")},
+        registry=R,
+    )
+    # Force thunk evaluation.
+    assert dict(built.fields), "FilterInput .fields must be non-empty"
+    assert "name" in built.fields
+    assert "rating" in built.fields
+
+
+@pytestmark_native
+def test_native_filter_input_carries_extensions_gdx():
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    R = Registry()
+    built = native_build(FilterModel, {"name": ("exact",)}, registry=R)
+    assert built.extensions is not None
+    assert "gdx" in built.extensions
+    assert built.extensions["gdx"] is not None
+
+
+@pytestmark_native
+def test_native_filter_every_field_carries_snake_out_name():
+    """The cardinal footgun: EVERY field (top-level + nested lookups) must carry
+    an ``out_name`` so the coerced dict uses snake ORM keys, never camelCase wire
+    keys. A multi-word field (``published_date``) proves wire(camel) != out(snake).
+    """
+    from graphql import GraphQLInputObjectType
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    class MultiWordModel(models.Model):
+        published_date = models.DateField(null=True)
+        word_count = models.IntegerField(default=0)
+
+        class Meta:
+            app_label = "tests"
+
+    R = Registry()
+    built = native_build(
+        MultiWordModel,
+        {
+            "published_date": ("exact", "isnull"),
+            "word_count": ("exact", "gt"),
+        },
+        registry=R,
+    )
+
+    fields = dict(built.fields)
+    # Wire key is camelCase; out_name is snake.
+    assert "publishedDate" in fields
+    assert fields["publishedDate"].out_name == "published_date"
+    assert "wordCount" in fields
+    assert fields["wordCount"].out_name == "word_count"
+
+    # Every nested lookup field carries an out_name equal to its lookup name.
+    for top_name, top_field in fields.items():
+        if top_name in ("and", "or", "not"):
+            continue
+        lookups_type = top_field.type
+        assert isinstance(lookups_type, GraphQLInputObjectType)
+        for lookup_name, lookup_field in dict(lookups_type.fields).items():
+            assert lookup_field.out_name == lookup_name, (
+                f"lookup {lookup_name!r} on {top_name!r} missing/wrong out_name"
+            )
+
+
+@pytestmark_native
+def test_native_filter_isnull_field_out_name_is_isnull():
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    R = Registry()
+    built = native_build(
+        FilterModel, {"rating": ("exact", "isnull")}, registry=R
+    )
+    rating_lookups = dict(built.fields)["rating"].type
+    isnull_field = dict(rating_lookups.fields)["isnull"]
+    assert isnull_field.out_name == "isnull"
+
+
+@pytestmark_native
+def test_native_choices_field_produces_enum(db):
+    from graphql import GraphQLEnumType
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    class NativeChoiceModel(models.Model):
+        STATUS = (("a", "A"), ("b", "B"))
+        status = models.CharField(max_length=1, choices=STATUS)
+
+        class Meta:
+            app_label = "tests"
+
+    R = Registry()
+    built = native_build(
+        NativeChoiceModel, {"status": ("exact", "in")}, registry=R
+    )
+    status_lookups = dict(built.fields)["status"].type
+    exact_field = dict(status_lookups.fields)["exact"]
+    assert isinstance(exact_field.type, GraphQLEnumType), (
+        "choices field must produce a GraphQLEnumType, not a bare GraphQLString"
+    )
+
+
+@pytestmark_native
+def test_native_filter_to_q_round_trip_icontains_and_isnull(db):
+    """End-to-end: coerce a wire payload through the native FilterInput, then
+    translate to a Q. The coerced dict MUST use snake keys (via out_name) so
+    ``to_q`` builds the correct lookup. Missing out_name -> empty/wrong Q.
+    """
+    from graphql.utilities import coerce_input_value
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    R = Registry()
+    built = native_build(
+        FilterModel,
+        {"name": ("exact", "icontains", "isnull"), "rating": ("exact", "gt")},
+        registry=R,
+    )
+
+    # Wire payload uses camelCase top-level keys; lookups are snake.
+    raw = {"name": {"icontains": "foo", "isnull": True}}
+    coerced = coerce_input_value(raw, built)
+    # out_name mapping: top-level snake key preserved (single-word here).
+    assert coerced == {"name": {"icontains": "foo", "isnull": True}}
+
+    q, touched = to_q(coerced, FilterModel)
+    expected = models.Q(name__icontains="foo") & models.Q(name__isnull=True)
+    assert q == expected
+    assert touched is False
+
+
+@pytestmark_native
+def test_native_filter_to_q_round_trip_multiword_field(db):
+    """Multi-word field: wire camelCase -> out_name snake -> correct Q.
+    This is the canonical out_name footgun guard.
+    """
+    from graphql.utilities import coerce_input_value
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    class MWQModel(models.Model):
+        published_date = models.DateField(null=True)
+
+        class Meta:
+            app_label = "tests"
+
+    R = Registry()
+    built = native_build(
+        MWQModel, {"published_date": ("isnull",)}, registry=R
+    )
+    raw = {"publishedDate": {"isnull": True}}
+    coerced = coerce_input_value(raw, built)
+    # Without out_name this would be {'publishedDate': ...} and to_q would
+    # silently produce an EMPTY Q (publishedDate is not a real field).
+    assert coerced == {"published_date": {"isnull": True}}
+
+    q, _ = to_q(coerced, MWQModel)
+    assert q == models.Q(published_date__isnull=True)
+
+
+@pytestmark_native
+def test_native_backend_build_input_type_returns_graphql_input_object_type():
+    from graphql import GraphQLInputObjectType
+
+    R = Registry()
+    backend = NativeFilterBackend()
+    built = backend.build_input_type(
+        FilterModel, {"name": ("exact",)}, registry=R
+    )
+    assert isinstance(built, GraphQLInputObjectType)
+    # No filterable fields -> None on the native path too.
+    assert backend.build_input_type(FilterModel, None, registry=R) is None
+
+
+@pytestmark_native
+def test_native_custom_filter_field_uses_declared_graphene_type():
+    """A custom ``@filter_field(graphene.Int)`` arg must render as the matching
+    graphql-core scalar (``GraphQLInt``) under the native backend, NOT degrade
+    to ``GraphQLString``. Otherwise SDL parity with graphene breaks (WU4/WU10).
+    """
+    from graphql import GraphQLFloat, GraphQLInt, GraphQLString
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    custom_filters = [
+        ("search_count", lambda qs, info, value: qs, {
+            "graphene_type": graphene.Int,
+            "description": "Count search",
+        }),
+        ("min_score", lambda qs, info, value: qs, {
+            "graphene_type": graphene.Float,
+            "description": None,
+        }),
+        ("text_search", lambda qs, info, value: qs, {
+            "graphene_type": graphene.String,
+            "description": None,
+        }),
+    ]
+
+    R = Registry()
+    built = native_build(
+        FilterModel,
+        {"name": ("exact",)},
+        registry=R,
+        custom_filters=custom_filters,
+    )
+
+    fields = dict(built.fields)
+    # Wire keys are camelCase; out_name preserves the snake arg name.
+    assert fields["searchCount"].type is GraphQLInt
+    assert fields["searchCount"].out_name == "search_count"
+    assert fields["minScore"].type is GraphQLFloat
+    assert fields["minScore"].out_name == "min_score"
+    assert fields["textSearch"].type is GraphQLString
+    assert fields["textSearch"].out_name == "text_search"
+
+
+@pytestmark_native
+def test_native_custom_filter_field_no_graphene_type_falls_back_to_string():
+    """When no ``graphene_type`` is present, the custom arg falls back to
+    ``GraphQLString`` (matches graphene's default)."""
+    from graphql import GraphQLString
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    custom_filters = [
+        ("legacy", lambda qs, info, value: qs, {"description": None}),
+    ]
+
+    R = Registry()
+    built = native_build(
+        FilterModel,
+        {"name": ("exact",)},
+        registry=R,
+        custom_filters=custom_filters,
+    )
+    fields = dict(built.fields)
+    assert fields["legacy"].type is GraphQLString
+    assert fields["legacy"].out_name == "legacy"
+
+
+# --------------------------------------------------------------------------- #
+# WU4 — recursion (and/or/not), completeness assert, native translate enum     #
+# (GDX_BACKEND=native only)                                                     #
+# --------------------------------------------------------------------------- #
+@pytestmark_native
+def test_native_filter_input_has_and_or_not_combinators():
+    """The native filter input MUST expose the recursive ``and`` / ``or`` /
+    ``not`` combinators, mirroring the graphene builder for SDL parity.
+
+    Shape (matches graphene ``filtering/schema.py:334-336``):
+        and: [<Self>]   or: [<Self>]   not: <Self>
+    """
+    from graphql import GraphQLInputObjectType, GraphQLList
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    R = Registry()
+    built = native_build(
+        FilterModel,
+        {"name": ("exact", "icontains"), "rating": ("exact", "gt")},
+        registry=R,
+    )
+    fields = dict(built.fields)
+
+    assert "and" in fields, "filter input missing 'and' combinator"
+    assert "or" in fields, "filter input missing 'or' combinator"
+    assert "not" in fields, "filter input missing 'not' combinator"
+
+    # and/or -> GraphQLList(<self>); not -> <self>. The element/inner type MUST
+    # be the SAME cached input instance (recursion via cache-before-thunk).
+    and_type = fields["and"].type
+    or_type = fields["or"].type
+    not_type = fields["not"].type
+    assert isinstance(and_type, GraphQLList)
+    assert isinstance(or_type, GraphQLList)
+    assert and_type.of_type is built, "and: must be a list of the SAME filter input"
+    assert or_type.of_type is built, "or: must be a list of the SAME filter input"
+    assert not_type is built, "not: must be the SAME filter input (self-ref)"
+    assert isinstance(built, GraphQLInputObjectType)
+
+    # out_name carries the snake combinator name (== the wire key here).
+    assert fields["and"].out_name == "and"
+    assert fields["or"].out_name == "or"
+    assert fields["not"].out_name == "not"
+
+
+@pytestmark_native
+def test_native_filter_self_referential_recursion_resolves():
+    """Category->parent->Category (self-relation FK): the nested relation filter
+    input must resolve with NON-EMPTY ``.fields`` and no RecursionError, proving
+    cache-before-thunk registration breaks the cycle.
+
+    ``NestedTreeNode`` has ``parent = FK("self")`` — the canonical self-relation.
+    """
+    from graphql import GraphQLInputObjectType
+
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+    from .models import NestedTreeNode
+
+    R = Registry()
+    # Declare BOTH a self-relation-nested path AND the recursive combinators.
+    built = native_build(
+        NestedTreeNode,
+        {"label": ("exact", "icontains"), "parent__label": ("exact",)},
+        registry=R,
+    )
+
+    fields = dict(built.fields)
+    # The nested relation filter input (parent -> NestedTreeNode) is present and
+    # its own .fields are non-empty (forces the nested thunk to evaluate).
+    assert "parent" in fields
+    parent_input = fields["parent"].type
+    assert isinstance(parent_input, GraphQLInputObjectType)
+    parent_fields = dict(parent_input.fields)
+    assert parent_fields, "nested self-relation filter input has EMPTY .fields"
+    assert "label" in parent_fields
+
+    # The nested input ALSO carries and/or/not (recursion all the way down).
+    assert "and" in parent_fields
+    assert "or" in parent_fields
+    assert "not" in parent_fields
+
+    # No RecursionError even though parent's filter input references itself via
+    # and/or/not. Force the top-level thunk one more time for good measure.
+    assert dict(built.fields)
+
+
+@pytestmark_native
+def test_native_assert_filter_type_complete_passes_for_valid_type():
+    """``_assert_filter_type_complete`` forces thunk eval and accepts a type with
+    non-empty fields without raising."""
+    from django_graphex.filtering.native_schema import (
+        _assert_filter_type_complete,
+        build_filter_input_type as native_build,
+    )
+
+    R = Registry()
+    built = native_build(FilterModel, {"name": ("exact",)}, registry=R)
+    # Must NOT raise.
+    _assert_filter_type_complete(built)
+
+
+@pytestmark_native
+def test_native_assert_filter_type_complete_raises_on_empty_fields():
+    """``_assert_filter_type_complete`` raises AssertionError when a thunk
+    evaluates to empty ``.fields`` (the silent-empty footgun A6 catches)."""
+    from graphql import GraphQLInputObjectType
+
+    from django_graphex.filtering.native_schema import (
+        _assert_filter_type_complete,
+    )
+
+    empty = GraphQLInputObjectType(name="EmptyFilterinput", fields=lambda: {})
+    with pytest.raises(AssertionError):
+        _assert_filter_type_complete(empty)
+
+
+@pytestmark_native
+def test_native_build_filter_input_type_wires_completeness_assert(monkeypatch):
+    """``build_filter_input_type`` MUST wire ``_assert_filter_type_complete`` so a
+    type that resolves to empty fields is caught at BUILD time, not silently
+    shipped.
+
+    Uses a UNIQUE model so the module-level ``_NATIVE_INPUT_CACHE`` is cold — a
+    cache hit would (correctly) short-circuit before the assert, so the wiring
+    can only be observed on a fresh build.
+    """
+    import django_graphex.filtering.native_schema as ns
+
+    class WireAssertModel(models.Model):
+        headline = models.CharField(max_length=50)
+
+        class Meta:
+            app_label = "tests"
+
+    R = Registry()
+    # Patch the helper to record that it was called during build (proves wiring).
+    calls = {"n": 0}
+    real_assert = ns._assert_filter_type_complete
+
+    def _spy(t):
+        calls["n"] += 1
+        return real_assert(t)
+
+    monkeypatch.setattr(ns, "_assert_filter_type_complete", _spy)
+    built = ns.build_filter_input_type(
+        WireAssertModel, {"headline": ("exact",)}, registry=R
+    )
+    assert built is not None
+    assert calls["n"] >= 1, (
+        "build_filter_input_type did NOT wire _assert_filter_type_complete"
+    )
+
+
+@pytestmark_native
+def test_native_translate_skips_unwrap_enum(db):
+    """Under the native backend, ``to_q`` must NOT call the graphene-specific
+    ``_unwrap_enum`` — graphql-core delivers raw enum values already. A native
+    enum lookup value passes through unchanged into the Q."""
+    from django_graphex.filtering import translate as tr
+
+    # Sentinel: if _unwrap_enum were called on the native path it would mutate
+    # this marker. Patch it to a poison that raises so any call is loud.
+    def _poison(_value):
+        raise AssertionError("_unwrap_enum must NOT be called on the native path")
+
+    # Only meaningful under native; the module-level flag gates the call.
+    import os as _os2
+    if _os2.environ.get("GDX_BACKEND", "graphene") != "native":
+        pytest.skip("native-only")
+
+    orig = tr._unwrap_enum
+    tr._unwrap_enum = _poison
+    try:
+        q, _ = tr.to_q({"name": {"exact": "published"}}, FilterModel)
+    finally:
+        tr._unwrap_enum = orig
+    assert q == models.Q(name__exact="published")
+
+
+def test_translate_unwrap_enum_kept_for_graphene_path():
+    """DUAL-BACKEND: ``_unwrap_enum`` (and its graphene Enum .value unwrap) is
+    retained for the graphene path regardless of backend. A graphene-style Enum
+    member is unwrapped to its raw value.
+
+    Runs on BOTH backends — it documents the graphene contract is preserved.
+    """
+    from django_graphex.filtering.translate import _unwrap_enum
+
+    class _StatusEnum:
+        # Name ends with 'Enum' and exposes .value, mimicking a graphene Enum.
+        value = "published"
+
+    _StatusEnum.__name__ = "StatusEnum"
+    member = _StatusEnum()
+    assert _unwrap_enum(member) == "published"
+    assert _unwrap_enum([member, member]) == ["published", "published"]
+
+
+def test_translate_to_q_enum_lookup_both_backends(db):
+    """``to_q`` builds the correct Q for an enum lookup. On the native path the
+    raw value passes straight through; on the graphene path it is unwrapped.
+    Either way the resulting Q is identical."""
+    from django_graphex.filtering.translate import to_q
+
+    q, _ = to_q({"rating": {"in": [1, 2]}}, FilterModel)
+    assert q == models.Q(rating__in=[1, 2])

@@ -3,12 +3,19 @@
 This module provides configuration management for the django-graphex
 package, including pagination, caching, and other global settings. It reads
 both the ``DJANGO_GRAPHEX`` namespace (this package's own settings) and the
-``GRAPHENE`` namespace (the schema/middleware settings formerly read by
-``graphene-django``), each exposed through its own singleton.
+``GRAPHEX`` / ``GRAPHENE`` namespace (the schema/middleware settings formerly
+read by ``graphene-django``), each exposed through its own singleton.
+
+``GRAPHEX`` is the new canonical namespace for schema/middleware settings.
+``GRAPHENE`` remains supported but is deprecated: when only ``GRAPHENE`` is
+present (and ``GRAPHEX`` is absent or empty), ``graphex_or_graphene_settings``
+falls back to ``GRAPHENE`` and emits a lazy warn-once-per-process
+``DeprecationWarning``.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from django.conf import settings
@@ -268,6 +275,156 @@ class GrapheneSettings(_BaseAPISettings):
         )
 
 
+class GraphexSettings(_BaseAPISettings):
+    """Read the ``GRAPHEX`` settings namespace (new canonical name).
+
+    Mirrors :class:`GrapheneSettings` exactly, but reads from
+    ``settings.GRAPHEX`` instead of ``settings.GRAPHENE``.  Consumers should
+    prefer :data:`graphex_or_graphene_settings` over direct use of this class
+    so they get the GRAPHENE-fallback shim automatically.
+    """
+
+    def __init__(
+        self,
+        user_settings: dict[str, Any] | None = None,
+        defaults: dict[str, Any] | None = None,
+        import_strings: tuple[str, ...] | None = None,
+    ) -> None:
+        """Initialize the reader bound to the ``GRAPHEX`` namespace.
+
+        Args:
+            user_settings: Explicit user settings (else read from Django).
+            defaults: The default values mapping (defaults to
+                ``GRAPHENE_DEFAULTS`` — the same keys as the legacy namespace).
+            import_strings: Keys whose string values are import paths
+                (defaults to ``GRAPHENE_IMPORT_STRINGS``).
+        """
+        super().__init__(
+            user_settings,
+            defaults or GRAPHENE_DEFAULTS,
+            import_strings or GRAPHENE_IMPORT_STRINGS,
+            "GRAPHEX",
+        )
+
+
+class _GraphexOrGrapheneSettings:
+    """Shim that resolves each key from ``GRAPHEX`` first, then ``GRAPHENE``.
+
+    ``GRAPHEX`` is the new canonical namespace introduced in v2.  Resolution is
+    **per key**, not per namespace: for each requested key ``K``,
+
+    1. if ``K`` is present in the user's ``GRAPHEX`` dict → use GRAPHEX's value
+       (no warning);
+    2. elif ``K`` is present in the user's ``GRAPHENE`` dict → use GRAPHENE's
+       value and emit a lazy warn-once-per-process ``DeprecationWarning``;
+    3. else → the package default (no warning).
+
+    Per-key resolution is what makes incremental migration **safe**: moving a
+    single key to ``GRAPHEX`` does NOT drop keys that are still declared only in
+    ``GRAPHENE``. A whole-namespace switch would instead return the *default*
+    for any key left behind the moment ``GRAPHEX`` gained any key — silently
+    dropping, for example, a security/auth middleware configured only in
+    ``GRAPHENE`` (its default is ``()``). See WU8/C15 (design D9).
+
+    The ``_warned`` flag enforces once-per-process semantics: it flips the first
+    time ANY key resolves from the legacy ``GRAPHENE`` namespace, and is reset
+    by :meth:`reload` for test isolation.
+
+    Consumers should import the module-level singleton
+    :data:`graphex_or_graphene_settings` rather than instantiating this class
+    directly.
+    """
+
+    def __init__(self) -> None:
+        self._graphex = GraphexSettings(None, GRAPHENE_DEFAULTS, GRAPHENE_IMPORT_STRINGS)
+        self._graphene = GrapheneSettings(None, GRAPHENE_DEFAULTS, GRAPHENE_IMPORT_STRINGS)
+        # Tracks whether the once-per-process DeprecationWarning has fired.
+        self._warned: bool = False
+
+    def _has_graphex(self) -> bool:
+        """Return True when ``settings.GRAPHEX`` is present and non-empty."""
+        return bool(getattr(settings, "GRAPHEX", None))
+
+    def _has_graphene(self) -> bool:
+        """Return True when ``settings.GRAPHENE`` is present and non-empty."""
+        return bool(getattr(settings, "GRAPHENE", None))
+
+    def _owning_namespace(self, attr: str) -> str:
+        """Return which namespace owns *attr* by raw per-key presence.
+
+        Presence is decided against the raw user-provided dict for each
+        namespace (defaults are NOT consulted), so a key the user actually wrote
+        in GRAPHEX wins, a key the user wrote only in GRAPHENE falls back, and a
+        key absent from both resolves to the default.
+
+        Args:
+            attr: The setting key (e.g. ``"SCHEMA"``, ``"MIDDLEWARE"``).
+
+        Returns:
+            ``"GRAPHEX"`` if the key is in the user's GRAPHEX dict, ``"GRAPHENE"``
+            if it is (only) in the user's GRAPHENE dict, otherwise ``"DEFAULT"``.
+        """
+        if attr in self._graphex.user_settings:
+            return "GRAPHEX"
+        if attr in self._graphene.user_settings:
+            return "GRAPHENE"
+        return "DEFAULT"
+
+    def __getattr__(self, attr: str) -> Any:
+        """Resolve *attr* per key: GRAPHEX → GRAPHENE (warn once) → default.
+
+        Resolution is per key, not per namespace. The owning namespace is
+        decided by raw user-dict presence (see :meth:`_owning_namespace`); the
+        chosen namespace's settings object then applies its own
+        import-string/default handling.
+
+        Args:
+            attr: The setting key (e.g. ``"SCHEMA"``, ``"MIDDLEWARE"``).
+
+        Returns:
+            The setting value from whichever namespace owns the key (or the
+            default when neither user namespace declares it).
+        """
+        owner = self._owning_namespace(attr)
+
+        if owner == "GRAPHEX":
+            return getattr(self._graphex, attr)
+
+        if owner == "GRAPHENE":
+            # The key is declared only in the legacy GRAPHENE namespace — warn
+            # once per process, then delegate so import_strings/defaults apply.
+            if not self._warned:
+                self._warned = True
+                warnings.warn(
+                    "The 'GRAPHENE' Django setting namespace is deprecated. "
+                    "Rename it to 'GRAPHEX' to silence this warning. "
+                    "Support for 'GRAPHENE' will be removed in a future release.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            return getattr(self._graphene, attr)
+
+        # Key absent from both user namespaces — return the default (no warning),
+        # delegating to GRAPHEX so import_strings/defaults still apply.
+        return getattr(self._graphex, attr)
+
+    def reload(self) -> None:
+        """Clear all cached values on both inner settings objects.
+
+        Called by :func:`reload_api_settings` when ``setting_changed`` fires
+        (e.g. ``override_settings`` in tests) so that both ``GRAPHEX`` and
+        ``GRAPHENE`` settings re-read from Django on the next access.
+        Also resets the ``_warned`` flag so tests that reset Django settings
+        can exercise the warn-once path again.
+        """
+        self._graphex.reload()
+        self._graphene.reload()
+        # Reset warned flag so the shim re-evaluates which namespace to use
+        # after settings change (important for test isolation with
+        # override_settings).
+        self._warned = False
+
+
 def _perform_import(value: Any, setting_name: str) -> Any:
     """Resolve dotted import-path strings in a setting value.
 
@@ -318,13 +475,14 @@ def _import_from_string(value: str, setting_name: str) -> Any:
 
 graphql_api_settings = GraphQLAPISettings(None, DEFAULTS, IMPORT_STRINGS)
 graphene_settings = GrapheneSettings(None, GRAPHENE_DEFAULTS, GRAPHENE_IMPORT_STRINGS)
+graphex_or_graphene_settings = _GraphexOrGrapheneSettings()
 
 
 def reload_api_settings(*args: Any, **kwargs: Any) -> None:
     """Clear the cached settings on the singleton when a watched Django setting changes.
 
-    Keeps ``override_settings(...)`` working in tests for both the
-    ``DJANGO_GRAPHEX`` and ``GRAPHENE`` namespaces by re-reading from Django.
+    Keeps ``override_settings(...)`` working in tests for all three
+    namespaces: ``DJANGO_GRAPHEX``, ``GRAPHENE``, and ``GRAPHEX``.
     Uses ``singleton.reload()`` rather than replacing the object so that any
     ``from .settings import graphql_api_settings`` bindings in other modules
     continue to reference the correct (updated) singleton.
@@ -338,6 +496,12 @@ def reload_api_settings(*args: Any, **kwargs: Any) -> None:
         graphql_api_settings.reload()
     elif setting == "GRAPHENE":
         graphene_settings.reload()
+        # Also reload the shim so it re-evaluates which namespace is active.
+        graphex_or_graphene_settings.reload()
+    elif setting == "GRAPHEX":
+        # The shim delegates to graphex_settings internally; reload both so
+        # that any switch between GRAPHEX/GRAPHENE is visible immediately.
+        graphex_or_graphene_settings.reload()
 
 
 setting_changed.connect(reload_api_settings)
