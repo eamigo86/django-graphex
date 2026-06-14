@@ -35,7 +35,13 @@ from __future__ import annotations
 from typing import Any
 
 from graphene.utils.str_converters import to_camel_case
-from graphql import GraphQLField, GraphQLObjectType
+from graphql import (
+    GraphQLArgument,
+    GraphQLField,
+    GraphQLList,
+    GraphQLNonNull,
+    GraphQLObjectType,
+)
 from graphql.execution import default_field_resolver
 
 from django_graphex.native.bridge import GdxPayload
@@ -43,12 +49,11 @@ from django_graphex.native.ir import GdxMeta
 
 # Map of not-yet-supported field-kind class names → the WU that owns the native
 # builder. Used to produce a precise NotImplementedError instead of a silent skip.
-_DEFERRED_FIELD_KINDS: dict[str, str] = {
-    "DjangoFilterListField": "WU3 (native filter-arg fields)",
-    "DjangoFilterPaginateListField": "WU3/WU6 (native filter + pagination fields)",
-    "DjangoListObjectField": "WU5/WU6 (native pagination/list fields)",
-    "DjangoNestedListObjectField": "WU6 (native nested pagination/list fields)",
-}
+#
+# WU6a (this slice) emptied the list/filter/pagination kinds: the native builders
+# now exist (see _build_list_object_field / _build_filter_list_field). Anything
+# left here still raises a precise NotImplementedError instead of a silent skip.
+_DEFERRED_FIELD_KINDS: dict[str, str] = {}
 
 
 def _collect_root_attrs(root: type) -> dict[str, Any]:
@@ -159,6 +164,181 @@ def _build_scalar_field(field: Any) -> GraphQLField:
     )
 
 
+def _filter_arg(field: Any) -> dict[str, GraphQLArgument]:
+    """Return the native ``filter`` arg dict for a list field, or ``{}``.
+
+    The native ``<Model>FilterInput`` is built by the WU3 native filter input
+    builder and stored on the field's ``filter_type`` attribute (set in the
+    field's ``__init__`` via the graphene builder for the graphene path) — but
+    the GRAPHENE filter type is NOT usable as a native arg. We rebuild the native
+    input here from the field's declared ``fields`` + ``custom_filters`` via the
+    native backend so the arg is a real ``GraphQLInputObjectType`` whose coerced
+    value (snake out_name keys) flows straight into ``to_q``.
+
+    Args:
+        field: A list field carrying ``filter_backend`` / ``fields`` /
+            ``custom_filters`` (set by ``_build_filter_arg``).
+
+    Returns:
+        ``{"filter": GraphQLArgument(<Model>FilterInput)}`` when filterable
+        fields are declared, else ``{}``.
+    """
+    declared_fields = getattr(field, "fields", None)
+    custom_filters = getattr(field, "custom_filters", None) or []
+    if not declared_fields and not custom_filters:
+        return {}
+
+    model = field.model
+    node_type = _unwrap_to_node_type(field)
+    registry = getattr(getattr(node_type, "_meta", None), "registry", None)
+
+    from django_graphex.filtering.native_schema import build_filter_input_type
+
+    native_input = build_filter_input_type(
+        model, declared_fields, registry, custom_filters=custom_filters
+    )
+    if native_input is None:
+        return {}
+    return {
+        "filter": GraphQLArgument(
+            native_input,
+            out_name="filter",
+            description="Filtering options for the list",
+        )
+    }
+
+
+def _list_container_output_type(field: Any) -> GraphQLObjectType:
+    """Return the canonical native container type for a list-object field.
+
+    Reuses the WU1b list-container ``_meta.graphql_output_type`` (identity-stable,
+    carries ``extensions['gdx']``). NEVER rebuilds a second container instance.
+
+    Args:
+        field: A ``DjangoListObjectField`` (or subclass) whose ``type`` is a
+            ``DjangoListObjectType``.
+
+    Returns:
+        The canonical container ``GraphQLObjectType``.
+
+    Raises:
+        RuntimeError: When the container has no compiled ``graphql_output_type``
+            (compile_all_outputs() must run before native root compilation).
+    """
+    container = getattr(getattr(field.type, "_meta", None), "graphql_output_type", None)
+    if container is None:  # pragma: no cover — defensive
+        raise RuntimeError(
+            f"DjangoListObjectField target {field.type!r} has no compiled "
+            "graphql_output_type. compile_all_outputs() must run before native "
+            "root compilation (WU1b list-container compile)."
+        )
+    return container
+
+
+def _build_list_object_field(field: Any) -> GraphQLField:
+    """Build a native ``GraphQLField`` for a ``DjangoListObjectField``.
+
+    The output type is the WU1b list-container (``results`` + ``totalCount``
+    [+ ``pageInfo``]); the container's ``results`` field carries the pagination
+    args + slicing resolver (wired in types.py WU6a). The list field itself
+    carries the ``filter`` arg (when filterable) and a resolver that filters the
+    queryset and returns a ``DjangoListObjectBase`` — the page slicing then
+    happens on the container's results field.
+
+    Args:
+        field: A ``DjangoListObjectField`` (or ``DjangoNestedListObjectField``).
+
+    Returns:
+        A graphql-core ``GraphQLField``.
+    """
+    output_type = _list_container_output_type(field)
+    args = _filter_arg(field)
+    # The field's wrap_resolve already returns a (root, info, **kwargs) callable
+    # (a partial binding manager/filter_backend/output_type). Reuse it so the
+    # filter/queryset logic is identical to the graphene path — NOT a no-op.
+    resolve = field.wrap_resolve(default_field_resolver)
+    return GraphQLField(
+        output_type,
+        args=args,
+        resolve=resolve,
+        description=getattr(field, "description", None),
+    )
+
+
+def _unwrap_to_node_type(field: Any) -> Any:
+    """Unwrap a list field's ``type`` to the inner ``DjangoObjectType`` node.
+
+    ``DjangoFilterListField.type`` is a ``graphene.List`` (possibly wrapping a
+    ``graphene.NonNull``) around the node ``DjangoObjectType``. graphql-core
+    wrappers may also be present in mixed states. Peel every wrapper to reach the
+    node class that carries ``_meta.graphql_output_type``.
+
+    Args:
+        field: A list field whose ``type`` wraps a ``DjangoObjectType``.
+
+    Returns:
+        The inner node type class (carrying ``_meta``).
+    """
+    from graphene.types.structures import Structure
+
+    current = field.type
+    while True:
+        if isinstance(current, (GraphQLList, GraphQLNonNull)):
+            current = current.of_type
+        elif isinstance(current, Structure):
+            current = current.of_type
+        else:
+            return current
+
+
+def _build_filter_list_field(field: Any) -> GraphQLField:
+    """Build a native ``GraphQLField`` for a plain filtered list field.
+
+    Covers ``DjangoFilterListField`` (no pagination → ``[Node]``) and
+    ``DjangoFilterPaginateListField`` (filter + in-resolver pagination →
+    ``[Node!]``). The output type mirrors the graphene shape: a
+    ``GraphQLList`` of the node's canonical ``graphql_output_type``. Pagination
+    args (when present) are added directly to the field; filtering + slicing
+    happen inside the field's own ``list_resolver`` (reused via ``wrap_resolve``).
+
+    Args:
+        field: A ``DjangoFilterListField`` or ``DjangoFilterPaginateListField``.
+
+    Returns:
+        A graphql-core ``GraphQLField``.
+    """
+    node_type = _unwrap_to_node_type(field)
+    node_output = node_type._meta.graphql_output_type
+    if node_output is None:  # pragma: no cover — defensive
+        raise RuntimeError(
+            f"Filter list field target {field.type!r} has no compiled "
+            "graphql_output_type. compile_all_outputs() must run first."
+        )
+
+    # DjangoFilterListField wraps List(_type); DjangoFilterPaginateListField
+    # wraps List(NonNull(_type)). Mirror the non-null inner shape so SDL parity
+    # holds: the paginate variant emits [Node!], the plain variant [Node].
+    if type(field).__name__ == "DjangoFilterPaginateListField":
+        list_type: Any = GraphQLList(GraphQLNonNull(node_output))
+    else:
+        list_type = GraphQLList(node_output)
+
+    args = _filter_arg(field)
+    # Pagination args (DjangoFilterPaginateListField only): the paginator slices
+    # inside list_resolver, so the args must be on THIS field.
+    paginator = getattr(field, "pagination", None)
+    if paginator is not None:
+        args.update(paginator.to_graphql_fields(native=True))
+
+    resolve = field.wrap_resolve(default_field_resolver)
+    return GraphQLField(
+        list_type,
+        args=args,
+        resolve=resolve,
+        description=getattr(field, "description", None),
+    )
+
+
 def compile_native_root(root: type, *, name: str) -> GraphQLObjectType:
     """Compile a graphene root ObjectType into a native ``GraphQLObjectType``.
 
@@ -180,11 +360,16 @@ def compile_native_root(root: type, *, name: str) -> GraphQLObjectType:
         return None  # type: ignore[return-value]
 
     # Import field classes lazily to avoid a hard import cycle at module load.
-    from django_graphex.fields import DjangoObjectField
+    from django_graphex.fields import (
+        DjangoFilterListField,
+        DjangoFilterPaginateListField,
+        DjangoListObjectField,
+        DjangoObjectField,
+    )
 
     fields: dict[str, GraphQLField] = {}
 
-    # 1) graphene-mounted fields (DjangoObjectField, plain scalars, …).
+    # 1) graphene-mounted fields (DjangoObjectField, list/filter fields, scalars).
     meta_fields = getattr(getattr(root, "_meta", None), "fields", None) or {}
     for field_name, field in meta_fields.items():
         kind = type(field).__name__
@@ -196,6 +381,15 @@ def compile_native_root(root: type, *, name: str) -> GraphQLObjectType:
             )
         if isinstance(field, DjangoObjectField):
             fields[to_camel_case(field_name)] = _build_object_field(field)
+        elif isinstance(field, DjangoListObjectField):
+            # DjangoListObjectField (and DjangoNestedListObjectField) → the WU1b
+            # list-container output type; pagination args/resolver live on the
+            # container's results field (WU6a), filter arg on this field.
+            fields[to_camel_case(field_name)] = _build_list_object_field(field)
+        elif isinstance(field, (DjangoFilterListField, DjangoFilterPaginateListField)):
+            # Plain filtered list ([Node] / [Node!]); pagination (when present)
+            # slices inside the field's own list_resolver (args on this field).
+            fields[to_camel_case(field_name)] = _build_filter_list_field(field)
         else:
             # Plain graphene scalar/enum field (e.g. CustomDateTime).
             fields[to_camel_case(field_name)] = _build_scalar_field(field)

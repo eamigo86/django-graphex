@@ -184,10 +184,18 @@ def test_native_schema_query_none_raises_graphql_error():
 @pytest.mark.django_db
 def test_native_schema_build_failure_raises_not_silent_fallback():
     """A native root with an unbuildable field kind RAISES (no silent graphene
-    fallback). This is the guard the discarded WU2 attempt lacked."""
+    fallback). This is the guard the discarded WU2 attempt lacked.
+
+    WU6a added native builders for the list/filter/pagination kinds, so we
+    temporarily re-register ``DjangoListObjectField`` in ``_DEFERRED_FIELD_KINDS``
+    to assert the propagation path (NotImplementedError surfaces through
+    ``DjangoGraphQLSchema`` rather than being swallowed by a graphene fallback)
+    is STILL intact for any kind that does not yet have a builder.
+    """
     import graphene
 
     from django_graphex.fields import DjangoListObjectField
+    from django_graphex.native import schema_compiler
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
     from django_graphex.types import DjangoListObjectType
@@ -202,7 +210,13 @@ def test_native_schema_build_failure_raises_not_silent_fallback():
     class _ListQuery(graphene.ObjectType):
         categories = DjangoListObjectField(_RaiseListType)
 
-    # NotImplementedError from the root compiler must propagate (loud), NOT be
-    # swallowed by a try/except returning a graphene schema.
-    with pytest.raises(NotImplementedError):
-        DjangoGraphQLSchema(query=_ListQuery)
+    # Temporarily mark DjangoListObjectField as deferred so the compiler raises
+    # NotImplementedError, proving the loud-propagation path is still in place.
+    schema_compiler._DEFERRED_FIELD_KINDS["DjangoListObjectField"] = "TEST-deferred"
+    try:
+        # NotImplementedError from the root compiler must propagate (loud), NOT
+        # be swallowed by a try/except returning a graphene schema.
+        with pytest.raises(NotImplementedError):
+            DjangoGraphQLSchema(query=_ListQuery)
+    finally:
+        schema_compiler._DEFERRED_FIELD_KINDS.pop("DjangoListObjectField", None)

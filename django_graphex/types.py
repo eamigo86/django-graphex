@@ -968,17 +968,25 @@ class DjangoListObjectType(ObjectType):
             # Capture loop variables via default-arg idiom.
             _list_model = model
             _list_rfn = results_field_name  # e.g. "results" or "items"
+            _list_paginator = paginator  # may be None (plain list, no pagination)
 
             def _make_list_fields_thunk(
                 _m: type = _list_model,
                 _rfn: str = _list_rfn,
                 _reg: Any = _shared_registry,
+                _pg: Any = _list_paginator,
             ) -> dict:
-                """Lazily build results + totalCount fields.
+                """Lazily build results + totalCount (+ pageInfo) fields.
 
                 Results element type is resolved from the shared registry so
                 it is the same canonical GraphQLObjectType as the node type's
                 _meta.graphql_output_type — identity-stable, no String fallback.
+
+                WU6a: when a paginator is configured the ``results`` field carries
+                the paginator's native args (limit/offset/ordering | page/... |
+                first/cursor) AND a slicing resolver so the SDL-visible args
+                ACTUALLY slice (no silent no-op). Cursor paginators also add a
+                native ``pageInfo`` field.
                 """
                 node_gql = _reg.get_compiled(_m)
                 if node_gql is None:
@@ -987,10 +995,49 @@ class DjangoListObjectType(ObjectType):
                     from graphql import GraphQLString as _S
                     node_gql = _S  # type: ignore[assignment]
 
-                return {
-                    _rfn: GraphQLField(GraphQLList(node_gql)),
-                    "totalCount": GraphQLField(GraphQLInt),
+                from django_graphex.paginations.utils import NativePaginationField
+
+                _results_args: dict = {}
+                _results_resolve = None
+                if _pg is not None:
+                    # Native pagination args wired directly onto the results field
+                    # (the build-not-wired seam WU6a closes). _NativePaginationField_
+                    # extracts the already_paginated-aware slicing resolver.
+                    _results_args = _pg.to_graphql_fields(native=True)
+                    _native_field = NativePaginationField(type=node_gql, paginator=_pg)
+                    from graphql.execution import default_field_resolver as _dfr
+
+                    _results_resolve = _native_field.wrap_resolve(_dfr)
+
+                def _total_count_resolve(root: Any, info: Any, **_kw: Any) -> Any:
+                    """Read the total count off the DjangoListObjectBase root.
+
+                    The container's GraphQL field is ``totalCount`` but the root
+                    object exposes it as ``count`` (graphene mapped the ``count``
+                    field via ``name="totalCount"``); the default field resolver
+                    would read ``root.totalCount`` and get ``None``.
+                    """
+                    return getattr(root, "count", None)
+
+                fields: dict = {
+                    _rfn: GraphQLField(
+                        GraphQLList(node_gql),
+                        args=_results_args,
+                        resolve=_results_resolve,
+                    ),
+                    "totalCount": GraphQLField(
+                        GraphQLInt, resolve=_total_count_resolve
+                    ),
                 }
+
+                # Opt-in pagination metadata: cursor paginators expose a native
+                # pageInfo field carrying the same first/cursor args + resolver.
+                if _pg is not None:
+                    _native_page_info = _pg.get_native_page_info_field(node_gql)
+                    if _native_page_info is not None:
+                        fields["pageInfo"] = _native_page_info
+
+                return fields
 
             _list_gdx_meta = GdxMeta(
                 name=cls.__name__,

@@ -288,8 +288,17 @@ class BaseDjangoGraphqlPagination:
         """
         return None
 
-    def to_graphql_fields(self) -> dict[str, Any]:
+    def to_graphql_fields(self, *, native: bool | None = None) -> dict[str, Any]:
         """Convert pagination parameters to GraphQL field arguments.
+
+        Args:
+            native: When ``True`` return graphql-core ``GraphQLArgument``
+                instances; when ``False`` return graphene scalar instances.
+                Defaults to the process backend flag (``_NATIVE_BACKEND``) so
+                existing callers keep their behavior. The graphene
+                ``GenericPaginationField`` passes ``native=False`` so a
+                graphene-built schema running in a native process still gets
+                sortable graphene args.
 
         Returns:
             A mapping of argument names to GraphQL field definitions.
@@ -300,6 +309,22 @@ class BaseDjangoGraphqlPagination:
         raise NotImplementedError(
             "to_graphql_field() function must be implemented into child classes."
         )
+
+    def get_native_page_info_field(self, node_type: Any) -> Any:
+        """Return a native (graphql-core) ``pageInfo`` field, or ``None``.
+
+        The base implementation returns ``None`` (no pagination metadata),
+        mirroring :meth:`get_page_info_field`. Cursor pagination overrides this
+        to expose a native ``CursorPageInfo`` field under ``GDX_BACKEND=native``.
+
+        Args:
+            node_type: The compiled element (node) ``GraphQLObjectType`` the
+                list paginates.
+
+        Returns:
+            A ``graphql.GraphQLField``, or ``None`` when no metadata is exposed.
+        """
+        return None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert pagination configuration to a dictionary.
@@ -430,17 +455,23 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
             "ordering": self.ordering,
         }
 
-    def to_graphql_fields(self) -> dict[str, Any]:
+    def to_graphql_fields(self, *, native: bool | None = None) -> dict[str, Any]:
         """Convert limit/offset parameters to GraphQL field arguments.
 
-        Under GDX_BACKEND=native returns ``{name: GraphQLArgument}`` instances
+        Under the native path returns ``{name: GraphQLArgument}`` instances
         so the native compiler can embed them directly as field args.
         Under the graphene path returns graphene scalar instances (unchanged).
+
+        Args:
+            native: Force the arg flavour (native graphql-core vs graphene
+                scalars). Defaults to the process backend flag.
 
         Returns:
             A mapping of argument names to GraphQL field definitions.
         """
-        if _NATIVE_BACKEND:
+        if native is None:
+            native = _NATIVE_BACKEND
+        if native:
             from graphql import GraphQLArgument, GraphQLInt, GraphQLString
 
             return {
@@ -644,16 +675,22 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             "ordering": self.ordering,
         }
 
-    def to_graphql_fields(self) -> dict[str, Any]:
+    def to_graphql_fields(self, *, native: bool | None = None) -> dict[str, Any]:
         """Convert page pagination parameters to GraphQL field arguments.
 
-        Under GDX_BACKEND=native returns ``{name: GraphQLArgument}`` instances.
+        Under the native path returns ``{name: GraphQLArgument}`` instances.
         Under the graphene path returns graphene scalar instances (unchanged).
+
+        Args:
+            native: Force the arg flavour (native graphql-core vs graphene
+                scalars). Defaults to the process backend flag.
 
         Returns:
             A mapping of argument names to GraphQL field definitions.
         """
-        if _NATIVE_BACKEND:
+        if native is None:
+            native = _NATIVE_BACKEND
+        if native:
             from graphql import GraphQLArgument, GraphQLInt, GraphQLString
 
             paginator_dict: dict[str, Any] = {
@@ -967,16 +1004,22 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             "max_page_size": self.max_page_size,
         }
 
-    def to_graphql_fields(self) -> dict[str, Any]:
+    def to_graphql_fields(self, *, native: bool | None = None) -> dict[str, Any]:
         """Convert cursor pagination parameters to GraphQL field arguments.
 
-        Under GDX_BACKEND=native returns ``{name: GraphQLArgument}`` instances.
+        Under the native path returns ``{name: GraphQLArgument}`` instances.
         Under the graphene path returns graphene scalar instances (unchanged).
+
+        Args:
+            native: Force the arg flavour (native graphql-core vs graphene
+                scalars). Defaults to the process backend flag.
 
         Returns:
             A mapping of argument names to GraphQL field definitions.
         """
-        if _NATIVE_BACKEND:
+        if native is None:
+            native = _NATIVE_BACKEND
+        if native:
             from graphql import GraphQLArgument, GraphQLInt, GraphQLString
 
             return {
@@ -1090,6 +1133,51 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
                 ),
             },
             resolver=resolver,
+            description="Forward keyset pagination metadata.",
+        )
+
+    def get_native_page_info_field(self, node_type: Any) -> Any:
+        """Return a native ``CursorPageInfo`` field with first/cursor args.
+
+        Mirrors :meth:`get_page_info_field` for the native compiler: the field's
+        type is the shared ``NATIVE_CURSOR_PAGE_INFO`` ``GraphQLObjectType`` and
+        the resolver computes the page info from the ``DjangoListObjectBase``
+        root (same logic as the graphene resolver).
+
+        Args:
+            node_type: The compiled element (node) ``GraphQLObjectType`` (unused;
+                accepted for signature parity with the base method).
+
+        Returns:
+            A ``graphql.GraphQLField`` for the cursor ``pageInfo``.
+        """
+        from graphql import GraphQLArgument, GraphQLField, GraphQLInt, GraphQLString
+
+        def _native_resolver(root: Any, info: Any, **kwargs: Any) -> Any:
+            if not isinstance(root, DjangoListObjectBase):
+                return None
+            info_dict = self.get_page_info(root.results, **kwargs)
+            # get_page_info returns snake_case keys; the native CursorPageInfo
+            # fields are camelCase, so remap to the wire keys the default
+            # field resolver reads (no per-field resolver on the page-info type).
+            return {
+                "hasNextPage": info_dict["has_next_page"],
+                "hasPreviousPage": info_dict["has_previous_page"],
+                "startCursor": info_dict["start_cursor"],
+                "endCursor": info_dict["end_cursor"],
+            }
+
+        return GraphQLField(
+            NATIVE_CURSOR_PAGE_INFO,
+            args={
+                self.first_query_param: GraphQLArgument(
+                    GraphQLInt, description=self.first_query_description
+                ),
+                self.cursor_query_param: GraphQLArgument(
+                    GraphQLString, description=self.cursor_query_description
+                ),
+            },
+            resolve=_native_resolver,
             description="Forward keyset pagination metadata.",
         )
 

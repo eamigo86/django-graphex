@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import operator
+import os
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -32,6 +33,12 @@ from .utils import (
     maybe_queryset,
     queryset_factory,
 )
+
+#: True when GDX_BACKEND=native is set in the process environment. Read once at
+#: import time (the flag is process-global and set before import — D7). Mirrors
+#: the same constant in paginations/utils.py and paginations/pagination.py so the
+#: WU5/WU6a callsites share one source of truth instead of re-reading os.environ.
+_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 # ---------------------------------------------------------------------------
 # G3 spike result: does .only() survive Window + filter(_gqx_rn) wrapping?
@@ -471,9 +478,9 @@ class DjangoFilterPaginateListField(Field):
             # Under GDX_BACKEND=native, to_graphql_fields() returns native
             # GraphQLArgument instances that graphene's to_arguments() cannot
             # sort. The native compiler (WU6a) wires args directly; skip here.
-            import os as _os_fields_pag
-
-            if _os_fields_pag.environ.get("GDX_BACKEND", "graphene") != "native":
+            # Reuse the module-level _NATIVE_BACKEND constant (WU5 SUGGESTION a)
+            # instead of re-reading os.environ at field-construction time.
+            if not _NATIVE_BACKEND:
                 pagination_kwargs = pagination.to_graphql_fields()
                 kwargs.update(**pagination_kwargs)
 

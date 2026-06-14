@@ -124,10 +124,14 @@ def test_compile_native_root_wires_resolver():
 
 
 @pytest.mark.django_db
-def test_compile_native_root_raises_notimplemented_for_list_field():
-    """The compiler RAISES NotImplementedError (never silent-skip) for a list
-    field whose native builder does not exist yet (WU5/WU6)."""
+def test_compile_native_root_builds_list_object_field():
+    """WU6a: the compiler BUILDS a DjangoListObjectField into a native field
+    whose type is the canonical WU1b list-container (identity, gdx-bridged).
+
+    (Previously this asserted NotImplementedError; WU6a added the builder.)
+    """
     import graphene
+    from graphql import GraphQLObjectType
 
     from django_graphex.fields import DjangoListObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -144,19 +148,25 @@ def test_compile_native_root_raises_notimplemented_for_list_field():
     class _ListQuery(graphene.ObjectType):
         categories = DjangoListObjectField(_NIListType)
 
-    with pytest.raises(NotImplementedError) as exc:
-        compile_native_root(_ListQuery, name="Query")
-    msg = str(exc.value)
-    assert "categories" in msg, f"error must name the field; got: {msg}"
-    assert "DjangoListObjectField" in msg, (
-        f"error must name the field kind; got: {msg}"
-    )
+    native_root = compile_native_root(_ListQuery, name="Query")
+    field = native_root.fields["categories"]
+    # Output type is the canonical WU1b list container (identity-stable, gdx).
+    assert field.type is _NIListType._meta.graphql_output_type
+    assert isinstance(field.type, GraphQLObjectType)
+    assert "gdx" in (field.type.extensions or {})
+    # The field resolver is wired (not a dead no-op).
+    assert callable(field.resolve)
 
 
 @pytest.mark.django_db
-def test_compile_native_root_raises_notimplemented_for_filter_field():
-    """The compiler RAISES NotImplementedError for a filter list field (WU3)."""
+def test_compile_native_root_builds_filter_list_field():
+    """WU6a: the compiler BUILDS a DjangoFilterListField into a native [Node]
+    field carrying the native filter input arg.
+
+    (Previously this asserted NotImplementedError; WU6a added the builder.)
+    """
     import graphene
+    from graphql import GraphQLInputObjectType, GraphQLList
 
     from django_graphex.fields import DjangoFilterListField
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -167,16 +177,20 @@ def test_compile_native_root_raises_notimplemented_for_filter_field():
     class _FilterCatType(DjangoObjectType):
         class Meta:
             model = Category
+            filter_fields = ["title"]
 
     compile_all_outputs()
 
     class _FilterQuery(graphene.ObjectType):
         cats = DjangoFilterListField(_FilterCatType)
 
-    with pytest.raises(NotImplementedError) as exc:
-        compile_native_root(_FilterQuery, name="Query")
-    assert "cats" in str(exc.value)
-    assert "DjangoFilterListField" in str(exc.value)
+    native_root = compile_native_root(_FilterQuery, name="Query")
+    field = native_root.fields["cats"]
+    assert isinstance(field.type, GraphQLList)
+    # Filter arg is a native graphql-core input type.
+    assert "filter" in field.args
+    assert isinstance(field.args["filter"].type, GraphQLInputObjectType)
+    assert callable(field.resolve)
 
 
 @pytest.mark.django_db
