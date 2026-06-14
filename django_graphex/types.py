@@ -1198,15 +1198,32 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
                         {input_field_name: Argument(input_type, required=True)}
                     )
             else:
-                global_arguments[operation].update(
-                    {
-                        "id": Argument(
-                            ID,
-                            required=True,
-                            description="Django object unique identification field",
-                        )
-                    }
-                )
+                import os as _os_dt
+                if _os_dt.environ.get("GDX_BACKEND", "graphene") == "native":
+                    # Native path: use graphql-core GraphQLArgument for 'id'.
+                    from graphql import GraphQLArgument as _GQLArgDT
+                    from graphql import GraphQLID as _GraphQLIDDT
+                    from graphql import GraphQLNonNull as _GQLNonNullDT
+
+                    global_arguments[operation].update(
+                        {
+                            "id": _GQLArgDT(
+                                _GQLNonNullDT(_GraphQLIDDT),
+                                description="Django object unique identification field",
+                                out_name="id",
+                            )
+                        }
+                    )
+                else:
+                    global_arguments[operation].update(
+                        {
+                            "id": Argument(
+                                ID,
+                                required=True,
+                                description="Django object unique identification field",
+                            )
+                        }
+                    )
             global_arguments[operation].update(arguments)
 
         _meta = DjangoModelTypeOptions(cls)
@@ -1650,16 +1667,52 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         )
 
     @classmethod
-    def CreateField(cls, *args, **kwargs) -> Field:
+    def _build_native_mutation_field(cls, operation: str) -> Any:
+        """Build a graphql-core GraphQLField for the given mutation operation.
+
+        Used by CreateField / DeleteField / UpdateField under GDX_BACKEND=native.
+        R7: reads ``_meta.output_type._meta.graphql_output_type`` (a compiled
+        GraphQLObjectType) — NEVER passes the graphene/Pydantic class directly.
+
+        Args:
+            operation: One of ``"create"``, ``"delete"``, or ``"update"``.
+
+        Returns:
+            A ``GraphQLField`` whose ``.args`` are ``GraphQLArgument`` instances
+            and whose ``.resolve`` is the corresponding classmethod (adapted via
+            ``_adapt_self`` for forward-compat).
+        """
+        from graphql import GraphQLField as _GQLField
+        from django_graphex.native._compat import _adapt_self
+
+        _resolver_map = {
+            "create": cls.create,
+            "delete": cls.delete,
+            "update": cls.update,
+        }
+        return _GQLField(
+            cls._meta.output_type._meta.graphql_output_type,
+            args=cls._meta.arguments[operation],
+            resolve=_adapt_self(_resolver_map[operation], owner=cls),
+        )
+
+    @classmethod
+    def CreateField(cls, *args, **kwargs) -> Any:
         """Create a field for creating objects.
+
+        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
+        Under graphene (default) returns a graphene Field.
 
         Args:
             *args: Positional arguments (currently unused).
-            **kwargs: Keyword arguments forwarded to the field.
+            **kwargs: Keyword arguments forwarded to the field (graphene only).
 
         Returns:
             A mutation field wired to the "create" resolver.
         """
+        import os as _os_mt
+        if _os_mt.environ.get("GDX_BACKEND", "graphene") == "native":
+            return cls._build_native_mutation_field("create")
         return Field(
             cls._meta.mutation_output,
             args=cls._meta.arguments["create"],
@@ -1668,16 +1721,22 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         )
 
     @classmethod
-    def DeleteField(cls, *args, **kwargs) -> Field:
+    def DeleteField(cls, *args, **kwargs) -> Any:
         """Create a field for deleting objects.
+
+        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
+        Under graphene (default) returns a graphene Field.
 
         Args:
             *args: Positional arguments (currently unused).
-            **kwargs: Keyword arguments forwarded to the field.
+            **kwargs: Keyword arguments forwarded to the field (graphene only).
 
         Returns:
             A mutation field wired to the "delete" resolver.
         """
+        import os as _os_mt
+        if _os_mt.environ.get("GDX_BACKEND", "graphene") == "native":
+            return cls._build_native_mutation_field("delete")
         return Field(
             cls._meta.mutation_output,
             args=cls._meta.arguments["delete"],
@@ -1686,16 +1745,22 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         )
 
     @classmethod
-    def UpdateField(cls, *args, **kwargs) -> Field:
+    def UpdateField(cls, *args, **kwargs) -> Any:
         """Create a field for updating objects.
+
+        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
+        Under graphene (default) returns a graphene Field.
 
         Args:
             *args: Positional arguments (currently unused).
-            **kwargs: Keyword arguments forwarded to the field.
+            **kwargs: Keyword arguments forwarded to the field (graphene only).
 
         Returns:
             A mutation field wired to the "update" resolver.
         """
+        import os as _os_mt
+        if _os_mt.environ.get("GDX_BACKEND", "graphene") == "native":
+            return cls._build_native_mutation_field("update")
         return Field(
             cls._meta.mutation_output,
             args=cls._meta.arguments["update"],

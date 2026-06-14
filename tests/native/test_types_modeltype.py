@@ -73,32 +73,35 @@ def test_django_model_type_output_list_type_accessible():
 
 
 @pytest.mark.django_db
-def test_django_model_type_create_update_field_deferred_to_phase5():
-    """CreateField/UpdateField native schema assembly is deferred to Phase 5.
+def test_django_model_type_create_field_returns_graphql_field():
+    """WU-3: CreateField() now returns a GraphQLField under GDX_BACKEND=native.
 
-    Under GDX_BACKEND=native, calling CreateField() or UpdateField() will raise
-    NotImplementedError because _meta.arguments["create"/"update"] hold
-    graphql-core GraphQLArgument objects — not graphene Argument objects.
-    This is the explicit Phase-5 deferral: the mutation field's native assembly
-    is NOT done in Phase 3.
+    Phase 4 WU-3 implements DjangoModelType.*Field() native branches.
+    Under native, CreateField() and UpdateField() return graphql-core GraphQLField
+    instances (not graphene Field), so no ValueError is raised.
 
-    This test asserts the EXPLICIT DEFERRAL: the method raises NotImplementedError
-    (or ValueError from graphene's args validation). This confirms the deferred
-    state is detectable, not silent.
+    This test replaces the old 'deferred_to_phase5' deferral test — WU-3 lifted
+    the deferral for field construction; schema assembly (mounting into a live
+    GraphQLSchema) remains Phase 5.
     """
+    from graphql import GraphQLField
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 
-    class _Phase5DeferralTest(DjangoModelType):
+    class _Phase4WU3Test(DjangoModelType):
         class Meta:
             model = Category
 
-    # Under native: _meta.arguments["create"] contains GraphQLArgument (not graphene.Argument).
-    # graphene's Field(args=...) rejects unknown argument types → ValueError.
-    # This is the explicit Phase-5 deferral: native schema assembly for mutations is
-    # deferred; until Phase 5, callers must use the graphene schema build path.
-    with pytest.raises((ValueError, NotImplementedError)):
-        _Phase5DeferralTest.CreateField()
+    # WU-3 GREEN: CreateField returns a GraphQLField, not graphene Field
+    create_field = _Phase4WU3Test.CreateField()
+    assert isinstance(create_field, GraphQLField), (
+        "DjangoModelType.CreateField() must return GraphQLField under native (WU-3)"
+    )
+
+    update_field = _Phase4WU3Test.UpdateField()
+    assert isinstance(update_field, GraphQLField), (
+        "DjangoModelType.UpdateField() must return GraphQLField under native (WU-3)"
+    )
 
 
 @pytest.mark.django_db
