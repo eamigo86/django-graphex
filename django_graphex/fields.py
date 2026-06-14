@@ -12,7 +12,8 @@ from django.db.models.expressions import Window
 from django.db.models.functions import RowNumber
 from graphene import ID, Argument, Field, List
 from graphene.types.structures import NonNull, Structure
-from graphene.utils.str_converters import to_snake_case
+
+from ._strconv import to_snake_case
 
 import django_graphex.settings as _settings_module
 from django_graphex.filtering.backend import resolve_filter_backend
@@ -113,9 +114,19 @@ class DjangoObjectField(Field):
         Returns:
             The Django model class backing the field's type.
         """
+        import os as _os_fields
+
         current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
+            from graphql import GraphQLList as _GQLList
+            from graphql import GraphQLNonNull as _GQLNonNull
+
+            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
+            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+                current_type = current_type.of_type
+        else:
+            while isinstance(current_type, Structure):
+                current_type = current_type.of_type
         return current_type._meta.model
 
     @staticmethod
@@ -282,9 +293,19 @@ class DjangoFilterListField(Field):
         Returns:
             The Django model class backing the field's type.
         """
+        import os as _os_fields
+
         current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
+            from graphql import GraphQLList as _GQLList
+            from graphql import GraphQLNonNull as _GQLNonNull
+
+            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
+            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+                current_type = current_type.of_type
+        else:
+            while isinstance(current_type, Structure):
+                current_type = current_type.of_type
         return current_type._meta.model
 
     @staticmethod
@@ -368,9 +389,19 @@ class DjangoFilterListField(Field):
         Returns:
             A partial that binds the leading positional arguments.
         """
+        import os as _os_fields
+
         current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
+            from graphql import GraphQLList as _GQLList
+            from graphql import GraphQLNonNull as _GQLNonNull
+
+            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
+            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+                current_type = current_type.of_type
+        else:
+            while isinstance(current_type, Structure):
+                current_type = current_type.of_type
         if self.resolver:
             # Custom resolver: bind only (manager, filter_backend).
             return partial(
@@ -444,9 +475,19 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The Django model class backing the field's type.
         """
+        import os as _os_fields
+
         current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
+            from graphql import GraphQLList as _GQLList
+            from graphql import GraphQLNonNull as _GQLNonNull
+
+            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
+            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+                current_type = current_type.of_type
+        else:
+            while isinstance(current_type, Structure):
+                current_type = current_type.of_type
         return current_type._meta.model
 
     def get_queryset(
@@ -463,9 +504,19 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The base queryset built for the request (hook applied).
         """
+        import os as _os_fields
+
         current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
+            from graphql import GraphQLList as _GQLList
+            from graphql import GraphQLNonNull as _GQLNonNull
+
+            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
+            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+                current_type = current_type.of_type
+        else:
+            while isinstance(current_type, Structure):
+                current_type = current_type.of_type
         return queryset_factory(manager, root, info, output_type=current_type, **kwargs)
 
     def list_resolver(
@@ -520,10 +571,20 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             A partial that binds the manager and filter backend.
         """
+        import os as _os_fields
+
         resolver = self.resolver or self.list_resolver
         current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
+            from graphql import GraphQLList as _GQLList
+            from graphql import GraphQLNonNull as _GQLNonNull
+
+            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
+            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+                current_type = current_type.of_type
+        else:
+            while isinstance(current_type, Structure):
+                current_type = current_type.of_type
         return partial(
             resolver,
             current_type._meta.model._default_manager,
