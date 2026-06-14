@@ -195,49 +195,63 @@ def test_compile_native_root_builds_filter_list_field():
 
 @pytest.mark.django_db
 def test_compile_native_root_reuses_raw_graphql_field():
-    """The compiler REUSES a raw graphql-core GraphQLField placed on the root.
+    """The compiler REUSES a raw graphql-core GraphQLField placed on the root —
+    via the REAL registration path, not a manual ``_NATIVE_FIELD_REGISTRY`` poke.
 
     Under GDX_BACKEND=native, ``DjangoModelType.CreateField()`` returns a raw
     ``graphql.GraphQLField`` that graphene's ObjectType metaclass does NOT mount
-    into ``_meta.fields`` (it stays as a plain class attribute). The native root
-    compiler must recover such attributes from the class dict and reuse them
-    AS-IS (no rebuild). This is exactly the mutation-field integration seam WU9
-    will rely on; here we assert it with a hand-built GraphQLField so the test is
-    independent of Phase-4 mutation input-compilation ordering.
+    into ``_meta.fields`` (it stays as a plain class attribute). The builder
+    SELF-REGISTERS that field in ``_NATIVE_FIELD_REGISTRY[(model, op, "native")]``,
+    and the native root compiler recovers such attributes from the class dict
+    (gated on registry membership) and reuses them AS-IS (no rebuild).
 
-    The recovered field must be REGISTERED in ``_NATIVE_FIELD_REGISTRY``: the
-    compiler keys recovery off registry membership (not a blanket
-    ``isinstance(value, GraphQLField)`` scan) so an unrelated user-declared raw
-    ``GraphQLField`` is never silently mounted. We register the hand-built field
-    under a synthetic key (kept decoupled from Phase-4 mutation input-compile
-    ordering) and clean it up afterward.
+    This exercises the genuine seam end-to-end: a real ``DjangoModelType``
+    builds + registers the field, graphene drops it from ``_meta.fields``, and
+    the compiler recovers the SAME instance. (Previously this hand-built a field
+    and MANUALLY injected it into the registry, simulating a registration the
+    DjangoModelType path never performed — false confidence the audit flagged.)
     """
     import graphene
-    from graphql import GraphQLField, GraphQLString
 
+    from django_graphex import DjangoObjectType
     from django_graphex.mutation import _NATIVE_FIELD_REGISTRY
+    from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
+    from django_graphex.types import DjangoModelType
 
-    raw_field = GraphQLField(GraphQLString, resolve=lambda root, info: "ok")
-    _reg_key = ("_test_thing_model", "create", "native")
-    _NATIVE_FIELD_REGISTRY[_reg_key] = raw_field
-    try:
+    # Use a model dedicated to this test so its input/output registry entries are
+    # not polluted by sibling DjangoModelType/DjangoInputObjectType definitions
+    # for the same model elsewhere in the process-wide global registry.
+    from tests.models import HookModel
 
-        class _MutationRoot(graphene.ObjectType):
-            create_thing = raw_field
+    class _RawHookNode(DjangoObjectType):
+        class Meta:
+            model = HookModel
 
-        # graphene drops the raw GraphQLField — it must NOT appear in _meta.fields.
-        assert "create_thing" not in (
-            getattr(_MutationRoot._meta, "fields", {}) or {}
-        )
+    class _RawHookType(DjangoModelType):
+        class Meta:
+            model = HookModel
 
-        native_root = compile_native_root(_MutationRoot, name="Mutation")
-        # camelCase mirrors graphene auto_camelcase=True; recovered from the class
-        # dict, reused as the SAME native GraphQLField instance (no rebuild).
-        assert "createThing" in native_root.fields
-        assert native_root.fields["createThing"] is raw_field
-    finally:
-        _NATIVE_FIELD_REGISTRY.pop(_reg_key, None)
+    compile_all_outputs()
+
+    # The REAL registration path: CreateField() builds AND self-registers the
+    # native GraphQLField — no manual _NATIVE_FIELD_REGISTRY injection.
+    create_field = _RawHookType.CreateField()
+    assert _NATIVE_FIELD_REGISTRY[(HookModel, "create", "native")] is create_field
+
+    class _MutationRoot(graphene.ObjectType):
+        create_hook = create_field
+
+    # graphene drops the raw GraphQLField — it must NOT appear in _meta.fields.
+    assert "create_hook" not in (
+        getattr(_MutationRoot._meta, "fields", {}) or {}
+    )
+
+    native_root = compile_native_root(_MutationRoot, name="Mutation")
+    # camelCase mirrors graphene auto_camelcase=True; recovered from the class
+    # dict, reused as the SAME native GraphQLField instance (no rebuild).
+    assert "createHook" in native_root.fields
+    assert native_root.fields["createHook"] is create_field
 
 
 @pytest.mark.django_db

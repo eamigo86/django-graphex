@@ -1919,30 +1919,99 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         """Build a graphql-core GraphQLField for the given mutation operation.
 
         Used by CreateField / DeleteField / UpdateField under GDX_BACKEND=native.
-        R7: reads ``_meta.output_type._meta.graphql_output_type`` (a compiled
-        GraphQLObjectType) — NEVER passes the graphene/Pydantic class directly.
+
+        WU9 parity fix — this path now mirrors the DjangoModelMutation native
+        field (mutation.py) and graphene's own DjangoModelType mutation shape:
+
+        1. **Output is the PAYLOAD, not the node.** Graphene mounts
+           ``cls._meta.mutation_output`` (= ``cls``) as the field type, so the SDL
+           is ``create(...): <ThisType>`` where ``<ThisType>`` is the wrapper
+           carrying ``ok`` / ``errors`` + the output field (the node).  The prior
+           code used ``_meta.output_type._meta.graphql_output_type`` (the bare
+           node) — ``ok`` / ``errors`` were unqueryable.  We now compile ``cls``
+           itself (a plain graphene ObjectType subclass) via
+           ``_compile_plain_object_type`` → the payload GraphQLObjectType.
+        2. **camelCase wire arg keys.** graphql-core does NOT auto-camelCase arg
+           names; the dict keys must be the camelCase WIRE names while each
+           GraphQLArgument keeps ``out_name`` = the snake Python kwarg (already
+           set when the arg was built in ``__init_subclass_with_meta__``).
+        3. **Registration.** The built field is stored in
+           ``_NATIVE_FIELD_REGISTRY[(model, operation, "native")]`` so the native
+           root compiler's ``_collect_root_attrs`` (gated on registry membership)
+           mounts it onto the native Mutation root.  The SAME instance is cached
+           and returned on repeat calls so the mounted field IS the registered
+           field (identity), exactly like the DjangoModelMutation path.
 
         Args:
             operation: One of ``"create"``, ``"delete"``, or ``"update"``.
 
         Returns:
-            A ``GraphQLField`` whose ``.args`` are ``GraphQLArgument`` instances
-            and whose ``.resolve`` is the corresponding classmethod (adapted via
-            ``_adapt_self`` for forward-compat).
+            A ``GraphQLField`` whose ``.type`` is the compiled mutation payload,
+            whose ``.args`` are ``GraphQLArgument`` instances keyed by camelCase
+            wire names, and whose ``.resolve`` is the corresponding classmethod
+            (adapted via ``_adapt_self``).
         """
+        from graphene.utils.str_converters import to_camel_case as _to_camel
         from graphql import GraphQLField as _GQLField
+
+        from django_graphex.mutation import (
+            _NATIVE_FIELD_IDENTITIES,
+            _NATIVE_FIELD_REGISTRY,
+        )
         from django_graphex.native._compat import _adapt_self
+        from django_graphex.native.schema_compiler import (
+            _compile_plain_object_type,
+        )
+
+        model = cls._meta.model
+        _reg_key = (model, operation, "native")
+
+        # Per-CLASS idempotency: repeated *Field() calls on THIS exact subclass
+        # return the SAME field instance (identity-stable so the mounted field is
+        # the registered one). Keyed on the class — NOT on (model, op) — so two
+        # distinct DjangoModelType subclasses for the same model each build their
+        # OWN field (their resolvers/payloads differ). The shared
+        # ``_NATIVE_FIELD_REGISTRY`` slot is still keyed by model+op and is
+        # OVERWRITTEN below (last-built wins) to mirror the DjangoModelMutation
+        # registration semantics; ``_collect_root_attrs`` recovers whichever
+        # field instance is mounted via identity, so a root assembled from THIS
+        # class always finds THIS class' field.
+        _cache: dict[str, Any] = cls.__dict__.get("_dgx_native_mutation_fields", {})
+        if "_dgx_native_mutation_fields" not in cls.__dict__:
+            cls._dgx_native_mutation_fields = _cache
+        cached = _cache.get(operation)
+        if cached is not None:
+            # Re-assert this class' slot in the shared registry (a sibling
+            # subclass for the same model may have overwritten it since).
+            _NATIVE_FIELD_REGISTRY[_reg_key] = cached
+            return cached
 
         _resolver_map = {
             "create": cls.create,
             "delete": cls.delete,
             "update": cls.update,
         }
-        return _GQLField(
-            cls._meta.output_type._meta.graphql_output_type,
-            args=cls._meta.arguments[operation],
+
+        # Output type = the compiled PAYLOAD (this wrapper class), not the node.
+        _gql_output_type = _compile_plain_object_type(cls)
+
+        # camelCase the wire arg keys; each GraphQLArgument keeps out_name=snake.
+        _args = {
+            _to_camel(_arg_name): _arg
+            for _arg_name, _arg in cls._meta.arguments[operation].items()
+        }
+
+        _gql_field = _GQLField(
+            _gql_output_type,
+            args=_args,
             resolve=_adapt_self(_resolver_map[operation], owner=cls),
+            description=getattr(cls._meta, "description", None)
+            or f"Native {operation} mutation for {model.__name__}",
         )
+        _cache[operation] = _gql_field
+        _NATIVE_FIELD_REGISTRY[_reg_key] = _gql_field
+        _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
+        return _gql_field
 
     @classmethod
     def CreateField(cls, *args, **kwargs) -> Any:

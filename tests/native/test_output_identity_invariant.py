@@ -52,9 +52,10 @@ def test_compile_all_outputs_relation_identity_no_string_fallback():
     type's _meta.graphql_output_type.
     """
     from graphql import GraphQLObjectType
-    from django_graphex.types import DjangoObjectType
+
     from django_graphex.native.base import get_shared_output_registry
     from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.types import DjangoObjectType
     from tests.models import Author, Post
 
     class _IdAuthorType(DjangoObjectType):
@@ -124,8 +125,9 @@ def test_compile_all_outputs_self_cycle_resolves_to_same_instance():
     to the node type itself.
     """
     from graphql import GraphQLObjectType
-    from django_graphex.types import DjangoObjectType
+
     from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.types import DjangoObjectType
     from tests.models import NestedTreeNode
 
     class _SelfCycleNodeType(DjangoObjectType):
@@ -164,8 +166,8 @@ def test_compile_all_outputs_single_instance_stable_across_recompile():
     created once, identity-stable. A second compile_all_outputs() call must
     return the SAME object on _meta.graphql_output_type.
     """
-    from django_graphex.types import DjangoObjectType
     from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.types import DjangoObjectType
     from tests.models import Category
 
     class _StableCategoryType(DjangoObjectType):
@@ -199,27 +201,30 @@ def test_compile_all_outputs_single_instance_stable_across_recompile():
 def test_schema_assembly_no_duplicate_type_name():
     """Reviewer probe 3 — the permanent regression guard for the identity bug.
 
-    Two cross-referencing DjangoObjectTypes plus a mutation that pins one of
-    their compiled output types at class-def time. After compile_all_outputs(),
-    assemble a graphql.GraphQLSchema(query=..., mutation=...) from the compiled
-    roots. This MUST construct without:
+    Two cross-referencing DjangoObjectTypes plus a mutation. After
+    compile_all_outputs(), assemble a graphql.GraphQLSchema(query=..., mutation=...)
+    from the compiled roots. This MUST construct without:
 
         TypeError: Schema must contain uniquely named types but contains
                    multiple types named '<TypeName>'.
 
-    The mutation pins output_type._meta.graphql_output_type at class-def time
-    (mutation.py:434/456). If compile_all_outputs() later swaps in a SECOND
-    instance, the schema would carry two same-named types and raise. The fix
-    guarantees the pinned instance IS the one that ends up in the schema.
+    WU9 update: the native mutation field's output type is the MUTATION PAYLOAD
+    type (``ok`` / ``errors`` + the output field), NOT the bare model node type
+    (the pre-WU9 bug pinned the node type, leaving ``ok``/``errors``/output
+    unqueryable). The payload type's output FIELD references the CANONICAL node
+    instance compile_all_outputs() left on ``_meta`` — so the node type still
+    appears exactly once in the schema's type map (no duplicate-name TypeError).
     """
     from graphql import (
         GraphQLField,
+        GraphQLNonNull,
         GraphQLObjectType,
         GraphQLSchema,
     )
-    from django_graphex.types import DjangoObjectType
-    from django_graphex.mutation import DjangoModelMutation, _NATIVE_FIELD_REGISTRY
+
+    from django_graphex.mutation import _NATIVE_FIELD_REGISTRY, DjangoModelMutation
     from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.types import DjangoObjectType
     from tests.models import Author, Post
 
     class _SchemaAuthorType(DjangoObjectType):
@@ -230,10 +235,9 @@ def test_schema_assembly_no_duplicate_type_name():
         class Meta:
             model = Post
 
-    # A mutation referencing Author — pins Author's compiled output type at
-    # class-def time (the exact pinning the dual-path bug poisoned). The
-    # mutation looks up the already-registered DjangoObjectType for Author
-    # (i.e. _SchemaAuthorType) via registry.get_type_for_model(model).
+    # A mutation referencing Author. Under WU9 it pins the compiled PAYLOAD type
+    # at class-def time; the payload's output field references Author's canonical
+    # node instance via the shared registry.
     class _SchemaAuthorMutation(DjangoModelMutation):
         class Meta:
             model = Author
@@ -244,16 +248,35 @@ def test_schema_assembly_no_duplicate_type_name():
     author_gql = _SchemaAuthorType._meta.graphql_output_type
     post_gql = _SchemaPostType._meta.graphql_output_type
 
-    # The mutation field pinned at class-def time MUST be the same object that
-    # compile_all_outputs() populated (identity proof of the fix).
     pinned_field = _NATIVE_FIELD_REGISTRY.get((Author, "create", "native"))
     assert pinned_field is not None, "mutation native create field must be registered"
-    pinned_output = pinned_field.type
-    pinned_inner = getattr(pinned_output, "of_type", pinned_output)
-    assert pinned_inner is author_gql, (
-        "The mutation pinned a DIFFERENT GraphQLObjectType than the one "
-        "compile_all_outputs() left on _meta — the dual-path identity hazard. "
-        f"pinned={pinned_inner!r} vs author={author_gql!r}"
+
+    # WU9: the pinned field's output type is the PAYLOAD type (ok/errors + output
+    # field), NOT the node type. The payload exposes ok/errors + the output field.
+    payload = pinned_field.type
+    if isinstance(payload, GraphQLNonNull):
+        payload = payload.of_type
+    assert isinstance(payload, GraphQLObjectType)
+    assert payload is not author_gql, (
+        "WU9: the mutation output type must be the PAYLOAD type, not the node type."
+    )
+    payload_fields = set(payload.fields.keys())
+    assert {"ok", "errors"} <= payload_fields, (
+        f"Mutation payload must expose ok/errors; got {sorted(payload_fields)}"
+    )
+
+    # The payload's OUTPUT FIELD (camelCased model name) references the CANONICAL
+    # Author node instance — identity proof that there is no dual-path second
+    # instance (the bug compile_all_outputs() guards against).
+    output_field_name = _SchemaAuthorMutation._meta.output_field_name
+    out_field_type = payload.fields[output_field_name].type
+    if isinstance(out_field_type, GraphQLNonNull):
+        out_field_type = out_field_type.of_type
+    assert out_field_type is author_gql, (
+        "The mutation payload's output field references a DIFFERENT "
+        "GraphQLObjectType than the one compile_all_outputs() left on _meta — "
+        f"the dual-path identity hazard. inner={out_field_type!r} vs "
+        f"author={author_gql!r}"
     )
 
     # Build query + mutation roots from the SAME compiled instances.

@@ -190,6 +190,28 @@ def build_model_schema(
     """
     exclude = exclude or set()
     definitions: dict[str, tuple[Any, Any]] = {}
+    # Update semantics (``partial=True``) require the primary key in the input so
+    # the resolver can locate the row to mutate: graphene's update input exposes
+    # ``id: ID!`` (added by ``construct_fields(input_for="update")``), and
+    # ``DjangoModelMutation.update`` does ``data.pop("id", None)``.  The pk is
+    # excluded from ``writable_fields`` (it is not editable), so add it back here
+    # for the partial case only.  The create input never carries ``id``.
+    if partial and "id" not in exclude:
+        pk_field = model._meta.pk
+        pk_py_type = _scalar_type(pk_field)
+        # ``id`` is OPTIONAL in the validation model: the resolver pops it from the
+        # payload (``data.pop("id", None)``) to locate the row BEFORE the
+        # remaining data is validated, so requiring it here would fail validation
+        # on the popped payload. The client still supplies it on the wire (the
+        # update input exposes ``id``); a missing pk simply yields a clean
+        # "not found" error in the resolver rather than a validation error.
+        definitions["id"] = (
+            pk_py_type | None,
+            Field(
+                default=None,
+                description="Django object unique identification field",
+            ),
+        )
     for field in writable_fields(model):
         if field.name in exclude or field.attname in exclude:
             continue

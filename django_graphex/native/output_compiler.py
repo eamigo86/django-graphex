@@ -23,7 +23,7 @@ Design contracts:
 from __future__ import annotations
 
 import re
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from graphql import (
     GraphQLBoolean,
@@ -46,7 +46,7 @@ from django_graphex.native.scalars import (
 )
 
 if TYPE_CHECKING:
-    from django.db.models import Field as DjangoField, Model
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +142,7 @@ def _is_relation_field(field: Any) -> bool:
     Fallback: ``field.is_relation`` attribute (covers exotic custom field types
     that subclass neither but still declare the standard ``is_relation`` sentinel).
     """
-    from django.db.models.fields.related import RelatedField
-    from django.db.models.fields.related import ForeignObjectRel
+    from django.db.models.fields.related import ForeignObjectRel, RelatedField
     if isinstance(field, (RelatedField, ForeignObjectRel)):
         return True
     # Fallback: check for the is_relation attribute (all relation fields have it)
@@ -225,10 +224,19 @@ def _to_graphql_field(
             _info: Any,
             *,
             _name: str = field_name,
+            _many: bool = is_many,
         ) -> Any:
             if isinstance(root, dict):
-                return root.get(_name)
-            return getattr(root, _name, None)
+                value = root.get(_name)
+            else:
+                value = getattr(root, _name, None)
+            # A to-many relation accessor is a Django RelatedManager, which
+            # graphql-core's list completion cannot iterate directly ("Expected
+            # Iterable"). Materialise it via ``.all()`` so the list field resolves
+            # to a real iterable of related rows.
+            if _many and value is not None and hasattr(value, "all"):
+                return value.all()
+            return value
 
         gql_field = GraphQLField(
             type_=resolved_type,

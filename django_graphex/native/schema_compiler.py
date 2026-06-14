@@ -80,11 +80,19 @@ def _collect_root_attrs(root: type) -> dict[str, Any]:
         Mapping of attribute name → ``GraphQLField`` for every dropped native
         mutation field found on the root (and its bases).
     """
-    from django_graphex.mutation import _NATIVE_FIELD_REGISTRY
+    from django_graphex.mutation import (
+        _NATIVE_FIELD_IDENTITIES,
+        _NATIVE_FIELD_REGISTRY,
+    )
 
-    # Identity set of the exact GraphQLField instances the mutation machinery
-    # registered; membership proves a recovered attr is a native mutation field.
+    # Identity set of EVERY native mutation GraphQLField ever built; membership
+    # proves a recovered attr is a native mutation field. We union the current
+    # registry values (defensive, in case a field is registered out-of-band) with
+    # the cumulative identity set so a field is still recovered after its single
+    # ``(model, op)`` registry slot was overwritten by a sibling subclass for the
+    # same model (DjangoModelType / DjangoModelMutation last-built-wins).
     native_field_ids = {id(f) for f in _NATIVE_FIELD_REGISTRY.values()}
+    native_field_ids |= _NATIVE_FIELD_IDENTITIES
 
     found: dict[str, Any] = {}
     for klass in reversed(root.__mro__):
@@ -297,7 +305,6 @@ def _compile_plain_object_fields(graphene_cls: type) -> dict[str, GraphQLField]:
         A ``{camelCase_name: GraphQLField}`` dict.
     """
     from django_graphex.native._args import (
-        _unwrap_graphene_type,
         graphene_arg_to_graphql_argument,
     )
 
@@ -309,7 +316,15 @@ def _compile_plain_object_fields(graphene_cls: type) -> dict[str, GraphQLField]:
             gql_type: Any = _compile_plain_object_type(field_type)
         else:
             target = _plain_django_output_type(field_type)
-            gql_type = target if target is not None else _unwrap_graphene_type(field_type)
+            if target is not None:
+                gql_type = target
+            else:
+                # A graphene List/NonNull wrapper around a plain ObjectType
+                # (e.g. ``errors: [ErrorType]`` on a mutation payload) must
+                # compile the inner plain type and preserve the wrapper shape;
+                # _unwrap_graphene_type only handles scalar leaves and would
+                # raise a GDX_SCALAR_MAP KeyError for an inner ObjectType.
+                gql_type = _compile_wrapped_field_type(field_type)
 
         args = {}
         if getattr(field, "args", None):
@@ -326,6 +341,47 @@ def _compile_plain_object_fields(graphene_cls: type) -> dict[str, GraphQLField]:
             description=getattr(field, "description", None),
         )
     return fields
+
+
+def _compile_wrapped_field_type(field_type: Any) -> Any:
+    """Compile a (possibly wrapped) graphene field type to a graphql-core type.
+
+    Unwraps graphene ``List`` / ``NonNull`` structures, preserving the wrapper
+    shape, and dispatches the inner leaf to the correct compiler:
+
+    - an inner plain ``graphene.ObjectType`` (e.g. ``ErrorType``) compiles
+      on-the-fly via ``_compile_plain_object_type`` (single-instance, memoized);
+    - an inner ``DjangoObjectType`` / ``DjangoListObjectType`` reuses its
+      canonical ``_meta.graphql_output_type``;
+    - any other leaf (scalar/enum) goes through ``_unwrap_graphene_type``.
+
+    This is what lets a mutation-payload field like ``errors: [ErrorType]`` —
+    a ``graphene.List`` wrapping a plain ObjectType — compile natively instead of
+    raising a ``GDX_SCALAR_MAP`` KeyError on ``ErrorType``.
+
+    Args:
+        field_type: The mounted graphene field ``type`` (a ``Structure`` wrapper
+            or a leaf class).
+
+    Returns:
+        The corresponding graphql-core type (wrappers preserved).
+    """
+    from graphene.types.structures import List as GList
+    from graphene.types.structures import NonNull as GNonNull
+
+    from django_graphex.native._args import _unwrap_graphene_type
+
+    if isinstance(field_type, GNonNull):
+        return GraphQLNonNull(_compile_wrapped_field_type(field_type.of_type))
+    if isinstance(field_type, GList):
+        return GraphQLList(_compile_wrapped_field_type(field_type.of_type))
+
+    if _is_plain_object_type(field_type):
+        return _compile_plain_object_type(field_type)
+    target = _plain_django_output_type(field_type)
+    if target is not None:
+        return target
+    return _unwrap_graphene_type(field_type)
 
 
 def _plain_django_output_type(field_type: Any) -> GraphQLObjectType | None:

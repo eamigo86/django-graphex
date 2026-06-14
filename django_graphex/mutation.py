@@ -34,7 +34,21 @@ if TYPE_CHECKING:
 # Values: GraphQLField built during __init_subclass_with_meta__
 # Graphene fields are NEVER stored here; they live on the class directly.
 # Phase 7 removes the graphene path; this registry is then the only path.
+#
+# NOTE: this registry holds ONE field per (model, operation): a later subclass
+# for the same model OVERWRITES the slot (last-built wins). It is the lookup
+# table for ``*Field()`` reads (DjangoModelMutation) and is overwritten by the
+# DjangoModelType path too.
 _NATIVE_FIELD_REGISTRY: dict[tuple, Any] = {}
+
+# Identity set of EVERY native mutation GraphQLField ever built (by either the
+# DjangoModelMutation or DjangoModelType path). Used by the native root compiler
+# (``_collect_root_attrs``) to recognise a provably-native mutation field even
+# after its single ``_NATIVE_FIELD_REGISTRY`` slot was overwritten by a sibling
+# subclass for the same model. Membership here (NOT a blanket
+# ``isinstance(value, GraphQLField)`` scan) keeps the gate: an unrelated
+# user-declared raw GraphQLField is never silently mounted onto the native root.
+_NATIVE_FIELD_IDENTITIES: set[int] = set()
 
 
 def _projection_signature(
@@ -426,12 +440,22 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
         if _os.environ.get("GDX_BACKEND", "graphene") == "native":
             from graphql import GraphQLField as _GraphQLField
 
-            # R7: NEVER pass cls._meta.output (a graphene/Pydantic class) to
-            # graphql-core.  Read _meta.graphql_output_type (a compiled
-            # GraphQLObjectType) from the already-built output_type class.
-            # graphql-core's GraphQLField validates the type synchronously
-            # (is_output_type), so we pass the resolved object directly.
-            _gql_output_type = output_type._meta.graphql_output_type
+            # WU9: the mutation field's output type is the compiled MUTATION
+            # PAYLOAD type (``ok`` / ``errors`` + the output field), NOT the bare
+            # model node type.  The graphene path uses ``cls._meta.output`` (the
+            # mutation result class itself); the native path mirrors that by
+            # compiling THIS mutation class to a native GraphQLObjectType.  Using
+            # the node type (the WU<9 bug) left ``ok``/``errors``/output
+            # unqueryable on the wire.  ``cls`` is a plain graphene ObjectType
+            # subclass (not a Django output type), so the plain-object compiler
+            # handles it; its inner fields are lazy thunks, so the node's
+            # ``graphql_output_type`` is resolved at schema-build time (after
+            # compile_all_outputs), not here.
+            from django_graphex.native.schema_compiler import (
+                _compile_plain_object_type,
+            )
+
+            _gql_output_type = _compile_plain_object_type(cls)
 
             from django_graphex.native._compat import _adapt_self
 
@@ -441,7 +465,16 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
                 "update": cls.update,
             }
             for _op in model_operations:
-                _args = global_arguments.get(_op, {})
+                # WU9: graphql-core does NOT auto-camelCase argument names, so the
+                # arg dict keys must be the camelCase WIRE names while each
+                # GraphQLArgument keeps ``out_name`` = the snake Python kwarg
+                # (already set when the arg was built).  Without this the wire arg
+                # would be ``new_<model>`` and a ``new<Model>: {...}`` document
+                # would be rejected.
+                _args = {
+                    to_camel_case(_arg_name): _arg
+                    for _arg_name, _arg in global_arguments.get(_op, {}).items()
+                }
                 _resolver = op_to_resolver.get(_op)
                 if _resolver is None:
                     continue  # pragma: no cover — model_operations already validated
@@ -454,6 +487,7 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
                     description=description or f"Native {_op} mutation for {model.__name__}",
                 )
                 _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
+                _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
 
     @classmethod
     def get_errors(cls, errors: list[Any]) -> DjangoModelMutation:

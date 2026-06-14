@@ -109,21 +109,90 @@ class TypesTest(TestCase):
         self.assertIsInstance(list_field, graphene.Field)
 
     def test_serializer_type_mutation_fields(self):
-        """Test serializer type mutation field creation."""
+        """Test serializer type mutation field creation.
+
+        Native mutation schema assembly is delivered in Phase 5 / WU9: under
+        ``GDX_BACKEND=native`` ``CreateField``/``UpdateField``/``DeleteField``
+        return graphql-core ``GraphQLField`` objects (NOT graphene ``Field``)
+        whose ``.type`` is the canonical compiled output type and whose ``.args``
+        are graphql-core ``GraphQLArgument`` instances — the genuine native
+        mutation field shape. (The honest skip this replaces deferred exactly
+        this assertion to Phase 5; specs/2.0-migration-plan.md.)
+        """
         import os
 
-        if os.environ.get("GDX_BACKEND", "graphene") == "native":
-            self.skipTest(
-                "Native mutation schema assembly is deferred to Phase 5: "
-                "CreateField/UpdateField build args as graphql-core GraphQLArgument, "
-                "which graphene's to_arguments() rejects at field-construction time. "
-                "Tracked in specs/2.0-migration-plan.md (Phase 5)."
-            )
+        # MutationFields() returns (create, delete, update) — keep this order so
+        # the per-field assertions below reference the correct operation.
         (
             create_field,
-            update_field,
             delete_field,
+            update_field,
         ) = BasicSerializerType.MutationFields()
+
+        if os.environ.get("GDX_BACKEND", "graphene") == "native":
+            from graphene.utils.str_converters import to_camel_case
+            from graphql import (
+                GraphQLArgument,
+                GraphQLField,
+                GraphQLNonNull,
+                GraphQLObjectType,
+            )
+
+            from django_graphex.native.schema_compiler import (
+                _compile_plain_object_type,
+            )
+
+            for field in (create_field, update_field, delete_field):
+                # Native: a raw graphql-core GraphQLField, NOT a graphene.Field.
+                self.assertIsInstance(field, GraphQLField)
+                self.assertNotIsInstance(field, graphene.Field)
+                # Its args are graphql-core GraphQLArgument instances (graphene's
+                # to_arguments() would have rejected these at construction — the
+                # exact reason the original assertion was skipped pre-Phase-5).
+                for arg in field.args.values():
+                    self.assertIsInstance(arg, GraphQLArgument)
+                # Its output type is the compiled mutation PAYLOAD wrapper
+                # (ok / errors + the model output field) — graphene mounts
+                # cls._meta.mutation_output (= this type) here, NOT the bare node.
+                out = field.type
+                if isinstance(out, GraphQLNonNull):
+                    out = out.of_type
+                self.assertIsInstance(out, GraphQLObjectType)
+                # The payload carries ok / errors + the output field — matching
+                # graphene's DjangoModelType mutation SDL (`...: ThisType` where
+                # ThisType = { <model>, ok, errors }).
+                self.assertIn("ok", out.fields)
+                self.assertIn("errors", out.fields)
+                self.assertIn(
+                    BasicSerializerType._meta.output_field_name, out.fields
+                )
+
+            # The wire arg names are camelCase (graphql-core does NOT
+            # auto-camelCase); the create input arg is the camelCased
+            # `new_<model>` and the delete arg is `id`. Each keeps out_name=snake.
+            create_arg_name = to_camel_case(
+                BasicSerializerType._meta.input_field_name
+            )
+            self.assertIn(create_arg_name, create_field.args)
+            self.assertEqual(
+                create_field.args[create_arg_name].out_name,
+                BasicSerializerType._meta.input_field_name,
+            )
+            self.assertIn("id", delete_field.args)
+
+            # The create field's output payload is the canonical compiled
+            # instance (single-instance memoized), not a fresh per-call rebuild —
+            # identity-stable with the plain-object compiler's cache.
+            create_out = create_field.type
+            if isinstance(create_out, GraphQLNonNull):
+                create_out = create_out.of_type
+            self.assertIs(
+                create_out,
+                _compile_plain_object_type(BasicSerializerType),
+            )
+            return
+
+        # Graphene path (default): graphene Field instances.
         self.assertIsInstance(create_field, graphene.Field)
         self.assertIsInstance(update_field, graphene.Field)
         self.assertIsInstance(delete_field, graphene.Field)
