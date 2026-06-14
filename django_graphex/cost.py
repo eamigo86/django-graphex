@@ -35,6 +35,7 @@ from graphql.validation import ValidationRule
 
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
+from .native.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
     from graphql import (
@@ -65,8 +66,15 @@ def _settings_value(name: str) -> Any:
 
 
 def _type_complexity(named_type: GraphQLNamedType) -> int | None:
-    """Return a type's declared ``Meta.complexity``, or ``None``."""
-    meta = getattr(getattr(named_type, "graphene_type", None), "_meta", None)
+    """Return a type's declared ``Meta.complexity``, or ``None``.
+
+    Uses the ``_gdx_meta`` shim which tries ``graphene_type._meta`` first
+    (graphene path) and falls back to ``extensions["gdx"]._meta`` (native path).
+    """
+    try:
+        meta = _native_gdx_meta(named_type)
+    except AttributeError:
+        return None
     value = getattr(meta, "complexity", None)
     if value is None:
         return None

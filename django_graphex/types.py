@@ -143,6 +143,9 @@ class DjangoObjectOptions(BaseOptions):
     #: Compiled native GraphQLInputObjectType; set by DjangoInputObjectType
     #: __init_subclass_with_meta__ when GDX_BACKEND=native; None under graphene.
     graphql_input_type = None
+    #: Compiled native GraphQLObjectType; set by DjangoObjectType / DjangoListObjectType
+    #: __init_subclass_with_meta__ when GDX_BACKEND=native; None under graphene.
+    graphql_output_type = None
 
 
 class DjangoModelTypeOptions(BaseOptions):
@@ -282,6 +285,56 @@ class DjangoObjectType(ObjectType):
 
         if not skip_registry:
             registry.register(cls)
+
+        # ----------------------------------------------------------------
+        # NATIVE PATH: compile a GraphQLObjectType via the native pipeline.
+        # The graphene base/_meta machinery stays live (Phase 7 removes it).
+        # Mirrors the Phase-2 DjangoInputObjectType native branch pattern.
+        # ----------------------------------------------------------------
+        import os as _os_output
+        if _os_output.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+            from django_graphex.native.bridge import GdxPayload
+            from django_graphex.native.ir import GdxMeta
+            from django_graphex.native.output_compiler import compile_output_fields
+            from django_graphex.native.registry_compiler import (
+                NativeOutputRegistry,
+                compile_all,
+            )
+            from graphql import GraphQLObjectType
+
+            _native_registry = NativeOutputRegistry()
+            _native_registry.register(
+                cls.__name__,
+                model,
+                related_models=[],
+            )
+            # Pre-populate the registry with a compiled stub for the model so
+            # compile_output_fields can resolve relations via the same registry.
+            _gdx_meta_obj = GdxMeta(
+                name=cls.__name__,
+                model=model,
+                max_deep=max_deep,
+                complexity=complexity,
+            )
+            _gdx_payload = GdxPayload(_gdx_meta_obj)
+
+            # Build real fields using the output compiler (handles scalars + relations)
+            _output_fields = compile_output_fields(
+                model,
+                _native_registry,
+                only_fields=list(only_fields) if only_fields else None,
+                exclude_fields=list(exclude_fields) if exclude_fields else None,
+            )
+
+            _graphql_output_type = GraphQLObjectType(
+                name=cls.__name__,
+                fields=lambda f=_output_fields: f,
+                extensions={"gdx": _gdx_payload},
+            )
+            # graphene freezes Options after super().__init_subclass_with_meta__.
+            # Use object.__setattr__ to bypass the freeze (same pattern as
+            # Phase-2 input compiler; Phase 7 removes the graphene path).
+            object.__setattr__(_meta, "graphql_output_type", _graphql_output_type)
 
     def resolve_id(self, info: ResolveInfo) -> Any:
         """Resolve the "id" field for the object.

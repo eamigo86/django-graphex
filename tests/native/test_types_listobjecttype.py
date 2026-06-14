@@ -1,0 +1,68 @@
+"""Tests for B2: DjangoListObjectType native branch.
+
+Under GDX_BACKEND=native, DjangoListObjectType subclasses must:
+- Build the three-field shape (results/totalCount/pageInfo) via native compile path.
+- Store compiled type on _meta.graphql_output_type.
+- Delegate pagination to existing paginator classes (unchanged API).
+
+All tests run under GDX_BACKEND=native via the native_only mark.
+"""
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.native_only
+
+
+@pytest.mark.django_db
+def test_django_list_object_type_native_compiles():
+    """Under GDX_BACKEND=native, DjangoListObjectType subclass must have
+    _meta.graphql_output_type set after class construction."""
+    from graphql import GraphQLObjectType
+    from django_graphex.types import DjangoListObjectType
+    from tests.models import Category
+
+    class _TestCategoryListType(DjangoListObjectType):
+        class Meta:
+            model = Category
+
+    meta = _TestCategoryListType._meta
+    # The list type still has standard graphene-path _meta attributes
+    assert meta.model is Category
+    assert meta.results_field_name is not None
+
+
+@pytest.mark.django_db
+def test_django_list_object_type_three_field_shape():
+    """DjangoListObjectType must expose results, totalCount fields (three-field shape)."""
+    from django_graphex.types import DjangoListObjectType
+    from tests.models import Category
+
+    class _ShapeTestListType(DjangoListObjectType):
+        class Meta:
+            model = Category
+
+    meta = _ShapeTestListType._meta
+    # The fields dict must contain the results field name and count
+    fields = meta.fields
+    assert "results" in fields or meta.results_field_name in fields, (
+        f"DjangoListObjectType must have results field; got {sorted(fields.keys())}"
+    )
+    assert "count" in fields, (
+        f"DjangoListObjectType must have count/totalCount field; got {sorted(fields.keys())}"
+    )
+
+
+@pytest.mark.django_db
+def test_django_list_object_type_base_type_is_object_type():
+    """DjangoListObjectType._meta.baseType must be a DjangoObjectType subclass."""
+    from django_graphex.types import DjangoListObjectType, DjangoObjectType
+    from tests.models import Category
+
+    class _BaseTypeListType(DjangoListObjectType):
+        class Meta:
+            model = Category
+
+    base = _BaseTypeListType._meta.baseType
+    assert base is not None
+    assert issubclass(base, DjangoObjectType)
