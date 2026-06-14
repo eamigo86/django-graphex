@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from ..backends import SerializerBackend
 from ..errors import ErrorType
 from .fields import build_model_schema
+from .input_compiler import translate_validation_error
 
 if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo
@@ -28,14 +29,10 @@ def _errors_to_type(errors: dict[str, list[str]]) -> list[ErrorType]:
     return [ErrorType(field=field, messages=msgs) for field, msgs in errors.items()]
 
 
-def _translate(exc: ValidationError) -> dict[str, list[str]]:
-    """Translate a Pydantic ``ValidationError`` to ``{field: [messages]}``."""
-    out: dict[str, list[str]] = {}
-    for err in exc.errors():
-        loc = [p for p in err["loc"] if not isinstance(p, int)]
-        field = ".".join(str(p) for p in loc) or "non_field_errors"
-        out.setdefault(field, []).append(err["msg"])
-    return out
+# _translate is promoted to input_compiler.translate_validation_error (with
+# include_url=False). The alias below keeps internal callers working without
+# changing every call site in this file.
+_translate = translate_validation_error
 
 
 class PydanticBackend(SerializerBackend):

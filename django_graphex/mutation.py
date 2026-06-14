@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os as _os
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
@@ -340,9 +341,29 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
                             "input", DjangoInputObjectType, operation, **factory_kwargs
                         )
 
-                global_arguments[operation].update(
-                    {input_field_name: Argument(input_type, required=True)}
-                )
+                if _os.environ.get("GDX_BACKEND", "graphene") == "native":
+                    # Native path: wrap the compiled GraphQLInputObjectType in a
+                    # graphql-core GraphQLArgument.  _meta.arguments[op] is a
+                    # plain dict[str, GraphQLArgument] under native; the graphene
+                    # Argument is not used.  Phase 7 removes the else-branch.
+                    from graphql import GraphQLArgument as _GraphQLArgument
+                    from graphql import GraphQLNonNull as _GraphQLNonNull
+
+                    _gql_input_type = input_type._meta.graphql_input_type
+                    global_arguments[operation].update(
+                        {
+                            input_field_name: _GraphQLArgument(
+                                _GraphQLNonNull(_gql_input_type),
+                                out_name=input_field_name,
+                            )
+                        }
+                    )
+                else:
+                    # Graphene path (default): keep graphene.Argument so graphene's
+                    # to_arguments() validation passes and schema build works.
+                    global_arguments[operation].update(
+                        {input_field_name: Argument(input_type, required=True)}
+                    )
             else:
                 global_arguments[operation].update(
                     {
