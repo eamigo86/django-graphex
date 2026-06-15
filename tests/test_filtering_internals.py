@@ -673,55 +673,15 @@ def test_native_build_filter_input_type_wires_completeness_assert(monkeypatch):
     )
 
 
-@pytestmark_native
-def test_native_translate_skips_unwrap_enum(db):
-    """Under the native backend, ``to_q`` must NOT call the graphene-specific
-    ``_unwrap_enum`` — graphql-core delivers raw enum values already. A native
-    enum lookup value passes through unchanged into the Q."""
-    from django_graphex.filtering import translate as tr
+def test_translate_to_q_enum_lookup_native(db):
+    """``to_q`` builds the correct Q for an enum lookup. Native graphql-core
+    delivers the raw value straight through into the Q (no graphene Enum unwrap).
 
-    # Sentinel: if _unwrap_enum were called on the native path it would mutate
-    # this marker. Patch it to a poison that raises so any call is loud.
-    def _poison(_value):
-        raise AssertionError("_unwrap_enum must NOT be called on the native path")
-
-    # Only meaningful under native; the module-level flag gates the call.
-    import os as _os2
-    if _os2.environ.get("GDX_BACKEND", "graphene") != "native":
-        pytest.skip("native-only")
-
-    orig = tr._unwrap_enum
-    tr._unwrap_enum = _poison
-    try:
-        q, _ = tr.to_q({"name": {"exact": "published"}}, FilterModel)
-    finally:
-        tr._unwrap_enum = orig
-    assert q == models.Q(name__exact="published")
-
-
-def test_translate_unwrap_enum_kept_for_graphene_path():
-    """DUAL-BACKEND: ``_unwrap_enum`` (and its graphene Enum .value unwrap) is
-    retained for the graphene path regardless of backend. A graphene-style Enum
-    member is unwrapped to its raw value.
-
-    Runs on BOTH backends — it documents the graphene contract is preserved.
+    S7: the graphene-era ``_unwrap_enum`` helper and its two contract tests
+    (``test_native_translate_skips_unwrap_enum`` / the dual-backend
+    ``test_translate_unwrap_enum_kept_for_graphene_path``) were removed alongside
+    the helper — this native ``to_q`` exercise is the surviving coverage.
     """
-    from django_graphex.filtering.translate import _unwrap_enum
-
-    class _StatusEnum:
-        # Name ends with 'Enum' and exposes .value, mimicking a graphene Enum.
-        value = "published"
-
-    _StatusEnum.__name__ = "StatusEnum"
-    member = _StatusEnum()
-    assert _unwrap_enum(member) == "published"
-    assert _unwrap_enum([member, member]) == ["published", "published"]
-
-
-def test_translate_to_q_enum_lookup_both_backends(db):
-    """``to_q`` builds the correct Q for an enum lookup. On the native path the
-    raw value passes straight through; on the graphene path it is unwrapped.
-    Either way the resulting Q is identical."""
     from django_graphex.filtering.translate import to_q
 
     q, _ = to_q({"rating": {"in": [1, 2]}}, FilterModel)

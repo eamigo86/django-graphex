@@ -1,11 +1,9 @@
 import datetime
-import os
 
-import graphene
 from django.contrib.auth.models import User
 from django.utils.translation import gettext_lazy as _
 
-from django_graphex import ObjectType, all_directives, field
+from django_graphex import DjangoGraphQLSchema, ObjectType, all_directives, field
 from django_graphex.fields import (
     DjangoFilterListField,
     DjangoFilterPaginateListField,
@@ -105,17 +103,12 @@ class Query(ObjectType):
         return User.objects.filter(is_staff=True)
 
 
-# S6b: ``UserType`` / ``User1ListType`` are now NATIVE-only types (re-parented
-# off graphene onto the native Pydantic base). graphene's ``Schema(query=Query)``
-# can no longer assemble them ("Expected Graphene type, but received: ...").
-# Under ``GDX_BACKEND=native`` the consumers build the schema through
-# ``DjangoGraphQLSchema`` from ``Query`` directly (see
-# tests/native/_sdl_parity_seed.build_full_schema_sdl), so the module only needs
-# to register the types at import — NOT build a graphene Schema. Building it under
-# native would crash at import (the #1534 risk-7 "import-time crash after a type
-# goes native-only" — keep the graphene-only construction behind a backend
-# guard; the non-native branch is a clean no-op exposing ``schema = None``).
-if os.environ.get("GDX_BACKEND", "graphene") == "native":
-    schema = None
-else:
-    schema = graphene.Schema(query=Query, directives=all_directives)
+# S7: the suite is native-only. ``UserType`` / ``User1ListType`` are native
+# (re-parented off graphene in S6b) and the public roots/fields use the native
+# ``ObjectType`` + ``field()`` API (S-ROOTS-f). The shared test schema is now
+# built directly with the native ``DjangoGraphQLSchema`` — a drop-in for the
+# retired ``graphene.Schema(query=Query, directives=all_directives)``. The old
+# ``GDX_BACKEND``-guarded graphene branch was removed because graphene's
+# ``Schema(query=Query)`` can no longer assemble native types and crashed at
+# import under graphene.
+schema = DjangoGraphQLSchema(query=Query, directives=all_directives)

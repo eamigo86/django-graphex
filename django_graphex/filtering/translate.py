@@ -8,7 +8,6 @@ traversed (so the backend can apply ``.distinct()``).
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any
 
 from django.db.models import Q
@@ -23,12 +22,6 @@ __all__ = ("to_q",)
 
 #: Lookup names recognized at a leaf (drives relation-direct pk detection).
 _LOOKUP_NAMES = frozenset(ALL_LOOKUPS)
-
-#: Backend flag, read once at import time (the flag is process-global and set
-#: before import — D7). Under the native backend graphql-core delivers raw enum
-#: values already, so the graphene-specific ``_unwrap_enum`` is a no-op that we
-#: skip entirely (A5). The graphene path retains it (graphene Enum has ``.value``).
-_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 
 def _is_set(value: Any) -> bool:
@@ -110,49 +103,6 @@ def _is_model_field(model: type[Model], name: str) -> bool:
     return True
 
 
-def _looks_like_graphene_enum(value: Any) -> bool:
-    """Return whether a value (or any list item) is a graphene Enum member.
-
-    A graphene Enum member's class name ends with ``Enum`` and exposes ``.value``.
-    Native graphql-core enums deliver the raw Python value (a plain scalar), so
-    they never match. This drives the dual-backend safety fallback in ``_leaf_q``:
-    a graphene.Schema-built filter executed in a ``GDX_BACKEND=native`` process
-    still gets its Enum members unwrapped.
-
-    Args:
-        value: A lookup value (scalar, Enum member, or list thereof).
-
-    Returns:
-        True when the value (or any item, for list lookups) is a graphene Enum
-        member that still needs unwrapping.
-    """
-    if isinstance(value, (list, tuple)):
-        return any(_looks_like_graphene_enum(item) for item in value)
-    return hasattr(value, "value") and type(value).__name__.endswith("Enum")
-
-
-def _unwrap_enum(value: Any) -> Any:
-    """Return an Enum member's raw value, unwrapping list items too.
-
-    GRAPHENE PATH ONLY (A5): graphene delivers Enum *members* (with a ``.value``)
-    to the resolver, so the raw ORM value must be unwrapped before building the
-    ``Q``. graphql-core (native backend) delivers the raw value directly, so
-    ``to_q`` skips this call entirely under ``GDX_BACKEND=native`` — this helper
-    is retained unchanged for the dual-backend graphene path.
-
-    Args:
-        value: A lookup value (scalar, Enum member, or list thereof).
-
-    Returns:
-        The value with any graphene Enum members replaced by their raw value.
-    """
-    if isinstance(value, (list, tuple)):
-        return [_unwrap_enum(item) for item in value]
-    if hasattr(value, "value") and type(value).__name__.endswith("Enum"):
-        return value.value
-    return value
-
-
 def _leaf_q(prefix: str, field: str, lookups: Any) -> Q:
     """Build the AND of a single field's ``{lookup: value}`` mapping.
 
@@ -178,18 +128,10 @@ def _leaf_q(prefix: str, field: str, lookups: Any) -> Q:
                     "exactly two elements."
                 )
             value = list(value)
-        # A5: under a genuine native schema graphql-core delivers RAW enum values,
-        # so the graphene-specific ``_unwrap_enum`` is unnecessary. Skip it on the
-        # native path. The graphene path always unwraps (graphene Enum members
-        # carry a ``.value`` that must be resolved before the ORM).
-        #
-        # DUAL-BACKEND SAFETY: ``_unwrap_enum`` is value-driven (a no-op unless
-        # the value is a graphene-Enum-like member), so even under the native
-        # env flag we still unwrap a value that IS a graphene Enum member — this
-        # keeps graphene.Schema-built filters correct when executed in a process
-        # where ``GDX_BACKEND=native`` (the v1 graphene integration suite).
-        if not _NATIVE_BACKEND or _looks_like_graphene_enum(value):
-            value = _unwrap_enum(value)
+        # S7: the suite is native-only. graphql-core delivers RAW enum values to
+        # the resolver, so the graphene-era ``_unwrap_enum`` (which resolved a
+        # graphene Enum member's ``.value``) is gone — the value goes straight
+        # into the Q.
         q &= Q(**{f"{prefix}{field}__{lookup}": value})
     return q
 
