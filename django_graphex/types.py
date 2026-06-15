@@ -4,25 +4,21 @@ from __future__ import annotations
 
 import warnings
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager, QuerySet
 from django.utils.functional import SimpleLazyObject
 from graphene import (
-    ID,
-    Argument,
     Boolean,
     Field,
     InputField,
     Int,
     Interface,
     List,
-    ObjectType,
     Union,
 )
 from graphene.types.base import BaseOptions
-from graphene.types.inputobjecttype import InputObjectType, InputObjectTypeContainer
 from graphene.types.utils import yank_fields_from_attrs
 from graphene.utils.deprecated import warn_deprecation
 from graphene.utils.props import props
@@ -31,14 +27,15 @@ from graphql import GraphQLError
 from .backends import resolve_backend
 from .base_types import DjangoListObjectBase, factory_type
 from .converter import construct_fields
-from .native.base import NativeObjectTypeOptions
-from .native.base import ObjectType as NativeObjectType
 from .errors import ErrorType
 from .fields import DjangoListField, DjangoListObjectField, DjangoObjectField
 from .filtering.filter_field import (
     RESERVED_FILTER_ARGS,
     collect_custom_filters,
 )
+from .native.base import InputType as NativeInputType
+from .native.base import NativeObjectTypeOptions
+from .native.base import ObjectType as NativeObjectType
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .paginations.pagination import BaseDjangoGraphqlPagination
@@ -880,8 +877,41 @@ class DjangoInterfaceType(Interface):
         return _resolve_polymorphic_type(cls, instance, info)
 
 
-class DjangoInputObjectType(InputObjectType):
+class DjangoInputObjectType(NativeInputType):
     """A Django model GraphQL input type."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Run the graphene-free ObjectType driver WITHOUT InputType registration.
+
+        S6c re-parents ``DjangoInputObjectType`` off graphene ``InputObjectType``
+        onto the native ``InputType`` base (the Pydantic engine: same
+        ``ConfigDict`` / ``ModelMetaclass`` / ``ignored_types`` surface). But
+        ``DjangoInputObjectType`` is MODEL-driven, not annotation-driven: its
+        ``graphql_input_type`` is compiled from a generated Pydantic model
+        (``build_model_schema(model)``) inside ``__init_subclass_with_meta__``,
+        and the driver assigns its OWN ``_meta`` (a ``NativeObjectTypeOptions``
+        carrying that compiled type).
+
+        Native ``InputType.__init_subclass__`` is designed for PLAIN
+        annotation-driven inputs (``class SearchInput(InputType): query: str``):
+        it appends every subclass to ``_gdx_input_registry`` and OVERWRITES
+        ``cls._meta`` with an empty ``_GdxInputMeta`` so ``compile_all_inputs()``
+        can compile it from ``model_fields`` at app-ready. For a model-driven
+        ``DjangoInputObjectType`` subclass that behavior is HARMFUL: it would (a)
+        clobber the driver's ``_meta.graphql_input_type`` (read at
+        mutation.py / DjangoModelType arg-building time) and (b) re-compile an
+        EMPTY input type at app-ready (no annotations) under a DUPLICATE name.
+
+        So this class bypasses ``InputType.__init_subclass__`` and dispatches the
+        ObjectType graphene-free driver directly via ``NativeObjectType``. That
+        runs the ``__init_subclass_with_meta__`` chain (the DjangoInputObjectType
+        driver builds + assigns its own ``_meta``) and does NOT touch the input
+        registry. The native ``InputType`` Pydantic ``ConfigDict`` is still
+        inherited (the base IS ``InputType``), so the type keeps the input
+        engine's alias/camelCase config — only the registration side effect is
+        skipped.
+        """
+        NativeObjectType.__init_subclass__.__func__(cls, **kwargs)
 
     @classmethod
     def __init_subclass_with_meta__(
@@ -922,8 +952,6 @@ class DjangoInputObjectType(InputObjectType):
             nested_fields: Nested fields to build into the input type.
             **options: Extra options forwarded to the parent implementation.
         """
-        import os as _os
-
         _check_unknown_options(cls.__name__, options)
 
         assert is_valid_django_model(model), (
@@ -944,16 +972,22 @@ class DjangoInputObjectType(InputObjectType):
 
         input_for = input_for.lower()
 
-        _gdx_backend = _os.environ.get("GDX_BACKEND", "graphene")
-
-        if _gdx_backend == "native" and input_for != "delete":
-            # ----------------------------------------------------------------
-            # NATIVE PATH: compile a GraphQLInputObjectType via Pydantic.
-            # The graphene container is still created (graphene.Schema reads
-            # _meta.container at schema-build time; Phase 7 removes it).
-            # Resolvers receive validated Pydantic BaseModel instances, not
-            # container objects — the container is a graphene internal detail.
-            # ----------------------------------------------------------------
+        # ----------------------------------------------------------------
+        # NATIVE PATH (S6c: now UNCONDITIONAL). DjangoInputObjectType is
+        # re-parented off graphene ``InputObjectType`` onto ``native.base
+        # .InputType``; the old ``GDX_BACKEND == "native"`` env guard, the
+        # graphene else-branch, and the ``InputObjectTypeContainer`` construction
+        # were removed. Resolvers receive a VALIDATED Pydantic model (built from
+        # ``build_model_schema(model)`` and exposed as ``graphql_input_type``),
+        # never a container — so no ``_meta.container`` is needed.
+        #
+        # ``input_for == "delete"`` compiles NO input object type: a delete
+        # mutation exposes an ``id: ID!`` argument (built by DjangoModelType /
+        # DjangoModelMutation), not an input object. ``graphql_input_type`` stays
+        # ``None`` in that case.
+        # ----------------------------------------------------------------
+        graphql_input_type = None
+        if input_for != "delete":
             from django_graphex.native.fields import build_model_schema
             from django_graphex.native.input_compiler import compile_input_type
 
@@ -970,84 +1004,39 @@ class DjangoInputObjectType(InputObjectType):
                 description=getattr(cls, "__doc__", None),
             )
 
-            # Graphene still needs fields + container for its internal schema
-            # machinery (Phase 7 removes them).  Build them as usual.
-            django_input_fields = yank_fields_from_attrs(
-                construct_fields(
-                    model,
-                    registry,
-                    only_fields,
-                    include_fields,
-                    exclude_fields,
-                    input_for,
-                    nested_fields,
-                ),
-                _as=InputField,
-                sort=False,
-            )
-            for base in reversed(cls.__mro__):
-                django_input_fields.update(
-                    yank_fields_from_attrs(base.__dict__, _as=InputField)
-                )
-            if container is None:
-                container = type(cls.__name__, (InputObjectTypeContainer, cls), {})
-
-            _meta = DjangoObjectOptions(cls)
-            _meta.model = model
-            _meta.registry = registry
-            _meta.filter_fields = filter_fields
-            _meta.fields = django_input_fields
-            _meta.input_fields = django_input_fields
-            _meta.connection = connection
-            _meta.input_for = input_for
-            _meta.container = container
-            # Native extension: compiled GraphQLInputObjectType
-            _meta.graphql_input_type = graphql_input_type
-
-        else:
-            # ----------------------------------------------------------------
-            # GRAPHENE PATH (default): use graphene InputObjectType machinery.
-            # Also used for input_for="delete" under both backends.
-            # ----------------------------------------------------------------
-            django_input_fields = yank_fields_from_attrs(
-                construct_fields(
-                    model,
-                    registry,
-                    only_fields,
-                    include_fields,
-                    exclude_fields,
-                    input_for,
-                    nested_fields,
-                ),
-                _as=InputField,
-                sort=False,
+        # The native compiler reads ``_meta.graphql_input_type``; the
+        # ``input_fields`` dict is kept on ``_meta`` for runtime metadata readers
+        # (registry / converter child lookups) that inspect declared input fields.
+        django_input_fields = yank_fields_from_attrs(
+            construct_fields(
+                model,
+                registry,
+                only_fields,
+                include_fields,
+                exclude_fields,
+                input_for,
+                nested_fields,
+            ),
+            _as=InputField,
+            sort=False,
+        )
+        for base in reversed(cls.__mro__):
+            django_input_fields.update(
+                yank_fields_from_attrs(base.__dict__, _as=InputField)
             )
 
-            for base in reversed(cls.__mro__):
-                django_input_fields.update(
-                    yank_fields_from_attrs(base.__dict__, _as=InputField)
-                )
+        _meta = NativeObjectTypeOptions(cls)
+        _meta.model = model
+        _meta.registry = registry
+        _meta.filter_fields = filter_fields
+        _meta.fields = django_input_fields
+        _meta.input_fields = django_input_fields
+        _meta.connection = connection
+        _meta.input_for = input_for
+        # Native extension: compiled GraphQLInputObjectType (None for delete).
+        _meta.graphql_input_type = graphql_input_type
 
-            # The graphene path still requires a container on _meta for graphene
-            # schema-build time (graphene.Schema.create_inputobjecttype reads it).
-            # This container is removed in Phase 7 when the graphene path is deleted.
-            # Under the native path, _meta.container is ignored — resolvers receive
-            # validated Pydantic BaseModel instances, never container objects.
-            if container is None:
-                container = type(cls.__name__, (InputObjectTypeContainer, cls), {})
-
-            _meta = DjangoObjectOptions(cls)
-            _meta.model = model
-            _meta.registry = registry
-            _meta.filter_fields = filter_fields
-            _meta.fields = django_input_fields
-            _meta.input_fields = django_input_fields
-            _meta.connection = connection
-            _meta.input_for = input_for
-            _meta.container = container
-            # graphql_input_type remains None (graphene path)
-
-        super(InputObjectType, cls).__init_subclass_with_meta__(
+        super().__init_subclass_with_meta__(
             _meta=_meta,
             **options,
         )
@@ -1421,7 +1410,7 @@ def get_or_create_list_object_type(
     )
 
 
-class DjangoModelType(NestedFieldsMixin, ObjectType):
+class DjangoModelType(NestedFieldsMixin, NativeObjectType):
     """DjangoModelType definition."""
 
     ok = Boolean(description="Boolean field that return mutation result request.")
@@ -1429,7 +1418,12 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
 
     #: Permission classes checked per action before each CRUD operation. Empty
     #: (the default) means no checks. See "django_graphex.permissions".
-    permission_classes = ()
+    #: ``ClassVar`` is REQUIRED post-S6c: the native base uses Pydantic's
+    #: ``ModelMetaclass``, which raises ``PydanticUserError`` on a plain
+    #: non-annotated class attribute (it cannot tell it apart from a model
+    #: field). ``ClassVar`` declares it as type-level config, not a GraphQL/model
+    #: field.
+    permission_classes: ClassVar[tuple[Any, ...]] = ()
 
     class Meta:
         """Meta configuration for DjangoModelType."""
@@ -1643,61 +1637,42 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
                             "input", DjangoInputObjectType, operation, **factory_kwargs
                         )
 
-                import os as _os_local
+                # S6c: DjangoModelType is now NATIVE-ONLY (re-parented off graphene
+                # onto ``native.base.ObjectType``). The input argument is wrapped
+                # in a graphql-core ``GraphQLArgument`` UNCONDITIONALLY; the old
+                # ``GDX_BACKEND == "native"`` env guard and the graphene
+                # ``Argument(...)`` else-branch were removed — graphene can no
+                # longer build a schema from this re-parented type.
+                from graphql import GraphQLArgument as _GQLArg
+                from graphql import GraphQLNonNull as _GQLNonNull
 
-                if _os_local.environ.get("GDX_BACKEND", "graphene") == "native":
-                    # Native path: wrap the compiled GraphQLInputObjectType in a
-                    # graphql-core GraphQLArgument.  _meta.arguments[op] is a
-                    # plain dict[str, GraphQLArgument] under native; the graphene
-                    # Argument is not used.  Phase 7 removes the else-branch.
-                    from graphql import GraphQLArgument as _GQLArg
-                    from graphql import GraphQLNonNull as _GQLNonNull
-
-                    _gql_input_type = input_type._meta.graphql_input_type
-                    global_arguments[operation].update(
-                        {
-                            input_field_name: _GQLArg(
-                                _GQLNonNull(_gql_input_type),
-                                out_name=input_field_name,
-                            )
-                        }
-                    )
-                else:
-                    # Graphene path (default): keep graphene.Argument so graphene's
-                    # to_arguments() validation passes and schema build works.
-                    global_arguments[operation].update(
-                        {input_field_name: Argument(input_type, required=True)}
-                    )
+                _gql_input_type = input_type._meta.graphql_input_type
+                global_arguments[operation].update(
+                    {
+                        input_field_name: _GQLArg(
+                            _GQLNonNull(_gql_input_type),
+                            out_name=input_field_name,
+                        )
+                    }
+                )
             else:
-                import os as _os_dt
-                if _os_dt.environ.get("GDX_BACKEND", "graphene") == "native":
-                    # Native path: use graphql-core GraphQLArgument for 'id'.
-                    from graphql import GraphQLArgument as _GQLArgDT
-                    from graphql import GraphQLID as _GraphQLIDDT
-                    from graphql import GraphQLNonNull as _GQLNonNullDT
+                # S6c: native-only ``id`` argument (graphene else-branch removed).
+                from graphql import GraphQLArgument as _GQLArgDT
+                from graphql import GraphQLID as _GraphQLIDDT
+                from graphql import GraphQLNonNull as _GQLNonNullDT
 
-                    global_arguments[operation].update(
-                        {
-                            "id": _GQLArgDT(
-                                _GQLNonNullDT(_GraphQLIDDT),
-                                description="Django object unique identification field",
-                                out_name="id",
-                            )
-                        }
-                    )
-                else:
-                    global_arguments[operation].update(
-                        {
-                            "id": Argument(
-                                ID,
-                                required=True,
-                                description="Django object unique identification field",
-                            )
-                        }
-                    )
+                global_arguments[operation].update(
+                    {
+                        "id": _GQLArgDT(
+                            _GQLNonNullDT(_GraphQLIDDT),
+                            description="Django object unique identification field",
+                            out_name="id",
+                        )
+                    }
+                )
             global_arguments[operation].update(arguments)
 
-        _meta = DjangoModelTypeOptions(cls)
+        _meta = NativeObjectTypeOptions(cls)
         _meta.mutation_output = cls
         _meta.arguments = global_arguments
         _meta.fields = django_fields

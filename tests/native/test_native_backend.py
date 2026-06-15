@@ -96,6 +96,19 @@ type AType {
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason="S6c: DjangoInputObjectType re-parented off graphene InputObjectType "
+    "onto native InputType, so the graphene baseline half of this parity test can "
+    "no longer build (graphene.Schema rejects the re-parented type at "
+    "schema.py:102 `assert is_graphene_type`). The native-side nullability is "
+    "independently proven by test_input_compiler.py "
+    "(test_compile_input_type_required_field_is_nonnull / "
+    "test_compile_input_type_optional_field_is_nullable) and the native-only "
+    "GraphQLInputObjectType assertions still active in "
+    "test_model_coupled_metaclass_is_modelmetaclass_after_s6c. The cross-backend "
+    "byte-parity assertion is retired (graphene path dies per-slice, pruned S7) — "
+    "same disposition as the S6b SDL-parity-seed skips."
+)
 @pytest.mark.django_db
 def test_input_type_sdl_field_nullability_parity_with_graphene():
     """Native compile path produces field names and nullability matching the graphene path

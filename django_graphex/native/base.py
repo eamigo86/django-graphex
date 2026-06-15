@@ -462,21 +462,42 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
 
         Mirrors graphene's value-object / mutation payload pattern
         ``cls(**resp)`` / ``cls(**errors_dict)`` (mutation.py:504,519;
-        types.py:1750,1828). Keys that name a graphene FIELD DESCRIPTOR (e.g.
-        ``ok`` / ``errors`` on a mutation payload) are stashed as plain instance
-        attributes — they are NOT Pydantic fields, so Pydantic's own
-        ``__init__`` would silently drop them. Remaining keys are real Pydantic
-        model fields and flow through normal validation.
+        types.py:1750,1828). graphene builds its value-object ``__init__`` as a
+        ``dataclass`` over EVERY key in ``_meta.fields`` (graphene
+        ``ObjectTypeMeta.__new__``), so ALL GraphQL-field-named keys round-trip —
+        not only the class-body descriptors.
+
+        The native equivalent: any kwarg whose key names a GraphQL FIELD on this
+        type is stashed as a plain instance attribute (it is NOT a Pydantic
+        model field, so Pydantic's own ``__init__`` would silently DROP it — the
+        S6c silent-null mutation-payload bug). The authoritative field set is
+        ``cls._meta.fields`` (populated by the driver + the terminal's
+        descriptor merge), which includes BOTH the class-body descriptors
+        (``ok`` / ``errors``) AND driver-injected fields with a DYNAMIC name
+        (the mutation/model-type ``output_field_name`` — e.g. ``category`` /
+        ``post`` — that is NOT a class attribute). When ``_meta`` is absent or
+        carries no fields (abstract base, pre-driver), we fall back to the
+        class-body descriptor names so the plain-``ObjectType`` payload pattern
+        still works. Remaining keys are real Pydantic model fields (``InputType``
+        / annotated output fields) and flow through normal validation.
         """
-        descriptor_names = _collect_descriptor_fields(type(self))
-        if descriptor_names:
-            descriptor_payload = {
-                k: kwargs.pop(k) for k in list(kwargs) if k in descriptor_names
+        meta = getattr(type(self), "_meta", None)
+        field_names: Any = getattr(meta, "fields", None) if meta is not None else None
+        if field_names:
+            stash_names = set(field_names)
+        else:
+            # Fallback: no _meta.fields (abstract base / plain payload) — use the
+            # class-body graphene descriptors collected across the MRO.
+            stash_names = set(_collect_descriptor_fields(type(self)))
+
+        if stash_names:
+            value_object_payload = {
+                k: kwargs.pop(k) for k in list(kwargs) if k in stash_names
             }
         else:
-            descriptor_payload = {}
+            value_object_payload = {}
         super().__init__(**kwargs)
-        for key, value in descriptor_payload.items():
+        for key, value in value_object_payload.items():
             object.__setattr__(self, key, value)
 
 

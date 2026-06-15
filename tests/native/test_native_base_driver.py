@@ -494,6 +494,61 @@ def test_container_constructor_round_trips_descriptor_payload():
 
 
 @pytest.mark.native_only
+def test_container_constructor_round_trips_driver_injected_field():
+    """``cls(**resp)`` round-trips a DYNAMIC output field injected by the driver.
+
+    S6c anti-regression lock. The mutation / model-type payload pattern is
+    ``cls(**{output_field_name: obj, "ok": True, "errors": None})`` where
+    ``output_field_name`` (e.g. ``post`` / ``category``) is NOT a class-body
+    descriptor — it is a ``graphene.Field`` the concrete driver injects into
+    ``_meta.fields``. graphene's value-object ``__init__`` is a dataclass over
+    EVERY ``_meta.fields`` key, so it round-trips. The native container
+    ``__init__`` must do the same: it consults ``_meta.fields`` (not just
+    class-body descriptors), otherwise the dynamic output key is SILENTLY DROPPED
+    by Pydantic and the mutation response's output object resolves to NULL on the
+    wire (the S6c silent-null bug). This locks the ``_meta.fields``-driven stash.
+    """
+    from collections import OrderedDict
+
+    from graphene import Boolean, Field, List, String
+
+    from django_graphex.native.base import NativeObjectTypeOptions, ObjectType
+
+    class _Inner(ObjectType):
+        class Meta:
+            abstract = True
+
+    class _PayloadBase(ObjectType):
+        ok = Boolean()
+        errors = List(String)
+
+        class Meta:
+            abstract = True
+
+        @classmethod
+        def __init_subclass_with_meta__(cls, _meta=None, **opts):
+            _meta = _meta or NativeObjectTypeOptions(cls)
+            # Driver injects the dynamic output field into _meta.fields (NOT a
+            # class attribute) — exactly like DjangoModelType / DjangoModelMutation.
+            _meta.fields = OrderedDict({"category": Field(_Inner)})
+            super().__init_subclass_with_meta__(_meta=_meta, **opts)
+
+    class _Payload(_PayloadBase):
+        class Meta:
+            name = "_Payload"
+
+    # _meta.fields must carry BOTH the driver-injected output field and the merged
+    # class-body descriptors (the terminal mounts ok/errors on top).
+    assert set(_Payload._meta.fields) == {"category", "ok", "errors"}
+
+    inst = _Payload(category="THE_OBJECT", ok=True, errors=["e"])
+    # The dynamic output field survived (NOT silently dropped by Pydantic).
+    assert inst.category == "THE_OBJECT"
+    assert inst.ok is True
+    assert inst.errors == ["e"]
+
+
+@pytest.mark.native_only
 def test_container_constructor_partial_payload():
     """``cls(**kwargs)`` accepts a partial payload (missing keys default safely)."""
     from graphene import Boolean, List, String

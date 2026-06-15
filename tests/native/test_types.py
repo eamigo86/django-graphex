@@ -5,17 +5,16 @@ Tests verify:
   _meta.graphql_input_type after native compile (Phase-2 deliverable).
 - Update form → all fields nullable (partial model).
 - Model-free _GdxInputMeta does NOT expose 'container' (container-free meta for
-  native model-free path). NOTE: DjangoInputObjectType._meta.container STILL
-  EXISTS in Phase 2 (graphene.Schema reads it at build time; removal is Phase 7).
+  native model-free path). S6c: DjangoInputObjectType._meta.container is now
+  ALSO absent — the InputObjectTypeContainer construction was deleted (resolvers
+  receive a validated Pydantic model, not a container).
 - assert input_flag is not None fires for the output branch.
 - type(InputType subclass) is ModelMetaclass (model-FREE metaclass identity —
   the Phase-2 deliverable for model-free types).
-  NOTE: type(DjangoInputObjectType subclass) is NOT ModelMetaclass in Phase 2.
-  DjangoInputObjectType subclasses graphene's InputObjectType; a class has
-  exactly one metaclass fixed at class-definition time —
-  type(DjangoInputObjectType subclass) is SubclassWithMeta_Meta (graphene),
-  NOT pydantic.ModelMetaclass. Model-coupled metaclass identity is RE-SCOPED
-  to Phase 7 (graphene deletion).
+  S6c: type(DjangoInputObjectType subclass) IS ALSO ModelMetaclass now — the
+  re-parent off graphene InputObjectType onto native InputType removed graphene's
+  SubclassWithMeta_Meta, achieving the #1452 metaclass-identity constraint. The
+  graphene-free driver runs via __init_subclass__, not a custom metaclass.
 - _meta.graphql_input_type is GraphQLInputObjectType after __init_subclass_with_meta__
   (the real Phase-2 model-coupled deliverable).
 - Accessing _meta.bogus_attr raises AttributeError.
@@ -117,31 +116,33 @@ def test_model_free_meta_container_absent():
 
 
 @pytest.mark.django_db
-def test_django_input_object_type_meta_container_present_phase2():
-    """DjangoInputObjectType._meta.container IS accessible in Phase 2.
+def test_django_input_object_type_meta_container_absent_after_s6c():
+    """DjangoInputObjectType._meta.container is ABSENT after S6c.
 
-    This is the honest inverse of the model-free container test above.
-    DjangoInputObjectType inherits from graphene.InputObjectType; graphene.Schema
-    reads _meta.container at build time, so the native path MUST set it too
-    (types.py line ~626). Removing it is Phase 7 (graphene deletion).
+    S6c (Phase 7) re-parents ``DjangoInputObjectType`` onto the native
+    ``InputType`` base and DELETES the ``InputObjectTypeContainer`` construction:
+    resolvers receive a VALIDATED Pydantic model (exposed as
+    ``_meta.graphql_input_type``), never a container. ``NativeObjectTypeOptions``
+    no longer has the driver set ``container``, so it stays at its ``None``
+    default (no container instance is built).
 
-    Phase-7 will change this assertion to expect AttributeError.
+    This test was INVERTED at S6c (pre-S6c it asserted the container was a class,
+    per the Phase-2 note that said "Phase-7 will change this assertion").
     """
     from django_graphex.types import DjangoInputObjectType
     from tests.models import Category
 
-    class _ContainerPhase2Test(DjangoInputObjectType):
+    class _ContainerAbsentTest(DjangoInputObjectType):
         class Meta:
             model = Category
             input_for = "create"
 
-    # container MUST be present in Phase 2 — graphene requires it
-    assert hasattr(_ContainerPhase2Test._meta, "container"), (
-        "DjangoInputObjectType._meta.container must be present in Phase 2 "
-        "(graphene.Schema reads it; removal is Phase 7)"
+    # The driver no longer builds an InputObjectTypeContainer; _meta.container
+    # stays at the NativeObjectTypeOptions default (None) — never a container class.
+    assert getattr(_ContainerAbsentTest._meta, "container", None) is None, (
+        "After S6c the InputObjectTypeContainer is deleted: _meta.container must "
+        "be None (resolvers receive a validated Pydantic model, not a container)."
     )
-    # It must be a class (the InputObjectTypeContainer subclass)
-    assert isinstance(_ContainerPhase2Test._meta.container, type)
 
 
 @pytest.mark.django_db
@@ -249,42 +250,82 @@ def test_build_model_schema_returns_pydantic_model():
 
 
 @pytest.mark.django_db
-def test_model_coupled_metaclass_is_phase7():
-    """type(DjangoInputObjectType subclass) is NOT pydantic.ModelMetaclass in Phase 2.
+def test_model_coupled_metaclass_is_modelmetaclass_after_s6c():
+    """type(DjangoInputObjectType subclass) IS pydantic.ModelMetaclass after S6c.
 
-    This is the HONEST Phase-2 boundary test. DjangoInputObjectType subclasses
-    graphene's InputObjectType. A Python class has exactly ONE metaclass, fixed at
-    class-definition time. Because the graphene base class is present, the metaclass
-    is graphene's SubclassWithMeta_Meta — NOT pydantic.ModelMetaclass.
+    S6c (Phase 7) re-parents ``DjangoInputObjectType`` off graphene
+    ``InputObjectType`` onto the native ``InputType`` base, whose sole metaclass
+    is pydantic ``ModelMetaclass`` (NO custom metaclass — the graphene-free driver
+    runs via ``__init_subclass__``). This is the systemic metaclass-identity
+    constraint #1452: every public ``Django*`` type keeps ``type(X) is
+    ModelMetaclass``.
 
-    The model-coupled metaclass identity (type(PostInput) is ModelMetaclass) is
-    RE-SCOPED to Phase 7 (graphene deletion), when the graphene base class is removed
-    and DjangoInputObjectType will subclass pydantic.BaseModel directly.
-
-    This test is intentionally asserting the CURRENT (Phase-2) reality, not the
-    eventual goal, so that the test suite is never tautological.
+    This test was INVERTED at S6c: pre-S6c it asserted the graphene Phase-2
+    reality (``type(...) is not ModelMetaclass``); now the re-parent makes the
+    #1452 goal real, so it asserts the goal — mirroring the S6b inversion of
+    ``test_types_objecttype.py``.
     """
     from pydantic._internal._model_construction import ModelMetaclass
     from django_graphex.types import DjangoInputObjectType
     from tests.models import Category
 
-    class _Phase2ModelCoupledInput(DjangoInputObjectType):
+    class _S6cModelCoupledInput(DjangoInputObjectType):
         class Meta:
             model = Category
             input_for = "create"
 
-    # In Phase 2: metaclass is graphene's SubclassWithMeta_Meta, NOT ModelMetaclass
-    assert type(_Phase2ModelCoupledInput) is not ModelMetaclass, (
-        "In Phase 2, type(DjangoInputObjectType subclass) is graphene's "
-        "SubclassWithMeta_Meta — NOT pydantic.ModelMetaclass. "
-        "Model-coupled metaclass identity is a Phase-7 (graphene-deletion) concern."
+    # After S6c: the driver runs via __init_subclass__, NOT a custom metaclass,
+    # so the metaclass is pydantic's ModelMetaclass (#1452).
+    assert type(_S6cModelCoupledInput) is ModelMetaclass, (
+        "After S6c, type(DjangoInputObjectType subclass) is pydantic."
+        "ModelMetaclass — the re-parent onto native InputType removed graphene's "
+        "SubclassWithMeta_Meta (the driver now runs via __init_subclass__, #1452)."
     )
 
-    # Phase-2 real deliverable: _meta.graphql_input_type IS a GraphQLInputObjectType
+    # Model-coupled deliverable: _meta.graphql_input_type IS a GraphQLInputObjectType
     from graphql import GraphQLInputObjectType
-    assert isinstance(_Phase2ModelCoupledInput._meta.graphql_input_type, GraphQLInputObjectType), (
-        "Phase-2 model-coupled deliverable: _meta.graphql_input_type must be a "
+    assert isinstance(_S6cModelCoupledInput._meta.graphql_input_type, GraphQLInputObjectType), (
+        "Model-coupled deliverable: _meta.graphql_input_type must be a "
         "GraphQLInputObjectType (the native compile path must be wired)"
+    )
+
+
+@pytest.mark.django_db
+def test_django_input_object_type_does_not_pollute_input_registry():
+    """A DjangoInputObjectType subclass must NOT register in _gdx_input_registry.
+
+    S6c anti-regression lock. DjangoInputObjectType re-parents onto native
+    ``InputType`` for the Pydantic engine, but it is MODEL-driven (its
+    ``graphql_input_type`` is compiled from ``build_model_schema(model)``), so it
+    overrides ``__init_subclass__`` to run the ObjectType driver WITHOUT
+    InputType's registry-append + ``_meta`` overwrite. If it leaked into
+    ``_gdx_input_registry``, ``compile_all_inputs()`` would re-compile it from its
+    (empty) ``model_fields`` at app-ready under a DUPLICATE name and clobber the
+    driver's ``_meta.graphql_input_type``. This guards that the bypass holds.
+    """
+    from django_graphex.native.base import _gdx_input_registry
+    from django_graphex.types import DjangoInputObjectType
+    from tests.models import Category
+
+    before = list(_gdx_input_registry)
+
+    class _RegistryIsolationInput(DjangoInputObjectType):
+        class Meta:
+            model = Category
+            input_for = "create"
+
+    after = list(_gdx_input_registry)
+    assert after == before, (
+        "DjangoInputObjectType subclass must NOT be appended to "
+        "_gdx_input_registry (the InputType registry is for annotation-driven "
+        f"model-free inputs only). Leaked: {set(after) - set(before)}"
+    )
+    # The driver-built _meta (NOT an empty _GdxInputMeta) must survive — its
+    # graphql_input_type is the compiled GraphQLInputObjectType.
+    from graphql import GraphQLInputObjectType
+
+    assert isinstance(
+        _RegistryIsolationInput._meta.graphql_input_type, GraphQLInputObjectType
     )
 
 

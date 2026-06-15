@@ -8,7 +8,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured
-from graphene import ID, Argument, Boolean, Field, List, ObjectType
+from graphene import Boolean, Field, List
 from graphene.types.base import BaseOptions
 from graphene.utils.deprecated import warn_deprecation
 from graphene.utils.props import props
@@ -17,6 +17,8 @@ from graphene.utils.str_converters import to_camel_case
 from .backends import resolve_backend
 from .base_types import factory_type
 from .errors import ErrorType
+from .native.base import NativeObjectTypeOptions
+from .native.base import ObjectType as NativeObjectType
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .registry import get_global_registry
@@ -221,7 +223,7 @@ class SerializerMutationOptions(BaseOptions):
     model_operations = ("create", "update", "delete")
 
 
-class DjangoModelMutation(NestedFieldsMixin, ObjectType):
+class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
     """Django model mutation type definition."""
 
     ok = Boolean(description="Boolean field that return mutation result request.")
@@ -364,58 +366,42 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
                             "input", DjangoInputObjectType, operation, **factory_kwargs
                         )
 
-                if _os.environ.get("GDX_BACKEND", "graphene") == "native":
-                    # Native path: wrap the compiled GraphQLInputObjectType in a
-                    # graphql-core GraphQLArgument.  _meta.arguments[op] is a
-                    # plain dict[str, GraphQLArgument] under native; the graphene
-                    # Argument is not used.  Phase 7 removes the else-branch.
-                    from graphql import GraphQLArgument as _GraphQLArgument
-                    from graphql import GraphQLNonNull as _GraphQLNonNull
+                # S6c: DjangoModelMutation is now NATIVE-ONLY (re-parented off
+                # graphene onto ``native.base.ObjectType``). The input argument is
+                # wrapped in a graphql-core ``GraphQLArgument`` UNCONDITIONALLY;
+                # the old ``GDX_BACKEND == "native"`` env guard and the graphene
+                # ``Argument(...)`` else-branch were removed — graphene can no
+                # longer build a schema from this re-parented type.
+                from graphql import GraphQLArgument as _GraphQLArgument
+                from graphql import GraphQLNonNull as _GraphQLNonNull
 
-                    _gql_input_type = input_type._meta.graphql_input_type
-                    global_arguments[operation].update(
-                        {
-                            input_field_name: _GraphQLArgument(
-                                _GraphQLNonNull(_gql_input_type),
-                                out_name=input_field_name,
-                            )
-                        }
-                    )
-                else:
-                    # Graphene path (default): keep graphene.Argument so graphene's
-                    # to_arguments() validation passes and schema build works.
-                    global_arguments[operation].update(
-                        {input_field_name: Argument(input_type, required=True)}
-                    )
+                _gql_input_type = input_type._meta.graphql_input_type
+                global_arguments[operation].update(
+                    {
+                        input_field_name: _GraphQLArgument(
+                            _GraphQLNonNull(_gql_input_type),
+                            out_name=input_field_name,
+                        )
+                    }
+                )
             else:
-                if _os.environ.get("GDX_BACKEND", "graphene") == "native":
-                    # Native path: use graphql-core GraphQLArgument for 'id'.
-                    from graphql import GraphQLArgument as _GraphQLArgument
-                    from graphql import GraphQLID as _GraphQLID
-                    from graphql import GraphQLNonNull as _GraphQLNonNull
+                # S6c: native-only ``id`` argument (graphene else-branch removed).
+                from graphql import GraphQLArgument as _GraphQLArgument
+                from graphql import GraphQLID as _GraphQLID
+                from graphql import GraphQLNonNull as _GraphQLNonNull
 
-                    global_arguments[operation].update(
-                        {
-                            "id": _GraphQLArgument(
-                                _GraphQLNonNull(_GraphQLID),
-                                description="Django object unique identification field",
-                                out_name="id",
-                            )
-                        }
-                    )
-                else:
-                    global_arguments[operation].update(
-                        {
-                            "id": Argument(
-                                ID,
-                                required=True,
-                                description="Django object unique identification field",
-                            )
-                        }
-                    )
+                global_arguments[operation].update(
+                    {
+                        "id": _GraphQLArgument(
+                            _GraphQLNonNull(_GraphQLID),
+                            description="Django object unique identification field",
+                            out_name="id",
+                        )
+                    }
+                )
             global_arguments[operation].update(arguments)
 
-        _meta = SerializerMutationOptions(cls)
+        _meta = NativeObjectTypeOptions(cls)
         _meta.output = cls
         _meta.arguments = global_arguments
         _meta.model_operations = model_operations
@@ -434,60 +420,60 @@ class DjangoModelMutation(NestedFieldsMixin, ObjectType):
         # ---------------------------------------------------------------------------
         # Native field construction (WU-3): build GraphQLField per operation and
         # store in the backend-keyed registry so *Field() can retrieve them.
-        # This runs only under GDX_BACKEND=native; the graphene path is unaffected.
-        # Phase 7 removes the else-branch; for now both coexist behind the guard.
+        # S6c: DjangoModelMutation is now NATIVE-ONLY (re-parented off graphene),
+        # so this runs UNCONDITIONALLY — the old ``GDX_BACKEND == "native"`` guard
+        # was removed; graphene can no longer build a schema from this type.
         # ---------------------------------------------------------------------------
-        if _os.environ.get("GDX_BACKEND", "graphene") == "native":
-            from graphql import GraphQLField as _GraphQLField
+        from graphql import GraphQLField as _GraphQLField
 
-            # WU9: the mutation field's output type is the compiled MUTATION
-            # PAYLOAD type (``ok`` / ``errors`` + the output field), NOT the bare
-            # model node type.  The graphene path uses ``cls._meta.output`` (the
-            # mutation result class itself); the native path mirrors that by
-            # compiling THIS mutation class to a native GraphQLObjectType.  Using
-            # the node type (the WU<9 bug) left ``ok``/``errors``/output
-            # unqueryable on the wire.  ``cls`` is a plain graphene ObjectType
-            # subclass (not a Django output type), so the plain-object compiler
-            # handles it; its inner fields are lazy thunks, so the node's
-            # ``graphql_output_type`` is resolved at schema-build time (after
-            # compile_all_outputs), not here.
-            from django_graphex.native.schema_compiler import (
-                _compile_plain_object_type,
-            )
+        # WU9: the mutation field's output type is the compiled MUTATION
+        # PAYLOAD type (``ok`` / ``errors`` + the output field), NOT the bare
+        # model node type.  The graphene path used ``cls._meta.output`` (the
+        # mutation result class itself); the native path mirrors that by
+        # compiling THIS mutation class to a native GraphQLObjectType.  Using
+        # the node type (the WU<9 bug) left ``ok``/``errors``/output
+        # unqueryable on the wire.  ``cls`` is a plain (now native) ObjectType
+        # subclass (not a Django output type), so the plain-object compiler
+        # handles it; its inner fields are lazy thunks, so the node's
+        # ``graphql_output_type`` is resolved at schema-build time (after
+        # compile_all_outputs), not here.
+        from django_graphex.native.schema_compiler import (
+            _compile_plain_object_type,
+        )
 
-            _gql_output_type = _compile_plain_object_type(cls)
+        _gql_output_type = _compile_plain_object_type(cls)
 
-            from django_graphex.native._compat import _adapt_self
+        from django_graphex.native._compat import _adapt_self
 
-            op_to_resolver = {
-                "create": cls.create,
-                "delete": cls.delete,
-                "update": cls.update,
+        op_to_resolver = {
+            "create": cls.create,
+            "delete": cls.delete,
+            "update": cls.update,
+        }
+        for _op in model_operations:
+            # WU9: graphql-core does NOT auto-camelCase argument names, so the
+            # arg dict keys must be the camelCase WIRE names while each
+            # GraphQLArgument keeps ``out_name`` = the snake Python kwarg
+            # (already set when the arg was built).  Without this the wire arg
+            # would be ``new_<model>`` and a ``new<Model>: {...}`` document
+            # would be rejected.
+            _args = {
+                to_camel_case(_arg_name): _arg
+                for _arg_name, _arg in global_arguments.get(_op, {}).items()
             }
-            for _op in model_operations:
-                # WU9: graphql-core does NOT auto-camelCase argument names, so the
-                # arg dict keys must be the camelCase WIRE names while each
-                # GraphQLArgument keeps ``out_name`` = the snake Python kwarg
-                # (already set when the arg was built).  Without this the wire arg
-                # would be ``new_<model>`` and a ``new<Model>: {...}`` document
-                # would be rejected.
-                _args = {
-                    to_camel_case(_arg_name): _arg
-                    for _arg_name, _arg in global_arguments.get(_op, {}).items()
-                }
-                _resolver = op_to_resolver.get(_op)
-                if _resolver is None:
-                    continue  # pragma: no cover — model_operations already validated
-                # classmethods are bound (inspect.ismethod → True), passthrough
-                _resolver = _adapt_self(_resolver, owner=cls)
-                _gql_field = _GraphQLField(
-                    _gql_output_type,
-                    args=_args,
-                    resolve=_resolver,
-                    description=description or f"Native {_op} mutation for {model.__name__}",
-                )
-                _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
-                _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
+            _resolver = op_to_resolver.get(_op)
+            if _resolver is None:
+                continue  # pragma: no cover — model_operations already validated
+            # classmethods are bound (inspect.ismethod → True), passthrough
+            _resolver = _adapt_self(_resolver, owner=cls)
+            _gql_field = _GraphQLField(
+                _gql_output_type,
+                args=_args,
+                resolve=_resolver,
+                description=description or f"Native {_op} mutation for {model.__name__}",
+            )
+            _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
+            _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
 
     @classmethod
     def get_errors(cls, errors: list[Any]) -> DjangoModelMutation:
