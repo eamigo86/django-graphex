@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import warnings
 from collections import OrderedDict
@@ -64,6 +65,61 @@ if TYPE_CHECKING:
     from django.db.models import Model
 
     from .registry import Registry
+
+
+#: True when ``GDX_BACKEND=native`` is set in the process environment. Read ONCE
+#: at import (the canonical pattern used by ``paginations/pagination.py``).
+_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
+
+
+class _DeadScalarSentinel:
+    """Marker returned by SCALAR converters under ``GDX_BACKEND=native``.
+
+    The native OUTPUT compiler (``native/output_compiler.compile_output_fields``)
+    reads ``model._meta`` DIRECTLY and maps each Django scalar field to a native
+    scalar (DateField->GdxDate, BinaryField->GraphQLString, CharField->
+    GraphQLString, …). It NEVER reads the graphene scalar DESCRIPTORS that the
+    converter builds into ``_meta.fields`` (``Binary(...)`` / ``CustomDate(...)`` /
+    ``String(...)`` / …) — so those descriptors are DEAD on native (verified
+    empirically: the entire converter ``_meta.fields`` output is unread on the
+    native output path, see #1552 and S-ROOTS-d).
+
+    To avoid BUILDING the dead graphene scalar descriptors on native (and so let
+    the now-unused graphene scalar classes retire once graphene is uninstalled in
+    S8), each SCALAR ``convert_django_field`` dispatcher returns this sentinel
+    when ``_NATIVE_BACKEND`` is True. ``construct_fields`` then OMITS the field
+    from the produced dict — a PER-FIELD-TYPE skip (#1552): GFK, the relation
+    ``Dynamic`` descriptors, and the nested-list (``_nested_list_object_field``)
+    descriptors are NOT scalars and so are KEPT, never returning this sentinel.
+
+    The graphene path (``GDX_BACKEND`` unset) is UNCHANGED — the dispatchers build
+    the real graphene scalar descriptors exactly as before.
+    """
+
+    __slots__ = ()
+
+
+#: Singleton sentinel instance (identity-comparable in ``construct_fields``).
+_DEAD_SCALAR = _DeadScalarSentinel()
+
+
+def _scalar_or_dead(build: "Callable[[], Any]") -> Any:
+    """Return the built graphene scalar descriptor, or the dead-scalar sentinel.
+
+    On native the descriptor is dead (see ``_DeadScalarSentinel``) so we return
+    the sentinel WITHOUT building (or even importing) the graphene scalar — the
+    native output compiler derives the field from ``model._meta`` directly. On
+    graphene we build the descriptor normally.
+
+    Args:
+        build: a zero-arg callable that builds the graphene scalar descriptor.
+
+    Returns:
+        The dead-scalar sentinel on native, otherwise the built descriptor.
+    """
+    if _NATIVE_BACKEND:
+        return _DEAD_SCALAR
+    return build()
 
 
 def _nested_list_object_field(
@@ -370,6 +426,14 @@ def construct_fields(
             converted = convert_django_field_with_choices(
                 field, registry, input_flag, nested_field
             )
+            # PER-FIELD-TYPE native skip (#1552 / S-ROOTS-d): a SCALAR converter
+            # returns the dead-scalar sentinel under GDX_BACKEND=native because
+            # the native output compiler derives the scalar from model._meta
+            # directly and never reads this descriptor. OMIT it so the dead
+            # graphene scalar descriptor is not even built. GFK / relation /
+            # nested-list converters never return the sentinel, so they are KEPT.
+            if converted is _DEAD_SCALAR:
+                continue
             fields[name] = converted
     return fields
 
@@ -424,9 +488,11 @@ def convert_field_to_string(
     Returns:
         A GraphQL String field for the Django field.
     """
-    return String(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: String(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -477,9 +543,11 @@ def convert_field_to_uuid(
     Returns:
         A GraphQL UUID field for the Django field.
     """
-    return UUID(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: UUID(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -505,9 +573,11 @@ def convert_field_to_int(
     Returns:
         A GraphQL Int field for the Django field.
     """
-    return Int(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: Int(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -529,6 +599,8 @@ def convert_field_to_boolean(
     Returns:
         A GraphQL Boolean field, non-null when required on create.
     """
+    if _NATIVE_BACKEND:
+        return _DEAD_SCALAR
     required = is_required(field) and input_flag == "create"
     if required:
         return NonNull(Boolean, description=field.help_text or field.verbose_name)
@@ -553,9 +625,11 @@ def convert_field_to_nullboolean(
     Returns:
         A GraphQL Boolean field for the Django field.
     """
-    return Boolean(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: Boolean(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -577,9 +651,11 @@ def convert_binary_to_string(
     Returns:
         A GraphQL Binary field for the Django field.
     """
-    return Binary(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: Binary(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -603,9 +679,11 @@ def convert_field_to_float(
     Returns:
         A GraphQL Float field for the Django field.
     """
-    return Float(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: Float(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -627,9 +705,11 @@ def convert_date_to_string(
     Returns:
         A GraphQL CustomDate field for the Django field.
     """
-    return CustomDate(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: CustomDate(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -651,9 +731,11 @@ def convert_datetime_to_string(
     Returns:
         A GraphQL CustomDateTime field for the Django field.
     """
-    return CustomDateTime(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: CustomDateTime(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -675,9 +757,11 @@ def convert_time_to_string(
     Returns:
         A GraphQL CustomTime field for the Django field.
     """
-    return CustomTime(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: CustomTime(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 
@@ -1011,9 +1095,11 @@ def convert_postgres_field_to_string(
     Returns:
         A GraphQL JSONString field for the Django field.
     """
-    return JSONString(
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
+    return _scalar_or_dead(
+        lambda: JSONString(
+            description=field.help_text or field.verbose_name,
+            required=is_required(field) and input_flag == "create",
+        )
     )
 
 

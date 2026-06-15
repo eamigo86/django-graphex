@@ -7,13 +7,22 @@ import datetime
 from typing import TYPE_CHECKING, Any
 
 # ``import graphene`` (and the graphene ``Date`` / ``DateTime`` / ``Time``
-# scalar bases) are STILL required here in S5: ``Binary``, ``CustomDate`` /
-# ``CustomDateTime`` / ``CustomTime`` and ``GenericForeignKeyType`` /
-# ``GenericForeignKeyInputType`` remain LIVE graphene field-descriptor surface
-# consumed by ``converter.py`` on the native path (``construct_fields`` is
-# called unconditionally at ``types.py:477`` on BOTH backends). Removing them
-# requires collapsing the converter descriptor surface — deferred to
-# S-ROOTS / S8. S5 only repoints the byte-safe ``to_camel_case`` off graphene.
+# scalar bases) are STILL required here after S-ROOTS-d:
+#
+# * ``GenericForeignKeyType`` / ``GenericForeignKeyInputType`` are graphene
+#   ObjectType / InputObjectType subclasses, KEPT and still BUILT by the GFK
+#   converter on BOTH backends (their native conversion is a later slice) — so
+#   ``import graphene`` (line below) cannot go yet.
+# * ``Binary`` / ``CustomDate`` / ``CustomDateTime`` / ``CustomTime`` are now
+#   NATIVE-AWARE SKIPPED by the converter: ``construct_fields`` does NOT build
+#   these scalar descriptors under ``GDX_BACKEND=native`` (the native output
+#   compiler derives the scalar from ``model._meta`` directly — the descriptor
+#   is dead on native, see #1552 / S-ROOTS-d). They are STILL LIVE on the
+#   graphene path (graphene installed) AND directly unit-tested by
+#   ``tests/test_base_types_internals.py`` (serialize/parse behaviour), so the
+#   classes — and the ``Date`` / ``DateTime`` / ``Time`` bases they subclass —
+#   CANNOT be removed without NEW collateral. Their removal is deferred to S8
+#   (graphene uninstall), when the graphene path itself goes away.
 import graphene
 from graphene.types.datetime import Date, DateTime, Time
 from graphql.language import ast

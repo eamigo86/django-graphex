@@ -296,3 +296,31 @@ class MetaHygieneWidget(DummyModel):
     title = models.CharField(max_length=200)
     body = models.TextField(default="")
     is_active = models.BooleanField(default=True)
+
+
+# --- Model for S-ROOTS-d: scalar-type coverage (date/binary/uuid/json/etc.) -- #
+# Exercises every converter SCALAR dispatcher that the native output_compiler
+# already derives directly from the model, so the silent-drop guard can assert
+# every scalar kind survives the converter native-aware skip with the SAME SDL
+# scalar name (CustomDate / CustomDateTime / CustomTime / String for Binary / …).
+class ScalarKindsModel(DummyModel):
+    """Carries one field of every converter scalar dispatcher kind."""
+
+    char = models.CharField(max_length=50)
+    text = models.TextField(default="")
+    integer = models.IntegerField(default=0)
+    big_integer = models.BigIntegerField(default=0)
+    boolean = models.BooleanField(default=False)
+    floating = models.FloatField(default=0.0)
+    decimal = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    duration = models.DurationField(null=True)
+    uuid_field = models.UUIDField(default=uuid.uuid4)
+    date = models.DateField(null=True)
+    datetime = models.DateTimeField(null=True)
+    time = models.TimeField(null=True)
+    binary = models.BinaryField(null=True)
+    json_field = models.JSONField(null=True)
+    # A relation so the silent-drop guard also proves a FK survives the skip.
+    author = models.ForeignKey(
+        Author, related_name="scalar_kinds", null=True, on_delete=models.SET_NULL
+    )
