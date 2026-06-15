@@ -99,17 +99,53 @@ def test_no_forbidden_legacy_imports():
 
 
 def test_public_exports():
-    """T-IMPORT: the documented public symbols are exported."""
+    """T-IMPORT: the post-cutover public surface (spec §Public API Contract).
+
+    After the WU11 lockstep cutover the bespoke transport symbols are gone and
+    subscriptions are native-only. The public ``__all__`` keeps the developer
+    base (``Subscription``), the auto-gen mount (``SubscriptionField``), the
+    signal binding, the action enum and the rewritten client view; it drops the
+    bespoke transport symbols and never exports the internal engine.
+    """
+    # Present: the kept public surface.
     for name in (
         "Subscription",
-        "GraphqlAPIDemultiplexer",
-        "SubscriptionGraphQLView",
+        "SubscriptionField",
         "SubscriptionBinding",
         "ActionSubscriptionEnum",
-        "OperationSubscriptionEnum",
+        "SubscriptionClientView",
     ):
-        assert name in subscriptions.__all__
+        assert name in subscriptions.__all__, f"{name} must stay public"
         assert hasattr(subscriptions, name)
+
+    # Absent: bespoke transport symbols removed in the lockstep cutover, the
+    # internal engine, AND the native transport factories — the transports are an
+    # explicit deep import (``subscriptions.transports.sse`` /
+    # ``subscriptions.transports.ws``), never part of the top-level surface.
+    for name in (
+        "GraphqlAPIDemultiplexer",
+        "SubscriptionGraphQLView",
+        "OperationSubscriptionEnum",
+        "StreamingSubscription",
+        "drive_subscription",
+        "ChannelLayerSource",
+        "SubscriptionSpec",
+        "subscription_sse_view",
+        "subscription_ws_consumer",
+    ):
+        assert name not in subscriptions.__all__, f"{name} must not be public"
+        assert not hasattr(subscriptions, name), (
+            f"{name} must not be a top-level subscriptions attribute"
+        )
+
+    # The exact public surface is the spec §Public API Contract set — no extras.
+    assert set(subscriptions.__all__) == {
+        "Subscription",
+        "SubscriptionField",
+        "SubscriptionBinding",
+        "ActionSubscriptionEnum",
+        "SubscriptionClientView",
+    }
 
     # The base package must NOT re-export the subscription symbols.
     assert "Subscription" not in django_graphex.__all__

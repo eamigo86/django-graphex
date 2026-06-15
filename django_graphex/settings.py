@@ -47,16 +47,6 @@ DEFAULTS = {
     # full instance with the subscription's backend. Can be overridden
     # per subscription with `Meta.serialize_data`.
     "SUBSCRIPTION_SERIALIZE_DATA": False,
-    # Channel ownership guard (v1.2.1+). When True (default), the subscribe
-    # mutation verifies that the channel_id was registered by the same session
-    # that is calling subscribe, using the Django cache as the backing store.
-    # Multi-worker deployments must configure a SHARED cache backend (Redis /
-    # Memcached) so the guard works across processes; with the default LocMemCache
-    # (per-process), HTTP and WS requests must land on the same worker.
-    # Set to False to bypass the guard entirely — do this only as a temporary
-    # escape hatch when a shared cache cannot be provisioned; it disables the
-    # channel-hijack protection.
-    "SUBSCRIPTIONS_CHANNEL_GUARD": True,
     # HTTP/view hardening
     # Maximum number of operations permitted in a single batch request.
     # Batch requests exceeding this limit are rejected with HTTP 400.
@@ -140,6 +130,10 @@ GRAPHENE_DEFAULTS: dict[str, Any] = {
     "ATOMIC_MUTATIONS": False,
     "MAX_VALIDATION_ERRORS": None,
     "CAMELCASE_ERRORS": True,
+    # graphql-transport-ws: seconds the server waits for the first
+    # ``connection_init`` after the socket opens before closing with 4408
+    # (``connectionInitWaitTimeout``). The transport factory may override it.
+    "SUBSCRIPTION_CONNECTION_INIT_TIMEOUT": 3.0,
 }
 
 #: ``GRAPHENE`` settings that may be given as dotted import-path strings.

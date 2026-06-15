@@ -19,22 +19,16 @@ except ImportError as exc:  # pragma: no cover - exercised by the base-install C
 
 from .bindings import SubscriptionBinding
 from .client import SubscriptionClientView
-from .consumers import GraphqlAPIDemultiplexer
 from .subscription import (
     ActionSubscriptionEnum,
-    OperationSubscriptionEnum,
     Subscription,
     SubscriptionField,
 )
-from .views import SubscriptionGraphQLView
 
 __all__ = (
     "Subscription",
     "SubscriptionField",
-    "GraphqlAPIDemultiplexer",
-    "SubscriptionGraphQLView",
     "SubscriptionClientView",
     "SubscriptionBinding",
     "ActionSubscriptionEnum",
-    "OperationSubscriptionEnum",
 )

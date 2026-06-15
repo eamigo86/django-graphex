@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import FieldDoesNotExist
 from django.db import models
+from graphene.utils.str_converters import to_camel_case
 from graphql import (
     GraphQLBoolean,
     GraphQLEnumType,
@@ -57,7 +58,6 @@ from graphql import (
     GraphQLScalarType,
     GraphQLString,
 )
-from graphene.utils.str_converters import to_camel_case
 
 from django_graphex.registry import get_global_registry
 

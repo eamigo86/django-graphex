@@ -26,7 +26,6 @@ DJANGO_GRAPHEX = {
 
     # --- Subscriptions ----------------------------------------------------- #
     "SUBSCRIPTION_SERIALIZE_DATA": False,
-    "SUBSCRIPTIONS_CHANNEL_GUARD": True,    # needs shared cache in multi-worker
 
     # --- Security ---------------------------------------------------------- #
     "ALLOW_INTROSPECTION": False,
@@ -116,7 +115,6 @@ The `fetch_cache_key` staticmethod (which hashes the request body) remains separ
 | Setting | Default | Description |
 |---|---|---|
 | `SUBSCRIPTION_SERIALIZE_DATA` | `False` | When `False`, change notifications carry only `{"id": <pk>}`; `True` serializes the full instance through the subscription's backend. Per-subscription override: `Meta.serialize_data`. See [Subscriptions](subscriptions.md). |
-| `SUBSCRIPTIONS_CHANNEL_GUARD` | `True` | When `True`, the channel ownership guard is active: the HTTP subscribe mutation verifies that `channel_id` was registered by the current session before joining any group. The guard reads from Django's `"default"` cache. **Multi-worker deployments must configure a shared cache backend (Redis / Memcached) for this to work correctly across processes.** With the default `LocMemCache` the guard works only when the WebSocket connect and HTTP subscribe land on the **same** worker. Set `False` to bypass the guard entirely — the failure mode with the guard on but no shared cache is a loud rejection (`ok: False`), never a silent data leak. See [Subscriptions → Security](subscriptions.md#channel-ownership-guard-fail-closed). |
 
 ## HTTP / view hardening
 

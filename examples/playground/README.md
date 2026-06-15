@@ -118,9 +118,10 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DenyAllRegistry` | note | Fail-closed sentinel for broken schemas; not needed in a healthy project |
 | **Views** | | |
 | `BaseGraphQLView` | ✅ | base of all views |
-| `GraphQLView` (depth/cost rules, caching) | ✅ | base of `SubscriptionGraphQLView` at `/graphql/` |
+| `GraphQLView` (depth/cost rules, caching) | ✅ | queries + mutations at `/graphql/` |
 | `AuthenticatedGraphQLView` | ✅ | `/graphql/secure/` — rejects unauthenticated requests with HTTP 403 |
-| `SubscriptionGraphQLView` | ✅ | `/graphql/` |
+| `subscription_sse_view` (native SSE) | ✅ | `/graphql/stream` |
+| `subscription_ws_consumer` (graphql-transport-ws) | ✅ | `/ws/graphql/` (see `config/asgi.py`) |
 | `SubscriptionClientView` | ✅ | `/graphql/client/` |
 | **Query depth / cost limiting** | | |
 | `DepthLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.max_deep = 4` activates per-type enforcement |
@@ -151,7 +152,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `subscription_scope` (server-forced row scope) | ✅ | `NoteModelType.subscription_scope` — only own notes |
 | `subscription_index_fields` | ✅ | `NoteModelType.Meta.subscription_index_fields = ("owner",)` |
 | `serialize_data` | ✅ | `PostSubscription`, `CommentSubscription`, `NoteModelType.Meta.serialize_data = True` |
-| `GraphqlAPIDemultiplexer` | ✅ | `consumers.py` — `AppDemultiplexer` |
+| Native WS consumer (`subscription_ws_consumer`) | ✅ | `consumers.py` — `AppWSConsumer` |
 
 ---
 
@@ -417,7 +418,7 @@ a plain `postCreate`.  Passing an empty list (`comments: []`) is a no-op
 
 ## Query depth and cost limits
 
-Both rules are wired into `GraphQLView` (and therefore `SubscriptionGraphQLView`).
+Both rules are wired into `GraphQLView`.
 
 **`MAX_QUERY_DEPTH` is active** in this playground: `config/settings.py` ships
 with `"MAX_QUERY_DEPTH": 6`, so any query nested more than 6 levels deep is
@@ -551,8 +552,10 @@ subscription {
 
 | Route | View | Notes |
 |-------|------|-------|
-| `/graphql/` | `SubscriptionGraphQLView` | HTTP GraphQL + GraphiQL; handles subscribe/unsubscribe |
-| `/graphql/client/` | `SubscriptionClientView` | Browser client for the WebSocket subscription flow |
+| `/graphql/` | `GraphQLView` | HTTP GraphQL + GraphiQL (queries + mutations) |
+| `/graphql/stream` | `subscription_sse_view` | Native Server-Sent Events subscription transport |
+| `/ws/graphql/` | `subscription_ws_consumer` | Native `graphql-transport-ws` WebSocket (see `config/asgi.py`) |
+| `/graphql/client/` | `SubscriptionClientView` | Browser client for the subscription flow (WS + SSE) |
 | `/graphql/secure/` | `AuthenticatedGraphQLView` | Same schema behind **view-level** HTTP 403 auth |
 
 `AuthenticatedGraphQLView` rejects unauthenticated requests before any query

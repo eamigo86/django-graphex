@@ -131,6 +131,30 @@ def _collect_root_attrs(root: type) -> dict[str, Any]:
     return found
 
 
+def _is_subscription_field(field: Any) -> bool:
+    """Return whether *field* is a subscription root field (WU7).
+
+    Duck-typed (NOT a hard ``import django_graphex.subscriptions``) so the native
+    root compiler never pulls the optional ``[subscriptions]`` extra (Channels)
+    onto the base build path. A subscription root field is a graphene-mounted
+    field whose ``type`` is a ``Subscription`` subclass carrying the native
+    compile-path method ``_build_native_field`` (added by WU6). The class name
+    gate (``SubscriptionField``) avoids matching an unrelated field that happens
+    to expose a callable of that name.
+
+    Args:
+        field: A graphene-mounted root field.
+
+    Returns:
+        ``True`` when *field* is a ``SubscriptionField`` whose target class
+        builds a native subscription field.
+    """
+    if type(field).__name__ != "SubscriptionField":
+        return False
+    target = getattr(field, "type", None)
+    return callable(getattr(target, "_build_native_field", None))
+
+
 def _build_object_field(field: Any) -> GraphQLField:
     """Build a native ``GraphQLField`` for a ``DjangoObjectField`` (single object).
 
@@ -736,7 +760,15 @@ def compile_native_root(root: type, *, name: str) -> GraphQLObjectType:
         # ``CustomDate(name="date")``) exactly as graphene does; the snake
         # ``field_name`` is still used for the ``resolve_<field_name>`` lookup.
         wire_name = _rendered_field_name(field, field_name)
-        if isinstance(field, DjangoObjectField):
+        if _is_subscription_field(field):
+            # Subscription root field (WU7): the mounted ``SubscriptionField``
+            # carries the Subscription subclass as its ``type`` (``_meta.output``).
+            # Build the DIRECT native subscription field (event type + subscribe
+            # source factory + reduced {action,id,filters} args) via the class'
+            # own ``_build_native_field``. schema/document are supplied by the
+            # transport at delivery time (the source build does not need them).
+            fields[wire_name] = field.type._build_native_field()
+        elif isinstance(field, DjangoObjectField):
             fields[wire_name] = _build_object_field(field)
         elif isinstance(field, DjangoListObjectField):
             # DjangoListObjectField (and DjangoNestedListObjectField) → the WU1b
