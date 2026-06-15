@@ -31,7 +31,6 @@ from django.shortcuts import render
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.generic import View
-from graphene import Schema
 from graphql import (
     ExecutionResult,
     OperationType,
@@ -227,8 +226,15 @@ class BaseGraphQLView(View):
         else:
             self.subscription_path = subscription_path
 
-        assert isinstance(self.schema, Schema), (
-            "A Schema is required to be provided to GraphQLView."
+        # Native 2.0: the view executes against ``self.schema.graphql_schema``
+        # (the graphql-core ``GraphQLSchema``).  We therefore duck-type on that
+        # attribute rather than ``isinstance(self.schema, graphene.Schema)``:
+        # a native ``DjangoGraphQLSchema`` (no longer a ``graphene.Schema``
+        # subclass as of S6f) exposes ``graphql_schema`` and must be accepted,
+        # while a graphene ``Schema`` instance also exposes it (backward compat).
+        assert hasattr(self.schema, "graphql_schema"), (
+            "A Schema exposing `graphql_schema` is required to be provided to "
+            "GraphQLView."
         )
         assert not all((graphiql, batch)), "Use either graphiql or batch processing"
         self.validation_rules = validation_rules or self.validation_rules

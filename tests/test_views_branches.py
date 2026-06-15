@@ -165,7 +165,7 @@ class AtomicMutationTest(TestCase):
     def setUp(self):
         self.factory = RequestFactory()
 
-    @override_settings(GRAPHENE={"SCHEMA": None, "ATOMIC_MUTATIONS": True})
+    @override_settings(GRAPHEX={"SCHEMA": None, "ATOMIC_MUTATIONS": True})
     def test_atomic_mutation_rolls_back_on_flag(self):
         # With ATOMIC_MUTATIONS on and the mutation flagging errors, the atomic
         # block sets rollback; the response still comes back 200 with ok:false.

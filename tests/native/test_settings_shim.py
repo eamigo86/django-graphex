@@ -320,3 +320,24 @@ class TestAuthMiddlewareConfiguredHonorsGraphex:
         from django_graphex.schema import _auth_middleware_configured
 
         assert _auth_middleware_configured() is False
+
+    @override_settings(
+        GRAPHEX={},
+        GRAPHENE={
+            "MIDDLEWARE": [
+                "django_graphex.middleware.AuthenticatedFieldsMiddleware"
+            ]
+        },
+    )
+    def test_ignores_legacy_graphene_namespace(self):
+        """BREAKING CHANGE (S2): the legacy GRAPHENE namespace is NOT consulted.
+
+        Pre-2.0 ``_auth_middleware_configured`` unioned GRAPHEX + GRAPHENE
+        ``MIDDLEWARE``. As of S2 the GRAPHENE namespace is retired everywhere:
+        a middleware configured ONLY under GRAPHENE must be ignored, so the
+        check returns False even though the middleware is present under the
+        legacy key.
+        """
+        from django_graphex.schema import _auth_middleware_configured
+
+        assert _auth_middleware_configured() is False

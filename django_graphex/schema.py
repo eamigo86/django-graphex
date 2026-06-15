@@ -76,17 +76,15 @@ class DenyAllRegistry(frozenset):
 def _auth_middleware_configured() -> bool:
     """Check that the AuthenticatedFieldsMiddleware is configured.
 
-    Checks both ``settings.GRAPHEX`` (new canonical namespace) and
-    ``settings.GRAPHENE`` (legacy namespace) so that projects using either
-    namespace get the warning-check. This is a best-effort check.
+    Reads ``settings.GRAPHEX['MIDDLEWARE']`` only. This is a best-effort check.
+
+    BREAKING CHANGE (2.0, S2): the legacy ``settings.GRAPHENE`` namespace is no
+    longer consulted — consistent with the GRAPHEX-only settings reader. A
+    project still configuring the middleware under ``GRAPHENE`` must rename the
+    namespace to ``GRAPHEX``.
     """
-    # Check GRAPHEX first (new canonical namespace), then fall back to GRAPHENE.
     graphex_conf = getattr(settings, "GRAPHEX", None) or {}
-    graphene_conf = getattr(settings, "GRAPHENE", None) or {}
-    # Union: check whichever namespace the project uses (or both).
-    middleware_entries = list(graphex_conf.get("MIDDLEWARE", []) or []) + list(
-        graphene_conf.get("MIDDLEWARE", []) or []
-    )
+    middleware_entries = list(graphex_conf.get("MIDDLEWARE", []) or [])
     for entry in middleware_entries:
         name = entry if isinstance(entry, str) else getattr(entry, "__name__", "")
         if "AuthenticatedFieldsMiddleware" in name:
