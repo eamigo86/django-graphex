@@ -43,14 +43,30 @@ from graphql import (
     GraphQLUnionType,
 )
 
+from django_graphex.native.base import (
+    SchemaRegistries,
+    default_schema_registries,
+)
 from django_graphex.native.bridge import GdxPayload
 from django_graphex.native.ir import GdxMeta
 
 # Memo so a union/interface referenced by multiple fields (or by a field AND
 # ``types=``) compiles to ONE instance — identity-stable, no duplicate-name
 # TypeError. Keyed by the polymorphic source class.
+#
+# item-b (B2): these dicts are the DEFAULT pair's union/interface cache
+# namespaces — ``default_schema_registries().union_cache`` /
+# ``.interface_cache`` ARE these very objects (bound by identity). Every
+# entrypoint resolves its cache from the threaded ``SchemaRegistries`` pair, so
+# the default path keeps writing here (byte-identical) while a forked pair (later
+# slices) owns its own namespace.
 _UNION_TYPE_CACHE: dict[type, GraphQLUnionType] = {}
 _INTERFACE_TYPE_CACHE: dict[type, GraphQLInterfaceType] = {}
+
+
+def _resolve_registries(registries: SchemaRegistries | None) -> SchemaRegistries:
+    """Return *registries* or the process-wide default pair (byte-identical)."""
+    return registries if registries is not None else default_schema_registries()
 
 
 def is_union_type(cls: Any) -> bool:
@@ -129,7 +145,9 @@ def _make_resolve_type(polymorphic_cls: Any) -> Any:
     return _resolve_type
 
 
-def compile_union_type(union_cls: Any) -> GraphQLUnionType:
+def compile_union_type(
+    union_cls: Any, registries: SchemaRegistries | None = None
+) -> GraphQLUnionType:
     """Compile a ``DjangoUnionType`` to a graphql-core ``GraphQLUnionType``.
 
     Memoized (single instance per union class). The member ``types`` are the
@@ -139,11 +157,14 @@ def compile_union_type(union_cls: Any) -> GraphQLUnionType:
 
     Args:
         union_cls: A ``DjangoUnionType`` subclass.
+        registries: The ``SchemaRegistries`` pair owning the union cache
+            namespace; defaults to the global pair (byte-identical, item-b B1/B2).
 
     Returns:
         The canonical (memoized) ``GraphQLUnionType`` for *union_cls*.
     """
-    cached = _UNION_TYPE_CACHE.get(union_cls)
+    cache = _resolve_registries(registries).union_cache
+    cached = cache.get(union_cls)
     if cached is not None:
         return cached
 
@@ -161,11 +182,13 @@ def compile_union_type(union_cls: Any) -> GraphQLUnionType:
         resolve_type=_make_resolve_type(union_cls),
         extensions={"gdx": GdxPayload(GdxMeta(name=name, graphene_type=union_cls))},
     )
-    _UNION_TYPE_CACHE[union_cls] = gql_union
+    cache[union_cls] = gql_union
     return gql_union
 
 
-def compile_interface_type(interface_cls: Any) -> GraphQLInterfaceType:
+def compile_interface_type(
+    interface_cls: Any, registries: SchemaRegistries | None = None
+) -> GraphQLInterfaceType:
     """Compile a ``DjangoInterfaceType`` to a graphql-core ``GraphQLInterfaceType``.
 
     Memoized (single instance per interface class). The shared fields are the
@@ -176,17 +199,25 @@ def compile_interface_type(interface_cls: Any) -> GraphQLInterfaceType:
 
     Args:
         interface_cls: A ``DjangoInterfaceType`` subclass.
+        registries: The ``SchemaRegistries`` pair owning the interface cache
+            namespace (and threaded into the declared-field compile); defaults to
+            the global pair (byte-identical, item-b B1/B2).
 
     Returns:
         The canonical (memoized) ``GraphQLInterfaceType`` for *interface_cls*.
     """
-    cached = _INTERFACE_TYPE_CACHE.get(interface_cls)
+    registries = _resolve_registries(registries)
+    cache = registries.interface_cache
+    cached = cache.get(interface_cls)
     if cached is not None:
         return cached
 
     name = getattr(interface_cls._meta, "name", None) or interface_cls.__name__
 
-    def _fields(_cls: type = interface_cls) -> dict[str, Any]:
+    def _fields(
+        _cls: type = interface_cls,
+        _registries: SchemaRegistries = registries,
+    ) -> dict[str, Any]:
         # Lazy thunk (cache-before-eval): the cache entry is registered BEFORE this
         # evaluates so a self-referential field closes through this instance.
         from django_graphex.native.schema_compiler import compile_declared_field
@@ -197,7 +228,7 @@ def compile_interface_type(interface_cls: Any) -> GraphQLInterfaceType:
         out: dict[str, Any] = {}
         for field_name, field in declared.items():
             out[to_camel_case(field_name)] = compile_declared_field(
-                _cls, field_name, field
+                _cls, field_name, field, _registries
             )
         return out
 
@@ -209,15 +240,19 @@ def compile_interface_type(interface_cls: Any) -> GraphQLInterfaceType:
             "gdx": GdxPayload(GdxMeta(name=name, graphene_type=interface_cls))
         },
     )
-    _INTERFACE_TYPE_CACHE[interface_cls] = gql_interface
+    cache[interface_cls] = gql_interface
     return gql_interface
 
 
-def compile_polymorphic_type(cls: Any) -> Any:
+def compile_polymorphic_type(
+    cls: Any, registries: SchemaRegistries | None = None
+) -> Any:
     """Dispatch a union/interface class to its native compiler.
 
     Args:
         cls: A ``DjangoUnionType`` or ``DjangoInterfaceType`` subclass.
+        registries: The ``SchemaRegistries`` pair owning the union/interface
+            caches; defaults to the global pair (byte-identical, item-b B1/B2).
 
     Returns:
         A ``GraphQLUnionType`` or ``GraphQLInterfaceType``.
@@ -225,10 +260,11 @@ def compile_polymorphic_type(cls: Any) -> Any:
     Raises:
         TypeError: If *cls* is neither a union nor an interface.
     """
+    registries = _resolve_registries(registries)
     if is_union_type(cls):
-        return compile_union_type(cls)
+        return compile_union_type(cls, registries)
     if is_interface_type(cls):
-        return compile_interface_type(cls)
+        return compile_interface_type(cls, registries)
     raise TypeError(
         f"compile_polymorphic_type expects a DjangoUnionType or "
         f"DjangoInterfaceType, received {cls!r}."

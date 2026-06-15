@@ -609,6 +609,99 @@ def get_shared_output_registry() -> Any:
 
 
 # ---------------------------------------------------------------------------
+# SchemaRegistries — the per-schema registry pair (item-b, B0)
+# ---------------------------------------------------------------------------
+# A single container that bundles the TWO registries every compile-time thunk
+# reads from:
+#   1. ``output``  — the ``NativeOutputRegistry`` (relation/list-container
+#      cross-type resolution; the central ``get_shared_output_registry()`` one).
+#   2. ``graphene`` — the graphene ``Registry`` (``get_global_registry()``):
+#      ``get_type_for_model`` / ``get_list_type_for_model`` / choices-enum memo
+#      used by the filter-input + optimizer + relation-list builders.
+#
+# Plus the per-build COMPILE CACHES (item-b, B2) so a distinct registry pair can
+# own its OWN cache namespace instead of the process-global module-level dicts.
+# The DEFAULT pair (``default_schema_registries()``) reuses the EXISTING global
+# instances AND the EXISTING module-level cache dicts, so every call site that
+# defaults to it is BYTE-IDENTICAL to the pre-item-b single-namespace behavior.
+#
+# This is PURE PLUMBING for B0-B2: nothing yet builds a non-default pair, so the
+# whole compile path keeps reading the one global namespace. Later slices
+# (B3-B5) thread a forked pair into a schema's own thunks.
+
+
+@dataclass
+class SchemaRegistries:
+    """A registry pair (+ compile caches) threaded through the native compiler.
+
+    Holds the graphene ``Registry`` and the ``NativeOutputRegistry`` a single
+    schema build resolves types against, plus the four compile caches that were
+    historically process-global module-level dicts:
+
+    - ``plain_object_cache``  → ``schema_compiler._PLAIN_OBJECT_TYPE_CACHE``
+    - ``union_cache``         → ``polymorphic_compiler._UNION_TYPE_CACHE``
+    - ``interface_cache``     → ``polymorphic_compiler._INTERFACE_TYPE_CACHE``
+    - ``filter_input_cache``  → ``filtering.native_schema._NATIVE_INPUT_CACHE``
+
+    The DEFAULT pair (``default_schema_registries()``) seeds every field with the
+    EXISTING global instance / module-level dict, so the default compile path is
+    byte-identical to the single-namespace behavior. A non-default pair gets
+    fresh empty caches so its compiled types live in their own namespace (used by
+    later slices; no caller builds one in B0-B2).
+
+    ``Any`` annotations avoid importing ``registry_compiler`` / ``registry`` at
+    ``base`` import time (import-safety on both backends).
+    """
+
+    graphene: Any = None
+    output: Any = None
+    plain_object_cache: dict | None = None
+    union_cache: dict | None = None
+    interface_cache: dict | None = None
+    filter_input_cache: dict | None = None
+
+
+# Process-wide DEFAULT pair, created once. Its members ARE the existing global
+# registries + module-level cache dicts, so defaulting to it changes NOTHING.
+_default_schema_registries: SchemaRegistries | None = None
+
+
+def default_schema_registries() -> SchemaRegistries:
+    """Return the process-wide DEFAULT ``SchemaRegistries`` pair (singleton).
+
+    The default pair's members are the EXISTING global instances:
+
+    - ``graphene`` = ``get_global_registry()``
+    - ``output``   = ``get_shared_output_registry()``
+
+    and its four cache fields are the EXISTING module-level cache dicts (bound by
+    identity, NOT copied), so every compile entrypoint that defaults to this pair
+    reads/writes the same single namespace it always did — byte-identical
+    behavior. Lazily built so ``base`` keeps no import-time dependency on the
+    cache-owning modules.
+    """
+    global _default_schema_registries
+    if _default_schema_registries is None:
+        from django_graphex.filtering.native_schema import _NATIVE_INPUT_CACHE
+        from django_graphex.native.polymorphic_compiler import (
+            _INTERFACE_TYPE_CACHE,
+            _UNION_TYPE_CACHE,
+        )
+        from django_graphex.native.schema_compiler import _PLAIN_OBJECT_TYPE_CACHE
+        from django_graphex.registry import get_global_registry
+
+        _default_schema_registries = SchemaRegistries(
+            graphene=get_global_registry(),
+            output=get_shared_output_registry(),
+            plain_object_cache=_PLAIN_OBJECT_TYPE_CACHE,
+            union_cache=_UNION_TYPE_CACHE,
+            interface_cache=_INTERFACE_TYPE_CACHE,
+            filter_input_cache=_NATIVE_INPUT_CACHE,
+        )
+    return _default_schema_registries
+
+
+# ---------------------------------------------------------------------------
 # InputType base (model-free inputs)
 # ---------------------------------------------------------------------------
 

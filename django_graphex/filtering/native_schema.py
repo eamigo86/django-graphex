@@ -65,6 +65,7 @@ from .lookups import default_lookups_for
 from .schema import _normalize_filter_fields, _relation_model
 
 if TYPE_CHECKING:
+    from django_graphex.native.base import SchemaRegistries
     from django_graphex.registry import Registry
 
 __all__ = (
@@ -157,7 +158,30 @@ class GdxFilterInputSpec:
 #: Separate from the graphene ``schema._INPUT_CACHE`` so the two backends never
 #: cross-contaminate. The and/or/not combinators (WU4) close over the cached
 #: reference registered here BEFORE the field thunk evaluates (cache-before-thunk).
+#:
+#: item-b (B2): this dict is the DEFAULT pair's filter-input cache namespace —
+#: ``default_schema_registries().filter_input_cache`` IS this very object (bound
+#: by identity). ``build_filter_input_type`` resolves its cache from the threaded
+#: ``SchemaRegistries`` pair, so the default path keeps writing here
+#: (byte-identical) while a forked pair (later slices) owns its own namespace.
 _NATIVE_INPUT_CACHE: dict[tuple[Any, Any, Any], GraphQLInputObjectType] = {}
+
+
+def _filter_input_cache(
+    registries: SchemaRegistries | None,
+) -> dict[tuple[Any, Any, Any], GraphQLInputObjectType]:
+    """Return the filter-input cache for *registries* (default pair when None).
+
+    The default pair's ``filter_input_cache`` IS ``_NATIVE_INPUT_CACHE`` (bound by
+    identity), so the default path is byte-identical. ``base`` is imported lazily
+    here to keep ``native_schema`` import-safe (``base`` lazily imports THIS
+    module to seed the default pair — see ``default_schema_registries``).
+    """
+    if registries is not None:
+        return registries.filter_input_cache
+    from django_graphex.native.base import default_schema_registries
+
+    return default_schema_registries().filter_input_cache
 
 
 def _pk_scalar(model: type[models.Model]) -> GraphQLScalarType:
@@ -413,6 +437,7 @@ def build_filter_input_type(
     filter_fields: Any,
     registry: Registry | None = None,
     custom_filters: list | None = None,
+    registries: SchemaRegistries | None = None,
 ) -> GraphQLInputObjectType | None:
     """Build (or reuse) the native ``<Model>Filterinput`` graphql-core input type.
 
@@ -424,11 +449,15 @@ def build_filter_input_type(
     Args:
         model: The Django model the input filters.
         filter_fields: The ``Meta.filter_fields`` declaration (list or dict).
-        registry: The registry providing choices enums and related types;
-            defaults to the global registry.
+        registry: The graphene ``Registry`` providing choices enums and related
+            types; defaults to the global registry. (Distinct from ``registries``
+            below — this is the legacy single-registry param the graphene path
+            also uses.)
         custom_filters: Optional list of ``(arg_name, method, metadata)``
             triples from ``@filter_field``-decorated methods. Each is added as
             a plain scalar argument to the filter input type.
+        registries: The ``SchemaRegistries`` pair owning the filter-input cache
+            namespace; defaults to the global pair (byte-identical, item-b B1/B2).
 
     Returns:
         A ``GraphQLInputObjectType``, or ``None`` when no filterable fields were
@@ -439,6 +468,8 @@ def build_filter_input_type(
 
     if registry is None:
         registry = get_global_registry()
+
+    cache = _filter_input_cache(registries)
 
     normalized = _normalize_filter_fields(filter_fields) if filter_fields else {}
 
@@ -459,7 +490,7 @@ def build_filter_input_type(
         frozenset((path, lookups) for path, lookups in normalized.items()),
         custom_key,
     )
-    cached = _NATIVE_INPUT_CACHE.get(cache_key)
+    cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
@@ -504,7 +535,9 @@ def build_filter_input_type(
             related = _relation_model(model, head)
             if related is None:
                 continue
-            nested = build_filter_input_type(related, sub_fields, registry)
+            nested = build_filter_input_type(
+                related, sub_fields, registry, registries=registries
+            )
             if nested is not None:
                 out[to_camel_case(head)] = GraphQLInputField(nested, out_name=head)
 
@@ -541,7 +574,7 @@ def build_filter_input_type(
     # Register BEFORE returning (and before the field thunk above can evaluate)
     # so the and/or/not combinators close over the cached reference without
     # re-entering the builder — the cache-before-thunk recursion guard (D5).
-    _NATIVE_INPUT_CACHE[cache_key] = input_type
+    cache[cache_key] = input_type
     # A6: force thunk evaluation NOW and raise if the type resolved to empty
     # ``.fields`` (the silent circular-reference footgun — a thunk that captured
     # an incomplete type would otherwise ship an empty input type unnoticed).
