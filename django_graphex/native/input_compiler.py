@@ -27,6 +27,7 @@ from typing import Any
 from graphql import (
     GraphQLInputField,
     GraphQLInputObjectType,
+    GraphQLList,
     GraphQLNonNull,
     GraphQLString,
     GraphQLInt,
@@ -49,12 +50,70 @@ class GdxInputSpec:
     """Payload stored in ``extensions["gdx"]`` on every compiled input type.
 
     Mirrors the ``GdxPayload`` used for output types but carries input-specific
-    metadata.  Phase 3/4 will extend this with ``nested_fields`` etc.
+    metadata.  ``nested_fields`` carries the resolved nested object-input specs
+    injected for a ``Meta.nested_fields`` host (empty for a plain input).
     """
 
     pydantic_model: Any = None
     name: str | None = None
     description: str | None = None
+    nested_fields: tuple[NestedInputField, ...] = ()
+
+
+@dataclass(frozen=True)
+class NestedInputField:
+    """A resolved nested object-input field to merge into a parent input type.
+
+    Mirrors the legacy graphene nested-converter semantics natively: a
+    ``Meta.nested_fields`` entry becomes either a single object input (forward
+    FK / reverse-O2O) or a list of object inputs (M2M / reverse-FK), wrapping
+    the CHILD model's compiled ``GraphQLInputObjectType`` (its generic input,
+    already registered on demand by ``_ensure_child_generic_input``).
+
+    Attributes:
+        out_name: snake_case field/accessor name (the ``nested_fields`` dict key
+            and the Django relation accessor; resolvers receive this via
+            graphql-core ``out_name`` so ``data.pop(field)`` matches).
+        alias: camelCase wire key the client sends.
+        child_input_type: the child model's compiled ``GraphQLInputObjectType``
+            (or a ``lambda`` thunk returning it, for lazy/forward refs).
+        is_list: ``True`` -> ``[<Child>!]`` list input (to-many relation);
+            ``False`` -> single ``<Child>`` object input (to-one relation).
+    """
+
+    out_name: str
+    alias: str
+    child_input_type: Any
+    is_list: bool
+
+
+@dataclass(frozen=True)
+class RelationInputField:
+    """A Django relation rendered as an ``ID`` / ``[ID]`` input field.
+
+    Mirrors the legacy graphene non-nested relation converters: forward FK /
+    reverse-O2O -> a single ``ID`` (``ID!`` when required on create); M2M and
+    reverse-FK (to-many) -> a ``[ID!]`` list. The graphql-core ``ID`` scalar
+    coerces both string and integer literals, so a client may send the related
+    pk either way; pydantic then coerces the delivered value back to the model's
+    pk Python type during validation.
+
+    Attributes:
+        out_name: snake_case field/accessor name (delivered to the resolver).
+        alias: camelCase wire key the client sends.
+        is_list: ``True`` -> ``[ID!]`` (to-many); ``False`` -> single ``ID``.
+        required: ``True`` -> wrap the single ``ID`` in ``GraphQLNonNull``
+            (ignored for lists, which are always nullable to match graphene).
+        inject_only: ``True`` -> this relation is NOT a base ``model_fields``
+            entry (a reverse relation) and must be ADDED; ``False`` -> it
+            REPLACES the scalar the base loop emitted for the same out_name.
+    """
+
+    out_name: str
+    alias: str
+    is_list: bool
+    required: bool
+    inject_only: bool
 
 
 # ---------------------------------------------------------------------------
@@ -242,11 +301,30 @@ def coerce_input(cls: type[BaseModel], raw: dict[str, Any]) -> BaseModel:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_child_input_type(child: Any) -> Any:
+    """Unwrap a nested child input spec into its graphql-core input type.
+
+    ``NestedInputField.child_input_type`` may be a compiled
+    ``GraphQLInputObjectType`` directly, or a zero-arg ``lambda`` thunk
+    returning one (lazy/forward-ref resolution inside the parent's own field
+    thunk). This normalizes both to the concrete graphql-core type.
+
+    Args:
+        child: The compiled input type or a thunk returning it.
+
+    Returns:
+        The resolved graphql-core input type.
+    """
+    return child() if callable(child) and not isinstance(child, type) else child
+
+
 def compile_input_type(
     model: type[BaseModel],
     *,
     name: str,
     description: str | None = None,
+    nested_fields: tuple[NestedInputField, ...] = (),
+    relation_fields: tuple[RelationInputField, ...] = (),
 ) -> GraphQLInputObjectType:
     """Compile a Pydantic ``BaseModel`` into a ``GraphQLInputObjectType``.
 
@@ -258,10 +336,22 @@ def compile_input_type(
     The resulting type carries ``extensions={"gdx": GdxInputSpec(...)}`` so the
     ``assert_gdx_bridge`` assertion passes.
 
+    When ``nested_fields`` is non-empty, each entry injects (or REPLACES, for a
+    relation whose scalar fk/id surface the base model already emitted) a nested
+    object-input field on the parent, mirroring the legacy graphene nested
+    converters: forward FK / reverse-O2O -> single ``<Child>`` object input;
+    M2M / reverse-FK -> ``[<Child>!]`` list input. The child input type is the
+    related model's compiled generic ``GraphQLInputObjectType``.
+
     Args:
         model: The Pydantic ``BaseModel`` class describing the input.
         name: The GraphQL type name (e.g. ``"PersonInput"``).
         description: Optional SDL description.
+        nested_fields: Resolved nested object-input specs to merge into the
+            parent's fields (empty for a plain input type).
+        relation_fields: Django relations to render as ``ID`` / ``[ID]`` inputs
+            (forward FK / O2O / M2M / reverse-FK), mirroring graphene's
+            non-nested relation converters (empty for a relation-free input).
 
     Returns:
         A ``GraphQLInputObjectType`` with a ``lambda`` thunk for fields.
@@ -270,7 +360,22 @@ def compile_input_type(
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
 
+        # The snake out_names claimed by nested object inputs; the base scalar
+        # loop below skips these so a forward-FK ``author_id``-style scalar does
+        # not shadow the nested ``author`` object input (and vice versa).
+        _nested_out_names = {nf.out_name for nf in nested_fields}
+        # out_names a relation spec REPLACES on the base model (the scalar the
+        # pydantic model emitted for a forward FK / M2M) -> skip them so the
+        # ``ID`` / ``[ID]`` relation field is the one that lands.
+        _relation_replace = {
+            rf.out_name for rf in relation_fields if not rf.inject_only
+        }
+
         for field_name, field_info in model.model_fields.items():
+            if field_name in _nested_out_names:
+                continue
+            if field_name in _relation_replace:
+                continue
             # Determine the wire alias (camelCase)
             alias: str
             if field_info.alias is not None:
@@ -310,6 +415,56 @@ def compile_input_type(
             )
             fields[alias] = gql_field
 
+        # ----------------------------------------------------------------
+        # Relation ID-surface injection (non-nested relations). Mirrors the
+        # legacy graphene relation converters: forward FK / reverse-O2O ->
+        # single ``ID`` (``ID!`` when required on create); M2M / reverse-FK ->
+        # ``[ID!]`` list. graphql-core's ``ID`` scalar coerces both string and
+        # int literals; the snake out_name routes the value to the resolver,
+        # where pydantic coerces it back to the model's pk type. A nested
+        # object input for the SAME accessor (see below) overrides this.
+        # ----------------------------------------------------------------
+        _nested_aliases = {nf.alias for nf in nested_fields}
+        for rf in relation_fields:
+            if rf.alias in _nested_aliases:
+                # A nested object input claims this accessor — skip the ID form.
+                continue
+            if rf.is_list:
+                rel_type: Any = GraphQLList(GraphQLNonNull(GraphQLID))
+            elif rf.required:
+                rel_type = GraphQLNonNull(GraphQLID)
+            else:
+                rel_type = GraphQLID
+            fields[rf.alias] = GraphQLInputField(
+                type_=rel_type,
+                out_name=rf.out_name,
+            )
+
+        # ----------------------------------------------------------------
+        # Nested object-input injection (Meta.nested_fields). Mirrors the
+        # legacy graphene nested converters: a to-one relation becomes a
+        # single ``<Child>`` object input, a to-many relation becomes a
+        # ``[<Child>!]`` list input. The child input type is the related
+        # model's compiled generic ``GraphQLInputObjectType`` (ensured on
+        # demand upstream). out_name is the snake accessor so the resolver's
+        # ``data.pop(field)`` matches the Django relation name.
+        # ----------------------------------------------------------------
+        for nf in nested_fields:
+            child_type = _resolve_child_input_type(nf.child_input_type)
+            if child_type is None:
+                # Child input unresolved (no registered type) -> skip rather
+                # than emit a broken field; mirrors the legacy converter's
+                # ``if not _type: return`` silent-skip for unresolved children.
+                continue
+            if nf.is_list:
+                field_type: Any = GraphQLList(GraphQLNonNull(child_type))
+            else:
+                field_type = child_type
+            fields[nf.alias] = GraphQLInputField(
+                type_=field_type,
+                out_name=nf.out_name,
+            )
+
         return fields
 
     # Wrap in a lambda thunk for lazy evaluation
@@ -317,5 +472,12 @@ def compile_input_type(
         name=name,
         fields=lambda: _build_fields(),
         description=description,
-        extensions={"gdx": GdxInputSpec(pydantic_model=model, name=name, description=description)},
+        extensions={
+            "gdx": GdxInputSpec(
+                pydantic_model=model,
+                name=name,
+                description=description,
+                nested_fields=tuple(nested_fields),
+            )
+        },
     )

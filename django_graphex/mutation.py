@@ -177,7 +177,9 @@ def _nested_input_name(
     return name
 
 
-def _ensure_child_generic_input(child_model: Any, op: str, registry: Any) -> None:
+def _ensure_child_generic_input(
+    child_model: Any, op: str, registry: Any, parent_model: Any = None
+) -> None:
     """Ensure the GENERIC ``(child_model, op)`` input type exists.
 
     The converter resolves each nested child lazily via
@@ -191,11 +193,23 @@ def _ensure_child_generic_input(child_model: Any, op: str, registry: Any) -> Non
     produces a generic child whose own nested relation is ``[ID!]`` -- no
     recursion. Already-registered children are a no-op.
 
+    ``parent_model`` (the nesting host) makes the child's back-reference FK
+    OPTIONAL on the INPUT surface: a reverse-FK / M2M child is linked to the
+    parent AFTER it saves (``NestedFieldsMixin._attach_children`` injects the FK
+    via ``save_kwargs``, and ``save_object`` excludes those keys from
+    validation), so the client must NOT be forced to supply the parent id inline.
+    The child's pydantic VALIDATION model still requires the FK, so a STANDALONE
+    child create that genuinely omits it still fails cleanly — only the inline
+    nested path is relaxed.
+
     Args:
         child_model: The related Django model to build the input for.
         op: The parent's operation ("create" or "update"); the child input is
             built for the same operation.
         registry: The active type registry.
+        parent_model: The nesting parent model; its back-reference FK on the
+            child is rendered optional on the input surface (or ``None`` for a
+            plain ensure with no relaxation).
     """
     if registry.get_type_for_model(child_model, for_input=op) is not None:
         return
@@ -207,6 +221,7 @@ def _ensure_child_generic_input(child_model: Any, op: str, registry: Any) -> Non
         nested_fields={},
         registry=registry,
         skip_registry=False,
+        nested_parent_model=parent_model,
     )
 
 
@@ -352,7 +367,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                     # ensured up front so the converter never silently drops the
                     # field (see ``_ensure_child_generic_input``).
                     for child_model in nested_map.values():
-                        _ensure_child_generic_input(child_model, operation, registry)
+                        _ensure_child_generic_input(
+                            child_model, operation, registry, parent_model=model
+                        )
                     input_type = factory_type(
                         "input",
                         DjangoInputObjectType,
@@ -462,6 +479,18 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             "delete": cls.delete,
             "update": cls.update,
         }
+        # Per-class operation→field map. The model-keyed ``_NATIVE_FIELD_REGISTRY``
+        # holds only ONE field per (model, op) — a later sibling mutation for the
+        # SAME model overwrites it (last-built wins). That collapses two distinct
+        # mutations on one model (e.g. a PLAIN ``PostMutation`` and a nested
+        # ``PostWithCommentsMutation``) onto a single field, so ``CreateField()``
+        # would hand back the wrong one (and its wrong — possibly nested — input
+        # type). Storing each operation's field on the CLASS keeps every
+        # mutation's own field intact; ``*Field()`` prefers this per-class map and
+        # only falls back to the model-keyed registry for legacy reads. The
+        # registry (and ``_NATIVE_FIELD_IDENTITIES``) is still populated so the
+        # native root compiler's provably-native recognition gate is unaffected.
+        cls._native_fields = {}
         for _op in model_operations:
             # WU9: graphql-core does NOT auto-camelCase argument names, so the
             # arg dict keys must be the camelCase WIRE names while each
@@ -484,6 +513,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                 resolve=_resolver,
                 description=description or f"Native {_op} mutation for {model.__name__}",
             )
+            cls._native_fields[_op] = _gql_field
             _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
             _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
 
@@ -618,11 +648,32 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             return cls.get_errors(not_found_error(cls._meta.model, pk))
 
     @classmethod
+    def _native_field_for(cls, operation: str) -> Any:
+        """Return THIS mutation class's field for ``operation``.
+
+        Prefers the per-class ``_native_fields`` map (built in
+        ``__init_subclass_with_meta__``) so two distinct mutations on the SAME
+        model never hand back each other's field. Falls back to the model-keyed
+        ``_NATIVE_FIELD_REGISTRY`` only when the per-class map is absent (legacy
+        / defensive path).
+
+        Args:
+            operation: The mutation operation ("create", "delete", "update").
+
+        Returns:
+            The graphql-core ``GraphQLField`` for this class + operation.
+        """
+        own = getattr(cls, "_native_fields", None)
+        if own is not None and operation in own:
+            return own[operation]
+        return _NATIVE_FIELD_REGISTRY[(cls._meta.model, operation, "native")]
+
+    @classmethod
     def CreateField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the create mutation.
 
-        Returns the graphql-core ``GraphQLField`` registered for the ``create``
-        operation in ``_NATIVE_FIELD_REGISTRY``.
+        Returns this class's ``create`` ``GraphQLField`` (see
+        ``_native_field_for``).
 
         Args:
             *args: Positional arguments (unused).
@@ -635,14 +686,14 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "create" is not in Meta.model_operations.
         """
         cls._assert_operation("create")
-        return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "create", "native")]
+        return cls._native_field_for("create")
 
     @classmethod
     def DeleteField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the delete mutation.
 
-        Returns the graphql-core ``GraphQLField`` registered for the ``delete``
-        operation in ``_NATIVE_FIELD_REGISTRY``.
+        Returns this class's ``delete`` ``GraphQLField`` (see
+        ``_native_field_for``).
 
         Args:
             *args: Positional arguments (unused).
@@ -655,14 +706,14 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "delete" is not in Meta.model_operations.
         """
         cls._assert_operation("delete")
-        return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "delete", "native")]
+        return cls._native_field_for("delete")
 
     @classmethod
     def UpdateField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the update mutation.
 
-        Returns the graphql-core ``GraphQLField`` registered for the ``update``
-        operation in ``_NATIVE_FIELD_REGISTRY``.
+        Returns this class's ``update`` ``GraphQLField`` (see
+        ``_native_field_for``).
 
         Args:
             *args: Positional arguments (unused).
@@ -675,7 +726,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "update" is not in Meta.model_operations.
         """
         cls._assert_operation("update")
-        return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "update", "native")]
+        return cls._native_field_for("update")
 
     @classmethod
     def _assert_operation(cls, operation: str) -> None:

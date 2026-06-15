@@ -17,10 +17,16 @@ ONLY in this file (``OrderParent``/``OrderChild``) so no sibling test module can
 have pre-populated that slot.
 """
 
-import graphene
 from django.test import RequestFactory, TestCase
+from graphql import GraphQLString, graphql_sync
 
-from django_graphex import DjangoModelMutation, DjangoModelType
+from django_graphex import (
+    DjangoGraphQLSchema,
+    DjangoModelMutation,
+    DjangoModelType,
+    ObjectType,
+    field,
+)
 from django_graphex.mutation import _nested_input_name
 from django_graphex.registry import get_global_registry
 
@@ -41,8 +47,31 @@ from .models import (
 # Helpers                                                                      #
 # --------------------------------------------------------------------------- #
 def _request():
-    """A real request context for ``schema.execute`` (resolver reads .META)."""
+    """A real request context for execution (resolver reads ``.META``)."""
     return RequestFactory().post("/graphql/", content_type="application/json")
+
+
+class _Q(ObjectType):
+    """Minimal native query root so every schema has at least one field."""
+
+    __test__ = False  # GraphQL schema fixture, not a pytest test class
+
+    hello = field(GraphQLString)
+
+
+def _native_schema(**mutation_fields):
+    """Build a native ``DjangoGraphQLSchema`` from a map of mutation fields.
+
+    Mirrors the legacy ``graphene.Schema(query=Q, mutation=M)`` harness but on
+    the native path: graphene can no longer assemble a schema from the
+    re-parented native ``DjangoModelMutation``/``DjangoModelType`` (their
+    ``*Field()`` builders return raw graphql-core ``GraphQLField``s), so the
+    converted tests assemble through the native schema instead. Returns the
+    graphql-core ``GraphQLSchema`` (``.graphql_schema``) so callers keep using
+    ``.mutation_type`` exactly as before.
+    """
+    mutation_cls = type("_M", (ObjectType,), {"__test__": False, **mutation_fields})
+    return DjangoGraphQLSchema(query=_Q, mutation=mutation_cls).graphql_schema
 
 
 def _arg_input_type(field):
@@ -58,6 +87,19 @@ def _named_arg_input_type(field, arg_name):
 
 def _field_type_str(input_type, field_name):
     return str(input_type.fields[field_name].type)
+
+
+def _meta_arg_input_name(host, op, arg_name):
+    """Read the compiled nested input type NAME off a host's ``_meta.arguments``.
+
+    Under the native backend ``_meta.arguments[op][arg_name]`` is a graphql-core
+    ``GraphQLArgument`` (not a graphene ``Argument``); its ``.type`` is a
+    ``GraphQLNonNull`` wrapping the ``GraphQLInputObjectType``, which carries
+    ``.name`` (graphene exposed it as ``._meta.name``).
+    """
+    arg = host._meta.arguments[op][arg_name]
+    input_type = arg.type.of_type if hasattr(arg.type, "of_type") else arg.type
+    return input_type.name
 
 
 # --------------------------------------------------------------------------- #
@@ -77,14 +119,10 @@ class GenericFirstOrderingTest(TestCase):
                 model_operations = ("create",)
                 nested_fields = {"comments": Comment}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            post_create = PostMutation.CreateField()
-            post_with_comments_create = PostWithCommentsMutation.CreateField()
-
-        return graphene.Schema(query=Q, mutation=M).graphql_schema
+        return _native_schema(
+            post_create=PostMutation.CreateField(),
+            post_with_comments_create=PostWithCommentsMutation.CreateField(),
+        )
 
     def test_nested_mutation_exposes_object_list_input(self):
         gql = self._build_schema()
@@ -151,14 +189,10 @@ class NestedFirstOrderingTest(TestCase):
         self.assertEqual(generic._meta.name, "OrderParentCreateGenericType")
 
         # Build a schema and assert: nested mutation -> object list; plain -> ID.
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            order_parent_nested_create = OrderParentNestedMutation.CreateField()
-            order_parent_create = OrderParentMutation.CreateField()
-
-        gql = graphene.Schema(query=Q, mutation=M).graphql_schema
+        gql = _native_schema(
+            order_parent_nested_create=OrderParentNestedMutation.CreateField(),
+            order_parent_create=OrderParentMutation.CreateField(),
+        )
         nested_input = _arg_input_type(
             gql.mutation_type.fields["orderParentNestedCreate"]
         )
@@ -181,9 +215,8 @@ class DjangoModelTypeSiteTest(TestCase):
                 model = Post
                 nested_fields = {"comments": Comment}
 
-        create_arg = PostWithCommentsType._meta.arguments["create"]["new_post"]
-        nested_input = create_arg.type.of_type
-        self.assertEqual(nested_input._meta.name, "PostCreateNestedCommentsType")
+        name = _meta_arg_input_name(PostWithCommentsType, "create", "new_post")
+        self.assertEqual(name, "PostCreateNestedCommentsType")
 
 
 # --------------------------------------------------------------------------- #
@@ -201,12 +234,10 @@ class DeterministicNameTest(TestCase):
                 model = Post
                 nested_fields = {"tags": Tag}
 
-        comments_name = PostWithCommentsType._meta.arguments["create"][
-            "new_post"
-        ].type.of_type._meta.name
-        tags_name = PostWithTagsType._meta.arguments["create"][
-            "new_post"
-        ].type.of_type._meta.name
+        comments_name = _meta_arg_input_name(
+            PostWithCommentsType, "create", "new_post"
+        )
+        tags_name = _meta_arg_input_name(PostWithTagsType, "create", "new_post")
         self.assertEqual(comments_name, "PostCreateNestedCommentsType")
         self.assertEqual(tags_name, "PostCreateNestedTagsType")
         self.assertNotEqual(comments_name, tags_name)
@@ -236,27 +267,19 @@ class ProjectionCollisionTest(TestCase):
                 nested_fields = {"comments": Comment}
                 only_fields = ("body", "comments")
 
-        name_a = PostNestedAMutation._meta.arguments["create"][
-            "new_post"
-        ].type.of_type._meta.name
-        name_b = PostNestedBMutation._meta.arguments["create"][
-            "new_post"
-        ].type.of_type._meta.name
+        name_a = _meta_arg_input_name(PostNestedAMutation, "create", "new_post")
+        name_b = _meta_arg_input_name(PostNestedBMutation, "create", "new_post")
         # Both encode comments but the projection suffix keeps them distinct.
         self.assertTrue(name_a.startswith("PostCreateNestedCommentsType_p"))
         self.assertTrue(name_b.startswith("PostCreateNestedCommentsType_p"))
         self.assertNotEqual(name_a, name_b)
 
-        # The schema must assemble with NO graphene duplicate-type error.
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            a = PostNestedAMutation.CreateField()
-            b = PostNestedBMutation.CreateField()
-
-        schema = graphene.Schema(query=Q, mutation=M)
-        self.assertIsNotNone(schema.graphql_schema)
+        # The schema must assemble with NO duplicate-type error.
+        gql = _native_schema(
+            a=PostNestedAMutation.CreateField(),
+            b=PostNestedBMutation.CreateField(),
+        )
+        self.assertIsNotNone(gql)
 
     def test_empty_projection_has_no_suffix(self):
         class PostNestedMutation(DjangoModelMutation):
@@ -265,9 +288,7 @@ class ProjectionCollisionTest(TestCase):
                 model_operations = ("create",)
                 nested_fields = {"comments": Comment}
 
-        name = PostNestedMutation._meta.arguments["create"][
-            "new_post"
-        ].type.of_type._meta.name
+        name = _meta_arg_input_name(PostNestedMutation, "create", "new_post")
         self.assertEqual(name, "PostCreateNestedCommentsType")  # no _p<hex> suffix
 
 
@@ -282,14 +303,10 @@ class UpdateOperationTest(TestCase):
                 model_operations = ("create", "update")
                 nested_fields = {"comments": Comment}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            post_with_comments_create = PostWithCommentsMutation.CreateField()
-            post_with_comments_update = PostWithCommentsMutation.UpdateField()
-
-        gql = graphene.Schema(query=Q, mutation=M).graphql_schema
+        gql = _native_schema(
+            post_with_comments_create=PostWithCommentsMutation.CreateField(),
+            post_with_comments_update=PostWithCommentsMutation.UpdateField(),
+        )
         update_input = _named_arg_input_type(
             gql.mutation_type.fields["postWithCommentsUpdate"], "newPost"
         )
@@ -318,14 +335,10 @@ class ChildInputIdentityTest(TestCase):
             class Meta:
                 model = Comment
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            post_with_comments_create = PostWithCommentsMutation.CreateField()
-            comment_create = CommentMutation.CreateField()
-
-        gql = graphene.Schema(query=Q, mutation=M).graphql_schema
+        gql = _native_schema(
+            post_with_comments_create=PostWithCommentsMutation.CreateField(),
+            comment_create=CommentMutation.CreateField(),
+        )
         nested_input = _arg_input_type(
             gql.mutation_type.fields["postWithCommentsCreate"]
         )
@@ -346,13 +359,9 @@ class BuildOnDemandTest(TestCase):
                 model_operations = ("create",)
                 nested_fields = {"comments": Comment}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            post_with_comments_create = PostWithCommentsMutation.CreateField()
-
-        gql = graphene.Schema(query=Q, mutation=M).graphql_schema
+        gql = _native_schema(
+            post_with_comments_create=PostWithCommentsMutation.CreateField(),
+        )
         nested_input = _arg_input_type(
             gql.mutation_type.fields["postWithCommentsCreate"]
         )
@@ -374,14 +383,8 @@ class SelfReferenceTerminationTest(TestCase):
                 model_operations = ("create",)
                 nested_fields = {"children": NestedTreeNode}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            tree_create = TreeMutation.CreateField()
-
         # Schema must build without RecursionError.
-        gql = graphene.Schema(query=Q, mutation=M).graphql_schema
+        gql = _native_schema(tree_create=TreeMutation.CreateField())
         nested_input = _arg_input_type(gql.mutation_type.fields["treeCreate"])
         # The parent's `children` is the nested object-list...
         children_type = _field_type_str(nested_input, "children")
@@ -403,14 +406,9 @@ class SnakeCaseNestedKeyTest(TestCase):
                 model_operations = ("create",)
                 nested_fields = {"blog_comments": SnakeChild}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            snake_parent_create = SnakeParentMutation.CreateField()
-
-        schema = graphene.Schema(query=Q, mutation=M)
-        gql = schema.graphql_schema
+        gql = _native_schema(
+            snake_parent_create=SnakeParentMutation.CreateField(),
+        )
         nested_input = _arg_input_type(gql.mutation_type.fields["snakeParentCreate"])
         # GraphQL surface camelCases the accessor.
         self.assertIn("blogComments", nested_input.fields)
@@ -429,7 +427,7 @@ class SnakeCaseNestedKeyTest(TestCase):
               }
             }
         """
-        result = schema.execute(mutation, context_value=_request())
+        result = graphql_sync(gql, mutation, context_value=_request())
         self.assertIsNone(result.errors, msg=result.errors)
         self.assertTrue(result.data["snakeParentCreate"]["ok"])
         self.assertEqual(SnakeParent.objects.count(), 1)
@@ -450,13 +448,9 @@ class ForwardFKNestedChildTest(TestCase):
                 model_operations = ("create",)
                 nested_fields = {"author": Author}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            post_forward_create = PostForwardMutation.CreateField()
-
-        gql = graphene.Schema(query=Q, mutation=M).graphql_schema
+        gql = _native_schema(
+            post_forward_create=PostForwardMutation.CreateField(),
+        )
         nested_input = _arg_input_type(gql.mutation_type.fields["postForwardCreate"])
         author_type = _field_type_str(nested_input, "author")
         self.assertNotEqual(author_type, "ID")
@@ -474,14 +468,10 @@ class M2MNestedChildTest(TestCase):
                 model_operations = ("create", "update")
                 nested_fields = {"tags": Tag}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            post_m2m_create = PostM2MMutation.CreateField()
-            post_m2m_update = PostM2MMutation.UpdateField()
-
-        gql = graphene.Schema(query=Q, mutation=M).graphql_schema
+        gql = _native_schema(
+            post_m2m_create=PostM2MMutation.CreateField(),
+            post_m2m_update=PostM2MMutation.UpdateField(),
+        )
         create_input = _named_arg_input_type(
             gql.mutation_type.fields["postM2mCreate"], "newPost"
         )
@@ -506,13 +496,9 @@ class E2ENestedCreateTest(TestCase):
                 model_operations = ("create",)
                 nested_fields = {"comments": Comment}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            post_with_comments_create = PostWithCommentsMutation.CreateField()
-
-        schema = graphene.Schema(query=Q, mutation=M)
+        gql = _native_schema(
+            post_with_comments_create=PostWithCommentsMutation.CreateField(),
+        )
         author = Author.objects.create(name="A")
         mutation = """
             mutation ($author: ID!) {
@@ -526,7 +512,8 @@ class E2ENestedCreateTest(TestCase):
               }
             }
         """
-        result = schema.execute(
+        result = graphql_sync(
+            gql,
             mutation,
             variable_values={"author": str(author.id)},
             context_value=_request(),
@@ -633,14 +620,10 @@ class NestedInputNameDelimiterCollisionTest(TestCase):
                 # collide with a single "tagsComments"-style multi-word key.
                 nested_fields = {"comments": Comment, "tags": Tag}
 
-        class Q(graphene.ObjectType):
-            hello = graphene.String()
-
-        class M(graphene.ObjectType):
-            snake_create = SnakeMultiWordMutation.CreateField()
-            post_two_create = PostTwoFieldMutation.CreateField()
-
-        gql = graphene.Schema(query=Q, mutation=M).graphql_schema
+        gql = _native_schema(
+            snake_create=SnakeMultiWordMutation.CreateField(),
+            post_two_create=PostTwoFieldMutation.CreateField(),
+        )
 
         snake_input = _arg_input_type(gql.mutation_type.fields["snakeCreate"])
         post_input = _arg_input_type(gql.mutation_type.fields["postTwoCreate"])

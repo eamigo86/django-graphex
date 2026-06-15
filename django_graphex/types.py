@@ -1088,6 +1088,210 @@ class DjangoInterfaceType(NativeObjectType):
         return _resolve_polymorphic_type(cls, instance, info)
 
 
+def _resolve_native_nested_input_fields(
+    model: type[Model],
+    registry: Registry,
+    input_for: str,
+    nested_fields: Any,
+) -> tuple[Any, ...]:
+    """Resolve ``Meta.nested_fields`` into native nested object-input specs.
+
+    Mirrors the legacy graphene nested converters (``convert_*`` with
+    ``nested_field=True``) on the native input path: each ``{field: ChildModel}``
+    entry becomes a ``NestedInputField`` wrapping the CHILD model's compiled
+    generic ``GraphQLInputObjectType`` (already ensured on demand by
+    ``_ensure_child_generic_input`` before this type is built). Relation kind
+    decides the shape exactly as graphene did:
+
+    * forward FK / reverse-O2O (to-one) -> single ``<Child>`` object input,
+    * M2M / reverse-FK (to-many) -> ``[<Child>!]`` list input.
+
+    The child input type is resolved LAZILY (via a thunk) inside the parent's
+    own ``fields`` thunk, so a self-referential nested model
+    (``nested_fields={"children": Self}``) terminates: the on-demand generic
+    child is built with EMPTY ``nested_fields`` (its own relation stays the
+    scalar ``[ID!]`` surface), so no unbounded recursion.
+
+    Args:
+        model: The Django model the parent input is built for.
+        registry: The active type registry (child input lookups read it).
+        input_for: The operation ("create" or "update"); the child input is
+            looked up for the same operation.
+        nested_fields: The ``Meta.nested_fields`` mapping (or empty/falsy).
+
+    Returns:
+        A tuple of ``NestedInputField`` specs (empty when there is nothing to
+        inject).
+    """
+    from graphene.utils.str_converters import to_camel_case
+
+    from django_graphex.native.input_compiler import NestedInputField
+
+    nested_map = nested_fields if isinstance(nested_fields, dict) else {}
+    if not nested_map:
+        return ()
+
+    # to-many relation kinds emit a list input; to-one emit a single object.
+    _to_many = {"one_to_many", "many_to_many"}
+
+    specs: list[Any] = []
+    for accessor, child_model in nested_map.items():
+        try:
+            relation = model._meta.get_field(accessor)
+        except Exception:  # noqa: BLE001 — unknown accessor: skip, never crash
+            continue
+
+        if relation.many_to_one:
+            is_list = False
+        elif getattr(relation, "one_to_one", False):
+            is_list = False
+        elif relation.one_to_many or relation.many_to_many:
+            is_list = True
+        else:
+            # Not an introspectable to-one/to-many relation: leave it out of
+            # the nested object surface (parent backend handles it raw).
+            continue
+
+        def _child_thunk(_child_model: type[Model] = child_model) -> Any:
+            """Resolve the child's compiled input type lazily (self-ref safe)."""
+            child_type = registry.get_type_for_model(
+                _child_model, for_input=input_for
+            )
+            if child_type is None:
+                return None
+            return child_type._meta.graphql_input_type
+
+        specs.append(
+            NestedInputField(
+                out_name=accessor,
+                alias=to_camel_case(accessor),
+                child_input_type=_child_thunk,
+                is_list=is_list,
+            )
+        )
+    return tuple(specs)
+
+
+def _resolve_native_relation_input_fields(
+    model: type[Model],
+    input_for: str,
+    nested_parent_model: type[Model] | None = None,
+) -> tuple[Any, ...]:
+    """Resolve a model's Django relations into ``ID`` / ``[ID]`` input specs.
+
+    Mirrors the legacy graphene non-nested relation converters on the native
+    input path so a mutation input exposes relations as id references:
+
+    * forward FK / forward O2O -> single ``ID`` (``ID!`` when the FK is required
+      and ``input_for == "create"``); these REPLACE the raw pk scalar the
+      pydantic model emitted for the same attribute (e.g. ``author: Int!`` ->
+      ``author: ID!``).
+    * M2M -> ``[ID!]`` list (REPLACES the pydantic ``list[int]`` scalar surface).
+    * reverse FK (to-many) -> ``[ID!]`` list, INJECTED (the pydantic model does
+      not carry reverse relations).
+    * reverse O2O -> single ``ID``, INJECTED.
+
+    graphql-core's ``ID`` scalar coerces both string and integer literals, so a
+    client may send the related pk either way; the snake out_name routes it to
+    the resolver where pydantic coerces it to the model's pk type. The
+    auto-created MTI parent-link O2O is skipped (it is Django-internal).
+
+    Args:
+        model: The Django model the input is built for.
+        input_for: The operation ("create" or "update").
+        nested_parent_model: When this input is a nested child, the nesting
+            parent model; a forward FK / O2O on this child pointing back to that
+            parent is rendered OPTIONAL (the FK is injected at save time).
+
+    Returns:
+        A tuple of ``RelationInputField`` specs (empty when the model has no
+        introspectable relations).
+    """
+    from django.db import models as _dj_models
+    from graphene.utils.str_converters import to_camel_case
+
+    from django_graphex.native.input_compiler import RelationInputField
+
+    is_create = input_for == "create"
+    specs: list[Any] = []
+    for field in model._meta.get_fields():
+        # Skip the model's own primary key and plain concrete scalars.
+        if getattr(field, "primary_key", False):
+            continue
+
+        # Forward FK / O2O (concrete, holds the key on this model).
+        if isinstance(field, (_dj_models.ForeignKey, _dj_models.OneToOneField)):
+            # Skip Django's MTI auto parent-link O2O (internal, not user input).
+            if getattr(getattr(field, "remote_field", None), "parent_link", False):
+                continue
+            # Back-reference FK to the nesting parent -> optional (injected at
+            # save time by the nested mixin; required-ness is still enforced by
+            # the child's pydantic validation model for the standalone path).
+            points_to_parent = (
+                nested_parent_model is not None
+                and field.related_model is nested_parent_model
+            )
+            required = (
+                is_create
+                and not points_to_parent
+                and not field.null
+                and not field.blank
+                and not field.has_default()
+            )
+            specs.append(
+                RelationInputField(
+                    out_name=field.name,
+                    alias=to_camel_case(field.name),
+                    is_list=False,
+                    required=required,
+                    inject_only=False,  # REPLACES the pk scalar (Int -> ID)
+                )
+            )
+            continue
+
+        # Forward M2M (REPLACES the pydantic list[int] surface).
+        if isinstance(field, _dj_models.ManyToManyField):
+            specs.append(
+                RelationInputField(
+                    out_name=field.name,
+                    alias=to_camel_case(field.name),
+                    is_list=True,
+                    required=False,
+                    inject_only=False,
+                )
+            )
+            continue
+
+        # Reverse relations (no concrete column on this model) -> INJECT.
+        if isinstance(field, _dj_models.ManyToManyRel):
+            accessor = field.get_accessor_name()
+            specs.append(
+                RelationInputField(
+                    out_name=accessor,
+                    alias=to_camel_case(accessor),
+                    is_list=True,
+                    required=False,
+                    inject_only=True,
+                )
+            )
+            continue
+        if isinstance(field, _dj_models.ManyToOneRel):
+            # reverse FK (to-many) or reverse O2O (to-one).
+            accessor = field.get_accessor_name()
+            is_o2o = getattr(field, "one_to_one", False)
+            specs.append(
+                RelationInputField(
+                    out_name=accessor,
+                    alias=to_camel_case(accessor),
+                    is_list=not is_o2o,
+                    required=False,
+                    inject_only=True,
+                )
+            )
+            continue
+    return tuple(specs)
+
+
 class DjangoInputObjectType(NativeInputType):
     """A Django model GraphQL input type."""
 
@@ -1139,6 +1343,7 @@ class DjangoInputObjectType(NativeInputType):
         filter_fields: Any = None,
         input_for: str = "create",
         nested_fields: Any = (),
+        nested_parent_model: type[Model] | None = None,
         **options,
     ) -> None:
         """Initialize the subclass with meta options for a Django input type.
@@ -1161,6 +1366,10 @@ class DjangoInputObjectType(NativeInputType):
             input_for: Operation the input is built for ("create", "update"
                 or "delete").
             nested_fields: Nested fields to build into the input type.
+            nested_parent_model: When this input is a NESTED CHILD of another
+                model, the nesting parent model; its back-reference FK on this
+                child is rendered optional on the input surface (the FK is
+                injected at save time by the nested mixin).
             **options: Extra options forwarded to the parent implementation.
         """
         _check_unknown_options(cls.__name__, options)
@@ -1209,10 +1418,25 @@ class DjangoInputObjectType(NativeInputType):
             # Resolve the GraphQL type name: prefer explicit Meta.name passed
             # via **options, then fall back to the class name.
             gql_type_name = options.get("name") or cls.__name__
+            # Resolve ``Meta.nested_fields`` into native nested object-input
+            # specs (relation introspection + child input type lookup). Empty
+            # for a plain input -> identical SDL to before this fix.
+            native_nested = _resolve_native_nested_input_fields(
+                model, registry, input_for, nested_fields
+            )
+            # Resolve Django relations into ``ID`` / ``[ID]`` input specs
+            # (forward FK / O2O / M2M / reverse-FK), mirroring graphene's
+            # non-nested relation converters. A relation also named in
+            # ``nested_fields`` is rendered as the nested OBJECT input instead.
+            native_relations = _resolve_native_relation_input_fields(
+                model, input_for, nested_parent_model=nested_parent_model
+            )
             graphql_input_type = compile_input_type(
                 pydantic_model,
                 name=gql_type_name,
                 description=getattr(cls, "__doc__", None),
+                nested_fields=native_nested,
+                relation_fields=native_relations,
             )
 
         # The native compiler reads ``_meta.graphql_input_type``; the
@@ -1859,7 +2083,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                     )
 
                     for child_model in nested_map.values():
-                        _ensure_child_generic_input(child_model, operation, registry)
+                        _ensure_child_generic_input(
+                            child_model, operation, registry, parent_model=model
+                        )
                     input_type = factory_type(
                         "input",
                         DjangoInputObjectType,

@@ -107,6 +107,7 @@ def factory_type(operation: str, _type: Any, *args: Any, **kwargs: Any) -> Any:
                 only_fields = kwargs.get("only_fields")
                 exclude_fields = kwargs.get("exclude_fields")
                 nested_fields = kwargs.get("nested_fields")
+                nested_parent_model = kwargs.get("nested_parent_model")
                 registry = kwargs.get("registry")
                 skip_registry = kwargs.get("skip_registry")
                 input_for = args[0]
