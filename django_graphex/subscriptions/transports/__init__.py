@@ -8,11 +8,15 @@ adapters only frame ``ExecutionResult`` values for the wire and translate
 client disconnect into ``source.aclose()`` teardown.
 
   * :mod:`.sse` — Server-Sent Events (SHIP FIRST, the cheap engine validator).
-  * ``.ws`` — graphql-transport-ws over Channels (SHIP SECOND).
+  * :mod:`.ws` — graphql-transport-ws over Channels (SHIP SECOND, the heavier
+    transport: connection_init/ack auth handshake, per-id task registry, N ops
+    multiplexed over one socket, close codes 4400/4401/4408/4409/4429).
 
 No module here imports graphene; ``channels`` is imported lazily/guarded so the
-base package never hard-requires it.
+base package never hard-requires it. The ``ws`` consumer module imports
+``channels.generic.websocket`` only inside its factory, so importing this
+package never pulls channels until WS is actually routed.
 """
 from __future__ import annotations
 
-__all__ = ["sse"]
+__all__ = ["sse", "ws"]

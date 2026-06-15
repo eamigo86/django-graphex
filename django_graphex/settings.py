@@ -140,6 +140,10 @@ GRAPHENE_DEFAULTS: dict[str, Any] = {
     "ATOMIC_MUTATIONS": False,
     "MAX_VALIDATION_ERRORS": None,
     "CAMELCASE_ERRORS": True,
+    # graphql-transport-ws: seconds the server waits for the first
+    # ``connection_init`` after the socket opens before closing with 4408
+    # (``connectionInitWaitTimeout``). The transport factory may override it.
+    "SUBSCRIPTION_CONNECTION_INIT_TIMEOUT": 3.0,
 }
 
 #: ``GRAPHENE`` settings that may be given as dotted import-path strings.
