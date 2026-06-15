@@ -179,6 +179,61 @@ def test_graphene_factory_type_list_unchanged():
 
 
 # ---------------------------------------------------------------------------
+# S6b: base_types.factory_type("output", DjangoObjectType, ...) under NATIVE
+# ---------------------------------------------------------------------------
+# After S6b re-parents DjangoObjectType onto native.base.ObjectType (Pydantic
+# ModelMetaclass), the factory_type "output" branch builds
+# ``type("GenericType", (DjangoObjectType,), {"Meta": OutputMeta, ...})``.
+# OutputMeta is a function-local class whose ``__qualname__`` is
+# ``factory_type.<locals>.OutputMeta`` — it does NOT match the synthesized
+# ``GenericType`` namespace, so without the S6b qualname re-stamp pydantic's
+# inspect_namespace treats ``Meta`` as an un-annotated model field and raises
+# PydanticUserError at class-creation time. These tests are the regression
+# guard for that fix (CONFIRMED FAILED pre-fix with PydanticUserError).
+
+
+class S6bFactoryModel(models.Model):
+    """Distinct model so the auto-generated type name does not collide."""
+
+    name = models.CharField(max_length=50)
+
+    class Meta:
+        app_label = "tests"
+
+
+def test_factory_output_builds_native_djangoobjecttype_without_pydantic_error():
+    """``factory_type('output', DjangoObjectType, ...)`` builds under native.
+
+    The bare act of class creation is the assertion: pydantic must NOT raise
+    PydanticUserError on the function-local ``OutputMeta`` (the S6b crasher).
+    """
+    from django_graphex.base_types import factory_type
+    from django_graphex.types import DjangoObjectType
+
+    generated = factory_type("output", DjangoObjectType, model=S6bFactoryModel)
+
+    assert isinstance(generated, type)
+    assert issubclass(generated, DjangoObjectType)
+    # The S6a native driver populated _meta from the OutputMeta options.
+    assert generated._meta.model is S6bFactoryModel
+    # Auto-generated name honored (to_camel_case of "<Model>_Generic_Type").
+    assert generated._meta.name is not None
+
+
+def test_factory_output_meta_consumed_not_left_as_field():
+    """``Meta`` is consumed by the native driver (deleted), not a model field."""
+    from django_graphex.base_types import factory_type
+    from django_graphex.types import DjangoObjectType
+
+    generated = factory_type("output", DjangoObjectType, model=S6bFactoryModel)
+
+    # The S6a __init_subclass__ driver deletes Meta after dispatch.
+    assert "Meta" not in generated.__dict__
+    # Meta never leaked into pydantic model_fields.
+    assert "Meta" not in generated.model_fields
+
+
+# ---------------------------------------------------------------------------
 # A5.4: "input" op delegates to Phase 2 (does not crash)
 # ---------------------------------------------------------------------------
 

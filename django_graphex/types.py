@@ -31,6 +31,8 @@ from graphql import GraphQLError
 from .backends import resolve_backend
 from .base_types import DjangoListObjectBase, factory_type
 from .converter import construct_fields
+from .native.base import NativeObjectTypeOptions
+from .native.base import ObjectType as NativeObjectType
 from .errors import ErrorType
 from .fields import DjangoListField, DjangoListObjectField, DjangoObjectField
 from .filtering.filter_field import (
@@ -391,7 +393,7 @@ class DjangoModelTypeOptions(BaseOptions):
     complexity = None
 
 
-class DjangoObjectType(ObjectType):
+class DjangoObjectType(NativeObjectType):
     """A Django model GraphQL type with enhanced features.
 
     Subclasses may override ``get_queryset(cls, queryset, info)`` to scope
@@ -483,7 +485,7 @@ class DjangoObjectType(ObjectType):
             _as=Field,
         )
 
-        _meta = DjangoObjectOptions(cls)
+        _meta = NativeObjectTypeOptions(cls)
         _meta.model = model
         _meta.registry = registry
         _meta.filter_fields = filter_fields
@@ -520,10 +522,13 @@ class DjangoObjectType(ObjectType):
         # class-def time is the SAME object that ends up in the assembled
         # GraphQLSchema — eliminating the duplicate-name TypeError hazard.
         #
-        # Phase 7 removes the graphene base/_meta machinery.
+        # S6b: DjangoObjectType is now NATIVE-ONLY (re-parented off graphene onto
+        # ``native.base.ObjectType``). The native compile is UNCONDITIONAL — the
+        # old ``if GDX_BACKEND == "native"`` env guard and the graphene-only
+        # construction were removed. ``model is not None`` is still guarded
+        # because abstract bases (no model) must not build an output type.
         # ----------------------------------------------------------------
-        import os as _os_output
-        if _os_output.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+        if model is not None:
             from graphql import GraphQLObjectType
 
             from django_graphex.native.base import (
@@ -649,10 +654,11 @@ class DjangoObjectType(ObjectType):
             if not skip_registry:
                 _shared_registry.set_compiled(model, _graphql_output_type)
 
-            # graphene freezes Options after super().__init_subclass_with_meta__.
-            # Use object.__setattr__ to bypass the freeze (same pattern as
-            # Phase-2 input compiler; Phase 7 removes the graphene path).
-            object.__setattr__(_meta, "graphql_output_type", _graphql_output_type)
+            # S6b: ``_meta`` is now a MUTABLE ``NativeObjectTypeOptions`` (no
+            # freeze() — the native terminal does not freeze), so this is a PLAIN
+            # assignment. The old ``object.__setattr__`` freeze-bypass workaround
+            # is gone.
+            _meta.graphql_output_type = _graphql_output_type
 
     def resolve_id(self, info: ResolveInfo) -> Any:
         """Resolve the "id" field for the object.
@@ -1062,7 +1068,7 @@ class DjangoInputObjectType(InputObjectType):
         return cls
 
 
-class DjangoListObjectType(ObjectType):
+class DjangoListObjectType(NativeObjectType):
     """A GraphQL type for paginated Django model lists."""
 
     class Meta:
@@ -1158,7 +1164,7 @@ class DjangoListObjectType(ObjectType):
             else:
                 result_container = DjangoListField(baseType)
 
-        _meta = DjangoObjectOptions(cls)
+        _meta = NativeObjectTypeOptions(cls)
         _meta.model = model
         _meta.registry = registry
         _meta.queryset = queryset
@@ -1211,9 +1217,12 @@ class DjangoListObjectType(ObjectType):
         # compile_all_outputs() POPULATES/validates the existing instance via
         # the same Phase-2 thunk-eval + Phase-3 gdx assertion already in place
         # for DjangoObjectType entries — no second instance is ever created.
+        #
+        # S6b: DjangoListObjectType is now NATIVE-ONLY (re-parented off graphene
+        # onto ``native.base.ObjectType``). The native compile is UNCONDITIONAL —
+        # the old ``if GDX_BACKEND == "native"`` env guard was removed.
         # ----------------------------------------------------------------
-        import os as _os_list
-        if _os_list.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+        if model is not None:
             from graphql import GraphQLField, GraphQLInt, GraphQLList, GraphQLObjectType
 
             from django_graphex.native.base import (
@@ -1336,9 +1345,10 @@ class DjangoListObjectType(ObjectType):
             )
             _gdx_output_registry.append(_list_entry)
 
-            # Store on _meta (graphene freezes Options after super().__init_subclass_with_meta__
-            # so we bypass with object.__setattr__, matching DjangoObjectType pattern).
-            object.__setattr__(_meta, "graphql_output_type", _list_gql_type)
+            # S6b: ``_meta`` is now a MUTABLE ``NativeObjectTypeOptions`` (no
+            # freeze), so this is a PLAIN assignment — matching the DjangoObjectType
+            # pattern. The old ``object.__setattr__`` freeze-bypass workaround is gone.
+            _meta.graphql_output_type = _list_gql_type
 
     @classmethod
     def RetrieveField(cls, *args, **kwargs) -> DjangoObjectField:

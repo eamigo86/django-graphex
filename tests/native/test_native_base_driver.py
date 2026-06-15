@@ -198,6 +198,83 @@ def test_no_meta_dispatches_with_empty_options():
     assert ("Sub", {}) in captured
 
 
+@pytest.mark.native_only
+def test_base_defining_driver_does_not_run_it_on_itself():
+    """A non-abstract base that DEFINES a driver must NOT run it on ITSELF.
+
+    This locks graphene's ``super(cls, cls).__init_subclass_with_meta__``
+    dispatch semantics (graphene.utils.subclass_with_meta.SubclassWithMeta):
+    the driver a class declares runs for its SUBCLASSES, never for the class
+    that declares it. ``DjangoObjectType`` / ``DjangoListObjectType`` rely on
+    this — they define a driver that asserts a Django ``model`` is present, and
+    the BASE class itself carries no model. A naive ``cls.__init_subclass_with_meta__``
+    dispatch would fire the base's own driver on the base and raise
+    ``AssertionError: ... received "None"`` at import time (the S6b crasher).
+    """
+    from django_graphex.native.base import ObjectType
+
+    ran_on: list[str] = []
+
+    class DriverBase(ObjectType):
+        @classmethod
+        def __init_subclass_with_meta__(cls, model=None, **options):
+            ran_on.append(cls.__name__)
+            assert model is not None, (
+                f"{cls.__name__}: driver requires a model"
+            )
+
+    # Defining DriverBase must NOT have run its own driver on itself (no model).
+    assert "DriverBase" not in ran_on
+
+    # A subclass DOES run DriverBase's driver (with its own model).
+    class Concrete(DriverBase):
+        class Meta:
+            model = object()
+
+    assert "Concrete" in ran_on
+
+
+@pytest.mark.native_only
+def test_intermediate_override_runs_only_on_subclasses():
+    """A subclass overriding the driver runs the PARENT's driver, not its own.
+
+    Mirrors the ``DjangoObjectType`` family: each public type OVERRIDES
+    ``__init_subclass_with_meta__``; that override runs only when a FURTHER
+    subclass is defined, dispatched via ``super(cls, cls)``.
+    """
+    from django_graphex.native.base import ObjectType
+
+    calls: list[str] = []
+
+    class Mid(ObjectType):
+        class Meta:
+            abstract = True
+
+        @classmethod
+        def __init_subclass_with_meta__(cls, **options):
+            calls.append(f"Mid:{cls.__name__}")
+
+    class Override(Mid):
+        # Override defines its OWN driver. Per super(cls, cls) semantics this
+        # runs Mid's driver on Override (dispatched from __init_subclass__),
+        # and Override's own driver runs only for Override's subclasses.
+        class Meta:
+            abstract = True
+
+        @classmethod
+        def __init_subclass_with_meta__(cls, **options):
+            calls.append(f"Override:{cls.__name__}")
+
+    class Leaf(Override):
+        class Meta:
+            name = "Leaf"
+
+    # Override is abstract -> no dispatch on Override itself.
+    # Leaf -> super(Leaf, Leaf) -> Override.__init_subclass_with_meta__.
+    assert "Override:Leaf" in calls
+    assert "Mid:Override" not in calls  # Override is abstract, never dispatched
+
+
 # ---------------------------------------------------------------------------
 # Mutable _meta Options — full parity-table attr surface + graphene defaults
 # ---------------------------------------------------------------------------
@@ -595,16 +672,18 @@ def test_terminal_keeps_meta_mutable_post_assignment():
 
 
 @pytest.mark.native_only
-def test_terminal_no_meta_is_noop():
-    """A driver that calls the terminal with ``_meta=None`` does not assign ``_meta``.
+def test_terminal_builds_meta_when_none():
+    """A driver that calls the terminal with ``_meta=None`` gets a fresh ``_meta``.
 
-    Graphene's ``BaseType.__init_subclass_with_meta__`` returns early when
-    ``_meta`` is falsy; the native terminal must replicate that so a driver that
-    chooses not to build a ``_meta`` does not get a half-initialized one. Here the
-    base dispatcher's own else-branch never runs (a concrete driver exists), so
-    after a no-_meta terminal call there must be no terminal-assigned ``_meta``.
+    The native terminal now collapses graphene's two-step
+    ``ObjectType.__init_subclass_with_meta__`` (which builds an Options object when
+    ``_meta`` is falsy) + ``BaseType.__init_subclass_with_meta__`` (name/desc/
+    assign) into one endpoint. So a ``_meta=None`` call no longer no-ops — it
+    builds a fresh mutable ``NativeObjectTypeOptions``, mirroring graphene's
+    ``ObjectType`` parity (a plain ``ObjectType`` with no driver gets a real
+    ``_meta``).
     """
-    from django_graphex.native.base import ObjectType
+    from django_graphex.native.base import NativeObjectTypeOptions, ObjectType
 
     class DriverBase(ObjectType):
         class Meta:
@@ -619,8 +698,9 @@ def test_terminal_no_meta_is_noop():
         class Meta:
             name = "Concrete"
 
-    # The terminal returned early on _meta=None — no _meta assigned by it.
-    assert "_meta" not in Concrete.__dict__
+    # The terminal built a fresh mutable _meta (graphene ObjectType parity).
+    assert isinstance(Concrete._meta, NativeObjectTypeOptions)
+    assert Concrete._meta.name == "Concrete"
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,24 @@ import pytest
 pytestmark = pytest.mark.native_only
 
 
+def _make_django_type(name: str, base: type, meta_attrs: dict, **extra) -> type:
+    """Build a ``DjangoObjectType`` / ``DjangoListObjectType`` subclass dynamically.
+
+    S6b re-parented these types onto the native (Pydantic ``ModelMetaclass``)
+    base, so the bare ``type(name, (Base,), {"Meta": type("Meta", (), attrs)})``
+    idiom now crashes: pydantic's ``inspect_namespace`` reads
+    ``namespace['__module__']`` (KeyError when absent) and only ignores a nested
+    ``Meta`` class when ``Meta.__qualname__.startswith(f"{namespace['__qualname__']}.")``.
+    The 3-arg ``type()`` form does NOT auto-inject ``__module__`` / ``__qualname__``
+    (unlike a real ``class`` statement), so we inject them and re-stamp the nested
+    ``Meta`` qualname — the same fix ``base_types.factory_type`` applies in prod.
+    """
+    meta = type("Meta", (), meta_attrs)
+    meta.__qualname__ = f"{name}.Meta"
+    ns = {"__module__": __name__, "__qualname__": name, "Meta": meta, **extra}
+    return type(name, (base,), ns)
+
+
 # ---------------------------------------------------------------------------
 # Shared native schema builder: Author list -> nested paginated Post list.
 # ---------------------------------------------------------------------------
@@ -53,34 +71,22 @@ def _build_native_nested_schema(pagination=None):
     if pagination is None:
         pagination = LimitOffsetGraphqlPagination(default_limit=5, max_limit=100)
 
-    _PostType = type(
-        "_WU6bPostType",
-        (DjangoObjectType,),
-        {"Meta": type("Meta", (), {"model": Post, "registry": reg})},
+    _PostType = _make_django_type(
+        "_WU6bPostType", DjangoObjectType, {"model": Post, "registry": reg}
     )
-    _PostList = type(
+    _PostList = _make_django_type(
         "_WU6bPostList",
-        (DjangoListObjectType,),
-        {
-            "Meta": type(
-                "Meta",
-                (),
-                {"model": Post, "pagination": pagination, "registry": reg},
-            )
-        },
+        DjangoListObjectType,
+        {"model": Post, "pagination": pagination, "registry": reg},
     )
-    _AuthorType = type(
+    _AuthorType = _make_django_type(
         "_WU6bAuthorType",
-        (DjangoObjectType,),
-        {
-            "posts": DjangoNestedListObjectField(_PostList, accessor="posts"),
-            "Meta": type("Meta", (), {"model": Author, "registry": reg}),
-        },
+        DjangoObjectType,
+        {"model": Author, "registry": reg},
+        posts=DjangoNestedListObjectField(_PostList, accessor="posts"),
     )
-    _AuthorList = type(
-        "_WU6bAuthorList",
-        (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": reg})},
+    _AuthorList = _make_django_type(
+        "_WU6bAuthorList", DjangoListObjectType, {"model": Author, "registry": reg}
     )
 
     compile_all_outputs()
@@ -173,6 +179,13 @@ def test_native_nested_pagination_query_count_bounded_no_n_plus_1():
     )
 
 
+@pytest.mark.skip(
+    reason="S6b: DjangoObjectType/DjangoListObjectType are re-parented off "
+    "graphene and can no longer be assembled into a graphene Schema (the "
+    "graphene schema-build path for these types is retired; pruned in S7). The "
+    "native query-count bound is still proven by "
+    "test_native_nested_pagination_query_count_bounded_no_n_plus_1."
+)
 @pytest.mark.django_db
 def test_native_nested_pagination_count_matches_graphene():
     """Native nested paginated query count must MATCH the graphene backend's count

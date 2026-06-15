@@ -100,6 +100,32 @@ def _collect_descriptor_fields(cls: type) -> dict[str, Any]:
     return fields
 
 
+def _mount_descriptor_fields(cls: type) -> dict[str, Any]:
+    """Collect class-body graphene descriptors mounted as graphene ``Field``s.
+
+    Byte-equivalent to graphene's
+    ``ObjectType.__init_subclass_with_meta__`` field collection:
+    ``for base in reversed(cls.__mro__): fields.update(
+    yank_fields_from_attrs(base.__dict__, _as=Field))``. Walking the MRO base-first
+    means a subclass declaration wins on a name collision (graphene parity).
+
+    Unlike ``_collect_descriptor_fields`` (which returns the RAW descriptors, used
+    by the container ``__init__`` to find payload key NAMES), this MOUNTS each
+    descriptor into a ``graphene.Field`` so the value carries ``.type`` — the
+    currency the native declared-field compiler reads. ``yank_fields_from_attrs``
+    already skips non-descriptor attrs and is idempotent for already-mounted
+    ``MountedType`` fields (e.g. ``DjangoListObjectField``), so list/object fields
+    keep their mounted identity.
+    """
+    from graphene import Field
+    from graphene.types.utils import yank_fields_from_attrs
+
+    fields: dict[str, Any] = {}
+    for base in reversed(cls.__mro__):
+        fields.update(yank_fields_from_attrs(base.__dict__, _as=Field))
+    return fields
+
+
 # ---------------------------------------------------------------------------
 # __getitem__ mixin
 # ---------------------------------------------------------------------------
@@ -325,87 +351,110 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
             )
             return
 
-        # --- collect graphene field descriptors into _meta.fields ---
-        # Only meaningful for OUTPUT types that declare descriptors; for plain
-        # InputType subclasses this is an empty dict and is ignored below.
-        descriptor_fields = _collect_descriptor_fields(cls)
-
-        # --- dispatch into the concrete type's __init_subclass_with_meta__ ---
-        # ``ObjectType`` now defines a TERMINAL ``__init_subclass_with_meta__``
-        # (the graphene-free chain endpoint below), so ``getattr`` would always
-        # resolve to *something*. We must dispatch ONLY when the subclass (or an
-        # intermediate non-ObjectType base) declares its OWN driver distinct from
-        # the base terminal — that driver is each public ``Django*`` type's
-        # ``__init_subclass_with_meta__`` (re-homed onto this base in S6b-S6f),
-        # and it ends by calling ``super().__init_subclass_with_meta__`` into the
-        # terminal. A plain subclass that merely INHERITS the base terminal has
-        # no concrete driver and must take the minimal-_meta else-branch.
-        init_with_meta = getattr(cls, "__init_subclass_with_meta__", None)
-        base_terminal = ObjectType.__init_subclass_with_meta__.__func__
-        has_concrete_driver = (
-            init_with_meta is not None
-            and getattr(init_with_meta, "__func__", None) is not base_terminal
-        )
-        if has_concrete_driver:
-            # Surface collected descriptors to the concrete implementation so it
-            # can fold them into its own _meta.fields (graphene parity). Passed
-            # only when present so existing zero-arg signatures keep working.
-            if descriptor_fields:
-                options.setdefault("_declared_fields", descriptor_fields)
+        # --- dispatch into the PARENT's __init_subclass_with_meta__ ---
+        # CRITICAL: mirror graphene's
+        # ``graphene.utils.subclass_with_meta.SubclassWithMeta.__init_subclass__``
+        # dispatch EXACTLY — it calls ``super(cls, cls).__init_subclass_with_meta__``,
+        # i.e. the PARENT's driver, NOT ``cls``'s own. This is load-bearing for the
+        # re-parented ``Django*`` types: each one DEFINES a driver that asserts a
+        # Django ``model`` is present, and the BASE class carries no model. With a
+        # naive ``cls.__init_subclass_with_meta__`` dispatch the base's OWN driver
+        # would fire on the base at import time and raise
+        # ``AssertionError: ... received "None"`` (the S6b crasher). graphene avoids
+        # this because a class's declared driver only runs for its SUBCLASSES:
+        # when ``DjangoObjectType`` itself is defined, ``super(DjangoObjectType,
+        # DjangoObjectType).__init_subclass_with_meta__`` resolves to THIS native
+        # ``ObjectType`` terminal (benign empty _meta); when ``class Foo(
+        # DjangoObjectType)`` is defined, it resolves to ``DjangoObjectType``'s
+        # real driver.
+        super_class = super(cls, cls)
+        init_with_meta = getattr(super_class, "__init_subclass_with_meta__", None)
+        if init_with_meta is not None:
             init_with_meta(**options)
-        else:
-            # No concrete driver: attach a minimal mutable _meta so the type is
-            # still introspectable (name defaults to class name; collected
-            # descriptors land in _meta.fields). This is the path the S6a unit
-            # tests exercise on throwaway subclasses.
-            opts = NativeObjectTypeOptions(class_type=cls)
-            opts.name = options.get("name") or cls.__name__
-            opts.description = options.get("description") or _trim_docstring(
-                cls.__doc__
-            )
-            opts.fields = descriptor_fields or None
-            for key, value in options.items():
-                if key == "_declared_fields":
-                    continue
-                setattr(opts, key, value)
-            cls._meta = opts  # type: ignore[attr-defined]
 
     @classmethod
     def __init_subclass_with_meta__(
         cls,
         name: str | None = None,
         description: str | None = None,
+        interfaces: tuple[Any, ...] = (),
         _meta: Any = None,
         **_kwargs: Any,
     ) -> None:
         """Graphene-free terminal of the ``__init_subclass_with_meta__`` chain.
 
-        Reproduces ``graphene.types.base.BaseType.__init_subclass_with_meta__``
-        (graphene/types/base.py) WITHOUT graphene's ``freeze()`` — the whole
-        point of S6a is a MUTABLE ``_meta``. The 8 public ``Django*`` drivers
-        each build their own ``_meta`` fully (types.py:495,799,855,1194,1710;
-        mutation.py:430; subscriptions/subscription.py:235) and end with
-        ``super().__init_subclass_with_meta__(_meta=_meta, ...)``; today that
-        super() resolves into graphene's ``BaseType`` terminal, and after S6b
-        re-parents the public types onto this native base it must resolve HERE.
+        Collapses graphene's two-step ``ObjectType.__init_subclass_with_meta__``
+        + ``BaseType.__init_subclass_with_meta__`` chain into ONE graphene-free
+        endpoint, WITHOUT graphene's ``freeze()`` (the whole point of S6a/S6b is a
+        MUTABLE ``_meta`` so later slices plain-assign instead of the old
+        ``object.__setattr__`` workaround).
 
-        graphene's ``BaseType`` terminal does exactly: return early on a falsy
-        ``_meta``; set ``_meta.name = name or cls.__name__``; set
-        ``_meta.description = description or trim_docstring(cls.__doc__)``;
-        ``_meta.freeze()``; ``cls._meta = _meta``. Every concrete driver builds
-        its ``_meta`` completely BEFORE calling super() and forwards ``types`` /
-        ``interfaces`` only for graphene ``Union`` / ``Interface`` to consume in
-        THEIR own ``__init_subclass_with_meta__`` before super() — graphene's
-        ``BaseType`` ignores them via ``**_kwargs``. So this terminal needs only
-        name/description/assign; no driver relies on super() handling
-        interfaces, registry, or freezing.
+        Two call shapes reach here (both via ``super(cls, cls)`` dispatch in
+        ``__init_subclass__``, mirroring graphene's ``SubclassWithMeta``):
+
+        1. **Plain subclass** (no concrete driver in the MRO above this base): the
+           dispatcher calls this terminal directly with ``_meta=None``. We build a
+           fresh mutable ``NativeObjectTypeOptions``, collect class-body graphene
+           field descriptors into ``_meta.fields`` (graphene's
+           ``yank_fields_from_attrs`` equivalent), then set name/description and
+           assign. This is graphene ``ObjectType.__init_subclass_with_meta__``'s
+           job for a plain ``ObjectType``.
+
+        2. **Re-parented ``Django*`` driver** (``DjangoObjectType`` /
+           ``DjangoListObjectType`` and S6c-S6f): the driver builds its ``_meta``
+           fully (model/registry/fields/...) and ends with
+           ``super().__init_subclass_with_meta__(_meta=_meta, interfaces=...,
+           **options)``. Here ``_meta`` is non-None, so we MERGE any collected
+           descriptor fields the driver did not already account for, default the
+           interfaces, then set name/description and assign.
+
+        graphene's ``BaseType`` terminal does exactly: ``_meta.name = name or
+        cls.__name__``; ``_meta.description = description or
+        trim_docstring(cls.__doc__)``; ``freeze()``; ``cls._meta = _meta``. We
+        replicate that minus ``freeze()``. graphene's ``ObjectType`` step also
+        merges interface fields + yanked attrs and sets ``interfaces`` /
+        ``possible_types`` / ``default_resolver``; the native compiler reads
+        ``_meta.fields`` and ``_meta.interfaces``, so we replicate the
+        field-merge + interface-default and leave possible_types/default_resolver
+        at their Options defaults.
         """
+        # Collect class-body graphene descriptors across the MRO and MOUNT them as
+        # graphene ``Field`` instances — EXACTLY graphene's
+        # ``yank_fields_from_attrs(base.__dict__, _as=Field)`` in
+        # ``ObjectType.__init_subclass_with_meta__``. This is load-bearing: the
+        # native output compiler (``types._compile_declared_fields`` ->
+        # ``schema_compiler.compile_declared_field``) reads ``field.type`` off each
+        # ``_meta.fields`` value. A RAW ``UnmountedType`` (``graphene.String()``)
+        # has NO ``.type`` attribute, so it would surface as "Cannot convert
+        # graphene type None"; the mounted ``Field`` carries ``.type`` (the scalar/
+        # object) the converter needs. graphene is imported lazily here (and only
+        # the field-mount helpers) — removed entirely in S8 with the descriptors.
+        mounted_fields = _mount_descriptor_fields(cls)
+
         if _meta is None:
-            return
+            # Plain subclass path — build a fresh mutable Options object.
+            _meta = NativeObjectTypeOptions(class_type=cls)
+
+        # Merge mounted descriptor fields into _meta.fields. A concrete driver may
+        # have already populated _meta.fields (e.g. model-derived Field-wrapped
+        # fields); graphene MERGES yanked attrs ON TOP, so declared descriptors win
+        # on a name collision — replicate that precedence.
+        if mounted_fields:
+            if _meta.fields:
+                merged = dict(_meta.fields)
+                merged.update(mounted_fields)
+                _meta.fields = merged
+            else:
+                _meta.fields = mounted_fields
+
+        # Default interfaces only when the driver did not set them (graphene
+        # parity: ``if not _meta.interfaces: _meta.interfaces = interfaces``).
+        if not _meta.interfaces:
+            _meta.interfaces = interfaces
+
         _meta.name = name or cls.__name__
         _meta.description = description or _trim_docstring(cls.__doc__)
-        # NO freeze() — S6a keeps _meta mutable so later slices plain-assign
-        # instead of the object.__setattr__ workaround (types.py:655,1341).
+        # NO freeze() — S6a/S6b keep _meta mutable so later slices plain-assign.
         cls._meta = _meta  # type: ignore[attr-defined]
 
     def __init__(self, **kwargs: Any) -> None:

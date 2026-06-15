@@ -161,33 +161,48 @@ class DjangoGraphQLSchema(graphene.Schema):
                 "DjangoGraphQLSchema requires a 'query' root ObjectType; got None."
             )
 
-        # graphene.Schema ALWAYS needs graphene roots; the native field-union +
-        # collision check is performed separately on the native path (C12).
-        merged_query = self._graphene_merge_root("Query", query, private_query)
-        merged_mutation = self._graphene_merge_root(
-            "Mutation", mutation, private_mutation
-        )
-        merged_subscription = self._graphene_merge_root(
-            "Subscription", subscription, private_subscription
-        )
-
-        super().__init__(
-            *args,
-            query=merged_query,
-            mutation=merged_mutation,
-            subscription=merged_subscription,
-            **kwargs,
-        )
-
         protected = (
             collect_field_names(private_query)
             | collect_field_names(private_mutation)
             | collect_field_names(private_subscription)
         )
 
-        # Attached to the graphql-core schema; read by the middleware as
-        # info.schema._gde_protected_fields (info.schema is self.graphql_schema).
-        self.graphql_schema._gde_protected_fields = frozenset(protected)
+        if _NATIVE_BACKEND:
+            # S6b: under native, DjangoObjectType / DjangoListObjectType are
+            # re-parented off graphene, so a graphene root that references them
+            # CANNOT be assembled by graphene's ``Schema.__init__`` (its TypeMap
+            # raises "Expected Graphene type, but received: <native type>"). The
+            # native path below rebuilds ``self.graphql_schema`` from the native
+            # root compiler ANYWAY (graphene's would be discarded), so SKIP the
+            # crashing graphene ``super().__init__()`` entirely under native and
+            # set only the attributes graphene.Schema.__init__ would (query /
+            # mutation / subscription are kept for legacy readers; execution reads
+            # ``self.graphql_schema``). S6f removes the graphene base outright.
+            self.query = query
+            self.mutation = mutation
+            self.subscription = subscription
+        else:
+            # graphene.Schema ALWAYS needs graphene roots; the native field-union
+            # + collision check is performed separately on the native path (C12).
+            merged_query = self._graphene_merge_root("Query", query, private_query)
+            merged_mutation = self._graphene_merge_root(
+                "Mutation", mutation, private_mutation
+            )
+            merged_subscription = self._graphene_merge_root(
+                "Subscription", subscription, private_subscription
+            )
+
+            super().__init__(
+                *args,
+                query=merged_query,
+                mutation=merged_mutation,
+                subscription=merged_subscription,
+                **kwargs,
+            )
+
+            # Attached to the graphql-core schema; read by the middleware as
+            # info.schema._gde_protected_fields (info.schema is self.graphql_schema).
+            self.graphql_schema._gde_protected_fields = frozenset(protected)
 
         # NATIVE PATH (WU2/C11 + WU7/C12-C14): rebuild self.graphql_schema as a
         # graphql-core GraphQLSchema assembled DIRECTLY from the native root

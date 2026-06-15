@@ -25,6 +25,23 @@ import pytest
 
 pytestmark = pytest.mark.native_only
 
+# S6b: graphene-vs-native SDL parity for seeds that build DjangoObjectType /
+# DjangoListObjectType is RETIRED. Those types are re-parented off graphene, so
+# the GRAPHENE subprocess (``_run_seed("graphene", ...)``) can no longer assemble
+# a graphene.Schema from them ("Expected Graphene type, but received: <native
+# type>") — the graphene SDL baseline no longer exists. Native SDL correctness
+# for these seeds is still proven WITHOUT a graphene baseline by the matching
+# ``*_native_subprocess_uses_native_assembly`` anti-tautology tests (which run the
+# NATIVE subprocess only and assert the native assembly path produced the SDL) and
+# by tests/native/test_native_schema_assembly.py. The graphene-baseline path is
+# removed in S7 (graphene root/schema pruning).
+_graphene_baseline_retired = pytest.mark.skip(
+    reason="S6b: graphene SDL baseline retired — DjangoObjectType / "
+    "DjangoListObjectType re-parented off graphene; graphene.Schema can no longer "
+    "build from them. Native correctness proven by the native-only anti-tautology "
+    "tests + test_native_schema_assembly.py. Graphene path pruned in S7."
+)
+
 _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
 )
@@ -55,6 +72,7 @@ def _run_seed(backend: str, seed: str = "node") -> str:
     return proc.stdout
 
 
+@_graphene_baseline_retired
 def test_cross_process_sdl_parity_seed():
     """The seed schema SDL is byte-equal between graphene and native backends."""
     from tests.native.conftest import normalize_sdl
@@ -151,6 +169,7 @@ def test_filter_seed_native_subprocess_uses_native_builder():
 # Slices B + C — OUTPUT scalar NAME + nullability cross-process SDL parity     #
 # (#1494 nullability + scalar-NAME parity sibling)                            #
 # --------------------------------------------------------------------------- #
+@_graphene_baseline_retired
 def test_cross_process_scalar_node_sdl_parity():
     """The OUTPUT node type with Date/DateTime/Time/UUID/Decimal/JSON +
     non-null CharField is byte-equal between graphene and native.
@@ -205,6 +224,7 @@ def test_scalar_node_seed_native_subprocess_uses_native_assembly():
 # Slices D + E + FK-relation-nullability — OUTPUT field/relation parity        #
 # (declared non-model fields; to-many list containers; required FK nullable)   #
 # --------------------------------------------------------------------------- #
+@_graphene_baseline_retired
 def test_cross_process_relation_node_sdl_parity():
     """The OUTPUT node graph with a declared non-model field, a required FK, a
     nullable FK, M2M relations, and a reverse FK is byte-equal between graphene
@@ -267,6 +287,7 @@ def test_relation_node_seed_native_subprocess_uses_native_assembly():
 # --------------------------------------------------------------------------- #
 # WU10 — FULL tests/schema.py cross-process SDL parity (Phase-5 closing gate)  #
 # --------------------------------------------------------------------------- #
+@_graphene_baseline_retired
 def test_cross_process_full_schema_sdl_parity():
     """The ENTIRE ``tests/schema.py`` schema SDL is byte-equal between graphene
     and native — the BINDING Phase-5 closing gate (D7).
@@ -324,6 +345,7 @@ def test_full_schema_native_subprocess_uses_native_assembly():
     )
 
 
+@_graphene_baseline_retired
 def test_full_schema_parity_is_not_vacuous():
     """ANTI-TAUTOLOGY (substance): the full-schema SDL must be non-trivial.
 

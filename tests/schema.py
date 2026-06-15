@@ -1,4 +1,5 @@
 import datetime
+import os
 
 import graphene
 from django.contrib.auth.models import User
@@ -97,4 +98,17 @@ class Query(graphene.ObjectType):
         return User.objects.filter(is_staff=True)
 
 
-schema = graphene.Schema(query=Query, directives=all_directives)
+# S6b: ``UserType`` / ``User1ListType`` are now NATIVE-only types (re-parented
+# off graphene onto the native Pydantic base). graphene's ``Schema(query=Query)``
+# can no longer assemble them ("Expected Graphene type, but received: ...").
+# Under ``GDX_BACKEND=native`` the consumers build the schema through
+# ``DjangoGraphQLSchema`` from ``Query`` directly (see
+# tests/native/_sdl_parity_seed.build_full_schema_sdl), so the module only needs
+# to register the types at import — NOT build a graphene Schema. Building it under
+# native would crash at import (the #1534 risk-7 "import-time crash after a type
+# goes native-only" — keep the graphene-only construction behind a backend
+# guard; the non-native branch is a clean no-op exposing ``schema = None``).
+if os.environ.get("GDX_BACKEND", "graphene") == "native":
+    schema = None
+else:
+    schema = graphene.Schema(query=Query, directives=all_directives)

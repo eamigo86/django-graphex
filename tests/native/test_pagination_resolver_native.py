@@ -52,10 +52,21 @@ def _build_native_schema(pagination=None, results_field_name=None):
     if results_field_name is not None:
         meta_kwargs["results_field_name"] = results_field_name
 
+    # S6b: DjangoListObjectType is re-parented onto the native Pydantic base, so
+    # the bare ``type(name, (Base,), {"Meta": type("Meta", (), attrs)})`` idiom
+    # crashes in pydantic's inspect_namespace (missing __module__ / qualname
+    # mismatch). Inject __module__ / __qualname__ and re-stamp the nested Meta
+    # qualname — the same fix base_types.factory_type applies in production.
+    _meta_cls = type("Meta", (), meta_kwargs)
+    _meta_cls.__qualname__ = "_WU6aAuthorList.Meta"
     list_type = type(
         "_WU6aAuthorList",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), meta_kwargs)},
+        {
+            "__module__": __name__,
+            "__qualname__": "_WU6aAuthorList",
+            "Meta": _meta_cls,
+        },
     )
 
     compile_all_outputs()

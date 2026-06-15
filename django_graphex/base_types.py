@@ -46,6 +46,23 @@ def factory_type(operation: str, _type: Any, *args: Any, **kwargs: Any) -> Any:
                 kwargs.get("model").__name__
             )
 
+        # ``DjangoObjectType`` is now a native (Pydantic ``ModelMetaclass``) type
+        # (Phase 7 S6b re-parent). pydantic's ``inspect_namespace`` only treats a
+        # class-valued namespace entry as an ignorable NESTED class when BOTH
+        # ``__module__`` and ``__qualname__`` are present in the new class's
+        # namespace AND ``value.__qualname__.startswith(f"{namespace['__qualname__']}.")``
+        # (see pydantic._internal._model_construction.inspect_namespace ~L442-449).
+        # When a class is built via the 3-arg ``type(name, bases, ns)`` form, the
+        # namespace dict does NOT auto-carry ``__module__`` / ``__qualname__``
+        # (unlike a real ``class`` statement), so we must inject them explicitly —
+        # otherwise pydantic raises ``KeyError('__module__')``. ``OutputMeta`` is a
+        # function-local (``factory_type.<locals>.OutputMeta``); we re-stamp its
+        # qualname to ``"GenericType.Meta"`` so the nested-class guard passes,
+        # exactly as if ``Meta`` had been written inside a real ``class GenericType``
+        # body. All harmless under graphene (graphene never inspects these).
+        _generic_name = "GenericType"
+        OutputMeta.__qualname__ = f"{_generic_name}.Meta"
+
         # Custom graphene fields declared on the owning DjangoModelType are
         # placed in the namespace *before* the type is created so graphene's
         # ObjectType base collects them and merges them with the model-derived
@@ -53,11 +70,13 @@ def factory_type(operation: str, _type: Any, *args: Any, **kwargs: Any) -> Any:
         # matching ``resolve_<field>`` methods ride along so a custom field is
         # resolved by its own resolver (not just ``source=``).
         namespace = {
+            "__module__": __name__,
+            "__qualname__": _generic_name,
             "Meta": OutputMeta,
             **(kwargs.get("extra_fields") or {}),
             **(kwargs.get("extra_resolvers") or {}),
         }
-        return type("GenericType", (_type,), namespace)
+        return type(_generic_name, (_type,), namespace)
 
     elif operation == "input":
 
