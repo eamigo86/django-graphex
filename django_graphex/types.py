@@ -14,9 +14,7 @@ from graphene import (
     Field,
     InputField,
     Int,
-    Interface,
     List,
-    Union,
 )
 from graphene.types.base import BaseOptions
 from graphene.types.utils import yank_fields_from_attrs
@@ -755,7 +753,7 @@ def _resolve_polymorphic_type(cls: Any, instance: Any, info: ResolveInfo) -> Any
     return object_type
 
 
-class DjangoUnionType(Union):
+class DjangoUnionType(NativeObjectType):
     """A GraphQL Union over explicitly enumerated DjangoObjectType members.
 
     Members are declared via ``Meta.gfk_types`` (a sequence of DjangoObjectType
@@ -763,6 +761,18 @@ class DjangoUnionType(Union):
     ``resolve_type`` maps a resolved Django row to its registered
     DjangoObjectType. ``Meta.possible_types`` is intentionally NOT set (it would
     collide with the DjangoObjectType ``is_type_of`` discrimination).
+
+    S6d re-parents this off graphene ``Union`` onto the native graphene-free
+    ``ObjectType`` base. The union is REGISTRY-ONLY: there is NO compiled native
+    Union ``GraphQLUnionType`` today (the native compiler consumes the union via
+    the registry + ``resolve_type``, reading ``_meta.types`` / the member-model
+    tuple). The native ObjectType base supplies exactly what this metadata
+    carrier needs: ``type(cls) is pydantic.ModelMetaclass`` (#1452), a
+    graphene-free MUTABLE ``_meta`` (``NativeObjectTypeOptions`` — which carries
+    ``name`` and the ``types`` slot the union sets below), and the
+    ``__init_subclass_with_meta__`` dispatch that sets ``_meta.name``. Reusing
+    ``ObjectType`` is sound precisely because nothing compiles this class as a
+    graphene Union — it is a name + member-list registry record.
     """
 
     class Meta:
@@ -784,7 +794,7 @@ class DjangoUnionType(Union):
             gfk_types: the DjangoObjectType members of this union (>= 1).
             registry: registry to self-register in; defaults to the global one.
             _meta: optional pre-built meta options object.
-            **options: extra options forwarded to ``graphene.Union``.
+            **options: extra options forwarded to the native base.
         """
         if not registry:
             registry = get_global_registry()
@@ -798,8 +808,19 @@ class DjangoUnionType(Union):
         cls._dgx_member_models = tuple(t._meta.model for t in member_types)
         cls._dgx_registry = registry
 
-        # graphene.Union requires a non-empty ``types``; feed the members in.
-        super().__init_subclass_with_meta__(types=member_types, _meta=_meta, **options)
+        # Build the union's own mutable ``_meta`` carrying the member ``types``.
+        # graphene's ``Union`` driver set ``_meta.types`` from the ``types=``
+        # kwarg; the native ObjectType terminal does NOT consume ``types`` (it
+        # would be swallowed into ``**_kwargs`` and dropped), so the driver sets
+        # it here directly. ``_meta.types`` stays the registry-only member list
+        # the polymorphic machinery reads (utils.py:682); the name is set by the
+        # native terminal below.
+        if _meta is None:
+            _meta = NativeObjectTypeOptions(cls)
+        _meta.types = member_types
+
+        # Native terminal sets ``_meta.name`` (= cls.__name__ unless overridden).
+        super().__init_subclass_with_meta__(_meta=_meta, **options)
 
         # After super() so ``cls._meta.name`` is set.
         registry.register_polymorphic(cls)
@@ -821,7 +842,7 @@ class DjangoUnionType(Union):
         return _resolve_polymorphic_type(cls, instance, info)
 
 
-class DjangoInterfaceType(Interface):
+class DjangoInterfaceType(NativeObjectType):
     """A GraphQL Interface enabling shared field declarations across types.
 
     Concrete "DjangoObjectType" subclasses declare membership via the existing
@@ -829,6 +850,16 @@ class DjangoInterfaceType(Interface):
     this MVP introduces no new queryset fetch path for interfaces.
     ``resolve_type`` follows the same model→registry→DjangoObjectType contract
     as "DjangoUnionType". ``Meta.possible_types`` is intentionally NOT set.
+
+    S6d re-parents this off graphene ``Interface`` onto the native graphene-free
+    ``ObjectType`` base. Like ``DjangoUnionType`` it is REGISTRY-ONLY: there is
+    NO compiled native ``GraphQLInterfaceType`` today — concrete object types
+    name it via ``Meta.interfaces`` and the interface itself is a name +
+    ``resolve_type`` registry record. The native ObjectType base supplies the
+    ModelMetaclass identity (#1452), the graphene-free MUTABLE ``_meta`` (with
+    the ``name`` the terminal sets), and the field-descriptor collection so
+    declared interface fields (e.g. ``name = graphene.String()``) still land in
+    ``_meta.fields`` without Pydantic mis-parsing them.
     """
 
     class Meta:
@@ -848,13 +879,15 @@ class DjangoInterfaceType(Interface):
         Args:
             registry: registry to self-register in; defaults to the global one.
             _meta: optional pre-built meta options object.
-            **options: extra options forwarded to ``graphene.Interface``.
+            **options: extra options forwarded to the native base.
         """
         if not registry:
             registry = get_global_registry()
 
         cls._dgx_registry = registry
 
+        # Native terminal sets ``_meta.name`` (= cls.__name__ unless overridden)
+        # and merges any declared graphene field descriptors into ``_meta.fields``.
         super().__init_subclass_with_meta__(_meta=_meta, **options)
 
         # After super() so ``cls._meta.name`` is set.

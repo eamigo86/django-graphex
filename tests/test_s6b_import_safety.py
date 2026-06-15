@@ -42,3 +42,23 @@ def test_reparented_types_importable_and_native_metaclass() -> None:
     # S6b: both re-parented onto the native graphene-free base.
     assert issubclass(DjangoObjectType, NativeObjectType)
     assert issubclass(DjangoListObjectType, NativeObjectType)
+
+
+def test_s6d_polymorphic_types_reparented_onto_native_base() -> None:
+    """S6d: DjangoUnionType / DjangoInterfaceType carry the native base.
+
+    Both are REGISTRY-ONLY metadata carriers re-parented off graphene
+    ``Union`` / ``Interface`` onto ``native.base.ObjectType`` (no compiled
+    native Union/Interface GraphQL type today). Importability under both
+    backends + the native base identity are the S6d import-safety contract.
+    """
+    from pydantic._internal._model_construction import ModelMetaclass
+
+    from django_graphex.native.base import ObjectType as NativeObjectType
+    from django_graphex.types import DjangoInterfaceType, DjangoUnionType
+
+    assert issubclass(DjangoUnionType, NativeObjectType)
+    assert issubclass(DjangoInterfaceType, NativeObjectType)
+    # #1452 metaclass-identity invariant holds for the re-parented bases.
+    assert type(DjangoUnionType) is ModelMetaclass
+    assert type(DjangoInterfaceType) is ModelMetaclass
