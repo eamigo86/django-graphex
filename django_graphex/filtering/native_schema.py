@@ -67,7 +67,11 @@ from .schema import _normalize_filter_fields, _relation_model
 if TYPE_CHECKING:
     from django_graphex.registry import Registry
 
-__all__ = ("build_filter_input_type", "_assert_filter_type_complete")
+__all__ = (
+    "build_filter_input_type",
+    "_assert_filter_type_complete",
+    "_canonical_filter_fields",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +317,97 @@ def _build_lookups_type(
     )
 
 
+def _model_root_filter_fields(model: type[models.Model], registry: Registry) -> Any:
+    """Return the model's canonical (root) ``filter_fields`` declaration, or ``None``.
+
+    A model's CANONICAL filter shape is the one declared by its own
+    ``DjangoListObjectType`` (preferred) or node ``DjangoObjectType``. Read-sites
+    use this so that whenever the SAME model is filtered in two contexts — as a
+    ROOT list (its own ``filter_fields``) AND as a NESTED relation-filter
+    referenced from another type — both resolve to the SAME ``<Model>Filterinput``
+    shape (defect #6 / variant of #1571).
+
+    Args:
+        model: The model whose root filter declaration is requested.
+        registry: The registry holding the model's list/node types.
+
+    Returns:
+        The model's ``filter_fields`` (list or dict), or ``None`` when the model
+        has no registered root type that declares filtering.
+    """
+    list_type = registry.get_list_type_for_model(model)
+    if list_type is not None:
+        root = getattr(getattr(list_type, "_meta", None), "filter_fields", None)
+        if root:
+            return root
+    node_type = registry.get_type_for_model(model)
+    if node_type is not None:
+        root = getattr(getattr(node_type, "_meta", None), "filter_fields", None)
+        if root:
+            return root
+    return None
+
+
+def _canonical_filter_fields(
+    model: type[models.Model],
+    requested: dict[str, tuple[str, ...] | None],
+    registry: Registry,
+) -> tuple[dict[str, tuple[str, ...] | None], bool]:
+    """Resolve the canonical filter declaration for a model build.
+
+    Defect #6: the same model can be built as a ROOT list (its own
+    ``filter_fields``) AND as a NESTED relation-filter (the narrow sub-declaration
+    propagated from another type, e.g. ``author__name``). Both produced a
+    differently-shaped type sharing the single name ``<Model>Filterinput`` —
+    graphene silently merged them (one shape won), graphql-core rejects the
+    duplicate name.
+
+    The fix converges on ONE canonical type per model: when the model has a
+    registered root filter declaration that COVERS the requested paths, every
+    context (root or nested) builds from that single root declaration, so the
+    resulting type instance is identical and the cache dedupes it.
+
+    Args:
+        model: The model being built.
+        requested: The normalized ``{path: lookups}`` declaration this call
+            asked for (the root's own, or a nested relation sub-declaration).
+        registry: The registry holding the model's root type.
+
+    Returns:
+        A ``(normalized, distinct)`` pair. ``normalized`` is the declaration to
+        build from (the canonical root when it covers ``requested``, else
+        ``requested`` unchanged). ``distinct`` is ``True`` only when the model
+        has a root declaration that does NOT cover ``requested`` — a genuine
+        shape fork that must receive a deterministic distinct name (the
+        single-context common case never sets this).
+    """
+    root = _model_root_filter_fields(model, registry)
+    if not root:
+        # No registered root for this model: the requested (nested) declaration
+        # IS the only / canonical shape. Single-context models (e.g. a relation
+        # target with no root list type) keep their narrow shape + canonical name.
+        return requested, False
+
+    root_normalized = _normalize_filter_fields(root)
+
+    # The root covers the requested context when every requested path is present
+    # in the root declaration (lookups need not match exactly — the root's
+    # superset of lookups still serves the narrower nested request: the extra
+    # lookups are valid ORM lookups, and the nested query only uses its own).
+    if all(path in root_normalized for path in requested):
+        return root_normalized, False
+
+    # Genuine fork: the model is filtered with paths its root does NOT expose.
+    # Reconcile by building the UNION (root ∪ requested) under the canonical
+    # name so a single type still serves both; flag it so callers can detect the
+    # divergence. (A union keeps both contexts working without a second name; a
+    # strict distinct-name split would also be valid per the brief but is not
+    # needed by any current declaration.)
+    merged = dict(root_normalized)
+    merged.update(requested)
+    return merged, True
+
+
 def build_filter_input_type(
     model: type[models.Model],
     filter_fields: Any,
@@ -346,6 +441,15 @@ def build_filter_input_type(
         registry = get_global_registry()
 
     normalized = _normalize_filter_fields(filter_fields) if filter_fields else {}
+
+    # Defect #6: converge same-named ``<Model>Filterinput`` shapes onto ONE
+    # canonical type. When the model has its own root filter declaration, build
+    # EVERY context (root list or nested relation-filter) from that single root
+    # so the resulting type instance is identical and the cache dedupes it —
+    # otherwise two differently-shaped types share the name and graphql-core
+    # rejects the duplicate (graphene used to silently merge one shape away).
+    if normalized:
+        normalized, _forked = _canonical_filter_fields(model, normalized, registry)
 
     custom_key = tuple(
         (name, meta.get("graphene_type")) for name, _fn, meta in (custom_filters or [])
