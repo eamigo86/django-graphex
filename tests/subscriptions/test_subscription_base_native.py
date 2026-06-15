@@ -215,59 +215,70 @@ def test_native_field_is_direct_graphql_field_with_reduced_args():
 
 
 # ---------------------------------------------------------------------------
-# M2M / non-scalar fields are OMITTED from the WU6 minimal seam (NOT String).
+# Relation handling on the deliverable-pk seam (no registered node types needed).
 #
-# WU6 maps ONLY what to_representation renders cleanly: scalars (value) + FK/O2O
-# (the <name>_id pk -> Int). A M2M field serializes to a list of pks ([7, 8]) the
-# minimal seam cannot render -> it must be OMITTED rather than silently emitted as
-# `coAuthors: String` (a WRONG SDL that also crashes at delivery with
-# "String cannot represent value: [7, 8]"). WU7 replaces _native_field_type with
-# the full converter (M2M as the results/totalCount container).
+# DESIGN RECONCILIATION (#1432 §3 vs §8): the serialize-once flat payload
+# (backend.to_representation) carries FK -> pk int and M2M -> list of pks, so the
+# event type renders FK -> pk scalar (ID) and M2M -> pk-list ([ID]). These are
+# leaf scalars/lists derived purely from the related model's pk field — they do
+# NOT require a registered related DjangoObjectType node type (the old nested-
+# object / results-totalCount container did; the deliverable pk shape does not).
+# So every relation field is ALWAYS PRESENT here, even with no node registration.
+# The full deliverable contract is asserted in test_capability_parity.py.
 # ---------------------------------------------------------------------------
 
 
 @native_only
-def test_native_event_type_omits_m2m_fields_not_string():
-    """M2M fields are OMITTED from the WU6 event type (NOT mapped to ``String``).
+def test_native_event_type_m2m_is_deliverable_pk_list():
+    """An M2M wire field is a DELIVERABLE pk-list (``[ID]``), never a bare String.
 
-    ``tests.Post`` has M2M ``tags`` / ``co_authors``. The WU6 minimal seam cannot
-    render a list-of-pks payload, so those wire fields (``tags`` / ``coAuthors``)
-    must be ABSENT from the event type rather than silently emitted as ``String``
-    (which is a wrong SDL and crashes at delivery). The scalar + FK fields the
-    seam DOES map (``id`` / ``title`` / ``body`` / ``author`` / ``views``) stay.
+    ``tests.Post`` has M2M ``tags`` / ``co_authors``. Under the deliverable-pk
+    contract the M2M field is ALWAYS PRESENT (no registered related node type
+    needed — the pk scalar is derived from the related model's pk field) and is a
+    list of pk scalars (``[ID]``), NEVER the old ``coAuthors: String`` stand-in
+    and NEVER the DB-backed ``<Model>ListType`` results/totalCount container.
     """
+    from graphql import GraphQLID as _GraphQLID
+    from graphql import GraphQLList as _GraphQLList
+    from graphql import GraphQLObjectType as _ObjType
     from graphql import GraphQLString as _GraphQLString
 
     sub = _make_subscription()
     event_type = sub._build_native_event_type()
 
-    # The M2M wire fields are OMITTED entirely (not present as String).
-    assert "coAuthors" not in event_type.fields
-    assert "tags" not in event_type.fields
+    def _unwrap(t):
+        while hasattr(t, "of_type"):
+            t = t.of_type
+        return t
 
-    # The cleanly-mappable fields are still present (scalars + FK->Int).
+    for wire in ("tags", "coAuthors"):
+        assert wire in event_type.fields, f"{wire} M2M pk-list must be present"
+        m2m_type = event_type.fields[wire].type
+        # [pk scalar] (auto pk -> [ID]); a leaf list, never a container/String.
+        assert isinstance(m2m_type, _GraphQLList), wire
+        assert m2m_type.of_type is _GraphQLID, wire
+        assert not isinstance(_unwrap(m2m_type), _ObjType), wire
+        assert m2m_type is not _GraphQLString, wire
+
+    # Scalars are always present (id/title/body/views) and id is the pk.
     assert "id" in event_type.fields
     assert "title" in event_type.fields
     assert "body" in event_type.fields
-    assert "author" in event_type.fields  # FK serialized as the _id pk -> Int
     assert "views" in event_type.fields
-
-    # No retained field is a bare permissive String stand-in for an M2M.
-    # (Sanity: the seam never emits a String for a field whose payload is a list.)
-    assert all(
-        name not in {"coAuthors", "tags"} for name in event_type.fields
-    )
-    # title/body ARE legitimately String (CharField/TextField) — keep them.
-    assert event_type.fields["title"].type is _GraphQLString
+    # The FK wire field is always present, as the deliverable pk scalar (ID).
+    assert "author" in event_type.fields
+    assert event_type.fields["author"].type is _GraphQLID
 
 
 @native_only
-async def test_native_drive_query_without_omitted_m2m_delivers_clean():
-    """A query NOT selecting the omitted M2M field delivers with NO coercion error.
+async def test_native_drive_query_without_selected_m2m_delivers_clean():
+    """A query NOT selecting an M2M field delivers with NO coercion error.
 
-    Against the previous silent-String mapping, selecting ``coAuthors`` would
-    crash with ``GraphQLError('String cannot represent value: [7, 8]')``. With the
-    M2M field OMITTED, a normal scalar+FK selection delivers cleanly.
+    The producer payload carries the M2M list (``co_authors=[7, 8]``); the
+    document does not select it, so it is ignored and a scalar selection delivers
+    cleanly. Under the deliverable-pk contract ``author`` is a pk scalar (``ID``)
+    and ``co_authors`` is a pk-list (``[ID]``) — both leaves over the flat payload,
+    so neither raises a coercion error even when carried in the payload.
     """
     from graphql import ExecutionResult
 
@@ -276,15 +287,14 @@ async def test_native_drive_query_without_omitted_m2m_delivers_clean():
     layer = InMemoryChannelLayer()
     sub = _make_subscription()
     schema = _native_schema(sub)
-    spec = sub._build_native_spec(schema, _DOC)
+    spec = sub._build_native_spec(schema, _DOC_SCALARS)
     source = await sub._native_subscribe(
-        layer, schema, _DOC, action="create", obj_id=None, filters=None, context=None
+        layer, schema, _DOC_SCALARS, action="create", obj_id=None, filters=None,
+        context=None,
     )
     delivery = drive_subscription(source, spec)
 
     group = source.joined_groups[0]
-    # The producer payload carries the M2M list (co_authors=[7, 8]) the seam would
-    # have mis-typed as String; the document does NOT select it, so it is ignored.
     flat = {"id": 1, "title": "hello", "author": 7, "co_authors": [7, 8]}
     await layer.group_send(group, _notify(group, flat))
 
@@ -293,7 +303,7 @@ async def test_native_drive_query_without_omitted_m2m_delivers_clean():
 
     assert isinstance(result, ExecutionResult)
     assert result.errors is None
-    assert result.data == {"postEvent": {"id": "1", "title": "hello", "author": 7}}
+    assert result.data == {"postEvent": {"id": "1", "title": "hello"}}
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +328,9 @@ def _native_schema(sub) -> GraphQLSchema:
 
 
 _DOC = parse("subscription { postEvent { id title author } }")
+# Scalar-only selection (no relation leaf): used by the WU7 full-converter tests
+# where a FK with no registered node type is a String placeholder.
+_DOC_SCALARS = parse("subscription { postEvent { id title } }")
 
 
 @native_only
@@ -355,9 +368,10 @@ async def test_native_drive_delivers_serialize_once_flat_dict():
     layer = InMemoryChannelLayer()
     sub = _make_subscription()
     schema = _native_schema(sub)
-    spec = sub._build_native_spec(schema, _DOC)
+    spec = sub._build_native_spec(schema, _DOC_SCALARS)
     source = await sub._native_subscribe(
-        layer, schema, _DOC, action="create", obj_id=None, filters=None, context=None
+        layer, schema, _DOC_SCALARS, action="create", obj_id=None, filters=None,
+        context=None,
     )
     delivery = drive_subscription(source, spec)
 
@@ -370,7 +384,7 @@ async def test_native_drive_delivers_serialize_once_flat_dict():
 
     assert isinstance(result, ExecutionResult)
     assert result.errors is None
-    assert result.data == {"postEvent": {"id": "1", "title": "hello", "author": 7}}
+    assert result.data == {"postEvent": {"id": "1", "title": "hello"}}
 
 
 @native_only

@@ -719,15 +719,40 @@ class Subscription(ObjectType):
 
     @classmethod
     def _build_native_event_type(cls) -> Any:
-        """Build the native event output ``GraphQLObjectType`` (WU6 base seam).
+        """Build the native event output ``GraphQLObjectType`` (deliverable pk shape).
 
-        Every field is wired with a WU1 ``make_snake_resolver`` closure (tagged
-        ``_gdx_pure_projection`` so COND-B/``guard.py`` whitelists it) keyed by
-        the SNAKE payload name produced by ``backend.to_representation`` — fixing
-        the camelCase-default-resolver silent-null. The type carries
-        ``extensions['gdx']`` (the native bridge). The full per-field scalar
-        auto-gen is WU7; WU6 maps the declared output fields to a permissive
-        scalar so the base path is functional and testable.
+        DESIGN RECONCILIATION (#1432 §3 vs §8): the serialize-once payload
+        (``native/backend.py:to_representation``) is FLAT PKS by design — one
+        serialize feeds N subscribers with ZERO DB per subscriber. So the event
+        type's relation fields MUST render the DELIVERABLE pk scalars/lists the
+        flat payload actually carries, NOT the DB-backed nested output-type SDL
+        (§8's "byte-identical to the DjangoObjectType OUTPUT type" goal is a
+        category error vs the §3 flat-pk payload — nested FK/M2M resolution over a
+        subscription event would need a per-subscriber DB query, the N+1 cliff
+        serialize-once forbids). The deliverable representation is:
+
+          * scalars -> the Phase-5 native names/nullability (``id: ID!``, model
+            scalars NULLABLE, ``Date`` -> ``CustomDate`` / ``UUID`` -> ``UUID`` /
+            ``JSON`` -> ``JSONString`` / ``Decimal`` -> ``Float`` …) reusing
+            ``native.output_compiler.compile_output_fields`` — KEEP;
+          * FK / O2O -> the PK SCALAR (``backend.to_representation`` carries the FK
+            under key ``<field.name>`` as the pk int via ``getattr(obj,
+            "<name>_id")``). Rendered as the pk's GraphQL scalar (``ID`` for an
+            auto/id pk, else the pk field's scalar). NOT the nested object type;
+          * M2M / reverse to-many -> a LIST of pk scalars (``to_representation``
+            carries the M2M under key ``<field.name>`` as ``list(... values_list(
+            "pk", flat=True))``). Rendered as ``[<pk scalar>]``. NOT the
+            results/totalCount container.
+
+        Each field's resolver is a WU1 ``make_snake_resolver`` closure (tagged
+        ``_gdx_pure_projection`` so COND-B/``guard.py`` whitelists it) keyed by the
+        SNAKE payload key ``backend.to_representation`` actually writes
+        (``field.name`` for every kind — scalars, FK pk, M2M pk-list), fixing the
+        camelCase-default-resolver silent-null. The flat serialize-once payload
+        holds pks (``author=7``, ``co_authors=[7, 8]``) and the snake closure
+        DELIVERS those pks directly (no DB, no re-serialize). The type carries
+        ``extensions['gdx']`` (the native bridge); ``check_subscription_output_type``
+        (COND-B) is run AFTER the sentinels are attached.
 
         Returns:
             A graphql-core ``GraphQLObjectType`` carrying ``extensions['gdx']``.
@@ -737,106 +762,95 @@ class Subscription(ObjectType):
 
         from ..native.bridge import GdxPayload
         from ..native.ir import GdxMeta
+        from .guard import check_subscription_output_type
         from .resolvers import make_snake_resolver
 
         type_name = cls._native_event_type_name()
-        snake_names = cls._meta.backend.output_field_names()
+        model = cls._meta.model
 
         def _fields() -> dict[str, Any]:
-            built: dict[str, Any] = {}
-            for snake in snake_names:
-                field_type = cls._native_field_type(snake)
-                # WU7 replaces this minimal seam with the full converter-driven
-                # scalar/relation mapping (incl. M2M as the results/totalCount
-                # container) — until then, non-scalar/relation fields are OMITTED
-                # to avoid silently emitting a wrong type. ``_native_field_type``
-                # returns ``None`` for any field the WU6 seam cannot render
-                # correctly (M2M -> list of pks, reverse relations, etc.); such
-                # fields are skipped here rather than mounted as a wrong String.
-                if field_type is None:
-                    continue
-                wire = _to_camel(snake)
-                built[wire] = _GraphQLField(
-                    field_type,
-                    resolve=make_snake_resolver(snake),
-                )
-            return built
+            from django.db import models as _dj_models
+            from graphql import GraphQLID as _GraphQLID
+            from graphql import GraphQLList as _GraphQLList
 
-        return GraphQLObjectType(
+            from ..native.base import get_shared_output_registry
+            from ..native.output_compiler import (
+                _get_django_to_gql,
+                _to_camel_case,
+                compile_output_fields,
+            )
+
+            # 1) Scalars via the SHARED output registry — the SAME builder the
+            # DjangoObjectType output thunk uses, so scalar NAMES/nullability are
+            # byte-identical to the model output type (``id: ID!``, rest nullable).
+            # compile_output_fields also emits FK/O2O as the NESTED object type,
+            # which is DB-backed and WRONG for the flat-pk payload; those entries
+            # are OVERWRITTEN below with the deliverable pk scalar.
+            built: dict[str, Any] = dict(
+                compile_output_fields(model, get_shared_output_registry())
+            )
+
+            def _pk_scalar(related_model: type) -> Any:
+                # Render the related model's pk GraphQL scalar — ID for an
+                # auto/id pk, else the pk field's mapped scalar. The flat payload
+                # carries the literal pk value (an int for AutoField), which
+                # GraphQLID coerces to its string form on output.
+                pk_field = related_model._meta.pk
+                mapping = _get_django_to_gql()
+                for klass in type(pk_field).__mro__:
+                    if klass in mapping:
+                        return mapping[klass]
+                return _GraphQLID
+
+            # 2) Walk the backend's emitted output fields (the SAME set
+            # ``to_representation`` serializes: concrete + M2M) and render every
+            # RELATION as its DELIVERABLE pk shape, keyed by ``field.name`` (the
+            # exact key the flat payload writes).
+            for field in cls._meta.backend._output_fields():
+                name = field.name
+                wire = _to_camel_case(name)
+                if isinstance(field, _dj_models.ManyToManyField):
+                    # M2M -> [pk scalar]; payload carries a list of pks under
+                    # key ``field.name``.
+                    related = field.related_model
+                    built[wire] = _GraphQLField(
+                        _GraphQLList(_pk_scalar(related))
+                    )
+                elif isinstance(
+                    field, (_dj_models.ForeignKey, _dj_models.OneToOneField)
+                ):
+                    # FK / O2O -> pk scalar; payload carries the pk int under key
+                    # ``field.name`` (``getattr(obj, "<name>_id")``). NOT nested.
+                    built[wire] = _GraphQLField(_pk_scalar(field.related_model))
+
+            # 3) RE-WRAP every field's resolver with a sentinel snake-closure
+            # keyed by the SNAKE payload key (the camelCase wire key would read
+            # the wrong dict key -> silent NULL). ``to_representation`` keys every
+            # field (scalar / FK pk / M2M pk-list) by ``field.name`` (snake), so
+            # the closure key is to_snake_case(wire).
+            from graphene.utils.str_converters import to_snake_case
+
+            rewrapped: dict[str, Any] = {}
+            for wire, field in built.items():
+                snake = to_snake_case(wire)
+                rewrapped[wire] = _GraphQLField(
+                    field.type,
+                    args=field.args,
+                    resolve=make_snake_resolver(snake),
+                    description=field.description,
+                    deprecation_reason=field.deprecation_reason,
+                )
+            return rewrapped
+
+        event_type = GraphQLObjectType(
             type_name,
             _fields,
-            extensions={
-                "gdx": GdxPayload(GdxMeta(name=type_name, model=cls._meta.model))
-            },
+            extensions={"gdx": GdxPayload(GdxMeta(name=type_name, model=model))},
         )
-
-    @classmethod
-    def _native_field_type(cls, snake: str) -> Any:
-        """Map a declared output field to a native scalar, or ``None`` to OMIT it.
-
-        WU7 replaces this minimal seam with the full converter-driven
-        scalar/relation mapping (incl. M2M as the results/totalCount container) —
-        until then, non-scalar/relation fields are OMITTED to avoid silently
-        emitting a wrong type. WU6 maps ONLY what ``backend.to_representation``
-        renders cleanly (see ``native/backend.py``):
-
-          * scalar  -> the field value      -> the matching graphql-core scalar
-          * FK/O2O  -> the ``<name>_id`` pk -> ``GraphQLInt``
-
-        A M2M field serializes to a list of pks (``[7, 8]``) the minimal seam
-        cannot render — mounting it as ``GraphQLString`` produces a WRONG SDL
-        (``coAuthors: String``) and a runtime coercion error
-        (``String cannot represent value: [7, 8]``). Such fields — M2M, reverse
-        relations, and anything else the seam can't render correctly — return
-        ``None`` so ``_build_native_event_type`` OMITS them (WU7 adds them back
-        with correct types). The snake-closure resolver itself is type-agnostic.
-
-        Args:
-            snake: The snake_case output field name.
-
-        Returns:
-            A graphql-core scalar type for a cleanly-mappable field, or ``None``
-            when the WU6 seam cannot render the field (OMIT it).
-        """
-        from django.db import models as _models
-        from graphql import (
-            GraphQLBoolean,
-            GraphQLFloat,
-            GraphQLID,
-            GraphQLInt,
-            GraphQLString,
-        )
-
-        try:
-            field = cls._meta.model._meta.get_field(snake)
-        except Exception:  # noqa: BLE001 - unknown field -> OMIT (cannot map it)
-            return None
-
-        # M2M -> list of pks (needs the WU7 container) -> OMIT.
-        if isinstance(field, _models.ManyToManyField):
-            return None
-        # Reverse relations are not concrete payload fields -> OMIT.
-        if getattr(field, "is_relation", False) and not getattr(
-            field, "concrete", False
-        ):
-            return None
-
-        if field.primary_key:
-            return GraphQLID
-        # FK/O2O -> the serialized ``<name>_id`` pk int.
-        if isinstance(field, (_models.ForeignKey, _models.OneToOneField)):
-            return GraphQLInt
-        if isinstance(field, _models.BooleanField):
-            return GraphQLBoolean
-        if isinstance(field, (_models.IntegerField, _models.AutoField)):
-            return GraphQLInt
-        if isinstance(field, (_models.FloatField, _models.DecimalField)):
-            return GraphQLFloat
-        # Concrete scalar (CharField/TextField/DateField/...) -> String.
-        if getattr(field, "concrete", False) and not field.is_relation:
-            return GraphQLString
-        # Anything else the minimal seam cannot render correctly -> OMIT.
-        return None
+        # COND-B (build-time flat-type guard) AFTER the sentinels are attached:
+        # forces field evaluation and asserts every field is sentinel-marked.
+        check_subscription_output_type(event_type)
+        return event_type
 
     @classmethod
     def _build_native_spec(cls, schema: Any, document: Any) -> Any:
@@ -966,7 +980,9 @@ class Subscription(ObjectType):
         )
 
     @classmethod
-    def _build_native_field(cls, schema: Any, document: Any) -> Any:
+    def _build_native_field(
+        cls, schema: Any = None, document: Any = None
+    ) -> Any:
         """Build the native subscription field as a DIRECT graphql-core ``GraphQLField``.
 
         NOT a graphene ``Field``/``SubscriptionField`` (design §3 / C-A). The field
@@ -982,9 +998,21 @@ class Subscription(ObjectType):
           * ``args`` reduced to ``{action, id, filters}`` under native (the
             graphene-only ``channel_id``/``operation`` args are dropped).
 
+        ``schema``/``document`` are OPTIONAL: the subscribe factory only builds the
+        :class:`ChannelLayerSource` (group join), which does NOT read the spec's
+        ``schema``/``document`` (only ``drive_subscription`` — the transport's
+        per-event delivery — does). So the field is buildable at SCHEMA-COMPILE
+        time (``compile_native_root``, WU7 root wiring) when the assembled native
+        schema and the per-request document are not yet known; the transport layer
+        (WU8/WU9) supplies the live schema + parsed request document to
+        ``drive_subscription`` at delivery time. When provided here they are
+        forwarded for direct/test drive paths.
+
         Args:
-            schema: The native graphql-core schema for the per-event execute.
-            document: The parsed subscription document executed per event.
+            schema: The native graphql-core schema for the per-event execute
+                (optional — supplied by the transport at delivery time).
+            document: The parsed subscription document executed per event
+                (optional — the per-request selection set, supplied at delivery).
 
         Returns:
             A graphql-core ``GraphQLField``.
