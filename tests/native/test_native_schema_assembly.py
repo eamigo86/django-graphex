@@ -391,3 +391,90 @@ def test_native_schema_types_unsupported_kind_raises_not_implemented():
         DjangoGraphQLSchema(query=_UnsupportedQuery, types=[_SomeInput])
     # The error must name the offending type so the failure is honest.
     assert "_SomeInput" in str(exc.value)
+
+
+# --------------------------------------------------------------------------- #
+# S6f — DjangoGraphQLSchema is no longer a graphene.Schema subclass            #
+# (metaclass-swap block S6 closes here; the graphql_schema is built directly   #
+# via the native root compiler, and the public surface is preserved without    #
+# inheriting graphene.Schema).                                                 #
+# --------------------------------------------------------------------------- #
+@pytest.mark.django_db
+def test_s6f_schema_is_not_graphene_schema_subclass():
+    """``DjangoGraphQLSchema`` no longer subclasses ``graphene.Schema`` (S6f).
+
+    Against the pre-S6f base this FAILS (it WAS ``graphene.Schema``); after S6f
+    it is a plain class that builds ``graphql_schema`` directly via the native
+    compiler. This is the S6 metaclass-swap block's terminal assertion.
+    """
+    import graphene
+
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    assert not issubclass(DjangoGraphQLSchema, graphene.Schema), (
+        "S6f: DjangoGraphQLSchema must NOT subclass graphene.Schema — it builds "
+        "graphql_schema directly via the native root compiler."
+    )
+    # graphene.Schema must not appear ANYWHERE in the MRO.
+    assert graphene.Schema not in DjangoGraphQLSchema.__mro__
+
+
+@pytest.mark.django_db
+def test_s6f_public_surface_preserved_without_graphene_base():
+    """The public surface callers rely on survives the graphene-base removal.
+
+    ``views.py`` reads ``schema.graphql_schema``; legacy readers read ``query`` /
+    ``mutation`` / ``subscription``; SDL tooling reads ``str(schema)`` and
+    ``schema.graphql_schema``. ``auto_camelcase`` is exposed for parity readers.
+    """
+    import graphene
+    from graphql import GraphQLSchema
+
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    class _S6fQuery(graphene.ObjectType):
+        hello = graphene.String()
+
+    schema = DjangoGraphQLSchema(query=_S6fQuery)
+
+    # graphql_schema is the canonical graphql-core schema (what views.py reads).
+    assert isinstance(schema.graphql_schema, GraphQLSchema)
+    # Legacy root readers are preserved.
+    assert schema.query is _S6fQuery
+    assert schema.mutation is None
+    assert schema.subscription is None
+    # __str__ renders SDL (graphene.Schema.__str__ parity) without a graphene base.
+    sdl = str(schema)
+    assert "type _S6fQuery" in sdl or "hello" in sdl
+    # auto_camelcase is exposed for parity readers (graphene default True).
+    assert schema.auto_camelcase is True
+
+
+@pytest.mark.django_db
+def test_s6f_protected_fields_attached_without_graphene_branch():
+    """Protected-field registry still lands on ``graphql_schema`` (no graphene
+    branch). The native build attaches both the legacy ``_gde_protected_fields``
+    marker and the canonical ``extensions['gdx_protected_fields']``.
+    """
+    import graphene
+
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    class _PubQ(graphene.ObjectType):
+        pub_only = graphene.String()
+
+    class _PrivQ(graphene.ObjectType):
+        priv_only = graphene.String()
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        schema = DjangoGraphQLSchema(query=_PubQ, private_query=_PrivQ)
+
+    gql = schema.graphql_schema
+    # Legacy marker (read by older middleware via info.schema._gde_protected_fields).
+    assert "privOnly" in gql._gde_protected_fields
+    assert "pubOnly" not in gql._gde_protected_fields
+    # Canonical native read location (C14).
+    assert gql.extensions["gdx_protected_fields"] == frozenset({"privOnly"})

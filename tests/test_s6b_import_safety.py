@@ -97,6 +97,25 @@ def test_s6e_subscription_reparented_onto_native_base() -> None:
     assert type(sub) is ModelMetaclass
 
 
+def test_s6f_django_graphql_schema_off_graphene_schema_base() -> None:
+    """S6f: ``DjangoGraphQLSchema`` no longer subclasses ``graphene.Schema``.
+
+    The S6 metaclass-swap block closes here: the schema builds its
+    ``graphql_schema`` directly via the native root compiler and is a plain
+    class. Importability + the base-identity invariant must hold under BOTH
+    backends (under graphene the type is dead-but-importable post-S6).
+    """
+    import graphene
+
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    assert not issubclass(DjangoGraphQLSchema, graphene.Schema)
+    assert graphene.Schema not in DjangoGraphQLSchema.__mro__
+    # The public surface attributes graphene.Schema provided are still declared.
+    assert hasattr(DjangoGraphQLSchema, "__str__")
+    assert hasattr(DjangoGraphQLSchema, "__init__")
+
+
 @pytest.mark.skipif(
     not _NATIVE,
     reason="native root compile path (GDX_BACKEND=native); the graphene "
