@@ -38,7 +38,9 @@
   .gdsx-btn-primary{background:linear-gradient(135deg,var(--accent),#b3208a);color:#fff}
   .gdsx-btn-ghost{background:#1b2840;color:var(--txt)}
   .gdsx-btn:hover{filter:brightness(1.1)}
-  .gdsx-channel{font-family:ui-monospace,monospace;font-size:.82rem;color:var(--accent2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gdsx-seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .gdsx-seg-btn{cursor:pointer;border:none;padding:.45rem .85rem;font-size:.82rem;font-weight:600;background:#1b2840;color:var(--muted);letter-spacing:.03em;transition:background .1s,color .1s}
+  .gdsx-seg-btn.active{background:var(--accent2);color:#fff}
   .gdsx-main{position:relative;display:grid;grid-template-columns:1fr 1fr;flex:1 1 auto;min-height:0}
   .gdsx-pane{display:flex;flex-direction:column;min-width:0;min-height:0}
   .gdsx-pane+.gdsx-pane{border-left:1px solid var(--line)}
@@ -58,6 +60,7 @@
   .gdsx-b-sent{background:rgba(229,53,171,.2);color:#ff8fd6}
   .gdsx-b-confirm{background:rgba(54,211,153,.18);color:#7defb7}
   .gdsx-b-notify{background:rgba(27,168,160,.2);color:#79e6df}
+  .gdsx-b-complete{background:rgba(122,162,247,.15);color:#9db4ff}
   .gdsx-b-error{background:rgba(255,107,107,.2);color:#ff9d9d}
   .gdsx-time{margin-left:auto;color:var(--muted);font-size:.66rem}
   .gdsx-entry pre{margin:0;padding:.55rem;white-space:pre-wrap;word-break:break-word;overflow-x:auto}
@@ -77,32 +80,38 @@
   <div class="gdsx-wrap" id="gdsx">
     <div class="gdsx-top">
       <span class="gdsx-pill" data-state="closed" id="gdsx-status"><span class="gdsx-dot"></span><span id="gdsx-status-txt">Disconnected</span></span>
-      <span class="gdsx-field"><label>WS</label><input class="gdsx-input" id="gdsx-ws" spellcheck="false"></span>
+      <!-- Transport mode selector: WS (graphql-transport-ws) or SSE (graphql-sse) -->
+      <span class="gdsx-field" style="flex:0 0 auto">
+        <label>Mode</label>
+        <span class="gdsx-seg" id="gdsx-mode-seg">
+          <button class="gdsx-seg-btn active" id="gdsx-mode-ws" type="button">WS</button>
+          <button class="gdsx-seg-btn" id="gdsx-mode-sse" type="button">SSE</button>
+        </span>
+      </span>
+      <!-- WS path (graphql-transport-ws endpoint) -->
+      <span class="gdsx-field" id="gdsx-ws-field"><label>WS</label><input class="gdsx-input" id="gdsx-ws" spellcheck="false"></span>
+      <!-- SSE path (graphql-sse / text/event-stream endpoint) -->
+      <span class="gdsx-field" id="gdsx-sse-field" style="display:none"><label>SSE</label><input class="gdsx-input" id="gdsx-sse" spellcheck="false"></span>
+      <!-- HTTP path for schema introspection autocomplete -->
       <span class="gdsx-field"><label>HTTP</label><input class="gdsx-input" id="gdsx-http" spellcheck="false"></span>
       <button class="gdsx-btn gdsx-btn-primary" id="gdsx-connect">Connect</button>
       <button class="gdsx-btn gdsx-btn-ghost" id="gdsx-clear">Clear</button>
     </div>
     <div class="gdsx-main">
       <div class="gdsx-pane">
-        <div class="gdsx-panehead"><span>subscription</span><span class="gdsx-channel" id="gdsx-channel" title="channel_id">no channel yet</span></div>
-        <textarea class="gdsx-editor" id="gdsx-query" spellcheck="false">subscription ($channelId: String!) {
+        <div class="gdsx-panehead"><span>subscription</span><span id="gdsx-op-id" style="font-size:.76rem;color:var(--accent2)"></span></div>
+        <textarea class="gdsx-editor" id="gdsx-query" spellcheck="false">subscription {
   # Replace with one of your subscriptions (see your schema).
-  postSubscription(
-    channelId: $channelId
-    action: ALL_ACTIONS
-    operation: SUBSCRIBE
-  ) {
-    ok
-    error
-    stream
-    operation
-    action
-  }
+  # Example:
+  # postSubscription(action: ALL_ACTIONS) {
+  #   id
+  #   title
+  # }
 }</textarea>
       </div>
       <div class="gdsx-pane">
         <div class="gdsx-panehead"><span>output</span><span class="gdsx-time" id="gdsx-count">0 events</span></div>
-        <div class="gdsx-out" id="gdsx-out"><div class="gdsx-empty">Connect, then press &#9654; to send your subscription. Notifications appear here live.</div></div>
+        <div class="gdsx-out" id="gdsx-out"><div class="gdsx-empty">Choose WS or SSE, connect, then press &#9654; to start your subscription.</div></div>
       </div>
       <button class="gdsx-fab" id="gdsx-run" title="Send subscription (Ctrl/Cmd+Enter)" disabled>
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
@@ -114,22 +123,44 @@
 
 <script>
 (function(){
+  "use strict";
   var root=document.getElementById("gdsx");
   if(!root||root.dataset.init) return; root.dataset.init="1";
-  var ws=null, channelId=null, count=0, schemaCandidates=[];
-  var $=function(id){return document.getElementById(id)};
-  var statusEl=$("gdsx-status"), statusTxt=$("gdsx-status-txt");
-  var connectBtn=$("gdsx-connect"), runBtn=$("gdsx-run"), out=$("gdsx-out"), countEl=$("gdsx-count");
-  var editor=$("gdsx-query"), ac=$("gdsx-ac");
 
-  // Default the endpoints from the page origin (same origin -> no CORS).
+  // ---- State -----------------------------------------------------------------
+  var mode="ws";      // "ws" | "sse"
+  var ws=null;        // active WebSocket (WS mode)
+  var sse=null;       // active EventSource (SSE mode)
+  var opId=null;      // current WS subscription id (string)
+  var wsAcked=false;  // true after connection_ack received
+  var count=0;
+  var schemaCandidates=[];
+  var opCounter=0;    // monotonic op id generator
+
+  // ---- DOM shortcuts ---------------------------------------------------------
+  var $=function(id){return document.getElementById(id);};
+  var statusEl=$("gdsx-status"), statusTxt=$("gdsx-status-txt");
+  var connectBtn=$("gdsx-connect"), runBtn=$("gdsx-run");
+  var out=$("gdsx-out"), countEl=$("gdsx-count");
+  var editor=$("gdsx-query"), ac=$("gdsx-ac");
+  var wsField=$("gdsx-ws-field"), sseField=$("gdsx-sse-field");
+  var opIdEl=$("gdsx-op-id");
+
+  // ---- Endpoint defaults (same-origin, no CORS) ------------------------------
   var loc=window.location;
   var wsProto=loc.protocol==="https:"?"wss:":"ws:";
   $("gdsx-ws").value=wsProto+"//"+loc.host+"__WS_PATH__";
+  $("gdsx-sse").value=loc.protocol+"//"+loc.host+"__HTTP_PATH__";
   $("gdsx-http").value=loc.protocol+"//"+loc.host+"__HTTP_PATH__";
 
-  function setStatus(state,label){statusEl.setAttribute("data-state",state);statusTxt.textContent=label;}
-  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  // ---- Utilities -------------------------------------------------------------
+  function setStatus(state,label){
+    statusEl.setAttribute("data-state",state);
+    statusTxt.textContent=label;
+  }
+  function esc(s){
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
   function highlight(value){
     var json=typeof value==="string"?value:JSON.stringify(value,null,2);
     json=esc(json);
@@ -151,46 +182,257 @@
     count++; countEl.textContent=count+(count===1?" event":" events");
   }
 
-  function connect(){
+  // ---- Mode selector ---------------------------------------------------------
+  function setMode(m){
+    mode=m;
+    $("gdsx-mode-ws").className="gdsx-seg-btn"+(m==="ws"?" active":"");
+    $("gdsx-mode-sse").className="gdsx-seg-btn"+(m==="sse"?" active":"");
+    wsField.style.display=m==="ws"?"":"none";
+    sseField.style.display=m==="sse"?"":"none";
+    // Disconnect any active connection when switching modes.
+    if(ws){ws.close();}
+    if(sse){sse.close();sse=null;setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;runBtn.disabled=true;}
+  }
+  $("gdsx-mode-ws").addEventListener("click",function(){setMode("ws");});
+  $("gdsx-mode-sse").addEventListener("click",function(){setMode("sse");});
+
+  // ==========================================================================
+  // WS transport — graphql-transport-ws protocol
+  // ==========================================================================
+  // Subprotocol: "graphql-transport-ws"
+  // Handshake: client sends connection_init → server sends connection_ack
+  // Subscribe: client sends {type:"subscribe", id, payload:{query,variables}}
+  //            server sends {type:"next", id, payload:{data,...}} per event
+  //            server sends {type:"complete", id} when done
+  //            client sends {type:"complete", id} to cancel
+  // Ping/pong: server sends {type:"ping"} → client replies {type:"pong"}
+  // ==========================================================================
+
+  function wsSend(msg){
+    if(ws&&ws.readyState===WebSocket.OPEN){ws.send(JSON.stringify(msg));}
+  }
+
+  function wsConnect(){
     var url=$("gdsx-ws").value.trim(); if(!url) return;
-    loadSchema();  // refresh autocomplete from the (possibly edited) endpoint
-    try{ws=new WebSocket(url);}catch(e){log("error","Error",String(e));return;}
-    setStatus("connecting","Connecting&#8230;"); connectBtn.textContent="Connecting&#8230;"; connectBtn.disabled=true;
-    ws.onopen=function(){connectBtn.textContent="Disconnect";connectBtn.disabled=false;setStatus("open","Connected");};
+    loadSchema();
+    try{ws=new WebSocket(url,"graphql-transport-ws");}catch(e){log("error","WS Error",String(e));return;}
+    setStatus("connecting","Connecting…");
+    connectBtn.textContent="Connecting…"; connectBtn.disabled=true;
+    wsAcked=false; opId=null; opIdEl.textContent="";
+
+    ws.onopen=function(){
+      // Send connection_init as the first message (graphql-transport-ws §4.1).
+      wsSend({type:"connection_init"});
+      log("handshake","connection_init","Sent connection_init — awaiting connection_ack…");
+    };
+
     ws.onmessage=function(ev){
-      var data; try{data=JSON.parse(ev.data);}catch(_){log("notify","Frame",ev.data);return;}
-      if(data&&data.connect==="success"&&data.channel_id){
-        channelId=data.channel_id;
-        $("gdsx-channel").textContent=channelId; $("gdsx-channel").title=channelId;
+      var msg;
+      try{msg=JSON.parse(ev.data);}catch(_){log("notify","Frame",ev.data);return;}
+      var t=msg&&msg.type;
+      if(t==="connection_ack"){
+        wsAcked=true;
+        connectBtn.textContent="Disconnect"; connectBtn.disabled=false;
+        setStatus("open","Connected (WS)");
         runBtn.disabled=false;
-        log("handshake","Handshake",data);
+        log("handshake","connection_ack",msg);
+      } else if(t==="next"){
+        log("notify","next",msg.payload||msg);
+      } else if(t==="complete"){
+        log("complete","complete",msg);
+        runBtn.disabled=false;
+        opId=null; opIdEl.textContent="";
+      } else if(t==="error"){
+        log("error","error",msg.payload||msg);
+        runBtn.disabled=false;
+        opId=null; opIdEl.textContent="";
+      } else if(t==="ping"){
+        // Respond to server pings with a pong (graphql-transport-ws §4.5).
+        wsSend({type:"pong"});
+        log("handshake","ping/pong","Received ping → sent pong");
       } else {
-        log("notify","Notification",data);
+        log("notify","Frame",msg);
       }
     };
-    ws.onerror=function(){log("error","WS Error","Could not reach "+url+". Is the server running?");};
-    ws.onclose=function(){setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;runBtn.disabled=true;channelId=null;$("gdsx-channel").textContent="no channel yet";ws=null;};
-  }
-  function disconnect(){ if(ws){ws.close();} }
 
+    ws.onerror=function(){
+      log("error","WS Error","Could not reach "+$("gdsx-ws").value+". Is the server running?");
+    };
+    ws.onclose=function(ev){
+      setStatus("closed","Disconnected");
+      connectBtn.textContent="Connect"; connectBtn.disabled=false;
+      runBtn.disabled=true;
+      wsAcked=false; opId=null; opIdEl.textContent="";
+      ws=null;
+      if(ev.code!==1000&&ev.code!==1001){
+        log("error","WS Closed","code "+ev.code+(ev.reason?" — "+ev.reason:""));
+      }
+    };
+  }
+
+  function wsDisconnect(){
+    if(ws){
+      // Send complete for the active op before closing (graphql-transport-ws §4.3).
+      if(opId&&wsAcked){wsSend({type:"complete",id:opId});}
+      ws.close(1000,"client disconnect");
+    }
+  }
+
+  function wsRun(){
+    if(!wsAcked){log("error","Error","WS not connected — connect first.");return;}
+    var query=editor.value;
+    opId=String(++opCounter);
+    opIdEl.textContent="op: "+opId;
+    var payload={query:query};
+    wsSend({type:"subscribe",id:opId,payload:payload});
+    log("sent","subscribe",{id:opId,query:query.substring(0,120)+(query.length>120?"…":"")});
+    runBtn.disabled=true;
+  }
+
+  // ==========================================================================
+  // SSE transport — graphql-sse (text/event-stream) protocol
+  // https://github.com/enisdenjo/graphql-sse
+  //
+  // The server endpoint is an async Django view returning:
+  //   Content-Type: text/event-stream
+  //   event: next\ndata: {json}\n\n    — one per subscription event
+  //   event: complete\ndata: \n\n      — terminal frame
+  //
+  // The client POSTs the GraphQL subscription query via HTTP first (fetch),
+  // then opens an EventSource on the SSE endpoint URL. Because EventSource
+  // only supports GET, django-graphex's SSE view accepts the subscription via
+  // a query-string or body form depending on server config. For simplicity this
+  // client sends the query via the URL query-string so EventSource can open it
+  // directly (servers that require POST should use the "distinct connections"
+  // mode from the graphql-sse spec — advanced usage, not this demo).
+  //
+  // Simpler approach used here: POST the query via fetch to the SSE endpoint
+  // to start the stream, then read the response body as a stream of SSE frames.
+  // This avoids the GET-only EventSource limitation and matches how the native
+  // SSE view works (POST body carries query/variables/operationName).
+  // ==========================================================================
+
+  function sseConnect(){
+    var url=$("gdsx-sse").value.trim(); if(!url) return;
+    loadSchema();
+    setStatus("connecting","Connecting…");
+    connectBtn.textContent="Connecting…"; connectBtn.disabled=true;
+    // Use EventSource for the SSE connection to the graphql-sse endpoint.
+    // The query document is not sent here — it is sent when the user presses
+    // the run button (per the graphql-sse distinct-connections mode: one
+    // EventSource connection per subscription).
+    // For demo purposes, open EventSource now to verify connectivity, and
+    // send the subscription query when the user presses run.
+    try{
+      sse=new EventSource(url);
+    }catch(e){log("error","SSE Error",String(e));setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;return;}
+
+    sse.onopen=function(){
+      connectBtn.textContent="Disconnect"; connectBtn.disabled=false;
+      setStatus("open","Connected (SSE)");
+      runBtn.disabled=false;
+      log("handshake","SSE Open","EventSource connected — ready to subscribe.");
+    };
+    sse.onerror=function(){
+      log("error","SSE Error","EventSource connection error. Is the server running?");
+      sse.close(); sse=null;
+      setStatus("closed","Disconnected");
+      connectBtn.textContent="Connect"; connectBtn.disabled=false;
+      runBtn.disabled=true;
+    };
+    // Handle named SSE events per graphql-sse protocol.
+    sse.addEventListener("next",function(ev){
+      var data;try{data=JSON.parse(ev.data);}catch(_){data=ev.data;}
+      log("notify","next",data);
+    });
+    sse.addEventListener("complete",function(){
+      log("complete","complete","Stream completed.");
+      sse.close(); sse=null;
+      setStatus("closed","Disconnected");
+      connectBtn.textContent="Connect"; connectBtn.disabled=false;
+      runBtn.disabled=true;
+    });
+  }
+
+  function sseDisconnect(){
+    if(sse){sse.close();sse=null;}
+    setStatus("closed","Disconnected");
+    connectBtn.textContent="Connect"; connectBtn.disabled=false;
+    runBtn.disabled=true;
+  }
+
+  function sseRun(){
+    // SSE distinct-connections mode: send the subscription via HTTP POST to the
+    // SSE endpoint; the server's StreamingHttpResponse carries event frames.
+    // Close the current EventSource (it was opened just for connectivity check),
+    // then POST the query and stream the response.
+    if(sse){sse.close();sse=null;}
+    var url=$("gdsx-sse").value.trim();
+    var query=editor.value;
+    log("sent","subscribe",{query:query.substring(0,120)+(query.length>120?"…":"")});
+    runBtn.disabled=true;
+    setStatus("connecting","Streaming…");
+
+    fetch(url,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Accept":"text/event-stream,application/json"},
+      body:JSON.stringify({query:query})
+    }).then(function(resp){
+      if(!resp.ok){
+        return resp.text().then(function(t){log("error","HTTP "+resp.status,t);runBtn.disabled=false;setStatus("open","Connected (SSE)");});
+      }
+      setStatus("open","Streaming (SSE)");
+      // Read the streaming SSE response body frame by frame.
+      var reader=resp.body.getReader(), decoder=new TextDecoder();
+      var buf="";
+      function pump(){
+        reader.read().then(function(chunk){
+          if(chunk.done){
+            log("complete","complete","Stream ended.");
+            runBtn.disabled=false;
+            setStatus("open","Connected (SSE)");
+            return;
+          }
+          buf+=decoder.decode(chunk.value,{stream:true});
+          // Parse SSE frames: each frame ends with \n\n
+          var frames=buf.split("\n\n");
+          buf=frames.pop(); // keep incomplete tail
+          frames.forEach(function(frame){
+            if(!frame.trim()) return;
+            var eventType="message", dataLines=[];
+            frame.split("\n").forEach(function(line){
+              if(line.startsWith("event: ")){eventType=line.slice(7).trim();}
+              else if(line.startsWith("data: ")){dataLines.push(line.slice(6));}
+            });
+            var raw=dataLines.join("\n");
+            if(eventType==="next"){
+              var data;try{data=JSON.parse(raw);}catch(_){data=raw;}
+              log("notify","next",data);
+            } else if(eventType==="complete"){
+              log("complete","complete","Stream complete.");
+              runBtn.disabled=false;
+              setStatus("open","Connected (SSE)");
+            }
+          });
+          pump();
+        }).catch(function(err){log("error","Stream Error",String(err));runBtn.disabled=false;setStatus("open","Connected (SSE)");});
+      }
+      pump();
+    }).catch(function(err){log("error","Fetch Error",String(err));runBtn.disabled=false;setStatus("open","Connected (SSE)");});
+  }
+
+  // ---- Unified connect / run -------------------------------------------------
+  function connect(){
+    if(mode==="ws"){wsConnect();}else{sseConnect();}
+  }
+  function disconnect(){
+    if(mode==="ws"){wsDisconnect();}else{sseDisconnect();}
+  }
   function run(){
-    if(!channelId){log("error","Error","Connect the WebSocket first to obtain a channel_id.");return;}
-    var query=$("gdsx-query").value;
-    var endpoint=$("gdsx-http").value.trim();
-    var body=JSON.stringify({query:query,variables:{channelId:channelId}});
-    log("sent","Sent",{operation:"subscription",variables:{channelId:channelId}});
-    fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:body})
-      .then(function(r){return r.json().then(function(j){return{ok:r.ok,json:j};});})
-      .then(function(res){
-        if(res.json&&res.json.errors){log("error","GraphQL Errors",res.json);}
-        else{log("confirm","Confirmation",res.json);}
-      })
-      .catch(function(err){log("error","HTTP Error",String(err));});
+    if(mode==="ws"){wsRun();}else{sseRun();}
   }
 
-  // --- Schema introspection (for autocomplete) -------------------------------
-  // Uses the HTTP endpoint shown above. If introspection is disabled on the
-  // server, autocomplete quietly falls back to GraphQL keywords only.
+  // ---- Schema introspection (autocomplete) -----------------------------------
   function loadSchema(){
     var endpoint=$("gdsx-http").value.trim(); if(!endpoint) return;
     var q="{__schema{types{name kind fields{name args{name}}inputFields{name}enumValues{name}}}}";
@@ -208,13 +450,12 @@
           (t.enumValues||[]).forEach(function(v){ add(v.name,"enum"); });
         });
         ["subscription","mutation","query","fragment"].forEach(function(k){ add(k,"keyword"); });
-        add("channelId","var");
         schemaCandidates=cands;
       })
       .catch(function(){ /* introspection optional */ });
   }
 
-  // --- Caret pixel position via a mirror element -----------------------------
+  // ---- Caret pixel position (for autocomplete popup) -------------------------
   function caretCoords(){
     var pos=editor.selectionStart, style=getComputedStyle(editor);
     var div=document.createElement("div");
@@ -228,7 +469,7 @@
     document.body.removeChild(div); return co;
   }
 
-  // --- Autocomplete ----------------------------------------------------------
+  // ---- Autocomplete ----------------------------------------------------------
   var acItems=[], acSel=0, acStart=-1;
   function currentWord(){
     var pos=editor.selectionStart, m=/[A-Za-z_][A-Za-z0-9_]*$/.exec(editor.value.substring(0,pos));
@@ -263,7 +504,7 @@
     e.preventDefault(); acSel=parseInt(item.getAttribute("data-i"),10); acAccept(); editor.focus();
   });
 
-  // --- Tab indentation (like a code editor) ----------------------------------
+  // ---- Tab indentation -------------------------------------------------------
   var IND="  ";
   function indent(){
     var s=editor.selectionStart, e=editor.selectionEnd, val=editor.value;
@@ -279,10 +520,11 @@
     editor.selectionStart=Math.max(ls,s-IND.length); editor.selectionEnd=e-(seg.length-newSeg.length);
   }
 
+  // ---- Event wiring ----------------------------------------------------------
   editor.addEventListener("input",openAc);
   editor.addEventListener("blur",function(){ setTimeout(closeAc,120); });
 
-  connectBtn.addEventListener("click",function(){ ws?disconnect():connect(); });
+  connectBtn.addEventListener("click",function(){ if(ws||(sse&&sse.readyState!==EventSource.CLOSED)){disconnect();}else{connect();} });
   runBtn.addEventListener("click",run);
   $("gdsx-clear").addEventListener("click",function(){out.innerHTML='<div class="gdsx-empty">Cleared. Press &#9654; to send your subscription.</div>';count=0;countEl.textContent="0 events";});
   $("gdsx-http").addEventListener("change",loadSchema);
@@ -295,10 +537,10 @@
     }
     if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();run();return;}
     if(e.key==="Tab"){e.preventDefault();e.shiftKey?outdent():indent();return;}
-    if(e.ctrlKey&&e.key===" "){e.preventDefault();openAc();return;}  // Ctrl+Space to trigger
+    if(e.ctrlKey&&e.key===" "){e.preventDefault();openAc();return;}
   });
 
-  loadSchema();  // prime autocomplete from the prefilled endpoint
+  loadSchema();
 })();
 </script>
 </body>
