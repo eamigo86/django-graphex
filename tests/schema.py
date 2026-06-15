@@ -5,14 +5,14 @@ import graphene
 from django.contrib.auth.models import User
 from django.utils.translation import gettext_lazy as _
 
-from django_graphex import all_directives
-from django_graphex.base_types import CustomDate, CustomDateTime, CustomTime
+from django_graphex import ObjectType, all_directives, field
 from django_graphex.fields import (
     DjangoFilterListField,
     DjangoFilterPaginateListField,
     DjangoListObjectField,
     DjangoObjectField,
 )
+from django_graphex.native.scalars import GdxDate, GdxDateTime, GdxTime
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.types import (
     DjangoListObjectType,
@@ -57,7 +57,7 @@ class UserModelType(DjangoModelType):
         )
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     # Possible User list queries definitions
     all_users = DjangoListObjectField(User1ListType, description=_("All Users query"))
     all_users1 = DjangoFilterPaginateListField(
@@ -80,9 +80,16 @@ class Query(graphene.ObjectType):
     # Exist two ways to define single or list user queries with DjangoModelType
     user2, users = UserModelType.QueryFields()
 
-    datetime_ = CustomDateTime(name="datetime")
-    date_ = CustomDate(name="date")
-    time_ = CustomTime(name="time")
+    # Custom (non-model) scalar fields — graphene-free public API (decision
+    # #1554): ``field()`` carries a graphql-core scalar singleton; ``name=``
+    # pins the explicit wire name (dodging the Python-keyword trailing
+    # underscore on the attribute). The native ``GdxDateTime`` / ``GdxDate`` /
+    # ``GdxTime`` scalars render the SAME GraphQL names (``CustomDateTime`` /
+    # ``CustomDate`` / ``CustomTime``, #1508) the old graphene descriptors did,
+    # so SDL stays byte-identical.
+    datetime_ = field(GdxDateTime, name="datetime")
+    date_ = field(GdxDate, name="date")
+    time_ = field(GdxTime, name="time")
 
     def resolve_datetime_(self, info, *args, **kwargs):
         return datetime.datetime(2020, 12, 31, 10, 21, 30)

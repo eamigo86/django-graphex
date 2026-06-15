@@ -43,7 +43,8 @@ from .types import (
     DjangoUnionType,
 )
 from .uploads import Base64FileInput, decode_base64_file
-from .native.base import InputType
+from .native.base import InputType, ObjectType
+from .native.descriptors import field
 from .native.mutation import Mutation
 from .validation import DepthLimitValidationRule
 from .views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
@@ -130,6 +131,9 @@ __all__ = (
     "AuthenticatedGraphQLView",
     # NATIVE INPUT (Phase 2)
     "InputType",
+    # NATIVE OBJECT TYPE + FIELD DECLARATION (Phase 7 S-ROOTS-f, decision #1554)
+    "ObjectType",
+    "field",
     # NATIVE MUTATION BASE (Phase 4 WU-2)
     "Mutation",
 )

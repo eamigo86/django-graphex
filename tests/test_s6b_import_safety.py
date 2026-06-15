@@ -154,3 +154,15 @@ def test_s6e_subscription_field_present_in_compiled_native_root() -> None:
     assert "post" in native_root.fields
     # Native arg set + the field is a DIRECT graphql-core field (no graphene Field).
     assert set(native_root.fields["post"].args) == {"action", "id", "filters"}
+
+
+def test_s_roots_f_public_objecttype_and_field_exported_both_backends() -> None:
+    """S-ROOTS-f: ``ObjectType`` + ``field`` are importable from the top-level
+    package under BOTH backends (the graphene-free public field-declaration API,
+    decision #1554) and are the canonical native objects."""
+    from django_graphex import ObjectType, field
+    from django_graphex.native.base import ObjectType as NativeObjectType
+    from django_graphex.native.descriptors import field as native_field
+
+    assert ObjectType is NativeObjectType
+    assert field is native_field
