@@ -7,7 +7,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from django.utils.text import slugify
-from graphene.utils.str_converters import to_camel_case, to_snake_case
+from django_graphex._strconv import to_camel_case, to_snake_case
 from graphql import (
     GraphQLArgument,
     GraphQLBoolean,

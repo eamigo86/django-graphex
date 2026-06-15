@@ -27,7 +27,7 @@ from django.db.models import (
 )
 from django.db.models.base import ModelBase
 from django.db.models.constants import LOOKUP_SEP
-from graphene.utils.str_converters import to_snake_case
+from ._strconv import to_snake_case
 from graphql import (
     GraphQLList,
     GraphQLNonNull,

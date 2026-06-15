@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from graphene.utils.str_converters import to_snake_case
+from django_graphex._strconv import to_snake_case
 from graphql import DirectiveLocation, GraphQLDirective
 
 from ..registry import get_global_registry

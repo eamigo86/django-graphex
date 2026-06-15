@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from graphene.utils.str_converters import to_camel_case
+from django_graphex._strconv import to_camel_case
 from graphql import (
     GraphQLArgument,
     GraphQLField,
