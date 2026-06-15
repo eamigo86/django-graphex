@@ -37,6 +37,7 @@ from typing import Any
 # recognize them.
 from graphene.types.mountedtype import MountedType
 from graphene.types.unmountedtype import UnmountedType
+from graphql import GraphQLField
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
@@ -51,11 +52,25 @@ _GRAPHENE_DESCRIPTOR_TYPES = (UnmountedType, MountedType)
 # ``_meta.fields`` and shielded from Pydantic model-field inference) when it is an
 # instance of one of these. This UNION is the dual-currency surface during
 # graphene removal: graphene descriptors (transitional, removed in S8) PLUS the
-# native ``NativeField`` (the S-ROOTS-a currency). Recognizing ``NativeField``
-# here lets a class-body ``field()`` declaration — e.g. ``errors.py``'s native
-# ``ErrorType`` (S-ROOTS-b) — land in ``_meta.fields`` instead of being silently
-# inferred as a Pydantic model field (PydanticUserError) or dropped.
-_FIELD_DESCRIPTOR_TYPES = (UnmountedType, MountedType, NativeField)
+# native ``NativeField`` (the S-ROOTS-a currency) PLUS a raw graphql-core
+# ``GraphQLField`` (the S-ROOTS-h currency).
+#
+# Recognizing ``NativeField`` here lets a class-body ``field()`` declaration —
+# e.g. ``errors.py``'s native ``ErrorType`` (S-ROOTS-b) — land in ``_meta.fields``
+# instead of being silently inferred as a Pydantic model field (PydanticUserError)
+# or dropped.
+#
+# Recognizing ``GraphQLField`` (S-ROOTS-h) lets a NATIVE ``ObjectType`` root hold
+# a raw graphql-core ``GraphQLField`` class attribute — e.g.
+# ``create_x = CreateX.Field()`` (hand-written ``Mutation``) or
+# ``post_create = PostMutation.CreateField()`` (``DjangoModelMutation``) — without
+# crashing at class-def with ``PydanticUserError`` ('non-annotated attribute'). The
+# raw field is collected into ``_meta.fields`` AS-IS; the native root compiler
+# reuses it verbatim (it is already a compiled graphql-core field — never recompiled
+# or scalar-converted). Previously only a GRAPHENE root tolerated these (graphene's
+# metaclass silently DROPPED them, and ``_collect_root_attrs`` recovered the
+# registered ones); a native root could not declare one at all.
+_FIELD_DESCRIPTOR_TYPES = (UnmountedType, MountedType, NativeField, GraphQLField)
 
 
 def _trim_docstring(docstring: str | None) -> str | None:
@@ -136,15 +151,17 @@ def _mount_descriptor_fields(cls: type) -> dict[str, Any]:
     for base in reversed(cls.__mro__):
         # graphene descriptors -> mounted graphene ``Field`` (carries ``.type``).
         fields.update(yank_fields_from_attrs(base.__dict__, _as=Field))
-        # Native ``field()`` descriptors are ALREADY field-shaped (expose
-        # ``.type`` / ``.args`` / ``.wrap_resolve``), so the compiler reads them
-        # directly — do NOT route them through graphene's ``yank_fields_from_attrs``
-        # (which would skip them entirely). Merge them in AS-IS, base-first so a
-        # subclass declaration wins on a name collision (graphene parity). This is
-        # the MOUNT half of the S-ROOTS-a silent-drop gotcha: it lets a class-body
-        # ``field()`` (e.g. native ``ErrorType`` in S-ROOTS-b) reach ``_meta.fields``.
+        # Native ``field()`` descriptors AND raw graphql-core ``GraphQLField``
+        # attributes are ALREADY field-shaped (expose ``.type`` / ``.args`` /
+        # ``.wrap_resolve``), so the compiler reads them directly — do NOT route
+        # them through graphene's ``yank_fields_from_attrs`` (which would skip them
+        # entirely). Merge them in AS-IS, base-first so a subclass declaration wins
+        # on a name collision (graphene parity). This is the MOUNT half of the
+        # silent-drop gotcha: it lets a class-body ``field()`` (native ``ErrorType``,
+        # S-ROOTS-b) AND a raw ``GraphQLField`` (a mounted mutation field on a native
+        # root, S-ROOTS-h) reach ``_meta.fields`` instead of vanishing.
         for attr_name, value in vars(base).items():
-            if isinstance(value, NativeField):
+            if isinstance(value, (NativeField, GraphQLField)):
                 fields[attr_name] = value
     return fields
 

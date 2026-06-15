@@ -794,7 +794,18 @@ def compile_native_root(root: type, *, name: str) -> GraphQLObjectType:
         # ``CustomDate(name="date")``) exactly as graphene does; the snake
         # ``field_name`` is still used for the ``resolve_<field_name>`` lookup.
         wire_name = _rendered_field_name(field, field_name)
-        if _is_subscription_field(field):
+        if isinstance(field, GraphQLField):
+            # S-ROOTS-h: a raw graphql-core ``GraphQLField`` declared on a NATIVE
+            # ``ObjectType`` root (e.g. ``create_x = CreateX.Field()`` for a
+            # hand-written ``Mutation``, or ``post_create = PostMutation.CreateField()``
+            # for ``DjangoModelMutation``) is ALREADY a fully compiled field — its
+            # type is the compiled payload, its args + resolver are wired. Reuse it
+            # VERBATIM (never recompile / scalar-convert). On a graphene root these
+            # never reach ``_meta.fields`` (graphene drops them); they are recovered
+            # by ``_collect_root_attrs`` below instead. The native mount
+            # (``_mount_descriptor_fields``) is what lands them here for a native root.
+            fields[wire_name] = field
+        elif _is_subscription_field(field):
             # Subscription root field (WU7): the mounted ``SubscriptionField``
             # carries the Subscription subclass as its ``type`` (``_meta.output``).
             # Build the DIRECT native subscription field (event type + subscribe

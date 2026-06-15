@@ -1,49 +1,65 @@
-"""Native Mutation base for hand-written GraphQL mutations.
+"""Native ``Mutation`` base for hand-written GraphQL mutations (S-ROOTS-h).
 
-Provides ``Mutation``, a drop-in replacement for ``graphene.Mutation`` under
-``GDX_BACKEND=native``.  Usage::
+``Mutation`` is the graphene-free public base for HAND-WRITTEN mutations under the
+native backend — the 2.0 replacement for ``graphene.Mutation``.  Usage (the public
+2.0 form)::
 
-    import graphene
-    from django_graphex.native.mutation import Mutation
+    from django_graphex import Mutation, field
+    from graphql import GraphQLBoolean, GraphQLString
+    import graphene  # only for the transitional argument declaration form
 
-    class CreateUser(Mutation):
-        class args:
+    class CreateCategory(Mutation):
+        class args:                              # input arguments
             name = graphene.Argument(graphene.String, required=True)
 
-        @staticmethod
-        def mutate(root, info, name):
-            user = User.objects.create(name=name)
-            return user
+        ok = field(GraphQLBoolean)               # output payload fields
+        category = field(CategoryType)
+        error = field(GraphQLString)
 
-    # In your schema:
-    field = CreateUser.Field()  # → GraphQLField
+        @classmethod
+        def mutate(cls, root, info, **args):
+            obj = Category.objects.create(name=args["name"])
+            return cls(ok=True, category=obj, error=None)
 
-Design:
-- ``class args`` inner class declares arguments as ``graphene.Argument``
-  instances (class-level attrs).  ``Field()`` reads them via
-  ``django_graphex._strconv.props`` and converts each one with
-  ``graphene_arg_to_graphql_argument``.
-- ``Field()`` returns ``GraphQLField(type_=GraphQLString, resolve=..., args=…)``.
-  The ``type_`` placeholder is ``GraphQLString`` — Phase 5 wires real output
-  types; for Phase 4 isolation testing the type value is irrelevant.
-- The resolver is ``_adapt_self(cls.mutate, cls)``:
-  - ``staticmethod``/bare ``(root, info, ...)`` functions → passthrough.
-  - ``def mutate(self, ...)`` → shimmed with ``DeprecationWarning``.
+    # On a native ``django_graphex.ObjectType`` root:
+    class RootMutation(ObjectType):
+        create_category = CreateCategory.Field()
 
-Zero graphene imports at module level (graphene is only accessed inside
-``_compile_args`` when actually converting arguments).
+Design (reuses the ``DjangoModelMutation`` machinery — mutation.py):
+
+1. ``Mutation`` subclasses the NATIVE ``ObjectType`` base, so the class-body
+   output ``field()`` descriptors land in ``_meta.fields`` (the native terminal's
+   descriptor merge) and the ``cls(ok=..., obj=..., error=...)`` VALUE-OBJECT
+   payload round-trips through the native ObjectType ``__init__`` (the S6c
+   silent-null fix stashes the descriptor-named kwargs as instance attributes).
+
+2. ``class args`` is converted to a ``{name: GraphQLArgument}`` dict exactly like
+   ``DjangoModelMutation`` builds its arguments — via
+   ``graphene_arg_to_graphql_argument`` (accepts the native arg form).
+
+3. ``Field()`` compiles the OUTPUT PAYLOAD by running THIS class through
+   ``_compile_plain_object_type`` (the same plain-object compiler
+   ``DjangoModelMutation`` uses for its payload), builds the args, wraps the
+   ``mutate`` resolver, and returns a graphql-core ``GraphQLField`` whose type IS
+   that compiled payload — NOT the old Phase-4 ``GraphQLString`` placeholder.  It
+   registers the field's identity in ``_NATIVE_FIELD_IDENTITIES`` so the native
+   root compiler's ``_collect_root_attrs`` recovers it (never silently dropping it).
+
+Graphene import policy: zero top-level ``import graphene``.  graphene is touched
+only lazily inside ``_compile_args`` when converting an argument declaration that
+is still a ``graphene.Argument`` (the transitional argument form).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from graphql import GraphQLField, GraphQLString
+from graphql import GraphQLField
 
 from django_graphex._strconv import props
 from django_graphex.native._args import graphene_arg_to_graphql_argument
 from django_graphex.native._compat import _adapt_self
-
+from django_graphex.native.base import ObjectType as NativeObjectType
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -55,7 +71,8 @@ def _compile_args(args_cls: type) -> dict[str, Any]:
 
     Reads every non-underscore attribute of *args_cls*.  Attributes that are
     ``graphene.Argument`` instances are converted via
-    ``graphene_arg_to_graphql_argument``; other attribute types are skipped.
+    ``graphene_arg_to_graphql_argument`` (the same converter ``DjangoModelMutation``
+    uses); other attribute types are skipped.
 
     Args:
         args_cls: The ``class args`` inner class of a ``Mutation`` subclass.
@@ -65,7 +82,7 @@ def _compile_args(args_cls: type) -> dict[str, Any]:
     """
     result: dict[str, Any] = {}
     for attr_name, value in props(args_cls).items():
-        # Lazy check: is this a graphene Argument?
+        # Lazy check: is this a graphene Argument? (transitional arg form)
         try:
             from graphene import Argument as GArgument  # noqa: PLC0415
         except ImportError:  # pragma: no cover — graphene absent
@@ -80,56 +97,73 @@ def _compile_args(args_cls: type) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class Mutation:
+class Mutation(NativeObjectType):
     """Base class for hand-written GraphQL mutations under the native backend.
 
     Subclass and define:
 
-    - ``class args``: inner class with ``graphene.Argument`` class attributes.
-    - ``def mutate(root, info, **kwargs)`` (or ``mutate(self, info, ...)``):
-      the resolver function.  ``self``-first callables are automatically
-      adapted via ``_adapt_self``.
+    - ``class args``: inner class with ``graphene.Argument`` class attributes
+      (the transitional argument form; converted to native ``GraphQLArgument``).
+    - Output payload fields declared via ``field()``
+      (``ok = field(GraphQLBoolean)``, ``category = field(CategoryType)`` …).
+    - ``mutate``: a ``@classmethod`` (or ``@staticmethod`` / bare function) that
+      returns ``cls(ok=..., <obj>=..., error=...)`` — a value-object instance of
+      this class.  ``self``-first callables are adapted via ``_adapt_self``.
 
     Example::
 
-        class MyMutation(Mutation):
+        class CreateCategory(Mutation):
             class args:
                 name = graphene.Argument(graphene.String, required=True)
 
-            @staticmethod
-            def mutate(root, info, name):
-                return do_something(name)
+            ok = field(GraphQLBoolean)
+            category = field(CategoryType)
+            error = field(GraphQLString)
 
-        field = MyMutation.Field()  # → GraphQLField
+            @classmethod
+            def mutate(cls, root, info, **args):
+                obj = Category.objects.create(name=args["name"])
+                return cls(ok=True, category=obj, error=None)
+
+        # In your schema root:
+        create_category = CreateCategory.Field()  # → GraphQLField
     """
+
+    class Meta:
+        """Marks the ``Mutation`` BASE itself as abstract.
+
+        The native ``ObjectType.__init_subclass__`` driver skips a base whose
+        ``Meta.abstract`` is True, so the bare ``Mutation`` class does not build a
+        payload ``_meta``; concrete user subclasses do.
+        """
+
+        abstract = True
 
     class args:
         """Default empty args inner class.
 
-        Subclasses override this to declare mutation arguments.
+        Subclasses override this to declare mutation arguments.  Declared as a
+        plain nested class (a ``type``), which Pydantic's ``ModelMetaclass``
+        ignores — it is not a model field.
         """
 
     @classmethod
-    def Field(cls) -> GraphQLField:
-        """Build and return a ``GraphQLField`` for this mutation.
+    def _resolve_mutate(cls) -> Any:
+        """Locate and adapt the ``mutate`` callable for this subclass.
 
-        The field's ``resolve`` is ``_adapt_self(cls.mutate, cls)`` and its
-        ``args`` are compiled from the ``class args`` inner class.
+        Walks the MRO to find ``mutate`` (skipping the bare ``Mutation`` base,
+        which defines none), unwraps ``staticmethod``, and adapts a ``self``-first
+        callable to the ``(root, info, **kw)`` protocol via ``_adapt_self``.
 
         Returns:
-            A ``GraphQLField`` whose ``.resolve`` and ``.args`` are ready for
-            direct inspection and (in Phase 5) schema wiring.
+            The resolver callable ready for ``GraphQLField(resolve=…)``.
+
+        Raises:
+            AttributeError: When no ``mutate`` is defined anywhere in the MRO.
         """
-        # Retrieve the args inner class from the subclass (or the default empty one)
-        args_cls = cls.__dict__.get("args", cls.args)
-
-        # Compile arguments
-        compiled_args = _compile_args(args_cls)
-
-        # Adapt the mutate resolver
         mutate_fn = cls.__dict__.get("mutate", None)
         if mutate_fn is None:
-            # Walk MRO to find mutate (but not our own default placeholder)
+            # Walk MRO to find mutate (but not our own — Mutation defines none).
             for klass in cls.__mro__[1:]:
                 if "mutate" in klass.__dict__:
                     mutate_fn = klass.__dict__["mutate"]
@@ -140,17 +174,60 @@ class Mutation:
                 f"{cls.__name__} must define a 'mutate' method or staticmethod."
             )
 
-        # Unwrap staticmethod descriptor if needed
+        # Unwrap descriptors so ``_adapt_self`` inspects the real function.
         if isinstance(mutate_fn, staticmethod):
             mutate_fn = mutate_fn.__func__
+        elif isinstance(mutate_fn, classmethod):
+            # Bind the classmethod to ``cls`` so it is called as
+            # ``(root, info, **kw)`` by graphql-core (``cls`` is already bound).
+            mutate_fn = mutate_fn.__get__(None, cls)
 
-        resolver = _adapt_self(mutate_fn, owner=cls)
+        return _adapt_self(mutate_fn, owner=cls)
 
-        # Phase 4: type_ placeholder — Phase 5 wires the real output type.
-        # Using GraphQLString as a non-None placeholder satisfies GraphQLField
-        # construction without schema assembly.
-        return GraphQLField(
-            GraphQLString,
+    @classmethod
+    def Field(cls) -> GraphQLField:
+        """Build and return a ``GraphQLField`` for this mutation.
+
+        The field's ``type`` is the compiled OUTPUT PAYLOAD ``GraphQLObjectType``
+        (the declared ``field()`` output descriptors compiled via
+        ``_compile_plain_object_type`` — the SAME plain-object compiler
+        ``DjangoModelMutation`` uses for its ``ok``/``errors`` payload).  Its
+        ``args`` are compiled from the ``class args`` inner class and its
+        ``resolve`` is the adapted ``mutate`` callable.
+
+        The returned field's identity is registered in ``_NATIVE_FIELD_IDENTITIES``
+        so the native root compiler (``_collect_root_attrs``) recovers it when
+        mounted on a root — the silent-drop guard.
+
+        Returns:
+            A graphql-core ``GraphQLField`` ready for direct mounting on a native
+            ``ObjectType`` root (or inspection).
+        """
+        # Lazy imports to avoid an import cycle at module load (schema_compiler
+        # imports from this module's siblings).
+        from django_graphex.mutation import _NATIVE_FIELD_IDENTITIES
+        from django_graphex.native.schema_compiler import _compile_plain_object_type
+
+        # 1) Output payload type — compile THIS class (its field() output
+        #    descriptors live in _meta.fields). The inner field types are lazy
+        #    thunks, so object-reference fields resolve at schema-build time
+        #    (after compile_all_outputs), not here.
+        payload_type = _compile_plain_object_type(cls)
+
+        # 2) Arguments from ``class args``.
+        args_cls = cls.__dict__.get("args", cls.args)
+        compiled_args = _compile_args(args_cls)
+
+        # 3) Resolver — the adapted ``mutate`` callable.
+        resolver = cls._resolve_mutate()
+
+        gql_field = GraphQLField(
+            payload_type,
             args=compiled_args,
             resolve=resolver,
+            description=cls.__doc__,
         )
+        # Register identity so ``_collect_root_attrs`` recovers it on a root —
+        # parity with the DjangoModelMutation registration (silent-drop guard).
+        _NATIVE_FIELD_IDENTITIES.add(id(gql_field))
+        return gql_field
