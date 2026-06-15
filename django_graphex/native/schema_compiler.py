@@ -275,24 +275,47 @@ def _is_plain_object_type(graphene_cls: Any) -> bool:
         graphene_cls: The mounted field ``type`` (``field.type``).
 
     Returns:
-        ``True`` when *graphene_cls* is a class that subclasses
-        ``graphene.ObjectType`` but is NOT a django-graphex output type.
+        ``True`` when *graphene_cls* is a class that is EITHER a native plain
+        ``ObjectType`` (the S-ROOTS-b marker — e.g. ``ErrorType``) OR a graphene
+        ``ObjectType`` subclass (transitional fallback), but is NOT a
+        django-graphex container/model output type.
     """
     import inspect
 
-    import graphene
-
     if not inspect.isclass(graphene_cls):
         return False
-    if not issubclass(graphene_cls, graphene.ObjectType):
-        return False
 
-    # Exclude django-graphex output types — they own a canonical compiled type.
+    # Exclude django-graphex container/model output types — they own a canonical
+    # compiled type built by the output registry, reused via
+    # ``_plain_django_output_type``. Checked FIRST so neither the native-marker nor
+    # the graphene fallback below ever mis-claims a ``DjangoObjectType`` /
+    # ``DjangoListObjectType`` as an on-the-fly plain object.
     from django_graphex.types import DjangoListObjectType, DjangoObjectType
 
     if issubclass(graphene_cls, (DjangoObjectType, DjangoListObjectType)):
         return False
-    return True
+
+    # NATIVE-MARKER (S-ROOTS-b) — checked BEFORE the graphene fallback. A native
+    # plain ``ObjectType`` (e.g. ``ErrorType``) is a ``native.base.ObjectType``
+    # subclass with ``type(cls) is pydantic.ModelMetaclass``; it is NOT a
+    # ``graphene.ObjectType``, so without this branch a native ErrorType would
+    # fall through to the scalar arm (``_unwrap_graphene_type``) and KeyError /
+    # silently vanish (the silent-drop EPICENTER). ``InputType`` is EXCLUDED: it
+    # shares the native base but is an INPUT type, never a plain output object.
+    from django_graphex.native.base import InputType
+    from django_graphex.native.base import ObjectType as NativeObjectType
+
+    if issubclass(graphene_cls, NativeObjectType):
+        if issubclass(graphene_cls, InputType):
+            return False
+        return True
+
+    # Transitional graphene fallback — graphene stays installed until S8; nested
+    # plain-object fields may still be graphene ``ObjectType`` subclasses until the
+    # remaining sub-slices convert them.
+    import graphene
+
+    return issubclass(graphene_cls, graphene.ObjectType)
 
 
 def _compile_plain_object_type(graphene_cls: type) -> GraphQLObjectType:

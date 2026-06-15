@@ -40,10 +40,22 @@ from graphene.types.unmountedtype import UnmountedType
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
+from django_graphex.native.descriptors import NativeField
+
 # A class-attribute name (or value) is treated as a graphene FIELD DESCRIPTOR
 # when it is an instance of one of these. ``MountedType`` covers ``Field(...)``;
 # ``UnmountedType`` covers scalars/structures like ``Boolean()`` / ``List(...)``.
 _GRAPHENE_DESCRIPTOR_TYPES = (UnmountedType, MountedType)
+
+# A class-attribute is treated as a FIELD DESCRIPTOR (collected into
+# ``_meta.fields`` and shielded from Pydantic model-field inference) when it is an
+# instance of one of these. This UNION is the dual-currency surface during
+# graphene removal: graphene descriptors (transitional, removed in S8) PLUS the
+# native ``NativeField`` (the S-ROOTS-a currency). Recognizing ``NativeField``
+# here lets a class-body ``field()`` declaration — e.g. ``errors.py``'s native
+# ``ErrorType`` (S-ROOTS-b) — land in ``_meta.fields`` instead of being silently
+# inferred as a Pydantic model field (PydanticUserError) or dropped.
+_FIELD_DESCRIPTOR_TYPES = (UnmountedType, MountedType, NativeField)
 
 
 def _trim_docstring(docstring: str | None) -> str | None:
@@ -95,7 +107,7 @@ def _collect_descriptor_fields(cls: type) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for base in reversed(cls.__mro__):
         for attr_name, value in vars(base).items():
-            if isinstance(value, _GRAPHENE_DESCRIPTOR_TYPES):
+            if isinstance(value, _FIELD_DESCRIPTOR_TYPES):
                 fields[attr_name] = value
     return fields
 
@@ -122,7 +134,18 @@ def _mount_descriptor_fields(cls: type) -> dict[str, Any]:
 
     fields: dict[str, Any] = {}
     for base in reversed(cls.__mro__):
+        # graphene descriptors -> mounted graphene ``Field`` (carries ``.type``).
         fields.update(yank_fields_from_attrs(base.__dict__, _as=Field))
+        # Native ``field()`` descriptors are ALREADY field-shaped (expose
+        # ``.type`` / ``.args`` / ``.wrap_resolve``), so the compiler reads them
+        # directly — do NOT route them through graphene's ``yank_fields_from_attrs``
+        # (which would skip them entirely). Merge them in AS-IS, base-first so a
+        # subclass declaration wins on a name collision (graphene parity). This is
+        # the MOUNT half of the S-ROOTS-a silent-drop gotcha: it lets a class-body
+        # ``field()`` (e.g. native ``ErrorType`` in S-ROOTS-b) reach ``_meta.fields``.
+        for attr_name, value in vars(base).items():
+            if isinstance(value, NativeField):
+                fields[attr_name] = value
     return fields
 
 
@@ -310,7 +333,7 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
         populate_by_name=True,
-        ignored_types=_GRAPHENE_DESCRIPTOR_TYPES,
+        ignored_types=_FIELD_DESCRIPTOR_TYPES,
     )
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
