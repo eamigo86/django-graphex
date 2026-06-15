@@ -53,6 +53,51 @@ def test_to_camel_case_already_camel():
     assert to_camel_case("createdAt") == "createdAt"
 
 
+def test_to_camel_case_lowercases_internal_capitals_like_graphene():
+    """Component capitals must be lower-cased exactly like graphene's to_camel_case.
+
+    Enum / type NAMES are built from values that already carry internal capitals
+    (e.g. ``meta.object_name`` = ``"SeedArticle"``). graphene's
+    ``to_camel_case`` ``str.capitalize()``-es each later component, lower-casing
+    the remainder (``"SeedArticle" -> "Seedarticle"``). The stdlib replacement
+    MUST match byte-for-byte, else filter-input enum-registry lookups (keyed by
+    this name) miss and the SDL silently degrades the choices field to String.
+    """
+    from django_graphex._strconv import to_camel_case
+
+    assert to_camel_case("tests_SeedArticle_status_Enum") == "testsSeedarticleStatusEnum"
+
+
+@pytest.mark.parametrize(
+    "snake",
+    [
+        "tests_SeedArticle_status_Enum",
+        "tests_SeedArticle_status_Enum_create",
+        "tests_Category_status_Enum",
+        "created_at",
+        "first_name_last",
+        "foo__bar",
+        "_leading",
+        "leading_",
+        "name",
+        "a_1_b",
+    ],
+)
+def test_to_camel_case_byte_equivalent_to_graphene(snake):
+    """The stdlib to_camel_case is byte-equivalent to graphene's for every form.
+
+    This is the cross-module-naming contract: converter.py, filtering/schema.py,
+    filtering/native_schema.py and native/* all key the SAME registry by names
+    built from this function, so any drift between the stdlib and graphene
+    implementations would split a single logical name into two keys.
+    """
+    from graphene.utils.str_converters import to_camel_case as graphene_to_camel
+
+    from django_graphex._strconv import to_camel_case
+
+    assert to_camel_case(snake) == graphene_to_camel(snake)
+
+
 # ---------------------------------------------------------------------------
 # to_snake_case
 # ---------------------------------------------------------------------------

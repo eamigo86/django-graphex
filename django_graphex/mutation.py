@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import os as _os
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
@@ -609,12 +608,12 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
     def CreateField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the create mutation.
 
-        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
-        Under graphene (default) returns a graphene Field.
+        Returns the graphql-core ``GraphQLField`` registered for the ``create``
+        operation in ``_NATIVE_FIELD_REGISTRY``.
 
         Args:
             *args: Positional arguments (unused).
-            **kwargs: Extra keyword arguments forwarded to the field (graphene only).
+            **kwargs: Extra keyword arguments (unused).
 
         Returns:
             The field resolving to the create mutation.
@@ -623,25 +622,18 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "create" is not in Meta.model_operations.
         """
         cls._assert_operation("create")
-        if _os.environ.get("GDX_BACKEND", "graphene") == "native":
-            return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "create", "native")]
-        return Field(
-            cls._meta.output,
-            args=cls._meta.arguments["create"],
-            resolver=cls.create,
-            **kwargs,
-        )
+        return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "create", "native")]
 
     @classmethod
     def DeleteField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the delete mutation.
 
-        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
-        Under graphene (default) returns a graphene Field.
+        Returns the graphql-core ``GraphQLField`` registered for the ``delete``
+        operation in ``_NATIVE_FIELD_REGISTRY``.
 
         Args:
             *args: Positional arguments (unused).
-            **kwargs: Extra keyword arguments forwarded to the field (graphene only).
+            **kwargs: Extra keyword arguments (unused).
 
         Returns:
             The field resolving to the delete mutation.
@@ -650,25 +642,18 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "delete" is not in Meta.model_operations.
         """
         cls._assert_operation("delete")
-        if _os.environ.get("GDX_BACKEND", "graphene") == "native":
-            return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "delete", "native")]
-        return Field(
-            cls._meta.output,
-            args=cls._meta.arguments["delete"],
-            resolver=cls.delete,
-            **kwargs,
-        )
+        return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "delete", "native")]
 
     @classmethod
     def UpdateField(cls, *args: Any, **kwargs: Any) -> Any:
         """Build a GraphQL field for the update mutation.
 
-        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
-        Under graphene (default) returns a graphene Field.
+        Returns the graphql-core ``GraphQLField`` registered for the ``update``
+        operation in ``_NATIVE_FIELD_REGISTRY``.
 
         Args:
             *args: Positional arguments (unused).
-            **kwargs: Extra keyword arguments forwarded to the field (graphene only).
+            **kwargs: Extra keyword arguments (unused).
 
         Returns:
             The field resolving to the update mutation.
@@ -677,14 +662,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "update" is not in Meta.model_operations.
         """
         cls._assert_operation("update")
-        if _os.environ.get("GDX_BACKEND", "graphene") == "native":
-            return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "update", "native")]
-        return Field(
-            cls._meta.output,
-            args=cls._meta.arguments["update"],
-            resolver=cls.update,
-            **kwargs,
-        )
+        return _NATIVE_FIELD_REGISTRY[(cls._meta.model, "update", "native")]
 
     @classmethod
     def _assert_operation(cls, operation: str) -> None:

@@ -33,9 +33,9 @@ from graphene import (
     String,
 )
 from graphene.types.json import JSONString
-from graphene.utils.str_converters import to_camel_case
 from graphql.pyutils import register_description
 
+from ._strconv import to_camel_case
 from .base_types import (
     Binary,
     CustomDate,

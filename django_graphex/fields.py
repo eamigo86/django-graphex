@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import operator
-import os
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -11,15 +10,14 @@ from django.db.models import Count, F, JSONField, Prefetch
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.expressions import Window
 from django.db.models.functions import RowNumber
-from graphene import ID, Argument, Field, List
+from graphene import ID, Field, List
 from graphene.types.structures import NonNull, Structure
-
-from ._strconv import to_snake_case
 
 import django_graphex.settings as _settings_module
 from django_graphex.filtering.backend import resolve_filter_backend
 from django_graphex.settings import graphql_api_settings
 
+from ._strconv import to_snake_case
 from .base_types import DjangoListObjectBase
 from .filtering.filter_field import apply_custom_filters
 from .paginations.pagination import BaseDjangoGraphqlPagination
@@ -33,12 +31,6 @@ from .utils import (
     maybe_queryset,
     queryset_factory,
 )
-
-#: True when GDX_BACKEND=native is set in the process environment. Read once at
-#: import time (the flag is process-global and set before import — D7). Mirrors
-#: the same constant in paginations/utils.py and paginations/pagination.py so the
-#: WU5/WU6a callsites share one source of truth instead of re-reading os.environ.
-_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 # ---------------------------------------------------------------------------
 # G3 spike result: does .only() survive Window + filter(_gqx_rn) wrapping?
@@ -121,19 +113,13 @@ class DjangoObjectField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        import os as _os_fields
+        from graphql import GraphQLList as _GQLList
+        from graphql import GraphQLNonNull as _GQLNonNull
 
         current_type = self.type
-        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
-            from graphql import GraphQLList as _GQLList
-            from graphql import GraphQLNonNull as _GQLNonNull
-
-            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
-            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-                current_type = current_type.of_type
-        else:
-            while isinstance(current_type, Structure):
-                current_type = current_type.of_type
+        # Unwrap graphql-core wrappers first, then graphene Structure.
+        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+            current_type = current_type.of_type
         return current_type._meta.model
 
     @staticmethod
@@ -224,14 +210,17 @@ class DjangoListField(Field):
 
 
 def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
-    """Attach a single ``filter`` argument (the native input type) to a field.
+    """Record the filter configuration (backend, fields, custom filters) on a field.
 
-    Builds the recursive ``<Model>FilterInput`` from the type's declared
-    ``filter_fields`` via the native filter backend and stores both the backend
-    and the input type on the field for the resolver to use.
+    Stores the resolved filter backend and the type's declared ``filter_fields``
+    on the field as backend-agnostic metadata. The native schema compiler
+    (``native.schema_compiler._filter_arg``) reads ``field.fields`` /
+    ``field.custom_filters`` / ``field.model`` and builds the native
+    ``<Model>FilterInput`` (``filtering.native_schema.build_filter_input_type``)
+    when it mounts the field, so no GraphQL input type is constructed here.
 
-    Also picks up ``@filter_field``-decorated methods from the type and injects
-    them as scalar arguments in the filter input type.
+    Also picks up ``@filter_field``-decorated methods from the type so the native
+    compiler can inject them as scalar arguments in the filter input type.
 
     Args:
         field: The list field being configured.
@@ -252,23 +241,6 @@ def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
         base_type = getattr(getattr(_type, "_meta", None), "baseType", None)
         custom_filters = getattr(base_type, "_dgx_custom_filters", None) or []
     field.custom_filters = custom_filters
-
-    if declared_fields or custom_filters:
-        registry = getattr(getattr(_type, "_meta", None), "registry", None)
-        # This is the GRAPHENE field path: the result is wrapped in a graphene
-        # ``Argument`` below, so it MUST be a graphene input type even under
-        # ``GDX_BACKEND=native``. The native (graphql-core) filter input is
-        # consumed by the native compiler field path (WU5/WU6), not here.
-        from django_graphex.filtering.schema import (
-            build_filter_input_type as _graphene_build_filter_input_type,
-        )
-
-        field.filter_type = _graphene_build_filter_input_type(
-            _type._meta.model,
-            declared_fields,
-            registry,
-            custom_filters=custom_filters,
-        )
 
 
 class DjangoFilterListField(Field):
@@ -291,10 +263,6 @@ class DjangoFilterListField(Field):
         """
         kwargs.setdefault("args", {})
         _build_filter_arg(self, _type, fields)
-        if self.filter_type is not None:
-            kwargs["args"]["filter"] = Argument(
-                self.filter_type, description="Filtering options for the list"
-            )
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
@@ -308,19 +276,13 @@ class DjangoFilterListField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        import os as _os_fields
+        from graphql import GraphQLList as _GQLList
+        from graphql import GraphQLNonNull as _GQLNonNull
 
         current_type = self.type
-        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
-            from graphql import GraphQLList as _GQLList
-            from graphql import GraphQLNonNull as _GQLNonNull
-
-            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
-            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-                current_type = current_type.of_type
-        else:
-            while isinstance(current_type, Structure):
-                current_type = current_type.of_type
+        # Unwrap graphql-core wrappers first, then graphene Structure.
+        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+            current_type = current_type.of_type
         return current_type._meta.model
 
     @staticmethod
@@ -404,19 +366,13 @@ class DjangoFilterListField(Field):
         Returns:
             A partial that binds the leading positional arguments.
         """
-        import os as _os_fields
+        from graphql import GraphQLList as _GQLList
+        from graphql import GraphQLNonNull as _GQLNonNull
 
         current_type = self.type
-        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
-            from graphql import GraphQLList as _GQLList
-            from graphql import GraphQLNonNull as _GQLNonNull
-
-            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
-            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-                current_type = current_type.of_type
-        else:
-            while isinstance(current_type, Structure):
-                current_type = current_type.of_type
+        # Unwrap graphql-core wrappers first, then graphene Structure.
+        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+            current_type = current_type.of_type
         if self.resolver:
             # Custom resolver: bind only (manager, filter_backend).
             return partial(
@@ -457,10 +413,6 @@ class DjangoFilterPaginateListField(Field):
         """
         kwargs.setdefault("args", {})
         _build_filter_arg(self, _type, fields)
-        if self.filter_type is not None:
-            kwargs["args"]["filter"] = Argument(
-                self.filter_type, description="Filtering options for the list"
-            )
 
         if pagination is None:
             # Resolve the global default safely: DEFAULT_PAGINATION_CLASS may be
@@ -475,14 +427,9 @@ class DjangoFilterPaginateListField(Field):
 
             self.pagination = pagination
 
-            # Under GDX_BACKEND=native, to_graphql_fields() returns native
-            # GraphQLArgument instances that graphene's to_arguments() cannot
-            # sort. The native compiler (WU6a) wires args directly; skip here.
-            # Reuse the module-level _NATIVE_BACKEND constant (WU5 SUGGESTION a)
-            # instead of re-reading os.environ at field-construction time.
-            if not _NATIVE_BACKEND:
-                pagination_kwargs = pagination.to_graphql_fields()
-                kwargs.update(**pagination_kwargs)
+            # The native compiler (schema_compiler) wires pagination args
+            # directly onto the list-container's ``results`` field, so the
+            # pagination's graphene ``to_graphql_fields()`` are NOT mounted here.
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
@@ -496,19 +443,13 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        import os as _os_fields
+        from graphql import GraphQLList as _GQLList
+        from graphql import GraphQLNonNull as _GQLNonNull
 
         current_type = self.type
-        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
-            from graphql import GraphQLList as _GQLList
-            from graphql import GraphQLNonNull as _GQLNonNull
-
-            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
-            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-                current_type = current_type.of_type
-        else:
-            while isinstance(current_type, Structure):
-                current_type = current_type.of_type
+        # Unwrap graphql-core wrappers first, then graphene Structure.
+        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+            current_type = current_type.of_type
         return current_type._meta.model
 
     def get_queryset(
@@ -525,19 +466,13 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The base queryset built for the request (hook applied).
         """
-        import os as _os_fields
+        from graphql import GraphQLList as _GQLList
+        from graphql import GraphQLNonNull as _GQLNonNull
 
         current_type = self.type
-        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
-            from graphql import GraphQLList as _GQLList
-            from graphql import GraphQLNonNull as _GQLNonNull
-
-            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
-            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-                current_type = current_type.of_type
-        else:
-            while isinstance(current_type, Structure):
-                current_type = current_type.of_type
+        # Unwrap graphql-core wrappers first, then graphene Structure.
+        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+            current_type = current_type.of_type
         return queryset_factory(manager, root, info, output_type=current_type, **kwargs)
 
     def list_resolver(
@@ -592,20 +527,14 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             A partial that binds the manager and filter backend.
         """
-        import os as _os_fields
+        from graphql import GraphQLList as _GQLList
+        from graphql import GraphQLNonNull as _GQLNonNull
 
         resolver = self.resolver or self.list_resolver
         current_type = self.type
-        if _os_fields.environ.get("GDX_BACKEND", "graphene") == "native":
-            from graphql import GraphQLList as _GQLList
-            from graphql import GraphQLNonNull as _GQLNonNull
-
-            # Under native: unwrap graphql-core wrappers first, then graphene Structure.
-            while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-                current_type = current_type.of_type
-        else:
-            while isinstance(current_type, Structure):
-                current_type = current_type.of_type
+        # Unwrap graphql-core wrappers first, then graphene Structure.
+        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
+            current_type = current_type.of_type
         return partial(
             resolver,
             current_type._meta.model._default_manager,
@@ -633,10 +562,6 @@ class DjangoListObjectField(Field):
         """
         kwargs.setdefault("args", {})
         _build_filter_arg(self, _type, fields)
-        if self.filter_type is not None:
-            kwargs["args"]["filter"] = Argument(
-                self.filter_type, description="Filtering options for the list"
-            )
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
@@ -783,22 +708,9 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         declared_fields = fields if fields is not None else _type._meta.filter_fields
         self.fields = declared_fields
-        if declared_fields:
-            # GRAPHENE field path: wrapped in a graphene ``Argument`` below, so
-            # build a graphene input type even under ``GDX_BACKEND=native`` (the
-            # native filter input is consumed by the native compiler, WU5/WU6).
-            from django_graphex.filtering.schema import (
-                build_filter_input_type as _graphene_build_filter_input_type,
-            )
-
-            self.filter_type = _graphene_build_filter_input_type(
-                _type._meta.model, declared_fields, _type._meta.registry
-            )
-            if self.filter_type is not None:
-                kwargs.setdefault("args", {})
-                kwargs["args"]["filter"] = Argument(
-                    self.filter_type, description="Filtering options for the list"
-                )
+        # The native schema compiler builds the ``<Model>FilterInput`` and mounts
+        # the ``filter`` arg from ``self.fields`` / ``self.filter_backend`` when it
+        # compiles this field, so no GraphQL input type is constructed here.
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"

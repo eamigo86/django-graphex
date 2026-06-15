@@ -15,21 +15,32 @@ from __future__ import annotations
 import re
 import warnings
 
-
 # ---------------------------------------------------------------------------
 # to_camel_case
 # ---------------------------------------------------------------------------
-
-_UNDERSCORE_RE = re.compile(r"_([a-zA-Z0-9])")
 
 
 def to_camel_case(value: str) -> str:
     """Convert a snake_case string to camelCase.
 
+    Byte-for-byte equivalent to ``graphene.utils.str_converters.to_camel_case``:
+    the FIRST underscore-separated component is kept verbatim and every later
+    component is ``str.capitalize()``-d (first letter upper, REST lower-cased),
+    with empty components (from doubled underscores) rendered as ``"_"``.  This
+    exact behavior matters: type / enum NAMES are built from values that may
+    already contain internal capitals (e.g. ``tests_SeedArticle_status_Enum``),
+    and ``str.capitalize()`` lower-cases the remainder
+    (``"SeedArticle" -> "Seedarticle"``).  A naive "uppercase the char after
+    each underscore" implementation would PRESERVE those capitals and silently
+    diverge from the graphene-built names used elsewhere (filter-input enum
+    lookups, native schema/type naming) — producing missed registry lookups and
+    SDL-parity breaks.
+
     Examples::
 
-        to_camel_case("created_at")  # "createdAt"
-        to_camel_case("name")        # "name"
+        to_camel_case("created_at")                    # "createdAt"
+        to_camel_case("name")                          # "name"
+        to_camel_case("tests_SeedArticle_status_Enum") # "testsSeedarticleStatusEnum"
 
     Args:
         value: A snake_case string.
@@ -37,7 +48,10 @@ def to_camel_case(value: str) -> str:
     Returns:
         The camelCase equivalent.
     """
-    return _UNDERSCORE_RE.sub(lambda m: m.group(1).upper(), value)
+    components = value.split("_")
+    return components[0] + "".join(
+        x.capitalize() if x else "_" for x in components[1:]
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -2248,73 +2248,46 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
     def CreateField(cls, *args, **kwargs) -> Any:
         """Create a field for creating objects.
 
-        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
-        Under graphene (default) returns a graphene Field.
+        Returns a graphql-core ``GraphQLField`` wired to the ``create`` resolver.
 
         Args:
             *args: Positional arguments (currently unused).
-            **kwargs: Keyword arguments forwarded to the field (graphene only).
+            **kwargs: Keyword arguments (currently unused).
 
         Returns:
             A mutation field wired to the "create" resolver.
         """
-        import os as _os_mt
-        if _os_mt.environ.get("GDX_BACKEND", "graphene") == "native":
-            return cls._build_native_mutation_field("create")
-        return Field(
-            cls._meta.mutation_output,
-            args=cls._meta.arguments["create"],
-            resolver=cls.create,
-            **kwargs,
-        )
+        return cls._build_native_mutation_field("create")
 
     @classmethod
     def DeleteField(cls, *args, **kwargs) -> Any:
         """Create a field for deleting objects.
 
-        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
-        Under graphene (default) returns a graphene Field.
+        Returns a graphql-core ``GraphQLField`` wired to the ``delete`` resolver.
 
         Args:
             *args: Positional arguments (currently unused).
-            **kwargs: Keyword arguments forwarded to the field (graphene only).
+            **kwargs: Keyword arguments (currently unused).
 
         Returns:
             A mutation field wired to the "delete" resolver.
         """
-        import os as _os_mt
-        if _os_mt.environ.get("GDX_BACKEND", "graphene") == "native":
-            return cls._build_native_mutation_field("delete")
-        return Field(
-            cls._meta.mutation_output,
-            args=cls._meta.arguments["delete"],
-            resolver=cls.delete,
-            **kwargs,
-        )
+        return cls._build_native_mutation_field("delete")
 
     @classmethod
     def UpdateField(cls, *args, **kwargs) -> Any:
         """Create a field for updating objects.
 
-        Under GDX_BACKEND=native returns a graphql-core GraphQLField.
-        Under graphene (default) returns a graphene Field.
+        Returns a graphql-core ``GraphQLField`` wired to the ``update`` resolver.
 
         Args:
             *args: Positional arguments (currently unused).
-            **kwargs: Keyword arguments forwarded to the field (graphene only).
+            **kwargs: Keyword arguments (currently unused).
 
         Returns:
             A mutation field wired to the "update" resolver.
         """
-        import os as _os_mt
-        if _os_mt.environ.get("GDX_BACKEND", "graphene") == "native":
-            return cls._build_native_mutation_field("update")
-        return Field(
-            cls._meta.mutation_output,
-            args=cls._meta.arguments["update"],
-            resolver=cls.update,
-            **kwargs,
-        )
+        return cls._build_native_mutation_field("update")
 
     @classmethod
     def QueryFields(cls, *args, **kwargs) -> tuple[Any, Any]:
