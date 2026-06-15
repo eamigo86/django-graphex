@@ -8,10 +8,8 @@ layer is swappable and isolated. The package ships a single
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any
 
-from .schema import build_filter_input_type
 from .translate import to_q
 
 if TYPE_CHECKING:
@@ -42,8 +40,8 @@ class FilterBackend:
                 triples from ``@filter_field``-decorated methods.
 
         Returns:
-            A graphene ``InputObjectType`` subclass, or ``None`` when no
-            filterable fields are declared.
+            A ``GraphQLInputObjectType`` (or ``None`` when no filterable fields
+            are declared).
         """
         raise NotImplementedError
 
@@ -81,19 +79,15 @@ class NativeFilterBackend(FilterBackend):
                 triples from ``@filter_field``-decorated methods.
 
         Returns:
-            Under ``GDX_BACKEND=native`` a ``GraphQLInputObjectType`` (or
-            ``None``); under graphene a ``graphene.InputObjectType`` subclass
-            (or ``None``) when no filterable fields are declared.
+            A ``GraphQLInputObjectType`` (or ``None`` when no filterable fields
+            are declared).
         """
-        if os.environ.get("GDX_BACKEND", "graphene") == "native":
-            # Native (graphql-core) builder — keeps the graphene path untouched.
-            from .native_schema import (
-                build_filter_input_type as native_build_filter_input_type,
-            )
+        # Native (graphql-core) ``<Model>FilterInput`` builder. The legacy
+        # graphene arm (``filtering/schema.build_filter_input_type``) was the dead
+        # half of the dual-backend seam under ``GDX_BACKEND=native``; it is
+        # collapsed away here (the graphene module is pruned in a later slice).
+        from .native_schema import build_filter_input_type
 
-            return native_build_filter_input_type(
-                model, filter_fields, registry, custom_filters=custom_filters
-            )
         return build_filter_input_type(
             model, filter_fields, registry, custom_filters=custom_filters
         )
