@@ -13,14 +13,17 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from graphene import NonNull
+from graphql import graphql_sync
 
 from django_graphex import (
     DjangoFilterListField,
     DjangoFilterPaginateListField,
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
     DjangoObjectType,
     LimitOffsetGraphqlPagination,
+    ObjectType,
 )
 from django_graphex.base_types import DjangoListObjectBase
 from django_graphex.fields import (
@@ -74,13 +77,13 @@ class PostListType(DjangoListObjectType):
         filter_fields = {"title": ["icontains", "exact"]}
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     categories = DjangoFilterListField(CategoryType)
     authors = DjangoFilterPaginateListField(AuthorType)
     posts = DjangoListObjectField(PostListType)
 
 
-schema = graphene.Schema(query=Query)
+schema = DjangoGraphQLSchema(query=Query)
 
 
 # --------------------------------------------------------------------------- #
@@ -137,11 +140,11 @@ def test_paginate_field_without_pagination_runs_resolver(db):
     author = Author.objects.create(name="A")
     Post.objects.create(title="p1", author=author)
 
-    class _Q(graphene.ObjectType):
+    class _Q(ObjectType):
         items = field
 
-    s = graphene.Schema(query=_Q)
-    result = s.execute("{ items { title } }")
+    s = DjangoGraphQLSchema(query=_Q)
+    result = graphql_sync(s.graphql_schema, "{ items { title } }")
     assert result.errors is None, result.errors
     assert [p["title"] for p in result.data["items"]] == ["p1"]
 
@@ -155,7 +158,7 @@ class FilterListRelatedFieldTest(TestCase):
         Post.objects.create(title="keep", author=author, category=cat)
         Post.objects.create(title="drop", author=author, category=cat)
 
-        result = schema.execute(
+        result = graphql_sync(schema.graphql_schema, 
             '{ categories { title posts(filter: { title: { icontains: "keep" } })'
             " { title } } }"
         )
@@ -167,7 +170,7 @@ class FilterListRelatedFieldTest(TestCase):
     def test_top_level_filter_list_no_root(self):
         # No root -> queryset_factory fallback path.
         Category.objects.create(title="Solo")
-        result = schema.execute("{ categories { title } }")
+        result = graphql_sync(schema.graphql_schema, "{ categories { title } }")
         assert result.errors is None, result.errors
         assert {c["title"] for c in result.data["categories"]} == {"Solo"}
 
@@ -183,7 +186,7 @@ class FilterPaginateExtraFiltersTest(TestCase):
         Post.objects.create(title="p2", author=author, category=c1)
         Post.objects.create(title="other", author=author, category=c2)
 
-        result = schema.execute(
+        result = graphql_sync(schema.graphql_schema, 
             "{ categories { title paginatedPosts(limit: 5) { title } } }"
         )
         assert result.errors is None, result.errors

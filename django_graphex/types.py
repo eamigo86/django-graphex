@@ -207,8 +207,12 @@ def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
     """
     from graphene.utils.str_converters import to_camel_case
 
-    from .fields import DjangoListObjectField
-    from .native.schema_compiler import compile_declared_field
+    from .fields import (
+        DjangoFilterListField,
+        DjangoFilterPaginateListField,
+        DjangoListObjectField,
+    )
+    from .native.schema_compiler import _build_filter_list_field, compile_declared_field
 
     meta = getattr(src_cls, "_meta", None)
     meta_fields = getattr(meta, "fields", None) or {}
@@ -219,6 +223,19 @@ def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
     for field_name, field in meta_fields.items():
         # Skip declared LIST fields — owned by _compile_declared_list_fields.
         if isinstance(field, DjangoListObjectField):
+            continue
+        # DEFECT #7: a declared NESTED filtered/paginated list field on a
+        # DjangoObjectType (``posts = DjangoFilterListField(PostType)`` /
+        # ``paginated_posts = DjangoFilterPaginateListField(...)``) is NOT a
+        # ``DjangoListObjectField`` subclass, so it falls through to the generic
+        # ``compile_declared_field`` below — which renders the wrong return type
+        # AND drops the ``filter`` / pagination args (no nested filtering was
+        # reachable under native). Route it to the SAME native builder the root
+        # compiler uses (``schema_compiler._build_filter_list_field``) so the
+        # nested field carries the DECLARED node type as ``[Node]`` / ``[Node!]``
+        # and its filter + pagination args — byte-identical to the root path.
+        if isinstance(field, (DjangoFilterListField, DjangoFilterPaginateListField)):
+            out[to_camel_case(field_name)] = _build_filter_list_field(field)
             continue
         # DEFECT C: a field whose name matches a model relation/field is usually
         # the AUTO-DERIVED graphene field (owned by compile_output_fields / the
