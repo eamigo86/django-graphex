@@ -6,10 +6,19 @@ import binascii
 import datetime
 from typing import TYPE_CHECKING, Any
 
+# ``import graphene`` (and the graphene ``Date`` / ``DateTime`` / ``Time``
+# scalar bases) are STILL required here in S5: ``Binary``, ``CustomDate`` /
+# ``CustomDateTime`` / ``CustomTime`` and ``GenericForeignKeyType`` /
+# ``GenericForeignKeyInputType`` remain LIVE graphene field-descriptor surface
+# consumed by ``converter.py`` on the native path (``construct_fields`` is
+# called unconditionally at ``types.py:477`` on BOTH backends). Removing them
+# requires collapsing the converter descriptor surface — deferred to
+# S-ROOTS / S8. S5 only repoints the byte-safe ``to_camel_case`` off graphene.
 import graphene
 from graphene.types.datetime import Date, DateTime, Time
-from graphene.utils.str_converters import to_camel_case
 from graphql.language import ast
+
+from ._strconv import to_camel_case
 
 if TYPE_CHECKING:
     from graphql.language import ast as ast_types
