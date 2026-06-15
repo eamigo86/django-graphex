@@ -14,8 +14,11 @@ Run BOTH:
 from __future__ import annotations
 
 import importlib
+import os
 
 import pytest
+
+_NATIVE = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 _CORE_MODULES = (
     "django_graphex",
@@ -62,3 +65,73 @@ def test_s6d_polymorphic_types_reparented_onto_native_base() -> None:
     # #1452 metaclass-identity invariant holds for the re-parented bases.
     assert type(DjangoUnionType) is ModelMetaclass
     assert type(DjangoInterfaceType) is ModelMetaclass
+
+
+def test_s6e_subscription_reparented_onto_native_base() -> None:
+    """S6e: ``Subscription`` carries the native base; subclass is ModelMetaclass.
+
+    Re-parented off graphene ``ObjectType`` onto ``native.base.ObjectType``. The
+    base must NO LONGER subclass graphene ``ObjectType`` and a concrete subclass's
+    metaclass IS pydantic ``ModelMetaclass`` (#1452). Importing the subscriptions
+    package pulls the ``[subscriptions]`` extra (Channels), so this lives with the
+    import-safety gate (it proves the re-parent imports clean under both backends).
+    """
+    from pydantic._internal._model_construction import ModelMetaclass
+
+    from django_graphex.native.base import ObjectType as NativeObjectType
+    from django_graphex.subscriptions import Subscription
+
+    assert issubclass(Subscription, NativeObjectType)
+    # The base itself stays abstract; build a concrete subclass to assert the
+    # metaclass-identity invariant (a class's metaclass is fixed at definition).
+    from tests.models import Post
+
+    meta_cls = type("Meta", (), {"model": Post, "stream": "posts"})
+    meta_cls.__qualname__ = "_S6eSub.Meta"
+    meta_cls.__module__ = __name__
+    sub = type(
+        "_S6eSub",
+        (Subscription,),
+        {"__module__": __name__, "__qualname__": "_S6eSub", "Meta": meta_cls},
+    )
+    assert type(sub) is ModelMetaclass
+
+
+@pytest.mark.skipif(
+    not _NATIVE,
+    reason="native root compile path (GDX_BACKEND=native); the graphene "
+    "schema-build path for re-parented types is retired per slice",
+)
+def test_s6e_subscription_field_present_in_compiled_native_root() -> None:
+    """S6e risk #4: the subscription field is PRESENT in the compiled native root.
+
+    Re-parenting ``Subscription`` must NOT make the mount seam vanish. The native
+    root compiler detects the ``SubscriptionField`` by class name and builds the
+    DIRECT graphql-core field via ``field.type._build_native_field()``. This
+    asserts the field survives the re-parent (it must not silently disappear).
+    """
+    import graphene
+    from graphql import GraphQLObjectType
+
+    from django_graphex import DjangoModelType
+    from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.native.schema_compiler import compile_native_root
+    from tests.models import Post
+
+    class _S6ePostModelType(DjangoModelType):
+        class Meta:
+            model = Post
+            stream = "posts"
+            serialize_data = True
+
+    class _S6eSubscriptionRoot(graphene.ObjectType):
+        post = _S6ePostModelType.SubscriptionField()
+
+    compile_all_outputs()
+    native_root = compile_native_root(_S6eSubscriptionRoot, name="Subscription")
+
+    assert isinstance(native_root, GraphQLObjectType)
+    # The mount seam survived the re-parent: the subscription field IS present.
+    assert "post" in native_root.fields
+    # Native arg set + the field is a DIRECT graphql-core field (no graphene Field).
+    assert set(native_root.fields["post"].args) == {"action", "id", "filters"}

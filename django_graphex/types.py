@@ -2396,11 +2396,29 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                 "subscription_index_fields": cls._meta.subscription_index_fields,
             }
 
+            # S6e (#1452): ``Subscription`` is now a native (pydantic
+            # ``ModelMetaclass``) type. Building a subclass via the 3-arg
+            # ``type(name, bases, ns)`` form does NOT auto-carry
+            # ``__module__`` / ``__qualname__`` into the namespace (unlike a real
+            # ``class`` statement), and pydantic's ``inspect_namespace`` reads
+            # ``namespace['__module__']`` eagerly — so a missing key raises
+            # ``KeyError('__module__')`` (the same factory_type fix S6b applied in
+            # base_types.py). Inject both, and re-stamp the nested ``Meta``'s
+            # qualname to ``"<Name>.Meta"`` so pydantic's nested-class guard
+            # treats ``Meta`` as an ignorable nested class exactly as if it had
+            # been written inside a real ``class <Name>(Subscription)`` body.
+            sub_name = f"{cls.__name__}Subscription"
+            meta_cls = type("Meta", (), meta_attrs)
+            meta_cls.__qualname__ = f"{sub_name}.Meta"
+            meta_cls.__module__ = __name__
+
             sub = type(
-                f"{cls.__name__}Subscription",
+                sub_name,
                 (Subscription,),
                 {
-                    "Meta": type("Meta", (), meta_attrs),
+                    "__module__": __name__,
+                    "__qualname__": sub_name,
+                    "Meta": meta_cls,
                     "authorize_subscription": classmethod(_authorize_subscription),
                     "subscription_scope": classmethod(_subscription_scope),
                 },

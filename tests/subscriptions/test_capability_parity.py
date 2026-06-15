@@ -108,11 +108,24 @@ def _register_post_node_types():
 
 
 def _make_subscription(**meta):
-    """Build a fresh ``PostSubscription`` (the kept graphene base, C-A)."""
+    """Build a fresh ``PostSubscription`` (native base, S6e re-parent).
+
+    ``Subscription`` is now a pydantic ``ModelMetaclass`` type (S6e); a 3-arg
+    ``type(name, bases, ns)`` build must inject ``__module__``/``__qualname__``
+    (and re-stamp the nested ``Meta`` qualname) or pydantic's
+    ``inspect_namespace`` raises ``KeyError('__module__')`` — mirroring the
+    production ``DjangoModelType.subscription_type`` builder.
+    """
     from django_graphex.subscriptions import Subscription
 
-    attrs = {"Meta": type("Meta", (), {"model": Post, "stream": "posts", **meta})}
-    return type("PostSubscription", (Subscription,), attrs)
+    meta_cls = type("Meta", (), {"model": Post, "stream": "posts", **meta})
+    meta_cls.__qualname__ = "PostSubscription.Meta"
+    meta_cls.__module__ = __name__
+    return type(
+        "PostSubscription",
+        (Subscription,),
+        {"__module__": __name__, "__qualname__": "PostSubscription", "Meta": meta_cls},
+    )
 
 
 def _notify(group: str, data: dict, *, action: str = "create", pk=1) -> dict:

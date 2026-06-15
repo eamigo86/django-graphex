@@ -11,18 +11,37 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from asgiref.sync import sync_to_async
+
+# S6e re-parent (#1452): ``Subscription`` is re-parented off graphene
+# ``ObjectType`` onto the graphene-free native base (``native.base.ObjectType``)
+# so ``type(<a Subscription subclass>) is pydantic.ModelMetaclass`` (the systemic
+# metaclass-identity invariant). ``SubscriptionOptions`` becomes a thin subclass
+# of the mutable ``NativeObjectTypeOptions`` (graphene-free _meta).
+#
+# RETAINED graphene imports (still live, removed in S8):
+#   * ``ID``/``Argument``/``Enum`` build ``_meta.arguments`` (graphene
+#     ``Argument(ActionSubscriptionEnum, required=True)`` -> the
+#     ``SubscriptionField`` mount seam reads it; ``test_unit`` asserts the
+#     ``NonNull(ActionSubscriptionEnum)`` identity). The NATIVE compile path
+#     (``_build_native_field``) builds its OWN graphql-core enum + args and does
+#     NOT consume ``_meta.arguments``, but the graphene mount path still does, so
+#     these stay until S8 removes the graphene arg path.
+#   * ``Field`` is the base class of ``SubscriptionField`` — the MOUNT SEAM the
+#     native root compiler detects by class name (``schema_compiler.
+#     _is_subscription_field``). Re-parenting that off graphene is S8 work; the
+#     class name + ``field.type._build_native_field`` duck-type are the contract.
 from graphene import (
     ID,
     Argument,
     Enum,
     Field,
-    ObjectType,
 )
 from graphene.types.generic import GenericScalar
-from graphene.types.objecttype import ObjectTypeOptions
 from graphql import GraphQLError
 
 from ..backends import resolve_backend
+from ..native.base import NativeObjectTypeOptions
+from ..native.base import ObjectType as NativeObjectType
 from ..settings import graphql_api_settings
 from .bindings import SubscriptionBinding
 from .mixins import safe_group_name
@@ -60,23 +79,19 @@ class ActionSubscriptionEnum(Enum):
     ALL_ACTIONS = "all_actions"
 
 
-class SubscriptionOptions(ObjectTypeOptions):
-    """Provide the Meta options container for "Subscription" subclasses."""
+class SubscriptionOptions(NativeObjectTypeOptions):
+    """Provide the Meta options container for "Subscription" subclasses.
 
-    output = None
-    arguments = None
-    model = None
-    stream = None
-    #: SerializerBackend serializing the notification payload.
-    backend = None
-    queryset = None
-    # None -> inherit the global SUBSCRIPTION_SERIALIZE_DATA setting;
-    # True/False -> force full / id-only payload for this subscription.
-    serialize_data = None
-    # Optional tuple of model field names used to route notifications to
-    # value-scoped groups (the "indexed groups" optimization). Empty -> the
-    # traditional single coarse group per action.
-    index_fields = ()
+    S6e (#1452): graphene-free. Was a subclass of graphene's frozen
+    ``ObjectTypeOptions``; now a thin subclass of the mutable
+    ``NativeObjectTypeOptions`` whose parity-table surface ALREADY enumerates
+    every subscription ``_meta`` attribute (``output``/``arguments``/``model``/
+    ``stream``/``backend``/``queryset``/``serialize_data``/``index_fields``/
+    ``subscription_index_fields``) with graphene-equivalent defaults. The driver
+    plain-assigns each attr below (no ``object.__setattr__`` freeze-bypass — the
+    native Options is mutable by design), so this subclass adds nothing beyond a
+    stable, subscription-named type the duck-typed callers can keep referencing.
+    """
 
 
 class SubscriptionField(Field):
@@ -113,7 +128,7 @@ class SubscriptionField(Field):
         return parent_subscribe or self._subscribe_fn
 
 
-class Subscription(ObjectType):
+class Subscription(NativeObjectType):
     """Define the subscription type.
 
     Subclass it through "Meta" and mount it on the schema's subscription root
@@ -123,6 +138,14 @@ class Subscription(ObjectType):
             class Meta:
                 model = User
                 stream = "users"
+
+    S6e (#1452): re-parented off graphene ``ObjectType`` onto the graphene-free
+    native base. The native base's ``__init_subclass__`` driver reproduces
+    graphene's ``SubclassWithMeta`` dispatch (read ``Meta``, pop ``abstract``,
+    dispatch ``super(cls, cls).__init_subclass_with_meta__``), so this base stays
+    abstract and each concrete subclass routes into the driver below — exactly as
+    under graphene's metaclass, but now ``type(<subclass>) is
+    pydantic.ModelMetaclass``.
     """
 
     class Meta:
@@ -194,6 +217,18 @@ class Subscription(ObjectType):
             # off the instance (FK -> "<name>_id") at notification time.
             model._meta.get_field(field_name)
 
+        # S6e kwarg-audit (#1543): the native ObjectType TERMINAL only honors
+        # ``name``/``description``/``interfaces``/``_meta`` — every other attr
+        # graphene's old super() would have set must be assigned explicitly here
+        # BEFORE the super() call or it vanishes into ``**_kwargs``. This driver
+        # already builds the ENTIRE ``_meta`` (it passes ``_meta=_meta`` to super,
+        # graphene's driver never derived these from kwargs), so the audit is a
+        # no-op for the subscription attrs below: ``output``/``model``/``stream``/
+        # ``backend``/``queryset``/``serialize_data``/``index_fields``/
+        # ``arguments`` are all plain-assigned onto the mutable
+        # ``NativeObjectTypeOptions`` (each one exists on its parity surface, so
+        # no silent ``AttributeError`` on read). No ``types=`` analogue exists for
+        # subscriptions, so no kwarg is dropped from the super() call.
         _meta = SubscriptionOptions(cls)
         _meta.output = cls
         _meta.model = model

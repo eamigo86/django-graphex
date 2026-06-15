@@ -31,13 +31,11 @@ parity so a CLIENT-supplied index-field value never narrows the joined group —
 only a server ``subscription_scope`` value does (no cross-subscriber leak via a
 client-chosen value-scoped group). This test asserts that parity.
 
-HONEST CONSTRAINT (design C-A / #1452): ``type(<a Subscription subclass>)`` IS
-graphene's metaclass, NOT pydantic ``ModelMetaclass`` — proving the metaclass
-swap is deferred to Phase 7.
-
-The graphene bespoke path stays UNCHANGED (the +0-regression graphene delta is
-the suite-level gate); this module's native assertions are gated behind
-``GDX_BACKEND=native`` and skipped under graphene.
+S6e UPDATE (#1452): the metaclass swap is now DONE — ``type(<a Subscription
+subclass>) is pydantic ModelMetaclass`` (re-parented off graphene ``ObjectType``
+onto ``native.base.ObjectType``). The base-class assertions below were inverted
+from the old C-A "stays graphene" constraint to the native reality. The native
+compile path (event type + ``_build_native_field`` mount seam) is UNCHANGED.
 """
 from __future__ import annotations
 
@@ -94,41 +92,61 @@ def _notify(group: str, data: dict, *, action: str = "create", pk=1) -> dict:
 
 
 def _make_subscription(**meta):
-    """Build a fresh ``PostSubscription`` (the kept graphene base, C-A)."""
+    """Build a fresh ``PostSubscription`` (native base, S6e re-parent).
+
+    ``Subscription`` is now a pydantic ``ModelMetaclass`` type (S6e); a 3-arg
+    ``type(name, bases, ns)`` build must inject ``__module__``/``__qualname__``
+    (and re-stamp the nested ``Meta`` qualname) or pydantic's
+    ``inspect_namespace`` raises ``KeyError('__module__')`` — mirroring the
+    production ``DjangoModelType.subscription_type`` builder.
+    """
     from django_graphex.subscriptions import Subscription
 
-    attrs = {"Meta": type("Meta", (), {"model": Post, "stream": "posts", **meta})}
-    return type("PostSubscription", (Subscription,), attrs)
+    meta_cls = type("Meta", (), {"model": Post, "stream": "posts", **meta})
+    meta_cls.__qualname__ = "PostSubscription.Meta"
+    meta_cls.__module__ = __name__
+    return type(
+        "PostSubscription",
+        (Subscription,),
+        {"__module__": __name__, "__qualname__": "PostSubscription", "Meta": meta_cls},
+    )
 
 
 # ---------------------------------------------------------------------------
-# HONEST CONSTRAINT (C-A / #1452): the base STAYS graphene; NO metaclass swap.
+# S6e METACLASS SWAP DONE (#1452): the base is re-parented onto the native
+# graphene-free ObjectType; ``type(<subclass>) is pydantic ModelMetaclass``.
 # ---------------------------------------------------------------------------
 
 
-def test_subscription_base_stays_object_type():
-    """The public ``Subscription`` base subclasses graphene ``ObjectType`` (C-A)."""
-    from graphene import ObjectType
+def test_subscription_base_is_native_object_type():
+    """The public ``Subscription`` base subclasses the native ObjectType (S6e).
 
+    Re-parented off graphene ``ObjectType`` onto ``native.base.ObjectType`` in
+    S6e. It must NO LONGER subclass graphene ``ObjectType``: the metaclass swap is
+    done (Phase 7 / #1452).
+    """
+    from graphene import ObjectType as GrapheneObjectType
+
+    from django_graphex.native.base import ObjectType as NativeObjectType
     from django_graphex.subscriptions import Subscription
 
-    assert issubclass(Subscription, ObjectType)
+    assert issubclass(Subscription, NativeObjectType)
+    assert not issubclass(Subscription, GrapheneObjectType)
 
 
-def test_subscription_subclass_is_not_model_metaclass():
-    """``type(PostSubscription) is NOT pydantic ModelMetaclass`` (the swap is Phase 7).
+def test_subscription_subclass_is_model_metaclass():
+    """``type(PostSubscription) is pydantic ModelMetaclass`` (S6e swap done).
 
-    A class has ONE metaclass fixed at definition; while the graphene base is
-    present (and it MUST be, to keep GDX_BACKEND=graphene working until Phase 7),
-    the subclass's metaclass is graphene's ``SubclassWithMeta_Meta`` — NOT
-    pydantic's ``ModelMetaclass``. This is the honest metaclass-phasing assert.
+    A class has ONE metaclass fixed at definition. After re-parenting the base
+    onto the graphene-free native ``ObjectType`` (whose metaclass is pydantic's
+    ``ModelMetaclass``, NOT graphene's ``SubclassWithMeta_Meta``), every concrete
+    ``Subscription`` subclass's metaclass IS ``ModelMetaclass`` — the systemic
+    metaclass-identity invariant (#1452).
     """
     from pydantic._internal._model_construction import ModelMetaclass
 
     sub = _make_subscription()
-    assert type(sub) is not ModelMetaclass
-    # Positive: it IS graphene's metaclass (the base is still ObjectType).
-    assert "graphene" in type(sub).__module__ or type(sub).__name__.endswith("_Meta")
+    assert type(sub) is ModelMetaclass
 
 
 # ---------------------------------------------------------------------------
