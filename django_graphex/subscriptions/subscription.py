@@ -27,7 +27,7 @@ from ..settings import graphql_api_settings
 from .bindings import SubscriptionBinding
 from .mixins import safe_group_name
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover - typing only
     from typing import Callable
 
     from django.db.models import QuerySet

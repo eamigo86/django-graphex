@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.core.serializers.json import DjangoJSONEncoder
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover - typing only
     from django.db.models import Model
 
     from ..backends import SerializerBackend
