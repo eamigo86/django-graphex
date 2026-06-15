@@ -7,11 +7,14 @@
 - Subscriptions: public "postSubscription" and private "noteSubscription".
 """
 
-import graphene
+import os
+
+import graphene  # transitional: only the `class args` argument form (graphene.Argument)
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.db.models import Count
 from django.utils import timezone
+from graphql import GraphQLBoolean, GraphQLInt, GraphQLString
 
 from django_graphex import (
     AllowAny,  # noqa: F401 — available for permission_classes experimentation
@@ -36,8 +39,11 @@ from django_graphex import (
     IsAuthenticated,  # noqa: F401 — available for permission_classes experimentation
     IsAuthenticatedOrReadOnly,
     LimitOffsetGraphqlPagination,
+    Mutation,
+    ObjectType,
     PageGraphqlPagination,
     all_directives,
+    field,
     filter_field,
 )
 from django_graphex.subscriptions import Subscription
@@ -118,7 +124,7 @@ class PostType(DjangoObjectType):
     #   1. Standard lookups (id, title, status, author from filter_fields)
     #   2. @filter_field methods in declaration order  ← search runs here
     #   3. filter_queryset (see get_queryset below)    ← applied last
-    @filter_field(graphene.String, description="Full-text search over title and body")
+    @filter_field(GraphQLString, description="Full-text search over title and body")
     def search(cls, queryset, info, value):
         """Filter posts whose title OR body contains the search term."""
         from django.db.models import Q
@@ -167,7 +173,7 @@ class AuthorType(DjangoObjectType):
     # `.annotate(_gqx_ann_post_count=Count('posts'))` ONLY when `postCount` is in
     # the selection; when it is not selected, no extra SQL is emitted. The default
     # resolver reads the value straight off the row (no resolve_post_count needed).
-    post_count = AnnotatedField(graphene.Int, Count("posts"))
+    post_count = AnnotatedField(GraphQLInt, Count("posts"))
 
     # Explicit nested list (instead of the auto-generated one) so we can attach a
     # per-field optimize hook below. Reuses PostListType's pagination + filtering.
@@ -372,10 +378,10 @@ class CommentSubscription(Subscription):
 # --------------------------------------------------------------------------- #
 # Queries                                                                     #
 # --------------------------------------------------------------------------- #
-class PublicQuery(graphene.ObjectType):
+class PublicQuery(ObjectType):
     """Anyone can run these."""
 
-    server_time = graphene.String(description="A public scalar field.")
+    server_time = field(GraphQLString, description="A public scalar field.")
 
     # Single object by id (generic field).
     post = DjangoObjectField(PostType, description="A single post by id.")
@@ -414,10 +420,10 @@ class PublicQuery(graphene.ObjectType):
         return timezone.now().isoformat()
 
 
-class PrivateQuery(graphene.ObjectType):
+class PrivateQuery(ObjectType):
     """Require an authenticated user (enforced by AuthenticatedFieldsMiddleware)."""
 
-    me = graphene.Field(UserType, description="The current user.")
+    me = field(UserType, description="The current user.")
     # NoteModelType.filter_queryset scopes this list to the current user; the
     # field's own resolver (cls.list) runs, so no resolve_* method is needed.
     my_notes = NoteModelType.ListField(description="Notes owned by the current user.")
@@ -484,7 +490,7 @@ class CategoryInput(DjangoInputObjectType):
         only_fields = ("name",)
 
 
-class CreateCategory(graphene.Mutation):
+class CreateCategory(Mutation):
     """A hand-written mutation taking an explicit DjangoInputObjectType.
 
     Teaching note — unique-constraint violations
@@ -493,29 +499,48 @@ class CreateCategory(graphene.Mutation):
     duplicate name raises an ``IntegrityError`` that Django bubbles up as HTTP
     500 — a hard crash with no useful message for the client.
 
-    The idiomatic pattern for hand-written graphene mutations is to catch the
-    database error and return ``ok=False`` with a human-readable ``error``
-    string. This keeps the GraphQL response status 200 and hands the client
-    structured error information.  (``DjangoModelMutation`` and
-    ``DjangoModelType`` handle this automatically through their serialiser
-    layer; hand-written mutations must do it explicitly.)
+    The idiomatic pattern for hand-written mutations is to catch the database
+    error and return ``ok=False`` with a human-readable ``error`` string. This
+    keeps the GraphQL response status 200 and hands the client structured error
+    information.  (``DjangoModelMutation`` and ``DjangoModelType`` handle this
+    automatically through their serialiser layer; hand-written mutations must
+    do it explicitly.)
+
+    Native 2.0 form (django_graphex.Mutation):
+    - Arguments live on ``class args`` as ``graphene.Argument`` (the transitional
+      argument form). The ``data`` argument's type is the compiled
+      ``GraphQLInputObjectType`` of ``CategoryInput`` — referenced LAZILY via a
+      thunk so it resolves at schema-build time (after the input compiler runs),
+      not at class-definition time.
+    - The output payload fields are declared via ``field()``.
+    - ``mutate`` is a ``@classmethod`` returning ``cls(...)``.
+    - Input-object arguments arrive as a plain ``dict`` (snake-case keys, the
+      ``out_name`` contract), so read ``data["name"]`` — not attribute access.
     """
 
-    class Arguments:
-        data = CategoryInput(required=True)
+    class args:
+        data = graphene.Argument(
+            lambda: CategoryInput._meta.graphql_input_type, required=True
+        )
 
-    ok = graphene.Boolean()
-    category = graphene.Field(CategoryType)
-    error = graphene.String()
+    ok = field(GraphQLBoolean)
+    category = field(CategoryType)
+    error = field(GraphQLString)
 
-    def mutate(self, info, data):
+    @classmethod
+    def mutate(cls, root, info, **kwargs):
+        data = kwargs["data"]
+        name = data["name"]
         try:
-            category = Category.objects.create(name=data.name)
+            category = Category.objects.create(name=name)
         except IntegrityError:
-            return CreateCategory(
-                ok=False, category=None, error=f"Category '{data.name}' already exists."
+            return cls(
+                ok=False, category=None, error=f"Category '{name}' already exists."
             )
-        return CreateCategory(ok=True, category=category)
+        # Pass every payload field explicitly (incl. error=None): native does not
+        # auto-default unset payload fields, so an omitted field would leak the
+        # class-level field() descriptor instead of resolving to null.
+        return cls(ok=True, category=category, error=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -545,36 +570,80 @@ class DocumentType(DjangoObjectType):
         only_fields = ("id", "name", "created")
 
 
-class UploadDocument(graphene.Mutation):
+class UploadDocument(Mutation):
     """Demo: upload a base64-encoded file and attach it to a Document record.
 
     .. note::
         ``MAX_UPLOAD_SIZE`` must be set in ``DJANGO_GRAPHEX`` before using
         ``Base64FileInput``. See ``config/settings.py``.
+
+    Native 2.0 form (django_graphex.Mutation):
+    - ``file`` is a ``Base64FileInput`` argument: its compiled
+      ``GraphQLInputObjectType`` is referenced LAZILY via a thunk so it resolves
+      at schema-build time (after the input compiler runs).
+    - Input-object arguments arrive as a plain ``dict`` (snake-case keys, the
+      ``out_name`` contract), so the ``file`` payload is rehydrated into a
+      ``Base64FileInput`` instance (``Base64FileInput(**file)``) before calling
+      ``.to_uploaded_file()``.
+    - Output payload fields are declared via ``field()``.
     """
 
-    class Arguments:
-        name = graphene.String(required=True)
-        file = Base64FileInput(required=True)
+    class args:
+        name = graphene.Argument(graphene.String, required=True)
+        file = graphene.Argument(
+            lambda: Base64FileInput._meta.graphql_input_type, required=True
+        )
 
-    ok = graphene.Boolean()
-    name = graphene.String()
-    error = graphene.String()
+    ok = field(GraphQLBoolean)
+    name = field(GraphQLString)
+    error = field(GraphQLString)
 
-    def mutate(self, info, name, file):
+    @classmethod
+    def mutate(cls, root, info, **kwargs):
+        name = kwargs["name"]
+        file = kwargs["file"]
         try:
+            # The input object arrives as a dict (out_name snake keys); rehydrate
+            # it into a Base64FileInput so .to_uploaded_file() is available.
+            upload_input = Base64FileInput(**file)
             # Decode: max_size here overrides (or supplements) the global cap.
             # The global MAX_UPLOAD_SIZE from settings also applies when
             # max_size is not passed — both are checked.
-            uploaded = file.to_uploaded_file()  # uses MAX_UPLOAD_SIZE from settings
+            uploaded = upload_input.to_uploaded_file()  # uses MAX_UPLOAD_SIZE
             doc = Document(name=name)
             doc.file.save(uploaded.name, uploaded, save=True)
-            return UploadDocument(ok=True, name=doc.name)
+            # Pass every payload field explicitly (incl. error=None): native does
+            # not auto-default unset payload fields.
+            return cls(ok=True, name=doc.name, error=None)
         except Exception as exc:  # noqa: BLE001
-            return UploadDocument(ok=False, name=name, error=str(exc))
+            return cls(ok=False, name=name, error=str(exc))
 
 
-class RootMutation(graphene.ObjectType):
+# --------------------------------------------------------------------------- #
+# Native compile trigger (native backend only).                                 #
+#                                                                              #
+# Hand-written ``Mutation`` arguments below reference a COMPILED                #
+# ``GraphQLInputObjectType`` (``CategoryInput`` / ``Base64FileInput``).  Those  #
+# input types — and every ``DjangoObjectType`` output type — are compiled by    #
+# ``compile_all_inputs`` / ``compile_all_outputs``.  In a project that lists     #
+# ``django_graphex`` in ``INSTALLED_APPS`` its ``AppConfig.ready()`` runs these  #
+# automatically at startup; this playground triggers them explicitly here,       #
+# AFTER all type declarations and BEFORE ``RootMutation`` calls ``.Field()`` (so #
+# the lazy argument thunks resolve to real compiled input types, not ``None``).  #
+# Gated on the native backend: under the legacy graphene backend these native    #
+# compilers must NOT run (graphene compiles its own types lazily).               #
+# --------------------------------------------------------------------------- #
+if os.environ.get("GDX_BACKEND", "graphene") == "native":
+    from django_graphex.native.base import compile_all_inputs  # noqa: E402
+    from django_graphex.native.registry_compiler import (  # noqa: E402
+        compile_all_outputs,
+    )
+
+    compile_all_inputs()
+    compile_all_outputs()
+
+
+class RootMutation(ObjectType):
     note_create, note_delete, note_update = NoteModelType.MutationFields()
     post_create = PostMutation.CreateField()
     post_update = PostMutation.UpdateField()
@@ -593,14 +662,14 @@ class RootMutation(graphene.ObjectType):
 # --------------------------------------------------------------------------- #
 # Subscriptions: a public subset and a (disjoint) private subset.             #
 # --------------------------------------------------------------------------- #
-class PublicSubscriptions(graphene.ObjectType):
+class PublicSubscriptions(ObjectType):
     """Anyone may subscribe to these."""
 
     post_subscription = PostSubscription.Field()
     comment_subscription = CommentSubscription.Field()
 
 
-class PrivateSubscriptions(graphene.ObjectType):
+class PrivateSubscriptions(ObjectType):
     """Require an authenticated user (enforced by AuthenticatedFieldsMiddleware)."""
 
     note_subscription = NoteModelType.SubscriptionField()
@@ -611,7 +680,7 @@ class PrivateSubscriptions(graphene.ObjectType):
 # subset; DjangoGraphQLSchema unions them and protects the private fields. In a #
 # multi-app project you would aggregate per-app subsets, e.g.                   #
 #   class RootSubscription(blog.PublicSubscriptions, shop.PublicSubscriptions,  #
-#                          graphene.ObjectType): pass                           #
+#                          ObjectType): pass                                     #
 # and pass those aggregates here instead.                                       #
 # --------------------------------------------------------------------------- #
 schema = DjangoGraphQLSchema(

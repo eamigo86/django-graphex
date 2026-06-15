@@ -65,7 +65,9 @@ CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
 # ---------------------------------------------------------------------------
 # django-graphex
 # ---------------------------------------------------------------------------
-GRAPHENE = {
+# 2.0 BREAKING CHANGE: schema/middleware settings are read ONLY from the
+# ``GRAPHEX`` namespace; the legacy ``GRAPHENE`` namespace is no longer consulted.
+GRAPHEX = {
     "SCHEMA": "blog.schema.schema",
     "MIDDLEWARE": [
         # Block schema introspection unless allowed (see DJANGO_GRAPHEX).
