@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 from graphql import GraphQLArgument, GraphQLList, GraphQLNonNull, GraphQLScalarType
+from graphql.type.definition import GraphQLType
 
 from django_graphex._strconv import to_snake_case
 from django_graphex.native.scalars import GDX_SCALAR_MAP
@@ -36,26 +37,41 @@ from django_graphex.native.scalars import GDX_SCALAR_MAP
 # ---------------------------------------------------------------------------
 
 def _unwrap_graphene_type(gtype: Any) -> Any:
-    """Recursively unwrap a graphene type to the equivalent graphql-core type.
+    """Resolve a field/arg ``type`` to the equivalent graphql-core type.
 
-    Handles:
-    - ``graphene.types.structures.NonNull`` → ``GraphQLNonNull(inner)``
-    - ``graphene.types.structures.List`` → ``GraphQLList(inner)``
-    - Leaf scalar class (has ``_meta.name``) → looked up in ``GDX_SCALAR_MAP``
+    Two currencies reach here:
+
+    - **Native** (S-ROOTS-a) — an already-built graphql-core ``GraphQLType``
+      (a scalar / object / enum / input, OR a ``GraphQLList`` / ``GraphQLNonNull``
+      wrapper around one). It is returned VERBATIM: the native ``field()`` helper
+      and the native scalar singletons already produce real graphql-core types,
+      so there is nothing to convert. This is the path the native descriptor
+      currency uses; it carries no graphene dependency.
+    - **Graphene** (transitional fallback, graphene still installed) — a graphene
+      ``NonNull`` / ``List`` wrapper, or a leaf scalar/enum class with
+      ``_meta.name`` resolved via ``GDX_SCALAR_MAP``.
 
     Args:
-        gtype: A graphene type — either a wrapper (``NonNull``/``List``) or a
-            scalar/enum/object class (anything with ``_meta.name``).
+        gtype: A graphql-core ``GraphQLType`` (native), OR a graphene type —
+            either a wrapper (``NonNull``/``List``) or a scalar/enum/object
+            class (anything with ``_meta.name``).
 
     Returns:
         The corresponding graphql-core type object.
 
     Raises:
-        KeyError: If the leaf type name is not found in ``GDX_SCALAR_MAP``.
-        TypeError: If ``gtype`` is not a recognised graphene type.
+        KeyError: If the leaf graphene type name is not found in ``GDX_SCALAR_MAP``.
+        TypeError: If ``gtype`` is neither a graphql-core type nor a recognised
+            graphene type.
     """
-    # Lazy graphene import — safe when graphene is installed (called only
-    # during conversion); the MODULE itself has no top-level graphene import.
+    # Native currency: a graphql-core type is already in the target shape.
+    # Returned as-is (List/NonNull wrappers included) — no graphene import on
+    # this path, so it stays valid after graphene is uninstalled.
+    if isinstance(gtype, GraphQLType):
+        return gtype
+
+    # Graphene fallback — lazy import keeps the module graphene-free at import
+    # time (and lets the native path above run with graphene uninstalled).
     from graphene.types.structures import List as GList, NonNull as GNonNull
 
     if isinstance(gtype, GNonNull):
