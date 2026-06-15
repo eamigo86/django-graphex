@@ -34,7 +34,15 @@ def test_django_list_object_type_native_compiles():
 
 @pytest.mark.django_db
 def test_django_list_object_type_three_field_shape():
-    """DjangoListObjectType must expose results, totalCount fields (three-field shape)."""
+    """DjangoListObjectType must expose results + totalCount (three-field shape).
+
+    S-ROOTS-e: on ``GDX_BACKEND=native`` the LIVE container is the thunk-built
+    ``_meta.graphql_output_type`` (the native compiler reads it, never
+    ``_meta.fields``). The dead graphene ``_meta.fields`` descriptors
+    (``GenericPaginationField`` / ``CursorPageInfo``) are no longer built on
+    native, so this asserts the live native container shape instead.
+    """
+    from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.types import DjangoListObjectType
     from tests.models import Category
 
@@ -42,14 +50,17 @@ def test_django_list_object_type_three_field_shape():
         class Meta:
             model = Category
 
+    compile_all_outputs()
+
     meta = _ShapeTestListType._meta
-    # The fields dict must contain the results field name and count
-    fields = meta.fields
-    assert "results" in fields or meta.results_field_name in fields, (
-        f"DjangoListObjectType must have results field; got {sorted(fields.keys())}"
+    gql = meta.graphql_output_type
+    assert gql is not None, "native DjangoListObjectType must build graphql_output_type"
+    fields = gql.fields  # force thunk eval
+    assert meta.results_field_name in fields, (
+        f"native container must have results field; got {sorted(fields.keys())}"
     )
-    assert "count" in fields, (
-        f"DjangoListObjectType must have count/totalCount field; got {sorted(fields.keys())}"
+    assert "totalCount" in fields, (
+        f"native container must have totalCount field; got {sorted(fields.keys())}"
     )
 
 
