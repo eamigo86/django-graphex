@@ -26,7 +26,7 @@ from graphene import (
 )
 from graphene.types.generic import GenericScalar
 from graphene.types.objecttype import ObjectTypeOptions
-from graphene.utils.str_converters import to_snake_case
+from graphene.utils.str_converters import to_camel_case, to_snake_case
 from graphql import GraphQLError
 
 from ..backends import resolve_backend
@@ -141,6 +141,11 @@ def _validate_channel_ownership(channel_name: str, session_key: str | None) -> N
 
 
 logger = logging.getLogger(__name__)
+
+
+def _to_camel(snake: str) -> str:
+    """Convert a snake_case payload key to its camelCase GraphQL wire name."""
+    return to_camel_case(snake)
 
 
 def _enum_value(value: Any) -> Any:
@@ -691,6 +696,375 @@ class Subscription(ObjectType):
             binding = SubscriptionBinding(cls)
             cls._binding = binding
         return binding
+
+    # -----------------------------------------------------------------------
+    # Native compile path (Phase 6 WU6) — GDX_BACKEND=native ONLY.
+    #
+    # ADD-ONLY: the graphene ``Subscription(ObjectType)`` base + the graphene
+    # ``_subscribe``/``Field``/``SubscriptionField`` path above stay INTACT
+    # (design C-A, #1452 — the metaclass swap is Phase 7). These methods build
+    # the NATIVE compile path WITHOUT importing graphene: a graphql-core
+    # ``GraphQLObjectType`` event type whose fields carry WU1 snake-closure
+    # resolvers + ``extensions['gdx']``, a fully-populated WU5
+    # ``SubscriptionSpec``, and a DIRECT graphql-core ``GraphQLField`` whose
+    # subscribe factory runs WU5 ``native_subscribe`` and whose delivery runs
+    # WU5 ``drive_subscription`` (COND-A). The full per-field auto-gen +
+    # COND-B build-time call are WU7 (types.py); WU6 keeps the seam clean.
+    # -----------------------------------------------------------------------
+
+    @classmethod
+    def _native_event_type_name(cls) -> str:
+        """Return the native event output type name for this subscription."""
+        return f"{cls._meta.model.__name__}SubscriptionEvent"
+
+    @classmethod
+    def _build_native_event_type(cls) -> Any:
+        """Build the native event output ``GraphQLObjectType`` (WU6 base seam).
+
+        Every field is wired with a WU1 ``make_snake_resolver`` closure (tagged
+        ``_gdx_pure_projection`` so COND-B/``guard.py`` whitelists it) keyed by
+        the SNAKE payload name produced by ``backend.to_representation`` — fixing
+        the camelCase-default-resolver silent-null. The type carries
+        ``extensions['gdx']`` (the native bridge). The full per-field scalar
+        auto-gen is WU7; WU6 maps the declared output fields to a permissive
+        scalar so the base path is functional and testable.
+
+        Returns:
+            A graphql-core ``GraphQLObjectType`` carrying ``extensions['gdx']``.
+        """
+        from graphql import GraphQLField as _GraphQLField
+        from graphql import GraphQLObjectType
+
+        from ..native.bridge import GdxPayload
+        from ..native.ir import GdxMeta
+        from .resolvers import make_snake_resolver
+
+        type_name = cls._native_event_type_name()
+        snake_names = cls._meta.backend.output_field_names()
+
+        def _fields() -> dict[str, Any]:
+            built: dict[str, Any] = {}
+            for snake in snake_names:
+                field_type = cls._native_field_type(snake)
+                # WU7 replaces this minimal seam with the full converter-driven
+                # scalar/relation mapping (incl. M2M as the results/totalCount
+                # container) — until then, non-scalar/relation fields are OMITTED
+                # to avoid silently emitting a wrong type. ``_native_field_type``
+                # returns ``None`` for any field the WU6 seam cannot render
+                # correctly (M2M -> list of pks, reverse relations, etc.); such
+                # fields are skipped here rather than mounted as a wrong String.
+                if field_type is None:
+                    continue
+                wire = _to_camel(snake)
+                built[wire] = _GraphQLField(
+                    field_type,
+                    resolve=make_snake_resolver(snake),
+                )
+            return built
+
+        return GraphQLObjectType(
+            type_name,
+            _fields,
+            extensions={
+                "gdx": GdxPayload(GdxMeta(name=type_name, model=cls._meta.model))
+            },
+        )
+
+    @classmethod
+    def _native_field_type(cls, snake: str) -> Any:
+        """Map a declared output field to a native scalar, or ``None`` to OMIT it.
+
+        WU7 replaces this minimal seam with the full converter-driven
+        scalar/relation mapping (incl. M2M as the results/totalCount container) —
+        until then, non-scalar/relation fields are OMITTED to avoid silently
+        emitting a wrong type. WU6 maps ONLY what ``backend.to_representation``
+        renders cleanly (see ``native/backend.py``):
+
+          * scalar  -> the field value      -> the matching graphql-core scalar
+          * FK/O2O  -> the ``<name>_id`` pk -> ``GraphQLInt``
+
+        A M2M field serializes to a list of pks (``[7, 8]``) the minimal seam
+        cannot render — mounting it as ``GraphQLString`` produces a WRONG SDL
+        (``coAuthors: String``) and a runtime coercion error
+        (``String cannot represent value: [7, 8]``). Such fields — M2M, reverse
+        relations, and anything else the seam can't render correctly — return
+        ``None`` so ``_build_native_event_type`` OMITS them (WU7 adds them back
+        with correct types). The snake-closure resolver itself is type-agnostic.
+
+        Args:
+            snake: The snake_case output field name.
+
+        Returns:
+            A graphql-core scalar type for a cleanly-mappable field, or ``None``
+            when the WU6 seam cannot render the field (OMIT it).
+        """
+        from django.db import models as _models
+        from graphql import (
+            GraphQLBoolean,
+            GraphQLFloat,
+            GraphQLID,
+            GraphQLInt,
+            GraphQLString,
+        )
+
+        try:
+            field = cls._meta.model._meta.get_field(snake)
+        except Exception:  # noqa: BLE001 - unknown field -> OMIT (cannot map it)
+            return None
+
+        # M2M -> list of pks (needs the WU7 container) -> OMIT.
+        if isinstance(field, _models.ManyToManyField):
+            return None
+        # Reverse relations are not concrete payload fields -> OMIT.
+        if getattr(field, "is_relation", False) and not getattr(
+            field, "concrete", False
+        ):
+            return None
+
+        if field.primary_key:
+            return GraphQLID
+        # FK/O2O -> the serialized ``<name>_id`` pk int.
+        if isinstance(field, (_models.ForeignKey, _models.OneToOneField)):
+            return GraphQLInt
+        if isinstance(field, _models.BooleanField):
+            return GraphQLBoolean
+        if isinstance(field, (_models.IntegerField, _models.AutoField)):
+            return GraphQLInt
+        if isinstance(field, (_models.FloatField, _models.DecimalField)):
+            return GraphQLFloat
+        # Concrete scalar (CharField/TextField/DateField/...) -> String.
+        if getattr(field, "concrete", False) and not field.is_relation:
+            return GraphQLString
+        # Anything else the minimal seam cannot render correctly -> OMIT.
+        return None
+
+    @classmethod
+    def _build_native_spec(cls, schema: Any, document: Any) -> Any:
+        """Build the fully-populated WU5 ``SubscriptionSpec`` from this class.
+
+        Wires the kept hooks (``authorize_subscription``/``subscription_scope``/
+        ``_validate_filters``), ``group_name``/``instance_index`` = the kept
+        ``_group_name``/``_instance_index`` (so producer + consumer group names
+        match by construction), index_fields, and ``db_exists`` = the single-row
+        ``.exists()`` narrowing that closes the WU4 conservative-drop gap so
+        native ``__lookup`` subscriptions deliver DB-verified events.
+
+        Args:
+            schema: The native graphql-core ``GraphQLSchema`` the per-event
+                ``execute`` runs against.
+            document: The parsed subscription ``DocumentNode`` executed per event.
+
+        Returns:
+            A WU5 ``SubscriptionSpec``.
+        """
+        from .streaming import SubscriptionSpec
+
+        def _authorize(context: Any, **kwargs: Any) -> None:
+            # The kept classmethod takes (info, **kwargs); pass the
+            # transport-neutral context as ``info`` (it exposes .user/.context).
+            cls.authorize_subscription(context, **kwargs)
+
+        def _scope(context: Any, **kwargs: Any) -> dict[str, Any] | None:
+            return cls.subscription_scope(context, **kwargs)
+
+        return SubscriptionSpec(
+            model_label=cls.model_label(),
+            stream=cls._meta.stream,
+            schema=schema,
+            document=document,
+            declared_output_fields=set(cls._meta.backend.output_field_names()),
+            index_fields=tuple(cls._meta.index_fields),
+            authorize=_authorize,
+            scope=_scope,
+            group_name=cls._group_name,
+            instance_index=cls._instance_index,
+            db_exists=cls._native_db_exists,
+            event_type_name=cls._native_event_type_name(),
+            serialize_data=cls._meta.serialize_data,
+            model=cls._meta.model,
+        )
+
+    @classmethod
+    def _native_db_exists(
+        cls, remaining: dict[str, Any], event: dict[str, Any], *, obj_id: Any = None
+    ) -> Any:
+        """Single-row ``.exists()`` narrowing for non-empty ``__lookup`` filters.
+
+        Closes the WU4 conservative-drop gap: a ``__lookup`` filter the in-memory
+        equality gate cannot resolve (e.g. ``author__name`` / a relation lookup)
+        is verified by a single-row ``.exists()`` against the changed instance's
+        pk — so only events whose row actually matches the lookup are delivered.
+
+        Wrapped via ``sync_to_async``: the source's ``db_verify`` runs inside the
+        async receive loop, so a direct blocking ORM ``.exists()`` would raise
+        ``SynchronousOnlyOperation`` on an ASGI server. The returned coroutine is
+        awaited by the WU5 ``_build_db_verify`` wrapper (``_maybe_await``).
+
+        Args:
+            remaining: The non-empty ``__lookup`` filters left after the in-memory
+                equality gate (Django ORM lookup -> expected value).
+            event: The already-serialized flat snake dict for the changed instance.
+            obj_id: An optional per-object id (unused — the pk is read from the
+                event so the narrowing targets exactly the changed row).
+
+        Returns:
+            An awaitable resolving to ``True`` when the changed row matches every
+            remaining lookup.
+        """
+        pk = event.get("id")
+        if pk is None:
+            return sync_to_async(lambda: False)()
+
+        def _exists() -> bool:
+            return cls._meta.model._default_manager.filter(pk=pk, **remaining).exists()
+
+        return sync_to_async(_exists)()
+
+    @classmethod
+    async def _native_subscribe(
+        cls,
+        channel_layer: Any,
+        schema: Any,
+        document: Any,
+        *,
+        action: str,
+        obj_id: Any = None,
+        filters: dict[str, Any] | None = None,
+        context: Any = None,
+    ) -> Any:
+        """Run the native subscribe (WU5 ``native_subscribe``) for this subscription.
+
+        Builds the spec from this class and delegates to WU5 ``native_subscribe``,
+        which runs the KEPT hooks BEFORE any ``group_add`` (deny short-circuits
+        before the source), joins exactly the action-selected groups (#1420), and
+        wires ``source.db_verify`` to the single-row ``.exists()`` narrowing.
+
+        Args:
+            channel_layer: The constructed Channels channel layer (injected).
+            schema: The native graphql-core schema for the per-event execute.
+            document: The parsed subscription document executed per event.
+            action: The requested action (``create``/``update``/``delete``/
+                ``all_actions``); picks the join set.
+            obj_id: An optional per-object primary key.
+            filters: The raw client-supplied filters.
+            context: The transport-neutral context (``.user`` + scope mapping).
+
+        Returns:
+            The STARTED :class:`ChannelLayerSource` (drive via
+            :func:`drive_subscription`).
+        """
+        from .streaming import native_subscribe
+
+        spec = cls._build_native_spec(schema, document)
+        return await native_subscribe(
+            spec,
+            channel_layer,
+            action=action,
+            obj_id=obj_id,
+            filters=filters,
+            context=context,
+        )
+
+    @classmethod
+    def _build_native_field(cls, schema: Any, document: Any) -> Any:
+        """Build the native subscription field as a DIRECT graphql-core ``GraphQLField``.
+
+        NOT a graphene ``Field``/``SubscriptionField`` (design §3 / C-A). The field
+        carries:
+
+          * ``type`` = the native event output type (``extensions['gdx']`` +
+            snake-closure resolvers),
+          * ``subscribe`` = a source factory that runs WU5 ``native_subscribe``
+            (returning a :class:`ChannelLayerSource`; the transport layer drives
+            it via WU5 ``drive_subscription``),
+          * ``resolve`` = identity (the source dict IS the root; the event type's
+            snake-closure resolvers project it),
+          * ``args`` reduced to ``{action, id, filters}`` under native (the
+            graphene-only ``channel_id``/``operation`` args are dropped).
+
+        Args:
+            schema: The native graphql-core schema for the per-event execute.
+            document: The parsed subscription document executed per event.
+
+        Returns:
+            A graphql-core ``GraphQLField``.
+        """
+        from graphql import (
+            GraphQLArgument,
+            GraphQLNonNull,
+        )
+        from graphql import (
+            GraphQLField as _GraphQLField,
+        )
+        from graphql import (
+            GraphQLID as _GraphQLID,
+        )
+        from graphql import (
+            GraphQLString as _GraphQLString,
+        )
+        from graphql.type import GraphQLEnumType, GraphQLEnumValue
+
+        action_enum = GraphQLEnumType(
+            f"{cls._meta.model.__name__}SubscriptionAction",
+            {
+                "CREATE": GraphQLEnumValue("create"),
+                "UPDATE": GraphQLEnumValue("update"),
+                "DELETE": GraphQLEnumValue("delete"),
+                "ALL_ACTIONS": GraphQLEnumValue("all_actions"),
+            },
+        )
+        # Reduced native arg set: {action, id, filters} (no channel_id/operation).
+        args = {
+            "action": GraphQLArgument(
+                GraphQLNonNull(action_enum),
+                description="Model change action to listen to.",
+                out_name="action",
+            ),
+            "id": GraphQLArgument(
+                _GraphQLID,
+                description="Optional object id to scope a per-object subscription.",
+                out_name="id",
+            ),
+            "filters": GraphQLArgument(
+                _GraphQLString,
+                description="Optional JSON-encoded per-subscriber field filters.",
+                out_name="filters",
+            ),
+        }
+
+        async def _subscribe_source(root: Any, info: Any, **kwargs: Any) -> Any:
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            if channel_layer is None:
+                raise RuntimeError(
+                    "No channel layer configured; set CHANNEL_LAYERS to enable "
+                    "subscriptions."
+                )
+            action = _enum_value(kwargs.get("action"))
+            obj_id = kwargs.get("id")
+            client_filters = kwargs.get("filters") or None
+            if isinstance(client_filters, str):
+                import json
+
+                client_filters = json.loads(client_filters) if client_filters else None
+            return await cls._native_subscribe(
+                channel_layer,
+                schema,
+                document,
+                action=action,
+                obj_id=obj_id,
+                filters=client_filters,
+                context=getattr(info, "context", None),
+            )
+
+        return _GraphQLField(
+            cls._build_native_event_type(),
+            args=args,
+            subscribe=_subscribe_source,
+            resolve=lambda root, _info: root,
+            description=f"Native subscription for {cls._meta.model.__name__} model",
+        )
 
     @classmethod
     def Field(cls, *args: Any, **kwargs: Any) -> SubscriptionField:

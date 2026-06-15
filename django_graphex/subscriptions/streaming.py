@@ -266,9 +266,11 @@ async def native_subscribe(
       2. ``_validate_client_filters`` — reject filter keys on undeclared fields.
       3. ``scope(context, **kwargs)`` — server-forced filters.
       4. ``filters = {**client, **scope}`` — scope WINS on conflict.
-      5. compute the index (when every index field is present in the merged
-         filters) and the group names; the *action* arg picks the join set
-         (``all_actions`` -> three groups, else the single action — #1420 guard).
+      5. compute the index (SCOPE-ONLY parity with the kept ``_subscribe`` hook:
+         a value-scoped group is joined only when the SERVER scope supplies every
+         index field — never from a client value) and the group names; the
+         *action* arg picks the join set (``all_actions`` -> three groups, else
+         the single action — #1420 guard).
       6. construct ``ChannelLayerSource(groups, channel_layer, filters=filters)``
          and ``start()`` it (the ONLY place ``group_add`` happens).
       7. wire ``source.db_verify`` to the spec's single-row ``.exists()``
@@ -312,11 +314,23 @@ async def native_subscribe(
     # (4) Merge — scope WINS on conflict (server precedence).
     merged: dict[str, Any] = {**client_filters, **scope}
 
-    # (5) Index routing: when every index field is present in the merged filters,
-    # join the value-scoped group; otherwise fall back to the coarse group.
+    # (5) Index routing: SCOPE-ONLY parity with the kept ``Subscription._subscribe``
+    # hook (subscription.py: ``all(field in scope for field in index_fields)``).
+    # A value-scoped group is joined ONLY when the SERVER scope supplies every
+    # index field — NEVER from a client-supplied value. Routing on ``merged``
+    # (client ∪ scope) would let a client pick a value-scoped group it should not
+    # see (a cross-subscriber routing leak); the WU6 reconciliation of the WU5
+    # SUGGESTION pins this to ``scope`` alone. The PARITY INVARIANT below makes
+    # the equivalence explicit and guards against a future regression.
     index: dict[str, Any] | None = None
-    if spec.index_fields and all(f in merged for f in spec.index_fields):
-        index = {f: merged[f] for f in spec.index_fields}
+    if spec.index_fields and all(f in scope for f in spec.index_fields):
+        index = {f: scope[f] for f in spec.index_fields}
+        # Parity assertion: a scope-routed index value must equal the merged value
+        # (scope wins on conflict, so they cannot diverge) — proving SCOPE-ONLY
+        # routing matches the kept hook's effective filter exactly.
+        assert all(index[f] == merged[f] for f in index), (
+            "index routing must be SCOPE-ONLY parity with the kept _subscribe hook"
+        )
 
     group_name = spec.group_name
     if group_name is None:  # pragma: no cover - spec must provide a namer
