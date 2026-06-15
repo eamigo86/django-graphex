@@ -165,7 +165,7 @@ def _get_related_model(field: Any) -> type | None:
 
 
 def _is_many_relation(field: Any) -> bool:
-    """Return True if this is a to-many relation (M2M, reverse FK, etc.).
+    """Return True if this is a to-many relation (M2M, reverse FK, GenericRelation).
 
     IMPORTANT: ``OneToOneRel`` (the reverse side of a forward ``OneToOneField``)
     is a SUBCLASS of ``ManyToOneRel`` (``issubclass(OneToOneRel, ManyToOneRel)``
@@ -176,7 +176,16 @@ def _is_many_relation(field: Any) -> bool:
     ``models.OneToOneRel``), NOT a list container. We must therefore EXCLUDE
     ``OneToOneRel`` BEFORE the ``ManyToOneRel`` check so reverse O2O flows
     through the to-ONE relation arm of ``_to_graphql_field``.
+
+    DEFECT B: a ``GenericRelation`` (django.contrib.contenttypes) is a to-MANY
+    relation rendered by graphene as the related model's ``<Model>ListType``
+    results/totalCount container (``converter.convert_generic_relation_to_object_list``
+    -> ``_nested_list_object_field``). It does NOT subclass any of the rel classes
+    below (it is a forward ``ForeignObject`` descriptor), so it must be matched
+    explicitly — otherwise it falls through to the to-ONE arm and renders as a
+    SINGLE object instead of the list container.
     """
+    from django.contrib.contenttypes.fields import GenericRelation
     from django.db.models import (
         ManyToManyField,
         ManyToManyRel,
@@ -185,7 +194,113 @@ def _is_many_relation(field: Any) -> bool:
     )
     if isinstance(field, OneToOneRel):
         return False
+    if isinstance(field, GenericRelation):
+        return True
     return isinstance(field, (ManyToManyField, ManyToManyRel, ManyToOneRel))
+
+
+# ---------------------------------------------------------------------------
+# GenericForeignKey output (DEFECT B — basic GFK -> flat object)
+# ---------------------------------------------------------------------------
+# graphene-django renders a model's GenericForeignKey OUTPUT field as a flat
+# ``GenericForeignKeyType`` (base_types.GenericForeignKeyType) with three fields:
+# ``app_label: String``, ``id: ID``, ``model_name: String``. Its default_resolver
+# reads ``instance._meta.app_label`` / ``instance.id`` / ``instance._meta.model.__name__``
+# from the RESOLVED content object. The native flat type below mirrors that shape
+# and resolver semantics byte-for-byte (camelCase keys ``appLabel``/``id``/``modelName``).
+#
+# NOTE (#8 / Track 2, OUT OF SCOPE here): when the owning type declares
+# ``Meta.gfk_unions`` for this GFK, graphene emits a typed GraphQLUnion instead of
+# the flat type. That union output path is a SEPARATE, larger defect and is NOT
+# implemented here — this only handles the basic GFK -> flat object case.
+
+
+def _is_generic_foreign_key(field: Any) -> bool:
+    """Return True if ``field`` is a django.contrib.contenttypes GenericForeignKey."""
+    from django.contrib.contenttypes.fields import GenericForeignKey
+
+    return isinstance(field, GenericForeignKey)
+
+
+# Module-level cache for the single shared flat GFK GraphQLObjectType.
+_GFK_FLAT_TYPE: Any = None
+
+
+def _gfk_flat_resolver(attr_name: str):
+    """Build a resolver reading ``attr_name`` from the resolved content object.
+
+    Mirrors ``base_types.resolver`` used by graphene's ``GenericForeignKeyType``:
+    ``app_label`` -> ``instance._meta.app_label``, ``id`` -> ``instance.id``,
+    ``model_name`` -> ``instance._meta.model.__name__``. A null content object
+    (unresolved / unregistered target) yields ``None`` for every sub-field.
+    """
+
+    def _resolve(root: Any, _info: Any) -> Any:
+        if root is None:
+            return None
+        if attr_name == "app_label":
+            return root._meta.app_label
+        if attr_name == "id":
+            return root.id
+        if attr_name == "model_name":
+            return root._meta.model.__name__
+        return None  # pragma: no cover - defensive
+
+    return _resolve
+
+
+def _get_gfk_flat_type() -> Any:
+    """Return the shared flat ``GenericForeignKeyType`` GraphQLObjectType (lazy).
+
+    SDL parity: name ``GenericForeignKeyType``, fields ``appLabel: String``,
+    ``id: ID``, ``modelName: String`` — matching graphene's
+    ``base_types.GenericForeignKeyType``.
+    """
+    global _GFK_FLAT_TYPE
+    if _GFK_FLAT_TYPE is None:
+        from graphql import GraphQLObjectType
+
+        _GFK_FLAT_TYPE = GraphQLObjectType(
+            name="GenericForeignKeyType",
+            description=(
+                " Auto generated Type for a model's GenericForeignKey field "
+            ),
+            fields={
+                "appLabel": GraphQLField(
+                    GraphQLString, resolve=_gfk_flat_resolver("app_label")
+                ),
+                "id": GraphQLField(
+                    GraphQLID, resolve=_gfk_flat_resolver("id")
+                ),
+                "modelName": GraphQLField(
+                    GraphQLString, resolve=_gfk_flat_resolver("model_name")
+                ),
+            },
+        )
+    return _GFK_FLAT_TYPE
+
+
+def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
+    """Compile a GenericForeignKey output field -> flat ``GenericForeignKeyType``.
+
+    The field resolver reads the GFK accessor (e.g. ``note.content_object``) from
+    the parent row; a null / unregistered-target content object renders as null
+    (the field and all its sub-fields are nullable, matching graphene).
+    """
+    field_name: str = field.name
+    camel_name: str = _to_camel_case(field_name)
+
+    def _gfk_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
+        if isinstance(root, dict):
+            return root.get(_name)
+        return getattr(root, _name, None)
+
+    return {
+        camel_name: GraphQLField(
+            type_=_get_gfk_flat_type(),
+            resolve=_gfk_resolver,
+        )
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +326,15 @@ def _to_graphql_field(
     """
     field_name: str = field.name if hasattr(field, "name") else field.attname
     camel_name: str = _to_camel_case(field_name)
+
+    # --- GenericForeignKey (DEFECT B) -----------------------------------------
+    # A GFK has ``is_relation == True`` but NO fixed ``related_model`` (it is
+    # polymorphic), so it would otherwise fall through ``_is_relation_field`` ->
+    # ``_get_related_model() is None`` -> ``{}`` (silently dropped). Render it as
+    # the flat ``GenericForeignKeyType`` BEFORE the relation arm. (The
+    # gfk_unions -> GraphQLUnion variant is #8 / Track 2, out of scope.)
+    if _is_generic_foreign_key(field):
+        return _compile_generic_foreign_key(field)
 
     # --- Relation fields ------------------------------------------------------
     if _is_relation_field(field):
@@ -363,7 +487,20 @@ def compile_output_fields(
         if exclude_fields is not None and field_name in exclude_fields:
             continue
 
-        # Skip auto-created reverse relations unless explicitly requested
+        # Skip auto-created reverse relations unless explicitly requested.
+        #
+        # NOTE on reverse O2O (#1581): a reverse ``OneToOneField`` is an
+        # auto-created ``OneToOneRel`` (to-ONE) that is ALSO skipped here. Unlike
+        # to-MANY reverse relations (reverse FK / reverse M2M) — which are
+        # re-injected as ``<Model>ListType`` containers by
+        # ``types._compile_relation_list_fields`` — a reverse O2O has no
+        # compensating injection in THIS compiler, because rendering it
+        # graphene-faithfully requires the PER-TYPE registry (graphene drops the
+        # field when the target model is not registered in that registry, see
+        # ``converter.convert_onetoone_field_to_djangomodel``). This compiler only
+        # sees the SHARED output registry, so reverse-O2O injection is delegated
+        # to ``types._compile_reverse_o2o_fields`` inside the output thunk, which
+        # has the per-type registry and mirrors graphene exactly.
         if getattr(field, "auto_created", False) and not getattr(field, "concrete", True):
             if only_fields is None or field_name not in (only_fields or []):
                 continue

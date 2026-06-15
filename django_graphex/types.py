@@ -331,6 +331,119 @@ def _compile_relation_list_fields(
     return out
 
 
+def _compile_reverse_o2o_fields(
+    src_cls: type,
+    model: type,
+    registry: Any,
+    *,
+    only_fields: list[str] | None = None,
+    exclude_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    """Compile AUTO-DERIVED reverse-OneToOne fields as single nullable objects (#1581).
+
+    A reverse ``OneToOneField`` is an auto-created ``OneToOneRel`` (to-ONE). The
+    native output compiler (``output_compiler.compile_output_fields``) skips ALL
+    auto-created reverse relations. To-MANY reverse relations get re-injected as
+    ``<Model>ListType`` containers by ``_compile_relation_list_fields``, but a
+    reverse O2O is to-ONE and had NO compensating injection — so it was SILENTLY
+    DROPPED on the native path (e.g. ``author { authorProfile { bio } }``).
+
+    graphene-django renders a reverse O2O as a SINGLE nullable ``Field`` whose
+    target type is resolved from the SAME per-type ``Registry`` and DROPPED when
+    the target model is not registered there (see
+    ``converter.convert_onetoone_field_to_djangomodel`` -> it returns ``None``
+    when ``registry.get_type_for_model(model)`` is falsy). This helper mirrors
+    that EXACTLY: it uses the per-type graphene ``registry`` (NOT the shared
+    output registry) so the reverse-O2O field is only emitted when the target's
+    type lives in this schema's registry — which prevents dragging an unrelated
+    model's subgraph (and its ``<Model>ListType`` container) into the schema and
+    causing a duplicate-type-name collision.
+
+    Honors ``only_fields`` / ``exclude_fields`` on the reverse accessor name,
+    matching ``compile_output_fields`` / ``construct_fields`` projection.
+
+    Args:
+        src_cls: The source ``DjangoObjectType`` subclass.
+        model: The Django model the type wraps.
+        registry: The per-type graphene ``Registry`` (``Meta.registry``).
+        only_fields: Restrict to these field names, or ``None`` for all.
+        exclude_fields: Drop these field names.
+
+    Returns:
+        A ``{camelCase_name: GraphQLField}`` dict of reverse-O2O object fields
+        (empty when the model has none / they are all projected out / unregistered).
+    """
+    from django.core.exceptions import ObjectDoesNotExist
+    from django.db.models import OneToOneRel
+    from graphene.utils.str_converters import to_camel_case
+    from graphql import GraphQLField
+
+    only_set = set(only_fields) if only_fields else None
+    exclude_set = set(exclude_fields) if exclude_fields else None
+
+    try:
+        all_fields = model._meta.get_fields(include_parents=False)
+    except Exception:  # pragma: no cover — defensive
+        all_fields = model._meta.concrete_fields
+
+    out: dict[str, Any] = {}
+    for field in all_fields:
+        # Only AUTO-CREATED reverse OneToOneRel (the reverse side of a forward
+        # OneToOneField). A forward O2O is a concrete RelatedField and is handled
+        # by compile_output_fields' to-ONE arm.
+        if not isinstance(field, OneToOneRel):
+            continue
+        if not getattr(field, "auto_created", False):
+            continue
+
+        # Accessor name on the OWNER (related_name, or "<model>" default).
+        get_accessor = getattr(field, "get_accessor_name", None)
+        if callable(get_accessor):
+            try:
+                accessor = get_accessor()
+            except Exception:  # pragma: no cover — defensive
+                accessor = getattr(field, "name", None)
+        else:
+            accessor = getattr(field, "name", None)
+        if accessor is None:
+            continue
+
+        field_name = getattr(field, "name", accessor)
+        if only_set is not None and accessor not in only_set and field_name not in only_set:
+            continue
+        if exclude_set is not None and (accessor in exclude_set or field_name in exclude_set):
+            continue
+
+        # graphene parity: resolve the target type via the PER-TYPE registry and
+        # DROP the field when the target model is not registered there.
+        target_model = field.related_model
+        target_type = registry.get_type_for_model(target_model)
+        if target_type is None:
+            continue
+        compiled = getattr(getattr(target_type, "_meta", None), "graphql_output_type", None)
+        if compiled is None:
+            continue
+
+        # Single nullable object field (graphene renders reverse O2O ALWAYS
+        # nullable: required=is_required(field) and input_flag=='create' is
+        # always False for output). The resolver reads the reverse accessor;
+        # Django raises RelatedObjectDoesNotExist when the row has no related
+        # instance — return None in that case (a nullable field).
+        def _resolver(root: Any, _info: Any, *, _name: str = accessor) -> Any:
+            if isinstance(root, dict):
+                return root.get(_name)
+            try:
+                return getattr(root, _name, None)
+            except ObjectDoesNotExist:
+                return None
+
+        out[to_camel_case(accessor)] = GraphQLField(
+            type_=compiled,
+            resolve=_resolver,
+        )
+    return out
+
+
 def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
     """Raise ImproperlyConfigured for any unknown Meta options.
 
@@ -653,6 +766,24 @@ class DjangoObjectType(NativeObjectType):
                 # the container name + shape + pagination args are byte-identical.
                 _fields.update(
                     _compile_relation_list_fields(
+                        _src_cls,
+                        _model,
+                        _graphene_reg,
+                        only_fields=_only_f,
+                        exclude_fields=_excl_f,
+                    )
+                )
+                # #1581: inject AUTO-DERIVED reverse-OneToOne fields as single
+                # nullable objects. compile_output_fields SKIPS all auto-created
+                # reverse relations; to-MANY ones are re-injected above, but a
+                # reverse O2O (to-ONE) had no compensating injection and was
+                # silently dropped. This uses the PER-TYPE graphene registry
+                # (NOT the shared output registry) and drops the field when the
+                # target is unregistered — byte-identical to graphene's
+                # convert_onetoone_field_to_djangomodel (avoids dragging an
+                # unrelated subgraph + its <Model>ListType into the schema).
+                _fields.update(
+                    _compile_reverse_o2o_fields(
                         _src_cls,
                         _model,
                         _graphene_reg,
