@@ -1090,7 +1090,13 @@ class Subscription(ObjectType):
             cls._build_native_event_type(),
             args=args,
             subscribe=_subscribe_source,
-            resolve=lambda root, _info: root,
+            # The source dict IS the root; the event type's snake-closure
+            # resolvers project it. ``**_kwargs`` absorbs the field arguments
+            # ({action, id, filters}) that graphql-core's ``execute`` passes to the
+            # resolver per delivered event (the COND-A delivery path uses bare
+            # ``execute``, NOT ``subscribe``, so the root field's resolve receives
+            # the coerced args alongside root/info).
+            resolve=lambda root, _info, **_kwargs: root,
             description=f"Native subscription for {cls._meta.model.__name__} model",
         )
 
