@@ -659,6 +659,84 @@ class SchemaRegistries:
     union_cache: dict | None = None
     interface_cache: dict | None = None
     filter_input_cache: dict | None = None
+    # item-b (B5, the lazy-fork): pair-local FORKED per-class output instances,
+    # keyed by the source ``DjangoObjectType`` / ``DjangoListObjectType`` class.
+    # ``None`` / empty means "no fork" — the DEFAULT pair leaves it empty, so
+    # ``resolved_output_type`` falls through to the class-def
+    # ``_meta.graphql_output_type`` (byte-identical single-schema path). A
+    # NON-default pair populates it via ``compile_outputs_into`` so two schemas
+    # over the same model own DISTINCT same-named instances (no graphql-core
+    # "uniquely named types" collision).
+    output_instances: dict | None = None
+
+
+def resolved_output_type(cls: Any, registries: Any) -> Any:
+    """Return the output ``GraphQLObjectType`` for *cls* under *registries*.
+
+    item-b (B5): the SINGLE choke point that decides whether a read-site sees the
+    DEFAULT class-def instance or a FORKED pair-local instance.
+
+    - When *registries* carries a non-empty ``output_instances`` map AND it holds
+      *cls* (a NON-default pair that ran ``compile_outputs_into``), return the
+      FORKED instance bound to that pair.
+    - Otherwise (the default pair, or a class not forked into this pair) return
+      the class-def canonical ``cls._meta.graphql_output_type`` — byte-identical
+      to the pre-B5 single-schema behavior.
+
+    Args:
+        cls: A ``DjangoObjectType`` / ``DjangoListObjectType`` subclass.
+        registries: The ``SchemaRegistries`` pair the current build compiles
+            against (``None`` degrades to the class-def instance).
+
+    Returns:
+        The pair-appropriate ``GraphQLObjectType`` (forked or canonical), or
+        ``None`` when the class has no compiled output type.
+    """
+    forks = getattr(registries, "output_instances", None) if registries else None
+    if forks:
+        forked = forks.get(cls)
+        if forked is not None:
+            return forked
+    return getattr(getattr(cls, "_meta", None), "graphql_output_type", None)
+
+
+# ---------------------------------------------------------------------------
+# Forked-build guard (item-b, B5)
+# ---------------------------------------------------------------------------
+# When a NON-default (forked) ``DjangoGraphQLSchema`` is being built, its relation
+# thunks may AUTO-CREATE per-pair ``<Model>ListType`` containers. Those class-def
+# blocks unconditionally append to the process-global ``_gdx_output_registry`` and
+# (for object types) write to the global shared output registry — leaking
+# pair-scoped, often duplicate-named types into the GLOBAL app-ready compile and
+# poisoning later default-pair builds. This depth counter is raised for the WHOLE
+# forked-build lifetime (compile + root assembly + lazy thunk eval) so those
+# class-def blocks SKIP the global registrations: the auto-created types stay in
+# their PAIR registry (forked there), never the global namespace. The DEFAULT pair
+# never raises it, so the single/default-schema path is byte-identical.
+_forking_depth: int = 0
+
+
+def is_forking() -> bool:
+    """Return whether a forked (non-default) schema build is in progress (B5)."""
+    return _forking_depth > 0
+
+
+class _forking_build:
+    """Context manager that marks a forked-schema build in progress (B5).
+
+    Raises ``_forking_depth`` for the duration so class-def auto-creation of
+    pair-scoped types skips the GLOBAL registry writes. Re-entrant (depth-counted)
+    so nested fork operations are safe.
+    """
+
+    def __enter__(self) -> "_forking_build":
+        global _forking_depth
+        _forking_depth += 1
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        global _forking_depth
+        _forking_depth -= 1
 
 
 # Process-wide DEFAULT pair, created once. Its members ARE the existing global

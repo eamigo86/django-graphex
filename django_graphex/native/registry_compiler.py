@@ -343,10 +343,33 @@ def compile_all_outputs() -> None:
         _gdx_output_registry,
         get_shared_output_registry,
     )
+    from django_graphex.registry import get_global_registry
 
     _reset_in_progress()
 
     if not _gdx_output_registry:
+        return
+
+    # item-b (B5): the app-ready compile owns ONLY the GLOBAL-registry types.
+    # A type declared in a CUSTOM (non-global) graphene ``Registry`` is
+    # SCHEMA-SCOPED — it is compiled into its schema's pair by
+    # ``compile_outputs_into`` (forked) or reused via its class-def instance
+    # (default pair). Such a type must NOT enter the global app-ready compile:
+    # forked schemas auto-create per-pair ``<Model>ListType`` containers that
+    # land in this global list, and compiling several same-named ones here would
+    # poison the global shared registry (the duplicate-name hazard the fork
+    # exists to avoid). Filtering them out keeps the global app-ready compile
+    # byte-identical to the pre-fork single-namespace behavior.
+    _global_graphene = get_global_registry()
+
+    def _is_global_entry(entry: Any) -> bool:
+        reg = getattr(getattr(entry.cls, "_meta", None), "registry", None)
+        # No registry recorded (legacy / model-free) -> treat as global so we
+        # never silently drop a type that the global app-ready compile owned.
+        return reg is None or reg is _global_graphene
+
+    _global_entries = [e for e in _gdx_output_registry if _is_global_entry(e)]
+    if not _global_entries:
         return
 
     # The SAME shared registry the class-def compile used.  Each model's
@@ -370,7 +393,7 @@ def compile_all_outputs() -> None:
         # ── Phase 1: register each model's CANONICAL instance in the cycle guard
         # so relation thunks of OTHER classes resolve A→B→A to that object.  We
         # do NOT create any new instance — the canonical one was set at class-def.
-        for entry in _gdx_output_registry:
+        for entry in _global_entries:
             canonical = shared_registry.get_compiled(entry.model)
             if canonical is None:
                 # No non-skip_registry class claimed the model slot (e.g. every
@@ -386,13 +409,13 @@ def compile_all_outputs() -> None:
         # class-def read (e.g. a test) may have cached a GraphQLString fallback
         # for a relation whose target was not yet registered.  Invalidate that
         # cache first, then re-evaluate so relations resolve to real types.
-        for entry in _gdx_output_registry:
+        for entry in _global_entries:
             inst = _class_instance(entry)
             inst.__dict__.pop("fields", None)  # drop stale cached_property
             _ = inst.fields  # noqa: F841 — force eval + warm correct cache
 
         # ── Phase 3: assertion — every per-class instance must carry gdx ─────
-        for entry in _gdx_output_registry:
+        for entry in _global_entries:
             inst = _class_instance(entry)
             if "gdx" not in (inst.extensions or {}):
                 raise BuildError(
@@ -404,3 +427,336 @@ def compile_all_outputs() -> None:
         # Reset at exit too: no stale stubs leak into later reads via
         # _get_related_type / a subsequent compile_all() run.
         _reset_in_progress()
+
+
+# ---------------------------------------------------------------------------
+# compile_outputs_into — fork per-class output instances into a registry pair
+# ---------------------------------------------------------------------------
+
+
+def _fork_output_class(
+    cls: Any, entry: Any, registries: Any, output_registry: Any, graphene_registry: Any
+) -> GraphQLObjectType:
+    """Build (or return) the FORKED ``GraphQLObjectType`` for *cls* in *registries*.
+
+    item-b (B5): the single-entry fork builder shared by ``compile_outputs_into``
+    (the eager pass) and ``fork_output_class`` (the on-demand path for lazily
+    auto-created ``<Model>ListType`` containers reached during thunk eval). Builds
+    a pair-local instance whose thunk closes over THIS pair's registries, copies
+    the class-def gdx payload (R4), and registers it in the pair's caches.
+
+    Returns the existing fork when *cls* is already forked into this pair.
+    """
+    from django_graphex.types import (
+        DjangoListObjectType,
+        _make_list_fields_thunk_for,
+        _make_output_thunk_for,
+    )
+
+    forks = registries.output_instances
+    existing = forks.get(cls)
+    if existing is not None:
+        return existing
+
+    meta = getattr(cls, "_meta", None)
+    class_inst = getattr(meta, "graphql_output_type", None)
+    if class_inst is None:
+        raise BuildError(
+            f"_fork_output_class: {entry.gql_name!r} "
+            f"(model: {entry.model.__name__!r}) has no class-def "
+            f"GraphQLObjectType on _meta — cannot fork."
+        )
+    # Copy the class-def gdx payload VERBATIM (R4): same GdxMeta object, so the
+    # forked instance carries graphene_type / model / depth / cost / name.
+    extensions = dict(class_inst.extensions or {})
+
+    is_list = isinstance(cls, type) and issubclass(cls, DjangoListObjectType)
+    if is_list:
+        thunk = _make_list_fields_thunk_for(
+            entry.model,
+            getattr(meta, "results_field_name", None) or "results",
+            output_registry,
+            getattr(meta, "pagination", None),
+        )
+    else:
+        thunk = _make_output_thunk_for(
+            cls,
+            entry.model,
+            output_registry,
+            graphene_registry,
+            entry.only_fields,
+            entry.exclude_fields,
+            registries,
+        )
+
+    forked = GraphQLObjectType(
+        name=entry.gql_name,
+        fields=thunk,
+        interfaces=getattr(class_inst, "interfaces", None) or None,
+        extensions=extensions,
+    )
+    # Register BEFORE returning so a self-referential / mutually-recursive
+    # relation thunk resolves through this same instance.
+    forks[cls] = forked
+    if not getattr(meta, "skip_registry", False):
+        output_registry.set_compiled(entry.model, forked)
+    return forked
+
+
+def fork_output_class(cls: Any, registries: Any) -> GraphQLObjectType | None:
+    """Fork *cls* into *registries* ON DEMAND, returning the pair-local instance.
+
+    item-b (B5): the on-demand fork path for a ``DjangoObjectType`` /
+    ``DjangoListObjectType`` that was NOT present when ``compile_outputs_into``
+    ran (e.g. an auto-created ``<Model>ListType`` container materialized lazily
+    inside a relation thunk). Without this, the reverse-relation container would
+    fall back to its class-def instance (bound to the GLOBAL output registry),
+    re-introducing the same-named-instance collision the fork exists to prevent.
+
+    Returns ``None`` when *registries* is not a forked pair (its
+    ``output_instances`` map is absent), so the caller falls back to the class-def
+    instance — byte-identical for the default pair.
+
+    The entry's projection / pagination metadata is recovered from the LAST
+    ``_gdx_output_registry`` entry for *cls* (the one carrying the right
+    ``only_fields`` / ``exclude_fields`` / model the class was registered with).
+    """
+    forks = getattr(registries, "output_instances", None)
+    if forks is None:
+        return None
+    existing = forks.get(cls)
+    if existing is not None:
+        return existing
+
+    from django_graphex.native.base import _GdxOutputEntry, _gdx_output_registry
+
+    # Find the registry entry for this class (last-registered wins, matching the
+    # canonical-instance rule).
+    entry = None
+    for candidate in reversed(_gdx_output_registry):
+        if candidate.cls is cls:
+            entry = candidate
+            break
+    if entry is None:
+        # No global entry: this is a type AUTO-CREATED during a forked build (its
+        # class-def skipped the global append by design — item-b B5). Synthesize
+        # an entry from its ``_meta`` so the fork has the model + projection it
+        # needs. A class with no model/_meta cannot be forked.
+        meta = getattr(cls, "_meta", None)
+        model = getattr(meta, "model", None)
+        if model is None:
+            return None
+        entry = _GdxOutputEntry(
+            cls=cls,
+            gql_name=getattr(meta, "name", None) or cls.__name__,
+            model=model,
+            only_fields=None,
+            exclude_fields=None,
+            max_deep=getattr(meta, "max_deep", None),
+            complexity=getattr(meta, "complexity", None),
+        )
+
+    graphene_registry = getattr(registries, "graphene", None)
+    output_registry = getattr(registries, "output", None)
+    if graphene_registry is None or output_registry is None:
+        return None
+
+    forked = _fork_output_class(
+        cls, entry, registries, output_registry, graphene_registry
+    )
+    # Force eval so the on-demand container's results node resolves against the
+    # pair now (it is reached mid-thunk, so warm its cache immediately).
+    forked.__dict__.pop("fields", None)
+    _ = forked.fields  # noqa: F841
+    return forked
+
+
+def compile_outputs_into(registries: Any) -> None:
+    """FORK pair-local output ``GraphQLObjectType`` instances into *registries*.
+
+    item-b (B5, THE CRUX). This is the counterpart to ``compile_all_outputs()``
+    for a NON-default ``SchemaRegistries`` pair. Where ``compile_all_outputs()``
+    REUSES the single class-def instance on ``_meta.graphql_output_type``,
+    ``compile_outputs_into`` BUILDS a SECOND, pair-local instance for every
+    registered output class whose ``_meta.registry`` is THIS pair's graphene
+    ``Registry`` — so two ``DjangoGraphQLSchema`` over the same model (each with
+    a distinct pair) own DISTINCT same-named ``GraphQLObjectType`` instances and
+    graphql-core never raises "Schema must contain uniquely named types".
+
+    The forked instances:
+
+    - close their relation thunks over THIS pair's ``output``
+      ``NativeOutputRegistry`` + the schema's graphene registry (so a relation
+      resolves to the SAME schema's forked instance, NOT the global last-wins
+      slot — the R1 leak fix);
+    - copy the class-def gdx meta (``graphene_type`` = source class, ``model``,
+      name, depth/cost) onto the fork so the optimizer (which reads
+      ``info.schema`` + the gdx bridge) works on forked schemas (R4);
+    - are stored BOTH in ``registries.output_instances[cls]`` (read by
+      ``base.resolved_output_type``) AND registered (last-wins, non-skip) in
+      ``registries.output`` so the FK / list-container thunks resolve them.
+
+    The DEFAULT pair NEVER calls this (the schema build skips it), so the
+    single/default-schema path stays byte-identical: every read-site falls
+    through ``resolved_output_type`` to the class-def instance.
+
+    Scoping rule: only classes registered in THIS pair's graphene ``Registry``
+    are forked (``_meta.registry is registries.graphene``). A schema only
+    references types declared in its own registry; forking the global registry's
+    unrelated classes would needlessly pull foreign subgraphs into the pair.
+
+    Args:
+        registries: A NON-default ``SchemaRegistries`` pair (its ``graphene`` /
+            ``output`` members are this schema's fresh registries).
+
+    Raises:
+        BuildError: If a forked instance ends up without ``extensions['gdx']``.
+    """
+    from django_graphex.native.base import (
+        _gdx_output_registry,
+        resolved_output_type,
+    )
+    from django_graphex.types import DjangoListObjectType
+
+    graphene_registry = getattr(registries, "graphene", None)
+    output_registry = getattr(registries, "output", None)
+    if graphene_registry is None or output_registry is None:
+        raise BuildError(
+            "compile_outputs_into: the pair must carry a graphene Registry and a "
+            "NativeOutputRegistry (got graphene=%r, output=%r)."
+            % (graphene_registry, output_registry)
+        )
+
+    # Pair-local map of forked per-class instances (read by resolved_output_type).
+    forks: dict[type, GraphQLObjectType] = {}
+    if registries.output_instances is None:
+        registries.output_instances = forks
+    else:
+        forks = registries.output_instances
+
+    # The entries belonging to THIS pair's registry, in registration order.
+    pair_entries = [
+        entry
+        for entry in _gdx_output_registry
+        if getattr(getattr(entry.cls, "_meta", None), "registry", None)
+        is graphene_registry
+    ]
+    if not pair_entries:
+        return
+
+    def _is_list_entry(entry: Any) -> bool:
+        return isinstance(entry.cls, type) and issubclass(
+            entry.cls, DjangoListObjectType
+        )
+
+    # ── Phase 1: build a FORKED GraphQLObjectType per entry (NON-list first so a
+    # list container's results node is already in the pair's output registry).
+    _ordered = sorted(pair_entries, key=_is_list_entry)
+    for entry in _ordered:
+        _fork_output_class(
+            entry.cls, entry, registries, output_registry, graphene_registry
+        )
+
+    # ── Phase 2: force thunk evaluation on each fork against the now-complete
+    # pair registry (mirrors compile_all_outputs Phase 2) so relations resolve to
+    # the forked instances, not a GraphQLString fallback. Thunk eval may FORK
+    # MORE classes on demand (auto-created <Model>ListType containers reached via
+    # a reverse relation); iterate over a SNAPSHOT and re-drain until stable so
+    # every transitively-reached fork is warmed against the pair.
+    _warmed: set[int] = set()
+    while True:
+        pending = [
+            (cls, forked)
+            for cls, forked in list(forks.items())
+            if id(forked) not in _warmed
+        ]
+        if not pending:
+            break
+        for cls, forked in pending:
+            forked.__dict__.pop("fields", None)
+            _ = forked.fields  # noqa: F841 — force eval + warm correct cache
+            _warmed.add(id(forked))
+
+    # ── Phase 3: assertion — every fork must carry the gdx bridge (R4 sanity).
+    for cls, forked in forks.items():
+        if "gdx" not in (forked.extensions or {}):
+            raise BuildError(
+                f"compile_outputs_into: forked type {forked.name!r} is missing "
+                f"extensions['gdx']."
+            )
+
+    # Touch resolved_output_type so the symbol is exercised (it is the read path
+    # the schema build relies on; keeps the import meaningful for linters).
+    assert resolved_output_type is not None
+
+
+# ---------------------------------------------------------------------------
+# assert_schema_pair_isolation — R1 build-invariant check
+# ---------------------------------------------------------------------------
+
+
+def assert_schema_pair_isolation(schema: Any, registries: Any) -> None:
+    """Assert every reachable object type in *schema* belongs to *registries*.
+
+    item-b (B5) R1 MITIGATION — the detection for the crux's HIGHEST risk:
+    a relation thunk in schema A silently resolving to schema B's same-named
+    instance. After building a NON-default (forked) schema, walk the reachable
+    object types and assert that any type whose source class was forked into THIS
+    pair IS the pair's forked instance (identity match in
+    ``registries.output_instances``). A mismatch means a cross-schema leak —
+    raise loudly rather than ship a schema that silently resolves to the wrong
+    instance.
+
+    Mirrors ``bridge.assert_gdx_bridge`` (walk ``schema.type_map``, skip
+    introspection / scalars / enums / unions). For each ``GraphQLObjectType``
+    whose gdx ``graphene_type`` is a class forked into this pair, the schema's
+    instance MUST be ``registries.output_instances[graphene_type]``.
+
+    Args:
+        schema: The built ``GraphQLSchema``.
+        registries: The (non-default) ``SchemaRegistries`` pair the schema was
+            forked into.
+
+    Raises:
+        BuildError: On the FIRST type whose schema instance does not match the
+            pair's forked instance (cross-schema leakage).
+    """
+    from graphql import GraphQLEnumType, GraphQLScalarType, GraphQLUnionType
+
+    forks = getattr(registries, "output_instances", None) or {}
+    if not forks:
+        # No fork happened (default pair) — nothing to isolate; byte-identical.
+        return
+
+    # Index the pair's forked instances by GraphQL NAME. The isolation guarantee
+    # is per-NAME: if THIS pair forked an instance named ``X``, then every
+    # ``X``-named object type reachable in the schema MUST be that exact instance
+    # (a same-named instance from a DIFFERENT pair is the R1 cross-schema leak).
+    forks_by_name: dict[str, GraphQLObjectType] = {}
+    for forked in forks.values():
+        forks_by_name[forked.name] = forked
+
+    for type_name, gql_type in schema.type_map.items():
+        if type_name.startswith("__"):
+            continue
+        if isinstance(gql_type, (GraphQLScalarType, GraphQLEnumType, GraphQLUnionType)):
+            continue
+        if not isinstance(gql_type, GraphQLObjectType):
+            continue
+        expected = forks_by_name.get(type_name)
+        if expected is None:
+            # This pair did not fork a type of this name — the schema may legally
+            # reference a default/global type for it (a type it did not fork).
+            continue
+        if gql_type is not expected:
+            payload = (gql_type.extensions or {}).get("gdx")
+            try:
+                source_cls = payload._meta.graphene_type if payload else None
+            except AttributeError:  # pragma: no cover — defensive
+                source_cls = None
+            raise BuildError(
+                f"assert_schema_pair_isolation: type {type_name!r} in the schema "
+                f"is NOT this pair's forked instance (cross-schema leakage). "
+                f"source_cls={source_cls!r}. A relation thunk resolved to a "
+                f"different schema's same-named instance — the R1 crux risk."
+            )

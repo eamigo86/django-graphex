@@ -179,9 +179,12 @@ def _build_object_field(
         A graphql-core ``GraphQLField``.
     """
     from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native.base import resolved_output_type
 
-    _resolve_registries(registries)
-    output_type = field.type._meta.graphql_output_type
+    registries = _resolve_registries(registries)
+    # item-b (B5): resolve to THIS schema's FORKED instance when a non-default
+    # pair is in play; default pair -> the class-def instance -> byte-identical.
+    output_type = resolved_output_type(field.type, registries)
     if output_type is None:  # pragma: no cover — defensive
         raise RuntimeError(
             f"DjangoObjectField target {field.type!r} has no compiled "
@@ -485,7 +488,7 @@ def compile_declared_field(
     elif _is_plain_object_type(field_type):
         gql_type = _compile_plain_object_type(field_type, registries)
     else:
-        target = _plain_django_output_type(field_type)
+        target = _plain_django_output_type(field_type, registries)
         if target is not None:
             gql_type = target
         else:
@@ -569,7 +572,7 @@ def _compile_wrapped_field_type(
         return polymorphic
     if _is_plain_object_type(field_type):
         return _compile_plain_object_type(field_type, registries)
-    target = _plain_django_output_type(field_type)
+    target = _plain_django_output_type(field_type, registries)
     if target is not None:
         return target
     return _unwrap_graphene_type(field_type)
@@ -610,19 +613,27 @@ def _polymorphic_field_type(
     return None
 
 
-def _plain_django_output_type(field_type: Any) -> GraphQLObjectType | None:
-    """Return the canonical native output type for a django-graphex output field.
+def _plain_django_output_type(
+    field_type: Any, registries: SchemaRegistries | None = None
+) -> GraphQLObjectType | None:
+    """Return the native output type for a django-graphex output field.
 
     A plain ObjectType may reference a ``DjangoObjectType`` /
-    ``DjangoListObjectType`` whose canonical native type lives on
+    ``DjangoListObjectType`` whose native type lives on
     ``_meta.graphql_output_type``. Reuse it (identity-stable) instead of
     recompiling. Returns ``None`` for non-django types.
 
+    item-b (B5): when *registries* is a non-default pair that forked this class,
+    return the FORKED instance instead of the class-def one (default pair / no
+    fork -> the class-def instance -> byte-identical).
+
     Args:
         field_type: The mounted field ``type``.
+        registries: The ``SchemaRegistries`` pair (forked resolution); ``None``
+            -> the class-def instance (byte-identical).
 
     Returns:
-        The canonical container ``GraphQLObjectType`` or ``None``.
+        The container ``GraphQLObjectType`` (forked or canonical) or ``None``.
     """
     import inspect
 
@@ -631,10 +642,9 @@ def _plain_django_output_type(field_type: Any) -> GraphQLObjectType | None:
     from django_graphex.types import DjangoListObjectType, DjangoObjectType
 
     if issubclass(field_type, (DjangoObjectType, DjangoListObjectType)):
-        compiled = getattr(
-            getattr(field_type, "_meta", None), "graphql_output_type", None
-        )
-        return compiled
+        from django_graphex.native.base import resolved_output_type
+
+        return resolved_output_type(field_type, registries)
     return None
 
 
@@ -715,8 +725,8 @@ def _build_django_output_field(
     """
     from django_graphex.native._args import graphene_arg_to_graphql_argument
 
-    _resolve_registries(registries)
-    output_type = _plain_django_output_type(field.type)
+    registries = _resolve_registries(registries)
+    output_type = _plain_django_output_type(field.type, registries)
 
     args = {}
     if getattr(field, "args", None):
@@ -833,24 +843,48 @@ def _filter_arg(
     }
 
 
-def _list_container_output_type(field: Any) -> GraphQLObjectType:
-    """Return the canonical native container type for a list-object field.
+def _list_container_output_type(
+    field: Any, registries: SchemaRegistries | None = None
+) -> GraphQLObjectType:
+    """Return the native container type for a list-object field.
 
-    Reuses the WU1b list-container ``_meta.graphql_output_type`` (identity-stable,
+    Reuses the WU1b list-container ``graphql_output_type`` (identity-stable,
     carries ``extensions['gdx']``). NEVER rebuilds a second container instance.
+
+    item-b (B5): resolves to THIS schema's FORKED container instance when a
+    non-default pair is in play; default pair -> the class-def container ->
+    byte-identical.
 
     Args:
         field: A ``DjangoListObjectField`` (or subclass) whose ``type`` is a
             ``DjangoListObjectType``.
+        registries: The ``SchemaRegistries`` pair (forked container resolution);
+            defaults to the global pair (byte-identical).
 
     Returns:
-        The canonical container ``GraphQLObjectType``.
+        The container ``GraphQLObjectType`` (forked or canonical).
 
     Raises:
         RuntimeError: When the container has no compiled ``graphql_output_type``
             (compile_all_outputs() must run before native root compilation).
     """
-    container = getattr(getattr(field.type, "_meta", None), "graphql_output_type", None)
+    from django_graphex.native.base import resolved_output_type
+
+    registries = _resolve_registries(registries)
+    # item-b (B5): a reverse-relation / nested ``<Model>ListType`` container is
+    # often AUTO-CREATED lazily inside a relation thunk — AFTER
+    # ``compile_outputs_into`` ran — so it is not yet in the pair's fork map.
+    # Fork it ON DEMAND (no-op for the default pair) so the container's results
+    # node resolves to THIS schema's forked node instead of the class-def one
+    # (which would re-introduce the same-named-instance collision).
+    if getattr(registries, "output_instances", None) is not None:
+        from django_graphex.native.registry_compiler import fork_output_class
+
+        forked = fork_output_class(field.type, registries)
+        if forked is not None:
+            return forked
+
+    container = resolved_output_type(field.type, registries)
     if container is None:  # pragma: no cover — defensive
         raise RuntimeError(
             f"DjangoListObjectField target {field.type!r} has no compiled "
@@ -881,7 +915,7 @@ def _build_list_object_field(
         A graphql-core ``GraphQLField``.
     """
     registries = _resolve_registries(registries)
-    output_type = _list_container_output_type(field)
+    output_type = _list_container_output_type(field, registries)
     args = _filter_arg(field, registries)
     # The field's wrap_resolve already returns a (root, info, **kwargs) callable
     # (a partial binding manager/filter_backend/output_type). Reuse it so the
@@ -941,9 +975,13 @@ def _build_filter_list_field(
     Returns:
         A graphql-core ``GraphQLField``.
     """
+    from django_graphex.native.base import resolved_output_type
+
     registries = _resolve_registries(registries)
     node_type = _unwrap_to_node_type(field)
-    node_output = node_type._meta.graphql_output_type
+    # item-b (B5): resolve the node to THIS schema's FORKED instance under a
+    # non-default pair; default pair -> the class-def node -> byte-identical.
+    node_output = resolved_output_type(node_type, registries)
     if node_output is None:  # pragma: no cover — defensive
         raise RuntimeError(
             f"Filter list field target {field.type!r} has no compiled "

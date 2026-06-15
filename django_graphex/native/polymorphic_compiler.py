@@ -91,26 +91,36 @@ def is_interface_type(cls: Any) -> bool:
     return issubclass(cls, DjangoInterfaceType)
 
 
-def _member_output_type(member_cls: Any) -> GraphQLObjectType:
-    """Return the canonical ``GraphQLObjectType`` for a union/interface member.
+def _member_output_type(
+    member_cls: Any, registries: SchemaRegistries | None = None
+) -> GraphQLObjectType:
+    """Return the ``GraphQLObjectType`` for a union/interface member.
 
-    The member is a ``DjangoObjectType`` whose single identity-stable native type
-    lives on ``_meta.graphql_output_type`` (built at the member's class-def time,
-    populated by ``compile_all_outputs``). Reuse it (NEVER recompile) so the union
-    member is the SAME instance the schema resolves objects to.
+    The member is a ``DjangoObjectType`` whose native type lives on
+    ``_meta.graphql_output_type`` (built at the member's class-def time, populated
+    by ``compile_all_outputs``). Reuse it (NEVER recompile) so the union member is
+    the SAME instance the schema resolves objects to.
+
+    item-b (B5): under a non-default (forked) pair, return the member's FORKED
+    instance so the union member matches the SAME schema's object types (default
+    pair / no fork -> the class-def instance -> byte-identical).
 
     Args:
         member_cls: A ``DjangoObjectType`` subclass (a union member or interface
             implementor).
+        registries: The ``SchemaRegistries`` pair (forked member resolution);
+            ``None`` -> the class-def instance (byte-identical).
 
     Returns:
-        The member's canonical ``GraphQLObjectType``.
+        The member's ``GraphQLObjectType`` (forked or canonical).
 
     Raises:
         RuntimeError: When the member has no compiled ``graphql_output_type``
             (its class-def native compile must have run first).
     """
-    compiled = getattr(getattr(member_cls, "_meta", None), "graphql_output_type", None)
+    from django_graphex.native.base import resolved_output_type
+
+    compiled = resolved_output_type(member_cls, registries)
     if compiled is None:  # pragma: no cover — defensive
         raise RuntimeError(
             f"Polymorphic member {member_cls!r} has no compiled "
@@ -163,7 +173,8 @@ def compile_union_type(
     Returns:
         The canonical (memoized) ``GraphQLUnionType`` for *union_cls*.
     """
-    cache = _resolve_registries(registries).union_cache
+    registries = _resolve_registries(registries)
+    cache = registries.union_cache
     cached = cache.get(union_cls)
     if cached is not None:
         return cached
@@ -171,10 +182,15 @@ def compile_union_type(
     name = getattr(union_cls._meta, "name", None) or union_cls.__name__
     member_types = tuple(getattr(union_cls._meta, "types", ()) or ())
 
-    def _types(_members: tuple[Any, ...] = member_types) -> list[GraphQLObjectType]:
+    def _types(
+        _members: tuple[Any, ...] = member_types,
+        _registries: SchemaRegistries = registries,
+    ) -> list[GraphQLObjectType]:
         # Lazy: a union member's ``graphql_output_type`` may not be populated until
         # ``compile_all_outputs`` runs; defer the read to schema-build time.
-        return [_member_output_type(m) for m in _members]
+        # item-b (B5): resolve members against THIS pair (forked under a
+        # non-default pair; class-def instances under the default pair).
+        return [_member_output_type(m, _registries) for m in _members]
 
     gql_union = GraphQLUnionType(
         name=name,

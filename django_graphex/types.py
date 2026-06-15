@@ -256,7 +256,9 @@ def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
     return out
 
 
-def _compile_gfk_union_output_fields(src_cls: type) -> dict[str, Any]:
+def _compile_gfk_union_output_fields(
+    src_cls: type, registries: Any = None
+) -> dict[str, Any]:
     """Compile typed GFK-union OUTPUT fields declared via ``Meta.gfk_unions`` (#8).
 
     ``compile_output_fields`` renders a model's ``GenericForeignKey`` as the flat
@@ -309,7 +311,9 @@ def _compile_gfk_union_output_fields(src_cls: type) -> dict[str, Any]:
         union_cls = registry.get_gfk_union(model, fk_name)
         if union_cls is None:
             continue
-        gql_union = compile_union_type(union_cls)
+        # item-b (B5): thread the pair so the union members resolve to THIS
+        # schema's forked instances (default pair -> class-def -> byte-identical).
+        gql_union = compile_union_type(union_cls, registries)
 
         def _gfk_resolver(root: Any, _info: Any, *, _name: str = fk_name) -> Any:
             if isinstance(root, dict):
@@ -331,6 +335,7 @@ def _compile_relation_list_fields(
     *,
     only_fields: list[str] | None = None,
     exclude_fields: list[str] | None = None,
+    registries: Any = None,
 ) -> dict[str, Any]:
     """Compile AUTO-DERIVED to-many relation fields as list containers (Slice E).
 
@@ -412,7 +417,10 @@ def _compile_relation_list_fields(
         if nested is None:
             # Related node type not registered — graphene skips it too.
             continue
-        out[to_camel_case(accessor)] = _build_list_object_field(nested)
+        # item-b (B5): thread the pair so the nested list container resolves to
+        # THIS schema's FORKED container instance (default pair -> the class-def
+        # container -> byte-identical).
+        out[to_camel_case(accessor)] = _build_list_object_field(nested, registries)
     return out
 
 
@@ -423,6 +431,7 @@ def _compile_reverse_o2o_fields(
     *,
     only_fields: list[str] | None = None,
     exclude_fields: list[str] | None = None,
+    registries: Any = None,
 ) -> dict[str, Any]:
     """Compile AUTO-DERIVED reverse-OneToOne fields as single nullable objects (#1581).
 
@@ -505,7 +514,12 @@ def _compile_reverse_o2o_fields(
         target_type = registry.get_type_for_model(target_model)
         if target_type is None:
             continue
-        compiled = getattr(getattr(target_type, "_meta", None), "graphql_output_type", None)
+        # item-b (B5): resolve to THIS schema's FORKED target instance when a
+        # non-default pair is in play; default pair -> the class-def instance ->
+        # byte-identical.
+        from .native.base import resolved_output_type
+
+        compiled = resolved_output_type(target_type, registries)
         if compiled is None:
             continue
 
@@ -527,6 +541,159 @@ def _compile_reverse_o2o_fields(
             resolve=_resolver,
         )
     return out
+
+
+def _make_output_thunk_for(
+    src_cls: type,
+    model: type,
+    output_registry: Any,
+    graphene_registry: Any,
+    only_fields: list[str] | None,
+    exclude_fields: list[str] | None,
+    registries: Any,
+) -> Any:
+    """Build the lazy fields thunk for a ``DjangoObjectType``'s output type.
+
+    item-b (B5): the SHARED instance-creation seam. BOTH the class-def native
+    branch (DEFAULT pair) AND ``registry_compiler.compile_outputs_into`` (a
+    FORKED pair) call this so the two paths build IDENTICAL field thunks, only
+    differing in the registry pair they close over:
+
+    - the FK relation lookup runs ``compile_output_fields(model, output_registry)``
+      against the PAIR's ``NativeOutputRegistry`` (default = the global shared
+      registry = byte-identical);
+    - the to-many list containers, reverse-O2O, declared, and GFK-union injectors
+      receive ``registries`` so they resolve the SCHEMA's FORKED instances
+      (default pair -> the class-def instances -> byte-identical).
+
+    Args:
+        src_cls: The source ``DjangoObjectType`` subclass.
+        model: The Django model the type wraps.
+        output_registry: The ``NativeOutputRegistry`` whose ``get_compiled`` the
+            FK relation thunk reads (the pair's ``output`` member).
+        graphene_registry: The per-type graphene ``Registry`` (used by the
+            relation-list / reverse-O2O injectors for ``get_type_for_model`` /
+            ``get_or_create_list_object_type``).
+        only_fields / exclude_fields: Projection passed to ``compile_output_fields``.
+        registries: The ``SchemaRegistries`` pair threaded into the container /
+            reverse-O2O injectors so they resolve forked instances.
+
+    Returns:
+        A zero-arg thunk that returns the ``{camelCase: GraphQLField}`` dict.
+    """
+    from .native.output_compiler import compile_output_fields
+
+    def _thunk(
+        _model: type = model,
+        _reg: Any = output_registry,
+        _graphene_reg: Any = graphene_registry,
+        _only_f: list[str] | None = only_fields,
+        _excl_f: list[str] | None = exclude_fields,
+        _src_cls: type = src_cls,
+        _registries: Any = registries,
+    ) -> dict:
+        _fields = compile_output_fields(
+            _model,
+            _reg,
+            only_fields=_only_f,
+            exclude_fields=_excl_f,
+        )
+        _fields.update(
+            _compile_relation_list_fields(
+                _src_cls,
+                _model,
+                _graphene_reg,
+                only_fields=_only_f,
+                exclude_fields=_excl_f,
+                registries=_registries,
+            )
+        )
+        _fields.update(
+            _compile_reverse_o2o_fields(
+                _src_cls,
+                _model,
+                _graphene_reg,
+                only_fields=_only_f,
+                exclude_fields=_excl_f,
+                registries=_registries,
+            )
+        )
+        _fields.update(_compile_declared_list_fields(_src_cls))
+        _fields.update(_compile_declared_fields(_src_cls))
+        _fields.update(_compile_gfk_union_output_fields(_src_cls, _registries))
+        return _fields
+
+    return _thunk
+
+
+def _make_list_fields_thunk_for(
+    list_model: type,
+    results_field_name: str,
+    output_registry: Any,
+    paginator: Any,
+) -> Any:
+    """Build the lazy fields thunk for a ``DjangoListObjectType`` container.
+
+    item-b (B5): the SHARED list-container instance-creation seam (mirrors
+    ``_make_output_thunk_for``). The ``results`` element type is read from the
+    pair's ``NativeOutputRegistry`` so a FORKED container's results node is THIS
+    schema's forked node (default pair -> the class-def node -> byte-identical).
+
+    Args:
+        list_model: The Django model the list container wraps.
+        results_field_name: The container's results field name (e.g. ``results``).
+        output_registry: The ``NativeOutputRegistry`` whose ``get_compiled``
+            resolves the node element type (the pair's ``output`` member).
+        paginator: The configured paginator (or ``None`` for a plain list).
+
+    Returns:
+        A zero-arg thunk that returns the container's field dict.
+    """
+    from graphql import GraphQLField, GraphQLInt, GraphQLList
+
+    def _thunk(
+        _m: type = list_model,
+        _rfn: str = results_field_name,
+        _reg: Any = output_registry,
+        _pg: Any = paginator,
+    ) -> dict:
+        node_gql = _reg.get_compiled(_m)
+        if node_gql is None:
+            from graphql import GraphQLString as _S
+
+            node_gql = _S  # type: ignore[assignment]
+
+        from django_graphex.paginations.utils import NativePaginationField
+
+        _results_args: dict = {}
+        _results_resolve = None
+        if _pg is not None:
+            _results_args = _pg.to_graphql_fields(native=True)
+            _native_field = NativePaginationField(type=node_gql, paginator=_pg)
+            from graphql.execution import default_field_resolver as _dfr
+
+            _results_resolve = _native_field.wrap_resolve(_dfr)
+
+        def _total_count_resolve(root: Any, info: Any, **_kw: Any) -> Any:
+            return getattr(root, "count", None)
+
+        fields: dict = {
+            _rfn: GraphQLField(
+                GraphQLList(node_gql),
+                args=_results_args,
+                resolve=_results_resolve,
+            ),
+            "totalCount": GraphQLField(GraphQLInt, resolve=_total_count_resolve),
+        }
+
+        if _pg is not None:
+            _native_page_info = _pg.get_native_page_info_field(node_gql)
+            if _native_page_info is not None:
+                fields["pageInfo"] = _native_page_info
+
+        return fields
+
+    return _thunk
 
 
 def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
@@ -766,10 +933,10 @@ class DjangoObjectType(NativeObjectType):
                 _gdx_output_registry,
                 _GdxOutputEntry,
                 get_shared_output_registry,
+                is_forking,
             )
             from django_graphex.native.bridge import GdxPayload
             from django_graphex.native.ir import GdxMeta
-            from django_graphex.native.output_compiler import compile_output_fields
 
             # Resolve the GraphQL type NAME the SAME way graphene does: an
             # explicit ``Meta.name`` (forwarded via **options) wins, otherwise the
@@ -778,6 +945,14 @@ class DjangoObjectType(NativeObjectType):
             # byte-identical to graphene's. Without this the native type would be
             # named ``GenericType`` while graphene names it ``<Model>GenericType``.
             _gql_name = options.get("name") or cls.__name__
+
+            # item-b (B5): during a FORKED schema build, a type AUTO-CREATED by a
+            # relation thunk is pair-scoped — it must NOT enter the GLOBAL
+            # app-ready compile list (``compile_all_outputs``), or several
+            # same-named pair containers would poison the global namespace. Skip
+            # the global append while forking; the type is forked into its pair
+            # instead. Outside a fork (the default path) this is byte-identical.
+            _forking = is_forking()
 
             # Register in the global entry list for compile_all_outputs() at
             # app-ready (carries projection / depth / complexity metadata).
@@ -790,7 +965,8 @@ class DjangoObjectType(NativeObjectType):
                 max_deep=max_deep,
                 complexity=complexity,
             )
-            _gdx_output_registry.append(_entry)
+            if not _forking:
+                _gdx_output_registry.append(_entry)
 
             # SHARED registry: the single source of truth for relation thunks.
             # Keyed by MODEL with last-registration-wins semantics, mirroring the
@@ -828,80 +1004,21 @@ class DjangoObjectType(NativeObjectType):
             # `.fields` access; by app-ready (compile_all_outputs) every model's
             # canonical instance is in the shared registry so relation lookups
             # resolve to the real related GraphQLObjectType (not GraphQLString).
-            def _make_output_thunk(
-                _model: type = model,
-                _reg: Any = _shared_registry,
-                _graphene_reg: Any = registry,
-                _only_f: list[str] | None = _only,
-                _excl_f: list[str] | None = _excl,
-                _src_cls: type = cls,
-            ) -> dict:
-                _fields = compile_output_fields(
-                    _model,
-                    _reg,
-                    only_fields=_only_f,
-                    exclude_fields=_excl_f,
-                )
-                # Slice E: inject AUTO-DERIVED to-many relations as the related
-                # model's ``<Model>ListType`` results/totalCount CONTAINER (NOT a
-                # plain ``[Node]`` list — that was a native-vs-graphene divergence).
-                # compile_output_fields deliberately SKIPS to-many relations; this
-                # reuses the SAME ``_nested_list_object_field`` ->
-                # ``_build_list_object_field`` path graphene's converter uses, so
-                # the container name + shape + pagination args are byte-identical.
-                _fields.update(
-                    _compile_relation_list_fields(
-                        _src_cls,
-                        _model,
-                        _graphene_reg,
-                        only_fields=_only_f,
-                        exclude_fields=_excl_f,
-                    )
-                )
-                # #1581: inject AUTO-DERIVED reverse-OneToOne fields as single
-                # nullable objects. compile_output_fields SKIPS all auto-created
-                # reverse relations; to-MANY ones are re-injected above, but a
-                # reverse O2O (to-ONE) had no compensating injection and was
-                # silently dropped. This uses the PER-TYPE graphene registry
-                # (NOT the shared output registry) and drops the field when the
-                # target is unregistered — byte-identical to graphene's
-                # convert_onetoone_field_to_djangomodel (avoids dragging an
-                # unrelated subgraph + its <Model>ListType into the schema).
-                _fields.update(
-                    _compile_reverse_o2o_fields(
-                        _src_cls,
-                        _model,
-                        _graphene_reg,
-                        only_fields=_only_f,
-                        exclude_fields=_excl_f,
-                    )
-                )
-                # WU6b: inject DECLARED nested-list fields (e.g. a
-                # ``DjangoNestedListObjectField`` class attribute such as
-                # ``posts = DjangoNestedListObjectField(PostList, accessor=...)``).
-                # compile_output_fields above only derives fields from
-                # ``model._meta.get_fields()`` — a declared list field is a
-                # graphene class attribute that never enters the model meta, so
-                # without this injection a nested paginated list is SILENTLY
-                # DROPPED ("Cannot query field 'posts'"). Reuses the same native
-                # list-container builder the root compiler uses (WU6a), so the
-                # window-prefetch resolver + pagination args land on the nested
-                # field's results container too (the WU6b DB-side window seam).
-                _fields.update(_compile_declared_list_fields(_src_cls))
-                # Slice D: inject DECLARED non-model, non-list fields (e.g.
-                # ``extra = graphene.String()`` / ``graphene.Field(PlainType)``).
-                # These graphene class attributes never enter ``model._meta`` so
-                # compile_output_fields drops them; graphene renders them via
-                # ``_meta.fields``. Added LAST so a declared field overrides a
-                # same-named model-derived field, matching graphene's precedence.
-                _fields.update(_compile_declared_fields(_src_cls))
-                # DEFECT #8: override a GFK's flat ``GenericForeignKeyType`` field
-                # with the typed ``GraphQLUnion`` when the owner declares
-                # ``Meta.gfk_unions`` for that GFK. Added LAST so it REPLACES the
-                # flat field compile_output_fields emitted (last-wins), matching
-                # graphene's typed-union GFK output.
-                _fields.update(_compile_gfk_union_output_fields(_src_cls))
-                return _fields
+            #
+            # item-b (B5): built via the SHARED ``_make_output_thunk_for`` factory
+            # so the class-def (DEFAULT pair) and ``compile_outputs_into`` (FORKED
+            # pair) produce IDENTICAL thunks. The class-def path passes
+            # ``registries=None`` so the container / reverse-O2O injectors resolve
+            # the class-def instances — byte-identical to the pre-B5 inline thunk.
+            _make_output_thunk = _make_output_thunk_for(
+                cls,
+                model,
+                _shared_registry,
+                registry,
+                _only,
+                _excl,
+                None,
+            )
 
             # DEFECT #8: wire any DjangoInterfaceType this type implements onto the
             # native GraphQLObjectType as graphql-core ``interfaces=`` (a lazy
@@ -940,7 +1057,15 @@ class DjangoObjectType(NativeObjectType):
             # with registry.register(cls) above.  When skip_registry=True the
             # class is NOT canonical in the graphene Registry, so do not let it
             # claim the shared slot either.
-            if not skip_registry:
+            #
+            # item-b (B5): during a FORKED build, the GLOBAL shared output
+            # registry must NOT be touched (an auto-created pair type would
+            # overwrite the global model slot, leaking into default-pair schemas).
+            # The forked type is registered in its PAIR output registry by
+            # ``compile_outputs_into`` / ``fork_output_class`` instead. Outside a
+            # fork this is byte-identical (the global last-wins write a custom- or
+            # global-registry type relies on for default-pair relation resolution).
+            if not skip_registry and not _forking:
                 _shared_registry.set_compiled(model, _graphql_output_type)
 
             # S6b: ``_meta`` is now a MUTABLE ``NativeObjectTypeOptions`` (no
@@ -1840,12 +1965,13 @@ class DjangoListObjectType(NativeObjectType):
         # the old ``if GDX_BACKEND == "native"`` env guard was removed.
         # ----------------------------------------------------------------
         if model is not None:
-            from graphql import GraphQLField, GraphQLInt, GraphQLList, GraphQLObjectType
+            from graphql import GraphQLObjectType
 
             from django_graphex.native.base import (
                 _gdx_output_registry,
                 _GdxOutputEntry,
                 get_shared_output_registry,
+                is_forking,
             )
             from django_graphex.native.bridge import GdxPayload
             from django_graphex.native.ir import GdxMeta
@@ -1860,79 +1986,18 @@ class DjangoListObjectType(NativeObjectType):
             # auto-derived to-many CONTAINER name byte-identical to graphene's.
             _list_gql_name = options.get("name") or cls.__name__
 
-            # Capture loop variables via default-arg idiom.
-            _list_model = model
-            _list_rfn = results_field_name  # e.g. "results" or "items"
-            _list_paginator = paginator  # may be None (plain list, no pagination)
-
-            def _make_list_fields_thunk(
-                _m: type = _list_model,
-                _rfn: str = _list_rfn,
-                _reg: Any = _shared_registry,
-                _pg: Any = _list_paginator,
-            ) -> dict:
-                """Lazily build results + totalCount (+ pageInfo) fields.
-
-                Results element type is resolved from the shared registry so
-                it is the same canonical GraphQLObjectType as the node type's
-                _meta.graphql_output_type — identity-stable, no String fallback.
-
-                WU6a: when a paginator is configured the ``results`` field carries
-                the paginator's native args (limit/offset/ordering | page/... |
-                first/cursor) AND a slicing resolver so the SDL-visible args
-                ACTUALLY slice (no silent no-op). Cursor paginators also add a
-                native ``pageInfo`` field.
-                """
-                node_gql = _reg.get_compiled(_m)
-                if node_gql is None:
-                    # Fallback: build a placeholder (should never happen after
-                    # compile_all_outputs() registers all nodes first).
-                    from graphql import GraphQLString as _S
-                    node_gql = _S  # type: ignore[assignment]
-
-                from django_graphex.paginations.utils import NativePaginationField
-
-                _results_args: dict = {}
-                _results_resolve = None
-                if _pg is not None:
-                    # Native pagination args wired directly onto the results field
-                    # (the build-not-wired seam WU6a closes). _NativePaginationField_
-                    # extracts the already_paginated-aware slicing resolver.
-                    _results_args = _pg.to_graphql_fields(native=True)
-                    _native_field = NativePaginationField(type=node_gql, paginator=_pg)
-                    from graphql.execution import default_field_resolver as _dfr
-
-                    _results_resolve = _native_field.wrap_resolve(_dfr)
-
-                def _total_count_resolve(root: Any, info: Any, **_kw: Any) -> Any:
-                    """Read the total count off the DjangoListObjectBase root.
-
-                    The container's GraphQL field is ``totalCount`` but the root
-                    object exposes it as ``count`` (graphene mapped the ``count``
-                    field via ``name="totalCount"``); the default field resolver
-                    would read ``root.totalCount`` and get ``None``.
-                    """
-                    return getattr(root, "count", None)
-
-                fields: dict = {
-                    _rfn: GraphQLField(
-                        GraphQLList(node_gql),
-                        args=_results_args,
-                        resolve=_results_resolve,
-                    ),
-                    "totalCount": GraphQLField(
-                        GraphQLInt, resolve=_total_count_resolve
-                    ),
-                }
-
-                # Opt-in pagination metadata: cursor paginators expose a native
-                # pageInfo field carrying the same first/cursor args + resolver.
-                if _pg is not None:
-                    _native_page_info = _pg.get_native_page_info_field(node_gql)
-                    if _native_page_info is not None:
-                        fields["pageInfo"] = _native_page_info
-
-                return fields
+            # item-b (B5): built via the SHARED ``_make_list_fields_thunk_for``
+            # factory so the class-def (DEFAULT pair) and ``compile_outputs_into``
+            # (FORKED pair) produce IDENTICAL container thunks. The class-def path
+            # binds the SHARED global output registry (byte-identical); a forked
+            # pair binds its own ``output`` member so the container's ``results``
+            # node is THIS schema's forked node.
+            _make_list_fields_thunk = _make_list_fields_thunk_for(
+                model,
+                results_field_name,
+                _shared_registry,
+                paginator,
+            )
 
             _list_gdx_meta = GdxMeta(
                 name=_list_gql_name,
@@ -1956,6 +2021,9 @@ class DjangoListObjectType(NativeObjectType):
 
             # Register entry so compile_all_outputs() validates (thunk-eval +
             # gdx assertion) this container alongside DjangoObjectType entries.
+            # item-b (B5): skip the GLOBAL append during a FORKED build (a
+            # pair-scoped auto-created container must not leak into the global
+            # app-ready compile); the container is forked into its pair instead.
             _list_entry = _GdxOutputEntry(
                 cls=cls,
                 gql_name=_list_gql_name,
@@ -1965,7 +2033,8 @@ class DjangoListObjectType(NativeObjectType):
                 max_deep=max_deep,
                 complexity=complexity,
             )
-            _gdx_output_registry.append(_list_entry)
+            if not is_forking():
+                _gdx_output_registry.append(_list_entry)
 
             # S6b: ``_meta`` is now a MUTABLE ``NativeObjectTypeOptions`` (no
             # freeze), so this is a PLAIN assignment — matching the DjangoObjectType
