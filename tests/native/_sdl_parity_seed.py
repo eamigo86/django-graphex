@@ -78,7 +78,7 @@ def _configure_django() -> None:
                 "django.contrib.staticfiles",
                 "tests",
             ),
-            GRAPHENE={"SCHEMA": "tests.schema.schema"},
+            GRAPHEX={"SCHEMA": "tests.schema.schema"},
         )
     django.setup()
 
@@ -170,8 +170,8 @@ def build_scalar_node_seed_sdl() -> str:
     """
     _configure_django()
 
-    from django.db import models
     import graphene
+    from django.db import models
     from graphql.utilities import print_schema
 
     from django_graphex.fields import DjangoObjectField
@@ -465,6 +465,8 @@ def build_filter_seed_sdl() -> str:
 
         from django_graphex.filtering.native_schema import (
             _choices_enum as native_choices_enum,
+        )
+        from django_graphex.filtering.native_schema import (
             build_filter_input_type as native_build,
         )
 
