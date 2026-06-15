@@ -1013,6 +1013,32 @@ class DjangoObjectType(NativeObjectType):
             return None
 
 
+def _schema_scoped_registry(info: ResolveInfo) -> Any:
+    """Return the request schema's scoped graphene ``Registry``, or ``None``.
+
+    item-b (B4): the ONLY genuine query-time registry read. A
+    ``DjangoGraphQLSchema`` stows its ``SchemaRegistries`` pair on
+    ``graphql_schema.extensions['gdx_registry']`` (B3); a polymorphic
+    ``resolve_type`` recovers the pair via ``info.schema`` and returns its
+    ``graphene`` member so a schema built with a FORKED registry (later slices)
+    resolves rows against ITS namespace instead of the class-def binding.
+
+    Reads exactly like the protected-fields channel (``security.py``): defensive
+    ``getattr`` so a ``None`` info (the unit-test ``resolve_type(instance, None)``
+    call style) or a schema with no extensions degrades to ``None`` — the caller
+    then falls back to the per-class / global chain (byte-identical).
+
+    With the DEFAULT pair the ``graphene`` member IS ``get_global_registry()``,
+    so the scoped read is the same registry the chain would reach anyway.
+    """
+    schema = getattr(info, "schema", None)
+    extensions = getattr(schema, "extensions", None) or {}
+    pair = extensions.get("gdx_registry")
+    if pair is None:
+        return None
+    return getattr(pair, "graphene", None)
+
+
 def _resolve_polymorphic_type(cls: Any, instance: Any, info: ResolveInfo) -> Any:
     """Map a plain Django model instance to its registered DjangoObjectType.
 
@@ -1020,31 +1046,60 @@ def _resolve_polymorphic_type(cls: Any, instance: Any, info: ResolveInfo) -> Any
     resolved row is a CONCRETE member model, so ``type(instance)`` yields the
     concrete class and the registry maps it to the right output type.
 
+    Registry resolution order (item-b, B4):
+
+    1. the SCHEMA-SCOPED registry from ``info.schema.extensions['gdx_registry']``
+       (so a forked-registry schema resolves against ITS namespace);
+    2. the per-class binding ``cls._dgx_registry``;
+    3. the process-wide global registry.
+
+    Candidates are tried in order and the FIRST that maps the model wins; an
+    earlier candidate that does not register the model (returns ``None``) falls
+    through to the next. With the default pair the schema-scoped registry IS the
+    global, so the per-class / global chain still catches every row it caught
+    before B4 — byte-identical for the single/default-schema case.
+
     Args:
         cls: the union or interface class whose registry is consulted.
         instance: the Django model instance being resolved.
-        info: GraphQL resolve info for the current request (unused; kept for the
-            graphene ``resolve_type`` signature).
+        info: GraphQL resolve info for the current request. ``info.schema`` is
+            read for the schema-scoped registry (B4); ``None`` degrades to the
+            class chain.
 
     Returns:
         The registered "DjangoObjectType" subclass for ``type(instance)``.
 
     Raises:
-        TypeError: if no "DjangoObjectType" is registered for the instance's
-            model. This is intentional: a silent None would surface later as the
-            opaque "Abstract type must resolve to an Object type" runtime error.
+        TypeError: if NO candidate registry has a "DjangoObjectType" for the
+            instance's model. This is intentional: a silent None would surface
+            later as the opaque "Abstract type must resolve to an Object type"
+            runtime error.
     """
-    registry = getattr(cls, "_dgx_registry", None) or get_global_registry()
-    object_type = registry.get_type_for_model(type(instance))
-    if object_type is None:
-        raise TypeError(
-            "{cls}.resolve_type: no DjangoObjectType registered for "
-            "{model!r}. Every member/implementor model must have a "
-            "DjangoObjectType registered in the same registry.".format(
-                cls=cls.__name__, model=type(instance).__name__
-            )
+    model = type(instance)
+    # Ordered, de-duplicated candidate registries: schema-scoped first, then the
+    # per-class binding, then the global. ``None`` entries (no info / no binding)
+    # are skipped; a registry already tried is not consulted twice.
+    candidates: list[Any] = []
+    for registry in (
+        _schema_scoped_registry(info),
+        getattr(cls, "_dgx_registry", None),
+        get_global_registry(),
+    ):
+        if registry is not None and not any(registry is c for c in candidates):
+            candidates.append(registry)
+
+    for registry in candidates:
+        object_type = registry.get_type_for_model(model)
+        if object_type is not None:
+            return object_type
+
+    raise TypeError(
+        "{cls}.resolve_type: no DjangoObjectType registered for "
+        "{model!r}. Every member/implementor model must have a "
+        "DjangoObjectType registered in the same registry.".format(
+            cls=cls.__name__, model=model.__name__
         )
-    return object_type
+    )
 
 
 class DjangoUnionType(NativeObjectType):

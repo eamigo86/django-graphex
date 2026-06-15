@@ -135,6 +135,7 @@ class DjangoGraphQLSchema:
         private_mutation: type[ObjectType] | None = None,
         private_subscription: type[ObjectType] | None = None,
         auto_camelcase: bool = True,
+        registries: Any = None,
         **kwargs,
     ) -> None:
         """Build the schema and attach the protected-field registry.
@@ -165,6 +166,15 @@ class DjangoGraphQLSchema:
             auto_camelcase: Stored on the instance for parity readers (the native
                 compiler camelCases field names unconditionally; this flag is kept
                 for graphene-API compatibility). Defaults to ``True``.
+            registries: The ``SchemaRegistries`` pair this schema compiles
+                against (item-b, B3). ``None`` selects the process-wide global
+                default pair (``default_schema_registries()``), so existing
+                callers are byte-identical. The selected pair is threaded into the
+                native build (compile caches/registry) AND stowed on
+                ``graphql_schema.extensions['gdx_registry']`` so the polymorphic
+                ``resolve_type`` can scope its registry read per-schema at query
+                time (B4). For B3 every schema still uses the default pair (no
+                fork yet — B5), so SDL + behavior stay byte-identical.
             **kwargs: ``query`` / ``mutation`` / ``subscription`` roots plus
                 ``directives`` / ``types`` (forwarded to the graphql-core schema
                 by :meth:`_build_native_graphql_schema`).
@@ -191,22 +201,37 @@ class DjangoGraphQLSchema:
         self.mutation = mutation
         self.subscription = subscription
 
+        # item-b (B3): the SchemaRegistries pair this schema compiles against.
+        # ``None`` -> the process-wide global default pair, so existing callers
+        # are byte-identical. Threaded into every native compile entrypoint below
+        # AND exposed on the built schema's extensions for query-time scoping.
+        from django_graphex.native.base import default_schema_registries
+
+        if registries is None:
+            registries = default_schema_registries()
+        self._registries = registries
+
         protected = (
             collect_field_names(private_query)
             | collect_field_names(private_mutation)
             | collect_field_names(private_subscription)
         )
 
-        native_query = self._merge_root("Query", query, private_query)
-        native_mutation = self._merge_root("Mutation", mutation, private_mutation)
+        native_query = self._merge_root(
+            "Query", query, private_query, registries=registries
+        )
+        native_mutation = self._merge_root(
+            "Mutation", mutation, private_mutation, registries=registries
+        )
         native_subscription = self._merge_root(
-            "Subscription", subscription, private_subscription
+            "Subscription", subscription, private_subscription, registries=registries
         )
         native_schema = self._build_native_graphql_schema(
             native_query,
             native_mutation,
             native_subscription,
             protected_fields=frozenset(protected),
+            registries=registries,
             **kwargs,
         )
         # Carry the protected-field marker onto the native schema too (legacy
@@ -245,6 +270,7 @@ class DjangoGraphQLSchema:
         subscription: Any,
         *,
         protected_fields: frozenset[str] | None = None,
+        registries: Any = None,
         **kwargs: Any,
     ) -> Any:
         """Assemble a graphql-core ``GraphQLSchema`` from the native root compiler.
@@ -266,6 +292,13 @@ class DjangoGraphQLSchema:
                 class, or ``None``).
             protected_fields: The frozenset of protected top-level field names to
                 store on ``schema.extensions['gdx_protected_fields']`` (C14).
+            registries: The ``SchemaRegistries`` pair to compile each root against
+                (item-b, B3); ``None`` -> the global default pair (byte-identical).
+                Threaded into ``compile_native_root`` for the graphene-root
+                short-circuit cases, and stowed on
+                ``schema.extensions['gdx_registry']`` ALONGSIDE
+                ``gdx_protected_fields`` so the polymorphic ``resolve_type`` can
+                scope its registry read per-schema at query time (B4).
             **kwargs: Extra graphene.Schema kwargs. Two are consumed here and
                 forwarded to ``GraphQLSchema`` EXACTLY as graphene does:
 
@@ -296,7 +329,14 @@ class DjangoGraphQLSchema:
         """
         from graphql import GraphQLObjectType, GraphQLSchema
 
+        from django_graphex.native.base import default_schema_registries
         from django_graphex.native.schema_compiler import compile_native_root
+
+        # item-b (B3): resolve the pair this build compiles against. ``None`` ->
+        # the global default pair, so the compile + the stowed extension are
+        # byte-identical for the single/default-schema case.
+        if registries is None:
+            registries = default_schema_registries()
 
         def _root_name(root: Any, default: str) -> str:
             """Use the root's GraphQL type name (class name by default).
@@ -322,7 +362,9 @@ class DjangoGraphQLSchema:
                 return None
             if isinstance(root, GraphQLObjectType):
                 return root
-            return compile_native_root(root, name=_root_name(root, default))
+            return compile_native_root(
+                root, name=_root_name(root, default), registries=registries
+            )
 
         native_query = _native_root(query, "Query")
         native_mutation = _native_root(mutation, "Mutation")
@@ -332,6 +374,12 @@ class DjangoGraphQLSchema:
         if protected_fields is not None:
             # C14: canonical native read location for protected top-level fields.
             extensions["gdx_protected_fields"] = protected_fields
+        # item-b (B3): stow the schema's registry pair so the polymorphic
+        # ``resolve_type`` can scope its registry read per-schema at query time
+        # (B4), via ``info.schema.extensions['gdx_registry']`` — the SAME channel
+        # ``gdx_protected_fields`` uses. With the default pair this is the global
+        # pair, so the query-time read resolves the same registry as before.
+        extensions["gdx_registry"] = registries
 
         # Forward ``directives`` exactly like graphene: a non-None custom list
         # REPLACES graphql-core's specified_directives (so SDL parity holds for
@@ -466,6 +514,8 @@ class DjangoGraphQLSchema:
         name: str,
         public: Any,
         private: Any,
+        *,
+        registries: Any = None,
     ) -> Any:
         """Union a public root with its private counterpart.
 
@@ -488,6 +538,11 @@ class DjangoGraphQLSchema:
                 "Subscription").
             public: The public root ObjectType class (or ``None``).
             private: The private root ObjectType class (or ``None``).
+            registries: The ``SchemaRegistries`` pair to compile both sides of a
+                genuine union against (item-b, B3); ``None`` -> the global default
+                pair (byte-identical). Short-circuit cases return the graphene
+                root class unchanged (compiled later by
+                ``_build_native_graphql_schema`` with the same pair).
 
         Returns:
             A native ``GraphQLObjectType`` for the genuine union, or the graphene
@@ -550,10 +605,14 @@ class DjangoGraphQLSchema:
         from django_graphex.native.schema_compiler import compile_native_root
 
         public_native = compile_native_root(
-            public, name=DjangoGraphQLSchema._root_type_name(public, name)
+            public,
+            name=DjangoGraphQLSchema._root_type_name(public, name),
+            registries=registries,
         )
         private_native = compile_native_root(
-            private, name=DjangoGraphQLSchema._root_type_name(private, name)
+            private,
+            name=DjangoGraphQLSchema._root_type_name(private, name),
+            registries=registries,
         )
 
         def _merged_fields(
