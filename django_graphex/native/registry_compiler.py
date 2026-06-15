@@ -28,7 +28,6 @@ from graphql import GraphQLField, GraphQLObjectType, GraphQLString
 from django_graphex.native.bridge import GdxPayload
 from django_graphex.native.ir import GdxMeta
 
-
 # ---------------------------------------------------------------------------
 # BuildError
 # ---------------------------------------------------------------------------
@@ -60,6 +59,7 @@ class NativeOutputRegistry:
     """
 
     def __init__(self) -> None:
+        """Initialize an empty registry (no entries, no compiled types)."""
         # Ordered list: (gql_name, model_cls, related_models, skip_gdx)
         self._entries: list[tuple[str, type, list[type], bool]] = []
         # model_cls → compiled GraphQLObjectType
@@ -298,8 +298,10 @@ def compile_all(registry: NativeOutputRegistry) -> None:
 
 
 def compile_all_outputs() -> None:
-    """Populate/validate the single per-CLASS ``GraphQLObjectType`` instances
-    registered in the global ``_gdx_output_registry``.
+    """Populate/validate per-CLASS ``GraphQLObjectType`` instances in the registry.
+
+    Operates on the single per-class instances registered in the global
+    ``_gdx_output_registry``.
 
     Called by ``DjangoGraphexConfig.ready()`` after ``compile_all_inputs()``.
 

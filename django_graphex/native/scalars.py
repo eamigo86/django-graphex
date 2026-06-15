@@ -41,7 +41,6 @@ from graphql.language.ast import (
     StringValueNode,
 )
 
-
 # ---------------------------------------------------------------------------
 # CustomDateFormat (owned here, no graphene import)
 # ---------------------------------------------------------------------------
@@ -57,6 +56,12 @@ class CustomDateFormat:
     __slots__ = ("date_str",)
 
     def __init__(self, date: str) -> None:
+        """Wrap a pre-formatted date/time string for serialize bypass.
+
+        Args:
+            date: The already-formatted date/time string a scalar's
+                ``serialize`` returns verbatim (no ISO-format pass).
+        """
         self.date_str = date
 
 

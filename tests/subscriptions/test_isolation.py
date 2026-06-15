@@ -118,8 +118,10 @@ def test_public_exports():
         assert name in subscriptions.__all__, f"{name} must stay public"
         assert hasattr(subscriptions, name)
 
-    # Absent: bespoke transport symbols removed in the lockstep cutover, plus the
-    # internal engine that must never be exported.
+    # Absent: bespoke transport symbols removed in the lockstep cutover, the
+    # internal engine, AND the native transport factories — the transports are an
+    # explicit deep import (``subscriptions.transports.sse`` /
+    # ``subscriptions.transports.ws``), never part of the top-level surface.
     for name in (
         "GraphqlAPIDemultiplexer",
         "SubscriptionGraphQLView",
@@ -127,8 +129,23 @@ def test_public_exports():
         "StreamingSubscription",
         "drive_subscription",
         "ChannelLayerSource",
+        "SubscriptionSpec",
+        "subscription_sse_view",
+        "subscription_ws_consumer",
     ):
         assert name not in subscriptions.__all__, f"{name} must not be public"
+        assert not hasattr(subscriptions, name), (
+            f"{name} must not be a top-level subscriptions attribute"
+        )
+
+    # The exact public surface is the spec §Public API Contract set — no extras.
+    assert set(subscriptions.__all__) == {
+        "Subscription",
+        "SubscriptionField",
+        "SubscriptionBinding",
+        "ActionSubscriptionEnum",
+        "SubscriptionClientView",
+    }
 
     # The base package must NOT re-export the subscription symbols.
     assert "Subscription" not in django_graphex.__all__

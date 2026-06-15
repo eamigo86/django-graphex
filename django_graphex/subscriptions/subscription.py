@@ -572,12 +572,18 @@ class Subscription(ObjectType):
     def _build_native_spec(cls, schema: Any, document: Any) -> Any:
         """Build the fully-populated WU5 ``SubscriptionSpec`` from this class.
 
-        Wires the kept hooks (``authorize_subscription``/``subscription_scope``/
-        ``_validate_filters``), ``group_name``/``instance_index`` = the kept
-        ``_group_name``/``_instance_index`` (so producer + consumer group names
-        match by construction), index_fields, and ``db_exists`` = the single-row
+        Wires the kept hooks (``authorize_subscription``/``subscription_scope``),
+        ``group_name``/``instance_index`` = the kept ``_group_name``/
+        ``_instance_index`` (so producer + consumer group names match by
+        construction), index_fields, and ``db_exists`` = the single-row
         ``.exists()`` narrowing that closes the WU4 conservative-drop gap so
         native ``__lookup`` subscriptions deliver DB-verified events.
+
+        Filter-key validation in the native path does NOT use the kept
+        ``_validate_filters`` classmethod: it is enforced in ``streaming.py`` by
+        ``_validate_client_filters`` against ``declared_output_fields`` (the
+        subscription backend's ``output_field_names()``), passed on the spec
+        below. ``_validate_filters`` is retained for the graphene path only.
 
         Args:
             schema: The native graphql-core ``GraphQLSchema`` the per-event

@@ -524,15 +524,16 @@ class DjangoObjectType(ObjectType):
         # ----------------------------------------------------------------
         import os as _os_output
         if _os_output.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+            from graphql import GraphQLObjectType
+
             from django_graphex.native.base import (
-                _GdxOutputEntry,
                 _gdx_output_registry,
+                _GdxOutputEntry,
                 get_shared_output_registry,
             )
             from django_graphex.native.bridge import GdxPayload
             from django_graphex.native.ir import GdxMeta
             from django_graphex.native.output_compiler import compile_output_fields
-            from graphql import GraphQLObjectType
 
             # Resolve the GraphQL type NAME the SAME way graphene does: an
             # explicit ``Meta.name`` (forwarded via **options) wins, otherwise the
@@ -1213,14 +1214,15 @@ class DjangoListObjectType(ObjectType):
         # ----------------------------------------------------------------
         import os as _os_list
         if _os_list.environ.get("GDX_BACKEND", "graphene") == "native" and model is not None:
+            from graphql import GraphQLField, GraphQLInt, GraphQLList, GraphQLObjectType
+
             from django_graphex.native.base import (
-                _GdxOutputEntry,
                 _gdx_output_registry,
+                _GdxOutputEntry,
                 get_shared_output_registry,
             )
             from django_graphex.native.bridge import GdxPayload
             from django_graphex.native.ir import GdxMeta
-            from graphql import GraphQLField, GraphQLInt, GraphQLList, GraphQLObjectType
 
             _shared_registry = get_shared_output_registry()
 

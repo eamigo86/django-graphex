@@ -132,15 +132,17 @@ pip install "django-graphex[subscriptions]"
 ```
 
 The migration shims for the **old standalone package's API are not carried over**
-(this is a fresh implementation, not a compatibility layer):
+(this is a fresh implementation, not a compatibility layer). In v2.0 the legacy
+bespoke transport was replaced by native SSE + `graphql-transport-ws`:
 
-- `depromise_subscription` middleware → removed; serve subscriptions with
-  `SubscriptionGraphQLView`.
-- the demultiplexer's `consumers = {stream: ...}` form → use
-  `subscriptions = {stream: Subscription}`.
+- `depromise_subscription` middleware → removed; serve subscriptions with the
+  native transports (`subscription_sse_view` / `subscription_ws_consumer`).
+- the demultiplexer consumer + HTTP `channelId` handshake → removed; route the
+  native WebSocket consumer and/or mount the SSE view instead.
 - `SubscriptionBinding.consumer` alias → use `.subscription_cls`.
 
-See the [Subscriptions guide](usage/subscriptions.md).
+Subscriptions are **native-only** in v2.0 (`GDX_BACKEND=native`). See the
+[Subscriptions guide](usage/subscriptions.md).
 
 #### 6. Filtering: a single nested `filter:` argument (django-filter removed)
 
