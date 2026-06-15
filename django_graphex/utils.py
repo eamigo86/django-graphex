@@ -457,7 +457,15 @@ def _get_field_optimize_hook(gql_type: Any, graphql_field_name: str) -> Any | No
     """
     if gql_type is None:
         return None
-    parent = getattr(gql_type, "graphene_type", None)
+    # Dual-backend: graphene carries the source class as ``gql_type.graphene_type``;
+    # native carries it on ``extensions['gdx']._meta.graphene_type``. Reading the
+    # raw attribute returns None for native NESTED types (they have no direct
+    # ``graphene_type``) so the bridge is required — otherwise every nested
+    # ``optimize_<field>`` hook is silently inert under GDX_BACKEND=native
+    # (DEFECT A).
+    from django_graphex.native.compat import _gdx_graphene_type
+
+    parent = _gdx_graphene_type(gql_type)
     if parent is None:
         return None
     hook_name = f"optimize_{to_snake_case(graphql_field_name)}"
@@ -1831,6 +1839,13 @@ def _collect_prefetch_only_sets(
     if _out is None:
         _out = {}
 
+    # Dual-backend (DEFECT A): the child's source class for AnnotatedField
+    # self-collection lives on ``child_gql.graphene_type`` under graphene but on
+    # ``extensions['gdx']._meta.graphene_type`` under native. The bridge reads
+    # either; without it the select->prefetch promotion + child-annotation
+    # injection never fires for native NESTED types.
+    from django_graphex.native.compat import _gdx_graphene_type
+
     rel_map = _relation_field_map(model, fmap_cache)
 
     # NOTE: @skip/@include guard is intentionally absent here.
@@ -1965,9 +1980,7 @@ def _collect_prefetch_only_sets(
                     child_gql_candidate = get_named_type(field_def.type)
                     if isinstance(child_gql_candidate, GraphQLObjectType):
                         child_gql = child_gql_candidate
-                        child_graphene_for_plan = getattr(
-                            child_gql, "graphene_type", None
-                        )
+                        child_graphene_for_plan = _gdx_graphene_type(child_gql)
             if sub_selection is not None:
                 _collect_prefetch_only_sets(
                     child_model,
@@ -2011,7 +2024,7 @@ def _collect_prefetch_only_sets(
                 child_gql_candidate = get_named_type(field_def.type)
                 if isinstance(child_gql_candidate, GraphQLObjectType):
                     child_gql = child_gql_candidate
-                    child_graphene = getattr(child_gql, "graphene_type", None)
+                    child_graphene = _gdx_graphene_type(child_gql)
         plan = _compute_child_only(
             child_model,
             related_field,
@@ -2725,8 +2738,13 @@ def _walk_annotated_fields(
             continue
         sub_gql = get_named_type(field_def.type)
         sub_gql = sub_gql if isinstance(sub_gql, GraphQLObjectType) else None
+        # Dual-backend (DEFECT A): use the bridge so native wrapper descent (e.g.
+        # DjangoListObjectType ``results`` -> inner row type) recovers the inner
+        # row's source class from ``extensions['gdx']._meta.graphene_type``.
+        from django_graphex.native.compat import _gdx_graphene_type
+
         sub_graphene = (
-            getattr(sub_gql, "graphene_type", None) if sub_gql is not None else None
+            _gdx_graphene_type(sub_gql) if sub_gql is not None else None
         )
         if (
             sub_gql is not None
@@ -2769,7 +2787,14 @@ def _collect_annotated_fields(
     field_nodes = info.field_nodes
     if not field_nodes or not isinstance(return_type, GraphQLObjectType):
         return {}, {}, set()
-    graphene_type = getattr(return_type, "graphene_type", None)
+    # Dual-backend (DEFECT A): graphene carries the source class as
+    # ``return_type.graphene_type``; native carries it on
+    # ``extensions['gdx']._meta.graphene_type``. The bridge tries graphene first,
+    # then native — without it the raw attribute is None for native NESTED types
+    # and no AnnotatedField annotations are ever collected.
+    from django_graphex.native.compat import _gdx_graphene_type
+
+    graphene_type = _gdx_graphene_type(return_type)
     if graphene_type is None or getattr(graphene_type, "_meta", None) is None:
         return {}, {}, set()
 
@@ -3011,6 +3036,12 @@ def _apply_optimizations(
     # inspect the same model's field map.
     _fmap_cache: dict[tuple[int, str], Any] = {}
 
+    # Dual-backend (DEFECT A): GraphQL types expose the source class on
+    # ``.graphene_type`` (graphene) or ``extensions['gdx']._meta.graphene_type``
+    # (native). The bridge reads either so the GAP-5 root identity and the
+    # AnnotatedField select->prefetch promotion detection both fire under native.
+    from django_graphex.native.compat import _gdx_graphene_type
+
     relation_map = _relation_field_map(model, _fmap_cache)
     select_related: list[str] = []
     prefetch_related: list[str] = []
@@ -3043,7 +3074,7 @@ def _apply_optimizations(
     root_type_name: str | None = None
     _root_named = get_named_type(info.return_type)
     if isinstance(_root_named, GraphQLObjectType):
-        _root_graphene = getattr(_root_named, "graphene_type", None)
+        _root_graphene = _gdx_graphene_type(_root_named)
         _root_meta = (
             getattr(_root_graphene, "_meta", None)
             if _root_graphene is not None
@@ -3174,7 +3205,7 @@ def _apply_optimizations(
                                 else None
                             )
                             sub_graphene = (
-                                getattr(sub_gql, "graphene_type", None)
+                                _gdx_graphene_type(sub_gql)
                                 if sub_gql is not None
                                 else None
                             )
@@ -3201,7 +3232,7 @@ def _apply_optimizations(
                             break
 
             # Walk the root selection set for promotion detection.
-            root_graphene_type = getattr(return_type, "graphene_type", None)
+            root_graphene_type = _gdx_graphene_type(return_type)
             if root_graphene_type is not None:
                 _detect_promotions(
                     return_type, root_graphene_type, fields_asts[0].selection_set
@@ -3221,7 +3252,7 @@ def _apply_optimizations(
                         sub_gql = get_named_type(fdef.type)
                         if not isinstance(sub_gql, GraphQLObjectType):
                             continue
-                        sub_graphene = getattr(sub_gql, "graphene_type", None)
+                        sub_graphene = _gdx_graphene_type(sub_gql)
                         if sub_graphene is not None:
                             _detect_promotions(sub_gql, sub_graphene, fsub)
 

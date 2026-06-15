@@ -159,6 +159,26 @@ def _model_field_names(model: type) -> set[str]:
     return names
 
 
+def _is_declared_class_attr(src_cls: type, field_name: str) -> bool:
+    """Return True when *field_name* is a user-DECLARED class attribute (Slice D).
+
+    A field can land in ``_meta.fields`` two ways: (a) AUTO-DERIVED from
+    ``model._meta`` by ``construct_fields`` (no corresponding entry in any class
+    ``__dict__``), or (b) EXPLICITLY DECLARED by the user as a class attribute
+    (e.g. ``posts = field(NativeList(PostType))``), which DOES appear in the
+    declaring class's ``__dict__``.
+
+    The DEFECT C override rule needs to tell these apart: a declared override of
+    a model-relation name must WIN over the auto-derived container, while a
+    purely model-derived field must NOT be re-emitted here (it is owned by
+    ``compile_output_fields`` / the relation-list injection). Scanning the full
+    MRO ``__dict__`` chain is the reliable discriminator — graphene's
+    ``yank_fields_from_attrs`` merges declared attrs INTO ``_meta.fields`` so the
+    field type alone cannot distinguish the two.
+    """
+    return any(field_name in base.__dict__ for base in src_cls.__mro__)
+
+
 def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
     """Compile DECLARED non-model, non-list fields on a ``DjangoObjectType`` (Slice D).
 
@@ -200,10 +220,18 @@ def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
         # Skip declared LIST fields — owned by _compile_declared_list_fields.
         if isinstance(field, DjangoListObjectField):
             continue
-        # Skip model-derived fields — owned by compile_output_fields / the
-        # to-many relation-list injection. Only genuinely DECLARED (non-model)
-        # graphene attributes survive this filter.
-        if field_name in model_names:
+        # DEFECT C: a field whose name matches a model relation/field is usually
+        # the AUTO-DERIVED graphene field (owned by compile_output_fields / the
+        # to-many relation-list injection) and must be skipped here. BUT when the
+        # user EXPLICITLY declares a class attribute of the SAME name (e.g.
+        # ``posts = field(NativeList(PostType))`` to override the auto-derived
+        # PostListType container), that declared override must WIN — graphene
+        # allowed this; native silently dropped it. The discriminator: a genuine
+        # class attribute is present on ``src_cls`` (or a base) in ``__dict__``,
+        # whereas a purely model-derived field only exists in ``_meta.fields``.
+        if field_name in model_names and not _is_declared_class_attr(
+            src_cls, field_name
+        ):
             continue
         out[to_camel_case(field_name)] = compile_declared_field(
             src_cls, field_name, field
@@ -583,6 +611,15 @@ class DjangoObjectType(NativeObjectType):
                 model=model,
                 max_deep=max_deep,
                 complexity=complexity,
+                # DEFECT A: carry the source DjangoObjectType subclass so the
+                # optimizer can recover AnnotatedField annotations
+                # (utils._collect_annotated_fields) and per-field
+                # ``optimize_<field>`` hooks (utils._get_field_optimize_hook) on
+                # NESTED types — exactly as the root compiler does
+                # (schema_compiler.py:854 ``graphene_type=root``). Without this
+                # the bridge (_gdx_graphene_type) returns None on nested types
+                # and every optimizer hook is silently inert.
+                graphene_type=cls,
             )
             _gdx_payload = GdxPayload(_gdx_meta_obj)
 
@@ -1377,6 +1414,11 @@ class DjangoListObjectType(NativeObjectType):
                 results_field_name=results_field_name,
                 max_deep=max_deep,
                 complexity=complexity,
+                # DEFECT A: carry the source DjangoListObjectType subclass so the
+                # optimizer's bridge (_gdx_graphene_type) resolves the wrapper's
+                # source class on nested list containers, mirroring the root
+                # compiler (schema_compiler.py:854).
+                graphene_type=cls,
             )
             _list_gdx_payload = GdxPayload(_list_gdx_meta)
 

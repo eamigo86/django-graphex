@@ -25,12 +25,13 @@ TEST DISCIPLINE: every test states the mutation that makes it RED.
 
 from __future__ import annotations
 
-import graphene
 from django.test import TestCase
-from graphql import parse
+from graphql import GraphQLList, parse
 
-from django_graphex import DjangoObjectType
+from django_graphex import DjangoObjectType, ObjectType, field
+from django_graphex.native.descriptors import NativeList
 from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.utils import (
     _collect_only_fields,
     _collect_only_fields_is_full_load,
@@ -42,6 +43,33 @@ from django_graphex.utils import (
     recursive_params,
 )
 from tests.models import Author, Post
+
+
+def _execute(schema, query):
+    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free)."""
+    from graphql import graphql_sync
+
+    return graphql_sync(schema.graphql_schema, query)
+
+
+def _gtype(name, bases, ns):
+    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+
+    Native ``ObjectType`` / ``DjangoObjectType`` / ``DjangoListObjectType`` are
+    pydantic ``BaseModel`` subclasses; building them with ``type(name, bases, ns)``
+    requires ``ns['__module__']`` and a nested ``Meta`` whose ``__qualname__`` is
+    ``"<Outer>.Meta"`` (the value a ``class`` body produces).
+    """
+    ns = dict(ns)
+    ns.setdefault("__module__", __name__)
+    ns["__qualname__"] = name
+    for attr_name, attr_val in list(ns.items()):
+        if isinstance(attr_val, type):
+            try:
+                attr_val.__qualname__ = f"{name}.{attr_name}"
+            except (AttributeError, TypeError):  # pragma: no cover - defensive
+                pass
+    return type(name, bases, ns)
 
 # A graphene type whose GraphQL type name we can feed to the guard as the
 # "current type" identity.  Author has a reverse-FK ``posts`` relation, so the
@@ -64,15 +92,15 @@ class _PostTypeGap5(DjangoObjectType):
         registry = _R_GAP5
 
 
-class _QueryGap5(graphene.ObjectType):
-    a = graphene.Field(_AuthorTypeGap5)
-    p = graphene.Field(_PostTypeGap5)
+class _QueryGap5(ObjectType):
+    a = field(_AuthorTypeGap5)
+    p = field(_PostTypeGap5)
 
 
 # A built schema lets us resolve the real ``GraphQLObjectType`` objects (with the
 # ``.name`` / ``.graphene_type`` identity the production walkers thread into the
 # guard).  Walking a helper against this gql_type mirrors the production path.
-_SCHEMA_GAP5 = graphene.Schema(query=_QueryGap5)
+_SCHEMA_GAP5 = DjangoGraphQLSchema(query=_QueryGap5)
 _AUTHOR_GQL_NAME = _AuthorTypeGap5._meta.name
 _POST_GQL_NAME = _PostTypeGap5._meta.name
 _AUTHOR_GQL = _SCHEMA_GAP5.graphql_schema.get_type(_AUTHOR_GQL_NAME)
@@ -676,7 +704,7 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
                 registry = reg
 
         class _AuthorW(_DOT):
-            posts = graphene.List(lambda: _PostW)
+            posts = field(NativeList(_PostW))
 
             def resolve_posts(root, info):
                 return root.posts.all()
@@ -690,10 +718,10 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
                 model = Author
                 registry = reg
 
-        class _QueryW(graphene.ObjectType):
+        class _QueryW(ObjectType):
             all_authors = DjangoListObjectField(_AuthorWList)
 
-        schema = graphene.Schema(query=_QueryW)
+        schema = DjangoGraphQLSchema(query=_QueryW)
         item_name = _AuthorW._meta.name
         query = (
             "{ allAuthors { results { name ... on "
@@ -701,7 +729,7 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
             + " { posts { id } } } } }"
         )
         with CaptureQueriesContext(connection) as ctx:
-            result = schema.execute(query)
+            result = _execute(schema, query)
         self.assertIsNone(result.errors, result.errors)
         post_queries = [
             q for q in ctx.captured_queries if "tests_post" in q["sql"].lower()
@@ -760,7 +788,7 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
                 registry = reg
 
         class _AuthorCW(_DOT):
-            posts = graphene.List(lambda: _PostCW)
+            posts = field(NativeList(_PostCW))
 
             def resolve_posts(root, info):
                 return root.posts.all()
@@ -776,10 +804,10 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
                 # NON-default results field name — the crux of the regression.
                 results_field_name = "items"
 
-        class _QueryCW(graphene.ObjectType):
+        class _QueryCW(ObjectType):
             all_authors = DjangoListObjectField(_AuthorCWList)
 
-        schema = graphene.Schema(query=_QueryCW)
+        schema = DjangoGraphQLSchema(query=_QueryCW)
         item_name = _AuthorCW._meta.name
         query = (
             "{ allAuthors { items { name ... on "
@@ -787,7 +815,7 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
             + " { posts { id } } } } }"
         )
         with CaptureQueriesContext(connection) as ctx:
-            result = schema.execute(query)
+            result = _execute(schema, query)
         self.assertIsNone(result.errors, result.errors)
         post_queries = [
             q for q in ctx.captured_queries if "tests_post" in q["sql"].lower()

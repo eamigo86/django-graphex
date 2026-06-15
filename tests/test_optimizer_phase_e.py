@@ -17,16 +17,18 @@ Coverage matrix:
 
 from __future__ import annotations
 
-import graphene
 from django.db import connection
 from django.db.models import Value
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
+from graphql import graphql_sync
 
 from django_graphex import (
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
     DjangoObjectType,
+    ObjectType,
 )
 from django_graphex.registry import Registry
 
@@ -35,9 +37,41 @@ from django_graphex.registry import Registry
 # ---------------------------------------------------------------------------
 
 
+def _execute(schema, query, variable_values=None):
+    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free).
+
+    Drop-in for the retired ``schema.execute(query, variable_values=...)``:
+    returns the graphql-core ``ExecutionResult`` (same ``.data`` / ``.errors``).
+    """
+    return graphql_sync(
+        schema.graphql_schema, query, variable_values=variable_values
+    )
+
+
+def _gtype(name, bases, ns):
+    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+
+    Native ``ObjectType`` / ``DjangoObjectType`` / ``DjangoListObjectType`` are
+    pydantic ``BaseModel`` subclasses; building them with ``type(name, bases, ns)``
+    requires ``ns['__module__']`` and a nested ``Meta`` whose ``__qualname__`` is
+    ``"<Outer>.Meta"`` (the value a ``class`` body produces). This supplies both so
+    the dynamic form behaves exactly like the equivalent ``class`` statement.
+    """
+    ns = dict(ns)
+    ns.setdefault("__module__", __name__)
+    ns["__qualname__"] = name
+    for attr_name, attr_val in list(ns.items()):
+        if isinstance(attr_val, type):
+            try:
+                attr_val.__qualname__ = f"{name}.{attr_name}"
+            except (AttributeError, TypeError):  # pragma: no cover - defensive
+                pass
+    return type(name, bases, ns)
+
+
 def _exec(schema, query, variables=None):
     """Execute a GraphQL query and assert no errors."""
-    result = schema.execute(query, variable_values=variables)
+    result = _execute(schema, query, variable_values=variables)
     assert result.errors is None, result.errors
     return result.data
 
@@ -258,7 +292,7 @@ def _build_window_hook_schema(
     _REG_WIN.clear()
     captured_kwargs: list[dict] = []
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_WinHookPostListType",
         (DjangoListObjectType,),
         {
@@ -301,18 +335,18 @@ def _build_window_hook_schema(
         optimize_posts = staticmethod(optimize_posts)
         author_attrs["optimize_posts"] = optimize_posts
 
-    _AuthorType = type("_WinHookAuthorType", (DjangoObjectType,), author_attrs)
+    _AuthorType = _gtype("_WinHookAuthorType", (DjangoObjectType,), author_attrs)
 
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_WinHookAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG_WIN})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "WinHookQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -464,7 +498,7 @@ class TestWindowPathHook(TestCase):
         } totalCount } }
         """
         with CaptureQueriesContext(connection) as ctx:
-            result = schema.execute(query)
+            result = _execute(schema, query)
 
         # No collision / no 500: the alias is silently overwritten by the window.
         self.assertIsNone(
@@ -508,7 +542,7 @@ def _build_filtered_hook_schema():
     _REG_FILT.clear()
     captured_kwargs: list[dict] = []
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_FiltHookPostListType",
         (DjangoListObjectType,),
         {
@@ -528,7 +562,7 @@ def _build_filtered_hook_schema():
         captured_kwargs.append(dict(kwargs))
         return qs.select_related("category")
 
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_FiltHookAuthorType",
         (DjangoObjectType,),
         {
@@ -538,16 +572,16 @@ def _build_filtered_hook_schema():
         },
     )
 
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_FiltHookAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG_FILT})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "FiltHookQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -635,7 +669,7 @@ def _build_unfiltered_hook_schema(has_hook=True):
     _REG_UNFILT.clear()
     captured_kwargs: list[dict] = []
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_UnfHookPostListType",
         (DjangoListObjectType,),
         {
@@ -663,17 +697,17 @@ def _build_unfiltered_hook_schema(has_hook=True):
 
         author_attrs["optimize_posts"] = staticmethod(optimize_posts)
 
-    _AuthorType = type("_UnfHookAuthorType", (DjangoObjectType,), author_attrs)
-    _AuthorListType = type(
+    _AuthorType = _gtype("_UnfHookAuthorType", (DjangoObjectType,), author_attrs)
+    _AuthorListType = _gtype(
         "_UnfHookAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG_UNFILT})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "UnfHookQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -764,7 +798,7 @@ def _build_site_b_schema():
     _REG_SITE_B.clear()
     captured_kwargs: list[dict] = []
 
-    _CommentListType = type(
+    _CommentListType = _gtype(
         "_SiteBCommentListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Comment, "registry": _REG_SITE_B})},
@@ -774,7 +808,7 @@ def _build_site_b_schema():
         captured_kwargs.append(dict(kwargs))
         return qs.select_related("post")
 
-    _PostType = type(
+    _PostType = _gtype(
         "_SiteBPostType",
         (DjangoObjectType,),
         {
@@ -786,7 +820,7 @@ def _build_site_b_schema():
         },
     )
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_SiteBPostListType",
         (DjangoListObjectType,),
         {
@@ -802,7 +836,7 @@ def _build_site_b_schema():
         },
     )
 
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_SiteBAuthorType",
         (DjangoObjectType,),
         {
@@ -811,16 +845,16 @@ def _build_site_b_schema():
         },
     )
 
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_SiteBAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG_SITE_B})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "SiteBQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -942,7 +976,7 @@ def _build_related_field_forward_schema():
     _REG_RELFWD.clear()
     captured_kwargs: list[dict] = []
 
-    _InnerPostListType = type(
+    _InnerPostListType = _gtype(
         "_RelFwdInnerPostListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
@@ -953,7 +987,7 @@ def _build_related_field_forward_schema():
         return qs.select_related("category")
 
     # AuthorType owns the hooked nested list `posts`.
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_RelFwdAuthorType",
         (DjangoObjectType,),
         {
@@ -966,22 +1000,22 @@ def _build_related_field_forward_schema():
     # PostType exposes `author` as a forward FK (a plain related field). The
     # walker descends Post -> author via the related-field branch, then reaches
     # the hooked nested list on AuthorType.
-    _PostType = type(
+    _PostType = _gtype(
         "_RelFwdPostType",
         (DjangoObjectType,),
         {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
     )
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_RelFwdPostListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "RelFwdQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"posts": DjangoListObjectField(_PostListType)},
         )
     )
@@ -1093,24 +1127,24 @@ def _build_site_b_multi_schema():
 
         return staticmethod(hook)
 
-    _CommentListType = type(
+    _CommentListType = _gtype(
         "_SBMCommentListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Comment, "registry": _REG_SITE_B_MULTI})},
     )
-    _TagListType = type(
+    _TagListType = _gtype(
         "_SBMTagListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Tag, "registry": _REG_SITE_B_MULTI})},
     )
     # Nested list of posts hung off Category (the multi-segment descendant target).
-    _CatPostListType = type(
+    _CatPostListType = _gtype(
         "_SBMCatPostListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Post, "registry": _REG_SITE_B_MULTI})},
     )
 
-    _CategoryType = type(
+    _CategoryType = _gtype(
         "_SBMCategoryType",
         (DjangoObjectType,),
         {
@@ -1126,7 +1160,7 @@ def _build_site_b_multi_schema():
 
     # PostType owns TWO unfiltered hooked nested lists (comments, tags) and exposes
     # `category` (FK) for the multi-segment descent.
-    _PostType = type(
+    _PostType = _gtype(
         "_SBMPostType",
         (DjangoObjectType,),
         {
@@ -1155,7 +1189,7 @@ def _build_site_b_multi_schema():
         },
     )
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_SBMPostListType",
         (DjangoListObjectType,),
         {
@@ -1171,7 +1205,7 @@ def _build_site_b_multi_schema():
         },
     )
 
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_SBMAuthorType",
         (DjangoObjectType,),
         {
@@ -1180,16 +1214,16 @@ def _build_site_b_multi_schema():
         },
     )
 
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_SBMAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG_SITE_B_MULTI})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "SBMQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -1418,7 +1452,7 @@ class TestSafeModeDegrade(TestCase):
 
         _reg = Registry()
 
-        _PostListType = type(
+        _PostListType = _gtype(
             "_SMPostListType",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _reg})},
@@ -1431,18 +1465,18 @@ class TestSafeModeDegrade(TestCase):
         if optimize_posts is not None:
             author_attrs["optimize_posts"] = staticmethod(optimize_posts)
 
-        type("_SMAuthorType", (DjangoObjectType,), author_attrs)
+        _gtype("_SMAuthorType", (DjangoObjectType,), author_attrs)
 
-        _AuthorListType = type(
+        _AuthorListType = _gtype(
             "_SMAuthorListType",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Author, "registry": _reg})},
         )
 
-        return graphene.Schema(
-            query=type(
+        return DjangoGraphQLSchema(
+            query=_gtype(
                 "SMQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
             )
         )
@@ -1480,7 +1514,7 @@ class TestSafeModeDegrade(TestCase):
         schema_raise = self._build_schema(optimize_posts=optimize_posts)
         with self.assertLogs("django_graphex.utils", level="WARNING") as cm:
             with CaptureQueriesContext(connection) as ctx_raise:
-                result = schema_raise.execute(query)
+                result = _execute(schema_raise, query)
         degraded_count = len(ctx_raise.captured_queries)
 
         # (1) The COARSE boundary warning must be the one that fired — NOT a

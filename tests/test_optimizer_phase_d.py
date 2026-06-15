@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import graphene
 from django.db import connection
 from django.db.models import Count, F, Sum
 from django.db.models.expressions import (
@@ -18,15 +17,54 @@ from django.db.models.expressions import (
 )
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
+from graphql import (
+    GraphQLFloat,
+    GraphQLInt,
+    GraphQLString,
+    graphql_sync,
+)
 
 from django_graphex import (
     AnnotatedField,
     DjangoFilterListField,
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
     DjangoObjectType,
+    ObjectType,
+    field,
 )
+from django_graphex.native.descriptors import NativeList
 from django_graphex.registry import Registry
+
+
+def _execute(schema, query):
+    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free).
+
+    Drop-in for the retired ``_execute(schema, query)``: returns the graphql-core
+    ``ExecutionResult`` (same ``.data`` / ``.errors`` shape graphene returned).
+    """
+    return graphql_sync(schema.graphql_schema, query)
+
+
+def _gtype(name, bases, ns):
+    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+
+    Native ``ObjectType`` / ``DjangoObjectType`` / ``DjangoListObjectType`` are
+    pydantic ``BaseModel`` subclasses; building them with ``type(name, bases, ns)``
+    requires ``ns['__module__']`` and a nested ``Meta`` whose ``__qualname__`` is
+    ``"<Outer>.Meta"`` (the value a ``class`` body produces).
+    """
+    ns = dict(ns)
+    ns.setdefault("__module__", __name__)
+    ns["__qualname__"] = name
+    for attr_name, attr_val in list(ns.items()):
+        if isinstance(attr_val, type):
+            try:
+                attr_val.__qualname__ = f"{name}.{attr_name}"
+            except (AttributeError, TypeError):  # pragma: no cover - defensive
+                pass
+    return type(name, bases, ns)
 
 # ---------------------------------------------------------------------------
 # Phase 1: AnnotatedField class + setting unit tests (tasks 1.1 - 1.4)
@@ -39,7 +77,7 @@ class TestAnnotatedFieldStoresAttrs(TestCase):
     def test_annotated_field_stores_attrs(self):
         """AnnotatedField stores expression, aliases default {}, annotation_name derived."""
         expr = Count("comments")
-        field = AnnotatedField(graphene.Int, expr)
+        field = AnnotatedField(GraphQLInt, expr)
         self.assertIs(field.expression, expr)
         self.assertEqual(field.aliases, {})
         self.assertEqual(
@@ -56,7 +94,7 @@ class TestAnnotatedFieldAliasesAndOverride(TestCase):
         expr = F("subtotal") / F("item_cnt")
         aliases = {"subtotal": Sum("price"), "item_cnt": Count("id")}
         field = AnnotatedField(
-            graphene.Float, expr, aliases=aliases, annotation_name="my_ann"
+            GraphQLFloat, expr, aliases=aliases, annotation_name="my_ann"
         )
         self.assertIs(field.expression, expr)
         self.assertEqual(field.aliases, aliases)
@@ -70,7 +108,7 @@ class TestAnnotatedFieldDefaultResolver(TestCase):
 
     def test_annotated_field_default_resolver_absent(self):
         """Resolver returns None when annotation attr is absent on root."""
-        field = AnnotatedField(graphene.Int, Count("comments"))
+        field = AnnotatedField(GraphQLInt, Count("comments"))
 
         class FakeInfo:
             field_name = "commentCount"
@@ -83,7 +121,7 @@ class TestAnnotatedFieldDefaultResolver(TestCase):
 
     def test_annotated_field_default_resolver_present(self):
         """Resolver returns the annotation value when attr is present on root."""
-        field = AnnotatedField(graphene.Int, Count("comments"))
+        field = AnnotatedField(GraphQLInt, Count("comments"))
 
         class FakeInfo:
             field_name = "commentCount"
@@ -139,7 +177,7 @@ _RWALK = Registry()
 
 
 class _DWalkPost(DjangoObjectType):
-    comment_count = AnnotatedField(graphene.Int, Count("comments"))
+    comment_count = AnnotatedField(GraphQLInt, Count("comments"))
 
     class Meta:
         from tests.models import Post as _P
@@ -156,12 +194,12 @@ class _DWalkPostList(DjangoListObjectType):
         registry = _RWALK
 
 
-class _DWalkQuery(graphene.ObjectType):
+class _DWalkQuery(ObjectType):
     all_posts = DjangoListObjectField(_DWalkPostList)
-    all_posts_flat = graphene.List(_DWalkPost)
+    all_posts_flat = DjangoFilterListField(_DWalkPost)
 
 
-_walk_schema = graphene.Schema(query=_DWalkQuery)
+_walk_schema = DjangoGraphQLSchema(query=_DWalkQuery)
 
 
 def _make_info_for_field(schema, query_str, field_name):
@@ -327,7 +365,7 @@ _RANN = Registry()
 
 
 class _DPostType(DjangoObjectType):
-    comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+    comment_count = AnnotatedField(GraphQLInt, lambda: Count("comments"))
 
     class Meta:
         from tests.models import Post as _P
@@ -344,7 +382,7 @@ class _DPostListType(DjangoListObjectType):
         registry = _RANN
 
 
-class _AnnQuery(graphene.ObjectType):
+class _AnnQuery(ObjectType):
     # Flat List field — EXACTLY 1 query (no count query).
     # DjangoFilterListField calls queryset_factory internally.
     all_posts_list = DjangoFilterListField(_DPostType)
@@ -352,11 +390,11 @@ class _AnnQuery(graphene.ObjectType):
     all_posts = DjangoListObjectField(_DPostListType)
 
 
-_ann_schema = graphene.Schema(query=_AnnQuery)
+_ann_schema = DjangoGraphQLSchema(query=_AnnQuery)
 
 
 def _exec(schema, query):
-    result = schema.execute(query)
+    result = _execute(schema, query)
     assert result.errors is None, result.errors
     return result.data
 
@@ -375,7 +413,7 @@ class TestRootAnnotationInjected1Query(TestCase):
                 Comment.objects.create(post=p, body=f"c{j}")
 
     def test_root_annotation_injected_1query(self):
-        """FLAT graphene.List(DPostType) with commentCount = exactly 1 DB query."""
+        """FLAT DjangoFilterListField(DPostType) with commentCount = exactly 1 DB query."""
         from tests.models import Comment, Post
 
         query = "{ allPostsList { id commentCount } }"
@@ -472,7 +510,7 @@ _RPROM = Registry()
 
 
 class _AuthorTypePromo(DjangoObjectType):
-    post_count = AnnotatedField(graphene.Int, lambda: Count("posts"))
+    post_count = AnnotatedField(GraphQLInt, lambda: Count("posts"))
 
     class Meta:
         from tests.models import Author as _A
@@ -497,11 +535,11 @@ class _PostListTypePromo(DjangoListObjectType):
         registry = _RPROM
 
 
-class _PromoQuery(graphene.ObjectType):
+class _PromoQuery(ObjectType):
     all_posts = DjangoListObjectField(_PostListTypePromo)
 
 
-_promo_schema = graphene.Schema(query=_PromoQuery)
+_promo_schema = DjangoGraphQLSchema(query=_PromoQuery)
 
 
 class TestSelectToPrefetchPromotion(TestCase):
@@ -564,7 +602,7 @@ class TestPromotionGrandchildSelectSurvival(TestCase):
                 registry = _RGC
 
         class _AuthGC(DjangoObjectType):
-            post_count = AnnotatedField(graphene.Int, lambda: Count("posts"))
+            post_count = AnnotatedField(GraphQLInt, lambda: Count("posts"))
 
             class Meta:
                 model = _Author
@@ -580,10 +618,10 @@ class TestPromotionGrandchildSelectSurvival(TestCase):
                 model = _Post
                 registry = _RGC
 
-        class _GCQuery(graphene.ObjectType):
+        class _GCQuery(ObjectType):
             all_posts = DjangoListObjectField(_PostGCList)
 
-        gc_schema = graphene.Schema(query=_GCQuery)
+        gc_schema = DjangoGraphQLSchema(query=_GCQuery)
         query = "{ allPosts { results { author { name postCount authorProfile { bio } } } } }"
         # Should not raise "Invalid field name(s) given in select_related"
         data = _exec(gc_schema, query)
@@ -616,7 +654,7 @@ class TestComputeChildOnlySelfCollectsAnnotations(TestCase):
         _R6 = Registry()
 
         class _PostT(DjangoObjectType):
-            comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+            comment_count = AnnotatedField(GraphQLInt, lambda: Count("comments"))
 
             class Meta:
                 model = Post
@@ -627,10 +665,10 @@ class TestComputeChildOnlySelfCollectsAnnotations(TestCase):
                 model = Author
                 registry = _R6
 
-        class _Q(graphene.ObjectType):
-            all_authors = graphene.List(_AuthT)
+        class _Q(ObjectType):
+            all_authors = DjangoFilterListField(_AuthT)
 
-        schema = graphene.Schema(query=_Q)
+        schema = DjangoGraphQLSchema(query=_Q)
         gql_schema = schema.graphql_schema
         post_gql_type = gql_schema.type_map.get("_PostT")
 
@@ -682,7 +720,7 @@ class TestPrefetchChildAnnotation(TestCase):
         _R6B = Registry()
 
         class _PostType6(DjangoObjectType):
-            comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+            comment_count = AnnotatedField(GraphQLInt, lambda: Count("comments"))
 
             class Meta:
                 model = Post
@@ -691,7 +729,7 @@ class TestPrefetchChildAnnotation(TestCase):
         class _AuthType6(DjangoObjectType):
             # Declare posts explicitly to avoid graphene picking up PostListType
             # from a different registry's DjangoListObjectType for Post.
-            posts = graphene.List(lambda: _PostType6)
+            posts = field(NativeList(_PostType6))
 
             def resolve_posts(root, info):
                 # Return the pre-fetched related set (or fallback to queryset).
@@ -707,10 +745,10 @@ class TestPrefetchChildAnnotation(TestCase):
                 model = Author
                 registry = _R6B
 
-        class _Q6(graphene.ObjectType):
+        class _Q6(ObjectType):
             all_authors = DjangoListObjectField(_AuthList6)
 
-        schema6 = graphene.Schema(query=_Q6)
+        schema6 = DjangoGraphQLSchema(query=_Q6)
         query = "{ allAuthors { results { name posts { id commentCount } } } }"
 
         with CaptureQueriesContext(connection) as ctx:
@@ -753,7 +791,7 @@ class TestPrefetchGateFiresOnAnnotatedFieldsOnly(TestCase):
         _R6C = Registry()
 
         class _PostT6C(DjangoObjectType):
-            comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+            comment_count = AnnotatedField(GraphQLInt, lambda: Count("comments"))
 
             class Meta:
                 model = Post
@@ -762,7 +800,7 @@ class TestPrefetchGateFiresOnAnnotatedFieldsOnly(TestCase):
         class _AuthT6C(DjangoObjectType):
             # Declare posts explicitly to avoid graphene picking up PostListType
             # from a different registry's DjangoListObjectType for Post.
-            posts = graphene.List(lambda: _PostT6C)
+            posts = field(NativeList(_PostT6C))
 
             def resolve_posts(root, info):
                 return root.posts.all()
@@ -776,10 +814,10 @@ class TestPrefetchGateFiresOnAnnotatedFieldsOnly(TestCase):
                 model = Author
                 registry = _R6C
 
-        class _Q6C(graphene.ObjectType):
+        class _Q6C(ObjectType):
             all_authors = DjangoListObjectField(_AuthList6C)
 
-        schema6c = graphene.Schema(query=_Q6C)
+        schema6c = DjangoGraphQLSchema(query=_Q6C)
         query = "{ allAuthors { results { name posts { id commentCount } } } }"
 
         with CaptureQueriesContext(connection) as ctx:
@@ -861,7 +899,7 @@ class TestMixedConcreteAnnotatedChildOnlyNarrowing(TestCase):
         _RS1 = Registry()
 
         class _PostTypeS1(DjangoObjectType):
-            comment_count = AnnotatedField(graphene.Int, lambda: Count("comments"))
+            comment_count = AnnotatedField(GraphQLInt, lambda: Count("comments"))
 
             class Meta:
                 model = Post
@@ -870,7 +908,7 @@ class TestMixedConcreteAnnotatedChildOnlyNarrowing(TestCase):
         class _AuthorTypeS1(DjangoObjectType):
             # Explicit graphene.List so the plain-prefetch path (_narrow_plain_prefetch
             # via _collect_prefetch_only_sets) is exercised — NOT the window path.
-            posts = graphene.List(lambda: _PostTypeS1)
+            posts = field(NativeList(_PostTypeS1))
 
             def resolve_posts(root, info):
                 return root.posts.all()
@@ -884,10 +922,10 @@ class TestMixedConcreteAnnotatedChildOnlyNarrowing(TestCase):
                 model = Author
                 registry = _RS1
 
-        class _QueryS1(graphene.ObjectType):
+        class _QueryS1(ObjectType):
             all_authors = DjangoListObjectField(_AuthorListS1)
 
-        schema_s1 = graphene.Schema(query=_QueryS1)
+        schema_s1 = DjangoGraphQLSchema(query=_QueryS1)
 
         # Select both a concrete field (title) and the AnnotatedField (commentCount).
         # This is exactly the "mixed" child scenario.
@@ -996,12 +1034,12 @@ class TestSafeModeContractStructural(TestCase):
                     model = Post
                     registry = _R8
 
-            class _Q8(graphene.ObjectType):
+            class _Q8(ObjectType):
                 all_posts = DjangoListObjectField(_PostList8)
 
-            schema8 = graphene.Schema(query=_Q8)
+            schema8 = DjangoGraphQLSchema(query=_Q8)
             # With SAFE_MODE=True, the FieldError should NOT propagate.
-            result = schema8.execute("{ allPosts { results { id } } }")
+            result = _execute(schema8, "{ allPosts { results { id } } }")
             self.assertIsNone(result.errors, result.errors)
 
 
@@ -1037,11 +1075,11 @@ class TestSafeModeFalsePropagatesBuildError(TestCase):
                     model = Post
                     registry = _R8B
 
-            class _Q8B(graphene.ObjectType):
+            class _Q8B(ObjectType):
                 all_posts = DjangoListObjectField(_PostList8B)
 
-            schema8b = graphene.Schema(query=_Q8B)
-            result = schema8b.execute("{ allPosts { results { id } } }")
+            schema8b = DjangoGraphQLSchema(query=_Q8B)
+            result = _execute(schema8b, "{ allPosts { results { id } } }")
             self.assertIsNotNone(result.errors)
 
 
@@ -1066,7 +1104,7 @@ class TestAliasBeforeAnnotateOrder(TestCase):
         class _PostT8C(DjangoObjectType):
             # ratio uses an alias (cnt) in its expression
             ratio = AnnotatedField(
-                graphene.Float,
+                GraphQLFloat,
                 lambda: F("cnt") * 1.0,
                 aliases={"cnt": Count("comments")},
             )
@@ -1080,10 +1118,10 @@ class TestAliasBeforeAnnotateOrder(TestCase):
                 model = Post
                 registry = _R8C
 
-        class _Q8C(graphene.ObjectType):
+        class _Q8C(ObjectType):
             all_posts = DjangoListObjectField(_PostList8C)
 
-        schema8c = graphene.Schema(query=_Q8C)
+        schema8c = DjangoGraphQLSchema(query=_Q8C)
 
         call_order = []
         _orig_alias = QuerySet.alias
@@ -1141,9 +1179,9 @@ class TestAnnotationNameCollisionSafety(TestCase):
     def test_annotation_name_collision_safety(self):
         """Two AnnotatedFields on the same type use distinct _gqx_ann_* keys."""
         field_a = AnnotatedField(
-            graphene.Int, Count("comments"), annotation_name="explicit_a"
+            GraphQLInt, Count("comments"), annotation_name="explicit_a"
         )
-        field_b = AnnotatedField(graphene.Int, Count("tags"))
+        field_b = AnnotatedField(GraphQLInt, Count("tags"))
 
         self.assertNotEqual(
             field_a.annotation_name("comment_count"),
@@ -1154,7 +1192,7 @@ class TestAnnotationNameCollisionSafety(TestCase):
 
     def test_annotation_name_prefix_isolation_from_window(self):
         """_gqx_ann_ prefix must not collide with _gqx_rn or _gqx_total."""
-        field = AnnotatedField(graphene.Int, Count("tags"))
+        field = AnnotatedField(GraphQLInt, Count("tags"))
         ann = field.annotation_name("rank")
         self.assertEqual(ann, "_gqx_ann_rank")
         self.assertNotEqual(ann, "_gqx_rn")
@@ -1206,8 +1244,6 @@ def _build_window_annotated_schema(use_aggregate=False):
       - use_aggregate=False: views_x2 = F("views") * 2  (concrete-column)
       - use_aggregate=True:  comment_count = Count("comments")  (aggregate, must decline)
     """
-    import graphene
-
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
     from django_graphex.types import (
@@ -1222,16 +1258,16 @@ def _build_window_annotated_schema(use_aggregate=False):
 
     if use_aggregate:
         extra_fields = {
-            "comment_count": AnnotatedField(graphene.Int, Count("comments")),
+            "comment_count": AnnotatedField(GraphQLInt, Count("comments")),
         }
         extra_fields_query = "commentCount"
     else:
         extra_fields = {
-            "views_x2": AnnotatedField(graphene.Int, F("views") * 2),
+            "views_x2": AnnotatedField(GraphQLInt, F("views") * 2),
         }
         extra_fields_query = "viewsX2"
 
-    _PostType = type(
+    _PostType = _gtype(
         "_WinAnnPostType",
         (DjangoObjectType,),
         {
@@ -1240,7 +1276,7 @@ def _build_window_annotated_schema(use_aggregate=False):
         },
     )
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_WinAnnPostListType",
         (DjangoListObjectType,),
         {
@@ -1256,7 +1292,7 @@ def _build_window_annotated_schema(use_aggregate=False):
         },
     )
 
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_WinAnnAuthorType",
         (DjangoObjectType,),
         {
@@ -1265,16 +1301,16 @@ def _build_window_annotated_schema(use_aggregate=False):
         },
     )
 
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_WinAnnAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "_WinAnnQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -1324,7 +1360,7 @@ class TestWindowCompositeConcreteColumn(TestCase):
         cls.views_map = {str(p.pk): p.views * 2 for p in cls.posts_a1 + cls.posts_a2}
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         self.assertIsNone(result.errors, result.errors)
         return result.data
 
@@ -1416,7 +1452,7 @@ class TestWindowAggregateFallsBack(TestCase):
         Comment.objects.create(post=cls.post, body="c2")
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         self.assertIsNone(result.errors, result.errors)
         return result.data
 
@@ -1477,7 +1513,6 @@ class TestWindowInjectionErrorGracefulFallback(TestCase):
         """
         from unittest.mock import patch
 
-        import graphene
         from django.core.exceptions import FieldError
 
         from django_graphex.fields import DjangoNestedListObjectField
@@ -1488,17 +1523,17 @@ class TestWindowInjectionErrorGracefulFallback(TestCase):
         _REG_ERR = {}
         paginator = LimitOffsetGraphqlPagination(default_limit=5)
 
-        _PostType = type(
+        _PostType = _gtype(
             "_ErrPostType",
             (DjangoObjectType,),
             {
                 # AnnotatedField with a concrete-column expression that will
                 # trigger a FieldError when .annotate() is called (mocked below).
-                "views_x2": AnnotatedField(graphene.Int, F("views") * 2),
+                "views_x2": AnnotatedField(GraphQLInt, F("views") * 2),
                 "Meta": type("Meta", (), {"model": Post, "registry": _REG_ERR}),
             },
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_ErrPostListType",
             (DjangoListObjectType,),
             {
@@ -1513,7 +1548,7 @@ class TestWindowInjectionErrorGracefulFallback(TestCase):
                 )
             },
         )
-        _AuthorType = type(
+        _AuthorType = _gtype(
             "_ErrAuthorType",
             (DjangoObjectType,),
             {
@@ -1522,18 +1557,18 @@ class TestWindowInjectionErrorGracefulFallback(TestCase):
             },
         )
 
-        field = _AuthorType._meta.fields["posts"]
+        posts_field = _AuthorType._meta.fields["posts"]
 
         # Build a minimal graphene schema so the GraphQLObjectType for _PostType
         # is registered and accessible via the schema's type_map.  Without a schema,
         # graphene types are not yet wired into GraphQLObjectType instances, so
         # _compute_child_only → _walk_annotated_fields would have no GraphQL type to
         # look up AnnotatedFields on and child_annotations would remain empty.
-        _schema = graphene.Schema(
-            query=type(
+        _schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_ErrFallbackQuery",
-                (graphene.ObjectType,),
-                {"dummy": graphene.String()},
+                (ObjectType,),
+                {"dummy": field(GraphQLString)},
             ),
             types=[_PostType, _PostListType, _AuthorType],
         )
@@ -1583,7 +1618,7 @@ class TestWindowInjectionErrorGracefulFallback(TestCase):
         author_rel = PostModel._meta.get_field("author").remote_field  # ManyToOneRel
 
         with patch.object(QuerySet, "annotate", failing_annotate):
-            result = field.build_window_prefetch(
+            result = posts_field.build_window_prefetch(
                 lookup="posts",
                 filter_value=None,
                 slice_tuple=(0, 5, ["id"]),
@@ -1652,7 +1687,7 @@ def _build_alias_dependent_window_schema():
 
     PostType declares:
         views_tripled = AnnotatedField(
-            graphene.Int,
+            GraphQLInt,
             expression=F("views_base") + 0,   # references the alias
             aliases={"views_base": F("views") * 3},
         )
@@ -1676,12 +1711,12 @@ def _build_alias_dependent_window_schema():
     _REG = {}
     paginator = LimitOffsetGraphqlPagination(default_limit=10)
 
-    _PostType = type(
+    _PostType = _gtype(
         "_AliasDepPostType",
         (DjangoObjectType,),
         {
             "views_tripled": AnnotatedField(
-                graphene.Int,
+                GraphQLInt,
                 # Expression references the alias name "views_base".
                 # alias() MUST be called first; annotate() references it.
                 F("views_base") + 0,
@@ -1690,7 +1725,7 @@ def _build_alias_dependent_window_schema():
             "Meta": type("Meta", (), {"model": Post, "registry": _REG}),
         },
     )
-    _PostListType = type(
+    _PostListType = _gtype(
         "_AliasDepPostListType",
         (DjangoListObjectType,),
         {
@@ -1705,7 +1740,7 @@ def _build_alias_dependent_window_schema():
             )
         },
     )
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_AliasDepAuthorType",
         (DjangoObjectType,),
         {
@@ -1713,15 +1748,15 @@ def _build_alias_dependent_window_schema():
             "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
         },
     )
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_AliasDepAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
     )
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "_AliasDepQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -1763,7 +1798,7 @@ class TestWindowAliasBeforeAnnotateOrdering(TestCase):
             cls.posts.append(p)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         self.assertIsNone(result.errors, result.errors)
         return result.data
 
