@@ -24,7 +24,11 @@ urlpatterns = [
     path("graphql/", GraphQLView.as_view(graphiql=True)),
     # Subscriptions over Server-Sent Events (HTTP text/event-stream). The native
     # WebSocket transport for the same schema is routed in config/asgi.py.
-    path("graphql/stream", subscription_sse_view(schema=schema)),
+    # The SSE/WS transports execute against the live graphql-core schema, so pass
+    # ``schema.graphql_schema`` (the GraphQLSchema), NOT the DjangoGraphQLSchema
+    # wrapper — graphql-core's validate / create_source_event_stream cannot
+    # consume the wrapper.
+    path("graphql/stream", subscription_sse_view(schema=schema.graphql_schema)),
     # A browser client to try subscriptions live (served from this origin -> no
     # CORS). Defaults match this project's routes (/ws/graphql/ and /graphql/).
     path("graphql/client/", SubscriptionClientView.as_view()),

@@ -30,10 +30,13 @@ from django.test import RequestFactory, TestCase, override_settings
 from graphql import GraphQLError
 
 # ---------------------------------------------------------------------------
-# We import from the package — at RED phase these will ImportError; pytest
-# will then mark them as collection errors (expected before implementation).
+# We import from the package. ``Base64FileInput`` itself is now a native
+# ``InputType`` (Pydantic) — its native behavior is covered in
+# ``tests/native/test_s_roots_g_base64_native.py``; this legacy file keeps the
+# ``decode_base64_file`` helper + view-guard coverage (the retired graphene
+# container assertions are skipped above).
 # ---------------------------------------------------------------------------
-from django_graphex.uploads import Base64FileInput, decode_base64_file
+from django_graphex.uploads import decode_base64_file
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -139,88 +142,28 @@ class TestDecodeBase64File:
 # ---------------------------------------------------------------------------
 
 
-def _make_container(filename, data, content_type=None):
-    """Build a Base64FileInput container (the dict-like object that arrives in resolvers).
-
-    graphene auto-generates a container class that is stored in
-    ``Base64FileInput._meta.container`` and inherits from both
-    ``InputObjectTypeContainer`` and ``Base64FileInput``. Use that class to
-    create instances for unit tests.
-    """
-    container_cls = Base64FileInput._meta.container
-    kwargs = {"filename": filename, "data": data}
-    if content_type is not None:
-        kwargs["content_type"] = content_type
-    return container_cls(**kwargs)
-
-
+# ---------------------------------------------------------------------------
+# RETIRED (S-ROOTS-g / S7): graphene-only Base64FileInput container assertions.
+#
+# Base64FileInput was ported to a native ``InputType`` (a Pydantic model) in
+# S-ROOTS-g. The graphene container surface it relied on
+# (``_meta.container`` / ``issubclass(graphene.InputObjectType)`` /
+# ``graphene.Schema`` execution of the input) no longer exists. The graphene-free
+# behavior — a VALIDATED Base64FileInput instance decoding to a
+# ``SimpleUploadedFile`` end-to-end — is asserted in the native replacement
+# suite ``tests/native/test_s_roots_g_base64_native.py``. This whole class is
+# pruned in S7 alongside the rest of the graphene-suite retirement.
+# ---------------------------------------------------------------------------
+@pytest.mark.skip(
+    reason="S-ROOTS-g: Base64FileInput is now a native InputType (Pydantic). "
+    "Graphene container assertions retired; native behavior covered by "
+    "tests/native/test_s_roots_g_base64_native.py. Pruned in S7."
+)
 class TestBase64FileInput:
-    """Base64FileInput graphene.InputObjectType."""
+    """RETIRED graphene-container assertions — see module note above."""
 
-    def test_is_input_object_type(self):
-        """Base64FileInput must be a graphene.InputObjectType subclass."""
-        assert issubclass(Base64FileInput, graphene.InputObjectType)
-
-    def test_fields_present(self):
-        """Must expose filename, data, and optional content_type fields."""
-        fields = Base64FileInput._meta.fields
-        assert "filename" in fields
-        assert "data" in fields
-        assert "content_type" in fields
-
-    def test_to_uploaded_file(self):
-        """Container.to_uploaded_file() → SimpleUploadedFile (as seen in a resolver)."""
-        container = _make_container("photo.png", _TINY_PNG_B64, "image/png")
-        result = container.to_uploaded_file(max_size=1024)
-        assert isinstance(result, SimpleUploadedFile)
-        assert result.name == "photo.png"
-        assert result.content_type == "image/png"
-        assert result.read() == _TINY_PNG
-
-    def test_to_uploaded_file_default_content_type(self):
-        """When content_type is absent, defaults to application/octet-stream."""
-        container = _make_container("blob.bin", _HELLO_B64)
-        result = container.to_uploaded_file(max_size=1024)
-        assert result.content_type == "application/octet-stream"
-
-    def test_to_uploaded_file_with_max_size(self):
-        """to_uploaded_file(max_size=N) enforces a per-file cap."""
-        large_data = base64.b64encode(b"x" * 200).decode()
-        container = _make_container("big.bin", large_data)
-        with pytest.raises(GraphQLError, match="exceeds"):
-            container.to_uploaded_file(max_size=50)
-
-    def test_container_inherits_from_base64_file_input(self):
-        """Auto-generated container inherits from Base64FileInput (methods available)."""
-        container_cls = Base64FileInput._meta.container
-        assert issubclass(container_cls, Base64FileInput)
-
-    def test_to_uploaded_file_available_in_schema_execution(self):
-        """to_uploaded_file is callable on the value that arrives in a real resolver."""
-        resolved_file = None
-
-        class Mutation(graphene.ObjectType):
-            upload = graphene.Field(
-                graphene.String,
-                file=Base64FileInput(required=True),
-            )
-
-            def resolve_upload(root, info, file):
-                nonlocal resolved_file
-                resolved_file = file.to_uploaded_file(max_size=1024)
-                return resolved_file.name
-
-        schema = graphene.Schema(query=Mutation)
-        b64 = _HELLO_B64
-        query = (
-            '{ upload(file: {filename: "test.txt", '
-            f'data: "{b64}", contentType: "text/plain"'
-            "}) }"
-        )
-        result = schema.execute(query)
-        assert result.errors is None
-        assert resolved_file is not None
-        assert resolved_file.read() == _HELLO_BYTES
+    def test_retired_graphene_container_surface(self):
+        """Placeholder: the graphene container contract is gone in 2.0."""
 
 
 # ---------------------------------------------------------------------------

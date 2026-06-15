@@ -13,4 +13,8 @@ from .schema import schema
 
 # A Channels AsyncJsonWebsocketConsumer subclass speaking graphql-transport-ws
 # (connection_init/ack, multiplexed subscribe, ping/pong, per-id complete).
-AppWSConsumer = subscription_ws_consumer(schema=schema)
+# The WS transport executes against the live graphql-core schema, so pass
+# ``schema.graphql_schema`` (the GraphQLSchema), NOT the DjangoGraphQLSchema
+# wrapper — graphql-core's validate / create_source_event_stream cannot consume
+# the wrapper.
+AppWSConsumer = subscription_ws_consumer(schema=schema.graphql_schema)
