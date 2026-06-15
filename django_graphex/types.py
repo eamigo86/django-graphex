@@ -256,6 +256,74 @@ def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
     return out
 
 
+def _compile_gfk_union_output_fields(src_cls: type) -> dict[str, Any]:
+    """Compile typed GFK-union OUTPUT fields declared via ``Meta.gfk_unions`` (#8).
+
+    ``compile_output_fields`` renders a model's ``GenericForeignKey`` as the flat
+    ``GenericForeignKeyType`` (DEFECT-B basic path). When the owning type declares
+    ``Meta.gfk_unions = {"<gfk_name>": SomeDjangoUnionType}`` (Track 2), graphene
+    instead emitted a typed ``GraphQLUnion`` for that GFK
+    (``converter.convert_generic_foreign_key_to_object``). Native must MATCH:
+    override the flat field with a field whose type is the compiled
+    ``GraphQLUnionType`` and whose resolver reads the GFK accessor off the parent.
+
+    Added in the output thunk AFTER ``compile_output_fields`` so the union field
+    REPLACES the flat ``GenericForeignKeyType`` field (last-wins). A declared union
+    that is NOT registered (mis-ordered declaration) is skipped here, leaving the
+    flat field — byte-identical to graphene's warn-and-fall-back semantics (the
+    warning itself fires on the converter path).
+
+    Args:
+        src_cls: The source ``DjangoObjectType`` subclass.
+
+    Returns:
+        A ``{camelCase_name: GraphQLField}`` dict of typed GFK-union fields
+        (empty when the class declares no ``gfk_unions``).
+    """
+    from django.contrib.contenttypes.fields import GenericForeignKey
+    from graphene.utils.str_converters import to_camel_case
+    from graphql import GraphQLField
+
+    meta = getattr(src_cls, "_meta", None)
+    gfk_unions = getattr(meta, "gfk_unions", None) or {}
+    model = getattr(meta, "model", None)
+    registry = getattr(meta, "registry", None)
+    if not gfk_unions or model is None or registry is None:
+        return {}
+
+    from .native.polymorphic_compiler import compile_union_type
+
+    gfk_names = {
+        f.name
+        for f in model._meta.get_fields()
+        if isinstance(f, GenericForeignKey)
+    }
+
+    out: dict[str, Any] = {}
+    for fk_name in gfk_unions:
+        if fk_name not in gfk_names:
+            continue
+        # Only emit when the companion union is actually registered (mirrors
+        # converter/registry.get_gfk_union: a mis-ordered, unregistered union
+        # leaves the flat GenericForeignKeyType in place + warns on the converter).
+        union_cls = registry.get_gfk_union(model, fk_name)
+        if union_cls is None:
+            continue
+        gql_union = compile_union_type(union_cls)
+
+        def _gfk_resolver(root: Any, _info: Any, *, _name: str = fk_name) -> Any:
+            if isinstance(root, dict):
+                return root.get(_name)
+            return getattr(root, _name, None)
+
+        out[to_camel_case(fk_name)] = GraphQLField(
+            gql_union,
+            resolve=_gfk_resolver,
+            description="Typed union for a GenericForeignKey field",
+        )
+    return out
+
+
 def _compile_relation_list_fields(
     src_cls: type,
     model: type,
@@ -827,11 +895,42 @@ class DjangoObjectType(NativeObjectType):
                 # ``_meta.fields``. Added LAST so a declared field overrides a
                 # same-named model-derived field, matching graphene's precedence.
                 _fields.update(_compile_declared_fields(_src_cls))
+                # DEFECT #8: override a GFK's flat ``GenericForeignKeyType`` field
+                # with the typed ``GraphQLUnion`` when the owner declares
+                # ``Meta.gfk_unions`` for that GFK. Added LAST so it REPLACES the
+                # flat field compile_output_fields emitted (last-wins), matching
+                # graphene's typed-union GFK output.
+                _fields.update(_compile_gfk_union_output_fields(_src_cls))
                 return _fields
+
+            # DEFECT #8: wire any DjangoInterfaceType this type implements onto the
+            # native GraphQLObjectType as graphql-core ``interfaces=`` (a lazy
+            # thunk so the interface compiles after this type's class-def). graphene
+            # listed implemented interfaces under the object type's ``interfaces=``;
+            # native must do the same or the interface is never an implementor and
+            # ``... on <Interface>`` / interface fields fail at schema build.
+            _declared_interfaces = tuple(interfaces or ())
+
+            def _make_interfaces(
+                _ifaces: tuple[Any, ...] = _declared_interfaces,
+            ) -> list[Any]:
+                if not _ifaces:
+                    return []
+                from django_graphex.native.polymorphic_compiler import (
+                    compile_interface_type,
+                    is_interface_type,
+                )
+
+                compiled: list[Any] = []
+                for iface in _ifaces:
+                    if is_interface_type(iface):
+                        compiled.append(compile_interface_type(iface))
+                return compiled
 
             _graphql_output_type = GraphQLObjectType(
                 name=_gql_name,
                 fields=_make_output_thunk,
+                interfaces=_make_interfaces if _declared_interfaces else None,
                 extensions={"gdx": _gdx_payload},
             )
 

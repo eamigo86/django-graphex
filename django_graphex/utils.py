@@ -826,7 +826,15 @@ def _resolve_fragment_target(
         return None
 
     gql = schema.get_type(name)
-    graphene_type = getattr(gql, "graphene_type", None)
+    # Dual-backend: graphene carries the source class as ``gql.graphene_type``;
+    # native carries it on ``gql.extensions['gdx']._meta.graphene_type`` (DEFECT A
+    # lands ``graphene_type=cls`` on every nested DjangoObjectType). The bridge
+    # reads whichever is present, so the member model resolves under native too —
+    # without it ``gql.graphene_type`` is None on native and EVERY GFK-union bucket
+    # silently degrades to full-load (N+1).
+    from django_graphex.native.compat import _gdx_graphene_type
+
+    graphene_type = _gdx_graphene_type(gql) if gql is not None else None
     model = getattr(getattr(graphene_type, "_meta", None), "model", None)
     if gql is None or graphene_type is None or model is None:
         # Unknown type, non-graphene type, or an interface (model is None).

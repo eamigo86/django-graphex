@@ -25,6 +25,7 @@ from django_graphex import DjangoInterfaceType, DjangoObjectType, DjangoUnionTyp
 from django_graphex.base_types import GenericForeignKeyType
 from django_graphex.converter import convert_django_field
 from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
 
 from .models import (
     Track2Account,
@@ -371,7 +372,7 @@ def test_union_schema_builds_without_assertionerror():
     class Query(graphene.ObjectType):
         payment = Field(union)
 
-    schema = graphene.Schema(query=Query, types=[account_type, invoice_type])
+    schema = DjangoGraphQLSchema(query=Query, types=[account_type, invoice_type])
     # The union is present in the built schema as a GraphQLUnionType.
     gql_union = schema.graphql_schema.get_type(union._meta.name)
     assert isinstance(gql_union, GraphQLUnionType)
@@ -406,7 +407,7 @@ def test_interface_shared_field_resolves_on_implementors():
             registry = reg
             interfaces = (ProductInterface,)
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=type(
             "Q",
             (graphene.ObjectType,),

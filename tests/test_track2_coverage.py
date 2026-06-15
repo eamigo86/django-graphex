@@ -26,10 +26,11 @@ from unittest import mock
 
 import graphene
 import pytest
-from graphene import Field
 
 from django_graphex import DjangoInterfaceType, DjangoObjectType
+from django_graphex.fields import DjangoObjectField
 from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoUnionType
 
 from .models import (
@@ -250,9 +251,9 @@ def _build_union_gql_schema(registry=None):
             gfk_unions = {"target": CommentTargetUnion}
 
     class Query(graphene.ObjectType):
-        comment = Field(GfkCommentType)
+        comment = DjangoObjectField(GfkCommentType)
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query, types=[AccountType, InvoiceType, GfkCommentType]
     )
     return schema.graphql_schema, {
@@ -1070,9 +1071,9 @@ def test_collect_gfk_union_buckets_merges_member_child_select_heads():
             gfk_unions = {"target": OrderTargetUnion}
 
     class Query(graphene.ObjectType):
-        comment = Field(GfkCommentType)
+        comment = DjangoObjectField(GfkCommentType)
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query, types=[OrderType, AccountType, InvoiceType, GfkCommentType]
     )
     gql_schema = schema.graphql_schema

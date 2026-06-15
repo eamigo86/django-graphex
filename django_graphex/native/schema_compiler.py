@@ -295,6 +295,19 @@ def _is_plain_object_type(graphene_cls: Any) -> bool:
     if issubclass(graphene_cls, (DjangoObjectType, DjangoListObjectType)):
         return False
 
+    # Polymorphic types (DjangoUnionType / DjangoInterfaceType, DEFECT #8) share
+    # the native ObjectType base but compile to graphql-core ``GraphQLUnionType`` /
+    # ``GraphQLInterfaceType`` — NOT a plain ``GraphQLObjectType``. Excluded here
+    # (BEFORE the native-marker branch below) so a union/interface field is routed
+    # to ``compile_polymorphic_type`` instead of being mis-compiled as an object.
+    from django_graphex.native.polymorphic_compiler import (
+        is_interface_type,
+        is_union_type,
+    )
+
+    if is_union_type(graphene_cls) or is_interface_type(graphene_cls):
+        return False
+
     # NATIVE-MARKER (S-ROOTS-b) — checked BEFORE the graphene fallback. A native
     # plain ``ObjectType`` (e.g. ``ErrorType``) is a ``native.base.ObjectType``
     # subclass with ``type(cls) is pydantic.ModelMetaclass``; it is NOT a
@@ -425,8 +438,11 @@ def compile_declared_field(
     from django_graphex.native._args import graphene_arg_to_graphql_argument
 
     field_type = getattr(field, "type", None)
-    if _is_plain_object_type(field_type):
-        gql_type: Any = _compile_plain_object_type(field_type)
+    polymorphic = _polymorphic_field_type(field_type)
+    if polymorphic is not None:
+        gql_type: Any = polymorphic
+    elif _is_plain_object_type(field_type):
+        gql_type = _compile_plain_object_type(field_type)
     else:
         target = _plain_django_output_type(field_type)
         if target is not None:
@@ -499,12 +515,45 @@ def _compile_wrapped_field_type(field_type: Any) -> Any:
     if isinstance(field_type, (GList, NativeList)):
         return GraphQLList(_compile_wrapped_field_type(field_type.of_type))
 
+    polymorphic = _polymorphic_field_type(field_type)
+    if polymorphic is not None:
+        return polymorphic
     if _is_plain_object_type(field_type):
         return _compile_plain_object_type(field_type)
     target = _plain_django_output_type(field_type)
     if target is not None:
         return target
     return _unwrap_graphene_type(field_type)
+
+
+def _polymorphic_field_type(field_type: Any) -> Any | None:
+    """Return the compiled graphql-core abstract type for a union/interface field.
+
+    DEFECT #8: a ``DjangoUnionType`` / ``DjangoInterfaceType`` field (e.g.
+    ``payment = Field(PaymentUnion)``) compiles to a graphql-core
+    ``GraphQLUnionType`` / ``GraphQLInterfaceType`` via the memoized polymorphic
+    compiler — NOT a plain ``GraphQLObjectType``. Returns ``None`` for any
+    non-polymorphic field type so the caller's normal dispatch continues.
+
+    Args:
+        field_type: The mounted field ``type``.
+
+    Returns:
+        A ``GraphQLUnionType`` / ``GraphQLInterfaceType`` or ``None``.
+    """
+    import inspect
+
+    if not inspect.isclass(field_type):
+        return None
+    from django_graphex.native.polymorphic_compiler import (
+        compile_polymorphic_type,
+        is_interface_type,
+        is_union_type,
+    )
+
+    if is_union_type(field_type) or is_interface_type(field_type):
+        return compile_polymorphic_type(field_type)
+    return None
 
 
 def _plain_django_output_type(field_type: Any) -> GraphQLObjectType | None:
@@ -558,6 +607,86 @@ def _build_plain_object_field(
     from django_graphex.native._args import graphene_arg_to_graphql_argument
 
     output_type = _compile_plain_object_type(field.type)
+
+    args = {}
+    if getattr(field, "args", None):
+        args = {
+            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            for arg_name, arg in field.args.items()
+        }
+
+    resolve = field.wrap_resolve(_resolver_for(source_cls, field_name))
+    return GraphQLField(
+        output_type,
+        args=args,
+        resolve=resolve,
+        description=getattr(field, "description", None),
+    )
+
+
+def _build_django_output_field(
+    field: Any, *, source_cls: type | None = None, field_name: str | None = None
+) -> GraphQLField:
+    """Build a native ``GraphQLField`` for a plain ``Field(DjangoObjectType)`` root.
+
+    Reuses the target ``DjangoObjectType`` / ``DjangoListObjectType``'s canonical
+    ``_meta.graphql_output_type`` (identity-stable). The resolver is wired via the
+    field's own ``wrap_resolve`` so a field-level resolver wins; otherwise the
+    source class' ``resolve_<field_name>`` (graphene parity) or the default
+    attribute/dict resolver.
+
+    Args:
+        field: A ``graphene.Field`` whose ``type`` is a ``DjangoObjectType`` /
+            ``DjangoListObjectType``.
+        source_cls: The ObjectType class declaring the field.
+        field_name: The snake_case field name.
+
+    Returns:
+        A graphql-core ``GraphQLField``.
+    """
+    from django_graphex.native._args import graphene_arg_to_graphql_argument
+
+    output_type = _plain_django_output_type(field.type)
+
+    args = {}
+    if getattr(field, "args", None):
+        args = {
+            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            for arg_name, arg in field.args.items()
+        }
+
+    resolve = field.wrap_resolve(_resolver_for(source_cls, field_name))
+    return GraphQLField(
+        output_type,
+        args=args,
+        resolve=resolve,
+        description=getattr(field, "description", None),
+    )
+
+
+def _build_polymorphic_field(
+    field: Any, *, source_cls: type | None = None, field_name: str | None = None
+) -> GraphQLField:
+    """Build a native ``GraphQLField`` for a union/interface root field (DEFECT #8).
+
+    The field type is the compiled ``GraphQLUnionType`` / ``GraphQLInterfaceType``
+    (memoized). The resolver is wired via the field's own ``wrap_resolve`` so a
+    field-level resolver still wins; otherwise the source class' ``resolve_<name>``
+    (graphene parity) or graphql-core's default attribute/dict resolver.
+
+    Args:
+        field: A ``graphene.Field`` whose ``type`` is a ``DjangoUnionType`` /
+            ``DjangoInterfaceType``.
+        source_cls: The ObjectType class declaring the field (for the
+            ``resolve_<field_name>`` parent-resolver lookup).
+        field_name: The snake_case field name.
+
+    Returns:
+        A graphql-core ``GraphQLField`` whose type is the polymorphic abstract type.
+    """
+    from django_graphex.native._args import graphene_arg_to_graphql_argument
+
+    output_type = _polymorphic_field_type(field.type)
 
     args = {}
     if getattr(field, "args", None):
@@ -824,6 +953,24 @@ def compile_native_root(root: type, *, name: str) -> GraphQLObjectType:
             # Plain filtered list ([Node] / [Node!]); pagination (when present)
             # slices inside the field's own list_resolver (args on this field).
             fields[wire_name] = _build_filter_list_field(field)
+        elif _polymorphic_field_type(getattr(field, "type", None)) is not None:
+            # DEFECT #8: a ``Field(PaymentUnion)`` / ``Field(ProductInterface)``
+            # root field whose type is a DjangoUnionType / DjangoInterfaceType
+            # compiles to a graphql-core GraphQLUnionType / GraphQLInterfaceType.
+            # Without this it would fall to _build_scalar_field →
+            # _unwrap_graphene_type → GDX_SCALAR_MAP KeyError on the member type.
+            fields[wire_name] = _build_polymorphic_field(
+                field, source_cls=root, field_name=field_name
+            )
+        elif _plain_django_output_type(getattr(field, "type", None)) is not None:
+            # A plain ``graphene.Field(SomeDjangoObjectType)`` on a root (instead
+            # of a ``DjangoObjectField``) reuses the target's canonical
+            # ``graphql_output_type``. Without this it would fall to the scalar arm
+            # and KeyError on the DjangoObjectType name. Resolver wiring matches the
+            # plain-field path (field resolver wins; else ``resolve_<name>``).
+            fields[wire_name] = _build_django_output_field(
+                field, source_cls=root, field_name=field_name
+            )
         elif _is_plain_object_type(getattr(field, "type", None)):
             # Slice A: a plain graphene.ObjectType field (NOT a DjangoObjectType,
             # NOT a scalar) compiles on-the-fly to a single-instance native

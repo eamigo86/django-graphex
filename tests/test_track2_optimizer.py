@@ -23,10 +23,12 @@ import graphene
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
-from graphene import Field
+from graphql import graphql_sync
 
 from django_graphex import DjangoListObjectField, DjangoListObjectType, DjangoObjectType
+from django_graphex.fields import DjangoObjectField
 from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoUnionType
 
 from .models import (
@@ -112,9 +114,9 @@ def _build_union_schema():
             gfk_unions = {"target": CommentTargetUnion}
 
     class Query(graphene.ObjectType):
-        comment = Field(GfkCommentType)
+        comment = DjangoObjectField(GfkCommentType)
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query, types=[AccountType, InvoiceType, GfkCommentType]
     )
     return (
@@ -378,7 +380,7 @@ def _build_gfk_union_schema(registry=None):
     class Query(graphene.ObjectType):
         all_comments = DjangoListObjectField(GfkCommentListType)
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query, types=[AccountType, InvoiceType, GfkCommentType]
     )
     return schema, reg
@@ -426,7 +428,7 @@ def test_gfk_union_builds_per_content_type_generic_prefetch_buckets():
 
     with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
         with CaptureQueriesContext(connection) as ctx:
-            result = schema.execute(_GFK_QUERY)
+            result = graphql_sync(schema.graphql_schema, _GFK_QUERY)
 
     assert result.errors is None, result.errors
     data = result.data["allComments"]
@@ -497,7 +499,7 @@ def test_gfk_union_no_n_plus_one_across_parents():
         # rows: the GenericPrefetch batches each content type into ONE query.  A
         # regression to per-row GFK resolution would add one query per comment.
         with case.assertNumQueries(4):
-            result = schema.execute(_GFK_QUERY)
+            result = graphql_sync(schema.graphql_schema, _GFK_QUERY)
 
     assert result.errors is None, result.errors
 
@@ -527,7 +529,7 @@ def test_gfk_union_unresolvable_bucket_degrades_without_fielderror():
     from django.test.utils import override_settings
 
     with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
-        result = schema.execute(query)
+        result = graphql_sync(schema.graphql_schema, query)
 
     assert result.errors is None, result.errors
     assert result.data["allComments"]["totalCount"] == 4
@@ -680,7 +682,7 @@ def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror():
     class Query(graphene.ObjectType):
         all_comments = DjangoListObjectField(GfkCommentListType)
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query, types=[AccountType, AccountProxyType, GfkCommentType]
     )
 
@@ -712,7 +714,7 @@ def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror():
 
     with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
         with CaptureQueriesContext(connection) as ctx:
-            result = schema.execute(query)
+            result = graphql_sync(schema.graphql_schema, query)
 
     # The critical assertion: NO duplicate-content-type ValueError surfaced.
     assert result.errors is None, result.errors
