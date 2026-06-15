@@ -7,21 +7,25 @@ on the type class, next to the logic that implements them.
 Usage::
 
     from django_graphex import filter_field
-    import graphene
 
     class PostType(DjangoObjectType):
         class Meta:
             model = Post
             filter_fields = {"title": ("exact", "icontains")}
 
-        @filter_field(graphene.String, description="Full-text search")
+        @filter_field(description="Full-text search")  # defaults to String
         def search(cls, queryset, info, value):
             return queryset.filter(
                 Q(title__icontains=value) | Q(body__icontains=value)
             )
 
 Contract:
-- ``graphene_type``: the graphene scalar/type for the argument (default: ``graphene.String``).
+- ``graphene_type``: the scalar/type for the argument (default: the native
+  graphql-core ``String`` scalar). The parameter NAME is kept for backward
+  compatibility with 1.x — it accepts EITHER a native graphql-core type
+  (``graphql.GraphQLInt`` etc.) OR a legacy graphene scalar/type
+  (``graphene.Int`` etc.); the native filter builder normalizes both. See
+  UPGRADE-2.0 for the deprecation-rename note.
 - ``description``: optional GraphQL description string.
 - The decorated method receives ``(cls, queryset, info, value) -> QuerySet``.
   The decorator handles classmethod semantics — do NOT stack ``@classmethod``.
@@ -34,7 +38,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-import graphene
+from graphql import GraphQLString
 
 __all__ = ("filter_field", "apply_custom_filters")
 
@@ -61,15 +65,19 @@ RESERVED_FILTER_ARGS: frozenset[str] = frozenset(
 
 
 def filter_field(
-    graphene_type: Any = graphene.String,
+    graphene_type: Any = GraphQLString,
     *,
     description: str | None = None,
 ) -> Callable:
     """Decorator that marks a method as a custom GraphQL filter argument.
 
     Args:
-        graphene_type: The graphene scalar or type for the argument.
-            Defaults to ``graphene.String``.
+        graphene_type: The scalar or type for the argument. Defaults to the
+            native graphql-core ``String`` scalar (``graphql.GraphQLString``).
+            The parameter name is kept for backward compatibility — it accepts
+            EITHER a native graphql-core type OR a legacy graphene scalar/type;
+            the native filter builder normalizes both (see UPGRADE-2.0 for the
+            deprecation-rename note).
         description: Optional description string for the GraphQL argument.
 
     Returns:

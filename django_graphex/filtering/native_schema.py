@@ -475,27 +475,44 @@ def _assert_filter_type_complete(gql_input_type: GraphQLInputObjectType) -> None
 def _custom_filter_gql_type(meta: dict[str, Any]) -> Any:
     """Resolve a custom ``@filter_field`` arg's graphql-core type from metadata.
 
-    ``@filter_field`` stores the declared graphene scalar/type under the
-    ``graphene_type`` metadata key (see ``filtering/filter_field.py``). Under the
-    native backend we must mirror that exact type so SDL parity with the graphene
-    builder holds (a ``@filter_field(graphene.Int)`` arg renders ``Int``, not
-    ``String``).
+    ``@filter_field`` stores the declared scalar/type under the ``graphene_type``
+    metadata key (see ``filtering/filter_field.py``). Under the native backend we
+    must mirror that exact type so SDL parity with the graphene builder holds (a
+    ``@filter_field(GraphQLInt)`` / ``@filter_field(graphene.Int)`` arg renders
+    ``Int``, not ``String``).
 
-    The graphene -> graphql-core translation reuses the output-path scalar
-    bridge (``native/_args.py``) so the resolved scalar is the SAME singleton the
-    rest of the native compiler emits.
+    Two input shapes are accepted (the parameter name is kept for backward
+    compat — S4):
+    - A native graphql-core type (``GraphQLScalarType`` / ``GraphQLList`` /
+      ``GraphQLNonNull`` / ``GraphQLEnumType`` / ``GraphQLInputObjectType``).
+      This is the new default (``GraphQLString``) and what native callers pass;
+      it is returned as-is (it is already what the compiler emits).
+    - A legacy graphene scalar/type (``graphene.Int`` etc.). It is translated to
+      its graphql-core twin via the output-path scalar bridge
+      (``native/_args.py``) so the resolved scalar is the SAME singleton the rest
+      of the native compiler emits — and graphene is imported only lazily, inside
+      that bridge, never at this module's import time.
 
     Args:
         meta: The ``@filter_field`` metadata dict (carries ``graphene_type``).
 
     Returns:
         The graphql-core type for the argument. Falls back to ``GraphQLString``
-        only when no ``graphene_type`` is present (matching graphene's default).
+        only when no type is present (matching the historical graphene default).
     """
+    from graphql import GraphQLType
+
     graphene_type = meta.get("graphene_type")
     if graphene_type is None:
         return GraphQLString
 
+    # New default / native callers: a graphql-core type is already what the
+    # compiler emits — pass it through without touching graphene.
+    if isinstance(graphene_type, GraphQLType):
+        return graphene_type
+
+    # Legacy graphene scalar/type (1.x back-compat): translate via the bridge,
+    # which imports graphene lazily (import-safe when graphene is absent).
     from django_graphex.native._args import _unwrap_graphene_type
 
     return _unwrap_graphene_type(graphene_type)
