@@ -10,17 +10,15 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager, QuerySet
 from django.utils.functional import SimpleLazyObject
 from graphene import (
-    Boolean,
     Field,
     InputField,
     Int,
-    List,
 )
 from graphene.types.base import BaseOptions
 from graphene.types.utils import yank_fields_from_attrs
 from graphene.utils.deprecated import warn_deprecation
 from graphene.utils.props import props
-from graphql import GraphQLError
+from graphql import GraphQLBoolean, GraphQLError
 
 from .backends import resolve_backend
 from .base_types import DjangoListObjectBase, factory_type
@@ -34,6 +32,8 @@ from .filtering.filter_field import (
 from .native.base import InputType as NativeInputType
 from .native.base import NativeObjectTypeOptions
 from .native.base import ObjectType as NativeObjectType
+from .native.descriptors import NativeList
+from .native.descriptors import field as native_field
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .paginations.pagination import BaseDjangoGraphqlPagination
@@ -1446,8 +1446,18 @@ def get_or_create_list_object_type(
 class DjangoModelType(NestedFieldsMixin, NativeObjectType):
     """DjangoModelType definition."""
 
-    ok = Boolean(description="Boolean field that return mutation result request.")
-    errors = List(ErrorType, description="Errors list for the field")
+    # S-ROOTS-c: ``ok`` / ``errors`` are NATIVE ``field()`` descriptors (not
+    # graphene ``Boolean()`` / ``List(ErrorType)``). The SDL is byte-identical
+    # (``ok: Boolean``, ``errors: [ErrorType]``). ``errors`` uses ``NativeList``
+    # because ``ErrorType`` is a native plain ``ObjectType`` whose graphql-core
+    # type compiles lazily — ``GraphQLList(ErrorType)`` cannot be built eagerly.
+    ok = native_field(
+        GraphQLBoolean,
+        description="Boolean field that return mutation result request.",
+    )
+    errors = native_field(
+        NativeList(ErrorType), description="Errors list for the field"
+    )
 
     #: Permission classes checked per action before each CRUD operation. Empty
     #: (the default) means no checks. See "django_graphex.permissions".

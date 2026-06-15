@@ -7,17 +7,20 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured
-from graphene import Boolean, Field, List
+from graphene import Field
 from graphene.types.base import BaseOptions
 from graphene.utils.deprecated import warn_deprecation
 from graphene.utils.props import props
 from graphene.utils.str_converters import to_camel_case
+from graphql import GraphQLBoolean
 
 from .backends import resolve_backend
 from .base_types import factory_type
 from .errors import ErrorType
 from .native.base import NativeObjectTypeOptions
 from .native.base import ObjectType as NativeObjectType
+from .native.descriptors import NativeList
+from .native.descriptors import field as native_field
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .registry import get_global_registry
@@ -225,8 +228,18 @@ class SerializerMutationOptions(BaseOptions):
 class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
     """Django model mutation type definition."""
 
-    ok = Boolean(description="Boolean field that return mutation result request.")
-    errors = List(ErrorType, description="Errors list for the field")
+    # S-ROOTS-c: ``ok`` / ``errors`` are NATIVE ``field()`` descriptors (not
+    # graphene ``Boolean()`` / ``List(ErrorType)``). The SDL is byte-identical
+    # (``ok: Boolean``, ``errors: [ErrorType]``). ``errors`` uses ``NativeList``
+    # because ``ErrorType`` is a native plain ``ObjectType`` whose graphql-core
+    # type compiles lazily — ``GraphQLList(ErrorType)`` cannot be built eagerly.
+    ok = native_field(
+        GraphQLBoolean,
+        description="Boolean field that return mutation result request.",
+    )
+    errors = native_field(
+        NativeList(ErrorType), description="Errors list for the field"
+    )
 
     class Meta:
         """Meta configuration for DjangoModelMutation."""

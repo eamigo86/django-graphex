@@ -468,12 +468,20 @@ def _compile_wrapped_field_type(field_type: Any) -> Any:
     - any other leaf (scalar/enum) goes through ``_unwrap_graphene_type``.
 
     This is what lets a mutation-payload field like ``errors: [ErrorType]`` —
-    a ``graphene.List`` wrapping a plain ObjectType — compile natively instead of
-    raising a ``GDX_SCALAR_MAP`` KeyError on ``ErrorType``.
+    a ``graphene.List`` (transitional) OR a native ``NativeList`` (S-ROOTS-c)
+    wrapping a plain ObjectType — compile natively instead of raising a
+    ``GDX_SCALAR_MAP`` KeyError on ``ErrorType``.
+
+    DUAL-CURRENCY wrappers (S-ROOTS-c): the native ``NativeList`` / ``NativeNonNull``
+    descriptors (descriptors.py) are LAZY carriers — graphql-core's
+    ``GraphQLList`` / ``GraphQLNonNull`` cannot wrap an uncompiled ``ObjectType``
+    class eagerly, so ``errors = field(NativeList(ErrorType))`` defers the inner
+    compile to here. They are recursed exactly like the graphene wrappers (same
+    ``.of_type`` read-contract), preserving the wrapper shape.
 
     Args:
-        field_type: The mounted graphene field ``type`` (a ``Structure`` wrapper
-            or a leaf class).
+        field_type: The mounted field ``type`` — a graphene ``Structure`` wrapper,
+            a native ``NativeList`` / ``NativeNonNull`` wrapper, or a leaf class.
 
     Returns:
         The corresponding graphql-core type (wrappers preserved).
@@ -482,10 +490,13 @@ def _compile_wrapped_field_type(field_type: Any) -> Any:
     from graphene.types.structures import NonNull as GNonNull
 
     from django_graphex.native._args import _unwrap_graphene_type
+    from django_graphex.native.descriptors import NativeList, NativeNonNull
 
-    if isinstance(field_type, GNonNull):
+    # Native lazy wrappers (S-ROOTS-c) AND graphene wrappers share a ``.of_type``
+    # read-contract; recurse the inner element and preserve the wrapper shape.
+    if isinstance(field_type, (GNonNull, NativeNonNull)):
         return GraphQLNonNull(_compile_wrapped_field_type(field_type.of_type))
-    if isinstance(field_type, GList):
+    if isinstance(field_type, (GList, NativeList)):
         return GraphQLList(_compile_wrapped_field_type(field_type.of_type))
 
     if _is_plain_object_type(field_type):

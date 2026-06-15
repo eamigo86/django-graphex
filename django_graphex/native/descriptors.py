@@ -49,6 +49,75 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 
+class NativeList:
+    """Graphene-free, LAZY ``[T]`` wrapper for a deferred-compile element type.
+
+    Why this exists (S-ROOTS-c): graphql-core's ``GraphQLList.__init__`` raises
+    ``TypeError`` unless ``of_type`` is already a ``GraphQLType``. A native plain
+    ``ObjectType`` class (e.g. ``ErrorType``) has NO compiled graphql-core type
+    until ``schema_compiler._compile_plain_object_type`` runs at schema-build, so
+    ``field(GraphQLList(ErrorType))`` is impossible to construct eagerly. graphql-core
+    wrappers also reject a thunk for ``of_type``.
+
+    ``NativeList`` is the lazy answer: it is an INERT carrier of the element type
+    (a graphql-core type, OR a deferred django-graphex / native ObjectType class)
+    and exposes the SAME ``.of_type`` read attribute graphene ``List`` /
+    graphql-core ``GraphQLList`` expose. The compiler's ``_compile_wrapped_field_type``
+    recurses through ``.of_type`` and compiles the inner element to the right
+    graphql-core type, preserving the list wrapper shape. This is how
+    ``errors = field(NativeList(ErrorType))`` compiles to ``[ErrorType]`` —
+    byte-identical to the graphene ``errors = List(ErrorType)`` original.
+
+    No ``import graphene``, no eager ``GraphQLList`` construction — the wrapper
+    stays valid under both backends and after graphene is uninstalled (S8).
+    """
+
+    __slots__ = ("of_type",)
+
+    def __init__(self, of_type: Any) -> None:
+        """Carry the (possibly deferred) element type; never builds eagerly.
+
+        Args:
+            of_type: The list element — a graphql-core ``GraphQLType``, OR a
+                django-graphex / native ``ObjectType`` class resolved lazily by
+                the compiler at schema-build time.
+        """
+        self.of_type = of_type
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        """Return a short debug representation of the lazy list wrapper."""
+        return f"<NativeList of_type={self.of_type!r}>"
+
+
+class NativeNonNull:
+    """Graphene-free, LAZY ``T!`` wrapper for a deferred-compile element type.
+
+    The non-null sibling of :class:`NativeList` (same rationale): graphql-core's
+    ``GraphQLNonNull`` cannot wrap an uncompiled class, so the non-null shape over
+    a deferred native/django output type is expressed lazily here and resolved by
+    ``_compile_wrapped_field_type`` (which recurses through ``.of_type`` preserving
+    the non-null wrapper). Exposes the same ``.of_type`` read attribute as
+    graphene ``NonNull`` / graphql-core ``GraphQLNonNull``.
+    """
+
+    __slots__ = ("of_type",)
+
+    def __init__(self, of_type: Any) -> None:
+        """Carry the (possibly deferred) wrapped type; never builds eagerly.
+
+        Args:
+            of_type: The wrapped type — a graphql-core ``GraphQLType``, OR a
+                django-graphex / native ``ObjectType`` class resolved lazily by
+                the compiler at schema-build time. May itself be a
+                :class:`NativeList` to express ``[T]!`` / ``[T!]!`` shapes.
+        """
+        self.of_type = of_type
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        """Return a short debug representation of the lazy non-null wrapper."""
+        return f"<NativeNonNull of_type={self.of_type!r}>"
+
+
 def _resolve_field_type(declared_type: Any) -> Any:
     """Resolve a declared ``field()`` type to the graphql-core type the compiler reads.
 
