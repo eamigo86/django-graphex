@@ -264,16 +264,23 @@ class Binary(graphene.Scalar):
         return None
 
 
-class CustomDateFormat:
-    """Custom date format wrapper."""
-
-    def __init__(self, date: str) -> None:
-        """Initialize custom date format.
-
-        Args:
-            date: the pre-formatted date string to wrap.
-        """
-        self.date_str = date
+# ``CustomDateFormat`` is the pre-formatted date/time bypass wrapper returned by
+# the ``@date`` directive (``directives/date.py``) to signal a date/time scalar
+# to emit a pre-rendered string verbatim instead of ISO-coercing the value.
+#
+# There must be EXACTLY ONE ``CustomDateFormat`` class shared by BOTH backends:
+# the directive returns it, and the recognising scalar checks ``isinstance``
+# against it. The native date/time scalars (``native/scalars.py``) own the
+# canonical, graphene-free definition; this module re-exports that single class
+# so the directive (which imports it from here) and the graphene-era
+# ``CustomDate`` / ``CustomDateTime`` / ``CustomTime`` scalars below all recognise
+# the same identity. Previously two distinct classes lived here and in
+# ``native/scalars.py``; their ``isinstance`` checks did not recognise each other,
+# so the native scalars rejected the directive's wrapper with
+# ``GraphQLError: Date cannot represent value: <CustomDateFormat object>``.
+# ``native/scalars.py`` has no ``django`` / ``graphene`` imports and is not part of
+# any import cycle with this module, so depending ON it here is safe.
+from .native.scalars import CustomDateFormat  # noqa: E402
 
 
 class CustomTime(Time):

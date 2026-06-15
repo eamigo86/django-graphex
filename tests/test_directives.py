@@ -1,15 +1,24 @@
-import graphene
 from django.test import TestCase
 from graphql import (
     DirectiveLocation,
     GraphQLArgument,
     GraphQLDirective,
+    GraphQLFloat,
     GraphQLInt,
+    GraphQLList,
     GraphQLNonNull,
     GraphQLString,
+    graphql_sync,
 )
+from graphql.execution import MiddlewareManager
 
-from django_graphex import GraphQLDirectiveMiddleware, all_directives
+from django_graphex import (
+    DjangoGraphQLSchema,
+    GraphQLDirectiveMiddleware,
+    ObjectType,
+    all_directives,
+    field,
+)
 from django_graphex.directives.base import BaseExtraGraphQLDirective
 from tests.test_fields import ParentTest
 
@@ -32,14 +41,14 @@ class DateDirective_Date_Test(ParentTest, TestCase):
 # --------------------------------------------------------------------------- #
 # Self-contained schema for the string / number / list directives             #
 # --------------------------------------------------------------------------- #
-class _DirectivesQuery(graphene.ObjectType):
-    text = graphene.String()
-    spaced = graphene.String()
-    encoded = graphene.String()
-    blank = graphene.String()
-    num = graphene.Float()
-    snum = graphene.String()
-    items = graphene.List(graphene.String)
+class _DirectivesQuery(ObjectType):
+    text = field(GraphQLString)
+    spaced = field(GraphQLString)
+    encoded = field(GraphQLString)
+    blank = field(GraphQLString)
+    num = field(GraphQLFloat)
+    snum = field(GraphQLString)
+    items = field(GraphQLList(GraphQLString))
 
     def resolve_text(root, info):
         return "Hello World"
@@ -67,16 +76,19 @@ class _DirectivesQuery(graphene.ObjectType):
 # exercise the middleware's "skip unknown directive" guard (B2).
 _noop_directive = GraphQLDirective(name="noop", locations=[DirectiveLocation.FIELD])
 
-_directives_schema = graphene.Schema(
+_directives_schema = DjangoGraphQLSchema(
     query=_DirectivesQuery, directives=list(all_directives) + [_noop_directive]
 )
-_middleware = [GraphQLDirectiveMiddleware()]
+_middleware = MiddlewareManager(GraphQLDirectiveMiddleware())
 
 
 class DirectivesTest(TestCase):
     def _run(self, query, **variables):
-        result = _directives_schema.execute(
-            query, middleware=_middleware, variables=variables or None
+        result = graphql_sync(
+            _directives_schema.graphql_schema,
+            query,
+            middleware=_middleware,
+            variable_values=variables or None,
         )
         self.assertIsNone(result.errors, result.errors)
         return result.data
@@ -178,25 +190,26 @@ class MaskGraphQLDirective(BaseExtraGraphQLDirective):
         return char * (len(text) - visible) + text[len(text) - visible :]
 
 
-class _CustomQuery(graphene.ObjectType):
-    card = graphene.String()
+class _CustomQuery(ObjectType):
+    card = field(GraphQLString)
 
     def resolve_card(root, info):
         return "4111111111111234"
 
 
 # Register the custom directive by passing an instance alongside the built-ins.
-_custom_schema = graphene.Schema(
+_custom_schema = DjangoGraphQLSchema(
     query=_CustomQuery, directives=[*all_directives, MaskGraphQLDirective()]
 )
 
 
 class CustomDirectiveTest(TestCase):
     def _run(self, query, **variables):
-        result = _custom_schema.execute(
+        result = graphql_sync(
+            _custom_schema.graphql_schema,
             query,
-            middleware=[GraphQLDirectiveMiddleware()],
-            variables=variables or None,
+            middleware=MiddlewareManager(GraphQLDirectiveMiddleware()),
+            variable_values=variables or None,
         )
         self.assertIsNone(result.errors, result.errors)
         return result.data
