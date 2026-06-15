@@ -117,7 +117,14 @@ def apply_custom_filters(
         return queryset
 
     for arg_name, method, _meta in custom_filters:
-        value = getattr(filter_value, arg_name, None)
+        # Native (GDX_BACKEND=native) delivers the filter input as a plain DICT
+        # with snake out_name keys (graphql-core does not rehydrate an object);
+        # graphene delivers an ``InputObjectTypeContainer`` accessed by attribute.
+        # Read both shapes so custom @filter_field args fire under either backend.
+        if isinstance(filter_value, dict):
+            value = filter_value.get(arg_name, None)
+        else:
+            value = getattr(filter_value, arg_name, None)
         if value is None:
             continue
         queryset = method(queryset, info, value)

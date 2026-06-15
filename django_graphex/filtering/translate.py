@@ -86,6 +86,30 @@ def _is_to_many(model: type[Model], name: str) -> bool:
     )
 
 
+def _is_model_field(model: type[Model], name: str) -> bool:
+    """Return whether ``name`` is a real concrete/relation field on ``model``.
+
+    Custom ``@filter_field`` args (e.g. ``search``) appear in the same filter
+    input value as the standard lookups but are NOT model fields — they are
+    applied separately by ``apply_custom_filters`` in the field resolver. ``to_q``
+    must therefore SKIP any key that is not a model field (and not a combinator),
+    otherwise it would reach ``_leaf_q`` and try to call ``.items()`` on the
+    custom filter's scalar value (``'str' object has no attribute 'items'``).
+
+    Args:
+        model: The model owning the field.
+        name: The key to inspect.
+
+    Returns:
+        ``True`` when ``model._meta.get_field(name)`` resolves a real field.
+    """
+    try:
+        model._meta.get_field(name)
+    except Exception:
+        return False
+    return True
+
+
 def _looks_like_graphene_enum(value: Any) -> bool:
     """Return whether a value (or any list item) is a graphene Enum member.
 
@@ -233,6 +257,14 @@ def to_q(node: Any, model: type[Model], prefix: str = "") -> tuple[Q, bool]:
             child_q, child_many = to_q(value, related, f"{prefix}{key}__")
             result &= child_q
             touched_to_many = touched_to_many or child_many
+            continue
+
+        # Skip keys that are NOT real model fields: custom ``@filter_field`` args
+        # (e.g. ``search``) ride in the same filter input value but are applied by
+        # ``apply_custom_filters`` in the resolver, not by ``to_q``. Without this
+        # guard ``_leaf_q`` would call ``.items()`` on the custom filter's scalar
+        # value and raise ``'str' object has no attribute 'items'`` (#1571).
+        if not _is_model_field(model, key):
             continue
 
         # A scalar field, or a relation declared directly (plain-pk lookups:

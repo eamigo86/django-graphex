@@ -209,6 +209,31 @@ class DjangoListField(Field):
         super().__init__(List(NonNull(_type)), *args, **kwargs)
 
 
+def _resolve_custom_filters(_type: Any) -> list:
+    """Resolve the ``@filter_field`` custom filters declared on a list type's node.
+
+    The custom filters are declared on the node ``DjangoObjectType`` (stored as
+    ``_dgx_custom_filters``). A ``DjangoListObjectType`` wraps that node as its
+    ``_meta.baseType`` and does NOT carry ``_dgx_custom_filters`` directly, so we
+    fall back to the ``baseType`` lookup. This is the SINGLE source of truth for
+    custom-filter propagation across EVERY list-field path (flat, list-object,
+    AND nested) — keeping the native ``<Model>Filterinput`` shape identical on all
+    paths so graphql-core never sees two same-named-but-different filter inputs
+    (#1571).
+
+    Args:
+        _type: The GraphQL object/list type carrying the model + filter config.
+
+    Returns:
+        The list of ``(arg_name, method, metadata)`` triples, or ``[]``.
+    """
+    custom_filters = getattr(_type, "_dgx_custom_filters", None)
+    if custom_filters is None:
+        base_type = getattr(getattr(_type, "_meta", None), "baseType", None)
+        custom_filters = getattr(base_type, "_dgx_custom_filters", None) or []
+    return custom_filters
+
+
 def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
     """Record the filter configuration (backend, fields, custom filters) on a field.
 
@@ -236,11 +261,7 @@ def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
 
     # Pick up custom @filter_field methods registered on the type or its baseType
     # (DjangoListObjectType wraps a DjangoObjectType as its baseType).
-    custom_filters = getattr(_type, "_dgx_custom_filters", None)
-    if custom_filters is None:
-        base_type = getattr(getattr(_type, "_meta", None), "baseType", None)
-        custom_filters = getattr(base_type, "_dgx_custom_filters", None) or []
-    field.custom_filters = custom_filters
+    field.custom_filters = _resolve_custom_filters(_type)
 
 
 class DjangoFilterListField(Field):
@@ -708,6 +729,15 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         declared_fields = fields if fields is not None else _type._meta.filter_fields
         self.fields = declared_fields
+        # Propagate the node type's @filter_field custom filters EXACTLY like
+        # DjangoListObjectField does (via _resolve_custom_filters). Without this the
+        # nested filter input would drop them while the root/flat path keeps them,
+        # producing two DIFFERENT-shaped GraphQLInputObjectType instances sharing
+        # the name <Model>Filterinput -> graphql-core duplicate-name TypeError at
+        # schema assembly (#1571). It also makes nested `results(filter:{search:…})`
+        # consistent with the runtime list_resolver, which already reads
+        # self.custom_filters via apply_custom_filters.
+        self.custom_filters = _resolve_custom_filters(_type)
         # The native schema compiler builds the ``<Model>FilterInput`` and mounts
         # the ``filter`` arg from ``self.fields`` / ``self.filter_backend`` when it
         # compiles this field, so no GraphQL input type is constructed here.
