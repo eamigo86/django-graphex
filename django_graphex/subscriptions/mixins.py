@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING, Any
 from django.core.serializers.json import DjangoJSONEncoder
 
 if TYPE_CHECKING:
-    from typing import Iterable
-
     from django.db.models import Model
 
     from ..backends import SerializerBackend
@@ -39,27 +37,6 @@ def safe_group_name(name: str) -> str:
         return name
     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
     return f"gde.{digest}"
-
-
-def project_fields(
-    data: dict[str, Any] | None,
-    fields: Iterable[str] | None,
-) -> dict[str, Any] | None:
-    """Filter a serialized "data" mapping down to "fields".
-
-    A "None" or empty "fields" collection means "return the full payload".
-
-    Args:
-        data: The serialized mapping to filter.
-        fields: The field names to keep, or "None" for all fields.
-
-    Returns:
-        The filtered mapping, or the original "data" when no fields are given.
-    """
-    if not fields:
-        return data
-    allowed = set(fields)
-    return {key: value for key, value in data.items() if key in allowed}
 
 
 def split_filters(

@@ -7,26 +7,19 @@ engine.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from asgiref.sync import sync_to_async
-from channels.layers import get_channel_layer
-from django.core.cache import caches
 from graphene import (
     ID,
     Argument,
-    Boolean,
     Enum,
     Field,
-    List,
     ObjectType,
-    String,
 )
 from graphene.types.generic import GenericScalar
 from graphene.types.objecttype import ObjectTypeOptions
-from graphene.utils.str_converters import to_camel_case, to_snake_case
 from graphql import GraphQLError
 
 from ..backends import resolve_backend
@@ -35,117 +28,10 @@ from .bindings import SubscriptionBinding
 from .mixins import safe_group_name
 
 if TYPE_CHECKING:
-    from typing import AsyncIterator, Callable
+    from typing import Callable
 
     from django.db.models import QuerySet
     from graphql import GraphQLResolveInfo
-
-
-# ---------------------------------------------------------------------------
-# Channel ownership registry — Django-cache backed
-# ---------------------------------------------------------------------------
-# Maps channel_name → session_key via the Django "default" cache.
-# Key format: "dgx:subchan:<channel_name>"
-# TTL: 24 h (refreshed on re-register).
-#
-# With LocMemCache (the Django default) the semantics are identical to the
-# previous in-process dict — no shared state across workers.
-# With a shared cache backend (Redis / Memcached) the guard works correctly
-# across multiple HTTP + WebSocket workers.
-#
-# Tests may call register_channel() directly to inject entries without going
-# through the consumer.  The conftest fixture clears the relevant cache keys
-# between tests.
-
-_CHANNEL_CACHE_PREFIX = "dgx:subchan:"
-_CHANNEL_CACHE_TTL = 86_400  # 24 hours in seconds
-
-
-def _channel_cache_key(channel_name: str) -> str:
-    """Build the cache key for *channel_name*.
-
-    Args:
-        channel_name: The Channels channel name.
-
-    Returns:
-        The namespaced cache key.
-    """
-    return f"{_CHANNEL_CACHE_PREFIX}{channel_name}"
-
-
-def register_channel(channel_name: str, *, session_key: str) -> None:
-    """Record that *channel_name* is owned by *session_key*.
-
-    Stores the ownership token in Django's ``"default"`` cache with a 24-hour
-    TTL (refreshed on re-register).  Called by
-    ``GraphqlAPIDemultiplexer.connect`` (and by test helpers that bypass the
-    consumer).  Subsequent ``_subscribe`` calls for this channel must supply the
-    same ``_session_key`` to be accepted.
-
-    Args:
-        channel_name: The Channels channel name as sent in the handshake frame.
-        session_key: An opaque per-session identifier (session key, user pk
-            formatted as a string, or any stable per-connection token).
-    """
-    cache = caches["default"]
-    cache.set(_channel_cache_key(channel_name), session_key, _CHANNEL_CACHE_TTL)
-
-
-def unregister_channel(channel_name: str) -> None:
-    """Remove *channel_name* from the ownership registry on disconnect.
-
-    Args:
-        channel_name: The channel name to remove.
-    """
-    cache = caches["default"]
-    cache.delete(_channel_cache_key(channel_name))
-
-
-def _validate_channel_ownership(channel_name: str, session_key: str | None) -> None:
-    """Raise ``GraphQLError`` when *channel_name* is not owned by *session_key*.
-
-    Reads the ownership token from Django's ``"default"`` cache.
-
-    Policy: fail-closed — an unknown (never-registered) channel is also
-    rejected so an attacker cannot enumerate channels by guessing.
-
-    ``None`` and ``""`` are treated as equivalent for the owner comparison so
-    that anonymous connections (no Django session) registered with ``""`` are
-    accepted by HTTP callers that have no session either.  A caller with a real
-    session key can never match an empty-string owner (and vice-versa).
-
-    Args:
-        channel_name: The channel_id supplied by the subscribe caller.
-        session_key: The session key supplied by the subscribe caller, or
-            ``None`` when no session context is available.
-
-    Raises:
-        GraphQLError: When ownership cannot be confirmed.
-    """
-    cache = caches["default"]
-    # cache.get returns None for both a missing key and an explicitly stored None.
-    # We use a sentinel to distinguish "key not present" from "key stored as empty".
-    _MISSING = object()
-    owner = cache.get(_channel_cache_key(channel_name), default=_MISSING)
-    if owner is _MISSING:
-        raise GraphQLError(
-            "channel_id is not registered; connect a WebSocket consumer first."
-        )
-    # Normalise: treat None and "" as the same (anonymous / no session).
-    normalised_caller = session_key or ""
-    normalised_owner = owner or ""
-    if normalised_caller != normalised_owner:
-        raise GraphQLError(
-            "channel_id does not belong to the current session; subscription rejected."
-        )
-
-
-logger = logging.getLogger(__name__)
-
-
-def _to_camel(snake: str) -> str:
-    """Convert a snake_case payload key to its camelCase GraphQL wire name."""
-    return to_camel_case(snake)
 
 
 def _enum_value(value: Any) -> Any:
@@ -172,13 +58,6 @@ class ActionSubscriptionEnum(Enum):
     UPDATE = "update"
     DELETE = "delete"
     ALL_ACTIONS = "all_actions"
-
-
-class OperationSubscriptionEnum(Enum):
-    """Whether the request joins or leaves a subscription group."""
-
-    SUBSCRIBE = "subscribe"
-    UNSUBSCRIBE = "unsubscribe"
 
 
 class SubscriptionOptions(ObjectTypeOptions):
@@ -245,12 +124,6 @@ class Subscription(ObjectType):
                 model = User
                 stream = "users"
     """
-
-    ok = Boolean(description="Boolean field that return subscription request result.")
-    error = String(description="Subscribe or unsubscribe operation request error .")
-    stream = String(description="Stream name.")
-    operation = OperationSubscriptionEnum(description="Subscription operation.")
-    action = ActionSubscriptionEnum(description="Subscription action.")
 
     class Meta:
         """Mark the "Subscription" base itself as abstract (not a schema type)."""
@@ -330,19 +203,17 @@ class Subscription(ObjectType):
         _meta.serialize_data = serialize_data
         _meta.index_fields = index_fields
 
+        # Native-only argument set: {action, id, filters}. The bespoke
+        # ``channel_id``/``operation`` args and the ``data`` field-projection
+        # enum are gone (the cutover replaced field projection with the GraphQL
+        # selection set, and the WS/SSE transports are the auth boundary, so no
+        # channel handshake id is needed). The reduced set mirrors the native
+        # ``_build_native_field`` args (subscription.py native compile path).
         arguments = {
-            "channel_id": Argument(
-                String,
-                required=True,
-                description="Websocket's channel connection identification",
-            ),
             "action": Argument(
                 ActionSubscriptionEnum,
                 required=True,
                 description="Model change action to listen to: create, update, delete or all_actions.",
-            ),
-            "operation": Argument(
-                OperationSubscriptionEnum, required=True, description="Operation to do"
             ),
             "id": Argument(
                 ID,
@@ -358,30 +229,6 @@ class Subscription(ObjectType):
                 ),
             ),
         }
-
-        # The `data` argument (and its <Model>Fields enum) only makes sense when
-        # the notification carries the full serialized instance. In id-only mode
-        # there are no fields to pick, so we omit it from the schema entirely.
-        # Effective mode is resolved at class-definition time: Meta override if
-        # given, else the global setting at import time.
-        effective_full = (
-            serialize_data
-            if serialize_data is not None
-            else bool(graphql_api_settings.SUBSCRIPTION_SERIALIZE_DATA)
-        )
-        if effective_full:
-            serializer_fields = [
-                (to_snake_case(field.strip("_")).upper(), to_snake_case(field))
-                for field in backend.output_field_names()
-            ]
-            model_fields_enum = Enum(
-                f"{_meta.model.__name__}Fields",
-                serializer_fields,
-                description="Desired {} fields in subscription's notification.".format(
-                    _meta.model.__name__
-                ),
-            )
-            arguments["data"] = List(model_fields_enum, required=False)
 
         _meta.arguments = arguments
 
@@ -552,137 +399,6 @@ class Subscription(ObjectType):
                     "Subscription filter key '{}' is not a declared output field. "
                     "Allowed fields: {}.".format(key, ", ".join(sorted(declared)))
                 )
-
-    @classmethod
-    async def _subscribe(
-        cls,
-        root: Any,
-        info: GraphQLResolveInfo,
-        **kwargs: Any,
-    ) -> AsyncIterator[Any]:
-        """Yield the field's graphql-core subscribe confirmation object.
-
-        Joins/leaves the relevant groups, registers the requested field set for
-        per-connection projection, and yields exactly one confirmation object.
-
-        Args:
-            root: The root value passed to the resolver.
-            info: The GraphQL resolve info.
-            **kwargs: The subscription arguments (action, operation, etc.) plus
-                the internal ``_session_key`` used for channel ownership checks.
-
-        Yields:
-            A single confirmation object describing the subscribe result.
-        """
-        # graphql-core delivers enum arguments as their graphene Enum members;
-        # normalize to the plain string values the engine and wire protocol use.
-        action = _enum_value(kwargs.get("action"))
-        operation = _enum_value(kwargs.get("operation"))
-        data = kwargs.get("data", None)
-        if data:
-            data = [_enum_value(field) for field in data]
-        obj_id = kwargs.get("id", None)
-        client_filters = kwargs.get("filters", None)
-        if not isinstance(client_filters, dict):
-            client_filters = {}
-        channel_name = kwargs.get("channel_id")
-
-        # _session_key is an internal kwarg injected by the consumer (or by
-        # test helpers) for ownership validation.  It is not part of the public
-        # GraphQL argument schema — strip it before forwarding to other hooks.
-        # When not explicitly provided, attempt to extract the session key from
-        # the Django HTTP request available as info.context (the real HTTP path
-        # via SubscriptionGraphQLView).
-        session_key: str | None = kwargs.pop("_session_key", None)
-        if session_key is None and info is not None:
-            context = info.context
-            session = getattr(context, "session", None)
-            if session is not None:
-                session_key = getattr(session, "session_key", None) or ""
-
-        response = {
-            "stream": cls._meta.stream,
-            "operation": operation,
-            "action": action,
-        }
-
-        try:
-            channel_layer = get_channel_layer()
-            if channel_layer is None:
-                raise RuntimeError(
-                    "No channel layer configured; set CHANNEL_LAYERS to enable "
-                    "subscriptions."
-                )
-
-            # --- (a) Channel ownership guard ---
-            # Validate that the calling session owns the presented channel_id
-            # before any group_add or group_send is performed.  This prevents
-            # a client from hijacking another user's channel by guessing its ID.
-            # The guard is skipped when SUBSCRIPTIONS_CHANNEL_GUARD=False (escape
-            # hatch for multi-worker deployments without a shared cache backend).
-            if graphql_api_settings.SUBSCRIPTIONS_CHANNEL_GUARD:
-                _validate_channel_ownership(channel_name, session_key)
-
-            # Authorize the subscribe (may raise -> surfaced as ok=False).
-            # authorize_subscription and subscription_scope are sync classmethods
-            # (the user-overridable hooks may touch the Django ORM, which raises
-            # SynchronousOnlyOperation when called directly from the async
-            # _subscribe coroutine on an ASGI server).  Wrapping them via
-            # sync_to_async runs them in a thread-pool executor so they are safe
-            # to await regardless of whether the current implementation is
-            # trivial (returns None) or performs real database access.
-            if operation == "subscribe":
-                await sync_to_async(cls.authorize_subscription)(info, **kwargs)
-
-                # --- (b) Filter key validation ---
-                # Reject filters whose root field is not in the declared output
-                # so an attacker cannot probe arbitrary ORM fields (e.g. password).
-                cls._validate_filters(client_filters)
-
-            # The server-forced scope is deterministic from the request, so it is
-            # recomputed here for both subscribe (to register filters) and
-            # unsubscribe (to target the very same group).
-            scope = await sync_to_async(cls.subscription_scope)(info, **kwargs) or {}
-            filters = {**client_filters, **scope} or None
-
-            # When every index field is present in the scope, route to a
-            # value-scoped group so only matching subscribers are woken;
-            # otherwise fall back to the coarse group (still correct, just
-            # broadcast + in-memory/DB filter).
-            index = None
-            index_fields = cls._meta.index_fields
-            if index_fields and all(field in scope for field in index_fields):
-                index = {field: scope[field] for field in index_fields}
-
-            actions = (
-                ("create", "update", "delete") if action == "all_actions" else (action,)
-            )
-            for act in actions:
-                group_name = cls._group_name(act, id=obj_id, index=index)
-                if operation == "subscribe":
-                    await channel_layer.group_add(group_name, channel_name)
-                    await channel_layer.send(
-                        channel_name,
-                        {
-                            "type": "subscription.register",
-                            "group": group_name,
-                            "fields": list(data) if data else None,
-                            "filters": filters,
-                        },
-                    )
-                elif operation == "unsubscribe":
-                    await channel_layer.group_discard(group_name, channel_name)
-                    await channel_layer.send(
-                        channel_name,
-                        {"type": "subscription.deregister", "group": group_name},
-                    )
-
-            response.update(ok=True, error=None)
-        except Exception as exc:  # noqa: BLE001 - surfaced to the client as `error`
-            logger.exception("Subscription %s failed", cls.__name__)
-            response.update(ok=False, error=str(exc))
-
-        yield cls(**response)
 
     @classmethod
     def get_binding(cls) -> SubscriptionBinding:
@@ -1104,8 +820,17 @@ class Subscription(ObjectType):
     def Field(cls, *args: Any, **kwargs: Any) -> SubscriptionField:
         """Mount this subscription on a root subscription "ObjectType".
 
+        The mounted ``SubscriptionField`` is the seam the native schema compiler
+        reads (``schema_compiler.compile_native_root`` detects the field by class
+        name and calls ``field.type._build_native_field()`` to build the DIRECT
+        graphql-core subscription field — the native compile path). The bespoke
+        graphene confirmation transport was removed in the WU11 cutover, so no
+        graphene ``subscribe`` resolver is wired here: under ``GDX_BACKEND=native``
+        the native field drives the source; under ``GDX_BACKEND=graphene`` the
+        type still mounts (the base compiles) but has no bespoke transport.
+
         Returns:
-            The "SubscriptionField" carrying this subscription's resolver.
+            The "SubscriptionField" carrying this subscription's output type.
         """
         kwargs.setdefault(
             "description", f"Subscription for {cls._meta.model.__name__} model"
@@ -1115,7 +840,6 @@ class Subscription(ObjectType):
         return SubscriptionField(
             cls._meta.output,
             args=cls._meta.arguments,
-            subscribe=cls._subscribe,
             **kwargs,
         )
 
@@ -1123,10 +847,7 @@ class Subscription(ObjectType):
 # Re-exported for convenience / typing.
 __all__ = [
     "ActionSubscriptionEnum",
-    "OperationSubscriptionEnum",
     "Subscription",
     "SubscriptionField",
     "SubscriptionOptions",
-    "register_channel",
-    "unregister_channel",
 ]

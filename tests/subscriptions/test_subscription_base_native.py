@@ -132,34 +132,50 @@ def test_subscription_subclass_is_not_model_metaclass():
 
 
 # ---------------------------------------------------------------------------
-# bespoke INTACT (WU6 is ADD-ONLY; bespoke deletion is WU11 lockstep).
+# bespoke GONE (WU11 lockstep cutover — subscriptions are now native-only).
 # ---------------------------------------------------------------------------
 
 
-def test_graphene_subscribe_path_intact():
-    """The kept graphene ``_subscribe``/``Field``/``SubscriptionField`` stay present."""
+def test_bespoke_transport_graphene_subscribe_path_removed():
+    """The bespoke graphene ``_subscribe`` (channel_id/operation confirmation) is gone.
+
+    WU11 retires the bespoke transport in lockstep with its tests. The
+    confirmation-frame ``_subscribe`` resolver (which drove the deleted consumer
+    via channel-ownership + ``subscription.register`` control messages) is
+    removed. The ``SubscriptionField`` mount + the native compile path stay so a
+    native schema still assembles the Subscription type.
+    """
     from django_graphex.subscriptions import subscription as sub_mod
 
-    assert hasattr(sub_mod.Subscription, "_subscribe")
+    assert not hasattr(sub_mod.Subscription, "_subscribe"), (
+        "the bespoke confirmation _subscribe must be deleted in the cutover"
+    )
+    # The mount API + the native compile seam survive.
     assert hasattr(sub_mod.Subscription, "Field")
+    assert hasattr(sub_mod.Subscription, "_build_native_field")
     assert hasattr(sub_mod, "SubscriptionField")
 
 
-def test_channel_ownership_block_not_deleted():
-    """The channel-ownership registry block is NOT deleted in WU6 (WU11 lockstep)."""
+def test_channel_ownership_block_deleted():
+    """The channel-ownership registry block is DELETED in the WU11 cutover."""
     from django_graphex.subscriptions import subscription as sub_mod
 
-    # The ownership helpers + the consumers/views bespoke modules survive until
-    # the WU11 lockstep cutover (deleting now would break the bespoke tests).
-    assert hasattr(sub_mod, "register_channel")
-    assert hasattr(sub_mod, "unregister_channel")
-    assert hasattr(sub_mod, "_validate_channel_ownership")
+    # The ownership helpers are gone (the WS socket / HTTP request is the auth
+    # boundary now — spec capability 9: the guard MUST NOT be re-introduced).
+    assert not hasattr(sub_mod, "register_channel")
+    assert not hasattr(sub_mod, "unregister_channel")
+    assert not hasattr(sub_mod, "_validate_channel_ownership")
+    assert not hasattr(sub_mod, "OperationSubscriptionEnum")
 
     import importlib
 
-    # consumers.py + views.py must still import (NOT deleted in WU6).
-    importlib.import_module("django_graphex.subscriptions.consumers")
-    importlib.import_module("django_graphex.subscriptions.views")
+    # The bespoke transport modules are deleted: importing them must fail.
+    for module in (
+        "django_graphex.subscriptions.consumers",
+        "django_graphex.subscriptions.views",
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(module)
 
 
 # ---------------------------------------------------------------------------

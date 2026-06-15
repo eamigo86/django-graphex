@@ -99,17 +99,36 @@ def test_no_forbidden_legacy_imports():
 
 
 def test_public_exports():
-    """T-IMPORT: the documented public symbols are exported."""
+    """T-IMPORT: the post-cutover public surface (spec §Public API Contract).
+
+    After the WU11 lockstep cutover the bespoke transport symbols are gone and
+    subscriptions are native-only. The public ``__all__`` keeps the developer
+    base (``Subscription``), the auto-gen mount (``SubscriptionField``), the
+    signal binding, the action enum and the rewritten client view; it drops the
+    bespoke transport symbols and never exports the internal engine.
+    """
+    # Present: the kept public surface.
     for name in (
         "Subscription",
-        "GraphqlAPIDemultiplexer",
-        "SubscriptionGraphQLView",
+        "SubscriptionField",
         "SubscriptionBinding",
         "ActionSubscriptionEnum",
-        "OperationSubscriptionEnum",
+        "SubscriptionClientView",
     ):
-        assert name in subscriptions.__all__
+        assert name in subscriptions.__all__, f"{name} must stay public"
         assert hasattr(subscriptions, name)
+
+    # Absent: bespoke transport symbols removed in the lockstep cutover, plus the
+    # internal engine that must never be exported.
+    for name in (
+        "GraphqlAPIDemultiplexer",
+        "SubscriptionGraphQLView",
+        "OperationSubscriptionEnum",
+        "StreamingSubscription",
+        "drive_subscription",
+        "ChannelLayerSource",
+    ):
+        assert name not in subscriptions.__all__, f"{name} must not be public"
 
     # The base package must NOT re-export the subscription symbols.
     assert "Subscription" not in django_graphex.__all__

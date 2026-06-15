@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
-"""T-UNIT: group names, model label, enum generation and field projection."""
+"""T-UNIT: group names, model label, enum generation and filter splitting.
 
-from graphene import NonNull, String
+Post-WU11 cutover: the bespoke-transport units (``project_fields``,
+``OperationSubscriptionEnum``, the ``channel_id``/``operation``/``data`` argument
+contract and the ``GraphqlAPIDemultiplexer`` resolution/filter branches) are
+retired with the bespoke transport. What remains are the transport-agnostic
+engine units the native path still relies on.
+"""
 
-from django_graphex.subscriptions import (
-    ActionSubscriptionEnum,
-    OperationSubscriptionEnum,
-)
+from django_graphex.subscriptions import ActionSubscriptionEnum
 from django_graphex.subscriptions.mixins import (
     MAX_GROUP_NAME_LENGTH,
-    project_fields,
     safe_group_name,
     serialize_instance,
     split_filters,
@@ -47,17 +48,6 @@ def test_safe_group_name_hashes_invalid_charset():
     assert safe_group_name(invalid).startswith("gde.")
 
 
-def test_project_fields():
-    data = {"id": 1, "username": "a", "email": "b"}
-    assert project_fields(data, ["username"]) == {"username": "a"}
-    assert project_fields(data, None) == data
-    assert project_fields(data, []) == data
-    assert project_fields(data, ["username", "email"]) == {
-        "username": "a",
-        "email": "b",
-    }
-
-
 def test_action_enum_values_snapshot():
     assert {e.name: e.value for e in ActionSubscriptionEnum} == {
         "CREATE": "create",
@@ -65,22 +55,6 @@ def test_action_enum_values_snapshot():
         "DELETE": "delete",
         "ALL_ACTIONS": "all_actions",
     }
-
-
-def test_operation_enum_values_snapshot():
-    assert {e.name: e.value for e in OperationSubscriptionEnum} == {
-        "SUBSCRIBE": "subscribe",
-        "UNSUBSCRIBE": "unsubscribe",
-    }
-
-
-def test_generated_fields_enum():
-    data_arg = UserSubscription._meta.arguments["data"]
-    enum_cls = data_arg.of_type  # List(<Model>Fields)
-    names = {member.name for member in enum_cls._meta.enum}
-    values = {member.value for member in enum_cls._meta.enum}
-    assert {"ID", "USERNAME", "EMAIL"} <= names
-    assert {"id", "username", "email"} <= values
 
 
 def test_split_filters_in_memory_match_and_mismatch():
@@ -100,19 +74,19 @@ def test_split_filters_in_memory_match_and_mismatch():
 
 
 def test_generated_arguments_contract():
+    """Native-only arg set after the cutover: {action, id, filters}.
+
+    The bespoke ``channel_id``/``operation`` args and the ``data`` field-projection
+    enum are gone (selection-set projection + WS/SSE auth boundary replaced them).
+    """
+    from graphene import NonNull
+
     args = UserSubscription._meta.arguments
-    assert set(args) == {
-        "channel_id",
-        "action",
-        "operation",
-        "id",
-        "data",
-        "filters",
-    }
-    # `channel_id` is required -> wrapped in NonNull(String).
-    channel_id_type = args["channel_id"].type
-    assert isinstance(channel_id_type, NonNull)
-    assert channel_id_type.of_type is String
+    assert set(args) == {"action", "id", "filters"}
+    # `action` is required -> wrapped in NonNull(ActionSubscriptionEnum).
+    action_type = args["action"].type
+    assert isinstance(action_type, NonNull)
+    assert action_type.of_type is ActionSubscriptionEnum
 
 
 def test_serialize_instance_returns_jsonable_dict(db, django_user_model):
@@ -123,60 +97,3 @@ def test_serialize_instance_returns_jsonable_dict(db, django_user_model):
     assert data["username"] == "bob"
     assert data["email"] == "bob@example.com"
     assert isinstance(data, dict)
-
-
-# --------------------------------------------------------------------------- #
-# GraphqlAPIDemultiplexer._resolve_subscription / _matches_filters branches    #
-# --------------------------------------------------------------------------- #
-def test_resolve_subscription_from_subclass_and_binding():
-    from django_graphex.subscriptions.consumers import GraphqlAPIDemultiplexer
-
-    # A plain Subscription subclass resolves to itself.
-    assert (
-        GraphqlAPIDemultiplexer._resolve_subscription(UserSubscription)
-        is UserSubscription
-    )
-
-    # A SubscriptionBinding resolves to its .subscription_cls (line 188).
-    binding = UserSubscription.get_binding()
-    assert (
-        GraphqlAPIDemultiplexer._resolve_subscription(binding)
-        is binding.subscription_cls
-    )
-
-
-def test_resolve_subscription_from_object_with_subscription_cls():
-    from types import SimpleNamespace
-
-    from django_graphex.subscriptions.consumers import GraphqlAPIDemultiplexer
-
-    # An object exposing `.subscription_cls` (line 189-190).
-    holder = SimpleNamespace(subscription_cls=UserSubscription)
-    assert GraphqlAPIDemultiplexer._resolve_subscription(holder) is UserSubscription
-
-
-async def test_matches_filters_fails_closed_without_subscription_or_pk():
-    from django_graphex.subscriptions.consumers import GraphqlAPIDemultiplexer
-
-    consumer = GraphqlAPIDemultiplexer()
-    consumer.subscriptions = {"users": UserSubscription}
-    # A filter that can't be settled in memory (the key isn't in the payload),
-    # with no pk in the event -> the DB-verification path fails closed (line 133).
-    event = {"stream": "users", "pk": None}
-    payload = {"data": {"username": "x"}}
-    filters = {"is_staff": True}
-    assert await consumer._matches_filters(event, payload, filters) is False
-
-
-async def test_matches_filters_db_lookup_invalid_filter_fails_closed(db):
-    from django_graphex.subscriptions.consumers import GraphqlAPIDemultiplexer
-
-    consumer = GraphqlAPIDemultiplexer()
-    consumer.subscriptions = {"users": UserSubscription}
-    # A bogus field name -> FieldError when the DB-verification query is built
-    # inside _exists -> the notification is dropped (fails closed, lines 139-145).
-    # The pk need not exist; the FieldError fires before any row is matched.
-    event = {"stream": "users", "pk": 1}
-    payload = {"data": {"username": "u1"}}
-    filters = {"not_a_real_field": "x"}
-    assert await consumer._matches_filters(event, payload, filters) is False

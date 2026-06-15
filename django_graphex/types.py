@@ -2336,7 +2336,8 @@ class DjangoModelType(NestedFieldsMixin, ObjectType):
         Built lazily from "Meta.model" / "Meta.stream" /
         "Meta.serialize_data" so that the base install never imports the
         optional "[subscriptions]" extra (Channels) until subscriptions are
-        actually used. Pass it to a "GraphqlAPIDemultiplexer".
+        actually used. Mount it on the subscription root via "SubscriptionField"
+        and serve it over the native SSE/WS transports.
 
         Returns:
             The generated "Subscription" subclass.

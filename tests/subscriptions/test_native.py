@@ -26,12 +26,13 @@ def test_native_subscription_uses_native_backend():
     assert ThingNativeSubscription._meta.model is SubNativeThing
 
 
-def test_data_argument_enum_from_model_fields():
-    # serialize_data=True adds the `data` arg whose enum lists the model fields.
-    assert "data" in ThingNativeSubscription._meta.arguments
-    enum = ThingNativeSubscription._meta.arguments["data"].of_type
-    members = {m.value for m in enum._meta.enum}
-    assert {"id", "name", "note"} <= members
+def test_no_data_projection_argument_after_cutover():
+    # The bespoke ``data`` field-projection enum is gone post-WU11: field
+    # selection is the GraphQL selection set now, so the native arg set is the
+    # reduced {action, id, filters} regardless of serialize_data=True.
+    args = set(ThingNativeSubscription._meta.arguments)
+    assert "data" not in args
+    assert args == {"action", "id", "filters"}
 
 
 @pytest.mark.django_db(transaction=True)
