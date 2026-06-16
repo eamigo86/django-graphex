@@ -12,7 +12,6 @@ from dataclasses import field as _dc_field
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-import graphene
 from django.db import DatabaseError
 
 from ..base_types import DjangoListObjectBase
@@ -22,6 +21,36 @@ if TYPE_CHECKING:
 
 #: True when GDX_BACKEND=native is set in the process environment.
 _NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
+
+
+# --------------------------------------------------------------------------- #
+# Lazy graphene accessor (S8f graphene-removal)                                #
+# --------------------------------------------------------------------------- #
+# ``utils.py`` no longer imports graphene at the MODULE top level — that
+# ``import graphene`` blocked the graphene uninstall (S8i). The only graphene
+# construct this module builds is the ``GenericPaginationField`` graphene
+# ``Field`` subclass (genuinely consumed by the native-default test contract in
+# tests/test_pagination_internals.py + tests/test_optimizer_phase_c.py). The
+# class is therefore built LAZILY (module ``__getattr__`` below) against a
+# graphene import resolved on first use and cached. The graphene class stays
+# byte-identical; only the uninstall-blocking top-level import moves here.
+_GRAPHENE: Any = None
+
+
+def _g() -> Any:
+    """Return the lazily imported, cached ``graphene`` module.
+
+    The first call imports graphene (still installed until S8i) and caches it;
+    subsequent calls reuse the cache. This keeps the graphene
+    ``GenericPaginationField`` byte-identical while removing the
+    uninstall-blocking top-level ``import graphene``.
+    """
+    global _GRAPHENE
+    if _GRAPHENE is None:
+        import graphene  # noqa: PLC0415
+
+        _GRAPHENE = graphene
+    return _GRAPHENE
 
 
 def _graphene_paginator_args(paginator: Any) -> dict[str, Any]:
@@ -150,84 +179,119 @@ class NativePaginationField:
         return _resolve
 
 
-class GenericPaginationField(graphene.Field):
-    """Generic pagination field with the logic needed to paginate a queryset."""
+#: Process-wide cache for the lazily built ``GenericPaginationField`` class.
+_GENERIC_PAGINATION_FIELD: Any = None
 
-    def __init__(
-        self, _type: Any, paginator_instance: Any, *args: Any, **kwargs: Any
-    ) -> None:
-        """Initialize the generic pagination field with a paginator instance.
 
-        Args:
-            _type: The GraphQL type to paginate.
-            paginator_instance: The paginator providing the pagination logic.
-            *args: Additional positional arguments for the base field.
-            **kwargs: Additional keyword arguments for the base field.
-        """
-        kwargs.setdefault("args", {})
+def _build_generic_pagination_field() -> type:
+    """Build (and cache) the graphene ``GenericPaginationField`` class.
 
-        self.paginator_instance = paginator_instance
+    S8f (graphene-removal): ``GenericPaginationField`` subclasses graphene
+    ``Field``, which the ``class`` statement would evaluate at MODULE import
+    time, re-introducing the uninstall-blocking top-level ``import graphene``.
+    The class is therefore built lazily here, against the graphene module
+    resolved by :func:`_g`, and cached. The resulting class is byte-identical to
+    the eager definition; only the import timing moved.
+    """
+    graphene = _g()
 
-        # The graphene field ALWAYS exposes graphene-typed pagination args, even
-        # under GDX_BACKEND=native: graphene.Field.to_arguments() sorts arg
-        # values and cannot order native GraphQLArgument instances, so a
-        # graphene-built schema running in a native process still needs graphene
-        # scalars here (the native compiler wires native args separately onto the
-        # native container's results field). _graphene_paginator_args() forces
-        # the graphene scalar shape regardless of the process backend flag.
-        kwargs.update(_graphene_paginator_args(paginator_instance))
-        kwargs.update(
-            {
-                "description": "{} list, paginated by {}".format(
-                    _type._meta.model.__name__, paginator_instance.__name__
-                )
-            }
-        )
+    class GenericPaginationField(graphene.Field):
+        """Generic pagination field with the logic needed to paginate a queryset."""
 
-        super().__init__(graphene.List(_type), *args, **kwargs)
+        def __init__(
+            self, _type: Any, paginator_instance: Any, *args: Any, **kwargs: Any
+        ) -> None:
+            """Initialize the generic pagination field with a paginator instance.
 
-    @property
-    def model(self) -> Any:
-        """Get the Django model associated with this pagination field.
+            Args:
+                _type: The GraphQL type to paginate.
+                paginator_instance: The paginator providing the pagination logic.
+                *args: Additional positional arguments for the base field.
+                **kwargs: Additional keyword arguments for the base field.
+            """
+            kwargs.setdefault("args", {})
 
-        Returns:
-            The Django model class backing this field.
-        """
-        return self.type.of_type._meta.node._meta.model
+            self.paginator_instance = paginator_instance
 
-    def list_resolver(
-        self,
-        manager: Any,
-        root: Any,
-        info: GraphQLResolveInfo,
-        **kwargs: Any,
-    ) -> Any:
-        """Resolve a paginated list using the configured paginator instance.
+            # The graphene field ALWAYS exposes graphene-typed pagination args,
+            # even under GDX_BACKEND=native: graphene.Field.to_arguments() sorts
+            # arg values and cannot order native GraphQLArgument instances, so a
+            # graphene-built schema running in a native process still needs
+            # graphene scalars here (the native compiler wires native args
+            # separately onto the native container's results field).
+            # _graphene_paginator_args() forces the graphene scalar shape
+            # regardless of the process backend flag.
+            kwargs.update(_graphene_paginator_args(paginator_instance))
+            kwargs.update(
+                {
+                    "description": "{} list, paginated by {}".format(
+                        _type._meta.model.__name__, paginator_instance.__name__
+                    )
+                }
+            )
 
-        Args:
-            manager: The model manager providing the base queryset.
-            root: The root value passed to the resolver.
-            info: The GraphQL resolve info for the current query.
-            **kwargs: The pagination arguments from the query.
+            super().__init__(graphene.List(_type), *args, **kwargs)
 
-        Returns:
-            The paginated results, or "None" when "root" is not a list base.
-        """
-        # Backend-neutral slicing (honors already_paginated, design C3/D6).
-        return _paginate_list_base(self.paginator_instance, root, **kwargs)
+        @property
+        def model(self) -> Any:
+            """Get the Django model associated with this pagination field.
 
-    def wrap_resolve(self, parent_resolver: Any) -> Any:
-        """Wrap the resolver with pagination logic.
+            Returns:
+                The Django model class backing this field.
+            """
+            return self.type.of_type._meta.node._meta.model
 
-        Args:
-            parent_resolver: The resolver being wrapped.
+        def list_resolver(
+            self,
+            manager: Any,
+            root: Any,
+            info: GraphQLResolveInfo,
+            **kwargs: Any,
+        ) -> Any:
+            """Resolve a paginated list using the configured paginator instance.
 
-        Returns:
-            A partial that resolves the paginated list.
-        """
-        return partial(
-            self.list_resolver, self.type.of_type._meta.model._default_manager
-        )
+            Args:
+                manager: The model manager providing the base queryset.
+                root: The root value passed to the resolver.
+                info: The GraphQL resolve info for the current query.
+                **kwargs: The pagination arguments from the query.
+
+            Returns:
+                The paginated results, or "None" when "root" is not a list base.
+            """
+            # Backend-neutral slicing (honors already_paginated, design C3/D6).
+            return _paginate_list_base(self.paginator_instance, root, **kwargs)
+
+        def wrap_resolve(self, parent_resolver: Any) -> Any:
+            """Wrap the resolver with pagination logic.
+
+            Args:
+                parent_resolver: The resolver being wrapped.
+
+            Returns:
+                A partial that resolves the paginated list.
+            """
+            return partial(
+                self.list_resolver, self.type.of_type._meta.model._default_manager
+            )
+
+    return GenericPaginationField
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve module-level ``GenericPaginationField`` (PEP 562).
+
+    Accessing ``utils.GenericPaginationField`` (import or attribute) builds the
+    graphene ``Field`` subclass on first use and caches it, so a bare ``import``
+    of this module never triggers the graphene import. Any other attribute name
+    raises ``AttributeError`` as usual.
+    """
+    if name == "GenericPaginationField":
+        global _GENERIC_PAGINATION_FIELD
+        if _GENERIC_PAGINATION_FIELD is None:
+            _GENERIC_PAGINATION_FIELD = _build_generic_pagination_field()
+        return _GENERIC_PAGINATION_FIELD
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _positive_int(

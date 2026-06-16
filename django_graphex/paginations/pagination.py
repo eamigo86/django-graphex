@@ -13,12 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
-from graphene import Boolean, Field, Int, ObjectType, String
 from graphql import GraphQLError
 
 from django_graphex.base_types import DjangoListObjectBase
 from django_graphex.paginations.utils import (
-    GenericPaginationField,
     _get_count,
     _positive_int,
 )
@@ -38,7 +36,10 @@ _LOOKUP_SEP = "__"
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from graphene import Field
     from graphql import GraphQLResolveInfo
+
+    from django_graphex.paginations.utils import GenericPaginationField
 
 __all__ = (
     "LimitOffsetGraphqlPagination",
@@ -46,6 +47,46 @@ __all__ = (
     "CursorGraphqlPagination",
     "NATIVE_CURSOR_PAGE_INFO",
 )
+
+
+# --------------------------------------------------------------------------- #
+# Lazy graphene accessor (S8f graphene-removal)                                #
+# --------------------------------------------------------------------------- #
+# ``pagination.py`` no longer imports graphene at the MODULE top level — that
+# ``from graphene import Boolean, Field, Int, ObjectType, String`` blocked the
+# graphene uninstall (S8i). The graphene constructs are STILL genuinely consumed
+# by the native-default test contract:
+#
+# * the ``to_graphql_fields(native=False)`` else-branches build graphene
+#   ``Int`` / ``String`` scalar args (forced graphene-shape by
+#   ``_graphene_paginator_args`` for the graphene ``GenericPaginationField``);
+# * ``CursorPageInfo`` is a graphene ``ObjectType`` (built lazily via module
+#   ``__getattr__`` below) wrapped by ``get_page_info_field`` in a graphene
+#   ``Field`` with ``Int`` / ``String`` args.
+#
+# These are exercised by tests/test_paginations.py, tests/test_pagination_edges.py
+# and tests/test_pagination_internals.py on the native default. The constructs
+# stay graphene and byte-identical; only the top-level import moves to a lazy,
+# cached accessor. The NATIVE machinery (NATIVE_CURSOR_PAGE_INFO,
+# get_native_page_info_field, to_graphql_fields(native=True)) is graphql-core and
+# untouched.
+_GRAPHENE: Any = None
+
+
+def _g() -> Any:
+    """Return the lazily imported, cached ``graphene`` module.
+
+    The first call imports graphene (still installed until S8i) and caches it;
+    subsequent calls reuse the cache. This keeps every graphene pagination
+    construct byte-identical while removing the uninstall-blocking top-level
+    ``from graphene import ...``.
+    """
+    global _GRAPHENE
+    if _GRAPHENE is None:
+        import graphene  # noqa: PLC0415
+
+        _GRAPHENE = graphene
+    return _GRAPHENE
 
 # ---------------------------------------------------------------------------
 # B7 — Native CursorPageInfo (GDX_BACKEND=native only)
@@ -272,6 +313,13 @@ class BaseDjangoGraphqlPagination:
         Returns:
             A pagination field bound to this paginator instance.
         """
+        # Lazy import: GenericPaginationField is a graphene Field subclass built
+        # on first access (S8f), so importing it here keeps the module top level
+        # graphene-free.
+        from django_graphex.paginations.utils import (  # noqa: PLC0415
+            GenericPaginationField,
+        )
+
         return GenericPaginationField(type, paginator_instance=self)
 
     def get_page_info_field(self, type: Any) -> Field | None:
@@ -499,18 +547,19 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
                     ),
                 ),
             }
+        graphene = _g()
         return {
-            self.limit_query_param: Int(
+            self.limit_query_param: graphene.Int(
                 default_value=self.default_limit,
                 description="Number of results to return per page. Default "
                 "'default_limit': {}, and 'max_limit': {}".format(
                     self.default_limit, self.max_limit
                 ),
             ),
-            self.offset_query_param: Int(
+            self.offset_query_param: graphene.Int(
                 description="The initial index from which to return the results. Default: 0"
             ),
-            self.ordering_param: String(
+            self.ordering_param: graphene.String(
                 description="A string or comma delimited string value that indicates the "
                 "default ordering when obtaining lists of objects."
             ),
@@ -716,12 +765,13 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
                 )
             return paginator_dict
 
+        graphene = _g()
         paginator_dict = {
-            self.page_query_param: Int(
+            self.page_query_param: graphene.Int(
                 default_value=1,
                 description="A page number within the result paginated set. Default: 1",
             ),
-            self.ordering_param: String(
+            self.ordering_param: graphene.String(
                 description="A string or comma delimited string value that indicates the "
                 "default ordering when obtaining lists of objects."
             ),
@@ -730,7 +780,7 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         if self.page_size_query_param:
             paginator_dict.update(
                 {
-                    self.page_size_query_param: Int(
+                    self.page_size_query_param: graphene.Int(
                         description=self.page_size_query_description
                     )
                 }
@@ -848,28 +898,72 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         return (offset, page_size, order)
 
 
-class CursorPageInfo(ObjectType):
-    """Forward keyset pagination metadata for "CursorGraphqlPagination"."""
+#: Process-wide cache for the lazily built graphene ``CursorPageInfo`` class.
+_CURSOR_PAGE_INFO: Any = None
 
-    class Meta:
-        """Meta configuration for CursorPageInfo."""
 
-        description = "Forward keyset pagination metadata."
+def _build_cursor_page_info() -> type:
+    """Build (and cache) the graphene ``CursorPageInfo`` ``ObjectType``.
 
-    has_next_page = Boolean(
-        required=True,
-        description="True if at least one row exists after the last row of the page.",
-    )
-    has_previous_page = Boolean(
-        required=True,
-        description="True if at least one row exists before the first row of the page.",
-    )
-    start_cursor = String(
-        description="Cursor of the first row of the page (null if the page is empty)."
-    )
-    end_cursor = String(
-        description="Cursor of the last row of the page (null if the page is empty)."
-    )
+    S8f (graphene-removal): ``CursorPageInfo`` subclasses graphene
+    ``ObjectType``, which the ``class`` statement would evaluate at MODULE import
+    time (re-introducing the uninstall-blocking top-level graphene import). The
+    class is therefore built lazily here against the graphene module resolved by
+    :func:`_g`, and cached so its identity is stable. The resulting graphene type
+    is byte-identical to the eager definition; only the import timing moved. This
+    is the GRAPHENE-path page-info type; the native compiler uses the separate
+    graphql-core :data:`NATIVE_CURSOR_PAGE_INFO` singleton.
+    """
+    graphene = _g()
+
+    class CursorPageInfo(graphene.ObjectType):
+        """Forward keyset pagination metadata for "CursorGraphqlPagination"."""
+
+        class Meta:
+            """Meta configuration for CursorPageInfo."""
+
+            description = "Forward keyset pagination metadata."
+
+        has_next_page = graphene.Boolean(
+            required=True,
+            description=(
+                "True if at least one row exists after the last row of the page."
+            ),
+        )
+        has_previous_page = graphene.Boolean(
+            required=True,
+            description=(
+                "True if at least one row exists before the first row of the page."
+            ),
+        )
+        start_cursor = graphene.String(
+            description=(
+                "Cursor of the first row of the page (null if the page is empty)."
+            )
+        )
+        end_cursor = graphene.String(
+            description=(
+                "Cursor of the last row of the page (null if the page is empty)."
+            )
+        )
+
+    return CursorPageInfo
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve module-level ``CursorPageInfo`` (PEP 562).
+
+    Accessing ``pagination.CursorPageInfo`` (import or attribute) builds the
+    graphene ``ObjectType`` on first use and caches it, so a bare ``import`` of
+    this module never triggers the graphene import. Any other attribute name
+    raises ``AttributeError`` as usual.
+    """
+    if name == "CursorPageInfo":
+        global _CURSOR_PAGE_INFO
+        if _CURSOR_PAGE_INFO is None:
+            _CURSOR_PAGE_INFO = _build_cursor_page_info()
+        return _CURSOR_PAGE_INFO
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
@@ -1032,9 +1126,14 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
                     description=self.cursor_query_description,
                 ),
             }
+        graphene = _g()
         return {
-            self.first_query_param: Int(description=self.first_query_description),
-            self.cursor_query_param: String(description=self.cursor_query_description),
+            self.first_query_param: graphene.Int(
+                description=self.first_query_description
+            ),
+            self.cursor_query_param: graphene.String(
+                description=self.cursor_query_description
+            ),
         }
 
     def _inmemory_cursor_start(
@@ -1124,11 +1223,18 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
                 return self.get_page_info(root.results, **kwargs)
             return None
 
-        return Field(
-            CursorPageInfo,
+        graphene = _g()
+        # Resolve the lazily built graphene CursorPageInfo via the module's
+        # PEP 562 __getattr__ (bare-name lookup would NameError here since the
+        # class is no longer a module-level binding).
+        cursor_page_info = __getattr__("CursorPageInfo")
+        return graphene.Field(
+            cursor_page_info,
             args={
-                self.first_query_param: Int(description=self.first_query_description),
-                self.cursor_query_param: String(
+                self.first_query_param: graphene.Int(
+                    description=self.first_query_description
+                ),
+                self.cursor_query_param: graphene.String(
                     description=self.cursor_query_description
                 ),
             },
