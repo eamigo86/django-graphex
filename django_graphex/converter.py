@@ -20,20 +20,6 @@ from django.db.models import Choices, JSONField
 from django.utils.encoding import force_str
 from django.utils.functional import Promise
 from django.utils.translation import override as translation_override
-from graphene import (
-    ID,
-    UUID,
-    Boolean,
-    Dynamic,
-    Enum,
-    Field,
-    Float,
-    Int,
-    List,
-    NonNull,
-    String,
-)
-from graphene.types.json import JSONString
 from graphql.pyutils import register_description
 
 from ._strconv import to_camel_case
@@ -70,6 +56,98 @@ if TYPE_CHECKING:
 #: True when ``GDX_BACKEND=native`` is set in the process environment. Read ONCE
 #: at import (the canonical pattern used by ``paginations/pagination.py``).
 _NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
+
+
+class _GrapheneConstructs:
+    """Lazy holder for the graphene descriptor classes the converter builds.
+
+    S8e (graphene-removal): the converter no longer imports graphene at the
+    MODULE top level — that ``from graphene import (...)`` blocked the graphene
+    uninstall (S8i). The graphene constructs are STILL genuinely consumed,
+    though:
+
+    * ``Enum`` — ``convert_django_field_with_choices`` returns a graphene
+      ``Enum`` instance and carries the choices->enum registry side-effect (the
+      native-default converter test contract asserts ``isinstance(out, Enum)``).
+    * ``Dynamic`` / ``Field`` / ``ID`` — the FK / O2O / M2M / reverse / GFK
+      relation closures; the native output thunk consumes the ``Dynamic``
+      descriptor, and the converter tests assert ``isinstance(out, Dynamic)``
+      plus ``out.type.of_type.of_type is ID`` on native.
+    * ``List`` / ``NonNull`` — the ArrayField / RangeField list wrappers and the
+      Boolean-NonNull create branch.
+    * ``String`` / ``Int`` / ``Float`` / ``Boolean`` / ``UUID`` / ``JSONString``
+      — the SCALAR descriptors, DEAD on the native OUTPUT path (built only on
+      the graphene path via ``_scalar_or_dead``), so their import is deferred to
+      the moment the graphene scalar is actually built.
+
+    So the constructs stay graphene; only the uninstall-blocking TOP-LEVEL
+    import moves here, resolved LAZILY on first use and cached. Each construct is
+    exposed as an attribute so call sites read ``_g().Enum`` / ``_g().Dynamic``
+    etc., one-for-one with the old direct names.
+    """
+
+    __slots__ = (
+        "ID",
+        "UUID",
+        "Boolean",
+        "Dynamic",
+        "Enum",
+        "Field",
+        "Float",
+        "Int",
+        "List",
+        "NonNull",
+        "String",
+        "JSONString",
+    )
+
+    def __init__(self) -> None:
+        """Import the graphene constructs once and pin them as attributes."""
+        from graphene import (  # noqa: PLC0415
+            ID,
+            UUID,
+            Boolean,
+            Dynamic,
+            Enum,
+            Field,
+            Float,
+            Int,
+            List,
+            NonNull,
+            String,
+        )
+        from graphene.types.json import JSONString  # noqa: PLC0415
+
+        self.ID = ID
+        self.UUID = UUID
+        self.Boolean = Boolean
+        self.Dynamic = Dynamic
+        self.Enum = Enum
+        self.Field = Field
+        self.Float = Float
+        self.Int = Int
+        self.List = List
+        self.NonNull = NonNull
+        self.String = String
+        self.JSONString = JSONString
+
+
+#: Process-wide cache for the lazily imported graphene constructs.
+_GRAPHENE_CONSTRUCTS: _GrapheneConstructs | None = None
+
+
+def _g() -> _GrapheneConstructs:
+    """Return the lazily imported, cached graphene constructs namespace.
+
+    The first call imports graphene (still installed until S8i) and caches the
+    construct classes; subsequent calls reuse the cache. This keeps every
+    descriptor the converter builds byte-identical while removing the
+    uninstall-blocking top-level ``import graphene``.
+    """
+    global _GRAPHENE_CONSTRUCTS
+    if _GRAPHENE_CONSTRUCTS is None:
+        _GRAPHENE_CONSTRUCTS = _GrapheneConstructs()
+    return _GRAPHENE_CONSTRUCTS
 
 
 class _DeadScalarSentinel:
@@ -329,7 +407,9 @@ def convert_django_field_with_choices(
                     """Return the description for the current enum member."""
                     return named_choices_descriptions[self.name]
 
-            enum = Enum(name, list(named_choices), type=EnumWithDescriptionsType)
+            enum = _g().Enum(
+                name, list(named_choices), type=EnumWithDescriptionsType
+            )
             registry.register_enum(name, enum)
 
         # Detect django-multiselectfield's MultiSelectField via isinstance when the
@@ -489,7 +569,7 @@ def convert_field_to_string(
         A GraphQL String field for the Django field.
     """
     return _scalar_or_dead(
-        lambda: String(
+        lambda: _g().String(
             description=field.help_text or field.verbose_name,
             required=is_required(field) and input_flag == "create",
         )
@@ -515,11 +595,11 @@ def convert_field_to_id(
         A GraphQL ID field for the Django field.
     """
     if input_flag:
-        return ID(
+        return _g().ID(
             description=field.help_text or "Django object unique identification field",
             required=input_flag == "update",
         )
-    return ID(
+    return _g().ID(
         description=field.help_text or "Django object unique identification field",
         required=not field.null,
     )
@@ -544,7 +624,7 @@ def convert_field_to_uuid(
         A GraphQL UUID field for the Django field.
     """
     return _scalar_or_dead(
-        lambda: UUID(
+        lambda: _g().UUID(
             description=field.help_text or field.verbose_name,
             required=is_required(field) and input_flag == "create",
         )
@@ -574,7 +654,7 @@ def convert_field_to_int(
         A GraphQL Int field for the Django field.
     """
     return _scalar_or_dead(
-        lambda: Int(
+        lambda: _g().Int(
             description=field.help_text or field.verbose_name,
             required=is_required(field) and input_flag == "create",
         )
@@ -601,10 +681,11 @@ def convert_field_to_boolean(
     """
     if _NATIVE_BACKEND:
         return _DEAD_SCALAR
+    g = _g()
     required = is_required(field) and input_flag == "create"
     if required:
-        return NonNull(Boolean, description=field.help_text or field.verbose_name)
-    return Boolean(description=field.help_text)
+        return g.NonNull(g.Boolean, description=field.help_text or field.verbose_name)
+    return g.Boolean(description=field.help_text)
 
 
 @convert_django_field.register(models.NullBooleanField)
@@ -626,7 +707,7 @@ def convert_field_to_nullboolean(
         A GraphQL Boolean field for the Django field.
     """
     return _scalar_or_dead(
-        lambda: Boolean(
+        lambda: _g().Boolean(
             description=field.help_text or field.verbose_name,
             required=is_required(field) and input_flag == "create",
         )
@@ -680,7 +761,7 @@ def convert_field_to_float(
         A GraphQL Float field for the Django field.
     """
     return _scalar_or_dead(
-        lambda: Float(
+        lambda: _g().Float(
             description=field.help_text or field.verbose_name,
             required=is_required(field) and input_flag == "create",
         )
@@ -788,13 +869,15 @@ def convert_onetoone_field_to_djangomodel(
     def dynamic_type() -> Any:
         """Resolve the related GraphQL type lazily."""
         if input_flag and not nested_field:
-            return ID()
+            return _g().ID()
         _type = registry.get_type_for_model(model, for_input=input_flag)
         if not _type:
             return
-        return Field(_type, required=is_required(field) and input_flag == "create")
+        return _g().Field(
+            _type, required=is_required(field) and input_flag == "create"
+        )
 
-    return Dynamic(dynamic_type)
+    return _g().Dynamic(dynamic_type)
 
 
 @convert_django_field.register(models.ManyToManyField)
@@ -821,7 +904,7 @@ def convert_field_to_list_or_connection(
         """Resolve the related GraphQL list field lazily."""
         if input_flag and not nested_field:
             return DjangoListField(
-                ID,
+                _g().ID,
                 required=is_required(field) and input_flag == "create",
                 description=field.help_text or field.verbose_name,
             )
@@ -833,7 +916,7 @@ def convert_field_to_list_or_connection(
         # Output: uniform results/totalCount nested list (M2M accessor = field.name).
         return _nested_list_object_field(field, model, registry, accessor=field.name)
 
-    return Dynamic(dynamic_type)
+    return _g().Dynamic(dynamic_type)
 
 
 @convert_django_field.register(GenericRel)
@@ -861,7 +944,7 @@ def convert_many_rel_to_djangomodel(
     def dynamic_type() -> Any:
         """Resolve the related GraphQL list field lazily."""
         if input_flag and not nested_field:
-            return DjangoListField(ID)
+            return DjangoListField(_g().ID)
         if input_flag and nested_field:
             _type = registry.get_type_for_model(model, for_input=input_flag)
             if not _type:
@@ -874,7 +957,7 @@ def convert_many_rel_to_djangomodel(
             accessor = field.name
         return _nested_list_object_field(field, model, registry, accessor=accessor)
 
-    return Dynamic(dynamic_type)
+    return _g().Dynamic(dynamic_type)
 
 
 @convert_django_field.register(models.OneToOneField)
@@ -909,7 +992,7 @@ def convert_field_to_djangomodel(
         if getattr(getattr(field, "remote_field", None), "parent_link", False):
             return
         if input_flag and not nested_field:
-            return ID(
+            return _g().ID(
                 description=field.help_text or field.verbose_name,
                 required=is_required(field) and input_flag == "create",
             )
@@ -918,13 +1001,13 @@ def convert_field_to_djangomodel(
         if not _type:
             return
 
-        return Field(
+        return _g().Field(
             _type,
             description=field.help_text or field.verbose_name,
             required=is_required(field) and input_flag == "create",
         )
 
-    return Dynamic(dynamic_type)
+    return _g().Dynamic(dynamic_type)
 
 
 @convert_django_field.register(GenericForeignKey)
@@ -980,7 +1063,7 @@ def convert_generic_foreign_key_to_object(
         # explicit ``Meta.gfk_types`` -- the ContentType table is never queried.
         union_cls = registry.get_gfk_union(model, field.name)
         if union_cls is not None:
-            return Field(
+            return _g().Field(
                 union_cls,
                 description="Typed union for a GenericForeignKey field",
                 required=required and input_flag == "create",
@@ -1009,13 +1092,13 @@ def convert_generic_foreign_key_to_object(
         if not _type:
             _type = GenericForeignKeyType
 
-        return Field(
+        return _g().Field(
             _type,
             description="Type for a GenericForeignKey field",
             required=required and input_flag == "create",
         )
 
-    return Dynamic(dynamic_type)
+    return _g().Dynamic(dynamic_type)
 
 
 @convert_django_field.register(GenericRelation)
@@ -1045,7 +1128,7 @@ def convert_generic_relation_to_object_list(
         # Output: uniform results/totalCount nested list (GenericRelation name).
         return _nested_list_object_field(field, model, registry, accessor=field.name)
 
-    return Dynamic(dynamic_type)
+    return _g().Dynamic(dynamic_type)
 
 
 @convert_django_field.register(ArrayField)
@@ -1066,10 +1149,11 @@ def convert_postgres_array_to_list(
     Returns:
         A GraphQL List field wrapping the converted base field type.
     """
+    g = _g()
     base_type = convert_django_field(field.base_field)
-    if not isinstance(base_type, (List, NonNull)):
+    if not isinstance(base_type, (g.List, g.NonNull)):
         base_type = type(base_type)
-    return List(
+    return g.List(
         base_type,
         description=field.help_text or field.verbose_name,
         required=is_required(field) and input_flag == "create",
@@ -1096,7 +1180,7 @@ def convert_postgres_field_to_string(
         A GraphQL JSONString field for the Django field.
     """
     return _scalar_or_dead(
-        lambda: JSONString(
+        lambda: _g().JSONString(
             description=field.help_text or field.verbose_name,
             required=is_required(field) and input_flag == "create",
         )
@@ -1121,10 +1205,11 @@ def convert_postgres_range_to_string(
     Returns:
         A GraphQL List field wrapping the converted inner field type.
     """
+    g = _g()
     inner_type = convert_django_field(field.base_field)
-    if not isinstance(inner_type, (List, NonNull)):
+    if not isinstance(inner_type, (g.List, g.NonNull)):
         inner_type = type(inner_type)
-    return List(
+    return g.List(
         inner_type,
         description=field.help_text or field.verbose_name,
         required=is_required(field) and input_flag == "create",
