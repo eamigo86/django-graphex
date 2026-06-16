@@ -10,15 +10,12 @@ attaches it to the underlying graphql-core schema, where the
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from django.conf import settings
 from graphql import GraphQLError
 
 from ._strconv import to_camel_case
-
-if TYPE_CHECKING:
-    from graphene import ObjectType
 
 __all__ = ("collect_field_names", "DenyAllRegistry", "DjangoGraphQLSchema")
 
@@ -142,9 +139,9 @@ class DjangoGraphQLSchema:
     def __init__(
         self,
         *args,
-        private_query: type[ObjectType] | None = None,
-        private_mutation: type[ObjectType] | None = None,
-        private_subscription: type[ObjectType] | None = None,
+        private_query: Any = None,
+        private_mutation: Any = None,
+        private_subscription: Any = None,
         auto_camelcase: bool = True,
         registries: Any = None,
         **kwargs,

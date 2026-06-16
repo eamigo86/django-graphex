@@ -15,10 +15,6 @@ from graphene import (
     InputField,
     Int,
 )
-from graphene.types.base import BaseOptions
-from graphene.types.utils import yank_fields_from_attrs
-from graphene.utils.deprecated import warn_deprecation
-from graphene.utils.props import props
 from graphql import GraphQLBoolean, GraphQLError
 
 from .backends import resolve_backend
@@ -31,7 +27,7 @@ from .filtering.filter_field import (
     collect_custom_filters,
 )
 from .native.base import InputType as NativeInputType
-from .native.base import NativeObjectTypeOptions
+from .native.base import MountedType, NativeObjectTypeOptions, UnmountedType, _props
 from .native.base import ObjectType as NativeObjectType
 from .native.descriptors import NativeList
 from .native.descriptors import field as native_field
@@ -70,6 +66,52 @@ __all__ = (
     "DjangoUnionType",
     "DjangoInterfaceType",
 )
+
+
+def _yank_fields(
+    attrs: dict[str, Any], _as: Any, sort: bool = True
+) -> dict[str, Any]:
+    """Graphene-free re-implementation of ``graphene.utils.yank_fields_from_attrs``.
+
+    S8b: drops the ``graphene.types.utils.yank_fields_from_attrs`` /
+    ``get_field_as`` import. Walks an attribute mapping (the ``construct_fields``
+    output or a class ``__dict__``), keeping only the values that are graphene
+    field DESCRIPTORS and mounting each into the supplied ``_as`` mount class
+    (``Field`` / ``InputField``) — byte-equivalent to graphene's helper:
+
+    - a ``MountedType`` (already mounted, e.g. ``DjangoNestedListObjectField``)
+      is kept AS-IS;
+    - an ``UnmountedType`` (e.g. a relation ``Dynamic``) is mounted via
+      ``_as.mounted(value)`` (which carries ``.type`` the native compiler reads);
+    - anything else (non-descriptor) is skipped.
+
+    Results are sorted by the mounted field's graphene ``creation_counter`` (via
+    ``OrderedType.__lt__``) exactly as graphene did, so SDL field ordering is
+    preserved. The mount classes are STILL graphene ``Field`` / ``InputField``
+    (the field-descriptor SURFACE removed in S8c); only the graphene UTIL import
+    is gone here.
+
+    Args:
+        attrs: A ``{name: value}`` mapping to extract field descriptors from.
+        _as: The graphene mount class used to mount ``UnmountedType`` values.
+        sort: Whether to order results by graphene ``creation_counter``.
+
+    Returns:
+        An ordered ``{name: mounted_field}`` dict.
+    """
+    fields_with_names: list[tuple[str, Any]] = []
+    for attname, value in list(attrs.items()):
+        if isinstance(value, MountedType):
+            field = value
+        elif isinstance(value, UnmountedType):
+            field = _as.mounted(value) if _as is not None else value
+        else:
+            continue
+        fields_with_names.append((attname, field))
+
+    if sort:
+        fields_with_names = sorted(fields_with_names, key=lambda f: f[1])
+    return dict(fields_with_names)
 
 
 # Options that graphene's base classes or the factory_type helper pass through
@@ -736,64 +778,12 @@ def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
         )
 
 
-class DjangoObjectOptions(BaseOptions):
-    """Meta options container for Django object and list GraphQL types."""
-
-    fields = None
-    input_fields = None
-    interfaces = ()
-    model = None
-    queryset = None
-    registry = None
-    connection = None
-    create_container = None
-    results_field_name = None
-    filter_fields = ()
-    input_for = None
-    #: Max nested-object depth allowed below this type (None = no per-type limit).
-    max_deep = None
-    #: Cost weight of a field returning this type (None = default weight of 1).
-    complexity = None
-    #: GFK field name -> companion DjangoUnionType (Track 2). None when the type
-    #: declares no GFK unions; the GFK converter falls back to
-    #: GenericForeignKeyType in that case.
-    gfk_unions = None
-    #: Compiled native GraphQLInputObjectType; set by DjangoInputObjectType
-    #: __init_subclass_with_meta__ when GDX_BACKEND=native; None under graphene.
-    graphql_input_type = None
-    #: Compiled native GraphQLObjectType; set by DjangoObjectType / DjangoListObjectType
-    #: __init_subclass_with_meta__ when GDX_BACKEND=native; None under graphene.
-    graphql_output_type = None
-
-
-class DjangoModelTypeOptions(BaseOptions):
-    """Meta options container for the Django model CRUD GraphQL type."""
-
-    model = None
-    queryset = None
-    #: SerializerBackend handling validate/save/output (native Pydantic).
-    backend = None
-
-    arguments = None
-    fields = None
-    input_fields = None
-    input_field_name = None
-
-    mutation_output = None
-    output_field_name = None
-    output_type = None
-    output_list_type = None
-    nested_fields = None
-    interfaces = ()
-
-    # Subscription integration (optional; requires the [subscriptions] extra).
-    stream = None
-    serialize_data = None
-    subscription_index_fields = ()
-    #: Max nested-object depth allowed below this type (None = no per-type limit).
-    max_deep = None
-    #: Cost weight of a field returning this type (None = default weight of 1).
-    complexity = None
+# S8b: the graphene-era ``DjangoObjectOptions`` / ``DjangoModelTypeOptions``
+# ``BaseOptions`` subclasses were DEAD — the native path builds a single mutable
+# ``NativeObjectTypeOptions`` (native.base) on every re-parented type. The
+# native-friendly Options containers (used by tests) live in
+# ``django_graphex._options``. The graphene ``BaseOptions`` import is removed with
+# these classes.
 
 
 class DjangoObjectType(NativeObjectType):
@@ -881,7 +871,7 @@ class DjangoObjectType(NativeObjectType):
                 )
         cls._dgx_custom_filters = custom_filters
 
-        django_fields = yank_fields_from_attrs(
+        django_fields = _yank_fields(
             construct_fields(
                 model, registry, only_fields, include_fields, exclude_fields
             ),
@@ -1750,7 +1740,7 @@ class DjangoInputObjectType(NativeInputType):
         # The native compiler reads ``_meta.graphql_input_type``; the
         # ``input_fields`` dict is kept on ``_meta`` for runtime metadata readers
         # (registry / converter child lookups) that inspect declared input fields.
-        django_input_fields = yank_fields_from_attrs(
+        django_input_fields = _yank_fields(
             construct_fields(
                 model,
                 registry,
@@ -1765,7 +1755,7 @@ class DjangoInputObjectType(NativeInputType):
         )
         for base in reversed(cls.__mro__):
             django_input_fields.update(
-                yank_fields_from_attrs(base.__dict__, _as=InputField)
+                _yank_fields(base.__dict__, _as=InputField)
             )
 
         _meta = NativeObjectTypeOptions(cls)
@@ -2246,15 +2236,17 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         if not input_class:
             input_class = getattr(cls, "Input", None)
             if input_class:
-                warn_deprecation(
+                warnings.warn(
                     (
                         "Please use {name}.Arguments instead of {name}.Input."
                         "Input is now only used in ClientMutationID.\nRead more: "
                         "https://github.com/graphql-python/graphene/blob/2.0/UPGRADE-v2.0.md#mutation-input"
-                    ).format(name=cls.__name__)
+                    ).format(name=cls.__name__),
+                    DeprecationWarning,
+                    stacklevel=2,
                 )
         if input_class:
-            arguments = props(input_class)
+            arguments = _props(input_class)
         else:
             arguments = {}
 
@@ -2272,7 +2264,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         for klass in reversed(cls.__mro__):
             if issubclass(klass, DjangoModelType) and klass is not DjangoModelType:
                 extra_fields.update(
-                    yank_fields_from_attrs(dict(vars(klass)), _as=Field)
+                    _yank_fields(dict(vars(klass)), _as=Field)
                 )
 
         # Forward each custom field's `resolve_<name>` method (most-derived wins)

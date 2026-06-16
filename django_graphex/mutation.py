@@ -3,21 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured
 from graphene import Field
-from graphene.types.base import BaseOptions
-from graphene.utils.deprecated import warn_deprecation
-from graphene.utils.props import props
 from graphql import GraphQLBoolean
 
 from ._strconv import to_camel_case
 from .backends import resolve_backend
 from .base_types import factory_type
 from .errors import ErrorType
-from .native.base import NativeObjectTypeOptions
+from .native.base import NativeObjectTypeOptions, _props
 from .native.base import ObjectType as NativeObjectType
 from .native.descriptors import NativeList
 from .native.descriptors import field as native_field
@@ -28,8 +26,7 @@ from .types import DjangoInputObjectType, DjangoObjectType
 from .utils import get_Object_or_None, not_found_error
 
 if TYPE_CHECKING:
-    from graphene import Field as GrapheneField
-    from graphql import GraphQLResolveInfo
+    from graphql import GraphQLField, GraphQLResolveInfo
 
 # ---------------------------------------------------------------------------
 # Backend-keyed native field registry (WU-3)
@@ -225,21 +222,6 @@ def _ensure_child_generic_input(
     )
 
 
-class SerializerMutationOptions(BaseOptions):
-    """Options class for DjangoModelMutation configuration."""
-
-    fields = None
-    input_fields = None
-    interfaces = ()
-    backend = None
-    action = None
-    arguments = None
-    output = None
-    resolver = None
-    nested_fields = None
-    model_operations = ("create", "update", "delete")
-
-
 class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
     """Django model mutation type definition."""
 
@@ -315,15 +297,17 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         if not input_class:
             input_class = getattr(cls, "Input", None)
             if input_class:
-                warn_deprecation(
+                warnings.warn(
                     (
                         "Please use {name}.Arguments instead of {name}.Input."
                         "Input is now only used in ClientMutationID.\nRead more: "
                         "https://github.com/graphql-python/graphene/blob/2.0/UPGRADE-v2.0.md#mutation-input"
-                    ).format(name=cls.__name__)
+                    ).format(name=cls.__name__),
+                    DeprecationWarning,
+                    stacklevel=2,
                 )
         if input_class:
-            arguments = props(input_class)
+            arguments = _props(input_class)
         else:
             arguments = {}
 
@@ -785,7 +769,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             )
 
     @classmethod
-    def MutationFields(cls, *args: Any, **kwargs: Any) -> tuple[GrapheneField, ...]:
+    def MutationFields(cls, *args: Any, **kwargs: Any) -> tuple[GraphQLField, ...]:
         """Build the mutation fields enabled by Meta.model_operations.
 
         Args:
@@ -793,8 +777,8 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             **kwargs: Keyword arguments forwarded to each field builder.
 
         Returns:
-            The create, delete and update graphene fields (in that order) for
-            every operation enabled in ``Meta.model_operations``.
+            The create, delete and update graphql-core fields (in that order)
+            for every operation enabled in ``Meta.model_operations``.
         """
         builders = (
             ("create", cls.CreateField),
