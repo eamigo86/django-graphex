@@ -119,7 +119,7 @@ def _compile_declared_list_fields(
         A ``{camelCase_name: GraphQLField}`` dict of declared list fields
         (empty when the class declares none).
     """
-    from graphene.utils.str_converters import to_camel_case
+    from ._strconv import to_camel_case
 
     from .fields import DjangoListObjectField
     from .native.schema_compiler import _build_list_object_field
@@ -207,7 +207,7 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
         A ``{camelCase_name: GraphQLField}`` dict of declared non-model fields
         (empty when the class declares none).
     """
-    from graphene.utils.str_converters import to_camel_case
+    from ._strconv import to_camel_case
 
     from .fields import (
         DjangoFilterListField,
@@ -285,7 +285,7 @@ def _compile_gfk_union_output_fields(
         (empty when the class declares no ``gfk_unions``).
     """
     from django.contrib.contenttypes.fields import GenericForeignKey
-    from graphene.utils.str_converters import to_camel_case
+    from ._strconv import to_camel_case
     from graphql import GraphQLField
 
     meta = getattr(src_cls, "_meta", None)
@@ -372,7 +372,7 @@ def _compile_relation_list_fields(
         A ``{camelCase_name: GraphQLField}`` dict of to-many container fields
         (empty when the model has none / they are all projected out).
     """
-    from graphene.utils.str_converters import to_camel_case
+    from ._strconv import to_camel_case
 
     from .converter import _nested_list_object_field
     from .native.output_compiler import _get_related_model, _is_many_relation
@@ -471,7 +471,7 @@ def _compile_reverse_o2o_fields(
     """
     from django.core.exceptions import ObjectDoesNotExist
     from django.db.models import OneToOneRel
-    from graphene.utils.str_converters import to_camel_case
+    from ._strconv import to_camel_case
     from graphql import GraphQLField
 
     only_set = set(only_fields) if only_fields else None
@@ -1427,7 +1427,7 @@ def _resolve_native_nested_input_fields(
         A tuple of ``NestedInputField`` specs (empty when there is nothing to
         inject).
     """
-    from graphene.utils.str_converters import to_camel_case
+    from ._strconv import to_camel_case
 
     from django_graphex.native.input_compiler import NestedInputField
 
@@ -1512,7 +1512,7 @@ def _resolve_native_relation_input_fields(
         introspectable relations).
     """
     from django.db import models as _dj_models
-    from graphene.utils.str_converters import to_camel_case
+    from ._strconv import to_camel_case
 
     from django_graphex.native.input_compiler import RelationInputField
 
@@ -2884,7 +2884,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             wire names, and whose ``.resolve`` is the corresponding classmethod
             (adapted via ``_adapt_self``).
         """
-        from graphene.utils.str_converters import to_camel_case as _to_camel
+        from ._strconv import to_camel_case as _to_camel
         from graphql import GraphQLField as _GQLField
 
         from django_graphex.mutation import (

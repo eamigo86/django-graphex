@@ -11,9 +11,9 @@ from graphene import Field
 from graphene.types.base import BaseOptions
 from graphene.utils.deprecated import warn_deprecation
 from graphene.utils.props import props
-from graphene.utils.str_converters import to_camel_case
 from graphql import GraphQLBoolean
 
+from ._strconv import to_camel_case
 from .backends import resolve_backend
 from .base_types import factory_type
 from .errors import ErrorType

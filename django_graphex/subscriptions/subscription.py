@@ -579,7 +579,7 @@ class Subscription(NativeObjectType):
             # the wrong dict key -> silent NULL). ``to_representation`` keys every
             # field (scalar / FK pk / M2M pk-list) by ``field.name`` (snake), so
             # the closure key is to_snake_case(wire).
-            from graphene.utils.str_converters import to_snake_case
+            from django_graphex._strconv import to_snake_case
 
             rewrapped: dict[str, Any] = {}
             for wire, field in built.items():

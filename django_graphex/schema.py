@@ -13,8 +13,9 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
-from graphene.utils.str_converters import to_camel_case
 from graphql import GraphQLError
+
+from ._strconv import to_camel_case
 
 if TYPE_CHECKING:
     from graphene import ObjectType
