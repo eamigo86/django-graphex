@@ -5,6 +5,15 @@ The existing ``test_converter`` covers output scalar conversion; this drives the
 ``input_flag`` paths of the FK/O2O/M2M/reverse converters (the ``Dynamic``
 closures), plus the GenericForeignKey, GenericRelation, ArrayField and
 JSON/HStore converters that the scalar tests skip.
+
+Phase 7 graphene-removal: the FK/O2O/M2M/reverse/GFK ``convert_django_field``
+relation closures are KEPT on native (the native output thunk consumes them), so
+those tests are unchanged. The graphene ``construct_fields`` SCALAR fields and the
+JSON scalar descriptor are dead on native (the native output compiler derives them
+from ``model._meta`` directly); the three formerly scalar-asserting tests were
+CONVERTED to drive the native field builders — ``compile_output_fields`` (only/
+exclude) and the native ``DjangoInputObjectType`` create-input compile (id-skip) —
+plus ``_to_graphql_field`` for the JSON scalar, preserving the original coverage.
 """
 
 from django.contrib.contenttypes.fields import (
@@ -13,17 +22,29 @@ from django.contrib.contenttypes.fields import (
 )
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from graphene import ID, Dynamic, JSONString, List, NonNull
+from graphene import ID, Dynamic, List, NonNull
 
 from django_graphex.converter import (
     construct_fields,
     convert_django_field,
 )
 from django_graphex.fields import DjangoListField
+from django_graphex.native.output_compiler import (
+    _to_graphql_field,
+    compile_output_fields,
+)
+from django_graphex.native.scalars import GdxJSONString
 from django_graphex.registry import Registry
 from django_graphex.types import DjangoInputObjectType, DjangoObjectType
 
 from .models import Author, Post
+
+
+class _StubRegistry:
+    """Minimal registry for ``_to_graphql_field`` (scalars never touch it)."""
+
+    def get_compiled(self, model_cls):
+        return None
 
 
 def _resolve(field, **kwargs):
@@ -111,17 +132,27 @@ def test_construct_fields_delete_flag_keeps_only_id():
 
 
 def test_construct_fields_create_flag_skips_id():
-    registry = Registry()
-    fields = construct_fields(Author, registry, None, None, None, input_flag="create")
+    # Native create-input construction: the compiled GraphQLInputObjectType drops
+    # the auto pk (``id``) and keeps the editable model scalars (``name``). This
+    # is the native equivalent of the graphene ``construct_fields(input_flag=
+    # "create")`` id-skip (the graphene scalar descriptors are dead on native).
+    class _AuthorCreateInput(DjangoInputObjectType):
+        class Meta:
+            model = Author
+            input_for = "create"
+
+    fields = _AuthorCreateInput._meta.graphql_input_type.fields
     assert "id" not in fields
     assert "name" in fields
 
 
 def test_construct_fields_exclude_and_only():
+    # Native OUTPUT field construction honors only/exclude over the model scalars
+    # (the graphene ``construct_fields`` scalar descriptors are dead on native).
     registry = Registry()
-    only = construct_fields(Author, registry, ["name"], None, None)
+    only = compile_output_fields(Author, registry, only_fields=["name"])
     assert "name" in only and "bio" not in only
-    excluded = construct_fields(Author, registry, None, None, ["bio"])
+    excluded = compile_output_fields(Author, registry, exclude_fields=["bio"])
     assert "bio" not in excluded and "name" in excluded
 
 
@@ -174,6 +205,11 @@ def test_generic_relation_input_flag_returns_none():
 # Postgres ArrayField / JSON / HStore (string-typed, no postgres import)       #
 # --------------------------------------------------------------------------- #
 def test_json_field_converts_to_string_scalar():
+    # Native scalar conversion: JSONField -> GdxJSONString (renders as the
+    # ``JSONString`` scalar). The graphene ``convert_django_field`` JSON descriptor
+    # is dead on native, so drive the live native scalar mapper instead.
     field = models.JSONField()
-    out = convert_django_field(field)
-    assert isinstance(out, JSONString)
+    field.name = "json_field"
+    field_map = _to_graphql_field(field, _StubRegistry())
+    out = next(iter(field_map.values())).type
+    assert out is GdxJSONString

@@ -6,6 +6,7 @@ import warnings
 
 import graphene
 from django.test import override_settings
+from graphql import graphql_sync
 
 from django_graphex import (
     AuthenticatedFieldsMiddleware,
@@ -91,7 +92,13 @@ _superuser = types.SimpleNamespace(is_authenticated=True, is_superuser=True)
 
 def _run(query, middleware, user=_anon, context="__default__"):
     ctx = _ctx(user) if context == "__default__" else context
-    return _schema.execute(query, middleware=middleware, context=ctx)
+    # Native backend: execute against the graphql-core schema directly.
+    # ``DjangoGraphQLSchema`` exposes the assembled ``graphql_schema``; the
+    # graphene-style security middleware (objects with a ``resolve`` method)
+    # are accepted by graphql-core's MiddlewareManager unchanged.
+    return graphql_sync(
+        _schema.graphql_schema, query, middleware=middleware, context_value=ctx
+    )
 
 
 # -- AC1 / AC2: introspection ------------------------------------------------ #
@@ -253,9 +260,17 @@ def test_disjoint_public_private_query_roots_are_unioned():
 
 
 def test_plain_schema_fallback_uses_protected_fields_only(monkeypatch):
-    plain = graphene.Schema(query=_RootQuery)
+    # A bare graphql-core schema carries neither the native
+    # ``extensions['gdx_protected_fields']`` marker nor the legacy
+    # ``_gde_protected_fields`` attribute, so ``get_protected_fields`` falls
+    # through to the ``PROTECTED_FIELDS`` setting (steps 1+2 miss, step 3 hits).
+    from graphql import GraphQLField, GraphQLObjectType, GraphQLSchema, GraphQLString
+
+    plain = GraphQLSchema(
+        query=GraphQLObjectType("Query", {"me": GraphQLField(GraphQLString)})
+    )
     mw = AuthenticatedFieldsMiddleware()
-    fake_info = types.SimpleNamespace(schema=plain.graphql_schema)
+    fake_info = types.SimpleNamespace(schema=plain)
 
     # No settings -> nothing protected (no auto-subscription magic).
     assert mw.get_protected_fields(fake_info) == set()
@@ -275,11 +290,15 @@ def test_warning_when_middleware_absent():
 
 
 def test_no_warning_when_middleware_configured():
-    graphene_conf = {
+    # v2.0 (S2) reads the auth-middleware config from the ``GRAPHEX`` namespace
+    # ONLY (the legacy ``GRAPHENE`` namespace is no longer consulted — see
+    # ``_auth_middleware_configured``). The behavioral assertion is unchanged:
+    # when the middleware IS configured, no RuntimeWarning is emitted.
+    graphex_conf = {
         "SCHEMA": "tests.schema.schema",
         "MIDDLEWARE": ["django_graphex.AuthenticatedFieldsMiddleware"],
     }
-    with override_settings(GRAPHENE=graphene_conf):
+    with override_settings(GRAPHEX=graphex_conf):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             DjangoGraphQLSchema(query=_RootQuery, private_query=_PrivateQuery)
@@ -293,14 +312,13 @@ def test_collect_field_names():
 
 
 def test_django_graphql_schema_query_none_raises_graphql_error():
-    """DjangoGraphQLSchema(query=None) raises GraphQLError on the graphene path.
+    """DjangoGraphQLSchema(query=None) raises GraphQLError under the native backend.
 
     Previously graphene silently built a schema with no query root; the explicit
-    guard makes the failure loud and consistent with the native backend.
+    guard makes the failure loud and consistent across backends.
     """
-    from graphql import GraphQLError
-
     import pytest
+    from graphql import GraphQLError
 
     with pytest.raises(GraphQLError):
         DjangoGraphQLSchema(query=None)

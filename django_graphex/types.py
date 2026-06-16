@@ -90,7 +90,9 @@ _GRAPHENE_BASE_OPTIONS: frozenset[str] = frozenset(
 )
 
 
-def _compile_declared_list_fields(src_cls: type) -> dict[str, Any]:
+def _compile_declared_list_fields(
+    src_cls: type, registries: Any = None
+) -> dict[str, Any]:
     """Compile DECLARED list/nested-list fields on a ``DjangoObjectType`` (WU6b).
 
     The native output compiler (``compile_output_fields``) only derives fields
@@ -128,7 +130,7 @@ def _compile_declared_list_fields(src_cls: type) -> dict[str, Any]:
         # DjangoNestedListObjectField is a subclass of DjangoListObjectField, so
         # this single isinstance covers both the nested and the flat list field.
         if isinstance(field, DjangoListObjectField):
-            out[to_camel_case(field_name)] = _build_list_object_field(field)
+            out[to_camel_case(field_name)] = _build_list_object_field(field, registries)
     return out
 
 
@@ -179,7 +181,7 @@ def _is_declared_class_attr(src_cls: type, field_name: str) -> bool:
     return any(field_name in base.__dict__ for base in src_cls.__mro__)
 
 
-def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
+def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str, Any]:
     """Compile DECLARED non-model, non-list fields on a ``DjangoObjectType`` (Slice D).
 
     ``compile_output_fields`` only derives fields from ``model._meta.get_fields()``;
@@ -235,7 +237,7 @@ def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
         # nested field carries the DECLARED node type as ``[Node]`` / ``[Node!]``
         # and its filter + pagination args — byte-identical to the root path.
         if isinstance(field, (DjangoFilterListField, DjangoFilterPaginateListField)):
-            out[to_camel_case(field_name)] = _build_filter_list_field(field)
+            out[to_camel_case(field_name)] = _build_filter_list_field(field, registries)
             continue
         # DEFECT C: a field whose name matches a model relation/field is usually
         # the AUTO-DERIVED graphene field (owned by compile_output_fields / the
@@ -251,7 +253,7 @@ def _compile_declared_fields(src_cls: type) -> dict[str, Any]:
         ):
             continue
         out[to_camel_case(field_name)] = compile_declared_field(
-            src_cls, field_name, field
+            src_cls, field_name, field, registries
         )
     return out
 
@@ -551,6 +553,7 @@ def _make_output_thunk_for(
     only_fields: list[str] | None,
     exclude_fields: list[str] | None,
     registries: Any,
+    include_fields: list[str] | None = None,
 ) -> Any:
     """Build the lazy fields thunk for a ``DjangoObjectType``'s output type.
 
@@ -591,12 +594,14 @@ def _make_output_thunk_for(
         _excl_f: list[str] | None = exclude_fields,
         _src_cls: type = src_cls,
         _registries: Any = registries,
+        _incl_f: list[str] | None = include_fields,
     ) -> dict:
         _fields = compile_output_fields(
             _model,
             _reg,
             only_fields=_only_f,
             exclude_fields=_excl_f,
+            include_fields=_incl_f,
         )
         _fields.update(
             _compile_relation_list_fields(
@@ -618,8 +623,8 @@ def _make_output_thunk_for(
                 registries=_registries,
             )
         )
-        _fields.update(_compile_declared_list_fields(_src_cls))
-        _fields.update(_compile_declared_fields(_src_cls))
+        _fields.update(_compile_declared_list_fields(_src_cls, _registries))
+        _fields.update(_compile_declared_fields(_src_cls, _registries))
         _fields.update(_compile_gfk_union_output_fields(_src_cls, _registries))
         return _fields
 
@@ -964,6 +969,7 @@ class DjangoObjectType(NativeObjectType):
                 exclude_fields=list(exclude_fields) if exclude_fields else None,
                 max_deep=max_deep,
                 complexity=complexity,
+                include_fields=list(include_fields) if include_fields else None,
             )
             if not _forking:
                 _gdx_output_registry.append(_entry)
@@ -999,6 +1005,7 @@ class DjangoObjectType(NativeObjectType):
 
             _only = list(only_fields) if only_fields else None
             _excl = list(exclude_fields) if exclude_fields else None
+            _incl = list(include_fields) if include_fields else None
 
             # LAZY field thunk bound to the SHARED registry.  Evaluated on first
             # `.fields` access; by app-ready (compile_all_outputs) every model's
@@ -1018,6 +1025,7 @@ class DjangoObjectType(NativeObjectType):
                 _only,
                 _excl,
                 None,
+                include_fields=_incl,
             )
 
             # DEFECT #8: wire any DjangoInterfaceType this type implements onto the
@@ -1733,6 +1741,10 @@ class DjangoInputObjectType(NativeInputType):
                 description=getattr(cls, "__doc__", None),
                 nested_fields=native_nested,
                 relation_fields=native_relations,
+                # issue #65: honor Meta only/include/exclude on the input wire type.
+                only_fields=only_fields or None,
+                exclude_fields=exclude_fields or None,
+                include_fields=include_fields or None,
             )
 
         # The native compiler reads ``_meta.graphql_input_type``; the
@@ -1902,6 +1914,15 @@ class DjangoListObjectType(NativeObjectType):
         _meta.exclude_fields = exclude_fields
         _meta.only_fields = only_fields
         _meta.pagination = pagination
+        # item-b (B6): store the RESOLVED paginator (``Meta.pagination`` OR the
+        # ``DEFAULT_PAGINATION_CLASS`` fallback) so a FORKED list container
+        # (registry_compiler ``_fork_output_class``) builds its results-field
+        # thunk with the SAME paginator the class-def used. Reading the raw
+        # ``_meta.pagination`` (often ``None`` when only the global default
+        # applies) would drop the pagination resolver on the fork — the
+        # container's renamed results field (e.g. ``items``) would then fall to
+        # the default attribute resolver and return ``None``.
+        _meta.paginator = paginator
         _meta.max_deep = max_deep
         _meta.complexity = complexity
 

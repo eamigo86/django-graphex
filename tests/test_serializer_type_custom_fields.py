@@ -11,9 +11,33 @@ import graphene
 import pytest
 from django.db import models
 from django.test import TestCase
+from graphql import graphql_sync
 
-from django_graphex import DjangoModelType, DjangoObjectType
+from django_graphex import (
+    DjangoGraphQLSchema,
+    DjangoModelType,
+    DjangoObjectType,
+    ObjectType,
+    field,
+)
 from tests.models import DummyModel, UUIDItem, UUIDThing
+
+
+def _compiled_output_fields(model_type):
+    """Compile ``model_type``'s native output type and return its field map.
+
+    Building a ``DjangoGraphQLSchema`` over the serializer type's ``output_type``
+    is what populates ``_meta.graphql_output_type`` (the graphql-core type the
+    native backend actually serves). Model-derived fields live there — not in the
+    graphene ``_meta.fields`` map the converter keeps for declared fields only.
+    """
+    output_type = model_type._meta.output_type
+
+    class _Q(ObjectType):
+        obj = field(output_type)
+
+    DjangoGraphQLSchema(query=_Q)
+    return output_type._meta.graphql_output_type.fields
 
 
 class ResolverThing(DummyModel):
@@ -49,8 +73,10 @@ class ThingModelType(_ThingFieldsMixin):
 
 class CustomFieldsOnSerializerTypeTest(TestCase):
     def test_custom_field_added_to_output_type(self):
-        fields = ThingModelType._meta.output_type._meta.fields
-        # custom field present alongside the model-derived ones
+        # The compiled native output type carries the declared custom field
+        # alongside the model-derived ones (model fields live on the compiled
+        # graphql-core type, not in the graphene-converter _meta.fields map).
+        fields = _compiled_output_fields(ThingModelType)
         self.assertIn("alias", fields)
         self.assertIn("name", fields)
 
@@ -80,14 +106,15 @@ class CustomFieldsOnSerializerTypeTest(TestCase):
     def test_custom_field_resolves_from_the_instance(self):
         output_type = ThingModelType._meta.output_type
 
-        class _Query(graphene.ObjectType):
-            thing = graphene.Field(output_type)
+        class _Query(ObjectType):
+            thing = field(output_type)
 
             def resolve_thing(root, info):
                 return UUIDThing(name="hello")  # unsaved is fine for attr reads
 
-        result = graphene.Schema(query=_Query).execute(
-            "{ thing { name alias upperName } }"
+        schema = DjangoGraphQLSchema(query=_Query)
+        result = graphql_sync(
+            schema.graphql_schema, "{ thing { name alias upperName } }"
         )
         self.assertIsNone(result.errors, result.errors)
         self.assertEqual(
@@ -111,13 +138,14 @@ class CustomResolverTest(TestCase):
 
         output_type = _ThingType._meta.output_type
 
-        class _Query(graphene.ObjectType):
-            thing = graphene.Field(output_type)
+        class _Query(ObjectType):
+            thing = field(output_type)
 
             def resolve_thing(root, info):
                 return ResolverThing(name="ada")
 
-        result = graphene.Schema(query=_Query).execute("{ thing { name shout } }")
+        schema = DjangoGraphQLSchema(query=_Query)
+        result = graphql_sync(schema.graphql_schema, "{ thing { name shout } }")
         self.assertIsNone(result.errors, result.errors)
         self.assertEqual(result.data["thing"], {"name": "ada", "shout": "ADA"})
 
@@ -140,13 +168,14 @@ class CustomResolverTest(TestCase):
 
         output_type = _Child._meta.output_type
 
-        class _Query(graphene.ObjectType):
-            thing = graphene.Field(output_type)
+        class _Query(ObjectType):
+            thing = field(output_type)
 
             def resolve_thing(root, info):
                 return ResolverThing2(name="x")
 
-        result = graphene.Schema(query=_Query).execute("{ thing { label } }")
+        schema = DjangoGraphQLSchema(query=_Query)
+        result = graphql_sync(schema.graphql_schema, "{ thing { label } }")
         self.assertIsNone(result.errors, result.errors)
         self.assertEqual(result.data["thing"]["label"], "child")
 

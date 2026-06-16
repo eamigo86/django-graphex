@@ -20,13 +20,19 @@ from __future__ import annotations
 
 import json
 
-import graphene
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.test import RequestFactory, TestCase, override_settings
+from graphql import GraphQLInt, GraphQLString
 
-from django_graphex import DjangoObjectType, filter_field
+from django_graphex import (
+    DjangoGraphQLSchema,
+    DjangoObjectType,
+    ObjectType,
+    field,
+    filter_field,
+)
 from django_graphex.filtering.filter_field import apply_custom_filters
 from django_graphex.registry import Registry
 from django_graphex.types import DjangoModelType
@@ -74,11 +80,11 @@ class _SkipArgType(DjangoObjectType):
         filter_fields = {"title": ("exact",)}
         registry = _SKIP_ARG_REGISTRY
 
-    @filter_field(graphene.String, description="Search in title")
+    @filter_field(GraphQLString, description="Search in title")
     def search(cls, queryset, info, value):
         return queryset.filter(title__icontains=value)
 
-    @filter_field(graphene.Int, description="Filter by min views")
+    @filter_field(GraphQLInt, description="Filter by min views")
     def min_views(cls, queryset, info, value):
         return queryset.filter(views__gte=value)
 
@@ -181,23 +187,37 @@ class TestDjangoModelTypeReservedNameCollision:
                 return queryset
 
             _method.__name__ = reserved_name
-            decorated = filter_field(graphene.String)(_method)
+            decorated = filter_field(GraphQLString)(_method)
             decorated.__name__ = reserved_name
 
+            cls_name = f"BadModelType_{reserved_name}"
             # DjangoModelType accepts: model, filter_fields, pagination, etc.
             # Do NOT include 'registry' (a DjangoObjectType-only option).
+            #
+            # Native ``DjangoModelType`` routes class creation through Pydantic's
+            # ``ModelMetaclass``. A class built with ``type(...)`` must therefore
+            # carry the ``__module__`` / ``__qualname__`` keys that a ``class``
+            # statement injects automatically, and the inner ``Meta`` needs a
+            # qualified name so Pydantic recognises it as the nested options
+            # class the metaclass strips (otherwise it raises before the
+            # reserved-name guard runs). These are construction details only —
+            # the reserved-name guard still fires at class-creation time.
+            meta = type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "filter_fields": {"id": ("exact",)},
+                    "__qualname__": f"{cls_name}.Meta",
+                },
+            )
             attrs = {
-                "Meta": type(
-                    "Meta",
-                    (),
-                    {
-                        "model": Post,
-                        "filter_fields": {"id": ("exact",)},
-                    },
-                ),
+                "__module__": __name__,
+                "__qualname__": cls_name,
+                "Meta": meta,
                 reserved_name: decorated,
             }
-            type(f"BadModelType_{reserved_name}", (DjangoModelType,), attrs)
+            type(cls_name, (DjangoModelType,), attrs)
 
         with pytest.raises(ImproperlyConfigured, match=reserved_name):
             _make_bad_type()
@@ -212,14 +232,14 @@ class TestDjangoModelTypeReservedNameCollision:
 # ---------------------------------------------------------------------------
 
 
-class _SimpleQuery(graphene.ObjectType):
-    hello = graphene.String()
+class _SimpleQuery(ObjectType):
+    hello = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
 
 
-_simple_schema = graphene.Schema(query=_SimpleQuery)
+_simple_schema = DjangoGraphQLSchema(query=_SimpleQuery)
 
 
 class TestContentLengthFallback(TestCase):

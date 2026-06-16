@@ -133,33 +133,18 @@ def normalize_sdl(sdl: str) -> str:
 
 
 def pytest_configure(config: object) -> None:
-    """Register the native_only mark."""
+    """Register the ``native_only`` mark (retained for back-compat).
+
+    S7 (graphene-removal): the native backend is now the suite DEFAULT (set in
+    ``tests/conftest.py``), so ``native_only`` no longer gates collection — the
+    mark stays registered only so existing ``@pytest.mark.native_only`` decorators
+    remain valid markers. The auto-skip (which excluded these tests under the old
+    ``GDX_BACKEND=graphene`` default) is gone: a bare ``pytest`` runs native and
+    these tests always run.
+    """
     import pytest as _pytest
     _pytest.ini_options = getattr(_pytest, "ini_options", {})
     config.addinivalue_line(  # type: ignore[attr-defined]
         "markers",
-        "native_only: mark test as native-backend only (excluded from graphene CI job)",
+        "native_only: mark test as native-backend only (suite default since S7)",
     )
-
-
-def pytest_collection_modifyitems(config: object, items: list) -> None:  # type: ignore[type-arg]
-    """Auto-skip native_only tests when GDX_BACKEND != native.
-
-    This prevents the WU-A misdiagnosis: if someone runs
-    ``pytest tests/native`` without GDX_BACKEND=native, the native-only
-    tests are skipped with a clear message instead of failing confusingly.
-
-    Gate: tests/native/ MUST be run with:
-        GDX_BACKEND=native .venv/bin/python -m pytest tests/native/ -q
-    """
-    import pytest as _pytest
-    if os.environ.get("GDX_BACKEND", "graphene") != "native":
-        skip_native = _pytest.mark.skip(
-            reason=(
-                "GDX_BACKEND != native — native_only tests skipped. "
-                "Run with: GDX_BACKEND=native pytest tests/native/"
-            )
-        )
-        for item in items:
-            if "native_only" in item.keywords:
-                item.add_marker(skip_native)

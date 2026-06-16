@@ -16,11 +16,11 @@ import pytest
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from graphene import Schema
-from graphql import GraphQLError
+from graphql import GraphQLError, graphql_sync
 
 from django_graphex import (
     CursorGraphqlPagination,
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
     PageGraphqlPagination,
@@ -47,16 +47,12 @@ class CursorHardenType(DjangoListObjectType):
         pagination = CursorGraphqlPagination(ordering="id")
 
 
-class _Query(Schema):
-    pass
-
-
 class HardenQuery(graphene.ObjectType):
     page_list = DjangoListObjectField(PageHardenType)
     cursor_list = DjangoListObjectField(CursorHardenType)
 
 
-harden_schema = Schema(query=HardenQuery)
+harden_schema = DjangoGraphQLSchema(query=HardenQuery)
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +223,9 @@ class TestConditionalCount(TestCase):
         # This uses the full schema so the separate qs.count() in types.py fires.
         for i in range(5):
             BasicModel.objects.create(text=f"T{i:02d}")
-        result = harden_schema.execute(
-            "query { pageList { results(page: 1, pageSize: 3) { text } totalCount } }"
+        result = graphql_sync(
+            harden_schema.graphql_schema,
+            "query { pageList { results(page: 1, pageSize: 3) { text } totalCount } }",
         )
         assert result.errors is None, result.errors
         data = result.data["pageList"]

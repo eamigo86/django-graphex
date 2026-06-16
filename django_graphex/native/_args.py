@@ -126,7 +126,12 @@ def graphene_arg_to_graphql_argument(
         # garg.type   → GraphQLNonNull(GraphQLString)
         # garg.out_name → "first_name"
     """
-    graphql_type = _unwrap_graphene_type(arg.type)
+    # A graphene ``Argument`` carries its scalar/enum on ``.type``; a bare mounted
+    # scalar instance (e.g. ``graphene.String()`` declared directly in a legacy
+    # ``Input`` class) IS the type and has no ``.type`` attribute. Fall back to the
+    # arg itself so both forms convert to a graphql-core ``GraphQLArgument``.
+    graphene_type = arg.type if hasattr(arg, "type") else arg
+    graphql_type = _unwrap_graphene_type(graphene_type)
 
     out_name: str | None = None
     if name is not None:

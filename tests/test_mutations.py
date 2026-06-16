@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 """Tests for django_graphex.mutation module."""
 
-import graphene
 from django.contrib.auth.models import User
 from django.test import RequestFactory, TestCase
+from graphql import GraphQLField, GraphQLString, graphql_sync
 
-from django_graphex import DjangoModelMutation
+from django_graphex import DjangoGraphQLSchema, DjangoModelMutation, ObjectType, field
+from django_graphex.registry import Registry
 
+from ._schema_isolation import isolated_pair
 from .models import Author, Post
+
+_RMUT = Registry()
 
 
 class PostMutation(DjangoModelMutation):
@@ -15,6 +19,7 @@ class PostMutation(DjangoModelMutation):
 
     class Meta:
         model = Post
+        registry = _RMUT
 
 
 class UserMutation(DjangoModelMutation):
@@ -23,6 +28,7 @@ class UserMutation(DjangoModelMutation):
     class Meta:
         model = User
         description = "User mutation"
+        registry = _RMUT
 
 
 class UserMutationWithCustomName(DjangoModelMutation):
@@ -32,20 +38,21 @@ class UserMutationWithCustomName(DjangoModelMutation):
         model = User
         model_operations = ("create", "update")
         lookup_field = "username"
+        registry = _RMUT
 
 
-class TestQuery(graphene.ObjectType):
+class TestQuery(ObjectType):
     """Test query for mutations."""
 
     __test__ = False  # GraphQL schema fixture, not a pytest test class
 
-    hello = graphene.String(default_value="Hello World!")
+    hello = field(GraphQLString)
 
     def resolve_hello(self, info):
         return "Hello World!"
 
 
-class TestMutations(graphene.ObjectType):
+class TestMutations(ObjectType):
     """Test mutations."""
 
     __test__ = False  # GraphQL schema fixture, not a pytest test class
@@ -60,7 +67,16 @@ class TestMutations(graphene.ObjectType):
     post_update = PostMutation.UpdateField()
 
 
-test_schema = graphene.Schema(query=TestQuery, mutation=TestMutations)
+test_schema = DjangoGraphQLSchema(
+    query=TestQuery, mutation=TestMutations, registries=isolated_pair(_RMUT)
+)
+
+
+def _execute(mutation, context_value):
+    """Run a mutation against the native schema (drop-in for ``schema.execute``)."""
+    return graphql_sync(
+        test_schema.graphql_schema, mutation, context_value=context_value
+    )
 
 
 class DjangoModelMutationTest(TestCase):
@@ -104,7 +120,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userCreate"]
@@ -140,7 +156,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userUpdate"]
@@ -169,7 +185,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["postUpdate"]
@@ -194,7 +210,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userDelete"]
@@ -231,7 +247,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userCreate"]
@@ -262,7 +278,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userUpdate"]
@@ -287,7 +303,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userDelete"]
@@ -319,7 +335,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userCustomUpdate"]
@@ -336,9 +352,9 @@ class DjangoModelMutationTest(TestCase):
         update_field = UserMutation.UpdateField()
         delete_field = UserMutation.DeleteField()
 
-        self.assertIsInstance(create_field, graphene.Field)
-        self.assertIsInstance(update_field, graphene.Field)
-        self.assertIsInstance(delete_field, graphene.Field)
+        self.assertIsInstance(create_field, GraphQLField)
+        self.assertIsInstance(update_field, GraphQLField)
+        self.assertIsInstance(delete_field, GraphQLField)
 
     def test_mutation_with_limited_operations(self):
         """Test mutation with limited model operations."""
@@ -346,8 +362,8 @@ class DjangoModelMutationTest(TestCase):
         create_field = UserMutationWithCustomName.CreateField()
         update_field = UserMutationWithCustomName.UpdateField()
 
-        self.assertIsInstance(create_field, graphene.Field)
-        self.assertIsInstance(update_field, graphene.Field)
+        self.assertIsInstance(create_field, GraphQLField)
+        self.assertIsInstance(update_field, GraphQLField)
 
         # delete was excluded from model_operations, so building the field
         # raises rather than silently exposing an unsupported operation.

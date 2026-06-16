@@ -34,10 +34,12 @@ def _multipart_info(files):
 class MutationFieldsTest(TestCase):
     def test_mutation_fields_returns_three_fields(self):
         create, delete, update = AuthorMutation.MutationFields()
-        # Each is a graphene Field bound to the matching resolver.
-        assert create.resolver.__name__ == "create"
-        assert delete.resolver.__name__ == "delete"
-        assert update.resolver.__name__ == "update"
+        # Each is a native graphql-core ``GraphQLField`` bound to the matching
+        # operation method. The native field exposes its resolver via ``.resolve``
+        # (graphql-core), not the graphene-era ``.resolver`` attribute.
+        assert create.resolve.__name__ == "create"
+        assert delete.resolve.__name__ == "delete"
+        assert update.resolve.__name__ == "update"
 
 
 class MultipartTest(TestCase):

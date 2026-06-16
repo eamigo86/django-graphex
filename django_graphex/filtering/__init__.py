@@ -20,7 +20,7 @@ from .lookups import (
     TEXT_LOOKUPS,
     TIME_LOOKUPS,
 )
-from .schema import build_filter_input_type
+from .native_schema import build_filter_input_type
 from .translate import to_q
 
 __all__ = (

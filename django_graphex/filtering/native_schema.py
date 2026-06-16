@@ -42,7 +42,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db import models
 from graphql import (
     GraphQLBoolean,
@@ -62,7 +62,6 @@ from django_graphex._strconv import to_camel_case
 from django_graphex.registry import get_global_registry
 
 from .lookups import default_lookups_for
-from .schema import _normalize_filter_fields, _relation_model
 
 if TYPE_CHECKING:
     from django_graphex.native.base import SchemaRegistries
@@ -73,6 +72,63 @@ __all__ = (
     "_assert_filter_type_complete",
     "_canonical_filter_fields",
 )
+
+
+# ---------------------------------------------------------------------------
+# filter_fields normalization + relation traversal (graphene-free helpers).
+#
+# S7 (graphene-removal): relocated VERBATIM from the now-deleted graphene
+# ``filtering/schema.py``. Both are pure Django-introspection helpers (no
+# graphene dependency), so they live here in the native filter-input builder's
+# own module — the only remaining caller now that the graphene arm is gone.
+# ---------------------------------------------------------------------------
+
+
+def _normalize_filter_fields(filter_fields: Any) -> dict[str, tuple[str, ...] | None]:
+    """Normalize a ``filter_fields`` declaration to ``{path: lookups | None}``.
+
+    A ``None`` value in the result means "use the default lookup set for the
+    field's type" and only ever appears when the list form is used (where the
+    caller did not specify explicit lookups).
+
+    Args:
+        filter_fields: A list of field paths, or a ``{path: lookups}`` dict.
+
+    Returns:
+        A mapping of field path to an explicit lookup tuple, or ``None`` when
+        the default lookup set should apply (list form).
+
+    Raises:
+        ImproperlyConfigured: When a dict value is explicitly ``None``.
+            The correct way to declare custom per-field filters is via the
+            ``@filter_field`` decorator.
+    """
+    result: dict[str, tuple[str, ...] | None] = {}
+    if isinstance(filter_fields, dict):
+        for path, lookups in filter_fields.items():
+            if lookups is None:
+                raise ImproperlyConfigured(
+                    f"filter_fields[{path!r}] is None. "
+                    "Use the @filter_field decorator to declare custom per-field "
+                    "filters instead of a None sentinel in filter_fields."
+                )
+            result[path] = tuple(lookups)
+    else:
+        # List form: None means "use defaults" for the downstream helpers.
+        for path in filter_fields or ():
+            result[path] = None
+    return result
+
+
+def _relation_model(model: type[models.Model], name: str) -> type[models.Model] | None:
+    """Return the related model for a relation field name, else ``None``."""
+    try:
+        field = model._meta.get_field(name)
+    except Exception:
+        return None
+    if field.is_relation:
+        return field.related_model
+    return None
 
 
 # ---------------------------------------------------------------------------

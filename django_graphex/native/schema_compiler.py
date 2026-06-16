@@ -416,6 +416,124 @@ def _compile_plain_object_type(
     return native_type
 
 
+def _native_field_declared_django_type(field: Any) -> type | None:
+    """Return the DECLARED ``DjangoObjectType`` class behind a ``NativeField``.
+
+    item-b (B7): ``field(SomeDjangoObjectType)`` builds a ``NativeField`` whose
+    ``.type`` property EAGERLY resolves the class-def ``graphql_output_type`` (a
+    graphql-core ``GraphQLObjectType``), losing the class reference the fork needs
+    to resolve a PAIR-LOCAL instance. The class is still on the descriptor's
+    ``_declared_type`` slot; recover it so the root compiler can route the field
+    through ``_build_django_output_field`` (which forks via ``resolved_output_type``).
+
+    Returns ``None`` for any field that is not a ``NativeField`` carrying a bare
+    ``DjangoObjectType`` / ``DjangoListObjectType`` class (so the existing
+    dispatch is unchanged for every other field kind).
+    """
+    import inspect
+
+    declared = getattr(field, "_declared_type", None)
+    if declared is None or not inspect.isclass(declared):
+        return None
+    from django_graphex.types import DjangoListObjectType, DjangoObjectType
+
+    if issubclass(declared, (DjangoObjectType, DjangoListObjectType)):
+        return declared
+    return None
+
+
+class _NativeDjangoFieldView:
+    """Adapt a ``NativeField`` so ``_build_django_output_field`` sees the CLASS type.
+
+    item-b (B7): ``_build_django_output_field`` reads ``field.type`` and routes it
+    through ``_plain_django_output_type`` (which needs a CLASS to fork). A
+    ``NativeField.type`` is the already-compiled class-def instance, so this thin
+    view exposes the declared ``DjangoObjectType`` class as ``.type`` while
+    delegating ``args`` / ``description`` / ``wrap_resolve`` to the real field —
+    so the fork resolves the pair-local instance and the resolver wiring is
+    preserved verbatim.
+    """
+
+    def __init__(self, field: Any, django_cls: type) -> None:
+        self._field = field
+        self._django_cls = django_cls
+
+    @property
+    def type(self) -> Any:  # noqa: A003 - matches compiler read-contract
+        return self._django_cls
+
+    @property
+    def args(self) -> Any:
+        return getattr(self._field, "args", None)
+
+    @property
+    def description(self) -> Any:
+        return getattr(self._field, "description", None)
+
+    def wrap_resolve(self, parent_resolver: Any) -> Any:
+        return self._field.wrap_resolve(parent_resolver)
+
+
+def _is_forked_pair(registries: Any) -> bool:
+    """Return whether *registries* is a FORKED (non-default) pair (item-b B5/B6).
+
+    A forked pair is one whose ``compile_outputs_into`` populated
+    ``output_instances`` with pair-local instances. The default pair leaves that
+    map empty/``None``, so this is ``False`` for the single/default-schema path
+    (byte-identical: no re-fork, the class-def payload is reused verbatim).
+    """
+    return bool(getattr(registries, "output_instances", None))
+
+
+def _maybe_refork_mutation_field(
+    field: GraphQLField, registries: SchemaRegistries | None
+) -> GraphQLField:
+    """Re-fork a native mutation field's payload into *registries* when forked.
+
+    item-b (B6): a ``DjangoModelMutation`` builds its payload
+    ``GraphQLObjectType`` ONCE at class-def time, pinning its output-field thunk
+    (e.g. ``post: PostGenericType``) to the registry pair the class was defined
+    under — the GLOBAL pair. When that field is mounted into a FORKED schema
+    (a distinct ``SchemaRegistries`` pair), the pinned payload's output field
+    still resolves to the GLOBAL node, so a relation from it reaches another
+    schema's same-named instance — the R1 crux that
+    ``assert_schema_pair_isolation`` raises on.
+
+    The fix: in a forked build, RE-COMPILE the payload via the pair's
+    plain-object cache (``_compile_plain_object_type(source_cls, registries)``)
+    so every output/relation thunk closes over THIS schema's forked nodes, then
+    return a shallow copy of the field carrying the re-forked payload type (args
+    + resolver + description preserved verbatim).
+
+    For the DEFAULT pair this is a no-op (returns *field* unchanged), keeping the
+    single/default-schema path byte-identical.
+
+    Args:
+        field: A mounted graphql-core ``GraphQLField`` (possibly a native mutation
+            field carrying ``extensions['gdx_mutation_source']``).
+        registries: The schema's ``SchemaRegistries`` pair.
+
+    Returns:
+        The field unchanged (default pair, or a non-mutation field), or a copy
+        with the re-forked payload type (forked pair + mutation field).
+    """
+    if not _is_forked_pair(registries):
+        return field
+    source_cls = (field.extensions or {}).get("gdx_mutation_source")
+    if source_cls is None:
+        return field
+    forked_payload = _compile_plain_object_type(source_cls, registries)
+    return GraphQLField(
+        forked_payload,
+        args=field.args,
+        resolve=field.resolve,
+        subscribe=field.subscribe,
+        description=field.description,
+        deprecation_reason=field.deprecation_reason,
+        extensions=field.extensions,
+    )
+
+
 def _compile_plain_object_fields(
     graphene_cls: type, registries: SchemaRegistries | None = None
 ) -> dict[str, GraphQLField]:
@@ -1075,7 +1193,7 @@ def compile_native_root(
             # never reach ``_meta.fields`` (graphene drops them); they are recovered
             # by ``_collect_root_attrs`` below instead. The native mount
             # (``_mount_descriptor_fields``) is what lands them here for a native root.
-            fields[wire_name] = field
+            fields[wire_name] = _maybe_refork_mutation_field(field, registries)
         elif _is_subscription_field(field):
             # Subscription root field (WU7): the mounted ``SubscriptionField``
             # carries the Subscription subclass as its ``type`` (``_meta.output``).
@@ -1104,6 +1222,21 @@ def compile_native_root(
             fields[wire_name] = _build_polymorphic_field(
                 field, source_cls=root, field_name=field_name, registries=registries
             )
+        elif _native_field_declared_django_type(field) is not None:
+            # item-b (B7): a native ``field(SomeDjangoObjectType)`` (NativeField)
+            # eagerly resolves ``field.type`` to the CLASS-DEF GraphQLObjectType, so
+            # neither ``_plain_django_output_type(field.type)`` (needs a class) nor
+            # the scalar arm forks it under a non-default pair — the class-def
+            # instance leaks into a forked schema (assert_schema_pair_isolation R1).
+            # Recover the DECLARED DjangoObjectType class and route it through
+            # ``_build_django_output_field`` so it resolves to THIS pair's forked
+            # instance (default pair -> class-def -> byte-identical).
+            fields[wire_name] = _build_django_output_field(
+                _NativeDjangoFieldView(field, _native_field_declared_django_type(field)),
+                source_cls=root,
+                field_name=field_name,
+                registries=registries,
+            )
         elif _plain_django_output_type(getattr(field, "type", None)) is not None:
             # A plain ``graphene.Field(SomeDjangoObjectType)`` on a root (instead
             # of a ``DjangoObjectField``) reuses the target's canonical
@@ -1130,7 +1263,9 @@ def compile_native_root(
 
     # 2) raw native mutation fields graphene dropped from _meta.fields.
     for attr_name, gql_field in _collect_root_attrs(root).items():
-        fields[to_camel_case(attr_name)] = gql_field
+        fields[to_camel_case(attr_name)] = _maybe_refork_mutation_field(
+            gql_field, registries
+        )
 
     # D8 invariant: every native object type carries extensions['gdx']. The
     # root's GdxMeta carries `graphene_type=root` so dual-backend read-sites

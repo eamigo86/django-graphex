@@ -274,6 +274,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         description: str = "",
         nested_fields: Any = (),
         model_operations: Any = ("create", "update", "delete"),
+        registry: Any = None,
         **options: Any,
     ) -> None:
         """Initialize the subclass with its meta configuration.
@@ -289,6 +290,12 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             model_operations: The mutation operations to generate; any subset of
                 ``("create", "update", "delete")``. Operations left out are not
                 built and their ``*Field()`` builders raise.
+            registry: The graphene ``Registry`` the mutation's output node /
+                input type resolve against. Defaults to the process-global
+                registry (byte-identical). A CUSTOM registry scopes the whole
+                mutation subgraph to a schema's own pair (item-b B6), so a forked
+                ``DjangoGraphQLSchema`` re-forks the payload's output node into
+                its own namespace instead of reaching the global last-wins node.
             **options: Additional options forwarded to the base class.
 
         Raises:
@@ -320,7 +327,12 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         else:
             arguments = {}
 
-        registry = get_global_registry()
+        # item-b (B6): honor an explicit ``Meta.registry`` so the mutation's
+        # output node + nested input types resolve against the schema's own
+        # graphene ``Registry`` (a forked pair). Defaults to the process-global
+        # registry, so the default/single-schema path is byte-identical.
+        if registry is None:
+            registry = get_global_registry()
 
         factory_kwargs = {
             "model": model,
@@ -498,10 +510,25 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             # (already set when the arg was built).  Without this the wire arg
             # would be ``new_<model>`` and a ``new<Model>: {...}`` document
             # would be rejected.
-            _args = {
-                to_camel_case(_arg_name): _arg
-                for _arg_name, _arg in global_arguments.get(_op, {}).items()
-            }
+            # Legacy ``Input`` / ``Arguments`` classes may declare graphene
+            # scalar args (e.g. ``extra = graphene.String()``); native builds
+            # GraphQLField args as graphql-core ``GraphQLArgument`` instances, so
+            # convert any non-``GraphQLArgument`` entry (a graphene mounted type)
+            # before mounting. Already-native args (the ``input`` / ``id`` args
+            # built above) pass through unchanged.
+            from graphql import GraphQLArgument as _GQLArg
+
+            from django_graphex.native._args import (
+                graphene_arg_to_graphql_argument as _arg_conv,
+            )
+
+            _args = {}
+            for _arg_name, _arg in global_arguments.get(_op, {}).items():
+                _wire = to_camel_case(_arg_name)
+                if isinstance(_arg, _GQLArg):
+                    _args[_wire] = _arg
+                else:
+                    _args[_wire] = _arg_conv(_arg, name=_arg_name)
             _resolver = op_to_resolver.get(_op)
             if _resolver is None:
                 continue  # pragma: no cover — model_operations already validated
@@ -513,6 +540,17 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                 resolve=_resolver,
                 description=description or f"Native {_op} mutation for {model.__name__}",
             )
+            # item-b (B6): record the mutation SOURCE class on the field's
+            # extensions so a FORKED schema can RE-COMPILE the payload against its
+            # own registry pair. The payload built here pins relation/output thunks
+            # to the pair the class was DEFINED under (the global pair at class-def
+            # time); a forked schema must re-fork the payload so its output field
+            # (e.g. ``post: PostGenericType``) resolves to the SCHEMA's forked node,
+            # not the global last-wins one (else assert_schema_pair_isolation fires).
+            _gql_field.extensions = {
+                **(_gql_field.extensions or {}),
+                "gdx_mutation_source": cls,
+            }
             cls._native_fields[_op] = _gql_field
             _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
             _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))

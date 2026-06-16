@@ -12,6 +12,42 @@ from django.db.models.expressions import Window
 from django.db.models.functions import RowNumber
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
+from graphql import graphql_sync
+
+from django_graphex import DjangoGraphQLSchema, ObjectType
+
+
+def _execute(schema, query):
+    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free).
+
+    Drop-in for the retired ``schema.execute(query)``: returns the graphql-core
+    ``ExecutionResult`` (same ``.data`` / ``.errors`` shape graphene returned).
+    """
+    return graphql_sync(schema.graphql_schema, query)
+
+
+def _gtype(name, bases, ns):
+    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+
+    Native ``ObjectType`` / ``DjangoObjectType`` / ``DjangoListObjectType`` are
+    pydantic ``BaseModel`` subclasses. When such a class is built dynamically with
+    ``type(name, bases, ns)`` (instead of a ``class`` statement), pydantic's
+    metaclass requires ``ns['__module__']`` and recognizes a nested ``Meta`` class
+    ONLY when its ``__qualname__`` is ``"<Outer>.Meta"`` (the value a real ``class``
+    body would produce). This helper supplies both so the dynamic form behaves
+    exactly like the equivalent ``class`` statement (no behavior change).
+    """
+    ns = dict(ns)
+    ns.setdefault("__module__", __name__)
+    ns["__qualname__"] = name
+    for attr_name, attr_val in list(ns.items()):
+        if isinstance(attr_val, type):
+            try:
+                attr_val.__qualname__ = f"{name}.{attr_name}"
+            except (AttributeError, TypeError):  # pragma: no cover - defensive
+                pass
+    return type(name, bases, ns)
+
 
 # ---------------------------------------------------------------------------
 # Phase 1: Setting + flag foundation
@@ -206,7 +242,7 @@ def _make_test_nested_field():
 
     # Use type() to define inner classes so the registry variable is captured
     # via closure in the Meta namespace correctly.
-    _PostListType = type(
+    _PostListType = _gtype(
         "_PostListType",
         (DjangoListObjectType,),
         {
@@ -222,7 +258,7 @@ def _make_test_nested_field():
         },
     )
 
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_AuthorType",
         (DjangoObjectType,),
         {
@@ -302,7 +338,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         from tests.models import Post
 
         _reg = {}
-        _PostListType3 = type(
+        _PostListType3 = _gtype(
             "_M2MPostListType",
             (DjangoListObjectType,),
             {
@@ -317,7 +353,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 )
             },
         )
-        _FakeM2MType = type(
+        _FakeM2MType = _gtype(
             "_FakeM2MType",
             (DjangoObjectType,),
             {
@@ -355,7 +391,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         from tests.models import Post
 
         _reg = {}
-        _PostListType2 = type(
+        _PostListType2 = _gtype(
             "_PostListType2",
             (DjangoListObjectType,),
             {
@@ -370,7 +406,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 )
             },
         )
-        _FakeType = type(
+        _FakeType = _gtype(
             "_FakeType",
             (DjangoObjectType,),
             {
@@ -587,7 +623,7 @@ _REG_WALK = {}
 
 def _build_walk_schema():
     """Build a minimal graphene Schema for walk tests with Author + paginated posts."""
-    import graphene
+
 
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -600,13 +636,13 @@ def _build_walk_schema():
 
     _REG_WALK.clear()
 
-    _PostType = type(
+    _PostType = _gtype(
         "_WalkPostType",
         (DjangoObjectType,),
         {"Meta": type("Meta", (), {"model": Post, "registry": _REG_WALK})},
     )
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_WalkPostListType",
         (DjangoListObjectType,),
         {
@@ -622,7 +658,7 @@ def _build_walk_schema():
         },
     )
 
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_WalkAuthorType",
         (DjangoObjectType,),
         {
@@ -631,18 +667,18 @@ def _build_walk_schema():
         },
     )
 
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_WalkAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG_WALK})},
     )
 
-    from graphene import Schema
 
-    schema = Schema(
-        query=type(
+
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "WalkQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -669,7 +705,7 @@ class TestWalkerPaginationArgExtraction(TestCase):
             Post.objects.create(title=f"WP{i}", author=cls.author)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -814,7 +850,7 @@ class TestWalkerPaginationArgExtraction(TestCase):
 
     def test_g2_custom_resolver_falls_back_without_crash(self):
         """G2: custom results resolver -> graceful fallback, no AttributeError/crash."""
-        import graphene
+
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.types import (
@@ -825,18 +861,18 @@ class TestWalkerPaginationArgExtraction(TestCase):
         from tests.models import Author, Post
 
         _g2_reg = {}
-        _PostType_g2 = type(
+        _PostType_g2 = _gtype(
             "_G2PostType",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _g2_reg})},
         )
         # No pagination -> no GenericPaginationField on results
-        _PostListTypeCustom = type(
+        _PostListTypeCustom = _gtype(
             "_G2PostListTypeCustom",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _g2_reg})},
         )
-        _AuthorTypeCustom = type(
+        _AuthorTypeCustom = _gtype(
             "_G2AuthorTypeCustom",
             (DjangoObjectType,),
             {
@@ -846,18 +882,18 @@ class TestWalkerPaginationArgExtraction(TestCase):
                 "Meta": type("Meta", (), {"model": Author, "registry": _g2_reg}),
             },
         )
-        _AuthorListTypeCustom = type(
+        _AuthorListTypeCustom = _gtype(
             "_G2AuthorListTypeCustom",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Author, "registry": _g2_reg})},
         )
 
-        from graphene import Schema
 
-        schema = Schema(
-            query=type(
+
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "G2Query",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListTypeCustom)},
             )
         )
@@ -867,7 +903,7 @@ class TestWalkerPaginationArgExtraction(TestCase):
             "{ authors { results { posts { results { id } totalCount } } totalCount } }"
         )
         # Must not raise an exception.
-        result = schema.execute(query)
+        result = _execute(schema, query)
         self.assertIsNone(
             result.errors,
             f"G2: query with custom resolver must not error: {result.errors}",
@@ -875,7 +911,7 @@ class TestWalkerPaginationArgExtraction(TestCase):
 
         # No window SQL (fell back to build_prefetch or plain path)
         with CaptureQueriesContext(connection) as ctx:
-            schema.execute(query)
+            _execute(schema, query)
         sql_list = [q["sql"].upper() for q in ctx.captured_queries]
         window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
         self.assertEqual(
@@ -1206,7 +1242,7 @@ class TestG4OrderingParity(TestCase):
 
 def _build_c3_schema(page_size=5, use_page=False):
     """Build a minimal schema for C3 e2e tests with a paginated nested posts field."""
-    import graphene
+
 
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import (
@@ -1227,13 +1263,13 @@ def _build_c3_schema(page_size=5, use_page=False):
         else LimitOffsetGraphqlPagination(default_limit=page_size)
     )
 
-    _PostType = type(
+    _PostType = _gtype(
         "_C3PostType",
         (DjangoObjectType,),
         {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
     )
 
-    _PostListType = type(
+    _PostListType = _gtype(
         "_C3PostListType",
         (DjangoListObjectType,),
         {
@@ -1249,7 +1285,7 @@ def _build_c3_schema(page_size=5, use_page=False):
         },
     )
 
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_C3AuthorType",
         (DjangoObjectType,),
         {
@@ -1258,16 +1294,16 @@ def _build_c3_schema(page_size=5, use_page=False):
         },
     )
 
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_C3AuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "_C3Query",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -1290,7 +1326,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
             cls.posts.append(p)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -1309,12 +1345,12 @@ class TestAlreadyPaginatedListResolver(TestCase):
         from tests.models import Author, Post
 
         _REG = {}
-        _PostType = type(
+        _PostType = _gtype(
             "_7P",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_7PL",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
@@ -1369,12 +1405,12 @@ class TestAlreadyPaginatedListResolver(TestCase):
         from tests.models import Author, Post
 
         _REG = {}
-        _PostType = type(
+        _PostType = _gtype(
             "_72P",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_72PL",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
@@ -1542,7 +1578,7 @@ class TestC3FallbackRegressions(TestCase):
             p.tags.add(cls.tag)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -1602,7 +1638,7 @@ class TestC3FallbackRegressions(TestCase):
         test for pre-check 3 is
         TestBuildWindowPrefetchPreChecks.test_precheck_returns_none_when_m2m.
         """
-        import graphene
+
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1616,12 +1652,12 @@ class TestC3FallbackRegressions(TestCase):
         _REG = {}
         paginator = LimitOffsetGraphqlPagination(default_limit=5)
 
-        _TagType = type(
+        _TagType = _gtype(
             "_M2MTagType",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Tag, "registry": _REG})},
         )
-        _TagListType = type(
+        _TagListType = _gtype(
             "_M2MTagListType",
             (DjangoListObjectType,),
             {
@@ -1632,7 +1668,7 @@ class TestC3FallbackRegressions(TestCase):
                 )
             },
         )
-        _PostType = type(
+        _PostType = _gtype(
             "_M2MPostType",
             (DjangoObjectType,),
             {
@@ -1640,16 +1676,16 @@ class TestC3FallbackRegressions(TestCase):
                 "Meta": type("Meta", (), {"model": Post, "registry": _REG}),
             },
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_M2MPostListType",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
         )
 
-        schema = graphene.Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_M2MQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"posts": DjangoListObjectField(_PostListType)},
             )
         )
@@ -1667,7 +1703,7 @@ class TestC3FallbackRegressions(TestCase):
 
     def test_fallback_unbounded_no_window_sql(self):
         """9.8: Unbounded paginator (no default_limit, no limit arg) → in-memory path."""
-        import graphene
+
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1682,12 +1718,12 @@ class TestC3FallbackRegressions(TestCase):
         # Unbounded: no default_limit, no max_limit → prefetch_window_slice returns None.
         paginator = LimitOffsetGraphqlPagination()  # DEFAULT_PAGE_SIZE=None → unbounded
 
-        _PostType = type(
+        _PostType = _gtype(
             "_UbPostType",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_UbPostListType",
             (DjangoListObjectType,),
             {
@@ -1698,7 +1734,7 @@ class TestC3FallbackRegressions(TestCase):
                 )
             },
         )
-        _AuthorType = type(
+        _AuthorType = _gtype(
             "_UbAuthorType",
             (DjangoObjectType,),
             {
@@ -1706,16 +1742,16 @@ class TestC3FallbackRegressions(TestCase):
                 "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
             },
         )
-        _AuthorListType = type(
+        _AuthorListType = _gtype(
             "_UbAuthorListType",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
         )
 
-        schema = graphene.Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_UbQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
             )
         )
@@ -1730,7 +1766,7 @@ class TestC3FallbackRegressions(TestCase):
 
     def test_fallback_non_concrete_ordering_no_window_sql(self):
         """9.9: Non-concrete ordering term → pre-check 5 fallback, no ROW_NUMBER()."""
-        import graphene
+
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1748,12 +1784,12 @@ class TestC3FallbackRegressions(TestCase):
             default_limit=5, ordering="nonexistent_computed"
         )
 
-        _PostType = type(
+        _PostType = _gtype(
             "_NcPostType",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_NcPostListType",
             (DjangoListObjectType,),
             {
@@ -1764,7 +1800,7 @@ class TestC3FallbackRegressions(TestCase):
                 )
             },
         )
-        _AuthorType = type(
+        _AuthorType = _gtype(
             "_NcAuthorType",
             (DjangoObjectType,),
             {
@@ -1772,16 +1808,16 @@ class TestC3FallbackRegressions(TestCase):
                 "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
             },
         )
-        _AuthorListType = type(
+        _AuthorListType = _gtype(
             "_NcAuthorListType",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
         )
 
-        schema = graphene.Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_NcQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
             )
         )
@@ -1796,7 +1832,7 @@ class TestC3FallbackRegressions(TestCase):
 
     def test_fallback_full_load_no_window_sql(self):
         """9.10: Full-load selection → pre-check 6 fallback, no ROW_NUMBER()."""
-        import graphene
+
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1820,12 +1856,12 @@ class TestC3FallbackRegressions(TestCase):
         # Instead, we'll use the compute-field route by patching _compute_child_only to return None.
         from unittest.mock import patch
 
-        _PostType = type(
+        _PostType = _gtype(
             "_FlPostType",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_FlPostListType",
             (DjangoListObjectType,),
             {
@@ -1836,7 +1872,7 @@ class TestC3FallbackRegressions(TestCase):
                 )
             },
         )
-        _AuthorType = type(
+        _AuthorType = _gtype(
             "_FlAuthorType",
             (DjangoObjectType,),
             {
@@ -1844,16 +1880,16 @@ class TestC3FallbackRegressions(TestCase):
                 "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
             },
         )
-        _AuthorListType = type(
+        _AuthorListType = _gtype(
             "_FlAuthorListType",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
         )
 
-        schema = graphene.Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_FlQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
             )
         )
@@ -1868,7 +1904,7 @@ class TestC3FallbackRegressions(TestCase):
 
     def test_fallback_query_count_m2m_matches_baseline(self):
         """9.11: M2M assertNumQueries matches pre-Phase-C baseline AND results identical."""
-        import graphene
+
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1882,12 +1918,12 @@ class TestC3FallbackRegressions(TestCase):
         _REG = {}
         paginator = LimitOffsetGraphqlPagination(default_limit=5)
 
-        _TagType = type(
+        _TagType = _gtype(
             "_QM2MTagType",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Tag, "registry": _REG})},
         )
-        _TagListType = type(
+        _TagListType = _gtype(
             "_QM2MTagListType",
             (DjangoListObjectType,),
             {
@@ -1898,7 +1934,7 @@ class TestC3FallbackRegressions(TestCase):
                 )
             },
         )
-        _PostType = type(
+        _PostType = _gtype(
             "_QM2MPostType",
             (DjangoObjectType,),
             {
@@ -1906,15 +1942,15 @@ class TestC3FallbackRegressions(TestCase):
                 "Meta": type("Meta", (), {"model": Post, "registry": _REG}),
             },
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_QM2MPostListType",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
         )
-        schema = graphene.Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_QM2MQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"posts": DjangoListObjectField(_PostListType)},
             )
         )
@@ -1956,7 +1992,7 @@ class TestC3ConstantQueryCount(TestCase):
             cls.authors.append(a)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -2029,7 +2065,7 @@ def _build_c3_filtered_schema(page_size=5):
     called manager.count() WITHOUT applying the user filter, returning the
     unfiltered partition size instead of the filtered one.
     """
-    import graphene
+
 
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -2043,12 +2079,12 @@ def _build_c3_filtered_schema(page_size=5):
     _REG = {}
     paginator = LimitOffsetGraphqlPagination(default_limit=page_size)
 
-    _PostType = type(
+    _PostType = _gtype(
         "_FC3PostType",
         (DjangoObjectType,),
         {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
     )
-    _PostListType = type(
+    _PostListType = _gtype(
         "_FC3PostListType",
         (DjangoListObjectType,),
         {
@@ -2064,7 +2100,7 @@ def _build_c3_filtered_schema(page_size=5):
             )
         },
     )
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_FC3AuthorType",
         (DjangoObjectType,),
         {
@@ -2072,16 +2108,16 @@ def _build_c3_filtered_schema(page_size=5):
             "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
         },
     )
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_FC3AuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "_FC3Query",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -2117,7 +2153,7 @@ class TestFilteredOffsetBeyondEndTotalCount(TestCase):
             Post.objects.create(title=f"OtherPost{i:02d}", author=cls.author)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -2289,7 +2325,7 @@ class TestBuildWindowPrefetchWithSubSelection(TestCase):
 
 def _build_cursor_schema():
     """Build a minimal schema with a CursorGraphqlPagination nested posts field."""
-    import graphene
+
 
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import CursorGraphqlPagination
@@ -2303,12 +2339,12 @@ def _build_cursor_schema():
     _REG = {}
     paginator = CursorGraphqlPagination(ordering="id", page_size=5)
 
-    _PostType = type(
+    _PostType = _gtype(
         "_CurPostType",
         (DjangoObjectType,),
         {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
     )
-    _PostListType = type(
+    _PostListType = _gtype(
         "_CurPostListType",
         (DjangoListObjectType,),
         {
@@ -2323,7 +2359,7 @@ def _build_cursor_schema():
             )
         },
     )
-    _AuthorType = type(
+    _AuthorType = _gtype(
         "_CurAuthorType",
         (DjangoObjectType,),
         {
@@ -2331,16 +2367,16 @@ def _build_cursor_schema():
             "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
         },
     )
-    _AuthorListType = type(
+    _AuthorListType = _gtype(
         "_CurAuthorListType",
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
     )
 
-    schema = graphene.Schema(
-        query=type(
+    schema = DjangoGraphQLSchema(
+        query=_gtype(
             "_CurQuery",
-            (graphene.ObjectType,),
+            (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
         )
     )
@@ -2366,7 +2402,7 @@ class TestCursorFallbackParity(TestCase):
             cls.posts.append(p)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -2436,13 +2472,13 @@ class TestG4NoOrderingE2EParity(TestCase):
             cls.posts.append(p)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         assert result.errors is None, result.errors
         return result.data
 
     def test_no_ordering_nested_page_on_vs_off_identical_rows(self):
         """G4 e2e: no ordering arg -> Phase C ON and OFF return identical rows (same pks, same order)."""
-        import graphene
+
         from django.test import override_settings
 
         from django_graphex.fields import DjangoNestedListObjectField
@@ -2458,12 +2494,12 @@ class TestG4NoOrderingE2EParity(TestCase):
         # Paginator with NO default ordering (ordering="") — G4 scenario.
         paginator = LimitOffsetGraphqlPagination(default_limit=3)
 
-        _PostType = type(
+        _PostType = _gtype(
             "_G4E2EPostType",
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _REG})},
         )
-        _PostListType = type(
+        _PostListType = _gtype(
             "_G4E2EPostListType",
             (DjangoListObjectType,),
             {
@@ -2474,7 +2510,7 @@ class TestG4NoOrderingE2EParity(TestCase):
                 )
             },
         )
-        _AuthorType = type(
+        _AuthorType = _gtype(
             "_G4E2EAuthorType",
             (DjangoObjectType,),
             {
@@ -2482,15 +2518,15 @@ class TestG4NoOrderingE2EParity(TestCase):
                 "Meta": type("Meta", (), {"model": Author, "registry": _REG}),
             },
         )
-        _AuthorListType = type(
+        _AuthorListType = _gtype(
             "_G4E2EAuthorListType",
             (DjangoListObjectType,),
             {"Meta": type("Meta", (), {"model": Author, "registry": _REG})},
         )
-        schema = graphene.Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_G4E2EQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
             )
         )
@@ -2545,7 +2581,7 @@ class TestEmptyWindowPageNoCountN1(TestCase):
             cls.authors.append(a)
 
     def _exec(self, schema, query):
-        result = schema.execute(query)
+        result = _execute(schema, query)
         assert result.errors is None, result.errors
         return result.data
 

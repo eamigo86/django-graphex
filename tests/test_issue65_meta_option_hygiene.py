@@ -119,7 +119,12 @@ class TestIncludeFieldsOnInputAndListTypes:
                 exclude_fields = ("body", "is_active")
                 include_fields = ("body",)  # force-include body despite exclude
 
-        field_names = set(WidgetCreateInput._meta.fields.keys())
+        # Native contract: the canonical field surface is the COMPILED
+        # GraphQLInputObjectType (``_meta.fields`` is intentionally empty for
+        # scalar-only models under the native backend — scalars are derived from
+        # the model + pydantic schema, not from graphene field descriptors). The
+        # wire field names are camelCase aliases (e.g. ``is_active`` -> ``isActive``).
+        field_names = set(WidgetCreateInput._meta.graphql_input_type.fields.keys())
         assert "title" in field_names, (
             f"'title' must be in WidgetCreateInput (not excluded) but got: {field_names}"
         )
@@ -128,8 +133,8 @@ class TestIncludeFieldsOnInputAndListTypes:
             f"Got: {field_names}"
         )
         # is_active was excluded and NOT in include_fields, so it must be absent.
-        assert "is_active" not in field_names, (
-            f"'is_active' must be excluded (not in include_fields) but got: {field_names}"
+        assert "isActive" not in field_names, (
+            f"'isActive' must be excluded (not in include_fields) but got: {field_names}"
         )
 
     def test_include_fields_overrides_only_on_input_type(self):
@@ -146,7 +151,9 @@ class TestIncludeFieldsOnInputAndListTypes:
                 only_fields = ("title",)
                 include_fields = ("body",)  # force-include body despite only_fields
 
-        field_names = set(WidgetUpdateInput._meta.fields.keys())
+        # Native contract: assert the COMPILED GraphQLInputObjectType fields
+        # (see the create-input test above for why ``_meta.fields`` is empty).
+        field_names = set(WidgetUpdateInput._meta.graphql_input_type.fields.keys())
         assert "title" in field_names, (
             f"'title' must be in only_fields but got: {field_names}"
         )
@@ -168,8 +175,12 @@ class TestIncludeFieldsOnInputAndListTypes:
                 only_fields = ("title",)
                 include_fields = ("body",)  # force-include body alongside title
 
-        # The inner baseType's fields should include both title and body.
-        base_fields = set(WidgetListType._meta.baseType._meta.fields.keys())
+        # Native contract: the inner baseType's canonical field surface is its
+        # COMPILED GraphQLObjectType (``_meta.fields`` is intentionally empty for
+        # scalar-only models natively). Wire names are camelCase.
+        base_fields = set(
+            WidgetListType._meta.baseType._meta.graphql_output_type.fields.keys()
+        )
         assert "title" in base_fields, (
             f"'title' must be in baseType fields but got: {base_fields}"
         )
@@ -177,8 +188,8 @@ class TestIncludeFieldsOnInputAndListTypes:
             f"'body' must be force-included by include_fields but got: {base_fields}"
         )
         # is_active was not in only_fields and not in include_fields.
-        assert "is_active" not in base_fields, (
-            f"'is_active' must not appear (not in only_fields or include_fields) "
+        assert "isActive" not in base_fields, (
+            f"'isActive' must not appear (not in only_fields or include_fields) "
             f"but got: {base_fields}"
         )
 

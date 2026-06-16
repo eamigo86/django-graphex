@@ -447,6 +447,7 @@ def compile_output_fields(
     *,
     only_fields: list[str] | tuple[str, ...] | None = None,
     exclude_fields: list[str] | tuple[str, ...] | None = None,
+    include_fields: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, GraphQLField]:
     """Compile all output fields for a Django model.
 
@@ -459,6 +460,11 @@ def compile_output_fields(
         registry: Object with ``get_compiled(model_cls)`` method.
         only_fields: If provided, only include fields in this list.
         exclude_fields: If provided, exclude fields in this list.
+        include_fields: If provided, FORCE-include these fields even when they
+            would be skipped by ``only_fields`` / ``exclude_fields`` (issue #65).
+            ``include_fields`` does NOT restrict the output (use ``only_fields``
+            for that); it overrides the skip filters for the named fields,
+            mirroring ``converter.construct_fields`` on the graphene path.
 
     Returns:
         Dict of ``{camelCase_name: GraphQLField}``.
@@ -479,12 +485,25 @@ def compile_output_fields(
         if field_name is None:
             continue
 
+        # ``include_fields`` force-includes a field even when only/exclude would
+        # skip it (issue #65). Mirrors ``converter.construct_fields`` on the
+        # graphene path: a force-included field bypasses BOTH skip filters.
+        _force_included = include_fields is not None and field_name in include_fields
+
         # Apply only_fields filter
-        if only_fields is not None and field_name not in only_fields:
+        if (
+            not _force_included
+            and only_fields is not None
+            and field_name not in only_fields
+        ):
             continue
 
         # Apply exclude_fields filter
-        if exclude_fields is not None and field_name in exclude_fields:
+        if (
+            not _force_included
+            and exclude_fields is not None
+            and field_name in exclude_fields
+        ):
             continue
 
         # Skip auto-created reverse relations unless explicitly requested.

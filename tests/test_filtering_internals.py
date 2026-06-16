@@ -7,19 +7,16 @@ lookups with isnull/in, non-relation ``__`` paths, the ``_relation_model`` /
 ``_relation_target`` exception guards, and the backend no-op paths.
 """
 
-import graphene
 import pytest
 from django.db import models
 from graphql import GraphQLError, Undefined
 
-from django_graphex.filtering import schema as fschema
+from django_graphex.filtering import native_schema as fschema
 from django_graphex.filtering.backend import (
     NativeFilterBackend,
     resolve_filter_backend,
 )
-from django_graphex.filtering.schema import (
-    _choices_enum,
-    _field_scalar,
+from django_graphex.filtering.native_schema import (
     _relation_model,
     build_filter_input_type,
 )
@@ -46,23 +43,17 @@ class FilterModel(models.Model):
 
 
 # --------------------------------------------------------------------------- #
-# schema.py                                                                    #
+# native_schema.py — the native ``<Model>Filterinput`` builder                 #
+#                                                                              #
+# S7 (graphene-removal): the graphene filter-input builder (``filtering/schema``)
+# was deleted. These tests now exercise the NATIVE builder
+# (``filtering/native_schema.build_filter_input_type``), which returns a
+# graphql-core ``GraphQLInputObjectType`` whose field surface is ``.fields``
+# (camelCase wire keys), NOT a graphene type with ``_meta.fields``. The
+# graphene-only ``_field_scalar`` / ``_choices_enum`` unit tests are pruned (those
+# helpers do not exist natively — the native builder derives scalars via
+# ``_scalar_by_internal()`` and registry-keyed enums).
 # --------------------------------------------------------------------------- #
-def test_field_scalar_unknown_internal_type_degrades_to_string():
-    # DurationField -> String per the scalar map; an unmapped one also -> String.
-    class _Weird(models.Field):
-        def get_internal_type(self):
-            return "TotallyUnknownField"
-
-    assert _field_scalar(_Weird()) is graphene.String
-
-
-def test_choices_enum_missing_falls_back_to_string():
-    # No enum registered for this field name -> graphene.String fallback.
-    field = FilterModel._meta.get_field("name")
-    assert _choices_enum(field, Registry()) is graphene.String
-
-
 def test_build_filter_input_type_returns_none_without_fields():
     assert build_filter_input_type(FilterModel, None) is None
     assert build_filter_input_type(FilterModel, []) is None
@@ -72,30 +63,31 @@ def test_build_filter_input_type_default_registry():
     # registry=None path resolves the global registry without error.
     built = build_filter_input_type(FilterModel, ["name"], registry=None)
     assert built is not None
-    assert "name" in built._meta.fields
+    assert "name" in built.fields
 
 
 def test_pk_relation_lookups_input_includes_isnull_and_in():
+    from graphql import GraphQLList
+
     R = Registry()
     built = build_filter_input_type(
         FilterModel,
         {"author": ("exact", "in", "isnull")},
         registry=R,
     )
-    author_input = built._meta.fields["author"].type
-    fields = set(author_input._meta.fields)
+    author_input = built.fields["author"].type
+    fields = set(author_input.fields)
     assert {"exact", "in", "isnull"} <= fields
     # `in` is a List, `isnull` a Boolean, `exact` the pk scalar.
-    assert isinstance(author_input._meta.fields["in"].type, graphene.List)
+    assert isinstance(author_input.fields["in"].type, GraphQLList)
 
 
 def test_relation_direct_list_form_uses_default_pk_lookups():
-    # List-form (no explicit lookups) relation -> `_pk_lookups_input_type` with
-    # `lookups=None` resolves the related pk default lookup set.
+    # List-form (no explicit lookups) relation -> the related pk default lookup set.
     R = Registry()
     built = build_filter_input_type(FilterModel, ["author"], registry=R)
-    author_input = built._meta.fields["author"].type
-    assert "exact" in author_input._meta.fields
+    author_input = built.fields["author"].type
+    assert "exact" in author_input.fields
 
 
 def test_non_relation_double_underscore_path_falls_back_to_leaf():
@@ -108,7 +100,7 @@ def test_non_relation_double_underscore_path_falls_back_to_leaf():
     assert built is not None
     assert built2 is not None
     # `name__bad` is not a real field so it is dropped from the namespace.
-    assert "name__bad" not in built2._meta.fields
+    assert "name__bad" not in built2.fields
 
 
 def test_relation_model_returns_none_for_scalar_and_missing():
@@ -118,7 +110,7 @@ def test_relation_model_returns_none_for_scalar_and_missing():
 
 
 def test_lookups_input_choices_field_uses_enum(db):
-    # A choices field declared in filter_fields routes through `_choices_enum`.
+    # A choices field declared in filter_fields compiles into the input type.
     class ChoiceModel(models.Model):
         STATUS = (("a", "A"), ("b", "B"))
         status = models.CharField(max_length=1, choices=STATUS)
@@ -128,7 +120,7 @@ def test_lookups_input_choices_field_uses_enum(db):
 
     R = Registry()
     built = build_filter_input_type(ChoiceModel, {"status": ("exact",)}, registry=R)
-    assert "status" in built._meta.fields
+    assert "status" in built.fields
 
 
 def test_filter_fields_dict_with_none_value_raises_improperly_configured():
@@ -146,7 +138,7 @@ def test_filter_fields_list_with_none_uses_default_lookups():
     R = Registry()
     built_list = build_filter_input_type(FilterModel, ["name"], registry=R)
     assert built_list is not None
-    assert "name" in built_list._meta.fields
+    assert "name" in built_list.fields
 
 
 # --------------------------------------------------------------------------- #
@@ -213,7 +205,9 @@ def test_resolve_filter_backend_returns_native():
 
 def test_input_cache_reuses_built_type():
     R = Registry()
-    fschema._INPUT_CACHE.clear()
+    # Native cache is ``_NATIVE_INPUT_CACHE`` (the graphene ``_INPUT_CACHE`` was
+    # deleted with ``filtering/schema.py``).
+    fschema._NATIVE_INPUT_CACHE.clear()
     first = build_filter_input_type(FilterModel, ["name"], registry=R)
     second = build_filter_input_type(FilterModel, ["name"], registry=R)
     assert first is second
@@ -446,9 +440,10 @@ def test_native_backend_build_input_type_returns_graphql_input_object_type():
 
 @pytestmark_native
 def test_native_custom_filter_field_uses_declared_graphene_type():
-    """A custom ``@filter_field(graphene.Int)`` arg must render as the matching
+    """A custom ``@filter_field(GraphQLInt)`` arg must render as the matching
     graphql-core scalar (``GraphQLInt``) under the native backend, NOT degrade
-    to ``GraphQLString``. Otherwise SDL parity with graphene breaks (WU4/WU10).
+    to ``GraphQLString``. The 2.0 public form declares the native graphql-core
+    type directly (the legacy graphene type still coerces via the unwrap bridge).
     """
     from graphql import GraphQLFloat, GraphQLInt, GraphQLString
 
@@ -458,15 +453,15 @@ def test_native_custom_filter_field_uses_declared_graphene_type():
 
     custom_filters = [
         ("search_count", lambda qs, info, value: qs, {
-            "graphene_type": graphene.Int,
+            "graphene_type": GraphQLInt,
             "description": "Count search",
         }),
         ("min_score", lambda qs, info, value: qs, {
-            "graphene_type": graphene.Float,
+            "graphene_type": GraphQLFloat,
             "description": None,
         }),
         ("text_search", lambda qs, info, value: qs, {
-            "graphene_type": graphene.String,
+            "graphene_type": GraphQLString,
             "description": None,
         }),
     ]

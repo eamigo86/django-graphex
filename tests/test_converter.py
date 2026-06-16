@@ -1,10 +1,41 @@
 # -*- coding: utf-8 -*-
-"""Tests for django_graphex.converter module."""
+"""Tests for Django field -> GraphQL conversion (native backend).
+
+Phase 7 graphene-removal: the public conversion of a Django model into a GraphQL
+OUTPUT type is now performed by the NATIVE output compiler
+(``django_graphex.native.output_compiler``). It reads ``model._meta`` directly and
+maps each Django scalar field to a graphql-core scalar (CharField->GraphQLString,
+DateField->GdxDate, ...). The legacy graphene ``convert_django_field`` SCALAR
+dispatchers return a dead-scalar sentinel under ``GDX_BACKEND=native`` (the
+graphene scalar descriptor is never read on the native output path), so the OLD
+``isinstance(out, graphene.String)`` assertions no longer describe native
+behavior. Each scalar test below was CONVERTED to drive the SAME conceptual code
+path on native — ``_to_graphql_field`` — and assert the graphql-core scalar it
+produces, preserving the original per-field-type coverage.
+
+RELATION conversion (FK / M2M / reverse) is still done by ``convert_django_field``
+on both backends (it returns a graphene ``Dynamic`` descriptor that the native
+output thunk consumes), so the relation tests keep exercising ``convert_django_field``
+unchanged. The pure helpers ``convert_choice_name`` / ``choice_enum_name`` /
+``get_choices`` and the choices->Enum conversion are backend-independent and are
+likewise exercised through their original entry points.
+
+Run: GDX_BACKEND=native .venv/bin/python -m pytest tests/test_converter.py \
+    -q -o addopts=""
+"""
 
 import graphene
 from django.contrib.auth.models import User
 from django.db import models
 from django.test import TestCase
+from graphql import (
+    GraphQLBoolean,
+    GraphQLFloat,
+    GraphQLID,
+    GraphQLInt,
+    GraphQLNonNull,
+    GraphQLString,
+)
 
 from django_graphex.converter import (
     convert_choice_name,
@@ -12,8 +43,47 @@ from django_graphex.converter import (
     convert_django_field_with_choices,
     get_choices,
 )
+from django_graphex.native.output_compiler import _to_graphql_field
+from django_graphex.native.scalars import (
+    GdxDate,
+    GdxDateTime,
+    GdxJSONString,
+    GdxTime,
+    GdxUUID,
+)
 
 from .models import BasicModel
+
+
+class _StubRegistry:
+    """Minimal registry for ``_to_graphql_field`` (scalars never touch it)."""
+
+    def __init__(self):
+        self._compiled = {}
+
+    def get_compiled(self, model_cls):
+        return self._compiled.get(model_cls)
+
+    def register_compiled(self, model_cls, gql_type):
+        self._compiled[model_cls] = gql_type
+
+
+def _native_scalar(field):
+    """Run the NATIVE scalar conversion for ``field`` and return its scalar.
+
+    Drives ``_to_graphql_field`` (the live native equivalent of the retired
+    graphene scalar dispatchers), unwraps ``GraphQLNonNull`` (only the pk is
+    non-null on output), and returns the underlying graphql-core scalar.
+    """
+    field_map = _to_graphql_field(field, _StubRegistry())
+    assert len(field_map) == 1, (
+        f"native scalar conversion must yield exactly one field, got {field_map!r}"
+    )
+    gql_field = next(iter(field_map.values()))
+    gql_type = gql_field.type
+    if isinstance(gql_type, GraphQLNonNull):
+        gql_type = gql_type.of_type
+    return gql_type
 
 
 class TestModel(models.Model):
@@ -57,115 +127,77 @@ class TestModel(models.Model):
 
 
 class ConverterTest(TestCase):
-    """Test cases for converter functions."""
+    """Test cases for native Django-field -> GraphQL-scalar conversion."""
 
     def test_convert_char_field(self):
-        """Test CharField conversion."""
+        """CharField -> GraphQLString."""
         field = TestModel._meta.get_field("char_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.String)
+        self.assertIs(_native_scalar(field), GraphQLString)
 
     def test_convert_text_field(self):
-        """Test TextField conversion."""
+        """TextField -> GraphQLString."""
         field = TestModel._meta.get_field("text_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.String)
+        self.assertIs(_native_scalar(field), GraphQLString)
 
     def test_convert_integer_field(self):
-        """Test IntegerField conversion."""
+        """IntegerField -> GraphQLInt."""
         field = TestModel._meta.get_field("integer_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.Int)
+        self.assertIs(_native_scalar(field), GraphQLInt)
 
     def test_convert_float_field(self):
-        """Test FloatField conversion."""
+        """FloatField -> GraphQLFloat."""
         field = TestModel._meta.get_field("float_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.Float)
+        self.assertIs(_native_scalar(field), GraphQLFloat)
 
     def test_convert_decimal_field(self):
-        """Test DecimalField conversion."""
+        """DecimalField -> GraphQLFloat (graphene-django parity, #1508)."""
         field = TestModel._meta.get_field("decimal_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.Float)
+        self.assertIs(_native_scalar(field), GraphQLFloat)
 
     def test_convert_boolean_field(self):
-        """Test BooleanField conversion."""
+        """BooleanField -> GraphQLBoolean."""
         field = TestModel._meta.get_field("boolean_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.Boolean)
+        self.assertIs(_native_scalar(field), GraphQLBoolean)
 
     def test_convert_date_field(self):
-        """Test DateField conversion."""
+        """DateField -> GdxDate (renders as the ``CustomDate`` scalar)."""
         field = TestModel._meta.get_field("date_field")
-        graphql_field = convert_django_field(field)
-
-        # Uses CustomDate from base_types
-        from django_graphex.base_types import CustomDate
-
-        self.assertIsInstance(graphql_field, CustomDate)
+        self.assertIs(_native_scalar(field), GdxDate)
 
     def test_convert_datetime_field(self):
-        """Test DateTimeField conversion."""
+        """DateTimeField -> GdxDateTime (renders as ``CustomDateTime``)."""
         field = TestModel._meta.get_field("datetime_field")
-        graphql_field = convert_django_field(field)
-
-        # Uses CustomDateTime from base_types
-        from django_graphex.base_types import CustomDateTime
-
-        self.assertIsInstance(graphql_field, CustomDateTime)
+        self.assertIs(_native_scalar(field), GdxDateTime)
 
     def test_convert_time_field(self):
-        """Test TimeField conversion."""
+        """TimeField -> GdxTime (renders as ``CustomTime``)."""
         field = TestModel._meta.get_field("time_field")
-        graphql_field = convert_django_field(field)
-
-        # Uses CustomTime from base_types
-        from django_graphex.base_types import CustomTime
-
-        self.assertIsInstance(graphql_field, CustomTime)
+        self.assertIs(_native_scalar(field), GdxTime)
 
     def test_convert_email_field(self):
-        """Test EmailField conversion."""
+        """EmailField -> GraphQLString."""
         field = TestModel._meta.get_field("email_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.String)
+        self.assertIs(_native_scalar(field), GraphQLString)
 
     def test_convert_url_field(self):
-        """Test URLField conversion."""
+        """URLField -> GraphQLString."""
         field = TestModel._meta.get_field("url_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.String)
+        self.assertIs(_native_scalar(field), GraphQLString)
 
     def test_convert_slug_field(self):
-        """Test SlugField conversion."""
+        """SlugField -> GraphQLString."""
         field = TestModel._meta.get_field("slug_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.String)
+        self.assertIs(_native_scalar(field), GraphQLString)
 
     def test_convert_uuid_field(self):
-        """Test UUIDField conversion."""
+        """UUIDField -> GdxUUID (renders as the ``UUID`` scalar)."""
         field = TestModel._meta.get_field("uuid_field")
-        graphql_field = convert_django_field(field)
-
-        # UUID should convert to UUID type
-        self.assertIsInstance(graphql_field, graphene.UUID)
+        self.assertIs(_native_scalar(field), GdxUUID)
 
     def test_convert_json_field(self):
-        """Test JSONField conversion."""
+        """JSONField -> GdxJSONString (renders as the ``JSONString`` scalar)."""
         field = TestModel._meta.get_field("json_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.JSONString)
+        self.assertIs(_native_scalar(field), GdxJSONString)
 
     def test_convert_choice_field(self):
         """Test field with choices conversion."""
@@ -189,7 +221,8 @@ class ConverterTest(TestCase):
         field = TestModel._meta.get_field("user")
         graphql_field = convert_django_field(field)
 
-        # Foreign key should convert to Dynamic type
+        # Foreign key converts to a Dynamic descriptor (KEPT on native — the
+        # native output thunk consumes it; only SCALAR descriptors are dead).
         self.assertIsInstance(graphql_field, graphene.Dynamic)
 
     def test_convert_many_to_many_field(self):
@@ -197,7 +230,7 @@ class ConverterTest(TestCase):
         field = TestModel._meta.get_field("basics")
         graphql_field = convert_django_field(field)
 
-        # M2M should convert to Dynamic type
+        # M2M converts to a Dynamic descriptor (KEPT on native).
         self.assertIsInstance(graphql_field, graphene.Dynamic)
 
     def test_convert_choice_name(self):
@@ -224,45 +257,52 @@ class ConverterTest(TestCase):
         self.assertIn((2, "Choice B"), choice_values)
 
     def test_nullable_field_conversion(self):
-        """Test nullable field conversion."""
-        field = TestModel._meta.get_field("float_field")
-        graphql_field = convert_django_field(field)
+        """A nullable scalar field is rendered nullable (not wrapped in NonNull).
 
-        # Nullable fields should not be wrapped in NonNull
-        self.assertIsInstance(graphql_field, graphene.Float)
-        self.assertFalse(isinstance(graphql_field, graphene.NonNull))
+        On the native OUTPUT path every non-pk scalar is nullable
+        (graphene-django #1494 parity), so ``_to_graphql_field`` returns the bare
+        scalar with no ``GraphQLNonNull`` wrapper.
+        """
+        field = TestModel._meta.get_field("float_field")
+        field_map = _to_graphql_field(field, _StubRegistry())
+        gql_type = next(iter(field_map.values())).type
+
+        self.assertNotIsInstance(gql_type, GraphQLNonNull)
+        self.assertIs(gql_type, GraphQLFloat)
 
     def test_required_field_conversion(self):
-        """A required CharField converts to a plain (nullable) String for input.
+        """A required (non-pk) CharField renders as a plain nullable String.
 
-        Input fields are intentionally NOT wrapped in NonNull on the ``create``
-        flag, so callers may omit fields that have model-level defaults; the
-        backend serializer enforces requiredness at validation time.
+        Output fields are intentionally NOT wrapped in ``GraphQLNonNull`` on the
+        native path (only the pk is non-null on output, graphene-django #1494
+        parity); requiredness is enforced by the input/serializer path, not the
+        output type.
         """
         field = TestModel._meta.get_field("char_field")
-        graphql_field = convert_django_field(field, input_flag="create")
+        field_map = _to_graphql_field(field, _StubRegistry())
+        gql_type = next(iter(field_map.values())).type
 
-        self.assertIsInstance(graphql_field, graphene.String)
-        self.assertNotIsInstance(graphql_field, graphene.NonNull)
+        self.assertIs(gql_type, GraphQLString)
+        self.assertNotIsInstance(gql_type, GraphQLNonNull)
 
     def test_field_with_default_conversion(self):
-        """Test field with default value conversion."""
+        """A field with a default still converts by its type (IntegerField->Int)."""
         field = TestModel._meta.get_field("integer_field")
-        graphql_field = convert_django_field(field)
-
-        self.assertIsInstance(graphql_field, graphene.Int)
+        self.assertIs(_native_scalar(field), GraphQLInt)
 
     def test_auto_field_conversion(self):
-        """Test AutoField conversion."""
+        """The model pk (AutoField) converts to a non-null GraphQL ID (``id: ID!``)."""
         field = TestModel._meta.get_field("id")  # Auto-created id field
-        graphql_field = convert_django_field(field)
+        field_map = _to_graphql_field(field, _StubRegistry())
+        gql_type = next(iter(field_map.values())).type
 
-        # An AutoField (the model pk) converts to the GraphQL ID type.
-        self.assertIsInstance(graphql_field, graphene.ID)
+        # The pk is the ONLY non-null OUTPUT scalar.
+        self.assertIsInstance(gql_type, GraphQLNonNull)
+        self.assertIs(gql_type.of_type, GraphQLID)
 
 
 class ConverterUtilsTest(TestCase):
-    """Test cases for converter utility functions."""
+    """Test cases for converter utility functions (backend-independent)."""
 
     def test_convert_choices_with_enum(self):
         """Test conversion of choices creates proper enum."""
@@ -307,8 +347,12 @@ class FieldConversionIntegrationTest(TestCase):
     """Integration tests for field conversion."""
 
     def test_model_to_graphql_type_conversion(self):
-        """Test complete model to GraphQL type conversion."""
-        # This tests the integration of field conversion
+        """Test complete model to GraphQL OUTPUT type conversion.
+
+        On native, the model -> GraphQL OUTPUT type is built by the native output
+        compiler and exposed as ``_meta.graphql_output_type`` (a graphql-core
+        ``GraphQLObjectType``). Assert it carries the converted fields.
+        """
         from django_graphex import DjangoObjectType
 
         class TestModelType(DjangoObjectType):
@@ -319,17 +363,22 @@ class FieldConversionIntegrationTest(TestCase):
         type_instance = TestModelType()
         self.assertIsNotNone(type_instance)
 
-        # Should have converted all fields
-        fields = TestModelType._meta.fields
+        # The compiled native output type carries the converted fields.
+        gql_type = TestModelType._meta.graphql_output_type
+        fields = gql_type.fields
         self.assertGreater(len(fields), 10)  # Should have many fields
 
-        # Check specific field conversions
-        self.assertIn("char_field", fields)
-        self.assertIn("choice_field", fields)
+        # Check specific field conversions (camelCase wire names).
+        self.assertIn("charField", fields)
+        self.assertIn("choiceField", fields)
         self.assertIn("user", fields)
 
     def test_input_type_conversion(self):
-        """Test model to input type conversion."""
+        """Test model to input type conversion.
+
+        On native the INPUT type is compiled to a graphql-core
+        ``GraphQLInputObjectType`` exposed via ``_meta.graphql_input_type``.
+        """
         from django_graphex import DjangoInputObjectType
 
         class TestModelInput(DjangoInputObjectType):
@@ -340,9 +389,9 @@ class FieldConversionIntegrationTest(TestCase):
         input_type = TestModelInput()
         self.assertIsNotNone(input_type)
 
-        # Should handle required vs optional fields appropriately
-        fields = TestModelInput._meta.fields
-        self.assertIn("char_field", fields)
+        # The compiled native input type carries the converted fields.
+        fields = TestModelInput._meta.graphql_input_type.fields
+        self.assertIn("charField", fields)
 
     def test_relationship_field_conversion(self):
         """Test relationship field conversion."""
@@ -353,8 +402,8 @@ class FieldConversionIntegrationTest(TestCase):
         user_graphql_field = convert_django_field(user_field)
         basics_graphql_field = convert_django_field(basics_field)
 
-        # User field should be a reference to User type
+        # User field (FK) converts to a Dynamic descriptor.
         self.assertIsInstance(user_graphql_field, graphene.Dynamic)
 
-        # Basics field should be a list
+        # Basics field (M2M) converts to a Dynamic descriptor.
         self.assertIsInstance(basics_graphql_field, graphene.Dynamic)

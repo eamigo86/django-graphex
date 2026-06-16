@@ -476,7 +476,13 @@ def _fork_output_class(
             entry.model,
             getattr(meta, "results_field_name", None) or "results",
             output_registry,
-            getattr(meta, "pagination", None),
+            # item-b (B6): use the RESOLVED paginator (``_meta.paginator``, set at
+            # class-def from ``Meta.pagination`` OR the global default), NOT the raw
+            # ``_meta.pagination`` (often ``None`` when only the global default
+            # applies). Falling back to raw pagination would drop the results-field
+            # pagination resolver on the fork — a renamed results field (e.g.
+            # ``items``) would then return ``None`` via the default attr resolver.
+            getattr(meta, "paginator", None) or getattr(meta, "pagination", None),
         )
     else:
         thunk = _make_output_thunk_for(
@@ -487,6 +493,7 @@ def _fork_output_class(
             entry.only_fields,
             entry.exclude_fields,
             registries,
+            include_fields=getattr(entry, "include_fields", None),
         )
 
     forked = GraphQLObjectType(
@@ -498,7 +505,17 @@ def _fork_output_class(
     # Register BEFORE returning so a self-referential / mutually-recursive
     # relation thunk resolves through this same instance.
     forks[cls] = forked
-    if not getattr(meta, "skip_registry", False):
+    # A ``DjangoListObjectType`` CONTAINER must NOT claim the model's output slot:
+    # that slot belongs to the element node (the ``<Model>GenericType`` /
+    # ``DjangoObjectType``) so a list container's ``results`` thunk
+    # (``output_registry.get_compiled(model)``) resolves to the NODE, not to the
+    # container itself. This mirrors the class-def native branch, which builds the
+    # list container WITHOUT a ``_shared_registry.set_compiled(model, ...)`` call
+    # (types.py ``DjangoListObjectType`` branch). Registering the container here
+    # (the pre-fix behavior) overwrote the model slot last-wins, so the forked
+    # ``results`` node degraded to ``[<Container>]`` and every nested field query
+    # raised "Cannot query field '<f>' on type '<Model>ListType'".
+    if not getattr(meta, "skip_registry", False) and not is_list:
         output_registry.set_compiled(entry.model, forked)
     return forked
 

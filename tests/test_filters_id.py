@@ -6,12 +6,17 @@ relation declared directly (e.g. ``author: { exact }``) filters by the related
 pk -- for both integer and UUID primary keys.
 """
 
-import graphene
-from graphene import Schema
+from graphql import graphql_sync
 
-from django_graphex import DjangoListObjectField, DjangoListObjectType
+from django_graphex import (
+    DjangoGraphQLSchema,
+    DjangoListObjectField,
+    DjangoListObjectType,
+    ObjectType,
+)
 from django_graphex.registry import Registry
 
+from ._schema_isolation import isolated_pair
 from .models import Author, Post, UUIDItem, UUIDThing
 
 R = Registry()
@@ -38,17 +43,17 @@ class UUIDItemListType(DjangoListObjectType):
         filter_fields = {"thing": ("exact", "in")}
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     posts = DjangoListObjectField(PostListType)
     things = DjangoListObjectField(UUIDThingListType)
     items = DjangoListObjectField(UUIDItemListType)
 
 
-schema = Schema(query=Query)
+schema = DjangoGraphQLSchema(query=Query, registries=isolated_pair(R))
 
 
 def _exec(query):
-    result = schema.execute(query)
+    result = graphql_sync(schema.graphql_schema, query)
     assert result.errors is None, result.errors
     return result.data
 

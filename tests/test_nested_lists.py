@@ -17,19 +17,21 @@ import graphene
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from graphene import Schema
+from graphql import graphql_sync
 
 from django_graphex import (
     DjangoListObjectField,
     DjangoListObjectType,
     DjangoObjectType,
     LimitOffsetGraphqlPagination,
+    ObjectType,
     PageGraphqlPagination,
 )
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.settings import graphql_api_settings
 
+from ._schema_isolation import isolated_pair
 from .models import Author, Post, Tag
 
 R = Registry()
@@ -64,11 +66,11 @@ class AuthorListN(DjangoListObjectType):
         )
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     authors = DjangoListObjectField(AuthorListN)
 
 
-schema = Schema(query=Query)
+schema = DjangoGraphQLSchema(query=Query, registries=isolated_pair(R))
 type_map = schema.graphql_schema.type_map
 
 
@@ -115,7 +117,7 @@ class NestedBehaviourTest(TestCase):
             Post.objects.create(title="Post %02d" % i, author=cls.author)
 
     def _exec(self, query):
-        result = schema.execute(query)
+        result = graphql_sync(schema.graphql_schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -289,25 +291,31 @@ class InMemoryPaginatorTest(TestCase):
 # --------------------------------------------------------------------------- #
 from django_graphex import DjangoModelMutation  # noqa: E402
 
+RMUT = Registry()
+
 
 class _GAuthorType(DjangoObjectType):
     class Meta:
         model = Author
+        registry = RMUT
 
 
 class _GTagType(DjangoObjectType):
     class Meta:
         model = Tag
+        registry = RMUT
 
 
 class _GPostType(DjangoObjectType):
     class Meta:
         model = Post
+        registry = RMUT
 
 
 class _PostMutation(DjangoModelMutation):
     class Meta:
         model = Post
+        registry = RMUT
 
 
 class _MutQuery(graphene.ObjectType):
@@ -324,7 +332,9 @@ class _Mutation(graphene.ObjectType):
 # bare graphene.Schema would drop from the empty Mutation root (the WU9 fix for
 # the "_Mutation must define one or more fields" failure). Under graphene it
 # behaves exactly like graphene.Schema.
-mut_schema = DjangoGraphQLSchema(query=_MutQuery, mutation=_Mutation)
+mut_schema = DjangoGraphQLSchema(
+    query=_MutQuery, mutation=_Mutation, registries=isolated_pair(RMUT)
+)
 
 # graphql-core's GraphQLSchema (native) executes via ``graphql_sync``; graphene's
 # Schema executes via ``.execute``. The same document runs on both.
@@ -349,16 +359,12 @@ class MutationNestedShapeTest(TestCase):
         # runs through graphene.Schema unchanged.
         author = Author.objects.create(name="Ada")
         # The uniform results/totalCount nested-list shape on an auto-derived
-        # to-many relation (``tags``) is produced by the converter on the graphene
-        # node; the native node compiler emits a plain ``[Tag]`` for auto-derived
-        # to-many relations (tracked debt — native auto-relation nested-list shape
-        # is a node-relation slice, NOT WU9 mutation-schema assembly). Select the
-        # shape each backend genuinely produces so the mutation-execution path is
-        # exercised honestly on both.
-        if _NATIVE_BACKEND:
-            tags_selection = "tags { label }"
-        else:
-            tags_selection = "tags { results { label } totalCount }"
+        # to-many relation (``tags``) is produced on BOTH backends: the converter
+        # builds it on the graphene node, and the native node compiler now emits
+        # the same ``TagListType`` (results/totalCount) container for auto-derived
+        # to-many relations. The mutation-execution path is therefore exercised
+        # with the identical selection on both backends.
+        tags_selection = "tags { results { label } totalCount }"
         mutation = (
             'mutation { postCreate(newPost: {title: "X", body: "y", author: %d}) '
             "{ post { title author { name } %s } "
@@ -373,11 +379,9 @@ class MutationNestedShapeTest(TestCase):
         self.assertTrue(data["ok"], data["errors"])
         self.assertEqual(data["post"]["title"], "X")
         self.assertEqual(data["post"]["author"]["name"], "Ada")
-        # A freshly created post has no tags, in whichever shape the backend emits.
-        if _NATIVE_BACKEND:
-            self.assertEqual(data["post"]["tags"], [])
-        else:
-            self.assertEqual(data["post"]["tags"]["totalCount"], 0)
-            self.assertEqual(data["post"]["tags"]["results"], [])
+        # A freshly created post has no tags; both backends emit the uniform
+        # results/totalCount nested-list shape.
+        self.assertEqual(data["post"]["tags"]["totalCount"], 0)
+        self.assertEqual(data["post"]["tags"]["results"], [])
         # The row really landed in the DB (not a faked payload).
         self.assertTrue(Post.objects.filter(title="X").exists())

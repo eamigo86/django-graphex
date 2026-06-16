@@ -12,17 +12,18 @@ These tests pin down each strategy:
 * ``CursorGraphqlPagination`` — forward keyset cursor paging + ``pageInfo``.
 """
 
-import graphene
 from django.test import TestCase
-from graphene import Schema
+from graphql import graphql_sync
 
 from django_graphex import (
     CursorGraphqlPagination,
     DjangoListObjectField,
     DjangoListObjectType,
     LimitOffsetGraphqlPagination,
+    ObjectType,
     PageGraphqlPagination,
 )
+from django_graphex.schema import DjangoGraphQLSchema
 
 from .models import BasicModel
 
@@ -50,14 +51,14 @@ class CursorType(DjangoListObjectType):
         pagination = CursorGraphqlPagination(ordering="id")
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     # Canonical mechanism (documented): pagination args live on `results`.
     limit_offset = DjangoListObjectField(LimitOffsetType)
     page = DjangoListObjectField(PageType)
     cursor = DjangoListObjectField(CursorType)
 
 
-schema = Schema(query=Query)
+schema = DjangoGraphQLSchema(query=Query)
 
 # 12 deterministic rows: ids 1..12 map to text "M00".."M11" (insertion order).
 ROWS = 12
@@ -68,7 +69,7 @@ def _texts(results):
 
 
 def _exec(query):
-    result = schema.execute(query)
+    result = graphql_sync(schema.graphql_schema, query)
     assert result.errors is None, result.errors
     return result.data
 
@@ -173,8 +174,9 @@ class CursorClassTest(_Base):
         self.assertEqual(_texts(data["results"]), ["M09", "M10", "M11"])
 
     def test_invalid_cursor_errors(self):
-        result = schema.execute(
-            'query { cursor { results(cursor: "not-a-valid-cursor") { text } } }'
+        result = graphql_sync(
+            schema.graphql_schema,
+            'query { cursor { results(cursor: "not-a-valid-cursor") { text } } }',
         )
         self.assertIsNotNone(result.errors)
 

@@ -1,20 +1,25 @@
 # -*- coding: utf-8 -*-
 """Native, ``Q``-based filtering: lookups, and/or/not, relations, distinct.
 
-Exercises the ``filtering/`` package end to end against a real
-``graphene.Schema`` plus unit tests for :func:`to_q`.
+Exercises the ``filtering/`` package end to end against a real native
+``DjangoGraphQLSchema`` plus unit tests for :func:`to_q`.
 """
 
 from datetime import date
 
-import graphene
 from django.db import models
-from graphene import Schema
+from graphql import graphql_sync
 
-from django_graphex import DjangoListObjectField, DjangoListObjectType
+from django_graphex import (
+    DjangoGraphQLSchema,
+    DjangoListObjectField,
+    DjangoListObjectType,
+    ObjectType,
+)
 from django_graphex.filtering.translate import to_q
 from django_graphex.registry import Registry
 
+from ._schema_isolation import isolated_pair
 from .models import Author
 
 R = Registry()
@@ -60,16 +65,16 @@ class AuthorListType(DjangoListObjectType):
         }
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     articles = DjangoListObjectField(ArticleListType)
     authors = DjangoListObjectField(AuthorListType)
 
 
-schema = Schema(query=Query)
+schema = DjangoGraphQLSchema(query=Query, registries=isolated_pair(R))
 
 
 def _exec(query):
-    result = schema.execute(query)
+    result = graphql_sync(schema.graphql_schema, query)
     assert result.errors is None, result.errors
     return result.data
 
@@ -299,11 +304,11 @@ class ArticleListTypeListForm(DjangoListObjectType):
         filter_fields = ["title", "views"]
 
 
-class _ListFormQuery(graphene.ObjectType):
+class _ListFormQuery(ObjectType):
     items = DjangoListObjectField(ArticleListTypeListForm)
 
 
-_list_form_schema = Schema(query=_ListFormQuery)
+_list_form_schema = DjangoGraphQLSchema(query=_ListFormQuery, registries=isolated_pair(RL))
 
 
 def test_list_form_default_lookups_present():
@@ -321,8 +326,9 @@ def test_list_form_default_lookups_filter(db):
     Article.objects.create(title="alpha", views=1, author=a)
     Article.objects.create(title="beta", views=9, author=a)
 
-    result = _list_form_schema.execute(
-        '{ items(filter: { title: { istartswith: "al" } }) { results { title } } }'
+    result = graphql_sync(
+        _list_form_schema.graphql_schema,
+        '{ items(filter: { title: { istartswith: "al" } }) { results { title } } }',
     )
     assert result.errors is None, result.errors
     titles = [r["title"] for r in result.data["items"]["results"]]

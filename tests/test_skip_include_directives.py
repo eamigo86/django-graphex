@@ -48,6 +48,7 @@ from django_graphex.utils import (
     recursive_params,
 )
 
+from ._schema_isolation import isolated_pair
 from .models import Post
 
 # --------------------------------------------------------------------------- #
@@ -635,60 +636,57 @@ class OptimizerFilteredPrefetchSkipTest(TestCase):
         Post.objects.create(title="SkipFiltPost", author=cls.author2, category=cls.cat)
 
     def _schema(self):
-        """Return the filtered-nested-list schema (reuses phase-e helper)."""
-        import graphene
+        """Return the filtered-nested-list schema (reuses phase-e helper).
 
+        Native build: model types subclass the native ``DjangoObjectType`` /
+        ``DjangoListObjectType`` and the query root is a native ``ObjectType``
+        assembled with ``DjangoGraphQLSchema``. A per-instance ``Registry`` keeps
+        these throwaway types out of the global registry.
+        """
         from django_graphex import (
+            DjangoGraphQLSchema,
             DjangoListObjectField,
             DjangoListObjectType,
             DjangoObjectType,
+            ObjectType,
         )
         from django_graphex.fields import DjangoNestedListObjectField
+        from django_graphex.registry import Registry
         from tests.models import Author, Post
 
-        _reg = {}
+        _reg = Registry()
 
-        _PostListType = type(
-            "_SkipFiltPostListType",
-            (DjangoListObjectType,),
-            {
-                "Meta": type(
-                    "Meta",
-                    (),
-                    {
-                        "model": Post,
-                        "filter_fields": {"title": ["exact"]},
-                        "registry": _reg,
-                    },
-                )
-            },
-        )
+        class _SkipFiltPostListType(DjangoListObjectType):
+            class Meta:
+                model = Post
+                filter_fields = {"title": ["exact"]}
+                registry = _reg
 
-        _AuthorType = type(
-            "_SkipFiltAuthorType",
-            (DjangoObjectType,),
-            {
-                "posts": DjangoNestedListObjectField(_PostListType, accessor="posts"),
-                "Meta": type("Meta", (), {"model": Author, "registry": _reg}),
-            },
-        )
-
-        _AuthorListType = type(
-            "_SkipFiltAuthorListType",
-            (DjangoListObjectType,),
-            {"Meta": type("Meta", (), {"model": Author, "registry": _reg})},
-        )
-
-        return graphene.Schema(
-            query=type(
-                "_SkipFiltQuery",
-                (graphene.ObjectType,),
-                {"authors": DjangoListObjectField(_AuthorListType)},
+        class _SkipFiltAuthorType(DjangoObjectType):
+            posts = DjangoNestedListObjectField(
+                _SkipFiltPostListType, accessor="posts"
             )
-        )
+
+            class Meta:
+                model = Author
+                registry = _reg
+
+        class _SkipFiltAuthorListType(DjangoListObjectType):
+            class Meta:
+                model = Author
+                registry = _reg
+
+        class _SkipFiltQuery(ObjectType):
+            authors = DjangoListObjectField(_SkipFiltAuthorListType)
+
+        return DjangoGraphQLSchema(query=_SkipFiltQuery, registries=isolated_pair(_reg))
 
     def _exec(self, schema, query, variables=None):
-        result = schema.execute(query, variable_values=variables)
+        from graphql import graphql_sync
+
+        result = graphql_sync(
+            schema.graphql_schema, query, variable_values=variables
+        )
         assert result.errors is None, result.errors
         return result.data
 

@@ -37,6 +37,8 @@ from django_graphex import (
 from django_graphex.native.descriptors import NativeList
 from django_graphex.registry import Registry
 
+from ._schema_isolation import isolated_pair
+
 
 def _execute(schema, query):
     """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free).
@@ -199,7 +201,7 @@ class _DWalkQuery(ObjectType):
     all_posts_flat = DjangoFilterListField(_DWalkPost)
 
 
-_walk_schema = DjangoGraphQLSchema(query=_DWalkQuery)
+_walk_schema = DjangoGraphQLSchema(query=_DWalkQuery, registries=isolated_pair(_RWALK))
 
 
 def _make_info_for_field(schema, query_str, field_name):
@@ -390,7 +392,7 @@ class _AnnQuery(ObjectType):
     all_posts = DjangoListObjectField(_DPostListType)
 
 
-_ann_schema = DjangoGraphQLSchema(query=_AnnQuery)
+_ann_schema = DjangoGraphQLSchema(query=_AnnQuery, registries=isolated_pair(_RANN))
 
 
 def _exec(schema, query):
@@ -539,7 +541,7 @@ class _PromoQuery(ObjectType):
     all_posts = DjangoListObjectField(_PostListTypePromo)
 
 
-_promo_schema = DjangoGraphQLSchema(query=_PromoQuery)
+_promo_schema = DjangoGraphQLSchema(query=_PromoQuery, registries=isolated_pair(_RPROM))
 
 
 class TestSelectToPrefetchPromotion(TestCase):
@@ -621,7 +623,7 @@ class TestPromotionGrandchildSelectSurvival(TestCase):
         class _GCQuery(ObjectType):
             all_posts = DjangoListObjectField(_PostGCList)
 
-        gc_schema = DjangoGraphQLSchema(query=_GCQuery)
+        gc_schema = DjangoGraphQLSchema(query=_GCQuery, registries=isolated_pair(_RGC))
         query = "{ allPosts { results { author { name postCount authorProfile { bio } } } } }"
         # Should not raise "Invalid field name(s) given in select_related"
         data = _exec(gc_schema, query)
@@ -668,7 +670,7 @@ class TestComputeChildOnlySelfCollectsAnnotations(TestCase):
         class _Q(ObjectType):
             all_authors = DjangoFilterListField(_AuthT)
 
-        schema = DjangoGraphQLSchema(query=_Q)
+        schema = DjangoGraphQLSchema(query=_Q, registries=isolated_pair(_R6))
         gql_schema = schema.graphql_schema
         post_gql_type = gql_schema.type_map.get("_PostT")
 
@@ -748,7 +750,7 @@ class TestPrefetchChildAnnotation(TestCase):
         class _Q6(ObjectType):
             all_authors = DjangoListObjectField(_AuthList6)
 
-        schema6 = DjangoGraphQLSchema(query=_Q6)
+        schema6 = DjangoGraphQLSchema(query=_Q6, registries=isolated_pair(_R6B))
         query = "{ allAuthors { results { name posts { id commentCount } } } }"
 
         with CaptureQueriesContext(connection) as ctx:
@@ -817,7 +819,7 @@ class TestPrefetchGateFiresOnAnnotatedFieldsOnly(TestCase):
         class _Q6C(ObjectType):
             all_authors = DjangoListObjectField(_AuthList6C)
 
-        schema6c = DjangoGraphQLSchema(query=_Q6C)
+        schema6c = DjangoGraphQLSchema(query=_Q6C, registries=isolated_pair(_R6C))
         query = "{ allAuthors { results { name posts { id commentCount } } } }"
 
         with CaptureQueriesContext(connection) as ctx:
@@ -925,7 +927,7 @@ class TestMixedConcreteAnnotatedChildOnlyNarrowing(TestCase):
         class _QueryS1(ObjectType):
             all_authors = DjangoListObjectField(_AuthorListS1)
 
-        schema_s1 = DjangoGraphQLSchema(query=_QueryS1)
+        schema_s1 = DjangoGraphQLSchema(query=_QueryS1, registries=isolated_pair(_RS1))
 
         # Select both a concrete field (title) and the AnnotatedField (commentCount).
         # This is exactly the "mixed" child scenario.
@@ -1037,7 +1039,7 @@ class TestSafeModeContractStructural(TestCase):
             class _Q8(ObjectType):
                 all_posts = DjangoListObjectField(_PostList8)
 
-            schema8 = DjangoGraphQLSchema(query=_Q8)
+            schema8 = DjangoGraphQLSchema(query=_Q8, registries=isolated_pair(_R8))
             # With SAFE_MODE=True, the FieldError should NOT propagate.
             result = _execute(schema8, "{ allPosts { results { id } } }")
             self.assertIsNone(result.errors, result.errors)
@@ -1078,7 +1080,7 @@ class TestSafeModeFalsePropagatesBuildError(TestCase):
             class _Q8B(ObjectType):
                 all_posts = DjangoListObjectField(_PostList8B)
 
-            schema8b = DjangoGraphQLSchema(query=_Q8B)
+            schema8b = DjangoGraphQLSchema(query=_Q8B, registries=isolated_pair(_R8B))
             result = _execute(schema8b, "{ allPosts { results { id } } }")
             self.assertIsNotNone(result.errors)
 
@@ -1121,7 +1123,7 @@ class TestAliasBeforeAnnotateOrder(TestCase):
         class _Q8C(ObjectType):
             all_posts = DjangoListObjectField(_PostList8C)
 
-        schema8c = DjangoGraphQLSchema(query=_Q8C)
+        schema8c = DjangoGraphQLSchema(query=_Q8C, registries=isolated_pair(_R8C))
 
         call_order = []
         _orig_alias = QuerySet.alias
@@ -1253,7 +1255,7 @@ def _build_window_annotated_schema(use_aggregate=False):
     )
     from tests.models import Author, Post
 
-    _REG = {}
+    _REG = Registry()
     paginator = LimitOffsetGraphqlPagination(default_limit=5)
 
     if use_aggregate:
@@ -1312,7 +1314,8 @@ def _build_window_annotated_schema(use_aggregate=False):
             "_WinAnnQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG),
     )
     return schema, extra_fields_query
 
@@ -1520,7 +1523,7 @@ class TestWindowInjectionErrorGracefulFallback(TestCase):
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
         from tests.models import Author, Post
 
-        _REG_ERR = {}
+        _REG_ERR = Registry()
         paginator = LimitOffsetGraphqlPagination(default_limit=5)
 
         _PostType = _gtype(
@@ -1571,6 +1574,7 @@ class TestWindowInjectionErrorGracefulFallback(TestCase):
                 {"dummy": field(GraphQLString)},
             ),
             types=[_PostType, _PostListType, _AuthorType],
+            registries=isolated_pair(_REG_ERR),
         )
         gql_schema = _schema.graphql_schema
         # The GraphQLObjectType for the inner row type (_PostType / "_ErrPostType").
@@ -1708,7 +1712,7 @@ def _build_alias_dependent_window_schema():
     )
     from tests.models import Author, Post
 
-    _REG = {}
+    _REG = Registry()
     paginator = LimitOffsetGraphqlPagination(default_limit=10)
 
     _PostType = _gtype(
@@ -1758,7 +1762,8 @@ def _build_alias_dependent_window_schema():
             "_AliasDepQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG),
     )
     return schema
 

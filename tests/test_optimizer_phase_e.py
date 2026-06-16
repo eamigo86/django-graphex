@@ -32,6 +32,8 @@ from django_graphex import (
 )
 from django_graphex.registry import Registry
 
+from ._schema_isolation import isolated_pair
+
 # ---------------------------------------------------------------------------
 # Helpers shared across test classes
 # ---------------------------------------------------------------------------
@@ -273,7 +275,7 @@ class TestApplyFieldHook(TestCase):
 # Phase 3 / Task 3.1 — Window path hook tests (RED)
 # ---------------------------------------------------------------------------
 
-_REG_WIN = {}
+_REG_WIN = Registry()
 
 
 def _build_window_hook_schema(
@@ -289,7 +291,8 @@ def _build_window_hook_schema(
     from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
     from tests.models import Author, Post
 
-    _REG_WIN.clear()
+    global _REG_WIN
+    _REG_WIN = Registry()
     captured_kwargs: list[dict] = []
 
     _PostListType = _gtype(
@@ -348,7 +351,8 @@ def _build_window_hook_schema(
             "WinHookQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG_WIN),
     )
     return schema, captured_kwargs
 
@@ -531,7 +535,7 @@ class TestWindowPathHook(TestCase):
 # Phase 5 / Task 5.1 — Filtered-plain path hook tests (RED)
 # ---------------------------------------------------------------------------
 
-_REG_FILT = {}
+_REG_FILT = Registry()
 
 
 def _build_filtered_hook_schema():
@@ -539,7 +543,8 @@ def _build_filtered_hook_schema():
     from django_graphex.fields import DjangoNestedListObjectField
     from tests.models import Author, Post
 
-    _REG_FILT.clear()
+    global _REG_FILT
+    _REG_FILT = Registry()
     captured_kwargs: list[dict] = []
 
     _PostListType = _gtype(
@@ -583,7 +588,8 @@ def _build_filtered_hook_schema():
             "FiltHookQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG_FILT),
     )
     return schema, captured_kwargs
 
@@ -658,7 +664,7 @@ class TestFilteredPlainPathHook(TestCase):
 # Phase 7 / Tasks 7.1 + 7.2 + 7.3 — Unfiltered-plain path hook (RED)
 # ---------------------------------------------------------------------------
 
-_REG_UNFILT = {}
+_REG_UNFILT = Registry()
 
 
 def _build_unfiltered_hook_schema(has_hook=True):
@@ -666,7 +672,8 @@ def _build_unfiltered_hook_schema(has_hook=True):
     from django_graphex.fields import DjangoNestedListObjectField
     from tests.models import Author, Post
 
-    _REG_UNFILT.clear()
+    global _REG_UNFILT
+    _REG_UNFILT = Registry()
     captured_kwargs: list[dict] = []
 
     _PostListType = _gtype(
@@ -709,7 +716,8 @@ def _build_unfiltered_hook_schema(has_hook=True):
             "UnfHookQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG_UNFILT),
     )
     return schema, captured_kwargs
 
@@ -783,7 +791,7 @@ class TestUnfilteredTopLevelHook(TestCase):
 # Phase 7 / Task 7.2 — SITE B: re-rooted nested under filtered ancestor (RED)
 # ---------------------------------------------------------------------------
 
-_REG_SITE_B = {}
+_REG_SITE_B = Registry()
 
 
 def _build_site_b_schema():
@@ -795,7 +803,8 @@ def _build_site_b_schema():
     from django_graphex.fields import DjangoNestedListObjectField
     from tests.models import Author, Comment, Post
 
-    _REG_SITE_B.clear()
+    global _REG_SITE_B
+    _REG_SITE_B = Registry()
     captured_kwargs: list[dict] = []
 
     _CommentListType = _gtype(
@@ -856,7 +865,8 @@ def _build_site_b_schema():
             "SiteBQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG_SITE_B),
     )
     return schema, captured_kwargs
 
@@ -956,7 +966,7 @@ class TestNestedUnderFilteredHook(TestCase):
 # Hook reached through a NON-nested-list relation (related-field walker branch)
 # ---------------------------------------------------------------------------
 
-_REG_RELFWD = {}
+_REG_RELFWD = Registry()
 
 
 def _build_related_field_forward_schema():
@@ -973,7 +983,8 @@ def _build_related_field_forward_schema():
     from django_graphex.fields import DjangoNestedListObjectField
     from tests.models import Author, Post
 
-    _REG_RELFWD.clear()
+    global _REG_RELFWD
+    _REG_RELFWD = Registry()
     captured_kwargs: list[dict] = []
 
     _InnerPostListType = _gtype(
@@ -1017,7 +1028,8 @@ def _build_related_field_forward_schema():
             "RelFwdQuery",
             (ObjectType,),
             {"posts": DjangoListObjectField(_PostListType)},
-        )
+        ),
+        registries=isolated_pair(_REG_RELFWD),
     )
     return schema, captured_kwargs
 
@@ -1086,7 +1098,7 @@ class TestHookThroughRelatedField(TestCase):
 # SITE B — multiple unfiltered children + multi-segment stripped path
 # ---------------------------------------------------------------------------
 
-_REG_SITE_B_MULTI = {}
+_REG_SITE_B_MULTI = Registry()
 
 
 def _build_site_b_multi_schema():
@@ -1105,7 +1117,8 @@ def _build_site_b_multi_schema():
     from django_graphex.fields import DjangoNestedListObjectField
     from tests.models import Author, Category, Comment, Post, Tag
 
-    _REG_SITE_B_MULTI.clear()
+    global _REG_SITE_B_MULTI
+    _REG_SITE_B_MULTI = Registry()
     captured_kwargs: list[dict] = []
 
     def _record(name, select_related_field=None):
@@ -1225,7 +1238,8 @@ def _build_site_b_multi_schema():
             "SBMQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG_SITE_B_MULTI),
     )
     return schema, captured_kwargs
 
@@ -1478,7 +1492,8 @@ class TestSafeModeDegrade(TestCase):
                 "SMQuery",
                 (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_reg),
         )
 
     @override_settings(

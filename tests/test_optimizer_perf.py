@@ -13,26 +13,61 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import graphene
 import pytest
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from graphene import Schema
-from graphql import parse
+from graphql import graphql_sync, parse
 from graphql.language.ast import (
     FragmentDefinitionNode,
     OperationDefinitionNode,
 )
 
-from django_graphex import DjangoModelType, DjangoObjectField, DjangoObjectType
+from django_graphex import (
+    DjangoGraphQLSchema,
+    DjangoModelType,
+    DjangoObjectField,
+    DjangoObjectType,
+    ObjectType,
+)
 from django_graphex.registry import Registry
 from django_graphex.utils import (
     _concrete_field_map,
     _relation_field_map,
 )
 
+from ._schema_isolation import isolated_pair
 from .models import Author, Category, Post
+
+
+def _execute(schema, query):
+    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free).
+
+    Drop-in for the retired ``schema.execute(query)``: returns the graphql-core
+    ``ExecutionResult`` (same ``.data`` / ``.errors`` shape graphene returned).
+    """
+    return graphql_sync(schema.graphql_schema, query)
+
+
+def _gtype(name, bases, ns):
+    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+
+    Native ``ObjectType`` / ``DjangoObjectType`` are pydantic ``BaseModel``
+    subclasses; building them with ``type(name, bases, ns)`` requires
+    ``ns['__module__']`` and a nested ``Meta`` whose ``__qualname__`` is
+    ``"<Outer>.Meta"`` (the value a ``class`` body produces). This supplies both so
+    the dynamic form behaves exactly like the equivalent ``class`` statement.
+    """
+    ns = dict(ns)
+    ns.setdefault("__module__", __name__)
+    ns["__qualname__"] = name
+    for attr_name, attr_val in list(ns.items()):
+        if isinstance(attr_val, type):
+            try:
+                attr_val.__qualname__ = f"{name}.{attr_name}"
+            except (AttributeError, TypeError):  # pragma: no cover - defensive
+                pass
+    return type(name, bases, ns)
 
 # ---------------------------------------------------------------------------
 # AST helpers for building fake field_nodes
@@ -143,10 +178,10 @@ class FieldMapMemoizationTest(TestCase):
                 model = Author
                 registry = _R2
 
-        class _QQuery(graphene.ObjectType):
+        class _QQuery(ObjectType):
             post = DjangoObjectField(_QPostType)
 
-        schema = Schema(query=_QQuery)
+        schema = DjangoGraphQLSchema(query=_QQuery, registries=isolated_pair(_R2))
 
         author = Author.objects.create(name="Memo")
         post = Post.objects.create(title="M1", author=author)
@@ -159,7 +194,7 @@ class FieldMapMemoizationTest(TestCase):
             return original_get_fields(*args, **kwargs)
 
         with patch.object(Post._meta, "get_fields", counting_get_fields):
-            result = schema.execute(
+            result = _execute(schema, 
                 "{ post(id: %d) { title author { name } } }" % post.pk
             )
 
@@ -351,8 +386,8 @@ class NestedListDescentFmapCacheTest(TestCase):
         """
         from unittest.mock import patch
 
-        import graphene
-        from graphene import Schema
+
+
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -389,12 +424,13 @@ class NestedListDescentFmapCacheTest(TestCase):
                 model = Author
                 registry = _REG
 
-        schema = Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_FmapQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_FAuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
 
         call_counts: dict[str, int] = {}
@@ -405,7 +441,7 @@ class NestedListDescentFmapCacheTest(TestCase):
             return original_get_fields(*args, **kwargs)
 
         with patch.object(Post._meta, "get_fields", counting_get_fields):
-            result = schema.execute(
+            result = _execute(schema, 
                 "{ authors { results { posts { results(limit: 5, offset: 0) { id title } totalCount } } } }"
             )
 
@@ -467,9 +503,9 @@ class OnlyNarrowingFmapCacheTest(TestCase):
         """
         from unittest.mock import patch
 
-        import graphene
+
         from django.test import override_settings
-        from graphene import Schema
+
 
         from django_graphex.registry import Registry
         from django_graphex.types import (
@@ -496,12 +532,13 @@ class OnlyNarrowingFmapCacheTest(TestCase):
                 model = Author
                 registry = _REG
 
-        schema = Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_NarrowQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_NAuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
 
         call_counts_with: dict[str, int] = {}
@@ -521,7 +558,7 @@ class OnlyNarrowingFmapCacheTest(TestCase):
         # Run with OPTIMIZE_ONLY_FIELDS=True (default) — triggers narrowing pass.
         with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
             with patch.object(Post._meta, "get_fields", counting_with):
-                result = schema.execute(gql)
+                result = _execute(schema, gql)
 
         assert result.errors is None, result.errors
 
@@ -536,7 +573,7 @@ class OnlyNarrowingFmapCacheTest(TestCase):
         # We assert the fix reduces the count vs an uncached run as a regression guard.
         with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": False}):
             with patch.object(Post._meta, "get_fields", counting_without):
-                result_off = schema.execute(gql)
+                result_off = _execute(schema, gql)
 
         assert result_off.errors is None, result_off.errors
         calls_without = call_counts_without.get("post", 0)
@@ -554,9 +591,9 @@ class OnlyNarrowingFmapCacheTest(TestCase):
 
     def test_only_narrowing_data_parity(self):
         """#66(b) non-regression: query results identical with/without _fmap_cache in narrowing."""
-        import graphene
+
         from django.test import override_settings
-        from graphene import Schema
+
 
         from django_graphex.registry import Registry
         from django_graphex.types import (
@@ -583,20 +620,21 @@ class OnlyNarrowingFmapCacheTest(TestCase):
                 model = Author
                 registry = _REG
 
-        schema = Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_NarrowParityQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_NPAuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
 
         gql = "{ authors { results { posts { results { id title } } } } }"
 
         with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
-            result_on = schema.execute(gql)
+            result_on = _execute(schema, gql)
         with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": False}):
-            result_off = schema.execute(gql)
+            result_off = _execute(schema, gql)
 
         assert result_on.errors is None, result_on.errors
         assert result_off.errors is None, result_off.errors

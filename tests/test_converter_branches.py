@@ -7,14 +7,31 @@ NullBooleanField / BinaryField / decimal / uuid converters, ``construct_fields``
 sorting (unconditional since #19), the FK/O2O inheritance skip, the
 GenericForeignKey ct/fk-field resolution, and the ArrayField/RangeField
 list-base branches.
+
+Phase 7 graphene-removal: the relation / GFK / ArrayField / RangeField branches
+and the pure ``choice_enum_name`` / ``assert_valid_name`` / ``construct_fields``
+sorting paths are KEPT/backend-independent and unchanged. The graphene SCALAR
+converters (boolean / nullboolean / binary / decimal / uuid) are dead on native
+(the native output compiler derives the scalar from ``model._meta`` directly), so
+those tests were CONVERTED to drive the live native scalar mapper
+(``_to_graphql_field``) and, for the required-boolean ``NonNull`` input case, the
+native create-input compile (``DjangoInputObjectType(input_for="create")``),
+preserving the original per-field-type coverage. NOTE: native renders BinaryField
+as the ``String`` scalar (graphene-django SDL parity), not a dedicated Binary
+scalar.
 """
 
 import graphene
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from graphene import UUID, Boolean, Dynamic, Float, List, NonNull
+from graphene import Dynamic, List, NonNull
+from graphql import (
+    GraphQLBoolean,
+    GraphQLFloat,
+    GraphQLNonNull,
+    GraphQLString,
+)
 
-from django_graphex.base_types import Binary
 from django_graphex.converter import (
     assert_valid_name,
     choice_enum_name,
@@ -24,10 +41,35 @@ from django_graphex.converter import (
     convert_postgres_range_to_string,
 )
 from django_graphex.fields import ArrayField
+from django_graphex.native.output_compiler import _to_graphql_field
+from django_graphex.native.scalars import GdxUUID
 from django_graphex.registry import Registry
 from django_graphex.types import DjangoInputObjectType, DjangoObjectType
 
 from .models import Author, BasicModel, Post
+
+
+class _StubRegistry:
+    """Minimal registry for ``_to_graphql_field`` (scalars never touch it)."""
+
+    def get_compiled(self, model_cls):
+        return None
+
+
+def _native_scalar(field, name="probe"):
+    """Run the NATIVE scalar conversion for ``field`` and return its scalar.
+
+    Drives ``_to_graphql_field`` (the live native equivalent of the retired
+    graphene scalar dispatchers), unwraps ``GraphQLNonNull``, and returns the
+    underlying graphql-core scalar.
+    """
+    if not getattr(field, "name", None):
+        field.name = name
+    field_map = _to_graphql_field(field, _StubRegistry())
+    gql_type = next(iter(field_map.values())).type
+    if isinstance(gql_type, GraphQLNonNull):
+        gql_type = gql_type.of_type
+    return gql_type
 
 
 def _resolve(field, **kwargs):
@@ -87,44 +129,68 @@ def test_multiselectfield_choice_returns_list():
 # --------------------------------------------------------------------------- #
 # Scalar converter branches                                                     #
 # --------------------------------------------------------------------------- #
+class _RequiredBoolModel(models.Model):
+    """A required + an optional boolean for native create-input nullability."""
+
+    active = models.BooleanField(null=False, blank=False)  # required -> NonNull
+    maybe = models.BooleanField(null=True)  # optional -> nullable
+
+    class Meta:
+        app_label = "tests"
+
+
 def test_required_boolean_is_nonnull():
-    field = models.BooleanField(null=False, blank=False)
-    field.name = "active"
-    out = convert_django_field(field, Registry(), input_flag="create")
-    assert isinstance(out, NonNull)
+    # Native create-input: a required (null=False, no default) BooleanField is
+    # wrapped in GraphQLNonNull (the native equivalent of the graphene
+    # ``convert_django_field(input_flag="create")`` NonNull wrapping; the graphene
+    # scalar descriptor is dead on native).
+    class _In(DjangoInputObjectType):
+        class Meta:
+            model = _RequiredBoolModel
+            input_for = "create"
+
+    field = _In._meta.graphql_input_type.fields["active"]
+    assert isinstance(field.type, GraphQLNonNull)
+    assert field.type.of_type is GraphQLBoolean
 
 
 def test_optional_boolean_is_plain_boolean():
+    # Native output conversion: an optional BooleanField -> plain GraphQLBoolean
+    # (not wrapped in NonNull).
     field = models.BooleanField(null=True)
-    out = convert_django_field(field, Registry())
-    assert isinstance(out, Boolean)
+    out = _native_scalar(field, name="maybe")
+    assert out is GraphQLBoolean
 
 
 def test_nullboolean_field_converts_to_boolean():
-    field = models.BooleanField(null=True)
-    # Force the NullBooleanField converter directly (deprecated class path).
-    from django_graphex.converter import convert_field_to_nullboolean
-
-    out = convert_field_to_nullboolean(field)
-    assert isinstance(out, Boolean)
+    # The deprecated NullBooleanField subclasses BooleanField; native MRO mapping
+    # resolves it to GraphQLBoolean (the graphene ``convert_field_to_nullboolean``
+    # descriptor is dead on native).
+    field = models.NullBooleanField()
+    out = _native_scalar(field, name="nb")
+    assert out is GraphQLBoolean
 
 
 def test_binary_field_converts_to_binary_scalar():
+    # Native renders BinaryField as the ``String`` scalar (graphene-django SDL
+    # parity, #1508) — there is no dedicated native Binary scalar.
     field = models.BinaryField()
-    out = convert_django_field(field)
-    assert isinstance(out, Binary)
+    out = _native_scalar(field, name="blob")
+    assert out is GraphQLString
 
 
 def test_decimal_field_converts_to_float():
+    # Native collapses DecimalField to GraphQLFloat (graphene-django parity).
     field = models.DecimalField(max_digits=5, decimal_places=2)
-    out = convert_django_field(field)
-    assert isinstance(out, Float)
+    out = _native_scalar(field, name="amount")
+    assert out is GraphQLFloat
 
 
 def test_uuid_field_converts_to_uuid():
+    # Native maps UUIDField to GdxUUID (renders as the ``UUID`` scalar).
     field = models.UUIDField()
-    out = convert_django_field(field)
-    assert isinstance(out, UUID)
+    out = _native_scalar(field, name="uid")
+    assert out is GdxUUID
 
 
 def test_unregistered_field_type_raises_typeerror():

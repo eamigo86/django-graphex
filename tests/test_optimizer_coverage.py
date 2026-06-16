@@ -26,24 +26,55 @@ from __future__ import annotations
 
 from unittest import mock
 
-import graphene
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.contrib.contenttypes.models import ContentType
 from django.db import connection, models
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from graphene import Schema
-from graphql import parse
+from graphql import GraphQLString, graphql_sync, parse
 from graphql.language.ast import FragmentDefinitionNode, OperationDefinitionNode
 
 from django_graphex import (
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
     DjangoObjectField,
     DjangoObjectType,
+    ObjectType,
+    field,
 )
 from django_graphex.registry import Registry
 from django_graphex.settings import graphql_api_settings
+
+
+def _execute(schema, query):
+    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free).
+
+    Drop-in for the retired ``_execute(schema, query)``: returns the graphql-core
+    ``ExecutionResult`` (same ``.data`` / ``.errors`` shape graphene returned).
+    """
+    return graphql_sync(schema.graphql_schema, query)
+
+
+def _gtype(name, bases, ns):
+    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+
+    Native ``ObjectType`` / ``DjangoObjectType`` / ``DjangoListObjectType`` are
+    pydantic ``BaseModel`` subclasses; building them with ``type(name, bases, ns)``
+    requires ``ns['__module__']`` and a nested ``Meta`` whose ``__qualname__`` is
+    ``"<Outer>.Meta"`` (the value a ``class`` body produces). This supplies both so
+    the dynamic form behaves exactly like the equivalent ``class`` statement.
+    """
+    ns = dict(ns)
+    ns.setdefault("__module__", __name__)
+    ns["__qualname__"] = name
+    for attr_name, attr_val in list(ns.items()):
+        if isinstance(attr_val, type):
+            try:
+                attr_val.__qualname__ = f"{name}.{attr_name}"
+            except (AttributeError, TypeError):  # pragma: no cover - defensive
+                pass
+    return type(name, bases, ns)
 from django_graphex.utils import (
     PrefetchPlan,
     _collect_only_fields,
@@ -59,6 +90,7 @@ from django_graphex.utils import (
     recursive_params,
 )
 
+from ._schema_isolation import isolated_pair
 from .models import Author, DummyModel, Post, Tag
 
 
@@ -436,6 +468,11 @@ class ProfileType(DjangoObjectType):
     class Meta:
         model = Profile
         registry = RO2O
+        # Native renders auto-created REVERSE relations only when explicitly
+        # requested (graphene auto-derived them). ``account`` is the reverse O2O
+        # accessor (Profile <- Account.profile); list it so the reverse-O2O
+        # select_related path is exercised identically to the graphene backend.
+        only_fields = ("id", "handle", "headline", "account")
 
 
 class AccountType(DjangoObjectType):
@@ -456,13 +493,13 @@ class ProfileListType(DjangoListObjectType):
         registry = RO2O
 
 
-class O2OQuery(graphene.ObjectType):
+class O2OQuery(ObjectType):
     all_accounts = DjangoListObjectField(AccountListType)
     account = DjangoObjectField(AccountType)
     all_profiles = DjangoListObjectField(ProfileListType)
 
 
-o2o_schema = Schema(query=O2OQuery)
+o2o_schema = DjangoGraphQLSchema(query=O2OQuery, registries=isolated_pair(RO2O))
 
 
 class O2OOptimizationTest(TestCase):
@@ -473,7 +510,7 @@ class O2OOptimizationTest(TestCase):
             Account.objects.create(username="u%d" % i, profile=profile)
 
     def _exec(self, query):
-        result = o2o_schema.execute(query)
+        result = _execute(o2o_schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -563,12 +600,12 @@ class OptNoteListType(DjangoListObjectType):
         registry = RGFK
 
 
-class GFKQuery(graphene.ObjectType):
+class GFKQuery(ObjectType):
     all_profiles = DjangoListObjectField(RProfileListType)
     all_notes = DjangoListObjectField(OptNoteListType)
 
 
-gfk_schema = Schema(query=GFKQuery)
+gfk_schema = DjangoGraphQLSchema(query=GFKQuery, registries=isolated_pair(RGFK))
 
 
 # --------------------------------------------------------------------------- #
@@ -626,7 +663,7 @@ class GenericRelationE2ETest(TestCase):
                 )
 
     def _exec(self, query):
-        result = gfk_schema.execute(query)
+        result = _execute(gfk_schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -693,7 +730,7 @@ class GFKEndToEndTest(TestCase):
         )
 
     def _exec(self, query):
-        result = gfk_schema.execute(query)
+        result = _execute(gfk_schema, query)
         # Allow errors for unregistered-type resolution (null fields); check
         # data is present.
         return result
@@ -797,7 +834,7 @@ class GFKEndToEndTest(TestCase):
         } }
         """
         with self.assertNumQueries(5):
-            result = gfk_schema.execute(query)
+            result = _execute(gfk_schema, query)
 
         # Total count is correct.
         self.assertEqual(result.data["allNotes"]["totalCount"], 4)
@@ -814,7 +851,7 @@ class GFKEndToEndTest(TestCase):
         # The GraphQL response for contentObject on an unregistered target is
         # null or flat fallback — no unhandled exception.
         query = "{ allNotes { results { text } } }"
-        result = gfk_schema.execute(query)
+        result = _execute(gfk_schema, query)
         # Must not propagate an unhandled exception.
         # The note itself is still returned (text is always present).
         texts = [r["text"] for r in result.data["allNotes"]["results"]]
@@ -1031,14 +1068,15 @@ class FAuthorListType(DjangoListObjectType):
         registry = RFILT
 
 
-filt_schema = Schema(
-    query=type(
+filt_schema = DjangoGraphQLSchema(
+    query=_gtype(
         "FQ",
-        (graphene.ObjectType,),
+        (ObjectType,),
         {
             "authors": DjangoListObjectField(FAuthorListType),
         },
-    )
+    ),
+    registries=isolated_pair(RFILT),
 )
 
 
@@ -1051,7 +1089,7 @@ class FilteredPrefetchWalkTest(TestCase):
                 Post.objects.create(title="t%d-%d" % (n, j), author=author)
 
     def _exec(self, query):
-        result = filt_schema.execute(query)
+        result = _execute(filt_schema, query)
         assert result.errors is None, result.errors
         return result.data
 
@@ -1852,7 +1890,7 @@ class ETagType(DjangoObjectType):
 
 
 class EAuthorType(DjangoObjectType):
-    display_name = graphene.String()
+    display_name = field(GraphQLString)
 
     class Meta:
         model = __import__("tests.models", fromlist=["Author"]).Author
@@ -1910,7 +1948,7 @@ class EOptNoteListType(DjangoListObjectType):
         registry = RAUTHOR
 
 
-class EAuthorQuery(graphene.ObjectType):
+class EAuthorQuery(ObjectType):
     all_authors = DjangoListObjectField(EAuthorListType)
     all_posts = DjangoListObjectField(EPostListType)
     all_profiles = DjangoListObjectField(EProfileListType)
@@ -1918,7 +1956,7 @@ class EAuthorQuery(graphene.ObjectType):
     all_tags = DjangoListObjectField(ETagListType)
 
 
-e2e_schema = graphene.Schema(query=EAuthorQuery)
+e2e_schema = DjangoGraphQLSchema(query=EAuthorQuery, registries=isolated_pair(RAUTHOR))
 
 
 # =========================================================================== #
@@ -1969,7 +2007,7 @@ class E2EBaseTest(TestCase):
             )
 
     def _exec(self, query):
-        result = e2e_schema.execute(query)
+        result = _execute(e2e_schema, query)
         self.assertIsNone(result.errors, msg=str(result.errors))
         return result.data
 
@@ -2195,7 +2233,7 @@ class E2EItem16GFKTargetNoDegrade(E2EBaseTest):
         { allNotes { results { text contentObject { id } } totalCount } }
         """
         # 1 count + 1 notes + 1-3 GFK prefetches per content-type group
-        result = e2e_schema.execute(query)
+        result = _execute(e2e_schema, query)
         self.assertIsNone(result.errors, msg=str(result.errors))
         data = result.data
         self.assertGreaterEqual(data["allNotes"]["totalCount"], 2)
@@ -2351,7 +2389,7 @@ class TestWindowCountAnnotationFailureDegradeGracefully(TestCase):
             patch.object(QuerySet, "annotate", _patched_annotate),
             self.assertLogs("django_graphex.utils", level="DEBUG") as log_cm,
         ):
-            result = schema.execute(query)
+            result = _execute(schema, query)
 
         # The query must NOT produce a hard error (degrade-gracefully).
         self.assertIsNone(

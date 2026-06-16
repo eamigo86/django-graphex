@@ -24,10 +24,10 @@ from __future__ import annotations
 import graphene
 import pytest
 from django.test import TestCase
-from graphene import Schema
-from graphql import GraphQLError
+from graphql import GraphQLError, graphql_sync
 
 from django_graphex import (
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
     LimitOffsetGraphqlPagination,
@@ -42,8 +42,12 @@ from django_graphex.paginations.pagination import (
 from django_graphex.paginations.pagination import (
     _validate_ordering_terms,
 )
+from django_graphex.registry import Registry
 
+from ._schema_isolation import isolated_pair
 from .models import Author
+
+_RPOS = Registry()
 
 # ---------------------------------------------------------------------------
 # Schema helpers — full GraphQL integration
@@ -53,12 +57,14 @@ from .models import Author
 class LOSecType(DjangoListObjectType):
     class Meta:
         model = Author
+        registry = _RPOS
         pagination = LimitOffsetGraphqlPagination(default_limit=5, max_limit=20)
 
 
 class PageSecType(DjangoListObjectType):
     class Meta:
         model = Author
+        registry = _RPOS
         pagination = PageGraphqlPagination(
             page_size=5, page_size_query_param="pageSize"
         )
@@ -69,7 +75,7 @@ class SecQuery(graphene.ObjectType):
     page_list = DjangoListObjectField(PageSecType)
 
 
-sec_schema = Schema(query=SecQuery)
+sec_schema = DjangoGraphQLSchema(query=SecQuery, registries=isolated_pair(_RPOS))
 
 
 # ---------------------------------------------------------------------------
@@ -378,16 +384,18 @@ class TestSchemaIntegrationOrderingSecurity(TestCase):
 
     def test_limitoffset_schema_invalid_ordering_returns_error(self):
         """Full schema query with invalid ordering must return errors, not crash."""
-        result = sec_schema.execute(
-            '{ loList { results(ordering: "nonexistent_field") { name } } }'
+        result = graphql_sync(
+            sec_schema.graphql_schema,
+            '{ loList { results(ordering: "nonexistent_field") { name } } }',
         )
         # Must have errors or data be null — must NOT be a raw FieldError 500
         assert result.errors is not None or result.data is not None
 
     def test_page_schema_invalid_ordering_returns_error(self):
         """PageGraphqlPagination: invalid ordering in schema query → errors field."""
-        result = sec_schema.execute(
-            '{ pageList { results(ordering: "nonexistent_field") { name } } }'
+        result = graphql_sync(
+            sec_schema.graphql_schema,
+            '{ pageList { results(ordering: "nonexistent_field") { name } } }',
         )
         assert result.errors is not None or result.data is not None
 

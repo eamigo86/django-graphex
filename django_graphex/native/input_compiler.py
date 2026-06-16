@@ -325,6 +325,9 @@ def compile_input_type(
     description: str | None = None,
     nested_fields: tuple[NestedInputField, ...] = (),
     relation_fields: tuple[RelationInputField, ...] = (),
+    only_fields: tuple[str, ...] | list[str] | None = None,
+    exclude_fields: tuple[str, ...] | list[str] | None = None,
+    include_fields: tuple[str, ...] | list[str] | None = None,
 ) -> GraphQLInputObjectType:
     """Compile a Pydantic ``BaseModel`` into a ``GraphQLInputObjectType``.
 
@@ -371,10 +374,25 @@ def compile_input_type(
             rf.out_name for rf in relation_fields if not rf.inject_only
         }
 
+        # issue #65: Meta only/include/exclude field selection on the INPUT type.
+        # ``include_fields`` force-includes a field even when only/exclude would
+        # skip it (mirrors ``converter.construct_fields`` + the native output
+        # compiler). The pydantic validation model still carries every field; the
+        # GraphQL input type is the WIRE contract, so a field omitted here simply
+        # cannot be sent by a client.
+        _only = set(only_fields) if only_fields else None
+        _excl = set(exclude_fields) if exclude_fields else None
+        _incl = set(include_fields) if include_fields else None
+
         for field_name, field_info in model.model_fields.items():
             if field_name in _nested_out_names:
                 continue
             if field_name in _relation_replace:
+                continue
+            _forced = _incl is not None and field_name in _incl
+            if not _forced and _only is not None and field_name not in _only:
+                continue
+            if not _forced and _excl is not None and field_name in _excl:
                 continue
             # Determine the wire alias (camelCase)
             alias: str

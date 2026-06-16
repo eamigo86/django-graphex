@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Tests for DjangoModelType.get_queryset / filter_queryset hooks (piece B)."""
 
-import graphene
+from graphql import graphql_sync
 
-from django_graphex import DjangoModelType
+from django_graphex import DjangoGraphQLSchema, DjangoModelType, ObjectType
 
 from .models import HookModel
 
@@ -14,12 +14,17 @@ class HookType(DjangoModelType):
         filter_fields = {"id": ("exact",), "text": ("exact", "icontains")}
 
 
-class _Query(graphene.ObjectType):
+class _Query(ObjectType):
     hook = HookType.RetrieveField()
     hooks = HookType.ListField()
 
 
-_schema = graphene.Schema(query=_Query)
+_schema = DjangoGraphQLSchema(query=_Query)
+
+
+def _execute(query):
+    """Run a query against the native schema (drop-in for ``schema.execute``)."""
+    return graphql_sync(_schema.graphql_schema, query)
 
 
 def _seed():
@@ -32,7 +37,7 @@ def _seed():
 # -- AC1: default hooks return everything ------------------------------------ #
 def test_default_returns_all(db):
     _seed()
-    res = _schema.execute("{ hooks { results { text } totalCount } }")
+    res = _execute("{ hooks { results { text } totalCount } }")
     assert res.errors is None, res.errors
     assert res.data["hooks"]["totalCount"] == 3
 
@@ -46,7 +51,7 @@ def test_get_queryset_override(db, monkeypatch):
 
     monkeypatch.setattr(HookType, "get_queryset", classmethod(_gq))
 
-    res = _schema.execute("{ hooks { results { text } totalCount } }")
+    res = _execute("{ hooks { results { text } totalCount } }")
     assert res.errors is None, res.errors
     assert res.data["hooks"]["totalCount"] == 2
     assert sorted(r["text"] for r in res.data["hooks"]["results"]) == [
@@ -64,16 +69,16 @@ def test_filter_queryset_override(db, monkeypatch):
 
     monkeypatch.setattr(HookType, "filter_queryset", classmethod(_fq))
 
-    res = _schema.execute("{ hooks { results { text } totalCount } }")
+    res = _execute("{ hooks { results { text } totalCount } }")
     assert res.errors is None, res.errors
     assert res.data["hooks"]["totalCount"] == 2
 
     # an excluded id retrieves as null
-    excluded = _schema.execute("{ hook(id: %d) { text } }" % c.pk)
+    excluded = _execute("{ hook(id: %d) { text } }" % c.pk)
     assert excluded.errors is None, excluded.errors
     assert excluded.data["hook"] is None
 
-    included = _schema.execute("{ hook(id: %d) { text } }" % a.pk)
+    included = _execute("{ hook(id: %d) { text } }" % a.pk)
     assert included.data["hook"]["text"] == "keep-1"
 
 

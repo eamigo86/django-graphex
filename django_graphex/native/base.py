@@ -569,6 +569,8 @@ class _GdxOutputEntry:
     exclude_fields: list[str] | None
     max_deep: int | None
     complexity: int | None
+    # issue #65: force-included field names (override only/exclude on the fork).
+    include_fields: list[str] | None = None
 
 
 _gdx_output_registry: list[_GdxOutputEntry] = []

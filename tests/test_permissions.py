@@ -4,16 +4,27 @@
 import types as _types
 
 import graphene
+from graphql import graphql_sync
 
 from django_graphex import (
     AllowAny,
     BasePermission,
+    DjangoGraphQLSchema,
+    DjangoModelType,
     IsAdminOrReadOnly,
     IsAuthenticated,
 )
 
 from .models import HookModel
-from .test_serializer_queryset_hooks import HookType
+
+
+# Local DjangoModelType (native). Defined here rather than imported from
+# ``test_serializer_queryset_hooks`` so this module's coverage of
+# ``permission_classes`` does not depend on that sibling's module-level schema.
+class HookType(DjangoModelType):
+    class Meta:
+        model = HookModel
+        filter_fields = {"id": ("exact",), "text": ("exact", "icontains")}
 
 
 class _Query(graphene.ObjectType):
@@ -25,7 +36,13 @@ class _Mutation(graphene.ObjectType):
     create_hook = HookType.CreateField()
 
 
-_schema = graphene.Schema(query=_Query, mutation=_Mutation)
+_schema = DjangoGraphQLSchema(query=_Query, mutation=_Mutation)
+
+
+def _execute(query, context):
+    """Run ``query`` against the native graphql-core schema with ``context``."""
+    return graphql_sync(_schema.graphql_schema, query, context_value=context)
+
 
 _CREATE = 'mutation { createHook(newHookmodel: {text: "y"}) { ok } }'
 _LIST = "{ hooks { totalCount } }"
@@ -55,7 +72,7 @@ def _denied(result):
 # -- AC1: no permission_classes -> everything allowed ------------------------ #
 def test_no_permissions_allows_anonymous(db):
     HookModel.objects.create(text="x")
-    res = _schema.execute(_LIST, context=_ctx(_anon))
+    res = _execute(_LIST, _ctx(_anon))
     assert res.errors is None and res.data["hooks"]["totalCount"] == 1
 
 
@@ -64,10 +81,10 @@ def test_is_authenticated(db, monkeypatch):
     monkeypatch.setattr(HookType, "permission_classes", [IsAuthenticated])
     HookModel.objects.create(text="x")
 
-    assert _denied(_schema.execute(_LIST, context=_ctx(_anon)))
-    assert _denied(_schema.execute(_CREATE, context=_ctx(_anon)))
+    assert _denied(_execute(_LIST, _ctx(_anon)))
+    assert _denied(_execute(_CREATE, _ctx(_anon)))
 
-    ok = _schema.execute(_LIST, context=_ctx(_authed))
+    ok = _execute(_LIST, _ctx(_authed))
     assert ok.errors is None and ok.data["hooks"]["totalCount"] == 1
 
 
@@ -77,11 +94,11 @@ def test_is_admin_or_read_only(db, monkeypatch):
     HookModel.objects.create(text="x")
 
     # anonymous can read, cannot write
-    assert _schema.execute(_LIST, context=_ctx(_anon)).errors is None
-    assert _denied(_schema.execute(_CREATE, context=_ctx(_anon)))
+    assert _execute(_LIST, _ctx(_anon)).errors is None
+    assert _denied(_execute(_CREATE, _ctx(_anon)))
 
     # admin can write
-    admin_create = _schema.execute(_CREATE, context=_ctx(_admin))
+    admin_create = _execute(_CREATE, _ctx(_admin))
     assert admin_create.errors is None and admin_create.data["createHook"]["ok"] is True
 
 
@@ -94,8 +111,8 @@ def test_custom_per_action_permission(db, monkeypatch):
     monkeypatch.setattr(HookType, "permission_classes", [NoCreate])
     HookModel.objects.create(text="x")
 
-    assert _schema.execute(_LIST, context=_ctx(_anon)).errors is None  # list allowed
-    assert _denied(_schema.execute(_CREATE, context=_ctx(_anon)))  # create denied
+    assert _execute(_LIST, _ctx(_anon)).errors is None  # list allowed
+    assert _denied(_execute(_CREATE, _ctx(_anon)))  # create denied
 
 
 # -- ready-made classes (unit) ----------------------------------------------- #

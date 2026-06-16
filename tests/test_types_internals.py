@@ -5,15 +5,17 @@
 
 from unittest.mock import patch
 
-import graphene
 import pytest
 from django.test import TestCase
 from django.utils.functional import SimpleLazyObject
+from graphql import graphql_sync
 
 from django_graphex import (
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
     DjangoObjectType,
+    ObjectType,
 )
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.registry import Registry
@@ -81,17 +83,18 @@ class GlobalPaginationTest(TestCase):
                     model = Author
                     registry = _PR
 
-            class _Query(graphene.ObjectType):
+            class _Query(ObjectType):
                 authors = DjangoListObjectField(_PagedAuthorList)
 
-            schema = graphene.Schema(query=_Query)
+            schema = DjangoGraphQLSchema(query=_Query)
 
         Author.objects.create(name="a")
         Author.objects.create(name="b")
         # The global LimitOffset paginator wraps the `results` field, which now
         # exposes a `limit` argument (proving the global paginator was applied).
-        result = schema.execute(
-            "{ authors { results(limit: 1) { name } totalCount } } "
+        result = graphql_sync(
+            schema.graphql_schema,
+            "{ authors { results(limit: 1) { name } totalCount } } ",
         )
         self.assertIsNone(result.errors, result.errors)
         self.assertEqual(len(result.data["authors"]["results"]), 1)

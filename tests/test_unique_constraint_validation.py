@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from django.db import models
 from django.db.models import Q
 from django.test import TestCase
+from django.test.utils import isolate_apps
 
 from django_graphex import DjangoModelType
 from django_graphex.native.backend import PydanticBackend
@@ -254,10 +255,16 @@ class MTIParentLinkExclusionTest(TestCase):
             ),
         )
 
+    @isolate_apps("tests")
     def test_non_parent_link_oto_still_included(self):
         """A regular (non-MTI) OneToOneField SHOULD still appear in _fk_fields."""
         from tests.models import Author
 
+        # ``isolate_apps`` keeps this throwaway model OUT of the global Django app
+        # registry. Without it, ``WithOTO`` stays registered for the whole process
+        # but has NO table (no migration), so a later ``transaction=True`` test
+        # that introspects every model (e.g. the native subscription e2e) hits
+        # ``no such table: tests_withoto`` once the full suite runs together.
         class WithOTO(DummyModel):
             author = models.OneToOneField(Author, on_delete=models.CASCADE)
 

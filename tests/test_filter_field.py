@@ -19,7 +19,7 @@ from django.db import models
 from django_graphex import DjangoObjectType, filter_field
 from django_graphex.filtering import filter_field as ff_from_filtering
 from django_graphex.filtering.filter_field import filter_field as ff_direct
-from django_graphex.filtering.schema import build_filter_input_type
+from django_graphex.filtering.native_schema import build_filter_input_type
 from django_graphex.registry import Registry
 
 from .models import Author, Post
@@ -77,24 +77,23 @@ class TestFilterFieldBasic:
             custom_filters=PostSearchType._dgx_custom_filters,
         )
         assert filter_input is not None
-        # 'search' field exists in the generated input type
-        assert "search" in filter_input._meta.fields
+        # Native contract: the canonical field surface is the compiled
+        # ``GraphQLInputObjectType.fields`` (graphql-core), not graphene
+        # ``_meta.fields``.
+        assert "search" in filter_input.fields
 
     def test_search_arg_is_string_type(self):
-        """The 'search' arg should be a graphene.String type."""
+        """The 'search' arg should compile to the native GraphQLString scalar."""
         filter_input = build_filter_input_type(
             _FilterFieldPost,
             {"title": ("exact",)},
             registry=_BASIC_REGISTRY,
             custom_filters=PostSearchType._dgx_custom_filters,
         )
-        field = filter_input._meta.fields["search"]
-        # graphene InputField holds the graphene type
-        from graphene import String
+        field = filter_input.fields["search"]
+        from graphql import GraphQLString
 
-        assert field.type is String or (
-            isinstance(field.type, type) and issubclass(field.type, String)
-        )
+        assert field.type is GraphQLString
 
     def test_description_flows_to_schema(self):
         """The description kwarg on @filter_field flows to the GraphQL arg."""
@@ -104,7 +103,7 @@ class TestFilterFieldBasic:
             registry=_BASIC_REGISTRY,
             custom_filters=PostSearchType._dgx_custom_filters,
         )
-        field = filter_input._meta.fields["search"]
+        field = filter_input.fields["search"]
         assert field.description == "Full-text search"
 
 
@@ -138,12 +137,11 @@ class TestFilterFieldTypeOverride:
             registry=_INT_REGISTRY,
             custom_filters=PostIntFilterType._dgx_custom_filters,
         )
-        field = filter_input._meta.fields["min_views"]
-        from graphene import Int
+        # Native wire names are camelCase: ``min_views`` -> ``minViews``.
+        field = filter_input.fields["minViews"]
+        from graphql import GraphQLInt
 
-        assert field.type is Int or (
-            isinstance(field.type, type) and issubclass(field.type, Int)
-        )
+        assert field.type is GraphQLInt
 
 
 # ---------------------------------------------------------------------------
@@ -240,30 +238,34 @@ class TestFilterFieldReservedNameCollision:
     def test_reserved_name_raises(self, reserved_name):
         registry = Registry()
 
+        # The native ``DjangoObjectType`` metaclass requires a lexically-nested
+        # ``class Meta`` (pydantic-backed namespace processing); a bare
+        # ``type(name, bases, ns)`` namespace fails before the collision check
+        # runs. Build a *real* class statement via ``exec`` so the metaclass
+        # reaches ``__init_subclass_with_meta__``, where the reserved-name guard
+        # lives. (Behaviour unchanged: defining a type whose ``@filter_field``
+        # method name collides with a reserved arg raises ImproperlyConfigured.)
+        ns = {
+            "DjangoObjectType": DjangoObjectType,
+            "filter_field": filter_field,
+            "graphene": graphene,
+            "_FilterFieldPost": _FilterFieldPost,
+            "registry": registry,
+        }
+        src = (
+            "class _BadReservedType(DjangoObjectType):\n"
+            "    class Meta:\n"
+            "        model = _FilterFieldPost\n"
+            "        filter_fields = {'title': ('exact',)}\n"
+            "        registry = registry\n"
+            "    @filter_field(graphene.String)\n"
+            f"    def {reserved_name}(cls, queryset, info, value):\n"
+            "        return queryset\n"
+        )
+
         with pytest.raises(ImproperlyConfigured, match=reserved_name):
-            # Building the class triggers the collision check
-            attrs = {
-                "Meta": type(
-                    "Meta",
-                    (),
-                    {
-                        "model": _FilterFieldPost,
-                        "filter_fields": {"title": ("exact",)},
-                        "registry": registry,
-                    },
-                ),
-            }
-
-            # Create a method decorated with the reserved name
-            def _method(cls, queryset, info, value):
-                return queryset
-
-            _method.__name__ = reserved_name
-            decorated = filter_field(graphene.String)(_method)
-            decorated.__name__ = reserved_name
-            attrs[reserved_name] = decorated
-
-            type(f"Bad{reserved_name.title()}Type", (DjangoObjectType,), attrs)
+            # Building the class triggers the collision check.
+            exec(src, ns)
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +277,7 @@ class TestFilterFieldsNoneRaisesImproperlyConfigured:
     """filter_fields = {"x": None} must now raise ImproperlyConfigured."""
 
     def test_none_value_raises(self):
-        from django_graphex.filtering.schema import build_filter_input_type
+        from django_graphex.filtering.native_schema import build_filter_input_type
 
         with pytest.raises(ImproperlyConfigured, match="filter_field"):
             build_filter_input_type(
@@ -318,10 +320,18 @@ class TestFilterFieldExports:
         assert my_filter._dgx_filter_field["description"] is None
 
     def test_decorator_default_type_is_string(self):
-        """@filter_field() (no type) defaults to graphene.String."""
+        """@filter_field() (no type) defaults to the String scalar.
+
+        The native public contract defaults the argument scalar to graphql-core's
+        ``GraphQLString`` (the graphene ``String`` default of 1.x was replaced
+        when the decorator moved to a native default — see UPGRADE-2.0). The
+        behaviour under test is unchanged: omitting the type yields a String
+        filter argument.
+        """
+        from graphql import GraphQLString
 
         @ff_direct()
         def my_filter(cls, queryset, info, value):
             return queryset
 
-        assert my_filter._dgx_filter_field["graphene_type"] is graphene.String
+        assert my_filter._dgx_filter_field["graphene_type"] is GraphQLString

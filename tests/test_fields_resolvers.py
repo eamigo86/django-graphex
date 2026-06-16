@@ -32,6 +32,7 @@ from django_graphex.fields import (
 )
 from django_graphex.registry import Registry
 
+from ._schema_isolation import isolated_pair
 from .models import Author, Category, Post, Tag
 
 R = Registry()
@@ -83,7 +84,7 @@ class Query(ObjectType):
     posts = DjangoListObjectField(PostListType)
 
 
-schema = DjangoGraphQLSchema(query=Query)
+schema = DjangoGraphQLSchema(query=Query, registries=isolated_pair(R))
 
 
 # --------------------------------------------------------------------------- #
@@ -143,7 +144,7 @@ def test_paginate_field_without_pagination_runs_resolver(db):
     class _Q(ObjectType):
         items = field
 
-    s = DjangoGraphQLSchema(query=_Q)
+    s = DjangoGraphQLSchema(query=_Q, registries=isolated_pair(R))
     result = graphql_sync(s.graphql_schema, "{ items { title } }")
     assert result.errors is None, result.errors
     assert [p["title"] for p in result.data["items"]] == ["p1"]

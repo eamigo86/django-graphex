@@ -215,31 +215,11 @@ class TestSelfReferentialO2O:
             "so the MTI guard does NOT skip it."
         )
 
-    def test_filter_enum_for_self_ref_model_uses_model_class_key(self):
-        """The filtering/_choices_enum function must also use model-class keying."""
-        from django_graphex.filtering.schema import _choices_enum
-
-        local_registry = Registry()
-
-        field_a = EnumCollisionItemA._meta.get_field("status")
-        field_b = EnumCollisionItemB._meta.get_field("status")
-
-        # First, populate the registry via the main converter so _choices_enum
-        # can retrieve the enums.
-        convert_django_field_with_choices(field_a, local_registry)
-        convert_django_field_with_choices(field_b, local_registry)
-
-        enum_for_a = _choices_enum(field_a, local_registry)
-        enum_for_b = _choices_enum(field_b, local_registry)
-
-        # Both must resolve to their respective enums (not graphene.String fallback).
-        assert enum_for_a is not graphene.String, (
-            "filter _choices_enum must find the enum for EnumCollisionItemA"
-        )
-        assert enum_for_b is not graphene.String, (
-            "filter _choices_enum must find the enum for EnumCollisionItemB"
-        )
-        # And they must be distinct.
-        assert enum_for_a is not enum_for_b, (
-            "filter _choices_enum must return distinct enums for different model classes"
-        )
+    # S7 (graphene-removal): the graphene filter-input builder
+    # (``filtering/schema.py``) and its ``_choices_enum`` helper were deleted. The
+    # model-class enum-keying behavior it tested is the SAME registry keying
+    # exercised by the converter tests above (``convert_django_field_with_choices``
+    # populates distinct enums per model class); the native filter-input builder
+    # (``filtering/native_schema.py``) reuses those registry-keyed enums. The
+    # graphene-only ``_choices_enum`` unit test is therefore pruned (its module no
+    # longer exists), not ported — the underlying behavior remains covered.

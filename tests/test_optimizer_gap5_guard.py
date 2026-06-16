@@ -44,6 +44,8 @@ from django_graphex.utils import (
 )
 from tests.models import Author, Post
 
+from ._schema_isolation import isolated_pair
+
 
 def _execute(schema, query):
     """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free)."""
@@ -100,7 +102,7 @@ class _QueryGap5(ObjectType):
 # A built schema lets us resolve the real ``GraphQLObjectType`` objects (with the
 # ``.name`` / ``.graphene_type`` identity the production walkers thread into the
 # guard).  Walking a helper against this gql_type mirrors the production path.
-_SCHEMA_GAP5 = DjangoGraphQLSchema(query=_QueryGap5)
+_SCHEMA_GAP5 = DjangoGraphQLSchema(query=_QueryGap5, registries=isolated_pair(_R_GAP5))
 _AUTHOR_GQL_NAME = _AuthorTypeGap5._meta.name
 _POST_GQL_NAME = _PostTypeGap5._meta.name
 _AUTHOR_GQL = _SCHEMA_GAP5.graphql_schema.get_type(_AUTHOR_GQL_NAME)
@@ -721,7 +723,7 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
         class _QueryW(ObjectType):
             all_authors = DjangoListObjectField(_AuthorWList)
 
-        schema = DjangoGraphQLSchema(query=_QueryW)
+        schema = DjangoGraphQLSchema(query=_QueryW, registries=isolated_pair(reg))
         item_name = _AuthorW._meta.name
         query = (
             "{ allAuthors { results { name ... on "
@@ -807,7 +809,7 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
         class _QueryCW(ObjectType):
             all_authors = DjangoListObjectField(_AuthorCWList)
 
-        schema = DjangoGraphQLSchema(query=_QueryCW)
+        schema = DjangoGraphQLSchema(query=_QueryCW, registries=isolated_pair(reg))
         item_name = _AuthorCW._meta.name
         query = (
             "{ allAuthors { items { name ... on "

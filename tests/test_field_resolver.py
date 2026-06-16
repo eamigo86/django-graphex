@@ -5,15 +5,17 @@ Also a regression for DjangoModelType: its injected ``cls.retrieve`` /
 ``cls.list`` (and therefore ``Meta.queryset``) must actually run.
 """
 
-import graphene
+from graphql import graphql_sync
 
 from django_graphex import (
     DjangoFilterListField,
     DjangoFilterPaginateListField,
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoModelType,
     DjangoObjectField,
     LimitOffsetGraphqlPagination,
+    ObjectType,
 )
 from tests.models import BasicModel
 from tests.schema import User1ListType, UserType
@@ -83,11 +85,11 @@ def test_serializer_type_fields_run_injected_resolvers():
     )
 
 
-class _Query(graphene.ObjectType):
+class _Query(ObjectType):
     basics = _RestrictedBasicType.ListField()
 
 
-_schema = graphene.Schema(query=_Query)
+_schema = DjangoGraphQLSchema(query=_Query)
 
 
 def test_meta_queryset_is_honored_in_list(db):
@@ -96,7 +98,9 @@ def test_meta_queryset_is_honored_in_list(db):
     BasicModel.objects.create(text="keep-2")
     BasicModel.objects.create(text="drop-1")
 
-    result = _schema.execute("{ basics { results { text } totalCount } }")
+    result = graphql_sync(
+        _schema.graphql_schema, "{ basics { results { text } totalCount } }"
+    )
     assert result.errors is None, result.errors
 
     data = result.data["basics"]

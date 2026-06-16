@@ -9,8 +9,9 @@ signature errors).
 
 from __future__ import annotations
 
-import graphene
+from graphql import graphql_sync
 
+from django_graphex import DjangoGraphQLSchema, ObjectType
 from django_graphex.fields import (
     DjangoFilterListField,
     DjangoFilterPaginateListField,
@@ -49,7 +50,7 @@ class ScopedArticleListType(DjangoListObjectType):
         pagination = LimitOffsetGraphqlPagination(default_limit=25, ordering="id")
 
 
-class _Query(graphene.ObjectType):
+class _Query(ObjectType):
     article = DjangoObjectField(ScopedArticleType)
     articles = DjangoFilterListField(ScopedArticleType)
     articles_paginated = DjangoFilterPaginateListField(
@@ -59,7 +60,7 @@ class _Query(graphene.ObjectType):
     articles_list_obj = DjangoListObjectField(ScopedArticleListType)
 
 
-_schema = graphene.Schema(query=_Query)
+_schema = DjangoGraphQLSchema(query=_Query)
 
 
 def _seed():
@@ -78,7 +79,7 @@ def test_list_field_applies_get_queryset(db):
     """DjangoFilterListField returns only rows the hook allows."""
     pub1, pub2, priv = _seed()
 
-    res = _schema.execute("{ articles { title } }")
+    res = graphql_sync(_schema.graphql_schema, "{ articles { title } }")
     assert res.errors is None, res.errors
 
     titles = {r["title"] for r in res.data["articles"]}
@@ -99,14 +100,14 @@ def test_single_object_field_applies_get_queryset(db):
     pub1, pub2, priv = _seed()
 
     # Private article should be invisible even when queried by exact id
-    res = _schema.execute("{ article(id: %d) { title } }" % priv.pk)
+    res = graphql_sync(_schema.graphql_schema, "{ article(id: %d) { title } }" % priv.pk)
     assert res.errors is None, res.errors
     assert res.data["article"] is None, (
         "DjangoObjectType.get_queryset hook was not applied — private row returned"
     )
 
     # Public article should still be visible
-    res_pub = _schema.execute("{ article(id: %d) { title } }" % pub1.pk)
+    res_pub = graphql_sync(_schema.graphql_schema, "{ article(id: %d) { title } }" % pub1.pk)
     assert res_pub.errors is None, res_pub.errors
     assert res_pub.data["article"]["title"] == "Public-1"
 
@@ -120,7 +121,7 @@ def test_paginated_list_applies_get_queryset(db):
     """DjangoFilterPaginateListField respects the get_queryset override."""
     pub1, pub2, priv = _seed()
 
-    res = _schema.execute("{ articlesPaginated { title } }")
+    res = graphql_sync(_schema.graphql_schema, "{ articlesPaginated { title } }")
     assert res.errors is None, res.errors
 
     titles = {r["title"] for r in res.data["articlesPaginated"]}
@@ -141,18 +142,18 @@ class UnfilteredArticleType(DjangoObjectType):
         skip_registry = True  # don't collide with ScopedArticleType in the registry
 
 
-class _UnfilteredQuery(graphene.ObjectType):
+class _UnfilteredQuery(ObjectType):
     unfiltered = DjangoFilterListField(UnfilteredArticleType)
 
 
-_unfiltered_schema = graphene.Schema(query=_UnfilteredQuery)
+_unfiltered_schema = DjangoGraphQLSchema(query=_UnfilteredQuery)
 
 
 def test_default_get_queryset_returns_all(db):
     """When get_queryset is not overridden, all rows are returned."""
     pub1, pub2, priv = _seed()
 
-    res = _unfiltered_schema.execute("{ unfiltered { title } }")
+    res = graphql_sync(_unfiltered_schema.graphql_schema, "{ unfiltered { title } }")
     assert res.errors is None, res.errors
     assert len(res.data["unfiltered"]) == 3
 
@@ -168,12 +169,12 @@ class HookModelType(DjangoModelType):
         filter_fields = {"id": ("exact",), "text": ("exact",)}
 
 
-class _DMTQuery(graphene.ObjectType):
+class _DMTQuery(ObjectType):
     hook = HookModelType.RetrieveField()
     hooks = HookModelType.ListField()
 
 
-_dmt_schema = graphene.Schema(query=_DMTQuery)
+_dmt_schema = DjangoGraphQLSchema(query=_DMTQuery)
 
 
 def test_django_model_type_unaffected(db):
@@ -182,12 +183,12 @@ def test_django_model_type_unaffected(db):
     HookModel.objects.create(text="beta")
 
     # list — all rows returned (no accidental extra filter)
-    res = _dmt_schema.execute("{ hooks { results { text } totalCount } }")
+    res = graphql_sync(_dmt_schema.graphql_schema, "{ hooks { results { text } totalCount } }")
     assert res.errors is None, res.errors
     assert res.data["hooks"]["totalCount"] == 2
 
     # retrieve — correct object returned
-    res2 = _dmt_schema.execute("{ hook(id: %d) { text } }" % a.pk)
+    res2 = graphql_sync(_dmt_schema.graphql_schema, "{ hook(id: %d) { text } }" % a.pk)
     assert res2.errors is None, res2.errors
     assert res2.data["hook"]["text"] == "alpha"
 
@@ -205,7 +206,7 @@ def test_django_model_type_get_queryset_signature_unchanged(db, monkeypatch):
 
     monkeypatch.setattr(HookModelType, "filter_queryset", classmethod(patched_fq))
 
-    res = _dmt_schema.execute("{ hooks { results { text } totalCount } }")
+    res = graphql_sync(_dmt_schema.graphql_schema, "{ hooks { results { text } totalCount } }")
     assert res.errors is None, res.errors
     assert filter_called, (
         "filter_queryset was never called — DjangoModelType path broken"
@@ -224,7 +225,7 @@ def test_optimizer_runs_on_hooked_queryset(db, django_db_setup):
     # We verify no Python/Django error occurs and the correct rows come back.
     pub1, pub2, priv = _seed()
 
-    res = _schema.execute("{ articles { title } }")
+    res = graphql_sync(_schema.graphql_schema, "{ articles { title } }")
     assert res.errors is None, res.errors
     assert len(res.data["articles"]) == 2  # only the 2 public ones
 
@@ -241,7 +242,7 @@ def test_list_object_field_applies_get_queryset_results(db):
     """DjangoListObjectField results reflect the item type's get_queryset hook."""
     pub1, pub2, priv = _seed()
 
-    res = _schema.execute("{ articlesListObj { results { title } totalCount } }")
+    res = graphql_sync(_schema.graphql_schema, "{ articlesListObj { results { title } totalCount } }")
     assert res.errors is None, res.errors
 
     titles = {r["title"] for r in res.data["articlesListObj"]["results"]}
@@ -256,7 +257,7 @@ def test_list_object_field_applies_get_queryset_total_count(db):
     """DjangoListObjectField totalCount reflects the item type's get_queryset hook."""
     pub1, pub2, priv = _seed()
 
-    res = _schema.execute("{ articlesListObj { results { title } totalCount } }")
+    res = graphql_sync(_schema.graphql_schema, "{ articlesListObj { results { title } totalCount } }")
     assert res.errors is None, res.errors
 
     count = res.data["articlesListObj"]["totalCount"]
@@ -275,7 +276,7 @@ def test_list_object_field_get_queryset_query_count_parity(
     # We run the same query twice and confirm it completes without error; the
     # exact count depends on optimizer settings, but it must be deterministic.
     with django_assert_num_queries(2):  # count + results (both from hooked qs)
-        res = _schema.execute("{ articlesListObj { results { title } totalCount } }")
+        res = graphql_sync(_schema.graphql_schema, "{ articlesListObj { results { title } totalCount } }")
     assert res.errors is None, res.errors
 
 
@@ -284,7 +285,7 @@ def test_list_object_field_django_model_type_unaffected(db):
     HookModel.objects.create(text="alpha")
     HookModel.objects.create(text="beta")
 
-    res = _dmt_schema.execute("{ hooks { results { text } totalCount } }")
+    res = graphql_sync(_dmt_schema.graphql_schema, "{ hooks { results { text } totalCount } }")
     assert res.errors is None, res.errors
     # Both rows still visible — DjangoModelType is isolated from the new wiring.
     assert res.data["hooks"]["totalCount"] == 2

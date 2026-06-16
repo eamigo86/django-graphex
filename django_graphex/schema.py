@@ -473,7 +473,7 @@ class DjangoGraphQLSchema:
         # defaults; the canonical-instance mapping keeps a type referenced by a
         # field AND listed in ``types=`` from duplicate-naming.
         native_types = DjangoGraphQLSchema._native_types_for_forwarding(
-            kwargs.get("types")
+            kwargs.get("types"), registries
         )
 
         return GraphQLSchema(
@@ -488,6 +488,7 @@ class DjangoGraphQLSchema:
     @staticmethod
     def _native_types_for_forwarding(
         types: Any,
+        registries: Any = None,
     ) -> list[Any] | None:
         """Map graphene ``types=`` entries to their canonical native types.
 
@@ -532,6 +533,7 @@ class DjangoGraphQLSchema:
 
         from graphql import GraphQLNamedType
 
+        from django_graphex.native.base import resolved_output_type
         from django_graphex.native.scalars import GDX_SCALAR_MAP
         from django_graphex.native.schema_compiler import (
             _compile_plain_object_type,
@@ -547,15 +549,23 @@ class DjangoGraphQLSchema:
                 continue
 
             # 2) DjangoObjectType / DjangoListObjectType → canonical instance.
-            canonical = _plain_django_output_type(entry)
-            if canonical is not None:
-                native.append(canonical)
+            #    item-b (B5/B7): under a FORKED pair, resolve to the pair's forked
+            #    instance (not the global class-def one) so a forwarded type also
+            #    listed/referenced in the schema does not introduce a SECOND
+            #    same-named instance (assert_schema_pair_isolation R1 guard).
+            #    Default pair → resolved_output_type returns the class-def instance
+            #    (byte-identical).
+            if _plain_django_output_type(entry) is not None:
+                forked = resolved_output_type(entry, registries)
+                native.append(
+                    forked if forked is not None else _plain_django_output_type(entry)
+                )
                 continue
 
             # 3) Plain graphene.ObjectType → memoized on-the-fly native type
             #    (the SAME instance the dispatch path compiles, so no dup-name).
             if _is_plain_object_type(entry):
-                native.append(_compile_plain_object_type(entry))
+                native.append(_compile_plain_object_type(entry, registries))
                 continue
 
             # 4) graphene scalar / enum class whose name resolves in the scalar

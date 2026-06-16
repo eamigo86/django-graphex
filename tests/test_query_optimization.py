@@ -5,20 +5,21 @@ Covers the reworked ``django_graphex.utils.queryset_factory`` /
 ``recursive_params`` (SPEC ``specs/queryset-optimization-spec.md``).
 """
 
-import graphene
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from graphene import Schema
-from graphql import parse
+from graphql import graphql_sync, parse
 from graphql.language.ast import FragmentDefinitionNode, OperationDefinitionNode
 
 from django_graphex import (
+    DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
     DjangoObjectField,
     DjangoObjectType,
+    ObjectType,
 )
+from django_graphex.registry import Registry
 from django_graphex.settings import graphql_api_settings
 from django_graphex.utils import (
     _collect_only_fields,
@@ -26,7 +27,10 @@ from django_graphex.utils import (
     recursive_params,
 )
 
+from ._schema_isolation import isolated_pair
 from .models import Author, Category, Post, Tag
+
+_RQO = Registry()
 
 
 # --------------------------------------------------------------------------- #
@@ -150,34 +154,39 @@ class OnlyFieldsTest(TestCase):
 class AuthorType(DjangoObjectType):
     class Meta:
         model = Author
+        registry = _RQO
 
 
 class CategoryType(DjangoObjectType):
     class Meta:
         model = Category
+        registry = _RQO
 
 
 class TagType(DjangoObjectType):
     class Meta:
         model = Tag
+        registry = _RQO
 
 
 class PostType(DjangoObjectType):
     class Meta:
         model = Post
+        registry = _RQO
 
 
 class PostListType(DjangoListObjectType):
     class Meta:
         model = Post
+        registry = _RQO
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     all_posts = DjangoListObjectField(PostListType)
     post = DjangoObjectField(PostType)
 
 
-schema = Schema(query=Query)
+schema = DjangoGraphQLSchema(query=Query, registries=isolated_pair(_RQO))
 
 NESTED_QUERY = """
 {
@@ -206,7 +215,7 @@ class NPlusOneTest(TestCase):
             post.tags.add(*tags)
 
     def _run(self):
-        result = schema.execute(NESTED_QUERY)
+        result = graphql_sync(schema.graphql_schema, NESTED_QUERY)
         assert result.errors is None, result.errors
         # force full resolution / serialization
         data = result.data["allPosts"]
@@ -250,9 +259,10 @@ class SingleObjectTest(TestCase):
         cls.post.tags.add(*tags)
 
     def _query(self, pk):
-        return schema.execute(
+        return graphql_sync(
+            schema.graphql_schema,
             "{ post(id: %s) { title author { name } "
-            "tags { results { label } totalCount } } }" % pk
+            "tags { results { label } totalCount } } }" % pk,
         )
 
     def test_constant_query_count_for_single_object(self):

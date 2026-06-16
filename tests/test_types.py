@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Tests for django_graphex.types module."""
 
-import graphene
 from django.test import TestCase
 
+from django_graphex.fields import DjangoListObjectField, DjangoObjectField
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.types import (
     DjangoInputObjectType,
@@ -88,38 +88,64 @@ class TypesTest(TestCase):
 
     def test_list_type_fields(self):
         """Test list type fields."""
-        # The uniform list shape always exposes results + totalCount.
-        fields = BasicListType._meta.fields
-        self.assertIsInstance(fields, dict)
-        # `count` is exposed in the schema as `totalCount`.
-        self.assertIn("results", fields)
-        self.assertIn("count", fields)
+        # The uniform list shape always exposes results + totalCount. Under the
+        # native backend the live container is the compiled
+        # ``_meta.graphql_output_type`` (a graphql-core ``GraphQLObjectType``);
+        # the dead graphene ``_meta.fields`` descriptors are no longer built.
+        from django_graphex.native.registry_compiler import compile_all_outputs
+
+        compile_all_outputs()
+        meta = BasicListType._meta
+        gql = meta.graphql_output_type
+        self.assertIsNotNone(gql)
+        fields = gql.fields  # force thunk eval
+        # `results` carries the list rows; `count` is exposed as `totalCount`.
+        self.assertIn(meta.results_field_name, fields)
+        self.assertIn("totalCount", fields)
 
     def test_input_type_fields(self):
         """Test input type fields."""
-        # The input type mirrors the model's concrete fields.
-        fields = BasicInputType._meta.fields
-        self.assertIsInstance(fields, dict)
+        # The input type mirrors the model's concrete fields. Under the native
+        # backend the input lands as a compiled graphql-core
+        # ``GraphQLInputObjectType`` on ``_meta.graphql_input_type``.
+        gql_input = BasicInputType._meta.graphql_input_type
+        self.assertIsNotNone(gql_input)
+        fields = gql_input.fields  # force thunk eval
         self.assertIn("text", fields)
 
     def test_serializer_type_query_fields(self):
-        """Test serializer type query field creation."""
+        """Test serializer type query field creation.
+
+        ``QueryFields()`` returns a single-object retrieve field and a list
+        field. Under the native backend these are the library's own
+        ``DjangoObjectField`` / ``DjangoListObjectField`` descriptors (the
+        public, graphene-free query-field API).
+        """
         retrieve_field, list_field = BasicSerializerType.QueryFields()
-        self.assertIsInstance(retrieve_field, graphene.Field)
-        self.assertIsInstance(list_field, graphene.Field)
+        self.assertIsInstance(retrieve_field, DjangoObjectField)
+        self.assertIsInstance(list_field, DjangoListObjectField)
 
     def test_serializer_type_mutation_fields(self):
         """Test serializer type mutation field creation.
 
-        Native mutation schema assembly is delivered in Phase 5 / WU9: under
-        ``GDX_BACKEND=native`` ``CreateField``/``UpdateField``/``DeleteField``
-        return graphql-core ``GraphQLField`` objects (NOT graphene ``Field``)
-        whose ``.type`` is the canonical compiled output type and whose ``.args``
-        are graphql-core ``GraphQLArgument`` instances — the genuine native
-        mutation field shape. (The honest skip this replaces deferred exactly
-        this assertion to Phase 5; specs/2.0-migration-plan.md.)
+        Native mutation schema assembly: ``CreateField`` / ``UpdateField`` /
+        ``DeleteField`` return graphql-core ``GraphQLField`` objects whose
+        ``.type`` is the canonical compiled output type and whose ``.args`` are
+        graphql-core ``GraphQLArgument`` instances — the genuine native mutation
+        field shape.
         """
-        import os
+        from graphql import (
+            GraphQLArgument,
+            GraphQLField,
+            GraphQLNonNull,
+            GraphQLObjectType,
+        )
+
+        from django_graphex._strconv import to_camel_case
+
+        from django_graphex.native.schema_compiler import (
+            _compile_plain_object_type,
+        )
 
         # MutationFields() returns (create, delete, update) — keep this order so
         # the per-field assertions below reference the correct operation.
@@ -129,78 +155,55 @@ class TypesTest(TestCase):
             update_field,
         ) = BasicSerializerType.MutationFields()
 
-        if os.environ.get("GDX_BACKEND", "graphene") == "native":
-            from graphene.utils.str_converters import to_camel_case
-            from graphql import (
-                GraphQLArgument,
-                GraphQLField,
-                GraphQLNonNull,
-                GraphQLObjectType,
-            )
+        for field in (create_field, update_field, delete_field):
+            # Native: a raw graphql-core GraphQLField.
+            self.assertIsInstance(field, GraphQLField)
+            # Its args are graphql-core GraphQLArgument instances.
+            for arg in field.args.values():
+                self.assertIsInstance(arg, GraphQLArgument)
+            # Its output type is the compiled mutation PAYLOAD wrapper
+            # (ok / errors + the model output field).
+            out = field.type
+            if isinstance(out, GraphQLNonNull):
+                out = out.of_type
+            self.assertIsInstance(out, GraphQLObjectType)
+            # The payload carries ok / errors + the output field — matching the
+            # DjangoModelType mutation SDL (`...: ThisType` where
+            # ThisType = { <model>, ok, errors }).
+            self.assertIn("ok", out.fields)
+            self.assertIn("errors", out.fields)
+            self.assertIn(BasicSerializerType._meta.output_field_name, out.fields)
 
-            from django_graphex.native.schema_compiler import (
-                _compile_plain_object_type,
-            )
+        # The wire arg names are camelCase (graphql-core does NOT auto-camelCase);
+        # the create input arg is the camelCased `new_<model>` and the delete arg
+        # is `id`. Each keeps out_name=snake.
+        create_arg_name = to_camel_case(BasicSerializerType._meta.input_field_name)
+        self.assertIn(create_arg_name, create_field.args)
+        self.assertEqual(
+            create_field.args[create_arg_name].out_name,
+            BasicSerializerType._meta.input_field_name,
+        )
+        self.assertIn("id", delete_field.args)
 
-            for field in (create_field, update_field, delete_field):
-                # Native: a raw graphql-core GraphQLField, NOT a graphene.Field.
-                self.assertIsInstance(field, GraphQLField)
-                self.assertNotIsInstance(field, graphene.Field)
-                # Its args are graphql-core GraphQLArgument instances (graphene's
-                # to_arguments() would have rejected these at construction — the
-                # exact reason the original assertion was skipped pre-Phase-5).
-                for arg in field.args.values():
-                    self.assertIsInstance(arg, GraphQLArgument)
-                # Its output type is the compiled mutation PAYLOAD wrapper
-                # (ok / errors + the model output field) — graphene mounts
-                # cls._meta.mutation_output (= this type) here, NOT the bare node.
-                out = field.type
-                if isinstance(out, GraphQLNonNull):
-                    out = out.of_type
-                self.assertIsInstance(out, GraphQLObjectType)
-                # The payload carries ok / errors + the output field — matching
-                # graphene's DjangoModelType mutation SDL (`...: ThisType` where
-                # ThisType = { <model>, ok, errors }).
-                self.assertIn("ok", out.fields)
-                self.assertIn("errors", out.fields)
-                self.assertIn(
-                    BasicSerializerType._meta.output_field_name, out.fields
-                )
-
-            # The wire arg names are camelCase (graphql-core does NOT
-            # auto-camelCase); the create input arg is the camelCased
-            # `new_<model>` and the delete arg is `id`. Each keeps out_name=snake.
-            create_arg_name = to_camel_case(
-                BasicSerializerType._meta.input_field_name
-            )
-            self.assertIn(create_arg_name, create_field.args)
-            self.assertEqual(
-                create_field.args[create_arg_name].out_name,
-                BasicSerializerType._meta.input_field_name,
-            )
-            self.assertIn("id", delete_field.args)
-
-            # The create field's output payload is the canonical compiled
-            # instance (single-instance memoized), not a fresh per-call rebuild —
-            # identity-stable with the plain-object compiler's cache.
-            create_out = create_field.type
-            if isinstance(create_out, GraphQLNonNull):
-                create_out = create_out.of_type
-            self.assertIs(
-                create_out,
-                _compile_plain_object_type(BasicSerializerType),
-            )
-            return
-
-        # Graphene path (default): graphene Field instances.
-        self.assertIsInstance(create_field, graphene.Field)
-        self.assertIsInstance(update_field, graphene.Field)
-        self.assertIsInstance(delete_field, graphene.Field)
+        # The create field's output payload is the canonical compiled instance
+        # (single-instance memoized), not a fresh per-call rebuild —
+        # identity-stable with the plain-object compiler's cache.
+        create_out = create_field.type
+        if isinstance(create_out, GraphQLNonNull):
+            create_out = create_out.of_type
+        self.assertIs(
+            create_out,
+            _compile_plain_object_type(BasicSerializerType),
+        )
 
     def test_list_type_retrieve_field(self):
-        """Test list type retrieve field."""
+        """Test list type retrieve field.
+
+        ``RetrieveField()`` returns the single-object retrieve descriptor — the
+        library's ``DjangoObjectField`` (graphene-free public field API).
+        """
         retrieve_field = BasicListType.RetrieveField()
-        self.assertIsInstance(retrieve_field, graphene.Field)
+        self.assertIsInstance(retrieve_field, DjangoObjectField)
 
     def test_type_meta_attributes(self):
         """Test type meta attributes."""
