@@ -111,12 +111,16 @@ def test_object_field_model_property():
 
 
 def test_django_list_field_unwraps_nonnull():
-    # Passing a NonNull(type) -> unwrapped before wrapping in List(NonNull(...)).
+    # Passing a NonNull(type) -> unwrapped before wrapping in NativeList(NativeNonNull(...)).
+    # S8c: DjangoListField is off graphene; ``.type`` is the native wrapper currency
+    # (NativeList / NativeNonNull) — the SAME ``[Tag!]`` shape, no graphene List.
+    from django_graphex.native.descriptors import NativeList, NativeNonNull
+
     field = DjangoListField(NonNull(TagType))
-    # The outer wrapper is List(NonNull(TagType)); the inner NonNull was unwrapped
-    # so it is not doubled (no List(NonNull(NonNull(TagType)))).
-    assert isinstance(field.type, graphene.List)
-    assert isinstance(field.type.of_type, NonNull)
+    # The outer wrapper is NativeList(NativeNonNull(TagType)); the inner (graphene)
+    # NonNull was unwrapped so it is not doubled (no [Tag!!]).
+    assert isinstance(field.type, NativeList)
+    assert isinstance(field.type.of_type, NativeNonNull)
     assert field.type.of_type.of_type is TagType
 
 

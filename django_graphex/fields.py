@@ -10,8 +10,7 @@ from django.db.models import Count, F, JSONField, Prefetch
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.expressions import Window
 from django.db.models.functions import RowNumber
-from graphene import ID, Field, List
-from graphene.types.structures import NonNull, Structure
+from graphql import GraphQLID, GraphQLList, GraphQLNonNull
 
 import django_graphex.settings as _settings_module
 from django_graphex.filtering.backend import resolve_filter_backend
@@ -20,6 +19,11 @@ from django_graphex.settings import graphql_api_settings
 from ._strconv import to_snake_case
 from .base_types import DjangoListObjectBase
 from .filtering.filter_field import apply_custom_filters
+from .native.descriptors import (
+    NativeList,
+    NativeMountedField,
+    NativeNonNull,
+)
 from .paginations.pagination import BaseDjangoGraphqlPagination
 from .utils import (
     _apply_field_hook,
@@ -59,6 +63,50 @@ if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo as ResolveInfo
 
 
+# All list/non-null wrapper currencies a field ``.type`` may carry during the
+# native window: graphql-core ``GraphQLList`` / ``GraphQLNonNull`` (eager,
+# compiled) AND the native lazy ``NativeList`` / ``NativeNonNull`` descriptors
+# (S-ROOTS-c). Every one exposes ``.of_type``; ``_unwrap_type`` peels them to reach
+# the inner node class that carries ``_meta`` (graphene ``Structure`` is gone —
+# S8c).
+_TYPE_WRAPPERS = (GraphQLNonNull, GraphQLList, NativeNonNull, NativeList)
+
+
+def _unwrap_type(current_type: Any) -> Any:
+    """Peel list / non-null wrappers to reach the inner node type.
+
+    Mirrors the graphene ``Structure`` unwrap the field classes used before S8c,
+    but over the native wrapper currency (graphql-core ``GraphQLList`` /
+    ``GraphQLNonNull`` + lazy ``NativeList`` / ``NativeNonNull``). Every wrapper
+    exposes ``.of_type``, so the loop is uniform.
+
+    Args:
+        current_type: A field ``.type`` (possibly wrapped).
+
+    Returns:
+        The innermost wrapped type (the node class carrying ``_meta``).
+    """
+    while isinstance(current_type, _TYPE_WRAPPERS):
+        current_type = current_type.of_type
+    return current_type
+
+
+def _id_argument() -> Any:
+    """Return the ``id: ID!`` argument for ``DjangoObjectField`` (graphene-free).
+
+    Replaces the graphene ``ID(required=True, description=...)`` extra-arg the
+    field used to mount. The native compiler's
+    ``graphene_arg_to_graphql_argument`` accepts a graphql-core ``GraphQLArgument``
+    verbatim, so this is the byte-equivalent native currency.
+    """
+    from graphql import GraphQLArgument
+
+    return GraphQLArgument(
+        GraphQLNonNull(GraphQLID),
+        description="Django object unique identification field",
+    )
+
+
 class _MissingType:
     """Placeholder for a Postgres field type that is unavailable."""
 
@@ -89,7 +137,7 @@ except ImportError:  # pragma: no cover
 # *********************************************** #
 # *********** FIELD FOR SINGLE OBJECT *********** #
 # *********************************************** #
-class DjangoObjectField(Field):
+class DjangoObjectField(NativeMountedField):
     """GraphQL field for a single Django model object."""
 
     def __init__(self, _type: Any, *args: Any, **kwargs: Any) -> None:
@@ -100,9 +148,7 @@ class DjangoObjectField(Field):
             *args: extra positional arguments forwarded to the base field.
             **kwargs: extra keyword arguments forwarded to the base field.
         """
-        kwargs["id"] = ID(
-            required=True, description="Django object unique identification field"
-        )
+        kwargs["id"] = _id_argument()
 
         super().__init__(_type, *args, **kwargs)
 
@@ -113,14 +159,7 @@ class DjangoObjectField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        from graphql import GraphQLList as _GQLList
-        from graphql import GraphQLNonNull as _GQLNonNull
-
-        current_type = self.type
-        # Unwrap graphql-core wrappers first, then graphene Structure.
-        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-            current_type = current_type.of_type
-        return current_type._meta.model
+        return _unwrap_type(self.type)._meta.model
 
     @staticmethod
     def object_resolver(
@@ -187,12 +226,12 @@ class DjangoObjectField(Field):
 # *********************************************** #
 # *************** FIELDS FOR LIST *************** #
 # *********************************************** #
-class DjangoListField(Field):
+class DjangoListField(NativeMountedField):
     """GraphQL field for a list of Django model objects.
 
-    A plain ``graphene.Field`` wrapping ``[Type!]``. We deliberately do *not*
-    extend graphene-django's ``DjangoListField`` (which asserts the inner type is
-    its own ``DjangoObjectType``); this library has its own ``DjangoObjectType``.
+    A plain field wrapping ``[Type!]``. We deliberately do *not* extend
+    graphene-django's ``DjangoListField`` (which asserts the inner type is its own
+    ``DjangoObjectType``); this library has its own ``DjangoObjectType``.
     """
 
     def __init__(self, _type: Any, *args: Any, **kwargs: Any) -> None:
@@ -203,10 +242,17 @@ class DjangoListField(Field):
             *args: extra positional arguments forwarded to the base field.
             **kwargs: extra keyword arguments forwarded to the base field.
         """
-        if isinstance(_type, NonNull):
+        # Unwrap an already-non-null inner type so we never double-wrap into
+        # ``[Type!!]``. Covers the native wrappers (``NativeNonNull``), graphql-core
+        # (``GraphQLNonNull``), AND a transitional graphene ``NonNull`` (the
+        # converter still emits graphene types until S8e) — duck-typed by the
+        # ``of_type`` + class-name shape so fields.py stays graphene-free.
+        if isinstance(_type, (NativeNonNull, GraphQLNonNull)) or (
+            hasattr(_type, "of_type") and type(_type).__name__ == "NonNull"
+        ):
             _type = _type.of_type
 
-        super().__init__(List(NonNull(_type)), *args, **kwargs)
+        super().__init__(NativeList(NativeNonNull(_type)), *args, **kwargs)
 
 
 def _resolve_custom_filters(_type: Any) -> list:
@@ -234,7 +280,7 @@ def _resolve_custom_filters(_type: Any) -> list:
     return custom_filters
 
 
-def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
+def _build_filter_arg(field: NativeMountedField, _type: Any, fields: Any) -> None:
     """Record the filter configuration (backend, fields, custom filters) on a field.
 
     Stores the resolved filter backend and the type's declared ``filter_fields``
@@ -264,7 +310,7 @@ def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
     field.custom_filters = _resolve_custom_filters(_type)
 
 
-class DjangoFilterListField(Field):
+class DjangoFilterListField(NativeMountedField):
     """GraphQL field for a filtered list of Django model objects."""
 
     def __init__(
@@ -288,7 +334,7 @@ class DjangoFilterListField(Field):
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
 
-        super().__init__(List(_type), *args, **kwargs)
+        super().__init__(NativeList(_type), *args, **kwargs)
 
     @property
     def model(self) -> type[Model]:
@@ -297,14 +343,7 @@ class DjangoFilterListField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        from graphql import GraphQLList as _GQLList
-        from graphql import GraphQLNonNull as _GQLNonNull
-
-        current_type = self.type
-        # Unwrap graphql-core wrappers first, then graphene Structure.
-        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-            current_type = current_type.of_type
-        return current_type._meta.model
+        return _unwrap_type(self.type)._meta.model
 
     @staticmethod
     def list_resolver(
@@ -387,13 +426,7 @@ class DjangoFilterListField(Field):
         Returns:
             A partial that binds the leading positional arguments.
         """
-        from graphql import GraphQLList as _GQLList
-        from graphql import GraphQLNonNull as _GQLNonNull
-
-        current_type = self.type
-        # Unwrap graphql-core wrappers first, then graphene Structure.
-        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-            current_type = current_type.of_type
+        current_type = _unwrap_type(self.type)
         if self.resolver:
             # Custom resolver: bind only (manager, filter_backend).
             return partial(
@@ -412,7 +445,7 @@ class DjangoFilterListField(Field):
         )
 
 
-class DjangoFilterPaginateListField(Field):
+class DjangoFilterPaginateListField(NativeMountedField):
     """GraphQL field for a filtered and paginated list of Django model objects."""
 
     def __init__(
@@ -455,7 +488,7 @@ class DjangoFilterPaginateListField(Field):
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
 
-        super().__init__(List(NonNull(_type)), *args, **kwargs)
+        super().__init__(NativeList(NativeNonNull(_type)), *args, **kwargs)
 
     @property
     def model(self) -> type[Model]:
@@ -464,14 +497,7 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        from graphql import GraphQLList as _GQLList
-        from graphql import GraphQLNonNull as _GQLNonNull
-
-        current_type = self.type
-        # Unwrap graphql-core wrappers first, then graphene Structure.
-        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-            current_type = current_type.of_type
-        return current_type._meta.model
+        return _unwrap_type(self.type)._meta.model
 
     def get_queryset(
         self, manager: Manager, root: Any, info: ResolveInfo, **kwargs: Any
@@ -487,13 +513,7 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The base queryset built for the request (hook applied).
         """
-        from graphql import GraphQLList as _GQLList
-        from graphql import GraphQLNonNull as _GQLNonNull
-
-        current_type = self.type
-        # Unwrap graphql-core wrappers first, then graphene Structure.
-        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-            current_type = current_type.of_type
+        current_type = _unwrap_type(self.type)
         return queryset_factory(manager, root, info, output_type=current_type, **kwargs)
 
     def list_resolver(
@@ -548,14 +568,8 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             A partial that binds the manager and filter backend.
         """
-        from graphql import GraphQLList as _GQLList
-        from graphql import GraphQLNonNull as _GQLNonNull
-
         resolver = self.resolver or self.list_resolver
-        current_type = self.type
-        # Unwrap graphql-core wrappers first, then graphene Structure.
-        while isinstance(current_type, (_GQLNonNull, _GQLList, Structure)):
-            current_type = current_type.of_type
+        current_type = _unwrap_type(self.type)
         return partial(
             resolver,
             current_type._meta.model._default_manager,
@@ -563,7 +577,7 @@ class DjangoFilterPaginateListField(Field):
         )
 
 
-class DjangoListObjectField(Field):
+class DjangoListObjectField(NativeMountedField):
     """GraphQL field for Django list objects with count and results."""
 
     def __init__(
@@ -746,7 +760,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
 
         # Skip DjangoListObjectField.__init__ (it would always build the arg).
-        Field.__init__(self, _type, **kwargs)
+        NativeMountedField.__init__(self, _type, **kwargs)
 
     def build_prefetch(
         self, lookup: str, filter_value: Any, info: ResolveInfo
@@ -1103,7 +1117,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 # ---------------------------------------------------------------------------
 
 
-class AnnotatedField(Field):
+class AnnotatedField(NativeMountedField):
     """A GraphQL field backed by a Django ORM annotation injected only when selected.
 
     The annotation is injected into the queryset as
@@ -1113,7 +1127,8 @@ class AnnotatedField(Field):
     needed.
 
     Args:
-        type_: The graphene output type (e.g. ``graphene.Int``).
+        type_: The field output type (a graphql-core scalar, e.g.
+            ``graphql.GraphQLInt``).
         expression: A Django ``Expression`` instance OR a zero-argument callable
             that returns one.  Called lazily at injection time so the Expression
             is freshly constructed per request (no Django Expression reuse issues).
@@ -1123,7 +1138,7 @@ class AnnotatedField(Field):
         annotation_name: Override the auto-derived ``_gqx_ann_<field_name>`` key.
             Use this when the default name would collide with a concrete model
             field attname.
-        **kwargs: Forwarded to ``graphene.Field``.
+        **kwargs: Forwarded to the native field base (``NativeMountedField``).
     """
 
     def __init__(

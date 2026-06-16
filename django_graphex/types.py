@@ -10,12 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager, QuerySet
 from django.utils.functional import SimpleLazyObject
-from graphene import (
-    Field,
-    InputField,
-    Int,
-)
-from graphql import GraphQLBoolean, GraphQLError
+from graphql import GraphQLBoolean, GraphQLError, GraphQLInt
 
 from .backends import resolve_backend
 from .base_types import DjangoListObjectBase, factory_type
@@ -29,7 +24,7 @@ from .filtering.filter_field import (
 from .native.base import InputType as NativeInputType
 from .native.base import MountedType, NativeObjectTypeOptions, UnmountedType, _props
 from .native.base import ObjectType as NativeObjectType
-from .native.descriptors import NativeList
+from .native.descriptors import NativeList, NativeMountedField
 from .native.descriptors import field as native_field
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
@@ -101,7 +96,13 @@ def _yank_fields(
     """
     fields_with_names: list[tuple[str, Any]] = []
     for attname, value in list(attrs.items()):
-        if isinstance(value, MountedType):
+        # S8c: a native ``NativeMountedField`` (the re-parented ``Django*Field``
+        # classes, e.g. ``DjangoNestedListObjectField`` / ``DjangoListField``) is
+        # ALREADY a mounted, field-shaped descriptor (carries ``.type`` / ``.args``
+        # / ``creation_counter``); keep it AS-IS exactly like a graphene
+        # ``MountedType``. Recognizing it here is the silent-drop guard — without
+        # it the field would fall to the ``continue`` and vanish from ``_meta.fields``.
+        if isinstance(value, (MountedType, NativeMountedField)):
             field = value
         elif isinstance(value, UnmountedType):
             field = _as.mounted(value) if _as is not None else value
@@ -875,7 +876,7 @@ class DjangoObjectType(NativeObjectType):
             construct_fields(
                 model, registry, only_fields, include_fields, exclude_fields
             ),
-            _as=Field,
+            _as=NativeMountedField,
         )
 
         _meta = NativeObjectTypeOptions(cls)
@@ -1750,12 +1751,12 @@ class DjangoInputObjectType(NativeInputType):
                 input_for,
                 nested_fields,
             ),
-            _as=InputField,
+            _as=NativeMountedField,
             sort=False,
         )
         for base in reversed(cls.__mro__):
             django_input_fields.update(
-                _yank_fields(base.__dict__, _as=InputField)
+                _yank_fields(base.__dict__, _as=NativeMountedField)
             )
 
         _meta = NativeObjectTypeOptions(cls)
@@ -1934,8 +1935,8 @@ class DjangoListObjectType(NativeObjectType):
                     (results_field_name, result_container),
                     (
                         "count",
-                        Field(
-                            Int,
+                        NativeMountedField(
+                            GraphQLInt,
                             name="totalCount",
                             description="Total count of matches elements",
                         ),
@@ -2264,7 +2265,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         for klass in reversed(cls.__mro__):
             if issubclass(klass, DjangoModelType) and klass is not DjangoModelType:
                 extra_fields.update(
-                    _yank_fields(dict(vars(klass)), _as=Field)
+                    _yank_fields(dict(vars(klass)), _as=NativeMountedField)
                 )
 
         # Forward each custom field's `resolve_<name>` method (most-derived wins)
@@ -2314,7 +2315,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         output_list_type = factory_type("list", DjangoListObjectType, **factory_kwargs)
 
-        django_fields = OrderedDict({output_field_name: Field(output_type)})
+        django_fields = OrderedDict(
+            {output_field_name: NativeMountedField(output_type)}
+        )
 
         global_arguments = {}
         for operation in ("create", "delete", "update"):

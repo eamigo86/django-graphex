@@ -41,12 +41,16 @@ from graphql import GraphQLField
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-from django_graphex.native.descriptors import NativeField
+from django_graphex.native.descriptors import NativeField, NativeMountedField
 
-# A class-attribute name (or value) is treated as a graphene FIELD DESCRIPTOR
-# when it is an instance of one of these. ``MountedType`` covers ``Field(...)``;
+# A class-attribute name (or value) is treated as a FIELD DESCRIPTOR when it is an
+# instance of one of these. ``MountedType`` covers graphene ``Field(...)``;
 # ``UnmountedType`` covers scalars/structures like ``Boolean()`` / ``List(...)``.
-_GRAPHENE_DESCRIPTOR_TYPES = (UnmountedType, MountedType)
+# ``NativeMountedField`` (S8c) covers the re-parented ``Django*Field`` classes —
+# graphene-free mounted descriptors — so a ``posts = DjangoNestedListObjectField(...)``
+# class attribute is recognized AND shielded from Pydantic model-field inference
+# exactly like the graphene descriptors were.
+_GRAPHENE_DESCRIPTOR_TYPES = (UnmountedType, MountedType, NativeMountedField)
 
 # A class-attribute is treated as a FIELD DESCRIPTOR (collected into
 # ``_meta.fields`` and shielded from Pydantic model-field inference) when it is an
@@ -70,7 +74,13 @@ _GRAPHENE_DESCRIPTOR_TYPES = (UnmountedType, MountedType)
 # or scalar-converted). Previously only a GRAPHENE root tolerated these (graphene's
 # metaclass silently DROPPED them, and ``_collect_root_attrs`` recovered the
 # registered ones); a native root could not declare one at all.
-_FIELD_DESCRIPTOR_TYPES = (UnmountedType, MountedType, NativeField, GraphQLField)
+_FIELD_DESCRIPTOR_TYPES = (
+    UnmountedType,
+    MountedType,
+    NativeMountedField,
+    NativeField,
+    GraphQLField,
+)
 
 
 def _trim_docstring(docstring: str | None) -> str | None:
@@ -161,7 +171,7 @@ def _mount_descriptor_fields(cls: type) -> dict[str, Any]:
         # S-ROOTS-b) AND a raw ``GraphQLField`` (a mounted mutation field on a native
         # root, S-ROOTS-h) reach ``_meta.fields`` instead of vanishing.
         for attr_name, value in vars(base).items():
-            if isinstance(value, (NativeField, GraphQLField)):
+            if isinstance(value, (NativeMountedField, NativeField, GraphQLField)):
                 fields[attr_name] = value
     return fields
 

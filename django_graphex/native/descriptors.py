@@ -46,7 +46,263 @@ Graphene import policy:
 
 from __future__ import annotations
 
+import inspect
+from functools import partial, total_ordering
 from typing import Any, Callable, Optional
+
+# ---------------------------------------------------------------------------
+# Graphene-free ordering counter (graphene OrderedType replica)
+# ---------------------------------------------------------------------------
+# ``_yank_fields`` (types.py) sorts the mounted descriptors by their
+# ``creation_counter`` so the SDL field order matches declaration order — exactly
+# what graphene's ``OrderedType`` provided. ``NativeMountedField`` carries one so
+# a field declared off graphene keeps stable, declaration-ordered output. The
+# counter is a SHARED, monotonically-increasing process-global integer (graphene
+# parity: graphene's ``OrderedType.creation_counter`` is one global counter, so a
+# graphene ``Field`` and a ``NativeMountedField`` interleave in a single order
+# space during the transitional dual-currency window).
+#
+# We deliberately reuse graphene's OWN global counter at runtime (when graphene is
+# importable) so a class body mixing a graphene descriptor (e.g. a relation
+# ``Dynamic`` mounted via ``_as``) and a native list field keeps the SAME relative
+# order graphene would have produced. The lazy import is wrapped so the descriptor
+# stays import-safe after graphene is uninstalled (S8i): it then falls back to a
+# local counter.
+_LOCAL_COUNTER = [0]
+
+
+def _next_creation_counter() -> int:
+    """Return the next monotonic creation counter (graphene-shared when present).
+
+    Mirrors ``graphene.utils.orderedtype.OrderedType.gen_counter``: a single
+    process-global, monotonically-increasing integer. During the transitional
+    dual-currency window we advance graphene's OWN counter so native + graphene
+    descriptors share ONE order space (declaration order preserved on mixed class
+    bodies). After graphene is uninstalled the local fallback keeps native-only
+    bodies ordered.
+    """
+    try:  # pragma: no cover - graphene present in the transitional window
+        from graphene.utils.orderedtype import OrderedType as _GOrderedType
+
+        counter = _GOrderedType.creation_counter
+        _GOrderedType.creation_counter += 1
+        return counter
+    except Exception:  # pragma: no cover - graphene uninstalled (S8i)
+        _LOCAL_COUNTER[0] += 1
+        return _LOCAL_COUNTER[0]
+
+
+def _source_resolver(source: str, root: Any, info: Any, **args: Any) -> Any:
+    """Graphene-free replica of ``graphene.types.field.source_resolver``.
+
+    A ``field(..., source="attr")`` declaration resolves by reading ``attr`` off
+    the root (dict-key for a mapping, attribute otherwise), then CALLING the
+    result when it is a function / method (graphene parity — lets a source point
+    at a zero-arg method). Used by ``NativeMountedField`` to honor the graphene
+    ``source=`` kwarg (e.g. ``graphene.String(source="name")`` declared on a
+    ``DjangoModelType``) without importing graphene.
+
+    Args:
+        source: The attribute / key name to read off the root.
+        root: The resolved parent value.
+        info: The GraphQL resolve info (unused; signature parity).
+        **args: Field arguments (unused; signature parity).
+
+    Returns:
+        The source value (called when it is a function / method).
+    """
+    import inspect as _inspect
+
+    if isinstance(root, dict):
+        resolved = root.get(source, None)
+    else:
+        resolved = getattr(root, source, None)
+    if _inspect.isfunction(resolved) or _inspect.ismethod(resolved):
+        return resolved()
+    return resolved
+
+
+def _resolve_thunk(_type: Any) -> Any:
+    """Graphene-free replica of ``graphene.types.utils.get_type``.
+
+    Resolves a deferred field/arg type expression to the concrete value the
+    compiler reads:
+
+    - a dotted import-path string -> the imported object;
+    - a zero-arg function / ``functools.partial`` -> its return value (a lazy
+      forward reference, e.g. ``lambda: SomeType``);
+    - anything else (a class, a graphql-core type, a native wrapper) -> verbatim.
+
+    Byte-equivalent to graphene's ``get_type`` so a ``NativeMountedField`` resolves
+    the same thunk shapes the field classes historically relied on.
+    """
+    if isinstance(_type, str):
+        from django.utils.module_loading import import_string
+
+        return import_string(_type)
+    if inspect.isfunction(_type) or isinstance(_type, partial):
+        return _type()
+    return _type
+
+
+@total_ordering
+class NativeMountedField:
+    """Graphene-free field-descriptor base for the ``Django*Field`` classes (S8c).
+
+    The native schema compiler consumes a DECLARED / ROOT field purely by DUCK
+    TYPING — it reads ``field.type`` / ``field.args`` / ``field.name`` /
+    ``field.description`` / ``field.resolver`` and calls
+    ``field.wrap_resolve(parent_resolver)`` with NO ``isinstance(graphene.Field)``
+    guard (the same contract :class:`NativeField` documents). The
+    ``django_graphex.fields`` field classes (``DjangoObjectField`` /
+    ``DjangoListObjectField`` / ``DjangoFilterListField`` /
+    ``DjangoFilterPaginateListField`` / ``DjangoNestedListObjectField`` /
+    ``AnnotatedField``) historically subclassed graphene ``Field`` to get that
+    shape; S8c re-parents them onto THIS base so they expose the same contract
+    with ZERO graphene dependency.
+
+    Read-contract (every attribute is read via ``getattr`` by the compiler):
+
+    - ``type`` -> the field's output type: a graphql-core ``GraphQLType``, a
+      django-graphex output-type CLASS (``DjangoObjectType`` /
+      ``DjangoListObjectType``, resolved to its node by the list builders), or a
+      ``NativeList`` / ``NativeNonNull`` lazy wrapper. Thunks (str / callable) are
+      resolved lazily, byte-equivalent to graphene ``Field.type``.
+    - ``args`` -> a ``{name: arg}`` dict. Each value is forwarded to
+      ``graphene_arg_to_graphql_argument`` (which accepts a graphql-core type, a
+      ``GraphQLArgument``, OR a transitional graphene Argument), so the field's
+      own ``__init__`` decides the arg currency.
+    - ``name`` -> an explicit wire name or ``None`` (compiler camelCases).
+    - ``description`` -> the field description or ``None``.
+    - ``resolver`` -> the field-level resolver or ``None``.
+    - ``wrap_resolve(parent_resolver)`` -> ``self.resolver or parent_resolver``
+      (byte-equivalent to graphene ``Field.wrap_resolve``).
+
+    Ordering: ``creation_counter`` (a process-global monotonic int) lets
+    ``_yank_fields`` sort mounted descriptors into declaration order for SDL
+    parity, exactly as graphene's ``OrderedType`` did.
+
+    Graphene import policy: ZERO top-level ``import graphene``; the only graphene
+    touch is the transitional shared-counter read in ``_next_creation_counter``
+    (wrapped so it degrades to a local counter once graphene is uninstalled).
+    """
+
+    def __init__(
+        self,
+        type_: Any,
+        args: Optional[dict[str, Any]] = None,
+        resolver: Optional[Callable[..., Any]] = None,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        required: bool = False,
+        source: Optional[str] = None,
+        _creation_counter: Optional[int] = None,
+        **extra_args: Any,
+    ) -> None:
+        """Build a native field descriptor (graphene ``Field.__init__`` parity).
+
+        Args:
+            type_: The field's output type (graphql-core type, django output-type
+                class, ``NativeList`` / ``NativeNonNull`` wrapper, or a thunk).
+            args: Optional explicit ``{name: arg}`` argument mapping.
+            resolver: Optional field-level resolver (wins in ``wrap_resolve``).
+            name: Optional explicit wire name (verbatim; no camelCase pass).
+            description: Optional field description.
+            required: When ``True``, wrap *type_* in a ``NativeNonNull`` (graphene
+                ``Field(required=True)`` parity).
+            source: Optional source attribute name. When set (and no explicit
+                ``resolver``), the field resolves by reading ``source`` off the
+                root (graphene ``Field(source=...)`` parity).
+            _creation_counter: Optional explicit counter (preserves order when a
+                descriptor is re-mounted / copied).
+            **extra_args: Extra ``name=arg`` field arguments, merged into ``args``
+                (graphene ``Field`` parity — e.g. ``DjangoObjectField`` passes
+                ``id=...``).
+        """
+        if required:
+            type_ = NativeNonNull(type_)
+        self._type = type_
+        merged_args: dict[str, Any] = dict(args or {})
+        merged_args.update(extra_args)
+        self.args = merged_args
+        if source and resolver is None:
+            # graphene parity: a ``source`` becomes a resolver reading it off root.
+            resolver = partial(_source_resolver, source)
+        self.resolver = resolver
+        self.name = name
+        self.description = description
+        self.creation_counter = (
+            _creation_counter
+            if _creation_counter is not None
+            else _next_creation_counter()
+        )
+
+    @classmethod
+    def mounted(cls, unmounted: Any) -> "NativeMountedField":
+        """Mount a graphene ``UnmountedType`` (transitional converter scalar) AS-IS.
+
+        ``_yank_fields`` (types.py) passes this class as the ``_as`` mount target.
+        On native the converter omits dead scalars, so this is reached ONLY on the
+        transitional graphene backend, where ``construct_fields`` still emits real
+        graphene scalar ``UnmountedType`` instances (e.g. ``String(required=True)``).
+        Byte-equivalent to graphene's ``MountedType.mounted``: the scalar's
+        ``get_type()`` (its class) becomes the field type, the ``required`` /
+        ``description`` / ``name`` kwargs carry over, and the creation counter is
+        preserved so ordering is stable. The native compiler then reads ``.type``
+        and resolves the graphene scalar via ``_unwrap_graphene_type``. (The mounted
+        descriptor is METADATA only — the schema is compiled from
+        ``_meta.graphql_output_type`` / ``_meta.graphql_input_type``, not from these.)
+
+        Args:
+            unmounted: A graphene ``UnmountedType`` scalar/enum instance.
+
+        Returns:
+            A ``NativeMountedField`` wrapping the unmounted type's class.
+        """
+        kwargs = dict(getattr(unmounted, "kwargs", {}) or {})
+        required = bool(kwargs.pop("required", False))
+        description = kwargs.pop("description", None)
+        name = kwargs.pop("name", None)
+        source = kwargs.pop("source", None)
+        return cls(
+            unmounted.get_type(),
+            required=required,
+            description=description,
+            name=name,
+            source=source,
+            _creation_counter=getattr(unmounted, "creation_counter", None),
+        )
+
+    @property
+    def type(self) -> Any:  # noqa: A003 - matches the compiler's read attr
+        """Return the field's output type, resolving thunks (graphene parity)."""
+        return _resolve_thunk(self._type)
+
+    def wrap_resolve(self, parent_resolver: Any) -> Any:
+        """Return ``self.resolver`` when set, else *parent_resolver* (graphene parity)."""
+        return self.resolver or parent_resolver
+
+    def wrap_subscribe(self, parent_subscribe: Any) -> Any:
+        """Return *parent_subscribe* unchanged (graphene ``Field`` parity)."""
+        return parent_subscribe
+
+    # -- ordering (graphene OrderedType parity, for _yank_fields sort) --------
+    def __eq__(self, other: Any) -> bool:
+        """Equality by ``creation_counter`` among ordered descriptors."""
+        if isinstance(other, NativeMountedField):
+            return self.creation_counter == other.creation_counter
+        return NotImplemented
+
+    def __lt__(self, other: Any) -> bool:
+        """Order by ``creation_counter`` (declaration order)."""
+        if hasattr(other, "creation_counter"):
+            return self.creation_counter < other.creation_counter
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        """Hash by ``creation_counter`` (graphene ``OrderedType`` parity)."""
+        return hash(self.creation_counter)
 
 
 class NativeList:

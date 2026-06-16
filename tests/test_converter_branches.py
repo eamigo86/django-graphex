@@ -122,8 +122,14 @@ def test_multiselectfield_choice_returns_list():
     field.name = "tags_multi"
     field.model = BasicModel
     out = convert_django_field_with_choices(field, Registry())
-    # The MultiSelectField branch wraps the enum in a DjangoListField (a Field).
-    assert isinstance(out, graphene.Field)
+    # The MultiSelectField branch wraps the enum in a DjangoListField. S8c: the
+    # field class is off graphene ``Field`` onto the native ``NativeMountedField``
+    # descriptor — the SAME field-shaped descriptor, no graphene base.
+    from django_graphex.fields import DjangoListField
+    from django_graphex.native.descriptors import NativeMountedField
+
+    assert isinstance(out, DjangoListField)
+    assert isinstance(out, NativeMountedField)
 
 
 # --------------------------------------------------------------------------- #
@@ -335,9 +341,12 @@ def test_reverse_relation_nested_input_registered_returns_list():
 
     reverse = Author._meta.get_field("posts")
     out = _resolve(reverse, registry=reg, input_flag="create", nested_field=True)
-    # A list of the registered nested input type: [_PostInput!].
-    assert isinstance(out.type, List)
-    assert isinstance(out.type.of_type, NonNull)
+    # A list of the registered nested input type: [_PostInput!]. S8c: native wrapper
+    # currency (NativeList / NativeNonNull); the inner input type is unchanged.
+    from django_graphex.native.descriptors import NativeList, NativeNonNull
+
+    assert isinstance(out.type, NativeList)
+    assert isinstance(out.type.of_type, NativeNonNull)
     assert out.type.of_type.of_type is _PostInput
 
 

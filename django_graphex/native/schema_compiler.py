@@ -135,6 +135,44 @@ def _collect_root_attrs(root: type) -> dict[str, Any]:
     return found
 
 
+def _collect_dropped_native_fields(root: type) -> dict[str, Any]:
+    """Recover ``NativeMountedField`` attrs the graphene root metaclass dropped.
+
+    S8c silent-drop guard: the ``Django*Field`` classes are re-parented off graphene
+    ``Field`` onto ``NativeMountedField``. graphene's ObjectType metaclass collects
+    fields via ``yank_fields_from_attrs``, which keeps ONLY graphene
+    ``MountedType`` / ``UnmountedType`` instances — so a ``NativeMountedField``
+    declared on a graphene root (e.g. ``class Query(graphene.ObjectType):
+    users = DjangoFilterListField(UserType)``) NEVER reaches ``_meta.fields`` and
+    would vanish from the compiled schema.
+
+    This walks the root MRO (base-first, most-derived wins on a name collision —
+    graphene parity) and recovers every class-body ``NativeMountedField`` so the
+    native root compiler can mount it. A native ``ObjectType`` root already
+    surfaces these via ``_mount_descriptor_fields`` (so they are in ``_meta.fields``
+    and not re-added here); this recovery is purely for the transitional
+    graphene-root public API. Returns the recovered fields ordered by graphene
+    ``creation_counter`` so declaration order (hence SDL field order) is preserved.
+
+    Args:
+        root: The root ObjectType class (graphene or native).
+
+    Returns:
+        An ordered ``{attr_name: NativeMountedField}`` mapping for every dropped
+        native field, sorted by declaration order.
+    """
+    from django_graphex.native.descriptors import NativeMountedField
+
+    found: dict[str, Any] = {}
+    for klass in reversed(root.__mro__):
+        for attr_name, value in vars(klass).items():
+            if isinstance(value, NativeMountedField):
+                found[attr_name] = value
+    # Order by declaration (creation_counter) so SDL field order is byte-stable.
+    ordered = sorted(found.items(), key=lambda kv: kv[1].creation_counter)
+    return dict(ordered)
+
+
 def _is_subscription_field(field: Any) -> bool:
     """Return whether *field* is a subscription root field (WU7).
 
@@ -1050,10 +1088,11 @@ def _build_list_object_field(
 def _unwrap_to_node_type(field: Any) -> Any:
     """Unwrap a list field's ``type`` to the inner ``DjangoObjectType`` node.
 
-    ``DjangoFilterListField.type`` is a ``graphene.List`` (possibly wrapping a
-    ``graphene.NonNull``) around the node ``DjangoObjectType``. graphql-core
-    wrappers may also be present in mixed states. Peel every wrapper to reach the
-    node class that carries ``_meta.graphql_output_type``.
+    ``DjangoFilterListField.type`` is a ``NativeList`` (possibly wrapping a
+    ``NativeNonNull``) around the node ``DjangoObjectType`` (S8c). graphql-core
+    ``GraphQLList`` / ``GraphQLNonNull`` wrappers may also be present in mixed
+    states. Peel every wrapper to reach the node class that carries
+    ``_meta.graphql_output_type``.
 
     Args:
         field: A list field whose ``type`` wraps a ``DjangoObjectType``.
@@ -1061,16 +1100,14 @@ def _unwrap_to_node_type(field: Any) -> Any:
     Returns:
         The inner node type class (carrying ``_meta``).
     """
-    from graphene.types.structures import Structure
+    from django_graphex.native.descriptors import NativeList, NativeNonNull
 
     current = field.type
-    while True:
-        if isinstance(current, (GraphQLList, GraphQLNonNull)):
-            current = current.of_type
-        elif isinstance(current, Structure):
-            current = current.of_type
-        else:
-            return current
+    while isinstance(
+        current, (GraphQLList, GraphQLNonNull, NativeList, NativeNonNull)
+    ):
+        current = current.of_type
+    return current
 
 
 def _build_filter_list_field(
@@ -1170,7 +1207,27 @@ def compile_native_root(
     fields: dict[str, GraphQLField] = {}
 
     # 1) graphene-mounted fields (DjangoObjectField, list/filter fields, scalars).
-    meta_fields = getattr(getattr(root, "_meta", None), "fields", None) or {}
+    meta_fields = dict(getattr(getattr(root, "_meta", None), "fields", None) or {})
+
+    # S8c silent-drop guard: the ``Django*Field`` classes are now
+    # ``NativeMountedField`` (off graphene ``Field``), so graphene's root metaclass
+    # DROPS them from ``_meta.fields``. Recover any class-body native fields the
+    # metaclass dropped and merge them in (only when absent — a native root already
+    # surfaced them via ``_mount_descriptor_fields``). Ordered by declaration
+    # counter so the combined field order — hence SDL field order — is byte-stable.
+    dropped_native = _collect_dropped_native_fields(root)
+    if dropped_native:
+        combined = dict(meta_fields)
+        for fname, fval in dropped_native.items():
+            combined.setdefault(fname, fval)
+        # Re-order the combined set by declaration counter where available so a
+        # graphene-scalar + native-field mixed root keeps declaration order.
+        def _decl_key(item: tuple[str, Any]) -> tuple[int, int]:
+            cc = getattr(item[1], "creation_counter", None)
+            return (0, cc) if isinstance(cc, int) else (1, 0)
+
+        meta_fields = dict(sorted(combined.items(), key=_decl_key))
+
     for field_name, field in meta_fields.items():
         kind = type(field).__name__
         if kind in _DEFERRED_FIELD_KINDS:

@@ -8,7 +8,6 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured
-from graphene import Field
 from graphql import GraphQLBoolean
 
 from ._strconv import to_camel_case
@@ -17,7 +16,7 @@ from .base_types import factory_type
 from .errors import ErrorType
 from .native.base import NativeObjectTypeOptions, _props
 from .native.base import ObjectType as NativeObjectType
-from .native.descriptors import NativeList
+from .native.descriptors import NativeList, NativeMountedField
 from .native.descriptors import field as native_field
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
@@ -333,7 +332,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         if not output_type:
             output_type = factory_type("output", DjangoObjectType, **factory_kwargs)
 
-        django_fields = OrderedDict({output_field_name: Field(output_type)})
+        django_fields = OrderedDict(
+            {output_field_name: NativeMountedField(output_type)}
+        )
 
         model_operations = tuple(op.lower() for op in model_operations)
         unknown = set(model_operations) - {"create", "update", "delete"}

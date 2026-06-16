@@ -69,10 +69,14 @@ def test_m2m_input_flag_not_nested_is_list_of_id():
     registry = Registry()
     m2m = Post._meta.get_field("tags")
     out = _resolve(m2m, registry=registry, input_flag="create")
-    # DjangoListField wrapping [ID!].
+    # DjangoListField wrapping [ID!]. S8c: the field is off graphene, so the wrapper
+    # currency is NativeList(NativeNonNull(...)); the inner ID is still the graphene
+    # scalar the converter (S8e) emits.
+    from django_graphex.native.descriptors import NativeList, NativeNonNull
+
     assert isinstance(out, DjangoListField)
-    assert isinstance(out.type, List)
-    assert isinstance(out.type.of_type, NonNull)
+    assert isinstance(out.type, NativeList)
+    assert isinstance(out.type.of_type, NativeNonNull)
     assert out.type.of_type.of_type is ID
 
 
@@ -80,10 +84,12 @@ def test_reverse_relation_input_flag_not_nested_is_list_of_id():
     registry = Registry()
     reverse = Author._meta.get_field("posts")  # reverse FK (ManyToOneRel)
     out = _resolve(reverse, registry=registry, input_flag="create")
-    # DjangoListField wrapping [ID!].
+    # DjangoListField wrapping [ID!]. S8c: native wrapper currency (see above).
+    from django_graphex.native.descriptors import NativeList, NativeNonNull
+
     assert isinstance(out, DjangoListField)
-    assert isinstance(out.type, List)
-    assert isinstance(out.type.of_type, NonNull)
+    assert isinstance(out.type, NativeList)
+    assert isinstance(out.type.of_type, NativeNonNull)
     assert out.type.of_type.of_type is ID
 
 

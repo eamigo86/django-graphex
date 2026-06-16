@@ -204,7 +204,13 @@ def test_multiselectfield_direct_class_still_detected():
     field.name = "tags"
     field.model = Author
     out = convert_django_field_with_choices(field, Registry())
-    assert isinstance(out, graphene.Field)
+    # S8c: DjangoListField is off graphene ``Field`` onto ``NativeMountedField``
+    # (the same field-shaped descriptor the native compiler reads).
+    from django_graphex.fields import DjangoListField
+    from django_graphex.native.descriptors import NativeMountedField
+
+    assert isinstance(out, DjangoListField)
+    assert isinstance(out, NativeMountedField)
 
 
 # --------------------------------------------------------------------------- #
