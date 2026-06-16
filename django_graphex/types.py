@@ -22,9 +22,9 @@ from .filtering.filter_field import (
     collect_custom_filters,
 )
 from .native.base import InputType as NativeInputType
-from .native.base import MountedType, NativeObjectTypeOptions, UnmountedType, _props
+from .native.base import NativeObjectTypeOptions, _props
 from .native.base import ObjectType as NativeObjectType
-from .native.descriptors import NativeList, NativeMountedField
+from .native.descriptors import NativeField, NativeList, NativeMountedField
 from .native.descriptors import field as native_field
 from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
@@ -61,6 +61,39 @@ __all__ = (
     "DjangoUnionType",
     "DjangoInterfaceType",
 )
+
+
+#: Lazily resolved graphene field-descriptor marker classes
+#: (``MountedType`` / ``UnmountedType``). S8h moved native/base.py OFF graphene,
+#: so these markers are no longer importable from it. They are needed by the
+#: graphene-descriptor branch of ``_yank_fields`` — which is STILL reached under
+#: ``GDX_BACKEND=native``: the converter's ``construct_fields`` emits graphene
+#: relation closures (``Dynamic``, an ``UnmountedType`` subclass) the native
+#: output thunk consumes from ``_meta.fields`` (S8e kept those). So the import
+#: fires on BOTH backends, but only when an actual graphene descriptor flows in —
+#: it is a LAZY import (``types.py`` is graphene-free at the TOP level, the S8h
+#: milestone), matching the converter / paginations / subscription lazy-defer
+#: policy. Cached as a 2-tuple ``(MountedType, UnmountedType)``; a single ``None``
+#: sentinel means "not yet resolved".
+_GRAPHENE_DESCRIPTOR_MARKERS: tuple[type, type] | None = None
+
+
+def _graphene_descriptor_markers() -> tuple[type, type]:
+    """Return ``(MountedType, UnmountedType)`` graphene markers, lazily imported.
+
+    Resolves the graphene field-descriptor base classes on first use and caches
+    them. Keeps ``types.py`` graphene-free at the TOP LEVEL (S8h): the import only
+    fires when ``_yank_fields`` actually meets a graphene descriptor value (a
+    relation ``Dynamic`` from the converter on either backend, or a graphene
+    scalar on the graphene backend), never at module import time.
+    """
+    global _GRAPHENE_DESCRIPTOR_MARKERS
+    if _GRAPHENE_DESCRIPTOR_MARKERS is None:
+        from graphene.types.mountedtype import MountedType
+        from graphene.types.unmountedtype import UnmountedType
+
+        _GRAPHENE_DESCRIPTOR_MARKERS = (MountedType, UnmountedType)
+    return _GRAPHENE_DESCRIPTOR_MARKERS
 
 
 def _yank_fields(
@@ -102,16 +135,48 @@ def _yank_fields(
         # / ``creation_counter``); keep it AS-IS exactly like a graphene
         # ``MountedType``. Recognizing it here is the silent-drop guard — without
         # it the field would fall to the ``continue`` and vanish from ``_meta.fields``.
-        if isinstance(value, (MountedType, NativeMountedField)):
+        # Checked FIRST so the native path never resolves the lazy graphene markers
+        # (S8h: ``types.py`` stays graphene-free under ``GDX_BACKEND=native``).
+        if isinstance(value, (NativeMountedField, NativeField)):
+            # S8h: a native ``field()`` (``NativeField``) declared on a
+            # ``DjangoModelType`` / ``DjangoObjectType`` body is ALSO field-shaped
+            # (exposes ``.type`` / ``.args`` / ``.wrap_resolve``) and is the 2.0
+            # replacement for a ``name = graphene.String()`` descriptor — keep it
+            # AS-IS so it lands in ``_meta.fields`` (silent-drop guard). Checked
+            # FIRST so the native currency never resolves the lazy graphene markers.
+            fields_with_names.append((attname, value))
+            continue
+        # Graphene descriptor path. STILL reached under ``GDX_BACKEND=native``: the
+        # converter's ``construct_fields`` emits graphene relation closures
+        # (``Dynamic`` — an ``UnmountedType`` subclass — for FK / O2O / M2M /
+        # reverse / GFK) that the native output thunk consumes from ``_meta.fields``
+        # (S8e kept the converter's graphene relation descriptors). So an
+        # already-mounted ``MountedType`` is kept AS-IS; a raw ``UnmountedType``
+        # (relation ``Dynamic`` / a graphene scalar on the graphene backend) is
+        # mounted via ``_as.mounted(value)``. The graphene marker classes are
+        # imported LAZILY (S8h: ``types.py`` is graphene-free at the TOP level; the
+        # import only fires when a real graphene descriptor flows in — same
+        # lazy-defer policy as converter.py / paginations / subscription).
+        mounted_type, unmounted_type = _graphene_descriptor_markers()
+        if isinstance(value, mounted_type):
             field = value
-        elif isinstance(value, UnmountedType):
+        elif isinstance(value, unmounted_type):
             field = _as.mounted(value) if _as is not None else value
         else:
             continue
         fields_with_names.append((attname, field))
 
     if sort:
-        fields_with_names = sorted(fields_with_names, key=lambda f: f[1])
+        # Order by graphene ``creation_counter`` (declaration order, SDL parity).
+        # A ``NativeMountedField`` and a graphene mounted field both expose it; a
+        # native ``NativeField`` (the ``field()`` currency) does NOT carry one, so
+        # fall back to +inf — declared scalar ``field()`` fields keep a stable
+        # relative order AFTER the counter-bearing descriptors (their absolute SDL
+        # position is then alphabetized by the output compiler).
+        fields_with_names = sorted(
+            fields_with_names,
+            key=lambda f: getattr(f[1], "creation_counter", float("inf")),
+        )
     return dict(fields_with_names)
 
 

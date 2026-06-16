@@ -384,8 +384,9 @@ def test_interface_resolve_type_reads_schema_scope_too():
     TEETH: if only the union path were patched, the interface would ignore the
     schema scope and return the class-binding type (A) instead of B's.
     """
-    import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import field
     from django_graphex.native.base import SchemaRegistries
     from django_graphex.registry import Registry
     from django_graphex.types import DjangoInterfaceType, DjangoObjectType
@@ -394,7 +395,7 @@ def test_interface_resolve_type_reads_schema_scope_too():
     reg_a = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg_a

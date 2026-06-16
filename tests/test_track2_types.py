@@ -19,9 +19,14 @@ import graphene
 import pytest
 from django.contrib.contenttypes.fields import GenericForeignKey
 from graphene import Dynamic, Field
-from graphql import GraphQLUnionType
+from graphql import GraphQLString, GraphQLUnionType
 
-from django_graphex import DjangoInterfaceType, DjangoObjectType, DjangoUnionType
+from django_graphex import (
+    DjangoInterfaceType,
+    DjangoObjectType,
+    DjangoUnionType,
+    field,
+)
 from django_graphex.base_types import GenericForeignKeyType
 from django_graphex.converter import convert_django_field
 from django_graphex.registry import Registry
@@ -189,7 +194,7 @@ def test_register_polymorphic_rejects_cross_registry_interface():
     reg_a = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg_a
@@ -390,7 +395,7 @@ def test_interface_shared_field_resolves_on_implementors():
     reg = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -429,7 +434,7 @@ def test_interface_resolve_type_maps_concrete_instance():
     reg = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -459,7 +464,7 @@ def test_interface_does_not_set_possible_types():
     reg = Registry()
 
     class NodeInterface(DjangoInterfaceType):
-        created_at = graphene.String()
+        created_at = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -477,7 +482,7 @@ def test_interface_self_registers_and_get_member_models():
     reg = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg

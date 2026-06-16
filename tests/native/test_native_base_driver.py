@@ -13,10 +13,13 @@ Design under test (see engram sdd/graphene-removal/s6-plan #1534):
 - ``type(NativeObjectSubclass)`` stays ``pydantic.ModelMetaclass`` (the systemic
   metaclass-identity constraint #1452). The driver runs via ``__init_subclass__``,
   NOT a custom metaclass.
-- graphene field descriptors (``Boolean()``, ``List(...)``, ``Field(...)``) on the
-  class body survive Pydantic via ``ConfigDict(ignored_types=(UnmountedType,
-  MountedType))`` and are collected into ``_meta.fields`` (graphene-free), without
-  routing them through Pydantic field inference and without breaking InputType.
+- native ``field()`` descriptors (the 2.0 public field-declaration API) on the
+  class body survive Pydantic via
+  ``ConfigDict(ignored_types=_FIELD_DESCRIPTOR_TYPES)`` and are collected into
+  ``_meta.fields`` (graphene-free), without routing them through Pydantic field
+  inference and without breaking InputType. (S8h: graphene descriptors on a native
+  type are no longer supported — graphene ``UnmountedType`` / ``MountedType``
+  markers were removed from the detection tuples.)
 - A ``Meta`` (class OR dict) is read, ``props(Meta)`` applied, ``abstract`` popped,
   ``__init_subclass_with_meta__(**options)`` dispatched, then ``Meta`` deleted.
 - ``_meta`` is a MUTABLE Options object exposing the FULL parity-table attr surface
@@ -27,6 +30,7 @@ Design under test (see engram sdd/graphene-removal/s6-plan #1534):
 from __future__ import annotations
 
 import pytest
+from graphql import GraphQLBoolean
 from pydantic._internal._model_construction import ModelMetaclass
 
 # ---------------------------------------------------------------------------
@@ -406,19 +410,22 @@ def test_meta_name_defaults_to_class_name():
 
 @pytest.mark.native_only
 def test_graphene_descriptors_collected_into_meta_fields():
-    """``Boolean()`` / ``List(...)`` / ``Field(...)`` land in ``_meta.fields``.
+    """Native ``field()`` descriptors land in ``_meta.fields``.
 
-    They must NOT be parsed as Pydantic model fields and must NOT crash class
-    creation (the PydanticUserError 'non-annotated attribute' blocker).
+    S8h: the 2.0 public field-declaration API is ``field()`` (graphene descriptors
+    on a native type are no longer supported). A ``field(...)`` scalar / list /
+    object descriptor must NOT be parsed as a Pydantic model field and must NOT
+    crash class creation (the PydanticUserError 'non-annotated attribute' blocker).
     """
-    from graphene import Boolean, Field, List, String
+    from graphql import GraphQLList, GraphQLString
 
+    from django_graphex import field
     from django_graphex.native.base import ObjectType
 
     class WithDescriptors(ObjectType):
-        ok = Boolean(description="ok flag")
-        errors = List(String, description="errors")
-        node = Field(String)
+        ok = field(GraphQLBoolean, description="ok flag")
+        errors = field(GraphQLList(GraphQLString), description="errors")
+        node = field(GraphQLString)
 
         class Meta:
             name = "WithDescriptors"
@@ -432,14 +439,15 @@ def test_graphene_descriptors_collected_into_meta_fields():
 
 @pytest.mark.native_only
 def test_graphene_descriptors_not_pydantic_fields():
-    """Descriptors must NOT leak into Pydantic ``model_fields``."""
-    from graphene import Boolean, List, String
+    """Native ``field()`` descriptors must NOT leak into Pydantic ``model_fields``."""
+    from graphql import GraphQLList, GraphQLString
 
+    from django_graphex import field
     from django_graphex.native.base import ObjectType
 
     class WithDescriptors(ObjectType):
-        ok = Boolean()
-        errors = List(String)
+        ok = field(GraphQLBoolean)
+        errors = field(GraphQLList(GraphQLString))
 
         class Meta:
             name = "WithDescriptors"
@@ -450,14 +458,13 @@ def test_graphene_descriptors_not_pydantic_fields():
 
 @pytest.mark.native_only
 def test_descriptors_survive_without_crash():
-    """Declaring graphene descriptors does not raise PydanticUserError."""
-    from graphene import Boolean
-
+    """Declaring native ``field()`` descriptors does not raise PydanticUserError."""
+    from django_graphex import field
     from django_graphex.native.base import ObjectType
 
     # The bare act of class creation is the assertion: no exception.
     class NoCrash(ObjectType):
-        flag = Boolean(description="x")
+        flag = field(GraphQLBoolean, description="x")
 
         class Meta:
             name = "NoCrash"
@@ -477,13 +484,14 @@ def test_container_constructor_round_trips_descriptor_payload():
     Mirrors graphene's mutation payload pattern ``cls(**resp)`` /
     ``cls(**errors_dict)`` (mutation.py:504,519; types.py:1750,1828).
     """
-    from graphene import Boolean, List, String
+    from graphql import GraphQLList, GraphQLString
 
+    from django_graphex import field
     from django_graphex.native.base import ObjectType
 
     class Payload(ObjectType):
-        ok = Boolean()
-        errors = List(String)
+        ok = field(GraphQLBoolean)
+        errors = field(GraphQLList(GraphQLString))
 
         class Meta:
             name = "Payload"
@@ -510,8 +518,9 @@ def test_container_constructor_round_trips_driver_injected_field():
     """
     from collections import OrderedDict
 
-    from graphene import Boolean, Field, List, String
+    from graphql import GraphQLList, GraphQLString
 
+    from django_graphex import field
     from django_graphex.native.base import NativeObjectTypeOptions, ObjectType
 
     class _Inner(ObjectType):
@@ -519,8 +528,8 @@ def test_container_constructor_round_trips_driver_injected_field():
             abstract = True
 
     class _PayloadBase(ObjectType):
-        ok = Boolean()
-        errors = List(String)
+        ok = field(GraphQLBoolean)
+        errors = field(GraphQLList(GraphQLString))
 
         class Meta:
             abstract = True
@@ -530,7 +539,7 @@ def test_container_constructor_round_trips_driver_injected_field():
             _meta = _meta or NativeObjectTypeOptions(cls)
             # Driver injects the dynamic output field into _meta.fields (NOT a
             # class attribute) — exactly like DjangoModelType / DjangoModelMutation.
-            _meta.fields = OrderedDict({"category": Field(_Inner)})
+            _meta.fields = OrderedDict({"category": field(_Inner)})
             super().__init_subclass_with_meta__(_meta=_meta, **opts)
 
     class _Payload(_PayloadBase):
@@ -551,13 +560,15 @@ def test_container_constructor_round_trips_driver_injected_field():
 @pytest.mark.native_only
 def test_container_constructor_partial_payload():
     """``cls(**kwargs)`` accepts a partial payload (missing keys default safely)."""
-    from graphene import Boolean, List, String
+    from graphql import GraphQLList, GraphQLString
 
+    from django_graphex import field
     from django_graphex.native.base import ObjectType
+    from django_graphex.native.descriptors import NativeField
 
     class Payload(ObjectType):
-        ok = Boolean()
-        errors = List(String)
+        ok = field(GraphQLBoolean)
+        errors = field(GraphQLList(GraphQLString))
 
         class Meta:
             name = "Payload"
@@ -568,11 +579,10 @@ def test_container_constructor_partial_payload():
     # payload keys are stashed), so it is absent from the instance __dict__ ...
     assert "errors" not in inst.__dict__
     # ... and it never leaked into Pydantic's model_fields. Attribute access
-    # falls back to the class-body graphene descriptor (kept by ignored_types).
+    # falls back to the class-body native ``field()`` descriptor (kept by
+    # ignored_types=_FIELD_DESCRIPTOR_TYPES).
     assert "errors" not in type(inst).model_fields
-    from graphene.types.unmountedtype import UnmountedType
-
-    assert isinstance(inst.errors, UnmountedType)
+    assert isinstance(inst.errors, NativeField)
 
 
 # ---------------------------------------------------------------------------

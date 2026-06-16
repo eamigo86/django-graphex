@@ -1,17 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Custom graphene fields declared directly on a ``DjangoModelType``.
+"""Custom fields declared directly on a ``DjangoModelType``.
 
 Previously, exposing an extra field (not on the serializer) required declaring a
 separate ``DjangoObjectType`` for the model so it would be picked up from the
 registry. These tests cover declaring the field straight on the
 ``DjangoModelType`` instead.
+
+S8h: the 2.0 public field-declaration API is ``field()`` (graphene descriptors on
+a native type are no longer supported). A graphene ``source="name"`` becomes a
+``field(GraphQLString, resolver=...)`` reading the attribute off the model
+instance — the native equivalent of graphene's ``source`` semantics.
 """
 
-import graphene
 import pytest
 from django.db import models
 from django.test import TestCase
-from graphql import graphql_sync
+from graphql import GraphQLInt, GraphQLString, graphql_sync
 
 from django_graphex import (
     DjangoGraphQLSchema,
@@ -21,6 +25,20 @@ from django_graphex import (
     field,
 )
 from tests.models import DummyModel, UUIDItem, UUIDThing
+
+
+def _read_attr(attr):
+    """Build a resolver that reads ``attr`` off the resolved model instance.
+
+    The native ``field()`` equivalent of graphene's ``source="attr"`` for the
+    plain attribute case exercised by these tests (the root is always a model
+    instance, never a dict or zero-arg callable).
+    """
+
+    def _resolver(root, info):
+        return getattr(root, attr, None)
+
+    return _resolver
 
 
 def _compiled_output_fields(model_type):
@@ -55,8 +73,8 @@ class ResolverThing2(DummyModel):
 class _ThingFieldsMixin(DjangoModelType):
     """Abstract base contributing shared custom fields (OOP-style reuse)."""
 
-    upper_name = graphene.String(source="name")  # inherited by subclasses
-    overridden = graphene.String(source="name")  # a subclass may override it
+    upper_name = field(GraphQLString, resolver=_read_attr("name"))  # inherited
+    overridden = field(GraphQLString, resolver=_read_attr("name"))  # may override
 
     class Meta:
         abstract = True
@@ -64,8 +82,8 @@ class _ThingFieldsMixin(DjangoModelType):
 
 class ThingModelType(_ThingFieldsMixin):
     # Declared right here -- no separate DjangoObjectType needed.
-    alias = graphene.Field(graphene.String, source="name")
-    overridden = graphene.Int()  # overrides the mixin's field
+    alias = field(GraphQLString, resolver=_read_attr("name"))
+    overridden = field(GraphQLInt)  # overrides the mixin's field
 
     class Meta:
         model = UUIDThing
@@ -86,8 +104,8 @@ class CustomFieldsOnSerializerTypeTest(TestCase):
 
     def test_subclass_overrides_inherited_field(self):
         # The subclass's `overridden` (Int) wins over the mixin's (String).
-        field = ThingModelType._meta.output_type._meta.fields["overridden"]
-        self.assertIs(field.type, graphene.Int)
+        declared = ThingModelType._meta.output_type._meta.fields["overridden"]
+        self.assertIs(declared.type, GraphQLInt)
 
     def test_custom_field_visible_in_list_type(self):
         # The list type reuses the same item type from the registry, so the
@@ -128,7 +146,7 @@ class CustomResolverTest(TestCase):
 
     def test_resolve_method_is_used_for_custom_field(self):
         class _ThingType(DjangoModelType):
-            shout = graphene.String()  # no `source=`; resolved by the method below
+            shout = field(GraphQLString)  # no resolver; resolved by the method below
 
             class Meta:
                 model = ResolverThing
@@ -151,7 +169,7 @@ class CustomResolverTest(TestCase):
 
     def test_inherited_resolver_and_subclass_override(self):
         class _Base(DjangoModelType):
-            label = graphene.String()
+            label = field(GraphQLString)
 
             class Meta:
                 abstract = True
@@ -192,7 +210,7 @@ class CustomFieldsConflictTest(TestCase):
         with pytest.warns(UserWarning, match="already registered"):
 
             class ItemModelType(DjangoModelType):
-                extra = graphene.Field(graphene.String, source="label")
+                extra = field(GraphQLString, resolver=_read_attr("label"))
 
                 class Meta:
                     model = UUIDItem

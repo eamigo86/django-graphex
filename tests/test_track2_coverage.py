@@ -26,8 +26,9 @@ from unittest import mock
 
 import graphene
 import pytest
+from graphql import GraphQLString
 
-from django_graphex import DjangoInterfaceType, DjangoObjectType
+from django_graphex import DjangoInterfaceType, DjangoObjectType, field
 from django_graphex.fields import DjangoObjectField
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
@@ -160,7 +161,7 @@ def test_inline_fragment_descends_on_implemented_interface_name():
     reg = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -796,7 +797,7 @@ def test_get_member_models_interface_skips_input_entries_and_non_implementors():
     reg = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -883,7 +884,7 @@ def test_django_interface_type_self_registers_into_global_registry_by_default():
     global_reg = get_global_registry()
 
     class _GlobalDefaultInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             # NOTE: registry deliberately OMITTED -> default global path.

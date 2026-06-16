@@ -22,42 +22,40 @@ from dataclasses import dataclass
 from inspect import cleandoc, isclass
 from typing import Any
 
-# ``graphene.types.mountedtype.MountedType`` / ``unmountedtype.UnmountedType``
-# are the graphene field-descriptor base classes. They are imported ONLY for two
-# graphene-free purposes here:
-#   1. ``ignored_types`` — tell Pydantic NOT to mis-parse class-body descriptors
-#      (``ok = Boolean(...)``, ``errors = List(...)``, ``Field(...)``) as model
-#      fields (which crashes with PydanticUserError 'non-annotated attribute').
-#   2. ``_collect_descriptor_fields`` — recover those descriptors from the class
-#      ``__dict__`` into ``_meta.fields`` WITHOUT Pydantic field inference.
-# Importing these base classes does NOT couple the native runtime to graphene's
-# schema machinery; they are plain marker classes. They are removed entirely in
-# the final graphene-removal slice (S8). Until then the public ``Django*`` types
-# still declare their descriptors as graphene instances, so the native base must
-# recognize them.
-from graphene.types.mountedtype import MountedType
-from graphene.types.unmountedtype import UnmountedType
+# S8h (graphene-removal): native/base.py is now FULLY graphene-free at the top
+# level — these were the LAST two top-level graphene imports in the whole
+# ``django_graphex`` package. They previously imported the graphene
+# field-descriptor base classes (``MountedType`` / ``UnmountedType``) ONLY to
+# DETECT + ignore graphene descriptors (``name = graphene.String()``) declared on
+# a NATIVE ``ObjectType`` class body — a 1.x back-compat shim. The 2.0 public
+# field-declaration API is ``field()`` (``NativeField`` / ``NativeMountedField``),
+# so graphene descriptors on a native type are NO LONGER supported: users migrate
+# ``name = graphene.String()`` -> ``name = field(GraphQLString)``. The native
+# descriptor currency below (``NativeField`` / ``NativeMountedField`` /
+# ``GraphQLField``) is what the detection tuples recognize now.
 from graphql import GraphQLField
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from django_graphex.native.descriptors import NativeField, NativeMountedField
 
-# A class-attribute name (or value) is treated as a FIELD DESCRIPTOR when it is an
-# instance of one of these. ``MountedType`` covers graphene ``Field(...)``;
-# ``UnmountedType`` covers scalars/structures like ``Boolean()`` / ``List(...)``.
+# A class-attribute name (or value) is treated as a FIELD DESCRIPTOR (a payload
+# key the container ``__init__`` round-trips) when it is an instance of this.
 # ``NativeMountedField`` (S8c) covers the re-parented ``Django*Field`` classes —
 # graphene-free mounted descriptors — so a ``posts = DjangoNestedListObjectField(...)``
-# class attribute is recognized AND shielded from Pydantic model-field inference
-# exactly like the graphene descriptors were.
-_GRAPHENE_DESCRIPTOR_TYPES = (UnmountedType, MountedType, NativeMountedField)
+# class attribute is recognized AND shielded from Pydantic model-field inference.
+# S8h dropped the graphene ``MountedType`` / ``UnmountedType`` markers (graphene
+# descriptors on a native type are no longer supported in 2.0; users migrate to
+# ``field()``).
+_GRAPHENE_DESCRIPTOR_TYPES = (NativeMountedField,)
 
 # A class-attribute is treated as a FIELD DESCRIPTOR (collected into
 # ``_meta.fields`` and shielded from Pydantic model-field inference) when it is an
-# instance of one of these. This UNION is the dual-currency surface during
-# graphene removal: graphene descriptors (transitional, removed in S8) PLUS the
-# native ``NativeField`` (the S-ROOTS-a currency) PLUS a raw graphql-core
-# ``GraphQLField`` (the S-ROOTS-h currency).
+# instance of one of these. After S8h this is the pure-native field currency:
+# ``NativeMountedField`` (re-parented ``Django*Field`` classes), ``NativeField``
+# (the ``field()`` descriptor), and a raw graphql-core ``GraphQLField``. The
+# graphene ``MountedType`` / ``UnmountedType`` markers were removed — graphene
+# descriptors declared on a native type are no longer recognized (2.0 contract).
 #
 # Recognizing ``NativeField`` here lets a class-body ``field()`` declaration —
 # e.g. ``errors.py``'s native ``ErrorType`` (S-ROOTS-b) — land in ``_meta.fields``
@@ -75,8 +73,6 @@ _GRAPHENE_DESCRIPTOR_TYPES = (UnmountedType, MountedType, NativeMountedField)
 # metaclass silently DROPPED them, and ``_collect_root_attrs`` recovered the
 # registered ones); a native root could not declare one at all.
 _FIELD_DESCRIPTOR_TYPES = (
-    UnmountedType,
-    MountedType,
     NativeMountedField,
     NativeField,
     GraphQLField,
@@ -117,17 +113,18 @@ def _props(meta_cls: type) -> dict[str, Any]:
 
 
 def _collect_descriptor_fields(cls: type) -> dict[str, Any]:
-    """Collect graphene field descriptors declared across the MRO into a dict.
+    """Collect native field descriptors declared across the MRO into a dict.
 
-    Mirrors graphene's ``yank_fields_from_attrs`` collection performed inside
-    ``ObjectType.__init_subclass_with_meta__``: walk the MRO (base-first, so
-    subclass declarations win on name collisions) and pick up every attribute
-    whose VALUE is a graphene ``UnmountedType`` / ``MountedType`` descriptor.
+    Walks the MRO (base-first, so subclass declarations win on name collisions)
+    and picks up every attribute whose VALUE is a NATIVE field descriptor
+    (``NativeMountedField`` / ``NativeField`` / a raw graphql-core ``GraphQLField``
+    — see ``_FIELD_DESCRIPTOR_TYPES``).
 
-    The descriptors are returned AS-IS (not wrapped into graphene ``Field``s);
-    the native compiler reads ``_meta.fields`` via ``getattr(...)`` and inspects
-    each value's ``type`` / kind, so the raw descriptor is the right currency
-    here and keeps S6a graphene-free at the call sites that follow.
+    The descriptors are returned AS-IS; the native compiler reads ``_meta.fields``
+    via ``getattr(...)`` and inspects each value's ``type`` / kind, so the raw
+    descriptor is the right currency here. S8h dropped the graphene
+    ``UnmountedType`` / ``MountedType`` recognition (graphene descriptors on a
+    native type are no longer supported in 2.0; users migrate to ``field()``).
     """
     fields: dict[str, Any] = {}
     for base in reversed(cls.__mro__):
@@ -138,38 +135,28 @@ def _collect_descriptor_fields(cls: type) -> dict[str, Any]:
 
 
 def _mount_descriptor_fields(cls: type) -> dict[str, Any]:
-    """Collect class-body graphene descriptors mounted as graphene ``Field``s.
+    """Collect class-body NATIVE field descriptors into ``{name: descriptor}``.
 
-    Byte-equivalent to graphene's
-    ``ObjectType.__init_subclass_with_meta__`` field collection:
-    ``for base in reversed(cls.__mro__): fields.update(
-    yank_fields_from_attrs(base.__dict__, _as=Field))``. Walking the MRO base-first
-    means a subclass declaration wins on a name collision (graphene parity).
+    Walks the MRO base-first (so a subclass declaration wins on a name collision)
+    and collects every NATIVE field descriptor: a ``NativeMountedField`` (the
+    re-parented ``Django*Field`` classes, e.g. ``DjangoListObjectField``), a
+    ``NativeField`` (a class-body ``field()`` declaration, e.g. the native
+    ``ErrorType``), or a raw graphql-core ``GraphQLField`` (a mounted mutation
+    field on a native root). Each is ALREADY field-shaped — it exposes ``.type`` /
+    ``.args`` / ``.wrap_resolve`` (the currency the native declared-field compiler
+    reads) — so it is merged in AS-IS.
 
-    Unlike ``_collect_descriptor_fields`` (which returns the RAW descriptors, used
-    by the container ``__init__`` to find payload key NAMES), this MOUNTS each
-    descriptor into a ``graphene.Field`` so the value carries ``.type`` — the
-    currency the native declared-field compiler reads. ``yank_fields_from_attrs``
-    already skips non-descriptor attrs and is idempotent for already-mounted
-    ``MountedType`` fields (e.g. ``DjangoListObjectField``), so list/object fields
-    keep their mounted identity.
+    S8h: the graphene-mount half (``yank_fields_from_attrs(base.__dict__,
+    _as=Field)``) was removed. It existed only to mount graphene ``UnmountedType``
+    / ``MountedType`` descriptors declared on a native type into a graphene
+    ``Field``; the 2.0 contract drops graphene-descriptor support, so that path is
+    dead and ``base.py`` is now graphene-free (no lazy graphene import either).
+    Recognizing the native currency here is the MOUNT half of the silent-drop
+    guard — without it a class-body ``field()`` / mounted ``GraphQLField`` would
+    vanish from ``_meta.fields``.
     """
-    from graphene import Field
-    from graphene.types.utils import yank_fields_from_attrs
-
     fields: dict[str, Any] = {}
     for base in reversed(cls.__mro__):
-        # graphene descriptors -> mounted graphene ``Field`` (carries ``.type``).
-        fields.update(yank_fields_from_attrs(base.__dict__, _as=Field))
-        # Native ``field()`` descriptors AND raw graphql-core ``GraphQLField``
-        # attributes are ALREADY field-shaped (expose ``.type`` / ``.args`` /
-        # ``.wrap_resolve``), so the compiler reads them directly — do NOT route
-        # them through graphene's ``yank_fields_from_attrs`` (which would skip them
-        # entirely). Merge them in AS-IS, base-first so a subclass declaration wins
-        # on a name collision (graphene parity). This is the MOUNT half of the
-        # silent-drop gotcha: it lets a class-body ``field()`` (native ``ErrorType``,
-        # S-ROOTS-b) AND a raw ``GraphQLField`` (a mounted mutation field on a native
-        # root, S-ROOTS-h) reach ``_meta.fields`` instead of vanishing.
         for attr_name, value in vars(base).items():
             if isinstance(value, (NativeMountedField, NativeField, GraphQLField)):
                 fields[attr_name] = value
@@ -336,16 +323,19 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
 
     1. Read a ``Meta`` (class OR dict), turn it into keyword options via
        ``_props``, pop ``abstract``.
-    2. Collect graphene field descriptors (``Boolean()`` / ``List(...)`` /
-       ``Field(...)``) declared on the class body into ``_meta.fields`` WITHOUT
-       routing them through Pydantic field inference.
+    2. Collect NATIVE field descriptors (a ``field()`` / ``NativeField`` scalar,
+       a re-parented ``Django*Field`` / ``NativeMountedField``, or a raw
+       graphql-core ``GraphQLField``) declared on the class body into
+       ``_meta.fields`` WITHOUT routing them through Pydantic field inference.
     3. Dispatch ``cls.__init_subclass_with_meta__(**options)`` (skipped for
        abstract bases), then ``delattr(cls, "Meta")``.
 
-    ``ignored_types=(UnmountedType, MountedType)`` is the critical escape: it
-    tells Pydantic to NOT treat class-body graphene descriptors as model fields
+    ``ignored_types=_FIELD_DESCRIPTOR_TYPES`` is the critical escape: it tells
+    Pydantic to NOT treat class-body native field descriptors as model fields
     (which otherwise crashes with ``PydanticUserError`` 'non-annotated
-    attribute'). The descriptors remain in ``cls.__dict__`` for step 2.
+    attribute'). The descriptors remain in ``cls.__dict__`` for step 2. S8h: the
+    tuple is now pure-native (graphene ``UnmountedType`` / ``MountedType`` markers
+    removed — graphene descriptors on a native type are unsupported in 2.0).
 
     ``alias_generator=to_camel`` wires camelCase SDL names automatically.
     ``populate_by_name=True`` lets callers construct with either snake or camel
@@ -468,17 +458,14 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
         field-merge + interface-default and leave possible_types/default_resolver
         at their Options defaults.
         """
-        # Collect class-body graphene descriptors across the MRO and MOUNT them as
-        # graphene ``Field`` instances — EXACTLY graphene's
-        # ``yank_fields_from_attrs(base.__dict__, _as=Field)`` in
-        # ``ObjectType.__init_subclass_with_meta__``. This is load-bearing: the
-        # native output compiler (``types._compile_declared_fields`` ->
-        # ``schema_compiler.compile_declared_field``) reads ``field.type`` off each
-        # ``_meta.fields`` value. A RAW ``UnmountedType`` (``graphene.String()``)
-        # has NO ``.type`` attribute, so it would surface as "Cannot convert
-        # graphene type None"; the mounted ``Field`` carries ``.type`` (the scalar/
-        # object) the converter needs. graphene is imported lazily here (and only
-        # the field-mount helpers) — removed entirely in S8 with the descriptors.
+        # Collect class-body NATIVE field descriptors across the MRO. This is
+        # load-bearing: the native output compiler (``types._compile_declared_fields``
+        # -> ``schema_compiler.compile_declared_field``) reads ``field.type`` off
+        # each ``_meta.fields`` value. Every native descriptor (``NativeField`` /
+        # ``NativeMountedField`` / raw ``GraphQLField``) is already field-shaped and
+        # carries ``.type``, so it is collected AS-IS. S8h removed the graphene-mount
+        # half (``yank_fields_from_attrs(..., _as=Field)``) — graphene descriptors on
+        # a native type are unsupported in 2.0, and ``base.py`` is now graphene-free.
         mounted_fields = _mount_descriptor_fields(cls)
 
         if _meta is None:
