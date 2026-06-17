@@ -13,7 +13,7 @@ GraphQL directives in `django-graphex` allow you to transform field values at qu
     Add it to your settings before using any directive:
 
     ```python
-    GRAPHEX = {
+    DJANGO_GRAPHEX = {
         "SCHEMA": "myapp.schema.schema",
         "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
     }
@@ -522,7 +522,7 @@ directive parses and validates but does nothing:
 
 ```python
 # settings.py
-GRAPHEX = {
+DJANGO_GRAPHEX = {
     "SCHEMA": "myapp.schema.schema",
     "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
 }
@@ -602,7 +602,7 @@ Enable directive processing with middleware:
 === "Django Settings"
 
     ```python
-    GRAPHEX = {
+    DJANGO_GRAPHEX = {
         'SCHEMA': 'myapp.schema.schema',
         'MIDDLEWARE': [
             'django_graphex.GraphQLDirectiveMiddleware',

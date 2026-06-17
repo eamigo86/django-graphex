@@ -24,7 +24,7 @@ It drives the serialize-once native engine end-to-end:
   * client disconnect / aclosing → ``source.aclose()`` → ``group_discard`` (the
     WU4 sweep releases a blocked receive + discards every joined group), so no
     ghost subscriber survives a teardown;
-  * the view reads ``graphex_or_graphene_settings.MAX_VALIDATION_ERRORS`` (NOT
+  * the view reads ``graphql_api_settings.MAX_VALIDATION_ERRORS`` (NOT
     ``graphene_settings`` — the no-graphene-import gate);
   * ``assertNumQueries(0)`` on the delivery path (serialize-once: the snake
     closure projects the flat pk dict, never the ORM).
@@ -474,19 +474,20 @@ async def test_delivery_path_is_zero_queries(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 5) settings: the view reads graphex_or_graphene_settings (no graphene_settings)
+# 5) settings: the view reads graphql_api_settings (no graphene_settings)
 # ---------------------------------------------------------------------------
 
 
-def test_view_reads_max_validation_errors_via_shim(monkeypatch):
-    """The SSE view reads MAX_VALIDATION_ERRORS through ``graphex_or_graphene_settings``.
+def test_view_reads_max_validation_errors_via_reader(monkeypatch):
+    """The SSE view reads MAX_VALIDATION_ERRORS through ``graphql_api_settings``.
 
     Static gate (mirrors the kept HTTP view's regression test): the module must
-    reference the shim, NOT ``graphene_settings`` (the no-graphene-import gate).
+    reference the unified reader, NOT ``graphene_settings`` (the
+    no-graphene-import gate).
     """
     from django_graphex.subscriptions.transports import sse
 
-    assert hasattr(sse, "graphex_or_graphene_settings")
+    assert hasattr(sse, "graphql_api_settings")
     assert not hasattr(sse, "graphene_settings")
 
 
@@ -518,6 +519,6 @@ def test_sse_module_does_not_import_graphene():
     # No graphene import of any kind.
     assert not any(m == "graphene" or m.startswith("graphene.") for m in imported_modules)
     assert "graphene" not in imported_names
-    # The settings shim is imported; the legacy graphene_settings is NOT.
-    assert "graphex_or_graphene_settings" in imported_names
+    # The unified settings reader is imported; the legacy graphene_settings is NOT.
+    assert "graphql_api_settings" in imported_names
     assert "graphene_settings" not in imported_names

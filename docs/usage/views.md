@@ -21,7 +21,7 @@ urlpatterns = [
 ]
 ```
 
-`GraphQLView` reads the `GRAPHEX["SCHEMA"]` setting by default, or pass
+`GraphQLView` reads the `DJANGO_GRAPHEX["SCHEMA"]` setting by default, or pass
 `schema=` explicitly. It enables the depth and cost validation rules
 automatically (no-ops until `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` are set — see
 [Query depth & cost limits](query-limits.md)) and response caching when

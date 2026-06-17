@@ -26,11 +26,13 @@ before/after snippets and a migration codemod (`scripts/migrate_2_0.py`).
   that selected the legacy graphene path is gone; the native graphql-core path is
   the only path. graphene (and graphene-django) are no longer required and can be
   uninstalled.
-- **`GRAPHENE` settings namespace → `GRAPHEX`.** Schema/middleware settings
-  (`SCHEMA`, `MIDDLEWARE`, `SUBSCRIPTION_PATH`, …) are now read **only** from the
-  canonical `GRAPHEX` dict; the legacy `GRAPHENE` Django-setting namespace is no
-  longer consulted. (The package's own `DJANGO_GRAPHEX` settings dict is
-  unchanged.)
+- **`GRAPHENE` settings namespace → `DJANGO_GRAPHEX` (single namespace).**
+  Schema/middleware settings (`SCHEMA`, `MIDDLEWARE`, `SUBSCRIPTION_PATH`, …) are
+  merged into the single `DJANGO_GRAPHEX` Django-setting dict alongside this
+  package's own settings (pagination, caching, query limits, …); there is no
+  longer a separate schema-settings namespace, and the legacy `GRAPHENE`
+  namespace is no longer consulted. The codemod `--apply` folds an existing
+  `GRAPHENE` dict into `DJANGO_GRAPHEX` (no key collisions).
 - **`graphene.ObjectType` schema roots → native `ObjectType`.** Import the root
   base from `django_graphex` (`from django_graphex import ObjectType`).
 - **`graphene.Schema(...)` → `DjangoGraphQLSchema(...)`.** Build the schema with

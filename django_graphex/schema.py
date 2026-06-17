@@ -84,14 +84,15 @@ class DenyAllRegistry(frozenset):
 def _auth_middleware_configured() -> bool:
     """Check that the AuthenticatedFieldsMiddleware is configured.
 
-    Reads ``settings.GRAPHEX['MIDDLEWARE']`` only. This is a best-effort check.
+    Reads ``settings.DJANGO_GRAPHEX['MIDDLEWARE']`` only. This is a best-effort
+    check.
 
     BREAKING CHANGE (2.0, S2): the legacy ``settings.GRAPHENE`` namespace is no
-    longer consulted — consistent with the GRAPHEX-only settings reader. A
-    project still configuring the middleware under ``GRAPHENE`` must rename the
-    namespace to ``GRAPHEX``.
+    longer consulted — consistent with the single ``DJANGO_GRAPHEX`` settings
+    reader. A project still configuring the middleware under ``GRAPHENE`` must
+    rename the namespace to ``DJANGO_GRAPHEX``.
     """
-    graphex_conf = getattr(settings, "GRAPHEX", None) or {}
+    graphex_conf = getattr(settings, "DJANGO_GRAPHEX", None) or {}
     middleware_entries = list(graphex_conf.get("MIDDLEWARE", []) or [])
     for entry in middleware_entries:
         name = entry if isinstance(entry, str) else getattr(entry, "__name__", "")
@@ -321,7 +322,7 @@ class DjangoGraphQLSchema:
             warnings.warn(
                 "DjangoGraphQLSchema received private_query/private_mutation/"
                 "private_subscription but AuthenticatedFieldsMiddleware is not in "
-                "settings.GRAPHEX['MIDDLEWARE']; private fields will NOT be "
+                "settings.DJANGO_GRAPHEX['MIDDLEWARE']; private fields will NOT be "
                 "protected.",
                 RuntimeWarning,
                 stacklevel=2,

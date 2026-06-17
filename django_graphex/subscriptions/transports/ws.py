@@ -45,7 +45,7 @@ context exposing ``.user`` + a ``scope`` mapping, here built from ``self.scope``
 (the Channels scope dict — NOT an ``HttpRequest``), so the authorize/scope hooks
 behave identically to the SSE transport.
 
-This module reads ``graphex_or_graphene_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT``
+This module reads ``graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT``
 (NOT ``graphene_settings`` — the no-graphene-import gate). It imports neither
 graphene at any scope nor ``channels`` at module scope; ``channels`` is imported
 lazily inside the factory so the base subscriptions package never hard-requires
@@ -70,7 +70,7 @@ from graphql import (
 )
 from graphql.utilities import get_operation_ast
 
-from ...settings import graphex_or_graphene_settings
+from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -200,7 +200,7 @@ def subscription_ws_consumer(
             delivery ``execute`` all use it).
         init_timeout: Seconds to wait for the first ``connection_init`` before
             closing with 4408. ``None`` reads
-            ``graphex_or_graphene_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT``
+            ``graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT``
             (default 3.0). A test may pass a tiny value to avoid waiting.
 
     Returns:
@@ -235,7 +235,7 @@ def subscription_ws_consumer(
             timeout = resolved_timeout
             if timeout is None:
                 timeout = (
-                    graphex_or_graphene_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT
+                    graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT
                 )
             self._init_timer = asyncio.ensure_future(self._init_watchdog(timeout))
 
@@ -363,7 +363,7 @@ def subscription_ws_consumer(
             validation_errors = validate(
                 schema,
                 document,
-                max_errors=graphex_or_graphene_settings.MAX_VALIDATION_ERRORS,
+                max_errors=graphql_api_settings.MAX_VALIDATION_ERRORS,
             )
             if validation_errors:
                 await self._send_error(

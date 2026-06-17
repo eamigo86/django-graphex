@@ -18,10 +18,10 @@ your resolvers.
     `Meta.max_deep`, `Meta.complexity`) now live on their own page —
     [Query depth & cost limits](query-limits.md).
 
-Wire the middlewares through `GRAPHEX['MIDDLEWARE']`:
+Wire the middlewares through `DJANGO_GRAPHEX['MIDDLEWARE']`:
 
 ```python
-GRAPHEX = {
+DJANGO_GRAPHEX = {
     "SCHEMA": "myapp.schema.schema",
     "MIDDLEWARE": [
         "django_graphex.DisableIntrospectionMiddleware",
@@ -151,14 +151,14 @@ matched against `info.field_name` (camelCase under the default
 !!! warning "Add the middleware"
 
     If you pass `private_query`/`private_mutation`/`private_subscription` but
-    `AuthenticatedFieldsMiddleware` is **not** in `GRAPHEX['MIDDLEWARE']`,
+    `AuthenticatedFieldsMiddleware` is **not** in `DJANGO_GRAPHEX['MIDDLEWARE']`,
     `DjangoGraphQLSchema` emits a `RuntimeWarning` — the private fields would
-    otherwise go unprotected. (The check inspects `GRAPHEX['MIDDLEWARE']`;
+    otherwise go unprotected. (The check inspects `DJANGO_GRAPHEX['MIDDLEWARE']`;
     middleware wired only via the view is not detected.)
 
 ### Behavior matrix
 
-| Middleware in `GRAPHEX['MIDDLEWARE']` | Schema declares private fields | Result |
+| Middleware in `DJANGO_GRAPHEX['MIDDLEWARE']` | Schema declares private fields | Result |
 |---|---|---|
 | ✅ | ✅ | declared fields require auth |
 | ✅ | ❌ | everything public |

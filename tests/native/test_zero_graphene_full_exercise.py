@@ -84,7 +84,7 @@ settings.configure(
         "tests",
     ),
     PASSWORD_HASHERS=("django.contrib.auth.hashers.MD5PasswordHasher",),
-    GRAPHEX={"SCHEMA": "tests.schema.schema"},
+    DJANGO_GRAPHEX={"SCHEMA": "tests.schema.schema"},
 )
 django.setup()
 

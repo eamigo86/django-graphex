@@ -570,7 +570,7 @@ Injecting raw strings would allow XSS if a path contained a double-quote
 ## Migrating from `graphene-django-subscriptions` / v1.x
 
 !!! note "Full v2.0 upgrade guide"
-    A comprehensive GRAPHENE → GRAPHEX upgrade guide (including the subscription
+    A comprehensive GRAPHENE → DJANGO_GRAPHEX upgrade guide (including the subscription
     transport cutover) ships with the v2.0 release notes. The steps below cover
     the subscription-specific moves.
 

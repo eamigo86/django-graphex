@@ -36,7 +36,7 @@ driver. The engine does the work:
     survives a teardown. Django>=5.2 guarantees the disconnect cancellation that
     triggers ``GeneratorExit`` into the async generator.
 
-This module reads ``graphex_or_graphene_settings.MAX_VALIDATION_ERRORS`` (NOT
+This module reads ``graphql_api_settings.MAX_VALIDATION_ERRORS`` (NOT
 ``graphene_settings`` — the no-graphene-import gate). It imports neither graphene
 nor channels at module scope; ``channels`` is imported lazily inside the view so
 the base package never hard-requires the optional ``[subscriptions]`` extra.
@@ -57,7 +57,7 @@ from graphql import (
 )
 from graphql.utilities import get_operation_ast
 
-from ...settings import graphex_or_graphene_settings
+from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -244,7 +244,7 @@ def subscription_sse_view(*, schema: "GraphQLSchema") -> "Callable[..., Any]":
         validation_errors = validate(
             schema,
             document,
-            max_errors=graphex_or_graphene_settings.MAX_VALIDATION_ERRORS,
+            max_errors=graphql_api_settings.MAX_VALIDATION_ERRORS,
         )
 
         started_source: "ChannelLayerSource | None" = None

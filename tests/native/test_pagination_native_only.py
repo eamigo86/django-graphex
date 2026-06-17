@@ -211,7 +211,7 @@ def test_native_pagination_build_does_not_import_graphene_subprocess() -> None:
                 "django.contrib.contenttypes", "django.contrib.sessions",
                 "django.contrib.sites", "django.contrib.staticfiles", "tests",
             ),
-            GRAPHEX={"SCHEMA": "tests.schema.schema"},
+            DJANGO_GRAPHEX={"SCHEMA": "tests.schema.schema"},
         )
         django.setup()
 

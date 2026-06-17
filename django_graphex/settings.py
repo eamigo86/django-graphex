@@ -1,19 +1,13 @@
 """Settings configuration for django-graphex.
 
 This module provides configuration management for the django-graphex
-package, including pagination, caching, and other global settings. It reads
-both the ``DJANGO_GRAPHEX`` namespace (this package's own settings) and the
-``GRAPHEX`` namespace (the schema/middleware settings formerly read by
-``graphene-django``), each exposed through its own singleton.
+package, including pagination, caching, schema/middleware and other global
+settings. Everything is read from the SINGLE ``DJANGO_GRAPHEX`` Django-setting
+namespace, exposed through the :data:`graphql_api_settings` singleton.
 
-``GRAPHEX`` is the canonical namespace for schema/middleware settings.
-
-BREAKING CHANGE (2.0): the legacy ``GRAPHENE`` Django-setting namespace is no
-longer consulted. Settings are read ONLY from the ``GRAPHEX`` dict. The public
-name ``graphex_or_graphene_settings`` is retained as a backwards-compatible
-alias for the GRAPHEX-only reader, but its dual-read / ``GRAPHENE``-fallback
-behavior has been removed. Projects still configuring the ``GRAPHENE`` namespace
-must rename it to ``GRAPHEX``.
+Migration note (v1.x -> v2.0): the legacy graphene-django ``GRAPHENE`` namespace
+is renamed to ``DJANGO_GRAPHEX`` (its schema/middleware/subscription keys are
+merged into this package's own settings dict — there is no separate namespace).
 """
 
 from __future__ import annotations
@@ -116,16 +110,10 @@ DEFAULTS = {
     # For batch requests, this cap applies to the total body of all operations.
     # Example: 20 * 1024 * 1024  →  20 MB total body
     "MAX_REQUEST_BODY_SIZE": None,
-}
-
-
-# List of settings that may be in string import notation.
-IMPORT_STRINGS = ("DEFAULT_PAGINATION_CLASS",)
-
-
-#: Defaults for the keys this package reads from the ``GRAPHEX`` namespace
-#: (a superset is harmless; kept close to graphene-django's for familiarity).
-GRAPHEX_DEFAULTS: dict[str, Any] = {
+    # ---------------------------------------------------------------------------
+    # Schema / middleware (formerly a separate schema namespace; the key names
+    # are kept close to graphene-django's for familiarity).
+    # ---------------------------------------------------------------------------
     "SCHEMA": None,
     "MIDDLEWARE": (),
     "SUBSCRIPTION_PATH": None,
@@ -138,8 +126,9 @@ GRAPHEX_DEFAULTS: dict[str, Any] = {
     "SUBSCRIPTION_CONNECTION_INIT_TIMEOUT": 3.0,
 }
 
-#: ``GRAPHEX`` settings that may be given as dotted import-path strings.
-GRAPHEX_IMPORT_STRINGS = ("MIDDLEWARE", "SCHEMA")
+
+# List of settings that may be in string import notation.
+IMPORT_STRINGS = ("DEFAULT_PAGINATION_CLASS", "MIDDLEWARE", "SCHEMA")
 
 
 class _BaseAPISettings:
@@ -148,9 +137,9 @@ class _BaseAPISettings:
     Self-contained (no DRF dependency): mirrors the small slice of DRF's
     ``APISettings`` the package used, so ``django-graphex`` imports
     without ``djangorestframework`` installed. A subclass/instance reads one
-    Django setting namespace (e.g. ``DJANGO_GRAPHEX`` or ``GRAPHEX``),
-    resolving missing keys from ``defaults`` and dotted import-path strings for
-    keys listed in ``import_strings``.
+    Django setting namespace (``DJANGO_GRAPHEX``), resolving missing keys from
+    ``defaults`` and dotted import-path strings for keys listed in
+    ``import_strings``.
     """
 
     def __init__(
@@ -245,38 +234,6 @@ class GraphQLAPISettings(_BaseAPISettings):
         )
 
 
-class GraphexSettings(_BaseAPISettings):
-    """Read the ``GRAPHEX`` settings namespace (the canonical schema namespace).
-
-    Reads schema/middleware settings from ``settings.GRAPHEX``. Consumers should
-    prefer the module-level singleton :data:`graphex_or_graphene_settings` (a
-    backwards-compatible alias bound to a ``GraphexSettings`` instance) over
-    direct use of this class.
-    """
-
-    def __init__(
-        self,
-        user_settings: dict[str, Any] | None = None,
-        defaults: dict[str, Any] | None = None,
-        import_strings: tuple[str, ...] | None = None,
-    ) -> None:
-        """Initialize the reader bound to the ``GRAPHEX`` namespace.
-
-        Args:
-            user_settings: Explicit user settings (else read from Django).
-            defaults: The default values mapping (defaults to
-                ``GRAPHEX_DEFAULTS``).
-            import_strings: Keys whose string values are import paths
-                (defaults to ``GRAPHEX_IMPORT_STRINGS``).
-        """
-        super().__init__(
-            user_settings,
-            defaults or GRAPHEX_DEFAULTS,
-            import_strings or GRAPHEX_IMPORT_STRINGS,
-            "GRAPHEX",
-        )
-
-
 def _perform_import(value: Any, setting_name: str) -> Any:
     """Resolve dotted import-path strings in a setting value.
 
@@ -325,23 +282,19 @@ def _import_from_string(value: str, setting_name: str) -> Any:
         )
 
 
+#: The single reader for every django-graphex setting (the ``DJANGO_GRAPHEX``
+#: namespace), including the schema/middleware/subscription keys that used to
+#: live in a separate schema-settings dict.
 graphql_api_settings = GraphQLAPISettings(None, DEFAULTS, IMPORT_STRINGS)
-
-#: Backwards-compatible public name for the GRAPHEX-only schema/middleware reader.
-#: As of 2.0 this is simply a ``GraphexSettings`` instance: the legacy ``GRAPHENE``
-#: namespace and its per-key fallback shim have been removed. The name is kept so
-#: the ~9 reader call-sites (views.py, subscriptions transports) need no edits.
-graphex_or_graphene_settings = GraphexSettings(None, GRAPHEX_DEFAULTS, GRAPHEX_IMPORT_STRINGS)
 
 
 def reload_api_settings(*args: Any, **kwargs: Any) -> None:
-    """Clear the cached settings on the singleton when a watched Django setting changes.
+    """Clear the cached settings on the singleton when ``DJANGO_GRAPHEX`` changes.
 
-    Keeps ``override_settings(...)`` working in tests for both namespaces:
-    ``DJANGO_GRAPHEX`` and ``GRAPHEX``. Uses ``singleton.reload()`` rather than
-    replacing the object so that any ``from .settings import graphql_api_settings``
-    (or ``graphex_or_graphene_settings``) bindings in other modules continue to
-    reference the correct (updated) singleton.
+    Keeps ``override_settings(DJANGO_GRAPHEX=...)`` working in tests. Uses
+    ``singleton.reload()`` rather than replacing the object so that any
+    ``from .settings import graphql_api_settings`` bindings in other modules
+    continue to reference the correct (updated) singleton.
 
     Args:
         *args: positional arguments from the "setting_changed" signal.
@@ -350,8 +303,6 @@ def reload_api_settings(*args: Any, **kwargs: Any) -> None:
     setting = kwargs.get("setting")
     if setting == "DJANGO_GRAPHEX":
         graphql_api_settings.reload()
-    elif setting == "GRAPHEX":
-        graphex_or_graphene_settings.reload()
 
 
 setting_changed.connect(reload_api_settings)

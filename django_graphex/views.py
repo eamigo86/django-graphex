@@ -10,7 +10,7 @@
 - ``AuthenticatedGraphQLView`` — gates the whole endpoint behind the library's own
   permission classes (no DRF).
 
-Reads the project's ``GRAPHEX`` Django setting (``SCHEMA``, ``MIDDLEWARE``,
+Reads the project's ``DJANGO_GRAPHEX`` Django setting (``SCHEMA``, ``MIDDLEWARE``,
 ``SUBSCRIPTION_PATH``, ``MAX_VALIDATION_ERRORS``, ``ATOMIC_MUTATIONS``) directly.
 """
 
@@ -47,7 +47,7 @@ from graphql.validation import specified_rules, validate
 from . import settings as _settings
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
-from .settings import graphex_or_graphene_settings, graphql_api_settings
+from .settings import graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule
 
@@ -197,15 +197,15 @@ class BaseGraphQLView(View):
         execution_context_class: Any = None,
         validation_rules: Any = None,
     ) -> None:
-        """Configure the view, reading defaults from the ``GRAPHEX`` setting.
+        """Configure the view, reading defaults from the ``DJANGO_GRAPHEX`` setting.
 
         Args mirror the classic ``GraphQLView`` signature (plus ``graphiql_template``).
         """
         if not schema:
-            schema = graphex_or_graphene_settings.SCHEMA
+            schema = graphql_api_settings.SCHEMA
 
         if middleware is None:
-            middleware = graphex_or_graphene_settings.MIDDLEWARE
+            middleware = graphql_api_settings.MIDDLEWARE
 
         self.schema = schema or self.schema
         if middleware is not None:
@@ -222,7 +222,7 @@ class BaseGraphQLView(View):
             execution_context_class or self.execution_context_class
         )
         if subscription_path is None:
-            self.subscription_path = graphex_or_graphene_settings.SUBSCRIPTION_PATH
+            self.subscription_path = graphql_api_settings.SUBSCRIPTION_PATH
         else:
             self.subscription_path = subscription_path
 
@@ -545,7 +545,7 @@ class BaseGraphQLView(View):
             schema,
             document,
             self.validation_rules,
-            graphex_or_graphene_settings.MAX_VALIDATION_ERRORS,
+            graphql_api_settings.MAX_VALIDATION_ERRORS,
         )
         if validation_errors:
             return ExecutionResult(data=None, errors=validation_errors)
@@ -567,7 +567,7 @@ class BaseGraphQLView(View):
                 operation_ast is not None
                 and operation_ast.operation == OperationType.MUTATION
                 and (
-                    graphex_or_graphene_settings.ATOMIC_MUTATIONS is True
+                    graphql_api_settings.ATOMIC_MUTATIONS is True
                     or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
                 )
             ):

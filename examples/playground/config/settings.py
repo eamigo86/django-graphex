@@ -65,21 +65,19 @@ CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
 # ---------------------------------------------------------------------------
 # django-graphex
 # ---------------------------------------------------------------------------
-# 2.0 BREAKING CHANGE: schema/middleware settings are read ONLY from the
-# ``GRAPHEX`` namespace; the legacy ``GRAPHENE`` namespace is no longer consulted.
-GRAPHEX = {
+# 2.0 BREAKING CHANGE: every django-graphex setting is read from the SINGLE
+# ``DJANGO_GRAPHEX`` namespace (schema/middleware/subscription keys included);
+# the legacy ``GRAPHENE`` namespace is no longer consulted.
+DJANGO_GRAPHEX = {
     "SCHEMA": "blog.schema.schema",
     "MIDDLEWARE": [
-        # Block schema introspection unless allowed (see DJANGO_GRAPHEX).
+        # Block schema introspection unless allowed (see ALLOW_INTROSPECTION).
         "django_graphex.DisableIntrospectionMiddleware",
         # Require an authenticated user on the schema's private fields.
         "django_graphex.AuthenticatedFieldsMiddleware",
         # Process @directives.
         "django_graphex.GraphQLDirectiveMiddleware",
     ],
-}
-
-DJANGO_GRAPHEX = {
     "DEFAULT_PAGE_SIZE": 10,
     "MAX_PAGE_SIZE": 100,
     # Keep introspection ON so GraphiQL works. Flip to False to see the

@@ -6,7 +6,7 @@ Three groups, all under the PLAYGROUND's own ``config.settings``:
    graphql-core schema with the expected query/mutation/subscription roots.
 
 2. Permission smoke — a protected field (``me``) served by ``GraphQLView`` (with
-   ``AuthenticatedFieldsMiddleware`` wired in ``GRAPHEX.MIDDLEWARE``) is denied
+   ``AuthenticatedFieldsMiddleware`` wired in ``DJANGO_GRAPHEX.MIDDLEWARE``) is denied
    for an anonymous request, but a public field is served.
 
 3. Subscription client (RANK 19, LEAN) — ``SubscriptionClientView`` at
@@ -65,7 +65,7 @@ def test_protected_field_requires_auth(client):
     """An anonymous request selecting the protected ``me`` field is denied.
 
     ``me`` is a private root field; ``AuthenticatedFieldsMiddleware`` (wired in
-    ``GRAPHEX.MIDDLEWARE``) blocks it for an unauthenticated request. The public
+    ``DJANGO_GRAPHEX.MIDDLEWARE``) blocks it for an unauthenticated request. The public
     ``serverTime`` field in the same request still resolves to prove the gate is
     field-scoped, not request-scoped.
     """

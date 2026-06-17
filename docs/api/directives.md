@@ -562,7 +562,7 @@ class GraphQLDirectiveMiddleware:
 #### Django Settings
 
 ```python
-GRAPHEX = {
+DJANGO_GRAPHEX = {
     'SCHEMA': 'myapp.schema.schema',
     'MIDDLEWARE': [
         'django_graphex.GraphQLDirectiveMiddleware',

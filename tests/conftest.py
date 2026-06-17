@@ -80,11 +80,11 @@ def pytest_configure(config):
             "tests",
         ),
         PASSWORD_HASHERS=("django.contrib.auth.hashers.MD5PasswordHasher",),
-        # S2 (2.0 breaking change): settings are read ONLY from the GRAPHEX
-        # namespace; the legacy GRAPHENE fallback has been removed. The harness
-        # uses the canonical GRAPHEX key so the global SCHEMA/MIDDLEWARE resolve
-        # through graphex_or_graphene_settings (now a GRAPHEX-only reader).
-        GRAPHEX={
+        # S2 (2.0 breaking change): settings are read from the SINGLE
+        # DJANGO_GRAPHEX namespace; the legacy GRAPHENE fallback has been
+        # removed. The harness uses DJANGO_GRAPHEX so the global SCHEMA/MIDDLEWARE
+        # resolve through graphql_api_settings (the one and only reader).
+        DJANGO_GRAPHEX={
             "SCHEMA": "tests.schema.schema",
             "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
         },

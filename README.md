@@ -126,7 +126,7 @@ DJANGO_GRAPHEX = {
 To use directives, add the middleware and pass `all_directives` to the schema:
 
 ```python
-GRAPHEX = {"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]}
+DJANGO_GRAPHEX = {"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]}
 
 from django_graphex import all_directives, DjangoGraphQLSchema
 schema = DjangoGraphQLSchema(query=Query, mutation=Mutation, directives=all_directives)

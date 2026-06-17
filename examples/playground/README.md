@@ -114,9 +114,9 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `IsAdmin` | ✅ | imported; available for `permission_classes` |
 | `IsAdminOrReadOnly` | ✅ | imported; available for `permission_classes` |
 | **Security / middleware** | | |
-| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` GRAPHEX.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
-| `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` GRAPHEX.MIDDLEWARE |
-| `GraphQLDirectiveMiddleware` | ✅ | `config/settings.py` GRAPHEX.MIDDLEWARE |
+| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
+| `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE |
+| `GraphQLDirectiveMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE |
 | `DjangoGraphQLSchema` (public + private roots) | ✅ | `schema.py` — `private_query=PrivateQuery`, `private_subscription=PrivateSubscriptions` |
 | `collect_field_names` | note | Used internally by `DjangoGraphQLSchema`; can be called directly to build a custom protected-field set |
 | `DenyAllRegistry` | note | Fail-closed sentinel for broken schemas; not needed in a healthy project |

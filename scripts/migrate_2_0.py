@@ -10,9 +10,14 @@ This codemod helps you move a project off graphene. It has two modes of
 operation per construct:
 
 1. MECHANICAL REWRITE (safe, automated with ``--apply``)
-   - The schema/middleware settings namespace ``GRAPHENE = {...}`` is renamed to
-     the canonical ``GRAPHEX = {...}``. (The package's OWN settings dict,
-     ``DJANGO_GRAPHEX``, is left untouched — it never changed.)
+   - The schema/middleware settings namespace ``GRAPHENE = {...}`` is folded into
+     the SINGLE ``DJANGO_GRAPHEX = {...}`` namespace (django-graphex unified its
+     two settings dicts in v2.0):
+       * if the module has no ``DJANGO_GRAPHEX`` dict yet, ``GRAPHENE`` is simply
+         renamed to ``DJANGO_GRAPHEX``;
+       * if a ``DJANGO_GRAPHEX`` dict already exists, the ``GRAPHENE`` keys are
+         MERGED into it (DJANGO_GRAPHEX wins on the rare key collision) and the
+         old ``GRAPHENE`` assignment is dropped.
 
 2. REPORT-AND-FLAG (always; never auto-rewritten because the native shape is not
    a 1:1 token swap)
@@ -34,7 +39,7 @@ Usage::
     # Show what the mechanical settings rewrite WOULD change (unified diff):
     python scripts/migrate_2_0.py --show-diff path/to/settings.py
 
-    # Apply the mechanical GRAPHENE -> GRAPHEX settings rewrite in place
+    # Apply the mechanical GRAPHENE -> DJANGO_GRAPHEX settings rewrite in place
     # (graphene constructs are still reported, never auto-rewritten):
     python scripts/migrate_2_0.py --apply path/to/project/
 
@@ -43,10 +48,11 @@ Implementation note
 ``libcst`` is not assumed present, and — critically — ``graphene`` is uninstalled
 in v2.0, so this script NEVER imports graphene. It operates purely on source
 text: ``ast`` for *analysis* (locating graphene constructs and their line
-numbers) and a conservative, targeted line rewrite for the single mechanical
-transform (``GRAPHENE = {`` → ``GRAPHEX = {``). Only the targeted assignment
-target is touched; all other formatting is preserved, so the rewrite is
-idempotent.
+numbers, and the ``GRAPHENE`` / ``DJANGO_GRAPHEX`` settings dicts). The
+mechanical transform folds ``GRAPHENE = {...}`` into ``DJANGO_GRAPHEX = {...}``:
+a plain rename when no target dict exists, or a key merge when it does. All other
+formatting is preserved and the rewrite is idempotent (a module with no
+``GRAPHENE`` dict is returned unchanged).
 """
 from __future__ import annotations
 
@@ -60,12 +66,13 @@ from dataclasses import field as dataclass_field
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
-# The legacy schema/middleware settings namespace that v2.0 renamed.           #
-# ``GRAPHENE`` (read by graphene-django / the old backend) -> ``GRAPHEX``.     #
-# NOTE: ``DJANGO_GRAPHEX`` (this package's own settings) is unchanged.         #
+# The legacy schema/middleware settings namespace that v2.0 folded away.       #
+# ``GRAPHENE`` (read by graphene-django / the old backend) -> ``DJANGO_GRAPHEX``#
+# (the SINGLE django-graphex settings namespace; the two v1.x dicts were        #
+# unified). If a ``DJANGO_GRAPHEX`` dict already exists the keys are MERGED in. #
 # --------------------------------------------------------------------------- #
 _LEGACY_SETTINGS_NAMESPACE = "GRAPHENE"
-_CANONICAL_SETTINGS_NAMESPACE = "GRAPHEX"
+_CANONICAL_SETTINGS_NAMESPACE = "DJANGO_GRAPHEX"
 
 # A top-level assignment target ``GRAPHENE = ...`` (not ``DJANGO_GRAPHEX``, which
 # is a different identifier and never matches this anchored pattern).
@@ -300,38 +307,30 @@ def _flag_mutation_args(mutation: ast.ClassDef, add) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Mechanical rewrite — GRAPHENE settings namespace -> GRAPHEX.                  #
+# Mechanical rewrite — GRAPHENE settings namespace -> DJANGO_GRAPHEX.           #
 # --------------------------------------------------------------------------- #
-def rewrite_source(source: str) -> tuple[str, bool]:
-    """Rewrite the legacy ``GRAPHENE = {...}`` settings target to ``GRAPHEX``.
-
-    Conservative: only a TOP-LEVEL assignment whose target line begins with
-    ``GRAPHENE =`` (optionally indented) is renamed. ``DJANGO_GRAPHEX`` and any
-    other identifier never match. Returns ``(new_source, changed)``.
-    """
-    # AST gate: only rewrite when there is a real module-level ``GRAPHENE``
-    # assignment target (avoids touching the token inside strings/comments).
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return source, False
-
-    target_lines: set[int] = set()
+def _module_assignment(tree: ast.Module, name: str) -> ast.Assign | ast.AnnAssign | None:
+    """Return the LAST module-level assignment to ``name`` (a dict target), if any."""
+    found: ast.Assign | ast.AnnAssign | None = None
     for node in tree.body:  # module level only
         if isinstance(node, ast.Assign):
             for tgt in node.targets:
-                if isinstance(tgt, ast.Name) and tgt.id == _LEGACY_SETTINGS_NAMESPACE:
-                    target_lines.add(tgt.lineno)
+                if isinstance(tgt, ast.Name) and tgt.id == name:
+                    found = node
         elif isinstance(node, ast.AnnAssign):
-            if (
-                isinstance(node.target, ast.Name)
-                and node.target.id == _LEGACY_SETTINGS_NAMESPACE
-            ):
-                target_lines.add(node.target.lineno)
+            if isinstance(node.target, ast.Name) and node.target.id == name:
+                found = node
+    return found
 
-    if not target_lines:
-        return source, False
 
+def _dict_value(node: ast.Assign | ast.AnnAssign) -> ast.Dict | None:
+    """Return the assigned value when it is a dict literal, else None."""
+    value = node.value if isinstance(node, ast.AnnAssign) else node.value
+    return value if isinstance(value, ast.Dict) else None
+
+
+def _rename_only(source: str, target_lines: set[int]) -> tuple[str, bool]:
+    """Rename the ``GRAPHENE =`` assignment target line(s) to ``DJANGO_GRAPHEX``."""
     out_lines: list[str] = []
     changed = False
     for i, line in enumerate(source.splitlines(keepends=True), start=1):
@@ -346,8 +345,131 @@ def rewrite_source(source: str) -> tuple[str, bool]:
                 out_lines.append(new_line)
                 continue
         out_lines.append(line)
-
     return "".join(out_lines), changed
+
+
+def _dict_entries(
+    source: str, dict_node: ast.Dict
+) -> list[tuple[str | None, str, str]]:
+    """Extract ``(key_literal, key_source, value_source)`` for each dict entry.
+
+    ``key_literal`` is the literal string key when the key is a constant string
+    (used for collision detection), else ``None``. ``key_source`` /
+    ``value_source`` preserve the exact source text so non-literal values
+    (import expressions, tuples, …) survive the merge verbatim.
+    """
+    entries: list[tuple[str | None, str, str]] = []
+    for key, value in zip(dict_node.keys, dict_node.values):
+        if key is None:  # ``**spread`` — keep source, no literal key
+            value_src = ast.get_source_segment(source, value) or ""
+            entries.append((None, f"**{value_src}", ""))
+            continue
+        key_src = ast.get_source_segment(source, key) or ""
+        value_src = ast.get_source_segment(source, value) or ""
+        key_literal = key.value if isinstance(key, ast.Constant) and isinstance(
+            key.value, str
+        ) else None
+        entries.append((key_literal, key_src, value_src))
+    return entries
+
+
+def rewrite_source(source: str) -> tuple[str, bool]:
+    """Fold the legacy ``GRAPHENE = {...}`` settings dict into ``DJANGO_GRAPHEX``.
+
+    Two cases (django-graphex unified its two settings namespaces in v2.0):
+
+    * No ``DJANGO_GRAPHEX`` dict in the module → the ``GRAPHENE =`` assignment
+      target is renamed to ``DJANGO_GRAPHEX`` (a conservative, line-anchored
+      rename; values are preserved verbatim).
+    * A ``DJANGO_GRAPHEX`` dict already exists → the ``GRAPHENE`` keys are MERGED
+      into it (the existing ``DJANGO_GRAPHEX`` value wins on a key collision) and
+      the old ``GRAPHENE`` assignment block is removed.
+
+    ``DJANGO_GRAPHEX`` is never matched as a legacy target. Returns
+    ``(new_source, changed)``; a module with no ``GRAPHENE`` dict is unchanged.
+    """
+    # AST gate: only rewrite when there is a real module-level ``GRAPHENE``
+    # assignment target (avoids touching the token inside strings/comments).
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source, False
+
+    graphene_assign = _module_assignment(tree, _LEGACY_SETTINGS_NAMESPACE)
+    if graphene_assign is None:
+        return source, False
+
+    graphene_dict = _dict_value(graphene_assign)
+    target_assign = _module_assignment(tree, _CANONICAL_SETTINGS_NAMESPACE)
+    target_dict = _dict_value(target_assign) if target_assign is not None else None
+
+    # --- Case 1: no existing DJANGO_GRAPHEX dict (or non-dict values) -> rename.
+    if target_dict is None or graphene_dict is None:
+        target_lines: set[int] = set()
+        if isinstance(graphene_assign, ast.Assign):
+            for tgt in graphene_assign.targets:
+                if isinstance(tgt, ast.Name) and tgt.id == _LEGACY_SETTINGS_NAMESPACE:
+                    target_lines.add(tgt.lineno)
+        elif isinstance(graphene_assign.target, ast.Name):
+            target_lines.add(graphene_assign.target.lineno)
+        return _rename_only(source, target_lines)
+
+    # --- Case 2: merge GRAPHENE keys into the existing DJANGO_GRAPHEX dict. -----
+    existing_keys = {
+        key_literal
+        for key_literal, _key_src, _val_src in _dict_entries(source, target_dict)
+        if key_literal is not None
+    }
+    graphene_entries = _dict_entries(source, graphene_dict)
+    # DJANGO_GRAPHEX wins on a collision: skip GRAPHENE keys already present.
+    new_entries = [
+        (key_src, val_src)
+        for key_literal, key_src, val_src in graphene_entries
+        if key_literal is None or key_literal not in existing_keys
+    ]
+
+    lines = source.splitlines(keepends=True)
+    # 1-based, inclusive end line of each construct.
+    g_start = graphene_assign.lineno
+    g_end = graphene_assign.end_lineno or g_start
+    t_dict_end = target_dict.end_lineno or target_assign.lineno
+
+    # Indentation of the target dict's entries (match the first entry, else 4 sp).
+    if target_dict.values:
+        first_val = target_dict.values[0]
+        entry_indent = " " * ((first_val.col_offset or 4))
+        # col_offset of the value is past the key; recover from the key instead.
+        first_key = target_dict.keys[0]
+        if first_key is not None:
+            entry_indent = " " * (first_key.col_offset or 4)
+    else:
+        entry_indent = "    "
+
+    injected = "".join(
+        f"{entry_indent}{key_src}: {val_src},\n" if key_src and not key_src.startswith("**")
+        else f"{entry_indent}{key_src},\n"
+        for key_src, val_src in new_entries
+    )
+
+    out: list[str] = []
+    for i, line in enumerate(lines, start=1):
+        # Drop the entire GRAPHENE assignment block.
+        if g_start <= i <= g_end:
+            continue
+        # Inject merged entries just before the DJANGO_GRAPHEX dict's closing brace.
+        if i == t_dict_end and injected:
+            close_idx = line.rfind("}")
+            if close_idx != -1:
+                out.append(line[:close_idx])
+                out.append(injected)
+                out.append(line[close_idx:])
+                continue
+        out.append(line)
+
+    # Collapse a blank line left where the GRAPHENE block used to be (cosmetic).
+    merged = "".join(out)
+    merged = re.sub(r"\n\n\n+", "\n\n", merged)
+    return merged, True
 
 
 # --------------------------------------------------------------------------- #
@@ -394,8 +516,8 @@ def run(paths: list[str], *, apply: bool = False) -> RunResult:
     """Analyze (and optionally rewrite) the given files / directories.
 
     - Always: analyze every ``.py`` file and collect graphene-construct findings.
-    - With ``apply=True``: rewrite the mechanical ``GRAPHENE -> GRAPHEX`` settings
-      namespace in place. graphene constructs are NEVER auto-rewritten.
+    - With ``apply=True``: rewrite the mechanical ``GRAPHENE -> DJANGO_GRAPHEX``
+      settings namespace in place. graphene constructs are NEVER auto-rewritten.
     """
     result = RunResult()
     for file_path in _iter_python_files(paths):
@@ -441,7 +563,7 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument(
         "--apply",
         action="store_true",
-        help="Apply the mechanical GRAPHENE -> GRAPHEX settings rewrite in place.",
+        help="Apply the mechanical GRAPHENE -> DJANGO_GRAPHEX settings rewrite in place.",
     )
     group.add_argument(
         "--show-diff",
@@ -458,11 +580,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print(format_report(result.findings))
     if args.apply and result.rewritten_files:
-        print("Rewrote (GRAPHENE -> GRAPHEX settings namespace):")
+        print("Rewrote (GRAPHENE -> DJANGO_GRAPHEX settings namespace):")
         for path in result.rewritten_files:
             print(f"  {path}")
     elif not args.apply and result.would_rewrite_files:
-        print("Would rewrite (run with --apply): GRAPHENE -> GRAPHEX settings in:")
+        print("Would rewrite (run with --apply): GRAPHENE -> DJANGO_GRAPHEX settings in:")
         for path in result.would_rewrite_files:
             print(f"  {path}")
 

@@ -214,7 +214,9 @@ class CostViewWiringTest(TestCase):
     def test_view_includes_cost_rule(self):
         self.assertIn(CostLimitValidationRule, GraphQLView.validation_rules)
 
-    @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
+    @override_settings(
+        DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000, "SCHEMA": "tests.schema.schema"}
+    )
     def test_get_query_cost_returns_payload(self):
         class _Owner(ObjectType):
             name = field(GraphQLString)

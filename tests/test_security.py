@@ -349,15 +349,15 @@ def test_warning_when_middleware_absent():
 
 
 def test_no_warning_when_middleware_configured():
-    # v2.0 (S2) reads the auth-middleware config from the ``GRAPHEX`` namespace
-    # ONLY (the legacy ``GRAPHENE`` namespace is no longer consulted — see
-    # ``_auth_middleware_configured``). The behavioral assertion is unchanged:
+    # v2.0 reads the auth-middleware config from the single ``DJANGO_GRAPHEX``
+    # namespace ONLY (the legacy ``GRAPHENE`` namespace is no longer consulted —
+    # see ``_auth_middleware_configured``). The behavioral assertion is unchanged:
     # when the middleware IS configured, no RuntimeWarning is emitted.
     graphex_conf = {
         "SCHEMA": "tests.schema.schema",
         "MIDDLEWARE": ["django_graphex.AuthenticatedFieldsMiddleware"],
     }
-    with override_settings(GRAPHEX=graphex_conf):
+    with override_settings(DJANGO_GRAPHEX=graphex_conf):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             DjangoGraphQLSchema(query=_RootQuery, private_query=_PrivateQuery)

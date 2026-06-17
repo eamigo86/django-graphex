@@ -134,7 +134,9 @@ class ExtraViewBranchesTest(TestCase):
             json.loads(first.content)["data"], json.loads(second.content)["data"]
         )
 
-    @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
+    @override_settings(
+        DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000, "SCHEMA": "tests.schema.schema"}
+    )
     def test_get_query_cost_returns_payload(self):
         view = GraphQLView()
         view.schema = _schema

@@ -761,7 +761,7 @@ async def test_ws_delivery_path_is_zero_queries(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# static gates: no graphene import; reads graphex_or_graphene_settings
+# static gates: no graphene import; reads graphql_api_settings
 # ---------------------------------------------------------------------------
 
 

@@ -4,7 +4,9 @@ v2.0 removed the graphene backend entirely (decision #1603). This codemod helps
 users move their project off graphene:
 
 * MECHANICAL REWRITE (``--apply`` / ``rewrite_source``): the schema/middleware
-  settings namespace ``GRAPHENE = {...}`` is renamed to ``GRAPHEX = {...}``.
+  settings namespace ``GRAPHENE = {...}`` is folded into the SINGLE
+  ``DJANGO_GRAPHEX = {...}`` namespace (rename when no target dict exists, key
+  MERGE when it does).
 * REPORT-AND-FLAG (always): graphene constructs that v2.0 no longer accepts —
   ``graphene.Argument(...)`` in a ``Mutation`` ``class args``, ``graphene.ObjectType``
   schema roots, ``graphene.Schema(...)`` and graphene field descriptors — are
@@ -56,6 +58,9 @@ migrate_2_0 = _load_codemod()
 _G = "graph" + "ene"  # noqa: S105 - not a secret; avoids the literal token on an import line
 _IMPORT_GRAPHENE = f"import {_G}"
 
+# Merge case: a project that has BOTH a legacy GRAPHENE dict and the package's
+# own DJANGO_GRAPHEX dict. The codemod merges GRAPHENE's keys into DJANGO_GRAPHEX
+# and drops the GRAPHENE assignment.
 SETTINGS_FIXTURE = (
     "# settings.py\n"
     'GRAPHENE = {\n'
@@ -65,6 +70,16 @@ SETTINGS_FIXTURE = (
     "\n"
     'DJANGO_GRAPHEX = {\n'
     '    "DEFAULT_PAGE_SIZE": 20,\n'
+    "}\n"
+)
+
+# Rename case: a project with ONLY a legacy GRAPHENE dict (no DJANGO_GRAPHEX yet).
+# The codemod renames GRAPHENE -> DJANGO_GRAPHEX in place.
+SETTINGS_RENAME_FIXTURE = (
+    "# settings.py\n"
+    'GRAPHENE = {\n'
+    '    "SCHEMA": "myapp.schema.schema",\n'
+    '    "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],\n'
     "}\n"
 )
 
@@ -92,25 +107,35 @@ SCHEMA_FIXTURE = (
 
 
 # --------------------------------------------------------------------------- #
-# 1. GRAPHENE -> GRAPHEX settings rewrite (the mechanical, safe transform)      #
+# 1. GRAPHENE -> DJANGO_GRAPHEX settings rewrite (the mechanical, safe          #
+#    transform): rename when no target dict exists, MERGE when it does.         #
 # --------------------------------------------------------------------------- #
-def test_rewrite_renames_graphene_settings_namespace_to_graphex():
-    """``GRAPHENE = {...}`` becomes ``GRAPHEX = {...}``; ``DJANGO_GRAPHEX`` untouched."""
+def test_rewrite_merges_graphene_keys_into_existing_django_graphex():
+    """When a ``DJANGO_GRAPHEX`` dict exists, ``GRAPHENE`` keys are merged into it."""
     new_source, changed = migrate_2_0.rewrite_source(SETTINGS_FIXTURE)
 
     assert changed is True
-    assert "GRAPHEX = {" in new_source
-    # The legacy assignment target is gone (no bare ``GRAPHENE =`` left).
-    assert "GRAPHENE = {" not in new_source
-    # The package's OWN settings dict must NOT be touched.
+    # The unified namespace remains; the legacy GRAPHENE assignment is gone.
     assert "DJANGO_GRAPHEX = {" in new_source
-    # Values inside the dict are preserved verbatim.
+    assert "GRAPHENE = {" not in new_source
+    # The merged schema/middleware values are preserved verbatim.
     assert '"SCHEMA": "myapp.schema.schema"' in new_source
     assert '"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]' in new_source
 
 
-def test_rewritten_settings_imports_cleanly_and_exposes_graphex():
-    """The rewritten settings fixture is valid Python and defines GRAPHEX (not GRAPHENE)."""
+def test_rewrite_renames_graphene_when_no_django_graphex_dict():
+    """With ONLY a legacy ``GRAPHENE`` dict, it is renamed to ``DJANGO_GRAPHEX``."""
+    new_source, changed = migrate_2_0.rewrite_source(SETTINGS_RENAME_FIXTURE)
+
+    assert changed is True
+    assert "DJANGO_GRAPHEX = {" in new_source
+    assert "GRAPHENE = {" not in new_source
+    assert '"SCHEMA": "myapp.schema.schema"' in new_source
+    assert '"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]' in new_source
+
+
+def test_rewritten_settings_imports_cleanly_and_unifies_into_django_graphex():
+    """The rewritten fixture is valid Python and exposes a single merged DJANGO_GRAPHEX."""
     new_source, _ = migrate_2_0.rewrite_source(SETTINGS_FIXTURE)
 
     # Parses (valid Python).
@@ -120,19 +145,19 @@ def test_rewritten_settings_imports_cleanly_and_exposes_graphex():
     namespace: dict[str, object] = {}
     exec(compile(tree, "<rewritten-settings>", "exec"), namespace)  # noqa: S102
 
-    assert "GRAPHEX" in namespace
     assert "GRAPHENE" not in namespace
-    assert namespace["GRAPHEX"] == {
+    # The schema/middleware keys are merged into the SINGLE DJANGO_GRAPHEX dict,
+    # alongside the package's own keys.
+    assert namespace["DJANGO_GRAPHEX"] == {
+        "DEFAULT_PAGE_SIZE": 20,
         "SCHEMA": "myapp.schema.schema",
         "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
     }
-    # The package's own settings namespace is preserved unchanged.
-    assert namespace["DJANGO_GRAPHEX"] == {"DEFAULT_PAGE_SIZE": 20}
 
 
 def test_rewrite_is_idempotent_and_noop_without_graphene_namespace():
     """A file with no ``GRAPHENE`` namespace is returned unchanged (changed=False)."""
-    already_migrated = 'GRAPHEX = {"SCHEMA": "myapp.schema.schema"}\n'
+    already_migrated = 'DJANGO_GRAPHEX = {"SCHEMA": "myapp.schema.schema"}\n'
     new_source, changed = migrate_2_0.rewrite_source(already_migrated)
 
     assert changed is False
@@ -253,7 +278,7 @@ def test_run_apply_rewrites_settings_file_in_place(project_tree: Path):
     result = migrate_2_0.run([str(project_tree)], apply=True)
 
     rewritten = (project_tree / "settings.py").read_text(encoding="utf-8")
-    assert "GRAPHEX = {" in rewritten
+    assert "DJANGO_GRAPHEX = {" in rewritten
     assert "GRAPHENE = {" not in rewritten
 
     # schema.py is report-only; it is NOT mutated by --apply.

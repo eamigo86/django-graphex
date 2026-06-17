@@ -20,20 +20,21 @@ before/after snippets, plus an automated codemod for the mechanical parts.
     # Report every graphene construct that needs porting (read-only):
     python scripts/migrate_2_0.py path/to/your/project/
 
-    # Apply the one safe, mechanical rewrite (GRAPHENE -> GRAPHEX settings):
+    # Apply the one safe, mechanical rewrite (GRAPHENE -> DJANGO_GRAPHEX settings):
     python scripts/migrate_2_0.py --apply path/to/your/project/
     ```
 
-    It rewrites the `GRAPHENE` settings namespace automatically and **flags**
-    (with native guidance) the graphene constructs you must port by hand. It
-    never imports graphene, so it runs fine after the 2.0 install.
+    It folds the `GRAPHENE` settings namespace into `DJANGO_GRAPHEX`
+    automatically and **flags** (with native guidance) the graphene constructs
+    you must port by hand. It never imports graphene, so it runs fine after the
+    2.0 install.
 
 ## At a glance
 
 | # | What changed | Effort |
 |---|--------------|--------|
 | 1 | graphene backend removed; `GDX_BACKEND` env var gone | none — automatic |
-| 2 | `GRAPHENE` settings namespace → `GRAPHEX` | codemod `--apply` |
+| 2 | `GRAPHENE` settings namespace → `DJANGO_GRAPHEX` (single namespace) | codemod `--apply` |
 | 3 | `graphene.ObjectType` roots → `from django_graphex import ObjectType` | manual |
 | 4 | `graphene.Schema(...)` → `DjangoGraphQLSchema(...)` | manual |
 | 5 | graphene field descriptors → `field(GraphQLString)` | manual |
@@ -62,18 +63,22 @@ pip uninstall graphene graphene-django   # no longer needed by django-graphex
 
 ---
 
-## 2. `GRAPHENE` settings namespace → `GRAPHEX`
+## 2. `GRAPHENE` settings namespace → `DJANGO_GRAPHEX` (single namespace)
 
 **Why.** The schema/middleware settings (`SCHEMA`, `MIDDLEWARE`,
 `SUBSCRIPTION_PATH`, …) used to be read from the legacy `GRAPHENE` Django-setting
-namespace (a graphene-django convention). In 2.0 they are read **only** from the
-canonical `GRAPHEX` dict; the `GRAPHENE` namespace is no longer consulted.
+namespace (a graphene-django convention). 2.0 **unifies** all django-graphex
+configuration into the single `DJANGO_GRAPHEX` dict — the schema/middleware keys
+are merged in alongside this package's own settings (pagination, caching, query
+limits, …). The `GRAPHENE` namespace is no longer consulted, and there is no
+separate schema-settings namespace anymore.
 
-!!! warning "`DJANGO_GRAPHEX` is unchanged"
+!!! note "One namespace now"
 
-    This package has always had its **own** settings dict, `DJANGO_GRAPHEX`
-    (pagination, caching, query limits, …). That name does **not** change. Only
-    the schema/middleware namespace `GRAPHENE` is renamed to `GRAPHEX`.
+    Earlier 2.0 pre-releases briefly used a separate `GRAPHEX` dict for the
+    schema/middleware keys. The final 2.0 release drops that second dict: every
+    setting lives in `DJANGO_GRAPHEX`. There are no key collisions, so merging is
+    mechanical.
 
 **Before**
 
@@ -83,20 +88,28 @@ GRAPHENE = {
     "SCHEMA": "myapp.schema.schema",
     "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
 }
+
+DJANGO_GRAPHEX = {
+    "DEFAULT_PAGE_SIZE": 20,
+}
 ```
 
 **After**
 
 ```python
 # settings.py
-GRAPHEX = {
+DJANGO_GRAPHEX = {
+    # schema/middleware keys merged in from the old GRAPHENE namespace
     "SCHEMA": "myapp.schema.schema",
     "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
+    # this package's own settings (unchanged)
+    "DEFAULT_PAGE_SIZE": 20,
 }
 ```
 
-The codemod's `--apply` performs exactly this rename and leaves `DJANGO_GRAPHEX`
-untouched.
+The codemod's `--apply` performs exactly this fold: it merges the `GRAPHENE`
+keys into an existing `DJANGO_GRAPHEX` dict (or renames `GRAPHENE` to
+`DJANGO_GRAPHEX` when there is no target dict yet).
 
 ---
 

@@ -7,6 +7,16 @@ below.
 ```python
 # settings.py
 DJANGO_GRAPHEX = {
+    # --- Schema & middleware ----------------------------------------------- #
+    # (merged in from the legacy GRAPHENE namespace in 2.0)
+    "SCHEMA": None,                  # dotted path to your schema, or pass schema= to the view
+    "MIDDLEWARE": (),                # GraphQL execution middleware (dotted paths or objects)
+    "SUBSCRIPTION_PATH": None,       # WebSocket subscription endpoint exposed to GraphiQL
+    "ATOMIC_MUTATIONS": False,       # wrap each mutation in transaction.atomic()
+    "MAX_VALIDATION_ERRORS": None,   # cap validation errors returned (None = no cap)
+    "CAMELCASE_ERRORS": True,
+    "SUBSCRIPTION_CONNECTION_INIT_TIMEOUT": 3.0,  # graphql-transport-ws connection_init wait (s)
+
     # --- Pagination -------------------------------------------------------- #
     "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
     "DEFAULT_PAGE_SIZE": None,
