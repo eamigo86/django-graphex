@@ -136,3 +136,55 @@ def test_gdx_meta_raises_on_no_extensions():
 
     with pytest.raises(AttributeError):
         _gdx_meta(bare_type)
+
+
+# --------------------------------------------------------------------------- #
+# Audit rank 21: _gdx_graphene_type's defensive AttributeError branch          #
+# (compat.py:112-117). When extensions['gdx'] is present but its ._meta lacks  #
+# a graphene_type attribute (a malformed/partial payload), the read must       #
+# swallow the AttributeError and return None — never propagate it — so callers #
+# uniformly treat "no source class recoverable" as "no custom hook declared".  #
+# --------------------------------------------------------------------------- #
+def test_gdx_graphene_type_returns_none_when_meta_lacks_graphene_type():
+    """gdx present, but gdx._meta has NO graphene_type -> None (defensive branch)."""
+    from graphql import GraphQLField, GraphQLObjectType, GraphQLString
+
+    from django_graphex.native.compat import _gdx_graphene_type
+
+    class _MetaWithoutGrapheneType:
+        """A _meta view that does NOT expose graphene_type (accessing raises)."""
+
+        max_deep = None
+
+    class _GdxNoGrapheneType:
+        """A gdx payload whose ._meta lacks graphene_type."""
+
+        _meta = _MetaWithoutGrapheneType()
+
+    gql_type = GraphQLObjectType(
+        name="GdxNoGrapheneTypeType",
+        fields={"id": GraphQLField(GraphQLString)},
+        extensions={"gdx": _GdxNoGrapheneType()},
+    )
+
+    # The fast-path graphene_type back-reference is absent, and gdx._meta has no
+    # graphene_type -> the try/except returns None instead of raising.
+    assert _gdx_graphene_type(gql_type) is None
+
+
+def test_gdx_graphene_type_returns_none_when_gdx_meta_attr_missing():
+    """gdx present but with NO ._meta at all -> AttributeError swallowed -> None."""
+    from graphql import GraphQLField, GraphQLObjectType, GraphQLString
+
+    from django_graphex.native.compat import _gdx_graphene_type
+
+    class _GdxNoMeta:
+        """A gdx payload with no ._meta attribute whatsoever."""
+
+    gql_type = GraphQLObjectType(
+        name="GdxNoMetaType",
+        fields={"id": GraphQLField(GraphQLString)},
+        extensions={"gdx": _GdxNoMeta()},
+    )
+
+    assert _gdx_graphene_type(gql_type) is None

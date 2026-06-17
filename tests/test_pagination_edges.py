@@ -260,3 +260,82 @@ class CursorPageInfoDbTest(TestCase):
             p.get_page_info(
                 Author.objects.all(), first=2, cursor="!!!not-base64!!!"
             )
+
+
+# --------------------------------------------------------------------------- #
+# Audit rank 17: DESCENDING-order cursor boundaries on a NUMERIC field,        #
+# including a cursor at value 0 and at a NEGATIVE value. Descending order uses #
+# the ``lt`` lookup for "after cursor" and ``gt`` for "before cursor" (see     #
+# pagination.py get_page_info), so 0 and negative boundaries must not be       #
+# confused by any truthiness/`if cursor` handling. Rows balances: 2, 1, 0, -1, #
+# -2 ordered by "-balance" (descending) -> window order [2, 1, 0, -1, -2].     #
+# --------------------------------------------------------------------------- #
+class CursorDescendingNumericPageInfoTest(TestCase):
+    def setUp(self):
+        from tests.models import Track2Account
+
+        for balance in (2, 1, 0, -1, -2):
+            Track2Account.objects.create(balance=balance)
+
+    def _qs(self):
+        from tests.models import Track2Account
+
+        return Track2Account.objects.all()
+
+    def test_descending_first_page_no_cursor(self):
+        """Descending first page: window is [2, 1]; hasNextPage True (0,-1,-2
+        follow), hasPreviousPage False; boundary cursors are 2 (highest) and 1."""
+        p = CursorGraphqlPagination(ordering="-balance", page_size=2)
+        info = p.get_page_info(self._qs(), first=2)
+        assert info["has_previous_page"] is False
+        assert info["has_next_page"] is True
+        assert info["start_cursor"] == CursorGraphqlPagination.encode_cursor(2)
+        assert info["end_cursor"] == CursorGraphqlPagination.encode_cursor(1)
+
+    def test_descending_cursor_at_zero_value(self):
+        """Cursor AT balance 0 (a falsy-but-valid boundary). Descending -> rows
+        strictly less than 0 follow: window [-1, -2]. hasPreviousPage True (2,1,0
+        precede), hasNextPage False (nothing after -2). The 0 value must be
+        decoded and applied via the ``balance__lt=0`` lookup, NOT swallowed by a
+        falsy guard."""
+        p = CursorGraphqlPagination(ordering="-balance", page_size=2)
+        token = CursorGraphqlPagination.encode_cursor(0)
+        info = p.get_page_info(self._qs(), first=2, cursor=token)
+        assert info["has_previous_page"] is True
+        assert info["has_next_page"] is False
+        assert info["start_cursor"] == CursorGraphqlPagination.encode_cursor(-1)
+        assert info["end_cursor"] == CursorGraphqlPagination.encode_cursor(-2)
+
+    def test_descending_cursor_at_negative_value(self):
+        """Cursor AT a NEGATIVE balance (-1). Descending -> rows < -1 follow:
+        window [-2] only. hasPreviousPage True (2,1,0,-1 precede), hasNextPage
+        False (nothing after -2). Both boundary cursors are -2."""
+        p = CursorGraphqlPagination(ordering="-balance", page_size=2)
+        token = CursorGraphqlPagination.encode_cursor(-1)
+        info = p.get_page_info(self._qs(), first=2, cursor=token)
+        assert info["has_previous_page"] is True
+        assert info["has_next_page"] is False
+        assert info["start_cursor"] == CursorGraphqlPagination.encode_cursor(-2)
+        assert info["end_cursor"] == CursorGraphqlPagination.encode_cursor(-2)
+
+    def test_descending_paginate_queryset_after_zero_cursor(self):
+        """paginate_queryset (not just page-info) also honours the 0 cursor in
+        descending order: the rows strictly below 0 are -1, -2."""
+        p = CursorGraphqlPagination(ordering="-balance", page_size=10)
+        token = CursorGraphqlPagination.encode_cursor(0)
+        out = p.paginate_queryset(self._qs(), first=10, cursor=token)
+        assert [o.balance for o in out] == [-1, -2]
+
+    def test_descending_cursor_at_lowest_value_empty_page(self):
+        """Cursor at the lowest balance (-2) in descending order -> nothing
+        strictly after it: the empty-page contract (all flags False, cursors
+        None)."""
+        p = CursorGraphqlPagination(ordering="-balance", page_size=2)
+        token = CursorGraphqlPagination.encode_cursor(-2)
+        info = p.get_page_info(self._qs(), first=2, cursor=token)
+        assert info == {
+            "has_next_page": False,
+            "has_previous_page": False,
+            "start_cursor": None,
+            "end_cursor": None,
+        }

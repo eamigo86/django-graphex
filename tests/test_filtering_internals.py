@@ -595,6 +595,80 @@ def test_native_assert_filter_type_complete_passes_for_valid_type():
     _assert_filter_type_complete(built)
 
 
+def test_native_assert_filter_input_out_names_passes_for_valid_type():
+    """``_assert_filter_input_out_names`` accepts a normally-compiled filter input
+    where every field carries a snake ``out_name`` (audit rank 19)."""
+    from django_graphex.filtering.native_schema import (
+        _assert_filter_input_out_names,
+    )
+    from django_graphex.filtering.native_schema import (
+        build_filter_input_type as native_build,
+    )
+
+    R = Registry()
+    built = native_build(
+        FilterModel,
+        {"name": ("exact",), "rating": ("gt",), "author": ("exact",)},
+        registry=R,
+    )
+    # Must NOT raise — the builder sets out_name on every field.
+    _assert_filter_input_out_names(built)
+
+
+def test_native_assert_filter_input_out_names_fires_when_out_name_missing():
+    """A compiled filter input field WITHOUT ``out_name`` (e.g. a custom extension
+    mutated the fields post-compile) must raise a clear error at build time —
+    otherwise ``to_q`` silently receives the camelCase wire key and produces an
+    EMPTY Q (audit rank 19, the cardinal out_name footgun)."""
+    from graphql import GraphQLInputField, GraphQLInputObjectType, GraphQLString
+
+    from django_graphex.filtering.native_schema import (
+        _assert_filter_input_out_names,
+    )
+
+    # A field that LOST its out_name (None) — exactly what a post-compile mutation
+    # would leave behind for a multi-word field whose wire key is camelCase.
+    broken = GraphQLInputObjectType(
+        name="BrokenFilterInput",
+        fields=lambda: {
+            "publishedDate": GraphQLInputField(GraphQLString, out_name=None),
+        },
+    )
+    with pytest.raises((AssertionError, GraphQLError)) as exc:
+        _assert_filter_input_out_names(broken)
+    assert "publishedDate" in str(exc.value) or "out_name" in str(exc.value)
+
+
+def test_native_build_filter_input_type_wires_out_name_assert(monkeypatch):
+    """``build_filter_input_type`` MUST wire ``_assert_filter_input_out_names`` so a
+    missing out_name is caught at BUILD time (audit rank 19). Uses a UNIQUE model
+    so the module cache is cold and the assert actually runs on a fresh build."""
+    import django_graphex.filtering.native_schema as ns
+
+    class OutNameWireModel(models.Model):
+        headline = models.CharField(max_length=50)
+
+        class Meta:
+            app_label = "tests"
+
+    R = Registry()
+    calls = {"n": 0}
+    real_assert = ns._assert_filter_input_out_names
+
+    def _spy(t):
+        calls["n"] += 1
+        return real_assert(t)
+
+    monkeypatch.setattr(ns, "_assert_filter_input_out_names", _spy)
+    built = ns.build_filter_input_type(
+        OutNameWireModel, {"headline": ("exact",)}, registry=R
+    )
+    assert built is not None
+    assert calls["n"] >= 1, (
+        "build_filter_input_type did NOT wire _assert_filter_input_out_names"
+    )
+
+
 def test_native_assert_filter_type_complete_raises_on_empty_fields():
     """``_assert_filter_type_complete`` raises AssertionError when a thunk
     evaluates to empty ``.fields`` (the silent-empty footgun A6 catches)."""
@@ -658,3 +732,73 @@ def test_translate_to_q_enum_lookup_native(db):
 
     q, _ = to_q({"rating": {"in": [1, 2]}}, FilterModel)
     assert q == models.Q(rating__in=[1, 2])
+
+
+# --------------------------------------------------------------------------- #
+# Audit rank 16: unknown field names inside and/or/not combinators must FAIL  #
+# LOUD instead of being silently skipped (which masks a typo as an empty Q).  #
+# Custom @filter_field args ride ONLY at the TOP level (apply_custom_filters   #
+# never recurses into combinators), so a key that is not a model field /       #
+# relation / nested combinator inside a combinator is ALWAYS a genuine error.  #
+# --------------------------------------------------------------------------- #
+def test_to_q_unknown_field_in_or_raises_graphql_error():
+    """An unknown field name inside ``or: [...]`` raises GraphQLError naming the
+    field and the combinator — not a silent empty Q that masks the typo."""
+    with pytest.raises(GraphQLError) as exc:
+        to_q({"or": [{"nmae": {"exact": "x"}}]}, FilterModel)
+    message = str(exc.value)
+    assert "nmae" in message
+    assert "or" in message
+
+
+def test_to_q_unknown_field_in_and_raises_graphql_error():
+    """An unknown field name inside ``and: [...]`` raises GraphQLError."""
+    with pytest.raises(GraphQLError) as exc:
+        to_q({"and": [{"raitng": {"gt": 3}}]}, FilterModel)
+    message = str(exc.value)
+    assert "raitng" in message
+    assert "and" in message
+
+
+def test_to_q_unknown_field_in_not_raises_graphql_error():
+    """An unknown field name inside ``not: {...}`` raises GraphQLError."""
+    with pytest.raises(GraphQLError) as exc:
+        to_q({"not": {"bogus": {"exact": 1}}}, FilterModel)
+    message = str(exc.value)
+    assert "bogus" in message
+    assert "not" in message
+
+
+def test_to_q_valid_fields_in_combinators_still_filter():
+    """A combinator over VALID model fields keeps building the correct Q —
+    the fail-loud guard must not break legitimate combinator filters."""
+    q_or, _ = to_q(
+        {"or": [{"name": {"exact": "a"}}, {"rating": {"gt": 3}}]}, FilterModel
+    )
+    assert q_or == (models.Q(name__exact="a") | models.Q(rating__gt=3))
+
+    q_and, _ = to_q(
+        {"and": [{"name": {"exact": "a"}}, {"rating": {"gt": 3}}]}, FilterModel
+    )
+    assert q_and == (models.Q(name__exact="a") & models.Q(rating__gt=3))
+
+    q_not, _ = to_q({"not": {"name": {"exact": "a"}}}, FilterModel)
+    assert q_not == ~models.Q(name__exact="a")
+
+
+def test_to_q_relation_field_in_combinator_still_filters():
+    """A relation field inside a combinator (e.g. ``author``) recurses correctly
+    and is NOT mistaken for an unknown field."""
+    q, _ = to_q(
+        {"or": [{"author": {"name": {"exact": "x"}}}]}, FilterModel
+    )
+    assert q == models.Q(author__name__exact="x")
+
+
+def test_to_q_top_level_custom_filter_arg_still_skipped():
+    """A top-level custom ``@filter_field`` arg (not a model field) is STILL
+    skipped — only combinator children fail loud. ``apply_custom_filters``
+    handles the custom arg separately, so to_q must leave it alone."""
+    q, _ = to_q({"search": "hello", "name": {"exact": "a"}}, FilterModel)
+    # 'search' is skipped; only 'name' contributes.
+    assert q == models.Q(name__exact="a")

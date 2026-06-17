@@ -2,6 +2,7 @@
 """Native (Pydantic) backend: Meta.model types, no DRF involved."""
 
 import decimal
+import enum
 from types import SimpleNamespace
 
 from django.db import models
@@ -246,3 +247,135 @@ class NativeNestedTest(TestCase):
         cat = NativeCategory.objects.get()
         self.assertEqual(cat.products.count(), 2)
         self.assertEqual(set(cat.products.values_list("sku", flat=True)), {"R1", "R2"})
+
+
+# --------------------------------------------------------------------------- #
+# Audit rank 11: list-of-enum unwrap, end-to-end. A field typed as a LIST of   #
+# an Enum (e.g. a multi-select choice) must arrive at the DB as RAW values,    #
+# never as Enum members. This exercises BOTH unwrap sites:                     #
+#   * native/backend.py PydanticBackend.save_object inline ``_unwrap`` — runs  #
+#     on validated.model_dump(), where a ``list[Enum]`` field yields a list of #
+#     Enum MEMBERS; the inline _unwrap recurses the list to raw values.        #
+#   * nested.py NestedMutationMixin._unwrap_enums — runs on each nested child  #
+#     payload, recursing list/tuple values so multi-valued choice fields land  #
+#     with plain Python values before the child save.                          #
+# --------------------------------------------------------------------------- #
+class _ColorEnum(str, enum.Enum):
+    RED = "red"
+    BLUE = "blue"
+    GREEN = "green"
+
+
+class EnumListModel(DummyModel):
+    """A model with a JSON-backed list field that stores raw choice values."""
+
+    name = models.CharField(max_length=50)
+    colors = models.JSONField(default=list)
+
+
+class _EnumListPydantic(BaseModel):
+    """Types ``colors`` as a list[Enum] so model_dump yields Enum MEMBERS,
+    forcing the backend inline ``_unwrap`` to recurse and produce raw values."""
+
+    name: str
+    colors: list[_ColorEnum] = []
+
+
+class EnumListType(DjangoModelType):
+    class Meta:
+        model = EnumListModel
+        pydantic_model = _EnumListPydantic
+
+
+class BackendListOfEnumUnwrapTest(TestCase):
+    def test_backend_inline_unwrap_list_of_enum_saves_raw_values(self):
+        """A ``list[Enum]`` save payload lands as raw strings via the backend's
+        inline ``_unwrap`` (native/backend.py), NOT as Enum members."""
+        result = _create(
+            EnumListType,
+            {"name": "palette", "colors": ["red", "blue", "green"]},
+        )
+        self.assertTrue(result.ok, msg=getattr(result, "errors", None))
+        obj = EnumListModel.objects.get()
+        # Stored values are RAW strings — never ``_ColorEnum`` members.
+        self.assertEqual(obj.colors, ["red", "blue", "green"])
+        for value in obj.colors:
+            self.assertIsInstance(value, str)
+            self.assertNotIsInstance(value, enum.Enum)
+
+    def test_backend_save_object_unwraps_enum_member_list_directly(self):
+        """Directly drive PydanticBackend.save_object with a payload whose
+        ``colors`` is a list of Enum MEMBERS (as model_dump produces): the inline
+        ``_unwrap`` must recurse the list to raw values before the DB write."""
+        backend = PydanticBackend(EnumListModel)
+        # Simulate exactly what validated.model_dump() yields for list[Enum].
+        ok, result = backend.save_object(
+            None,
+            None,
+            _info(),
+            {"name": "members", "colors": [_ColorEnum.RED, _ColorEnum.BLUE]},
+        )
+        self.assertTrue(ok, msg=result)
+        obj = EnumListModel.objects.get(name="members")
+        self.assertEqual(obj.colors, ["red", "blue"])
+        for value in obj.colors:
+            self.assertNotIsInstance(value, enum.Enum)
+
+
+# Nested parent whose child carries the list-of-enum field — exercises the
+# nested.py ``_unwrap_enums`` recursion on the child payload end-to-end.
+class EnumListParent(DummyModel):
+    title = models.CharField(max_length=50)
+
+
+class EnumListChild(DummyModel):
+    parent = models.ForeignKey(
+        EnumListParent, related_name="swatches", on_delete=models.CASCADE
+    )
+    name = models.CharField(max_length=50)
+    colors = models.JSONField(default=list)
+
+
+class _EnumListChildPydantic(BaseModel):
+    name: str
+    colors: list[_ColorEnum] = []
+
+
+class EnumListChildType(DjangoModelType):
+    class Meta:
+        model = EnumListChild
+        pydantic_model = _EnumListChildPydantic
+
+
+class EnumListParentType(DjangoModelType):
+    class Meta:
+        model = EnumListParent
+        nested_fields = {"swatches": EnumListChild}
+
+
+class NestedListOfEnumUnwrapTest(TestCase):
+    def test_nested_child_list_of_enum_persists_raw_values(self):
+        """A nested mutation whose child has a ``list[Enum]`` field saves the
+        child's colors as RAW values — exercising _unwrap_enums + the backend
+        inline unwrap end-to-end through a real reverse-FK nested create."""
+        result = _create(
+            EnumListParentType,
+            {
+                "title": "deck",
+                "swatches": [
+                    {"name": "warm", "colors": ["red", "green"]},
+                    {"name": "cool", "colors": ["blue"]},
+                ],
+            },
+        )
+        self.assertTrue(result.ok, msg=getattr(result, "errors", None))
+        parent = EnumListParent.objects.get()
+        self.assertEqual(parent.swatches.count(), 2)
+        warm = parent.swatches.get(name="warm")
+        cool = parent.swatches.get(name="cool")
+        self.assertEqual(warm.colors, ["red", "green"])
+        self.assertEqual(cool.colors, ["blue"])
+        for child in (warm, cool):
+            for value in child.colors:
+                self.assertIsInstance(value, str)
+                self.assertNotIsInstance(value, enum.Enum)

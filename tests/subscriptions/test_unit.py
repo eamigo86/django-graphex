@@ -117,3 +117,44 @@ def test_serialize_instance_returns_jsonable_dict(db, django_user_model):
     assert data["username"] == "bob"
     assert data["email"] == "bob@example.com"
     assert isinstance(data, dict)
+
+
+# --------------------------------------------------------------------------- #
+# Audit rank 20: the WS live-consumer registry is a WeakValueDictionary. When  #
+# the consumer (the weak VALUE) is garbage-collected, get_live_consumer()      #
+# returns None. This is a test/introspection-utility caveat only — a real      #
+# subscription is unaffected because the live consumer keeps its own strong    #
+# refs (Channels + its operation registry/sources). ws.py imports channels     #
+# LAZILY, so get_live_consumer / _LIVE_CONSUMERS are importable without it.    #
+# --------------------------------------------------------------------------- #
+def test_get_live_consumer_returns_none_after_consumer_gc():
+    """A collected (weak) consumer value -> get_live_consumer() returns None."""
+    import gc
+
+    from django_graphex.subscriptions.transports import ws
+
+    class _FakeConsumer:
+        """Stand-in consumer; only its identity (weak-referenceability) matters."""
+
+    scope = {"type": "websocket"}
+
+    consumer = _FakeConsumer()
+    ws._LIVE_CONSUMERS[id(scope)] = consumer
+    # While a strong ref is held, the consumer is observable.
+    assert ws.get_live_consumer(scope) is consumer
+
+    # Drop the only strong ref and force collection: the weak entry evaporates.
+    del consumer
+    gc.collect()
+
+    assert ws.get_live_consumer(scope) is None, (
+        "get_live_consumer must return None once the consumer is GC'd "
+        "(WeakValueDictionary entry collected)"
+    )
+
+
+def test_get_live_consumer_returns_none_for_unregistered_scope():
+    """An unknown scope (never registered) -> None (the not-connected path)."""
+    from django_graphex.subscriptions.transports import ws
+
+    assert ws.get_live_consumer({"type": "websocket", "never": "registered"}) is None

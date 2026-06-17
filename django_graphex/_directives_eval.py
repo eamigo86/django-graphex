@@ -90,6 +90,19 @@ def is_selection_skipped(
     Evaluates the ``@skip`` and ``@include`` directives on *node* using
     *variable_values* (which may be empty for validation-time calls).
 
+    Per-selection semantics (GraphQL spec)
+    --------------------------------------
+    ``@skip`` / ``@include`` are evaluated PER SELECTION: this function inspects
+    ONLY the directives on *node* itself and never looks at the node's parent or
+    children. Per the GraphQL spec, a ``@skip(if: true)`` on a parent field does
+    NOT cascade into its children's own evaluation — each child selection is
+    judged independently. In practice cascading still "happens" because a skipped
+    parent's subtree is never walked at all (the caller stops descending once a
+    selection is skipped), so a child is excluded transitively WITHOUT its own
+    directives ever being consulted. The distinction matters for any caller that
+    evaluates a child node directly: ``is_selection_skipped(child)`` reflects only
+    the child's own directives, regardless of what its parent declared.
+
     Args:
         node: A ``FieldNode``, ``InlineFragmentNode``, or ``FragmentSpreadNode``
             whose directives should be evaluated.

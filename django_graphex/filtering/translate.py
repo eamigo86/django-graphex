@@ -136,7 +136,13 @@ def _leaf_q(prefix: str, field: str, lookups: Any) -> Q:
     return q
 
 
-def to_q(node: Any, model: type[Model], prefix: str = "") -> tuple[Q, bool]:
+def to_q(
+    node: Any,
+    model: type[Model],
+    prefix: str = "",
+    *,
+    _combinator: str | None = None,
+) -> tuple[Q, bool]:
     """Translate a filter node into a ``(Q, touched_to_many)`` pair.
 
     Rules:
@@ -150,14 +156,33 @@ def to_q(node: Any, model: type[Model], prefix: str = "") -> tuple[Q, bool]:
 
     An empty node (or empty ``or: []``) contributes nothing.
 
+    Unknown field names (audit rank 16): a key that is not a model field, a
+    relation, or a combinator is normally a custom ``@filter_field`` arg riding in
+    the same filter input value (``apply_custom_filters`` applies those separately
+    in the resolver), so it is SKIPPED at the top level. But a custom arg is only
+    ever read at the TOP level — ``apply_custom_filters`` never recurses into
+    ``and`` / ``or`` / ``not`` — so an unknown key INSIDE a combinator can never be
+    a meaningful custom arg. Such a key is a genuine mistake (a typo), and silently
+    skipping it produces an empty ``Q`` that quietly fails to filter, masking the
+    error. Inside a combinator the unknown key therefore raises a clear
+    ``GraphQLError`` naming the field and the combinator instead of being skipped.
+
     Args:
         node: The dict-like filter node (an ``InputObjectTypeContainer``).
         model: The model the node filters (relations resolve against it).
         prefix: The dotted ORM prefix accumulated from parent relations.
+        _combinator: Internal — the name of the ``and`` / ``or`` / ``not``
+            combinator whose child node this call is translating, or ``None`` at
+            the top level. When set, an unknown (non-model, non-relation,
+            non-combinator) key fails loud instead of being skipped.
 
     Returns:
         A pair of the combined ``Q`` and whether any to-many relation was
         traversed (used to decide ``.distinct()``).
+
+    Raises:
+        GraphQLError: When a child node of a combinator references an unknown
+            field name (audit rank 16).
     """
     result = Q()
     touched_to_many = False
@@ -171,7 +196,7 @@ def to_q(node: Any, model: type[Model], prefix: str = "") -> tuple[Q, bool]:
 
         if key == "and":
             for child in value:
-                child_q, child_many = to_q(child, model, prefix)
+                child_q, child_many = to_q(child, model, prefix, _combinator="and")
                 result &= child_q
                 touched_to_many = touched_to_many or child_many
             continue
@@ -179,7 +204,7 @@ def to_q(node: Any, model: type[Model], prefix: str = "") -> tuple[Q, bool]:
             combined = Q()
             has_any = False
             for child in value:
-                child_q, child_many = to_q(child, model, prefix)
+                child_q, child_many = to_q(child, model, prefix, _combinator="or")
                 combined = child_q if not has_any else (combined | child_q)
                 has_any = True
                 touched_to_many = touched_to_many or child_many
@@ -187,7 +212,7 @@ def to_q(node: Any, model: type[Model], prefix: str = "") -> tuple[Q, bool]:
                 result &= combined
             continue
         if key == "not":
-            child_q, child_many = to_q(value, model, prefix)
+            child_q, child_many = to_q(value, model, prefix, _combinator="not")
             result &= ~child_q
             touched_to_many = touched_to_many or child_many
             continue
@@ -196,17 +221,32 @@ def to_q(node: Any, model: type[Model], prefix: str = "") -> tuple[Q, bool]:
         if related is not None and not _is_pk_lookups(value):
             if _is_to_many(model, key):
                 touched_to_many = True
+            # Relation children keep their own combinator scope reset: a relation
+            # node is a fresh filter node against the related model.
             child_q, child_many = to_q(value, related, f"{prefix}{key}__")
             result &= child_q
             touched_to_many = touched_to_many or child_many
             continue
 
-        # Skip keys that are NOT real model fields: custom ``@filter_field`` args
-        # (e.g. ``search``) ride in the same filter input value but are applied by
-        # ``apply_custom_filters`` in the resolver, not by ``to_q``. Without this
-        # guard ``_leaf_q`` would call ``.items()`` on the custom filter's scalar
-        # value and raise ``'str' object has no attribute 'items'`` (#1571).
         if not _is_model_field(model, key):
+            if _combinator is not None:
+                # Fail loud (audit rank 16): an unknown key inside a combinator can
+                # never be a custom ``@filter_field`` arg (those are read only at
+                # the top level by ``apply_custom_filters``), so it is a typo that
+                # would otherwise silently produce an empty Q.
+                raise GraphQLError(
+                    f"Unknown filter field {key!r} inside the '{_combinator}' "
+                    "combinator. It is not a field or relation of "
+                    f"{model._meta.label}. Check for a typo — a custom "
+                    "@filter_field argument is only valid at the top level of the "
+                    "filter input, not inside and/or/not."
+                )
+            # Top level: skip keys that are NOT real model fields — custom
+            # ``@filter_field`` args (e.g. ``search``) ride in the same filter input
+            # value but are applied by ``apply_custom_filters`` in the resolver, not
+            # by ``to_q``. Without this guard ``_leaf_q`` would call ``.items()`` on
+            # the custom filter's scalar value and raise ``'str' object has no
+            # attribute 'items'`` (#1571).
             continue
 
         # A scalar field, or a relation declared directly (plain-pk lookups:

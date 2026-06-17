@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 __all__ = (
     "build_filter_input_type",
     "_assert_filter_type_complete",
+    "_assert_filter_input_out_names",
     "_canonical_filter_fields",
 )
 
@@ -620,6 +621,13 @@ def build_filter_input_type(
     # ``.fields`` (the silent circular-reference footgun — a thunk that captured
     # an incomplete type would otherwise ship an empty input type unnoticed).
     _assert_filter_type_complete(input_type)
+    # Audit rank 19: assert EVERY compiled top-level field carries a snake
+    # ``out_name``. The cardinal footgun (see module docstring) is that a field
+    # without ``out_name`` delivers the camelCase WIRE key to ``to_q``, which then
+    # builds a WRONG/EMPTY Q with NO error. The builder always sets ``out_name``,
+    # but a custom extension mutating ``.fields`` post-compile could strip it; this
+    # build-time guard turns that silent failure into a loud one.
+    _assert_filter_input_out_names(input_type)
     return input_type
 
 
@@ -647,6 +655,46 @@ def _assert_filter_type_complete(gql_input_type: GraphQLInputObjectType) -> None
         f"native filter input {gql_input_type.name!r} resolved to EMPTY .fields "
         "— a thunk likely captured an incomplete (circular) type before its "
         "fields were populated. Check the cache-before-thunk ordering."
+    )
+
+
+def _assert_filter_input_out_names(gql_input_type: GraphQLInputObjectType) -> None:
+    """Assert every top-level field of a filter input carries a snake ``out_name``.
+
+    The cardinal footgun (see the module docstring / D5): graphql-core uses a
+    field's dict key as the WIRE key (camelCase, for SDL parity) and ``out_name``
+    as the key it delivers to the resolver. ``to_q`` expects snake ORM keys, so the
+    builder sets ``out_name`` on EVERY field (scalar leaves, relations, custom
+    ``@filter_field`` args, and the and/or/not combinators).
+
+    A field WITHOUT ``out_name`` (e.g. a custom extension that mutated ``.fields``
+    after compilation) would silently deliver the camelCase wire key to ``to_q``,
+    which would build a WRONG / EMPTY ``Q`` with NO error. This build-time guard
+    forces the thunk to evaluate and raises a clear error if any top-level field is
+    missing its ``out_name``, turning the silent footgun into a loud build failure.
+
+    Nested relation filter inputs and per-field ``<Field>Lookups`` inputs are each
+    validated on their own build (the recursive ``build_filter_input_type`` call and
+    the per-field ``out_name`` already proven by the round-trip tests), so this only
+    needs to re-check the top-level field surface of *this* type.
+
+    Args:
+        gql_input_type: The native filter input type to validate.
+
+    Raises:
+        AssertionError: If any top-level field lacks a truthy ``out_name``.
+    """
+    fields = dict(gql_input_type.fields)  # forces the thunk to evaluate
+    missing = [
+        name
+        for name, field in fields.items()
+        if not getattr(field, "out_name", None)
+    ]
+    assert not missing, (
+        f"native filter input {gql_input_type.name!r} has field(s) WITHOUT a snake "
+        f"out_name: {missing}. Every filter-input field MUST carry an out_name or "
+        "to_q receives the camelCase wire key and silently builds an EMPTY Q. A "
+        "custom extension likely mutated the compiled .fields and stripped it."
     )
 
 

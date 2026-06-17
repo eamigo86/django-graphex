@@ -80,6 +80,12 @@ class UserModelType(DjangoModelType):
         }
 ```
 
+!!! tip "Field-type conversion"
+    Django model fields map to GraphQL types automatically. For the full mapping
+    — including PostgreSQL `ArrayField` (`[<inner>]`, `ArrayField(choices)` →
+    `[<Enum>]`) and `*RangeField` (`{ lower, upper }`) — see the
+    [field-type conversion reference and worked example](usage/types.md#field-type-conversion-reference).
+
 ## Input Types
 
 Define input types for mutations:

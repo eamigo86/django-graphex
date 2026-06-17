@@ -112,11 +112,26 @@ def get_live_consumer(scope: "Mapping[str, Any]") -> Any:
     holding the ASGI scope (e.g. a test communicator) can introspect the live
     per-id operation registry and the started sources.
 
+    Scope-GC caveat (audit rank 20)
+    -------------------------------
+    The registry is a ``WeakValueDictionary`` keyed by ``id(scope)``, so this
+    lookup may return ``None`` if the consumer has been garbage-collected — and,
+    more subtly, the key itself uses ``id(scope)``, which Python may RECYCLE for a
+    different object once the original scope is collected. This is purely a
+    test/introspection-utility caveat: the live subscription is UNAFFECTED because
+    the running consumer keeps its OWN strong references (Channels holds the
+    consumer for the lifetime of the socket; the consumer holds its per-id
+    operation registry and sources). Losing the weak entry here only means an
+    out-of-band observer can no longer reach the consumer through this helper — the
+    subscription keeps delivering. Callers must therefore treat a ``None`` result as
+    "not observable via this registry", not as "the subscription is gone".
+
     Args:
         scope: The Channels ASGI scope dict the connection was opened with.
 
     Returns:
-        The connected consumer instance, or ``None`` when not connected.
+        The connected consumer instance, or ``None`` when not connected (or when
+        the weak entry has been collected — see the scope-GC caveat above).
     """
     return _LIVE_CONSUMERS.get(id(scope))
 

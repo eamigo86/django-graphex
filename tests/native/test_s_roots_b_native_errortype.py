@@ -177,6 +177,30 @@ def test_is_plain_object_type_excludes_non_class() -> None:
     assert _is_plain_object_type(GraphQLString) is False
 
 
+def test_is_plain_object_type_rejects_non_native_plain_class() -> None:
+    """Audit rank 5: the graphene-root REJECTION contract.
+
+    v2.0 is native-only: ``_is_plain_object_type`` recognises a plain object type
+    ONLY when it is a native ``ObjectType`` (the NATIVE-MARKER branch). The legacy
+    ``issubclass(graphene.ObjectType)`` fallback was removed, so a leftover graphene
+    root is rejected (returns False) and never enters the graphene-root compile
+    path that no longer exists.
+
+    graphene is UNINSTALLED in v2.0, so we cannot import a graphene subclass to
+    assert the rejection directly. We test the EQUIVALENT: a plain Python class that
+    is NOT a native ``ObjectType`` and NOT a ``DjangoObjectType`` — the same shape a
+    graphene root would present to this duck-typed check — must return False. This
+    locks in that ONLY a native marker (e.g. ``ErrorType``, asserted True above)
+    routes to the object arm; everything else is rejected.
+    """
+    from django_graphex.native.schema_compiler import _is_plain_object_type
+
+    class _PlainNonNativeRoot:
+        """A plain class with no native-base lineage (graphene-root equivalent)."""
+
+    assert _is_plain_object_type(_PlainNonNativeRoot) is False
+
+
 # ---------------------------------------------------------------------------
 # SILENT-DROP GUARD: errors = List(ErrorType) compiles to correct SDL
 # ---------------------------------------------------------------------------

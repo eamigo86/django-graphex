@@ -5,7 +5,7 @@ import types
 import warnings
 
 from django.test import override_settings
-from graphql import GraphQLBoolean, GraphQLString, graphql_sync
+from graphql import GraphQLBoolean, GraphQLError, GraphQLString, graphql_sync
 
 from django_graphex import (
     AuthenticatedFieldsMiddleware,
@@ -220,6 +220,63 @@ def test_private_subscription_subset():
         )
     reg = s.graphql_schema._gde_protected_fields
     assert "onA" in reg and "onB" not in reg
+
+
+def test_anonymous_can_subscribe_to_public_subscription_field():
+    """Audit rank 12: positive mirror of ``test_private_subscription_protects_*``.
+
+    An AnonymousUser MUST be allowed onto a PUBLIC (unprotected) subscription
+    field. ``AuthenticatedFieldsMiddleware`` gates only the fields named in the
+    schema's protected set; a subscription field that is NOT in that set passes
+    through unchanged regardless of the user — the symmetric counterpart of the
+    private-subscription protection check above. Here ``onB`` is public (only
+    ``onA`` is listed as ``private_subscription``), so an anonymous subscribe to
+    ``onB`` must NOT raise.
+    """
+
+    class _SubTwo(ObjectType):
+        on_a = field(GraphQLString)
+        on_b = field(GraphQLString)
+
+    class _PrivateSub(ObjectType):
+        on_a = field(GraphQLString)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        s = DjangoGraphQLSchema(
+            query=_RootQuery, subscription=_SubTwo, private_subscription=_PrivateSub
+        )
+
+    reg = s.graphql_schema._gde_protected_fields
+    # Precondition: onB is public (unprotected); onA is protected.
+    assert "onB" not in reg and "onA" in reg
+
+    mw = AuthenticatedFieldsMiddleware()
+    sentinel = object()
+
+    def _next(root, info, **kwargs):
+        return sentinel
+
+    # Top-level subscribe (root is None), anonymous user, PUBLIC field 'onB'.
+    info = types.SimpleNamespace(
+        field_name="onB",
+        schema=s.graphql_schema,
+        context=_ctx(_anon),
+    )
+    # Must pass straight through to the resolver — no Authentication error.
+    assert mw.resolve(_next, None, info) is sentinel
+
+    # Control: the PROTECTED field 'onA' still rejects the same anonymous user,
+    # proving the positive path above is not vacuous.
+    import pytest
+
+    info_protected = types.SimpleNamespace(
+        field_name="onA",
+        schema=s.graphql_schema,
+        context=_ctx(_anon),
+    )
+    with pytest.raises(GraphQLError):
+        mw.resolve(_next, None, info_protected)
 
 
 def test_disjoint_public_private_subscription_roots_are_unioned():

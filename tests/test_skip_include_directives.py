@@ -41,6 +41,7 @@ from django_graphex import (
     CostLimitValidationRule,
     DepthLimitValidationRule,
 )
+from django_graphex._directives_eval import is_selection_skipped
 from django_graphex.cost import analyze_cost
 from django_graphex.utils import (
     _collect_only_fields,
@@ -765,3 +766,54 @@ class OptimizerFilteredPrefetchSkipTest(TestCase):
             f"Filtered-prefetch query was not suppressed by @include(if:false).\n"
             f"Queries: {[q['sql'] for q in ctx.captured_queries]}",
         )
+
+
+# ============================================================================ #
+# Audit rank 18: @skip/@include are evaluated PER SELECTION (GraphQL spec).     #
+# is_selection_skipped inspects ONLY the directives on the node it is given —   #
+# a parent @skip(if:true) does NOT make the child node's OWN evaluation return  #
+# True. (Transitive exclusion happens because the caller stops descending into  #
+# a skipped subtree, NOT because the child inherits the parent's directive.)    #
+# ============================================================================ #
+class SkipIncludePerSelectionSemanticsTest(TestCase):
+    """@skip/@include are per-selection: a node is judged only by its own directives."""
+
+    @staticmethod
+    def _selections(query_str):
+        """Return the parent FieldNode and its first child FieldNode for
+        ``{ root @skip(if:true) { child } }``-shaped queries."""
+        from graphql import parse
+        from graphql.language.ast import OperationDefinitionNode
+
+        document = parse(query_str)
+        operation = next(
+            d for d in document.definitions if isinstance(d, OperationDefinitionNode)
+        )
+        parent = operation.selection_set.selections[0]
+        child = parent.selection_set.selections[0]
+        return parent, child
+
+    def test_parent_skip_does_not_cascade_to_child_own_evaluation(self):
+        """A child with NO directives evaluates to NOT-skipped even when its
+        parent carries @skip(if:true). The parent itself IS skipped."""
+        parent, child = self._selections("{ root @skip(if: true) { child } }")
+        # Parent's own directive: skipped.
+        self.assertTrue(is_selection_skipped(parent, {}))
+        # Child has no directives of its own -> NOT skipped, regardless of parent.
+        self.assertFalse(is_selection_skipped(child, {}))
+
+    def test_parent_include_false_does_not_cascade_to_child(self):
+        """A parent @include(if:false) is excluded but the child node, evaluated
+        on its own, is not (it has no directive)."""
+        parent, child = self._selections("{ root @include(if: false) { child } }")
+        self.assertTrue(is_selection_skipped(parent, {}))
+        self.assertFalse(is_selection_skipped(child, {}))
+
+    def test_child_with_own_skip_is_skipped_independently(self):
+        """When the CHILD carries its own @skip(if:true), it is skipped — the
+        evaluation is on the child's own directive, not the (clean) parent's."""
+        parent, child = self._selections("{ root { child @skip(if: true) } }")
+        # Parent has no directive -> not skipped.
+        self.assertFalse(is_selection_skipped(parent, {}))
+        # Child's own @skip(if:true) -> skipped.
+        self.assertTrue(is_selection_skipped(child, {}))

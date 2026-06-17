@@ -800,6 +800,19 @@ class GraphQLView(BaseGraphQLView):
         (``ATOMIC_MUTATIONS`` is off) Django executes ``on_commit`` immediately
         after the current statement — behaviour is unchanged for that case.
 
+        Residual microsecond window (audit rank 10 — ACCEPTABLE).  There is a
+        tiny gap between the moment ``on_commit`` is SCHEDULED (here) and the
+        moment it actually FIRES (right after the DB commit).  A concurrent reader
+        that commits and reads in that sub-millisecond window could momentarily
+        miss the bumped version.  This is correctness-SAFE: the data is already
+        durable, and a stale version key only causes a cache MISS that re-reads the
+        (now-current) data from the database — never a stale-but-cached read.  The
+        invalidation always converges; at worst one request pays a cache miss.  A
+        very-high-concurrency deployment that wants to close even this microsecond
+        window can add a cross-process barrier (e.g. a short read-side version
+        re-check or a distributed lock) around the read path — not needed for
+        correctness, only to shave the rare extra miss.
+
         Uses ``cache.incr`` for an atomic increment on Redis / Memcached /
         LocMemCache.  Because the key is seeded with integer ``1`` by
         ``_get_cache_version``, ``incr`` always finds an integer value and
