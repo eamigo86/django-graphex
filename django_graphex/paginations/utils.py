@@ -24,26 +24,30 @@ _NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 
 # --------------------------------------------------------------------------- #
-# Lazy graphene accessor (S8f graphene-removal)                                #
+# Lazy graphene accessor (S8f -> S-page-7 graphene-removal)                     #
 # --------------------------------------------------------------------------- #
 # ``utils.py`` no longer imports graphene at the MODULE top level — that
-# ``import graphene`` blocked the graphene uninstall (S8i). The only graphene
-# construct this module builds is the ``GenericPaginationField`` graphene
-# ``Field`` subclass (genuinely consumed by the native-default test contract in
-# tests/test_pagination_internals.py + tests/test_optimizer_phase_c.py). The
-# class is therefore built LAZILY (module ``__getattr__`` below) against a
-# graphene import resolved on first use and cached. The graphene class stays
-# byte-identical; only the uninstall-blocking top-level import moves here.
+# ``import graphene`` blocked the graphene uninstall (S8i). S-page-7 migrated the
+# pagination CONTAINER BUILD path off graphene entirely (the dead graphene branch
+# in ``types.py`` that called ``get_pagination_field`` is removed), so the
+# graphene ``GenericPaginationField`` (built lazily via the module ``__getattr__``
+# below) NEVER fires on a native build. It survives ONLY for the
+# graphene-backend-only tests that construct it via ``__new__`` (bypassing
+# ``__init__``) to exercise ``list_resolver``/``wrap_resolve``
+# (tests/test_pagination_internals.py + tests/test_optimizer_phase_c.py); those
+# tests — and the class + this lazy accessor — are RETIRED in S-del-backend-11.
+# Nothing on the native build path references ``_g()``.
 _GRAPHENE: Any = None
 
 
 def _g() -> Any:
     """Return the lazily imported, cached ``graphene`` module.
 
-    The first call imports graphene (still installed until S8i) and caches it;
-    subsequent calls reuse the cache. This keeps the graphene
-    ``GenericPaginationField`` byte-identical while removing the
-    uninstall-blocking top-level ``import graphene``.
+    S-page-7: retained ONLY for the dead-but-defined ``GenericPaginationField``
+    graphene ``Field`` subclass (retired in S-del-backend-11). It is NEVER called
+    on a native pagination build — the native container is assembled by
+    ``types._make_list_fields_thunk_for`` from ``to_graphql_fields(native=True)``
+    + ``NativePaginationField`` + ``get_native_page_info_field``.
     """
     global _GRAPHENE
     if _GRAPHENE is None:
@@ -51,24 +55,6 @@ def _g() -> Any:
 
         _GRAPHENE = graphene
     return _GRAPHENE
-
-
-def _graphene_paginator_args(paginator: Any) -> dict[str, Any]:
-    """Return the paginator's args as GRAPHENE scalars regardless of backend.
-
-    The graphene ``GenericPaginationField`` must always expose graphene-typed
-    args (graphene ``to_arguments()`` sorts arg values and cannot order native
-    ``GraphQLArgument`` instances). Forcing ``native=False`` keeps a single
-    source of truth for arg names/descriptions while guaranteeing the graphene
-    shape even when the process runs under ``GDX_BACKEND=native``.
-
-    Args:
-        paginator: The paginator instance.
-
-    Returns:
-        The paginator's GraphQL args as graphene scalar instances.
-    """
-    return paginator.to_graphql_fields(native=False)
 
 
 def _paginate_list_base(
@@ -190,8 +176,14 @@ def _build_generic_pagination_field() -> type:
     ``Field``, which the ``class`` statement would evaluate at MODULE import
     time, re-introducing the uninstall-blocking top-level ``import graphene``.
     The class is therefore built lazily here, against the graphene module
-    resolved by :func:`_g`, and cached. The resulting class is byte-identical to
-    the eager definition; only the import timing moved.
+    resolved by :func:`_g`, and cached.
+
+    S-page-7: this class is now DEAD on the native build path — the dead graphene
+    branch in ``types.py`` that allocated it (via ``get_pagination_field``) was
+    removed. It survives only for the graphene-backend-only tests that build it
+    via ``__new__`` to exercise ``list_resolver``/``wrap_resolve``; those tests
+    never call ``__init__``. The class + this factory are RETIRED in
+    S-del-backend-11.
     """
     graphene = _g()
 
@@ -213,15 +205,12 @@ def _build_generic_pagination_field() -> type:
 
             self.paginator_instance = paginator_instance
 
-            # The graphene field ALWAYS exposes graphene-typed pagination args,
-            # even under GDX_BACKEND=native: graphene.Field.to_arguments() sorts
-            # arg values and cannot order native GraphQLArgument instances, so a
-            # graphene-built schema running in a native process still needs
-            # graphene scalars here (the native compiler wires native args
-            # separately onto the native container's results field).
-            # _graphene_paginator_args() forces the graphene scalar shape
-            # regardless of the process backend flag.
-            kwargs.update(_graphene_paginator_args(paginator_instance))
+            # S-page-7: the native build path NEVER constructs this graphene field
+            # (the dead graphene container branch in types.py was removed). The
+            # paginator args are sourced from the single native ``to_graphql_fields``
+            # API; this ``__init__`` is dead-but-defined and retired in
+            # S-del-backend-11.
+            kwargs.update(paginator_instance.to_graphql_fields())
             kwargs.update(
                 {
                     "description": "{} list, paginated by {}".format(

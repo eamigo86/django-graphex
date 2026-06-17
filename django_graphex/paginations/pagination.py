@@ -50,36 +50,36 @@ __all__ = (
 
 
 # --------------------------------------------------------------------------- #
-# Lazy graphene accessor (S8f graphene-removal)                                #
+# Lazy graphene accessor (S8f -> S-page-7 graphene-removal)                     #
 # --------------------------------------------------------------------------- #
 # ``pagination.py`` no longer imports graphene at the MODULE top level — that
 # ``from graphene import Boolean, Field, Int, ObjectType, String`` blocked the
-# graphene uninstall (S8i). The graphene constructs are STILL genuinely consumed
-# by the native-default test contract:
+# graphene uninstall (S8i).
 #
-# * the ``to_graphql_fields(native=False)`` else-branches build graphene
-#   ``Int`` / ``String`` scalar args (forced graphene-shape by
-#   ``_graphene_paginator_args`` for the graphene ``GenericPaginationField``);
-# * ``CursorPageInfo`` is a graphene ``ObjectType`` (built lazily via module
-#   ``__getattr__`` below) wrapped by ``get_page_info_field`` in a graphene
-#   ``Field`` with ``Int`` / ``String`` args.
+# S-page-7 migrated the pagination CONTAINER BUILD path off graphene entirely:
+# ``to_graphql_fields`` is NATIVE-ONLY (always graphql-core ``GraphQLArgument``),
+# the dead graphene branch in ``types.py`` (``get_pagination_field`` /
+# ``get_page_info_field``) is removed, and ``_graphene_paginator_args`` is
+# retired. The only remaining graphene constructs are DEAD-BUT-DEFINED, kept for
+# graphene-backend-only tests and RETIRED in S-del-backend-11:
 #
-# These are exercised by tests/test_paginations.py, tests/test_pagination_edges.py
-# and tests/test_pagination_internals.py on the native default. The constructs
-# stay graphene and byte-identical; only the top-level import moves to a lazy,
-# cached accessor. The NATIVE machinery (NATIVE_CURSOR_PAGE_INFO,
-# get_native_page_info_field, to_graphql_fields(native=True)) is graphql-core and
-# untouched.
+# * ``CursorPageInfo`` (graphene ``ObjectType``, built lazily via module
+#   ``__getattr__`` below) wrapped by the graphene ``get_page_info_field`` —
+#   NEVER called on a build (the native compiler uses ``get_native_page_info_field``
+#   + ``NATIVE_CURSOR_PAGE_INFO``).
+#
+# The NATIVE machinery (``NATIVE_CURSOR_PAGE_INFO``, ``get_native_page_info_field``,
+# ``to_graphql_fields``) is graphql-core and is the ONLY pagination build path.
 _GRAPHENE: Any = None
 
 
 def _g() -> Any:
     """Return the lazily imported, cached ``graphene`` module.
 
-    The first call imports graphene (still installed until S8i) and caches it;
-    subsequent calls reuse the cache. This keeps every graphene pagination
-    construct byte-identical while removing the uninstall-blocking top-level
-    ``from graphene import ...``.
+    S-page-7: retained ONLY for the dead-but-defined graphene ``CursorPageInfo``
+    + graphene ``get_page_info_field`` (retired in S-del-backend-11). NEVER called
+    on a native pagination build — the native cursor pageInfo is the graphql-core
+    ``NATIVE_CURSOR_PAGE_INFO`` via ``get_native_page_info_field``.
     """
     global _GRAPHENE
     if _GRAPHENE is None:
@@ -336,20 +336,19 @@ class BaseDjangoGraphqlPagination:
         """
         return None
 
-    def to_graphql_fields(self, *, native: bool | None = None) -> dict[str, Any]:
-        """Convert pagination parameters to GraphQL field arguments.
+    def to_graphql_fields(self, *, native: bool = True) -> dict[str, Any]:
+        """Convert pagination parameters to graphql-core field arguments.
+
+        S-page-7 (graphene-removal): the build path is NATIVE-ONLY — this always
+        returns graphql-core ``GraphQLArgument`` instances. The ``native`` keyword
+        is retained for signature/back-compat stability (callers that still pass
+        ``native=...`` keep working) but is ignored; there is no graphene branch.
 
         Args:
-            native: When ``True`` return graphql-core ``GraphQLArgument``
-                instances; when ``False`` return graphene scalar instances.
-                Defaults to the process backend flag (``_NATIVE_BACKEND``) so
-                existing callers keep their behavior. The graphene
-                ``GenericPaginationField`` passes ``native=False`` so a
-                graphene-built schema running in a native process still gets
-                sortable graphene args.
+            native: Accepted for back-compat; ignored (always native).
 
         Returns:
-            A mapping of argument names to GraphQL field definitions.
+            A mapping of argument names to ``GraphQLArgument`` definitions.
 
         Raises:
             NotImplementedError: Always, since child classes must implement it.
@@ -503,65 +502,44 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
             "ordering": self.ordering,
         }
 
-    def to_graphql_fields(self, *, native: bool | None = None) -> dict[str, Any]:
-        """Convert limit/offset parameters to GraphQL field arguments.
+    def to_graphql_fields(self, *, native: bool = True) -> dict[str, Any]:
+        """Convert limit/offset parameters to graphql-core field arguments.
 
-        Under the native path returns ``{name: GraphQLArgument}`` instances
-        so the native compiler can embed them directly as field args.
-        Under the graphene path returns graphene scalar instances (unchanged).
+        S-page-7: NATIVE-ONLY — always returns ``{name: GraphQLArgument}``
+        instances so the native compiler can embed them directly as field args.
+        The ``native`` keyword is accepted for back-compat and ignored.
 
         Args:
-            native: Force the arg flavour (native graphql-core vs graphene
-                scalars). Defaults to the process backend flag.
+            native: Accepted for back-compat; ignored (always native).
 
         Returns:
-            A mapping of argument names to GraphQL field definitions.
+            A mapping of argument names to ``GraphQLArgument`` definitions.
         """
-        if native is None:
-            native = _NATIVE_BACKEND
-        if native:
-            from graphql import GraphQLArgument, GraphQLInt, GraphQLString
+        from graphql import GraphQLArgument, GraphQLInt, GraphQLString
 
-            return {
-                self.limit_query_param: GraphQLArgument(
-                    GraphQLInt,
-                    default_value=self.default_limit,
-                    description=(
-                        "Number of results to return per page. Default "
-                        "'default_limit': {}, and 'max_limit': {}".format(
-                            self.default_limit, self.max_limit
-                        )
-                    ),
-                ),
-                self.offset_query_param: GraphQLArgument(
-                    GraphQLInt,
-                    description=(
-                        "The initial index from which to return the results. Default: 0"
-                    ),
-                ),
-                self.ordering_param: GraphQLArgument(
-                    GraphQLString,
-                    description=(
-                        "A string or comma delimited string value that indicates the "
-                        "default ordering when obtaining lists of objects."
-                    ),
-                ),
-            }
-        graphene = _g()
         return {
-            self.limit_query_param: graphene.Int(
+            self.limit_query_param: GraphQLArgument(
+                GraphQLInt,
                 default_value=self.default_limit,
-                description="Number of results to return per page. Default "
-                "'default_limit': {}, and 'max_limit': {}".format(
-                    self.default_limit, self.max_limit
+                description=(
+                    "Number of results to return per page. Default "
+                    "'default_limit': {}, and 'max_limit': {}".format(
+                        self.default_limit, self.max_limit
+                    )
                 ),
             ),
-            self.offset_query_param: graphene.Int(
-                description="The initial index from which to return the results. Default: 0"
+            self.offset_query_param: GraphQLArgument(
+                GraphQLInt,
+                description=(
+                    "The initial index from which to return the results. Default: 0"
+                ),
             ),
-            self.ordering_param: graphene.String(
-                description="A string or comma delimited string value that indicates the "
-                "default ordering when obtaining lists of objects."
+            self.ordering_param: GraphQLArgument(
+                GraphQLString,
+                description=(
+                    "A string or comma delimited string value that indicates the "
+                    "default ordering when obtaining lists of objects."
+                ),
             ),
         }
 
@@ -724,68 +702,41 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             "ordering": self.ordering,
         }
 
-    def to_graphql_fields(self, *, native: bool | None = None) -> dict[str, Any]:
-        """Convert page pagination parameters to GraphQL field arguments.
+    def to_graphql_fields(self, *, native: bool = True) -> dict[str, Any]:
+        """Convert page pagination parameters to graphql-core field arguments.
 
-        Under the native path returns ``{name: GraphQLArgument}`` instances.
-        Under the graphene path returns graphene scalar instances (unchanged).
+        S-page-7: NATIVE-ONLY — always returns ``{name: GraphQLArgument}``
+        instances. The ``native`` keyword is accepted for back-compat and ignored.
 
         Args:
-            native: Force the arg flavour (native graphql-core vs graphene
-                scalars). Defaults to the process backend flag.
+            native: Accepted for back-compat; ignored (always native).
 
         Returns:
-            A mapping of argument names to GraphQL field definitions.
+            A mapping of argument names to ``GraphQLArgument`` definitions.
         """
-        if native is None:
-            native = _NATIVE_BACKEND
-        if native:
-            from graphql import GraphQLArgument, GraphQLInt, GraphQLString
+        from graphql import GraphQLArgument, GraphQLInt, GraphQLString
 
-            paginator_dict: dict[str, Any] = {
-                self.page_query_param: GraphQLArgument(
-                    GraphQLInt,
-                    default_value=1,
-                    description=(
-                        "A page number within the result paginated set. Default: 1"
-                    ),
-                ),
-                self.ordering_param: GraphQLArgument(
-                    GraphQLString,
-                    description=(
-                        "A string or comma delimited string value that indicates the "
-                        "default ordering when obtaining lists of objects."
-                    ),
-                ),
-            }
-            if self.page_size_query_param:
-                paginator_dict[self.page_size_query_param] = GraphQLArgument(
-                    GraphQLInt,
-                    description=self.page_size_query_description,
-                )
-            return paginator_dict
-
-        graphene = _g()
-        paginator_dict = {
-            self.page_query_param: graphene.Int(
+        paginator_dict: dict[str, Any] = {
+            self.page_query_param: GraphQLArgument(
+                GraphQLInt,
                 default_value=1,
-                description="A page number within the result paginated set. Default: 1",
+                description=(
+                    "A page number within the result paginated set. Default: 1"
+                ),
             ),
-            self.ordering_param: graphene.String(
-                description="A string or comma delimited string value that indicates the "
-                "default ordering when obtaining lists of objects."
+            self.ordering_param: GraphQLArgument(
+                GraphQLString,
+                description=(
+                    "A string or comma delimited string value that indicates the "
+                    "default ordering when obtaining lists of objects."
+                ),
             ),
         }
-
         if self.page_size_query_param:
-            paginator_dict.update(
-                {
-                    self.page_size_query_param: graphene.Int(
-                        description=self.page_size_query_description
-                    )
-                }
+            paginator_dict[self.page_size_query_param] = GraphQLArgument(
+                GraphQLInt,
+                description=self.page_size_query_description,
             )
-
         return paginator_dict
 
     def paginate_queryset(self, qs: Any, **kwargs: Any) -> Any:
@@ -1098,41 +1049,28 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             "max_page_size": self.max_page_size,
         }
 
-    def to_graphql_fields(self, *, native: bool | None = None) -> dict[str, Any]:
-        """Convert cursor pagination parameters to GraphQL field arguments.
+    def to_graphql_fields(self, *, native: bool = True) -> dict[str, Any]:
+        """Convert cursor pagination parameters to graphql-core field arguments.
 
-        Under the native path returns ``{name: GraphQLArgument}`` instances.
-        Under the graphene path returns graphene scalar instances (unchanged).
+        S-page-7: NATIVE-ONLY — always returns ``{name: GraphQLArgument}``
+        instances. The ``native`` keyword is accepted for back-compat and ignored.
 
         Args:
-            native: Force the arg flavour (native graphql-core vs graphene
-                scalars). Defaults to the process backend flag.
+            native: Accepted for back-compat; ignored (always native).
 
         Returns:
-            A mapping of argument names to GraphQL field definitions.
+            A mapping of argument names to ``GraphQLArgument`` definitions.
         """
-        if native is None:
-            native = _NATIVE_BACKEND
-        if native:
-            from graphql import GraphQLArgument, GraphQLInt, GraphQLString
+        from graphql import GraphQLArgument, GraphQLInt, GraphQLString
 
-            return {
-                self.first_query_param: GraphQLArgument(
-                    GraphQLInt,
-                    description=self.first_query_description,
-                ),
-                self.cursor_query_param: GraphQLArgument(
-                    GraphQLString,
-                    description=self.cursor_query_description,
-                ),
-            }
-        graphene = _g()
         return {
-            self.first_query_param: graphene.Int(
-                description=self.first_query_description
+            self.first_query_param: GraphQLArgument(
+                GraphQLInt,
+                description=self.first_query_description,
             ),
-            self.cursor_query_param: graphene.String(
-                description=self.cursor_query_description
+            self.cursor_query_param: GraphQLArgument(
+                GraphQLString,
+                description=self.cursor_query_description,
             ),
         }
 

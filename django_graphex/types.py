@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager, QuerySet
 from django.utils.functional import SimpleLazyObject
-from graphql import GraphQLBoolean, GraphQLError, GraphQLInt
+from graphql import GraphQLBoolean, GraphQLError
 
 from .backends import resolve_backend
 from .base_types import DjangoListObjectBase, factory_type
 from .converter import construct_fields
 from .errors import ErrorType
-from .fields import DjangoListField, DjangoListObjectField, DjangoObjectField
+from .fields import DjangoListObjectField, DjangoObjectField
 from .filtering.filter_field import (
     RESERVED_FILTER_ARGS,
     collect_custom_filters,
@@ -1946,17 +1946,16 @@ class DjangoListObjectType(NativeObjectType):
         filter_fields = filter_fields or baseType._meta.filter_fields
 
         # ----------------------------------------------------------------
-        # S-ROOTS-e: select the PAGINATOR INSTANCE here; the graphene
-        # ``result_container``/``page_info`` descriptors below are built ONLY
-        # on the graphene path. On ``GDX_BACKEND=native`` they are DEAD: the
-        # native list container is thunk-built separately on
-        # ``_meta.graphql_output_type`` (the native branch ~line 1247) from
-        # ``paginator.to_graphql_fields(native=True)`` + ``NativePaginationField``
-        # + ``get_native_page_info_field``, and the native compiler reads
-        # ``_meta.graphql_output_type`` — NEVER ``_meta.fields``. Calling the
-        # graphene ``get_pagination_field``/``get_page_info_field`` on native
-        # only allocated dead graphene ``GenericPaginationField``/``CursorPageInfo``
-        # objects that never reach the schema (verified by SDL byte-parity).
+        # S-ROOTS-e / S-page-7: select the PAGINATOR INSTANCE here. The native
+        # list container is thunk-built on ``_meta.graphql_output_type`` (the
+        # native block below) from ``paginator.to_graphql_fields(native=True)`` +
+        # ``NativePaginationField`` + ``get_native_page_info_field``; the native
+        # compiler reads ``_meta.graphql_output_type`` — NEVER ``_meta.fields``.
+        # S-page-7 removed the dead graphene branch that called the graphene
+        # ``get_pagination_field``/``get_page_info_field`` (it only allocated dead
+        # graphene ``GenericPaginationField``/``CursorPageInfo`` objects that never
+        # reached the schema), so ``_meta.fields`` is now an empty native-only
+        # container (verified SDL byte-identical).
         # ----------------------------------------------------------------
         paginator = None
         if pagination:
@@ -1992,39 +1991,17 @@ class DjangoListObjectType(NativeObjectType):
         _meta.max_deep = max_deep
         _meta.complexity = complexity
 
-        if _NATIVE_BACKEND:
-            # Native path: do NOT build the dead graphene results/pageInfo
-            # descriptors. ``_meta.fields`` is unused by the native compiler
-            # (which reads ``_meta.graphql_output_type``), so leave it empty.
-            _meta.fields = OrderedDict()
-        else:
-            # Graphene path: build the graphene results container + totalCount
-            # (and the opt-in cursor pageInfo) exactly as before.
-            if paginator is not None:
-                result_container = paginator.get_pagination_field(baseType)
-            else:
-                result_container = DjangoListField(baseType)
-
-            _meta.fields = OrderedDict(
-                [
-                    (results_field_name, result_container),
-                    (
-                        "count",
-                        NativeMountedField(
-                            GraphQLInt,
-                            name="totalCount",
-                            description="Total count of matches elements",
-                        ),
-                    ),
-                ]
-            )
-
-            # Opt-in pagination metadata: paginators that support it (cursor)
-            # expose a `pageInfo` field; others return None and add nothing.
-            if paginator is not None:
-                page_info_field = paginator.get_page_info_field(baseType)
-                if page_info_field is not None:
-                    _meta.fields["page_info"] = page_info_field
+        # S-page-7 (graphene-removal): the pagination container is NATIVE-ONLY.
+        # ``_meta.fields`` is unused by the native compiler (which reads
+        # ``_meta.graphql_output_type``, thunk-built below from
+        # ``to_graphql_fields(native=True)`` + ``NativePaginationField`` +
+        # ``get_native_page_info_field``), so leave it empty. The old
+        # ``if not _NATIVE_BACKEND:`` else-branch built the dead graphene
+        # ``GenericPaginationField``/``CursorPageInfo`` container (allocated via
+        # ``paginator.get_pagination_field``/``get_page_info_field``) that NEVER
+        # reached the schema; it is removed so the graphene pagination factories
+        # can never fire on a build (proven SDL byte-identical).
+        _meta.fields = OrderedDict()
 
         super().__init_subclass_with_meta__(_meta=_meta, **options)
 

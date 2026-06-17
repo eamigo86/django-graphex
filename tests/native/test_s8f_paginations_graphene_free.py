@@ -17,21 +17,24 @@ SEPARATELY from the native pagination container — see #1565 / S-ROOTS-e):
   ``get_native_page_info_field`` + ``NATIVE_CURSOR_PAGE_INFO``. These have ZERO
   graphene dependency and stay byte-identical.
 
-* The GRAPHENE pagination descriptors are GENUINELY CONSUMED by the
-  native-default test contract (a bare ``pytest tests/`` runs ``GDX_BACKEND=
-  native`` per ``tests/conftest.py``): ~115 tests across
-  ``tests/test_pagination_internals.py``, ``tests/test_pagination_edges.py``,
-  ``tests/test_paginations.py`` and ``tests/test_optimizer_phase_c.py`` directly
-  reference ``GenericPaginationField`` (graphene ``Field`` subclass),
-  ``CursorPageInfo`` (graphene ``ObjectType``) via ``get_page_info_field`` (a
-  graphene ``Field``), and the ``to_graphql_fields(native=False)`` graphene-scalar
-  else-branches via ``_graphene_paginator_args``. Removing them breaks the
-  protected contract.
+* The GRAPHENE pagination descriptors ``GenericPaginationField`` (graphene
+  ``Field`` subclass) + ``CursorPageInfo`` (graphene ``ObjectType``) are still
+  built lazily and referenced by graphene-backend-only tests
+  (``tests/test_pagination_internals.py``, ``tests/test_optimizer_phase_c.py``,
+  ``tests/test_pagination_edges.py``) that construct them via ``__new__`` to
+  exercise ``list_resolver``/``wrap_resolve``. They are RETIRED in
+  S-del-backend-11.
 
-So S8f is a LAZY-DEFER slice (same strategy as S8e for ``converter.py``): every
-graphene construct keeps producing the EXACT same graphene object (test contract
-+ SDL byte-parity preserved); only the uninstall-blocking TOP-LEVEL graphene
-imports move to a lazy, gated accessor.
+So S8f is a LAZY-DEFER slice (same strategy as S8e for ``converter.py``): the
+uninstall-blocking TOP-LEVEL graphene imports move to a lazy, gated accessor.
+
+S-page-7 UPDATE: the pagination CONTAINER BUILD path was then migrated off
+graphene entirely (the dead graphene branch in ``types.py`` that allocated the
+graphene container via ``get_pagination_field``/``get_page_info_field`` is
+removed, and ``to_graphql_fields`` is native-only). ``_graphene_paginator_args``
+was RETIRED. See ``tests/native/test_pagination_native_only.py``. The graphene
+``GenericPaginationField``/``CursorPageInfo`` factories survive as dead-but-defined
+for the ``__new__``-based graphene-backend tests only; they never fire on a build.
 
 Run: GDX_BACKEND=native .venv/bin/python -m pytest \
     tests/native/test_s8f_paginations_graphene_free.py -q -o addopts=""
@@ -201,23 +204,22 @@ def test_cursor_page_info_field_is_graphene_field() -> None:
     assert field.resolver("not-a-base", None) is None
 
 
-def test_graphene_paginator_args_are_graphene_scalars() -> None:
-    """``to_graphql_fields(native=False)`` still returns graphene scalar instances.
+def test_graphene_paginator_args_helper_is_retired() -> None:
+    """S-page-7: ``_graphene_paginator_args`` is RETIRED.
 
-    ``_graphene_paginator_args`` forces the graphene shape so the graphene
-    ``GenericPaginationField`` can order them. The lazy-defer must keep the
-    graphene scalar identity (``graphene.Int`` / ``graphene.String``).
+    S8f kept ``_graphene_paginator_args`` (forcing ``to_graphql_fields(native=
+    False)`` graphene scalars) so the graphene ``GenericPaginationField`` could
+    order its args. S-page-7 migrated the pagination CONTAINER build off graphene
+    entirely (the dead graphene branch in ``types.py`` is removed), so the
+    graphene-shape arg helper has no consumer and is gone. ``to_graphql_fields``
+    is now native-only (asserted in ``test_pagination_native_only.py``).
     """
-    import graphene
+    from django_graphex.paginations import utils
 
-    from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
-    from django_graphex.paginations.utils import _graphene_paginator_args
-
-    p = LimitOffsetGraphqlPagination(default_limit=5)
-    args = _graphene_paginator_args(p)
-    assert isinstance(args["limit"], graphene.Int)
-    assert isinstance(args["offset"], graphene.Int)
-    assert isinstance(args["ordering"], graphene.String)
+    assert not hasattr(utils, "_graphene_paginator_args"), (
+        "_graphene_paginator_args must be retired in S-page-7 (no consumer "
+        "after the dead graphene container branch was removed)."
+    )
 
 
 # --------------------------------------------------------------------------- #
