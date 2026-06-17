@@ -21,7 +21,6 @@ Covered pagination classes:
 
 from __future__ import annotations
 
-import graphene
 import pytest
 from django.test import TestCase
 from graphql import GraphQLError, graphql_sync
@@ -31,6 +30,7 @@ from django_graphex import (
     DjangoListObjectField,
     DjangoListObjectType,
     LimitOffsetGraphqlPagination,
+    ObjectType,
     PageGraphqlPagination,
 )
 from django_graphex.paginations.pagination import (
@@ -70,7 +70,7 @@ class PageSecType(DjangoListObjectType):
         )
 
 
-class SecQuery(graphene.ObjectType):
+class SecQuery(ObjectType):
     lo_list = DjangoListObjectField(LOSecType)
     page_list = DjangoListObjectField(PageSecType)
 
@@ -177,9 +177,9 @@ class TestInvalidFieldRaisesGraphQLError(TestCase):
 #
 # Ordering by a concrete column like 'password' on a User queryset cannot be
 # blocked at the paginator level alone because the paginator has no reference
-# to which graphene fields are exposed — that requires application-level
+# to which schema fields are exposed — that requires application-level
 # schema design (e.g. not exposing LimitOffset ordering on User types at all,
-# or customising allowed_orderings in the graphene type).
+# or customising allowed_orderings in the type).
 #
 # We document this boundary and test the cases the paginator CAN enforce.
 

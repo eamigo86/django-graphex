@@ -12,11 +12,12 @@ import importlib.util
 import json
 from unittest.mock import MagicMock, patch
 
-import graphene
 import pytest
 from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
+from graphql import GraphQLBoolean, GraphQLString
 
+from django_graphex import DjangoGraphQLSchema, Mutation, ObjectType, field
 from django_graphex.views import BaseGraphQLView, GraphQLView
 
 # The subscriptions package hard-requires the optional ``channels`` extra at
@@ -29,25 +30,25 @@ _CHANNELS_AVAILABLE = importlib.util.find_spec("channels") is not None
 # ---------------------------------------------------------------------------
 
 
-class _Q(graphene.ObjectType):
-    hello = graphene.String()
+class _Q(ObjectType):
+    hello = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
 
 
-class _Mut(graphene.Mutation):
-    ok = graphene.Boolean()
+class _Mut(Mutation):
+    ok = field(GraphQLBoolean)
 
     def mutate(root, info):
         return _Mut(ok=True)
 
 
-class _MRoot(graphene.ObjectType):
+class _MRoot(ObjectType):
     do_thing = _Mut.Field()
 
 
-_schema = graphene.Schema(query=_Q, mutation=_MRoot)
+_schema = DjangoGraphQLSchema(query=_Q, mutation=_MRoot)
 
 CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
 

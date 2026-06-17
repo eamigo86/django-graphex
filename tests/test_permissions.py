@@ -3,7 +3,6 @@
 
 import types as _types
 
-import graphene
 from graphql import graphql_sync
 
 from django_graphex import (
@@ -13,6 +12,7 @@ from django_graphex import (
     DjangoModelType,
     IsAdminOrReadOnly,
     IsAuthenticated,
+    ObjectType,
 )
 
 from .models import HookModel
@@ -27,12 +27,12 @@ class HookType(DjangoModelType):
         filter_fields = {"id": ("exact",), "text": ("exact", "icontains")}
 
 
-class _Query(graphene.ObjectType):
+class _Query(ObjectType):
     hook = HookType.RetrieveField()
     hooks = HookType.ListField()
 
 
-class _Mutation(graphene.ObjectType):
+class _Mutation(ObjectType):
     create_hook = HookType.CreateField()
 
 

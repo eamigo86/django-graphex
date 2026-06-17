@@ -8,10 +8,11 @@ helpers, all through the concrete ``BaseGraphQLView``.
 
 import json
 
-import graphene
 import pytest
 from django.test import RequestFactory, TestCase
+from graphql import GraphQLString
 
+from django_graphex import DjangoGraphQLSchema, ObjectType, field
 from django_graphex.views import (
     BaseGraphQLView,
     HttpError,
@@ -21,14 +22,14 @@ from django_graphex.views import (
 )
 
 
-class _Query(graphene.ObjectType):
-    hello = graphene.String()
+class _Query(ObjectType):
+    hello = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
 
 
-_schema = graphene.Schema(query=_Query)
+_schema = DjangoGraphQLSchema(query=_Query)
 
 
 class ViewBaseTest(TestCase):

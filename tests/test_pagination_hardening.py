@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import base64
 
-import graphene
 import pytest
 from django.db import connection
 from django.test import TestCase
@@ -23,6 +22,7 @@ from django_graphex import (
     DjangoGraphQLSchema,
     DjangoListObjectField,
     DjangoListObjectType,
+    ObjectType,
     PageGraphqlPagination,
 )
 from django_graphex.paginations.pagination import PageGraphqlPagination as _PGP
@@ -47,7 +47,7 @@ class CursorHardenType(DjangoListObjectType):
         pagination = CursorGraphqlPagination(ordering="id")
 
 
-class HardenQuery(graphene.ObjectType):
+class HardenQuery(ObjectType):
     page_list = DjangoListObjectField(PageHardenType)
     cursor_list = DjangoListObjectField(CursorHardenType)
 

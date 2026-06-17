@@ -11,11 +11,12 @@ batch + EXPOSE_QUERY_COST + CLEAN_RESPONSE error branches.
 import json
 from unittest.mock import patch
 
-import graphene
 import pytest
 from django.test import RequestFactory, TestCase, override_settings
+from graphql import GraphQLBoolean, GraphQLString
 from graphql.execution.middleware import MiddlewareManager
 
+from django_graphex import DjangoGraphQLSchema, Mutation, ObjectType, field
 from django_graphex.views import (
     MUTATION_ERRORS_FLAG,
     BaseGraphQLView,
@@ -23,9 +24,9 @@ from django_graphex.views import (
 )
 
 
-class _Query(graphene.ObjectType):
-    hello = graphene.String()
-    boom = graphene.String()
+class _Query(ObjectType):
+    hello = field(GraphQLString)
+    boom = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
@@ -34,31 +35,31 @@ class _Query(graphene.ObjectType):
         raise ValueError("kaboom")
 
 
-class _Flagged(graphene.Mutation):
+class _Flagged(Mutation):
     """A mutation that always flags MUTATION_ERRORS on the request."""
 
-    ok = graphene.Boolean()
+    ok = field(GraphQLBoolean)
 
     def mutate(root, info):
         setattr(info.context, MUTATION_ERRORS_FLAG, True)
         return _Flagged(ok=False)
 
 
-class _Clean(graphene.Mutation):
+class _Clean(Mutation):
     """A mutation that succeeds without flagging errors."""
 
-    ok = graphene.Boolean()
+    ok = field(GraphQLBoolean)
 
     def mutate(root, info):
         return _Clean(ok=True)
 
 
-class _Mutation(graphene.ObjectType):
+class _Mutation(ObjectType):
     flagged = _Flagged.Field()
     clean = _Clean.Field()
 
 
-_schema = graphene.Schema(query=_Query, mutation=_Mutation)
+_schema = DjangoGraphQLSchema(query=_Query, mutation=_Mutation)
 
 
 class BaseViewBranchesTest(TestCase):
@@ -74,8 +75,9 @@ class BaseViewBranchesTest(TestCase):
     def test_middleware_none_is_left_unset(self):
         # When the resolved middleware is None, the `is not None` guard skips
         # assignment and middleware stays the class default (188->193).
-        # WU8: views now reads from graphex_or_graphene_settings, not directly
-        # from graphene_settings, so patch the shim instead.
+        # WU8: views now reads the MIDDLEWARE setting through the
+        # ``graphex_or_graphene_settings`` shim, not the legacy settings object
+        # directly, so patch the shim instead.
         with patch("django_graphex.views.graphex_or_graphene_settings.MIDDLEWARE", None):
             view = BaseGraphQLView(schema=_schema)
         self.assertIsNone(view.middleware)

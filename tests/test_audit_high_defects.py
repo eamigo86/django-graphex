@@ -13,9 +13,11 @@ import importlib.util
 import time
 from unittest.mock import MagicMock
 
-import graphene
 import pytest
 from django.test import TestCase
+from graphql import GraphQLString
+
+from django_graphex import DjangoGraphQLSchema, ObjectType, field
 
 _CHANNELS_AVAILABLE = importlib.util.find_spec("channels") is not None
 
@@ -24,14 +26,14 @@ _CHANNELS_AVAILABLE = importlib.util.find_spec("channels") is not None
 # ---------------------------------------------------------------------------
 
 
-class _Q(graphene.ObjectType):
-    hello = graphene.String()
+class _Q(ObjectType):
+    hello = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
 
 
-_schema = graphene.Schema(query=_Q)
+_schema = DjangoGraphQLSchema(query=_Q)
 
 
 # ===========================================================================

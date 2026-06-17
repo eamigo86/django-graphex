@@ -10,14 +10,12 @@ A dedicated ``Registry`` isolates these types from the global one so the schema
 shape is deterministic regardless of test order.
 """
 
-import os
 from types import SimpleNamespace
 
-import graphene
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from graphql import graphql_sync
+from graphql import GraphQLString, graphql_sync
 
 from django_graphex import (
     DjangoListObjectField,
@@ -26,6 +24,7 @@ from django_graphex import (
     LimitOffsetGraphqlPagination,
     ObjectType,
     PageGraphqlPagination,
+    field,
 )
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
@@ -318,52 +317,41 @@ class _PostMutation(DjangoModelMutation):
         registry = RMUT
 
 
-class _MutQuery(graphene.ObjectType):
-    hello = graphene.String()
+class _MutQuery(ObjectType):
+    hello = field(GraphQLString)
 
 
-class _Mutation(graphene.ObjectType):
+class _Mutation(ObjectType):
     post_create = _PostMutation.CreateField()
 
 
-# DjangoGraphQLSchema is the canonical schema entry point on BOTH backends.
-# Under GDX_BACKEND=native it assembles the native graphql-core schema from the
-# native root compiler (WU2), recovering the native mutation GraphQLField that a
-# bare graphene.Schema would drop from the empty Mutation root (the WU9 fix for
-# the "_Mutation must define one or more fields" failure). Under graphene it
-# behaves exactly like graphene.Schema.
+# DjangoGraphQLSchema is the canonical schema entry point. It assembles the
+# native graphql-core schema from the native root compiler (WU2), recovering the
+# native mutation GraphQLField from the Mutation root (the WU9 fix for the
+# "_Mutation must define one or more fields" failure).
 mut_schema = DjangoGraphQLSchema(
     query=_MutQuery, mutation=_Mutation, registries=isolated_pair(RMUT)
 )
 
-# graphql-core's GraphQLSchema (native) executes via ``graphql_sync``; graphene's
-# Schema executes via ``.execute``. The same document runs on both.
-_NATIVE_BACKEND = os.environ.get("GDX_BACKEND", "graphene") == "native"
-
 
 class MutationNestedShapeTest(TestCase):
     def _execute(self, document, request):
-        if _NATIVE_BACKEND:
-            from graphql import graphql_sync
-
-            return graphql_sync(
-                mut_schema.graphql_schema, document, context_value=request
-            )
-        return mut_schema.execute(document, context_value=request)
+        # The native graphql-core schema executes via ``graphql_sync``.
+        return graphql_sync(
+            mut_schema.graphql_schema, document, context_value=request
+        )
 
     def test_create_response_nested_list_shape(self):
         # A native create mutation EXECUTES end-to-end via DjangoGraphQLSchema:
         # the native mutation field's output type is the mutation PAYLOAD
         # (post/ok/errors), the input arg is the camelCase wire name, and the
-        # resolver creates a real row (WU9). Under graphene the same document
-        # runs through graphene.Schema unchanged.
+        # resolver creates a real row (WU9).
         author = Author.objects.create(name="Ada")
         # The uniform results/totalCount nested-list shape on an auto-derived
-        # to-many relation (``tags``) is produced on BOTH backends: the converter
-        # builds it on the graphene node, and the native node compiler now emits
-        # the same ``TagListType`` (results/totalCount) container for auto-derived
-        # to-many relations. The mutation-execution path is therefore exercised
-        # with the identical selection on both backends.
+        # to-many relation (``tags``) is produced by the native node compiler,
+        # which emits the ``TagListType`` (results/totalCount) container for
+        # auto-derived to-many relations. The mutation-execution path is
+        # therefore exercised with this selection.
         tags_selection = "tags { results { label } totalCount }"
         mutation = (
             'mutation { postCreate(newPost: {title: "X", body: "y", author: %d}) '

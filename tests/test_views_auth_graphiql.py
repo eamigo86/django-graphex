@@ -4,21 +4,21 @@
 import json
 from types import SimpleNamespace
 
-import graphene
 from django.test import RequestFactory, TestCase
+from graphql import GraphQLString
 
-from django_graphex import AllowAny, IsAdmin
+from django_graphex import AllowAny, DjangoGraphQLSchema, IsAdmin, ObjectType, field
 from django_graphex.views import AuthenticatedGraphQLView, GraphQLView
 
 
-class _Query(graphene.ObjectType):
-    hello = graphene.String()
+class _Query(ObjectType):
+    hello = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
 
 
-_schema = graphene.Schema(query=_Query)
+_schema = DjangoGraphQLSchema(query=_Query)
 
 
 def _post(user=None):

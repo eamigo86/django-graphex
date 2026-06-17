@@ -4,39 +4,42 @@
 import json
 from unittest.mock import patch
 
-import graphene
 from django.core.cache import cache
 from django.test import RequestFactory, TestCase
+from graphql import GraphQLArgument, GraphQLString
 
+from django_graphex import DjangoGraphQLSchema, ObjectType, field
 from django_graphex.views import GraphQLView
 
 
-class TestQuery(graphene.ObjectType):
+class TestQuery(ObjectType):
     """Simple test query."""
 
     __test__ = False  # GraphQL schema fixture, not a pytest test class
 
-    hello = graphene.String(name=graphene.String(default_value="World"))
+    hello = field(
+        GraphQLString,
+        args={"name": GraphQLArgument(GraphQLString, default_value="World")},
+    )
 
     def resolve_hello(self, info, name):
         """Resolve hello field."""
         return f"Hello {name}!"
 
 
-class TestSubscription(graphene.ObjectType):
+class TestSubscription(ObjectType):
     """Simple test subscription."""
 
     __test__ = False  # GraphQL schema fixture, not a pytest test class
 
-    counter = graphene.String()
+    counter = field(GraphQLString)
 
-    def subscribe_counter(self, info):
-        """Subscribe to counter."""
-        for i in range(3):
-            yield {"counter": f"Count: {i}"}
+    def resolve_counter(self, info):
+        """Resolve counter field."""
+        return "Count: 0"
 
 
-test_schema = graphene.Schema(query=TestQuery, subscription=TestSubscription)
+test_schema = DjangoGraphQLSchema(query=TestQuery, subscription=TestSubscription)
 
 
 class GraphQLViewTest(TestCase):

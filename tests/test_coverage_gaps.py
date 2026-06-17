@@ -15,11 +15,12 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import graphene
 import pytest
 from django.db import models
 from django.test import RequestFactory, TestCase, override_settings
+from graphql import GraphQLString
 
+from django_graphex import DjangoGraphQLSchema, ObjectType, field
 from django_graphex.views import GraphQLView
 
 # Django 5.1 renamed ``CheckConstraint`` kwarg ``check`` -> ``condition``;
@@ -157,14 +158,14 @@ def test_single_field_uc_dedup_when_field_also_has_unique():
 # ---------------------------------------------------------------------------
 
 
-class _Q(graphene.ObjectType):
-    hello = graphene.String()
+class _Q(ObjectType):
+    hello = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
 
 
-_schema = graphene.Schema(query=_Q)
+_schema = DjangoGraphQLSchema(query=_Q)
 
 CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
 

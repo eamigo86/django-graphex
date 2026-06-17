@@ -6,16 +6,17 @@ mutation cache invalidation, and ``get_query_cost``.
 import json
 from unittest.mock import patch
 
-import graphene
 from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
+from graphql import GraphQLBoolean, GraphQLString
 
+from django_graphex import DjangoGraphQLSchema, Mutation, ObjectType, field
 from django_graphex.views import GraphQLView
 
 
-class _Query(graphene.ObjectType):
-    hello = graphene.String()
-    maybe = graphene.String()
+class _Query(ObjectType):
+    hello = field(GraphQLString)
+    maybe = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
@@ -24,18 +25,18 @@ class _Query(graphene.ObjectType):
         return None  # a null field, to exercise CLEAN_RESPONSE pruning
 
 
-class _CreateThing(graphene.Mutation):
-    ok = graphene.Boolean()
+class _CreateThing(Mutation):
+    ok = field(GraphQLBoolean)
 
     def mutate(root, info):
         return _CreateThing(ok=True)
 
 
-class _Mutation(graphene.ObjectType):
+class _Mutation(ObjectType):
     create_thing = _CreateThing.Field()
 
 
-_schema = graphene.Schema(query=_Query, mutation=_Mutation)
+_schema = DjangoGraphQLSchema(query=_Query, mutation=_Mutation)
 
 
 class ExtraViewBranchesTest(TestCase):

@@ -3,11 +3,10 @@
 
 from unittest.mock import Mock
 
-import graphene
 from django.test import TestCase
-from graphql import GraphQLArgument, GraphQLString
+from graphql import GraphQLArgument, GraphQLInt, GraphQLString
 
-from django_graphex import all_directives
+from django_graphex import DjangoGraphQLSchema, ObjectType, all_directives, field
 from django_graphex.directives.base import BaseExtraGraphQLDirective
 from django_graphex.middleware import GraphQLDirectiveMiddleware
 
@@ -33,9 +32,9 @@ _prefix_directive = PrefixGraphQLDirective()
 _middleware = [GraphQLDirectiveMiddleware()]
 
 
-class _Query(graphene.ObjectType):
-    text = graphene.String()
-    number = graphene.Int()
+class _Query(ObjectType):
+    text = field(GraphQLString)
+    number = field(GraphQLInt)
 
     def resolve_text(root, info):
         return "x"
@@ -44,7 +43,7 @@ class _Query(graphene.ObjectType):
         return 42
 
 
-_schema = graphene.Schema(
+_schema = DjangoGraphQLSchema(
     query=_Query, directives=list(all_directives) + [_prefix_directive]
 )
 
@@ -53,8 +52,13 @@ class GraphQLDirectiveMiddlewareExecutionTest(TestCase):
     """Behavioural tests driving the middleware through real schema execution."""
 
     def _run(self, query, **variables):
-        result = _schema.execute(
-            query, middleware=_middleware, variables=variables or None
+        from graphql import graphql_sync
+
+        result = graphql_sync(
+            _schema.graphql_schema,
+            query,
+            middleware=_middleware,
+            variable_values=variables or None,
         )
         self.assertIsNone(result.errors, result.errors)
         return result.data

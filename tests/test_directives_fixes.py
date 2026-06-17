@@ -17,11 +17,16 @@ from datetime import timezone as dt_timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import graphene
 import pytest
-from graphql import GraphQLError
+from graphql import GraphQLError, GraphQLString, graphql_sync
 
-from django_graphex import GraphQLDirectiveMiddleware, all_directives
+from django_graphex import (
+    DjangoGraphQLSchema,
+    GraphQLDirectiveMiddleware,
+    ObjectType,
+    all_directives,
+    field,
+)
 from django_graphex.directives.date import (
     _format_dt,
     _format_time_ago,
@@ -140,15 +145,19 @@ class TestISODateFormat:
     def test_iso_format_via_schema(self):
         """The 'iso' format must work end-to-end through a GraphQL schema."""
 
-        class _Q(graphene.ObjectType):
-            ts = graphene.String()
+        class _Q(ObjectType):
+            ts = field(GraphQLString)
 
             def resolve_ts(root, info):
                 return "2024-01-15 10:30:00"
 
-        schema = graphene.Schema(query=_Q, directives=list(all_directives))
+        schema = DjangoGraphQLSchema(query=_Q, directives=list(all_directives))
         middleware = [GraphQLDirectiveMiddleware()]
-        result = schema.execute('{ ts @date(format: "iso") }', middleware=middleware)
+        result = graphql_sync(
+            schema.graphql_schema,
+            '{ ts @date(format: "iso") }',
+            middleware=middleware,
+        )
         assert result.errors is None
         # Must be parseable as ISO
         datetime.fromisoformat(result.data["ts"])

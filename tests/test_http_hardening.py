@@ -10,9 +10,10 @@
 import json
 from unittest.mock import patch
 
-import graphene
 from django.test import RequestFactory, TestCase, override_settings
+from graphql import GraphQLString
 
+from django_graphex import DjangoGraphQLSchema, ObjectType, field
 from django_graphex.views import GraphQLView
 
 # ---------------------------------------------------------------------------
@@ -20,9 +21,9 @@ from django_graphex.views import GraphQLView
 # ---------------------------------------------------------------------------
 
 
-class _Query(graphene.ObjectType):
-    hello = graphene.String()
-    maybe = graphene.String()
+class _Query(ObjectType):
+    hello = field(GraphQLString)
+    maybe = field(GraphQLString)
 
     def resolve_hello(root, info):
         return "world"
@@ -31,7 +32,7 @@ class _Query(graphene.ObjectType):
         return None
 
 
-_schema = graphene.Schema(query=_Query)
+_schema = DjangoGraphQLSchema(query=_Query)
 
 
 # ---------------------------------------------------------------------------

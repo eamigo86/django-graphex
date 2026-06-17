@@ -4,16 +4,18 @@
 import types
 import warnings
 
-import graphene
 from django.test import override_settings
-from graphql import graphql_sync
+from graphql import GraphQLBoolean, GraphQLString, graphql_sync
 
 from django_graphex import (
     AuthenticatedFieldsMiddleware,
     DenyAllRegistry,
     DisableIntrospectionMiddleware,
     DjangoGraphQLSchema,
+    Mutation,
+    ObjectType,
     collect_field_names,
+    field,
     security,
 )
 
@@ -21,16 +23,16 @@ from django_graphex import (
 # --------------------------------------------------------------------------- #
 # Self-contained schema: public + private query/mutation roots, a subscription #
 # --------------------------------------------------------------------------- #
-class _Nested(graphene.ObjectType):
-    me = graphene.String()  # same name as a protected top-level field
+class _Nested(ObjectType):
+    me = field(GraphQLString)  # same name as a protected top-level field
 
     def resolve_me(root, info):
         return "nested-me"
 
 
-class _PublicQuery(graphene.ObjectType):
-    public_field = graphene.String()
-    public_nested = graphene.Field(_Nested)
+class _PublicQuery(ObjectType):
+    public_field = field(GraphQLString)
+    public_nested = field(_Nested)
 
     def resolve_public_field(root, info):
         return "pub"
@@ -39,34 +41,34 @@ class _PublicQuery(graphene.ObjectType):
         return _Nested()
 
 
-class _PrivateQuery(graphene.ObjectType):
-    me = graphene.String()
+class _PrivateQuery(ObjectType):
+    me = field(GraphQLString)
 
     def resolve_me(root, info):
         return "me"
 
 
-class _RootQuery(_PublicQuery, _PrivateQuery, graphene.ObjectType):
+class _RootQuery(_PublicQuery, _PrivateQuery, ObjectType):
     pass
 
 
-class _CreateThing(graphene.Mutation):
-    ok = graphene.Boolean()
+class _CreateThing(Mutation):
+    ok = field(GraphQLBoolean)
 
     def mutate(root, info):
         return _CreateThing(ok=True)
 
 
-class _PrivateMutation(graphene.ObjectType):
+class _PrivateMutation(ObjectType):
     create_thing = _CreateThing.Field()
 
 
-class _RootMutation(_PrivateMutation, graphene.ObjectType):
+class _RootMutation(_PrivateMutation, ObjectType):
     pass
 
 
-class _Subscription(graphene.ObjectType):
-    on_event = graphene.String()
+class _Subscription(ObjectType):
+    on_event = field(GraphQLString)
 
 
 with warnings.catch_warnings():  # middleware not in GRAPHENE config during tests
@@ -204,12 +206,12 @@ def test_subscriptions_not_protected_without_private_subscription():
 
 
 def test_private_subscription_subset():
-    class _SubTwo(graphene.ObjectType):
-        on_a = graphene.String()
-        on_b = graphene.String()
+    class _SubTwo(ObjectType):
+        on_a = field(GraphQLString)
+        on_b = field(GraphQLString)
 
-    class _PrivateSub(graphene.ObjectType):
-        on_a = graphene.String()
+    class _PrivateSub(ObjectType):
+        on_a = field(GraphQLString)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -223,11 +225,11 @@ def test_private_subscription_subset():
 def test_disjoint_public_private_subscription_roots_are_unioned():
     """Public-only + disjoint private-only roots -> the schema exposes the union."""
 
-    class _PubSub(graphene.ObjectType):
-        public_event = graphene.String()
+    class _PubSub(ObjectType):
+        public_event = field(GraphQLString)
 
-    class _PrivSub(graphene.ObjectType):
-        secret_event = graphene.String()
+    class _PrivSub(ObjectType):
+        secret_event = field(GraphQLString)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -244,11 +246,11 @@ def test_disjoint_public_private_subscription_roots_are_unioned():
 def test_disjoint_public_private_query_roots_are_unioned():
     """The same union behavior applies to the query root."""
 
-    class _PubQ(graphene.ObjectType):
-        pub_only = graphene.String()
+    class _PubQ(ObjectType):
+        pub_only = field(GraphQLString)
 
-    class _PrivQ(graphene.ObjectType):
-        priv_only = graphene.String()
+    class _PrivQ(ObjectType):
+        priv_only = field(GraphQLString)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)

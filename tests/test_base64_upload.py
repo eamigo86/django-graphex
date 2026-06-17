@@ -22,12 +22,13 @@ import base64
 import json
 import tempfile
 
-import graphene
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, TestCase, override_settings
-from graphql import GraphQLError
+from graphql import GraphQLError, GraphQLString
+
+from django_graphex import DjangoGraphQLSchema, ObjectType, field
 
 # ---------------------------------------------------------------------------
 # We import from the package. ``Base64FileInput`` itself is now a native
@@ -196,13 +197,13 @@ class TestMaxRequestBodySizeGuard(TestCase):
     """MAX_REQUEST_BODY_SIZE guard rejects oversized HTTP bodies BEFORE JSON parsing."""
 
     def _make_schema(self):
-        class Query(graphene.ObjectType):
-            hello = graphene.String()
+        class Query(ObjectType):
+            hello = field(GraphQLString)
 
             def resolve_hello(self, info):
                 return "world"
 
-        return graphene.Schema(query=Query)
+        return DjangoGraphQLSchema(query=Query)
 
     def _make_view(self, schema=None):
         from django_graphex.views import BaseGraphQLView

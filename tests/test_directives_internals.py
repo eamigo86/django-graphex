@@ -10,15 +10,17 @@ branches of the number/list/string directives that the schema path skips.
 from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
-import graphene
 import pytest
 from dateutil import relativedelta
 from django.test import TestCase
-from graphql import GraphQLString
+from graphql import GraphQLFloat, GraphQLString, graphql_sync
 
 from django_graphex import (
+    DjangoGraphQLSchema,
     GraphQLDirectiveMiddleware,
+    ObjectType,
     all_directives,
+    field,
 )
 from django_graphex.base_types import CustomDateFormat
 from django_graphex.directives.date import (
@@ -295,10 +297,10 @@ def test_snake_case_directive_resolve():
 # --------------------------------------------------------------------------- #
 # Round-trip: ceil/round/abs None through a real schema                        #
 # --------------------------------------------------------------------------- #
-class _Query(graphene.ObjectType):
-    blank = graphene.Float()
-    text = graphene.String()
-    ident = graphene.String()
+class _Query(ObjectType):
+    blank = field(GraphQLFloat)
+    text = field(GraphQLString)
+    ident = field(GraphQLString)
 
     def resolve_blank(root, info):
         return None
@@ -310,12 +312,14 @@ class _Query(graphene.ObjectType):
         return "hello_world"
 
 
-_schema = graphene.Schema(query=_Query, directives=list(all_directives))
+_schema = DjangoGraphQLSchema(query=_Query, directives=list(all_directives))
 
 
 class DirectiveSchemaNoneTest(TestCase):
     def _run(self, q):
-        result = _schema.execute(q, middleware=[GraphQLDirectiveMiddleware()])
+        result = graphql_sync(
+            _schema.graphql_schema, q, middleware=[GraphQLDirectiveMiddleware()]
+        )
         self.assertIsNone(result.errors, result.errors)
         return result.data
 
