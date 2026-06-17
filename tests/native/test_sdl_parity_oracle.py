@@ -38,7 +38,12 @@ NAMES native emits, so they already match. See ``_sdl_parity_seed`` for detail.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -47,11 +52,132 @@ from tests.native.conftest import normalize_sdl
 from ._sdl_parity_seed import (
     extract_enum_block,
     extract_type_block,
-    render_graphene_baseline,
     render_native_sdl,
 )
 
 pytestmark = pytest.mark.native_only
+
+
+# --------------------------------------------------------------------------- #
+# Graphene baseline (subprocess) — DELETE-LATER oracle machinery.              #
+#                                                                              #
+# This block lives in the ORACLE (a graphene-dependent, delete-later artifact) #
+# rather than in ``_sdl_parity_seed`` so that the seed — imported by the       #
+# PERMANENT relation verifiers and the zero-graphene gate — stays graphene-    #
+# free. The child program runs under ``GDX_BACKEND=graphene``. It rebuilds the #
+# choices owner as a PURE ``graphene.ObjectType`` from the converter's         #
+# ``construct_fields`` output (graphene-django's historical assembly), renders #
+# it through ``graphene.Schema``, and prints a JSON envelope:                  #
+#   {"choices_enum_sdl": "<SDL fragment for the choices enum + owner type>"}   #
+#                                                                              #
+# Only the choices-enum aspect produces a divergent graphene construct at this #
+# commit; relation aspects resolve to the same related-type names the native   #
+# compiler emits (regression guards on the native side). Keeping the baseline  #
+# a live subprocess (not a golden file) means it tracks the installed graphene.#
+# --------------------------------------------------------------------------- #
+_GRAPHENE_CHILD = textwrap.dedent(
+    '''
+    import json
+    import django
+    from django.conf import settings
+
+    settings.configure(
+        ALLOWED_HOSTS=["*"],
+        DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+        SITE_ID=1,
+        SECRET_KEY="x",
+        USE_I18N=True,
+        STATIC_URL="/static/",
+        INSTALLED_APPS=(
+            "django.contrib.admin",
+            "django.contrib.auth",
+            "django.contrib.contenttypes",
+            "django.contrib.sessions",
+            "django.contrib.sites",
+            "django.contrib.staticfiles",
+            "tests",
+        ),
+        PASSWORD_HASHERS=("django.contrib.auth.hashers.MD5PasswordHasher",),
+        GRAPHEX={"SCHEMA": "tests.schema.schema"},
+    )
+    django.setup()
+
+    import graphene
+    from graphql.utilities import print_schema
+
+    from django_graphex.converter import convert_django_field_with_choices
+    from django_graphex.registry import Registry
+    from tests.models import EnumCollisionItemA
+
+    # Reconstruct graphene-django's historical assembly for the choices owner:
+    # a PURE graphene.ObjectType whose ``status`` field is the converter's real
+    # graphene.Enum (with per-choice descriptions via EnumWithDescriptionsType).
+    reg = Registry()
+    status_field = convert_django_field_with_choices(
+        EnumCollisionItemA._meta.get_field("status"), reg
+    )
+
+    PSItem = type(
+        "PSItem",
+        (graphene.ObjectType,),
+        {"__module__": __name__, "id": graphene.ID(), "status": status_field},
+    )
+
+    class Query(graphene.ObjectType):
+        item = graphene.Field(PSItem)
+
+    schema = graphene.Schema(query=Query, types=[PSItem])
+    sdl = print_schema(schema.graphql_schema)
+
+    print("GDX_PARITY_JSON:" + json.dumps({"choices_enum_sdl": sdl}))
+    '''
+)
+
+
+def render_graphene_baseline() -> dict[str, str]:
+    """Render the GRAPHENE-side baseline via a ``GDX_BACKEND=graphene`` subprocess.
+
+    Returns a dict of per-aspect graphene SDL fragments. Spawns the child with
+    the SAME interpreter (``sys.executable``) and the repo root on ``PYTHONPATH``
+    so ``tests`` and ``django_graphex`` import identically.
+
+    Returns:
+        A mapping with at least ``"choices_enum_sdl"`` — the full SDL the
+        graphene path renders for the choices owner type + its enum.
+
+    Raises:
+        RuntimeError: if the subprocess fails or its marker line is missing.
+    """
+    repo_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
+    )
+    env = dict(os.environ)
+    env["GDX_BACKEND"] = "graphene"
+    env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
+
+    proc = subprocess.run(
+        [sys.executable, "-c", _GRAPHENE_CHILD],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=repo_root,
+        timeout=180,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "graphene baseline subprocess failed "
+            f"(rc={proc.returncode}).\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+        )
+
+    marker = "GDX_PARITY_JSON:"
+    for line in proc.stdout.splitlines():
+        if line.startswith(marker):
+            return json.loads(line[len(marker):])
+
+    raise RuntimeError(
+        "graphene baseline subprocess produced no GDX_PARITY_JSON marker.\n"
+        f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+    )
 
 
 # --------------------------------------------------------------------------- #

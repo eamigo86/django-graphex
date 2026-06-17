@@ -17,24 +17,35 @@ Usage in a test module::
     _schema = minimal_cache_schema  # local alias for readability
 
 NOTE: this module is imported AFTER Django has been configured by
-conftest.pytest_configure, so top-level Django/graphene imports are safe here.
+conftest.pytest_configure, so top-level Django imports are safe here.
+
+This schema is built on the NATIVE backend (graphene-free): the public 2.0 API
+``django_graphex.ObjectType`` + ``field()`` for the query root, the native
+``Mutation`` base for the version-bump mutation, and ``DjangoGraphQLSchema`` for
+assembly — a drop-in for the retired ``graphene.Schema(query=..., mutation=...)``.
+The query/mutation/context dispatch behavior its consumers rely on (``{ hello }``
+-> ``"world"``, ``{ me }`` -> auth-aware username/``"anon"`` read from
+``info.context.user``, ``mutation { doThing { ok } }`` -> ``ok == True`` to bump
+the cache version) is preserved byte-for-byte.
 """
 
 import json
 
-import graphene
 from django.contrib.auth.models import AnonymousUser
+from graphql import GraphQLBoolean, GraphQLString
+
+from django_graphex import DjangoGraphQLSchema, Mutation, ObjectType, field
 
 # ---------------------------------------------------------------------------
-# Shared minimal cache schema
+# Shared minimal cache schema (native backend)
 # ---------------------------------------------------------------------------
 
 
-class _MinimalQ(graphene.ObjectType):
+class _MinimalQ(ObjectType):
     """Query root for the shared minimal cache test schema."""
 
-    hello = graphene.String()
-    me = graphene.String()
+    hello = field(GraphQLString)
+    me = field(GraphQLString)
 
     def resolve_hello(root, info):  # noqa: N805
         return "world"
@@ -46,25 +57,28 @@ class _MinimalQ(graphene.ObjectType):
         return "anon"
 
 
-class _MinimalMut(graphene.Mutation):
+class _MinimalMut(Mutation):
     """A no-op mutation used to exercise the cache version-bump path."""
 
-    class Arguments:
+    class args:
         pass
 
-    ok = graphene.Boolean()
+    ok = field(GraphQLBoolean)
 
-    def mutate(root, info):  # noqa: N805
-        return _MinimalMut(ok=True)
+    @classmethod
+    def mutate(cls, root, info):
+        return cls(ok=True)
 
 
-class _MinimalMutationRoot(graphene.ObjectType):
+class _MinimalMutationRoot(ObjectType):
     do_thing = _MinimalMut.Field()
 
 
 #: Shared minimal schema for cache tests.  Import this in any test module that
 #: needs a lightweight query+mutation schema without model dependencies.
-minimal_cache_schema = graphene.Schema(query=_MinimalQ, mutation=_MinimalMutationRoot)
+minimal_cache_schema = DjangoGraphQLSchema(
+    query=_MinimalQ, mutation=_MinimalMutationRoot
+)
 
 # ---------------------------------------------------------------------------
 # Common settings helpers
