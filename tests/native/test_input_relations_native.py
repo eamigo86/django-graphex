@@ -89,23 +89,14 @@ def _unwrap(t):
 # (a) IMPORT-REMOVAL — the BIG one.                                            #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_input_build_does_not_import_graphene(monkeypatch):
+def test_input_build_does_not_import_graphene():
     """Building a create + update ``DjangoInputObjectType`` for a model with
-    FK + O2O + M2M + reverse + choices must NOT fire ``converter._g()``.
+    FK + O2O + M2M + reverse + choices is graphene-free.
 
-    ``converter._g`` is monkeypatched to RAISE; reaching the end without an
-    AssertionError proves the INPUT class-def path is graphene-free.
+    S-del-backend-11: the converter has no ``_g()`` graphene accessor (the graphene
+    backend was deleted), so the INPUT class-def path is structurally graphene-free.
+    This asserts the input types build + their thunks evaluate without error.
     """
-    import django_graphex.converter as converter_mod
-
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "converter._g() was called during a DjangoInputObjectType build — "
-            "the INPUT path must be graphene-free in S-input-5"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
-
     reg = Registry()
 
     class _PostCreate(DjangoInputObjectType):
@@ -146,20 +137,14 @@ def test_input_build_does_not_import_graphene(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_full_class_def_output_and_input_graphene_free(monkeypatch):
-    """The FULL class-def is now graphene-free: with ``converter._g`` raising,
-    defining a model's OUTPUT type AND its create/update INPUT types builds
-    without importing graphene (the converter/types class-def seam only)."""
-    import django_graphex.converter as converter_mod
+def test_full_class_def_output_and_input_graphene_free():
+    """The FULL class-def is graphene-free: defining a model's OUTPUT type AND its
+    create/update INPUT types builds without importing graphene.
 
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "converter._g() was called during a full OUTPUT + INPUT class-def "
-            "build — the converter/types class-def seam must be graphene-free"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
-
+    S-del-backend-11: the converter/types class-def seam has no ``_g()`` graphene
+    accessor (the graphene backend was deleted), so the build is structurally
+    graphene-free. This asserts the OUTPUT + INPUT types build + thunks evaluate.
+    """
     reg = Registry()
 
     # Register the FULL closure so every relation resolves on the output side.

@@ -117,65 +117,6 @@ def _build_post_graph(reg: Registry) -> tuple[type, type, type, type]:
 # (a) IMPORT-REMOVAL — the to-MANY relation OUTPUT converters never call _g(). #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_to_many_output_converters_do_not_import_graphene(monkeypatch):
-    """The to-MANY relation OUTPUT converters (forward M2M + reverse FK + reverse
-    M2M) must NOT fire ``converter._g()`` (i.e. must not import graphene).
-
-    Exercised DIRECTLY on the converters (not via a full class build) so the
-    assertion is precise. The forward ``GenericRelation`` / reverse ``GenericRel``
-    arms are OUT of S-rel-3 scope (S-rel-4), so they are not exercised here.
-    """
-    import django_graphex.converter as converter_mod
-    from django_graphex.converter import (
-        convert_field_to_list_or_connection,
-        convert_many_rel_to_djangomodel,
-    )
-
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "converter._g() was called from a to-MANY relation OUTPUT converter "
-            "— that path must be graphene-free in S-rel-3"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
-
-    reg = Registry()
-
-    # forward M2M: Post.tags -> Tag, Post.co_authors -> Author.
-    convert_field_to_list_or_connection(
-        Post._meta.get_field("tags"), reg, input_flag=None
-    )
-    convert_field_to_list_or_connection(
-        Post._meta.get_field("co_authors"), reg, input_flag=None
-    )
-
-    # reverse FK (ManyToOneRel): Post.comments <- Comment, Author.posts <- Post.
-    rev_fk = next(
-        f for f in Post._meta.get_fields() if getattr(f, "name", None) == "comments"
-    )
-    convert_many_rel_to_djangomodel(rev_fk, reg, input_flag=None)
-    author_rev_fk = next(
-        f for f in Author._meta.get_fields() if getattr(f, "name", None) == "posts"
-    )
-    convert_many_rel_to_djangomodel(author_rev_fk, reg, input_flag=None)
-
-    # reverse M2M (ManyToManyRel): Tag.posts <- Post, Author.coauthored_posts.
-    tag_rev_m2m = next(
-        f for f in Tag._meta.get_fields() if getattr(f, "name", None) == "posts"
-    )
-    convert_many_rel_to_djangomodel(tag_rev_m2m, reg, input_flag=None)
-    author_rev_m2m = next(
-        f
-        for f in Author._meta.get_fields()
-        if getattr(f, "name", None) == "coauthored_posts"
-    )
-    convert_many_rel_to_djangomodel(author_rev_m2m, reg, input_flag=None)
-
-    # Reaching here without AssertionError proves every to-MANY relation OUTPUT
-    # converter (forward M2M / reverse FK / reverse M2M) is graphene-free.
-
-
-@pytest.mark.django_db
 def test_to_many_converters_return_native_marker_on_output():
     """Forward-M2M / reverse-FK / reverse-M2M converters return a
     ``NativeRelationField`` on the native OUTPUT path (never None / dead-scalar)."""
@@ -213,25 +154,18 @@ def test_to_many_converters_return_native_marker_on_output():
 
 
 @pytest.mark.django_db
-def test_nested_list_container_path_is_graphene_free(monkeypatch):
+def test_nested_list_container_path_is_graphene_free():
     """The list-container path (``_nested_list_object_field`` ->
     ``get_or_create_list_object_type`` -> ``factory_type`` ->
-    ``_build_list_object_field``) does NOT fire ``_g()`` for an already-registered
-    node — proving the to-MANY OUTPUT CONTAINER is built natively (no graphene
-    Registry/factory firing)."""
-    import django_graphex.converter as converter_mod
+    ``_build_list_object_field``) builds for an already-registered node, proving
+    the to-MANY OUTPUT CONTAINER is built natively.
 
+    S-del-backend-11: the converter no longer has a ``_g()`` graphene accessor to
+    monkeypatch (the graphene backend was deleted); this asserts the behavioral
+    result that the native container path resolves without graphene.
+    """
     reg = Registry()
     _build_post_graph(reg)  # registers Tag (and its node) in reg
-
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "converter._g() fired in the native to-MANY container path "
-            "(_nested_list_object_field / get_or_create_list_object_type / "
-            "factory_type) — that path must be graphene-free in S-rel-3"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
 
     from django_graphex.converter import _nested_list_object_field
     from django_graphex.types import get_or_create_list_object_type
@@ -409,31 +343,22 @@ def test_to_many_relation_shapes_unchanged_in_seed_sdl():
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
 def test_generic_relation_list_returns_native_marker_in_s_rel_4():
-    """The forward ``GenericRelation`` list converter retired graphene in S-rel-4:
-    on the native OUTPUT path it now returns a graphene-free ``NativeRelationField``
-    marker (it was a graphene Dynamic through S-rel-3). On the graphene backend the
-    legacy Dynamic is UNCHANGED."""
-    from django_graphex.converter import (
-        _NATIVE_BACKEND,
-        convert_generic_relation_to_object_list,
-    )
+    """The forward ``GenericRelation`` list converter returns a graphene-free
+    ``NativeRelationField`` marker on the OUTPUT path.
+
+    S-del-backend-11: the graphene backend is deleted, so the converter ALWAYS
+    returns the native marker (the cross-backend ``graphene.Dynamic`` arm is gone).
+    """
+    from django_graphex.converter import convert_generic_relation_to_object_list
     from tests.test_optimizer_coverage import Profile
 
     reg = Registry()
     notes_field = Profile._meta.get_field("notes")  # GenericRelation
     out = convert_generic_relation_to_object_list(notes_field, reg, input_flag=None)
-    if _NATIVE_BACKEND:
-        assert isinstance(out, NativeRelationField), (
-            "forward GenericRelation list must return a NativeRelationField on the "
-            f"native OUTPUT path in S-rel-4; got {out!r}"
-        )
-    else:
-        import graphene
-
-        assert isinstance(out, graphene.Dynamic), (
-            "the graphene backend GenericRelation list must STILL be a graphene "
-            f"Dynamic; got {out!r}"
-        )
+    assert isinstance(out, NativeRelationField), (
+        "forward GenericRelation list must return a NativeRelationField on the "
+        f"OUTPUT path; got {out!r}"
+    )
 
 
 # --------------------------------------------------------------------------- #

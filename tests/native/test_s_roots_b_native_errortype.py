@@ -178,23 +178,26 @@ def test_is_plain_object_type_excludes_non_class() -> None:
 
 @pytest.mark.django_db
 def test_native_errortype_compiles_to_object_type_with_both_fields() -> None:
-    """A ``List(ErrorType)`` field compiles to a list of the ErrorType object.
+    """A ``NativeList(ErrorType)`` field compiles to a list of the ErrorType object.
 
     Routes through the EXISTING ``_compile_wrapped_field_type`` (the
     ``errors: [ErrorType]`` mutation-payload path). Asserts the inner element is a
     ``GraphQLObjectType`` named ``ErrorType`` carrying BOTH ``field`` and
     ``messages`` — proving the native ErrorType lands in the object arm, NOT the
     scalar arm (which would KeyError) and does NOT silently vanish.
+
+    S-del-backend-11: the graphene ``List(ErrorType)`` wrapper was replaced with
+    the native ``NativeList(ErrorType)`` wrapper (the graphene-root/wrapper compile
+    capability was removed; the native ``errors = field(NativeList(ErrorType))``
+    idiom is how the payload declares it now).
     """
-    # graphene List(ErrorType) is exactly how DjangoModelType / DjangoModelMutation
-    # declare `errors = List(ErrorType)` (types.py:1450, mutation.py:229).
-    from graphene import List
     from graphql import GraphQLList, GraphQLObjectType
 
     from django_graphex.errors import ErrorType
+    from django_graphex.native.descriptors import NativeList
     from django_graphex.native.schema_compiler import _compile_wrapped_field_type
 
-    wrapped = List(ErrorType)
+    wrapped = NativeList(ErrorType)
     compiled = _compile_wrapped_field_type(wrapped)
 
     assert isinstance(compiled, GraphQLList), "List wrapper shape lost"

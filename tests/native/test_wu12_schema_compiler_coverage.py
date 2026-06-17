@@ -109,14 +109,16 @@ def test_resolver_for_returns_default_without_source():
 
 def test_resolver_for_recovers_resolve_method():
     """_resolver_for returns the source's resolve_<name> when declared."""
-    import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType
+    from django_graphex import field as native_field
     from django_graphex.native.schema_compiler import _resolver_for
 
-    class _Src(graphene.ObjectType):
-        thing = graphene.String()
+    class _Src(ObjectType):
+        thing = native_field(GraphQLString)
 
-        def resolve_thing(root, info):  # noqa: N805 - graphene resolver
+        def resolve_thing(root, info):  # noqa: N805 - native resolver
             return "ok"
 
     resolver = _resolver_for(_Src, "thing")
@@ -130,16 +132,21 @@ def test_resolver_for_recovers_resolve_method():
 
 
 def test_build_scalar_field_converts_args():
-    """A scalar field declaring args converts them to GraphQLArgument (218-220)."""
-    import graphene
+    """A native scalar field declaring args converts them to GraphQLArgument.
 
+    S-del-backend-11: the graphene-source fixture was replaced with the native
+    ``field(GraphQLString, args={...})`` declaration (the graphene-root compile
+    capability was removed; the compiler internals are native-only now).
+    """
+    from graphql import GraphQLArgument
+
+    from django_graphex import field as native_field
     from django_graphex.native.schema_compiler import _build_scalar_field
 
-    class _Q(graphene.ObjectType):
-        greeting = graphene.String(name=graphene.String())
-
-    field = _Q._meta.fields["greeting"]
-    gql_field = _build_scalar_field(field, source_cls=_Q, field_name="greeting")
+    declared = native_field(
+        GraphQLString, args={"name": GraphQLArgument(GraphQLString)}
+    )
+    gql_field = _build_scalar_field(declared, source_cls=None, field_name="greeting")
     assert gql_field.type is GraphQLString
     assert "name" in gql_field.args
 
@@ -151,10 +158,16 @@ def test_build_scalar_field_converts_args():
 
 @pytest.mark.django_db
 def test_compile_declared_field_wrapped_django_output_list():
-    """A ``List(DjangoObjectType)`` declared field compiles to a list of the
-    canonical container/node native type (line 472 + wrapper preservation)."""
-    import graphene
+    """A native ``field(NativeList(DjangoObjectType))`` declared field compiles to
+    a list of the canonical container/node native type (wrapper preservation).
 
+    S-del-backend-11: the graphene ``List(...)`` fixture was replaced with the
+    native ``NativeList`` wrapper (the graphene-root compile capability was
+    removed).
+    """
+    from django_graphex import ObjectType
+    from django_graphex import field as native_field
+    from django_graphex.native.descriptors import NativeList
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_declared_field
     from django_graphex.types import DjangoObjectType
@@ -166,8 +179,8 @@ def test_compile_declared_field_wrapped_django_output_list():
 
     compile_all_outputs()
 
-    class _Holder(graphene.ObjectType):
-        cats = graphene.List(_DeclCatNode)
+    class _Holder(ObjectType):
+        cats = native_field(NativeList(_DeclCatNode))
 
     field = _Holder._meta.fields["cats"]
     gql_field = compile_declared_field(_Holder, "cats", field)
@@ -178,13 +191,21 @@ def test_compile_declared_field_wrapped_django_output_list():
 
 @pytest.mark.django_db
 def test_compile_declared_field_with_args():
-    """A declared field with args converts them (line 421)."""
-    import graphene
+    """A native declared field with args converts them.
 
+    S-del-backend-11: the graphene-source fixture was replaced with the native
+    ``field(GraphQLString, args={...})`` declaration.
+    """
+    from graphql import GraphQLArgument
+
+    from django_graphex import ObjectType
+    from django_graphex import field as native_field
     from django_graphex.native.schema_compiler import compile_declared_field
 
-    class _Holder(graphene.ObjectType):
-        echo = graphene.String(value=graphene.String())
+    class _Holder(ObjectType):
+        echo = native_field(
+            GraphQLString, args={"value": GraphQLArgument(GraphQLString)}
+        )
 
     field = _Holder._meta.fields["echo"]
     gql_field = compile_declared_field(_Holder, "echo", field)
@@ -198,16 +219,22 @@ def test_compile_declared_field_with_args():
 
 @pytest.mark.django_db
 def test_build_plain_object_field_with_args():
-    """A plain-ObjectType field declaring args converts them (line 530)."""
-    import graphene
+    """A native plain-ObjectType field declaring args converts them.
 
+    S-del-backend-11: the graphene-source fixture was replaced with a native
+    plain ``ObjectType`` field carrying native args.
+    """
+    from graphql import GraphQLArgument, GraphQLInt
+
+    from django_graphex import ObjectType
+    from django_graphex import field as native_field
     from django_graphex.native.schema_compiler import _build_plain_object_field
 
-    class _Nested(graphene.ObjectType):
-        value = graphene.String()
+    class _Nested(ObjectType):
+        value = native_field(GraphQLString)
 
-    class _Holder(graphene.ObjectType):
-        nested = graphene.Field(_Nested, depth=graphene.Int())
+    class _Holder(ObjectType):
+        nested = native_field(_Nested, args={"depth": GraphQLArgument(GraphQLInt)})
 
     field = _Holder._meta.fields["nested"]
     gql_field = _build_plain_object_field(field, source_cls=_Holder, field_name="nested")
@@ -264,8 +291,7 @@ def _scalar_field():
 @pytest.mark.django_db
 def test_build_filter_paginate_list_field_inner_non_null_and_args():
     """DjangoFilterPaginateListField -> [Node!] with pagination args (699, 708)."""
-    import graphene
-
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoFilterPaginateListField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
@@ -282,7 +308,7 @@ def test_build_filter_paginate_list_field_inner_non_null_and_args():
 
     # Pass an explicit paginator so the pagination-args branch (line 708) fires
     # regardless of the project's DEFAULT_PAGINATION_CLASS setting.
-    class _PgQuery(graphene.ObjectType):
+    class _PgQuery(_NativeRoot):
         cats = DjangoFilterPaginateListField(
             _PgCatType, pagination=LimitOffsetGraphqlPagination()
         )

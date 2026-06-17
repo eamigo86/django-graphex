@@ -128,48 +128,6 @@ def _reverse_generic_rel_field(model):
 #     OUTPUT converters never call _g().                                        #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_flat_gfk_and_generic_relation_output_do_not_import_graphene(monkeypatch):
-    """The flat-GFK + forward-GenericRelation + reverse-GenericRel OUTPUT
-    converters must NOT fire ``converter._g()`` (i.e. must be graphene-free).
-
-    Drives the converters DIRECTLY (a full DjangoObjectType build would also
-    exercise the choices Enum, which still uses graphene — that is OUT of S-rel-4
-    scope). A declared gfk_union is NOT registered here, so the flat path runs.
-    """
-    import django_graphex.converter as converter_mod
-    from django_graphex.converter import (
-        convert_generic_foreign_key_to_object,
-        convert_generic_relation_to_object_list,
-        convert_many_rel_to_djangomodel,
-    )
-
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "converter._g() was called from a flat-GFK / GenericRelation OUTPUT "
-            "converter — that path must be graphene-free in S-rel-4"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
-
-    reg = Registry()
-
-    # flat GFK (GfkS4Tag.content_object) — no gfk_union declared -> flat path.
-    convert_generic_foreign_key_to_object(
-        _flat_gfk_field(GfkS4Tag), reg, input_flag=None
-    )
-    # forward GenericRelation list (GfkS4Host.tags).
-    convert_generic_relation_to_object_list(
-        _forward_generic_relation_field(GfkS4Host), reg, input_flag=None
-    )
-    # reverse GenericRel arm (GfkS4Tag.hosts).
-    convert_many_rel_to_djangomodel(
-        _reverse_generic_rel_field(GfkS4Tag), reg, input_flag=None
-    )
-    # Reaching here without AssertionError proves all three OUTPUT paths are
-    # graphene-free.
-
-
-@pytest.mark.django_db
 def test_flat_gfk_and_generic_relation_return_native_markers():
     """flat GFK / forward GenericRelation / reverse GenericRel OUTPUT converters
     return a ``NativeRelationField`` (never ``None`` / the dead-scalar sentinel)."""
@@ -211,93 +169,31 @@ def test_full_gfk_object_type_build_does_not_import_graphene_for_relations():
     GenericRelation + reverse GenericRel does not raise from those relation
     paths (the choices Enum is out of scope; these models have no choices).
     """
-    import django_graphex.converter as converter_mod
+    reg = Registry()
 
-    real_g = converter_mod._g
-    calls: list[str] = []
+    class _TagT(DjangoObjectType):
+        class Meta:
+            model = GfkS4Tag
+            registry = reg
+            name = "GfkS4TagFullT"
 
-    def _tracking_g():
-        calls.append("called")
-        return real_g()
+    class _HostT(DjangoObjectType):
+        class Meta:
+            model = GfkS4Host
+            registry = reg
+            name = "GfkS4HostFullT"
 
-    converter_mod._g = _tracking_g
-    try:
-        reg = Registry()
-
-        class _TagT(DjangoObjectType):
-            class Meta:
-                model = GfkS4Tag
-                registry = reg
-                name = "GfkS4TagFullT"
-
-        class _HostT(DjangoObjectType):
-            class Meta:
-                model = GfkS4Host
-                registry = reg
-                name = "GfkS4HostFullT"
-    finally:
-        converter_mod._g = real_g
-
-    # These models have NO scalar that needs graphene and NO choices, so building
-    # them on the native OUTPUT path must not pin graphene via _g().
-    assert calls == [], (
-        "building a GFK / GenericRelation DjangoObjectType (no choices) called "
-        f"converter._g() {len(calls)} time(s) — relations must be graphene-free"
-    )
+    # S-del-backend-11: the converter has no ``_g()`` graphene accessor (the
+    # graphene backend was deleted), so building these GFK / GenericRelation
+    # DjangoObjectTypes is structurally graphene-free. Assert the OUTPUT types
+    # compile (the relation paths emit native markers, never pin graphene).
+    assert _TagT._meta.graphql_output_type is not None
+    assert _HostT._meta.graphql_output_type is not None
 
 
 # --------------------------------------------------------------------------- #
 # (b) GFK-UNION STILL WORKS — the Track-2 typed-union path is UNTOUCHED.        #
 # --------------------------------------------------------------------------- #
-@pytest.mark.django_db
-def test_gfk_union_converter_still_emits_graphene_field():
-    """When the owner declares ``Meta.gfk_unions`` for a GFK, the converter STILL
-    emits a graphene ``Field`` to the union (the union path is out of S-rel-4
-    scope — it feeds the native union injector and stays graphene)."""
-    import graphene
-
-    from django_graphex.converter import convert_django_field
-    from django_graphex.types import DjangoUnionType
-    from tests.models import Track2Account, Track2GfkComment, Track2Invoice
-
-    reg = Registry()
-
-    class _AccountT(DjangoObjectType):
-        class Meta:
-            model = Track2Account
-            registry = reg
-
-    class _InvoiceT(DjangoObjectType):
-        class Meta:
-            model = Track2Invoice
-            registry = reg
-
-    class _PaymentUnion(DjangoUnionType):
-        class Meta:
-            gfk_types = (_AccountT, _InvoiceT)
-            registry = reg
-
-    class _GfkCommentT(DjangoObjectType):
-        class Meta:
-            model = Track2GfkComment
-            registry = reg
-            gfk_unions = {"target": _PaymentUnion}
-
-    gfk = _flat_gfk_field(Track2GfkComment)
-    converted = convert_django_field(gfk, registry=reg)
-    # The union path stays a graphene Dynamic; resolving it yields a graphene
-    # Field whose type is the declared union.
-    assert isinstance(converted, graphene.Dynamic), (
-        "the GFK-union path must STILL be a graphene Dynamic (untouched in "
-        f"S-rel-4); got {converted!r}"
-    )
-    resolved = converted.get_type()
-    assert isinstance(resolved, graphene.Field)
-    assert resolved.type is _PaymentUnion, (
-        "the GFK-union path must resolve to a graphene Field wrapping the union"
-    )
-
-
 @pytest.mark.django_db
 def test_gfk_union_output_renders_typed_union_in_schema():
     """A Track-2 GFK-union owner renders a typed union output field in the
@@ -597,30 +493,21 @@ def test_yank_fields_keeps_gfk_native_relation_field():
 # choices path is UNCHANGED (graphene until S-input-5).                         #
 # =========================================================================== #
 @pytest.mark.django_db
-def test_choices_define_object_type_does_not_import_graphene(monkeypatch):
+def test_choices_define_object_type_does_not_import_graphene():
     """Defining a ``DjangoObjectType`` with a choices field (class-def time) and
     building its native OUTPUT type must NOT call ``converter._g()`` (#1609 gap).
     """
     from graphql import GraphQLEnumType
 
-    import django_graphex.converter as converter_mod
     from tests.models import EnumCollisionItemA
-
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "converter._g() was called while defining / building a choices "
-            "DjangoObjectType OUTPUT — that path must be graphene-free in S-enum-2"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
 
     reg = Registry()
 
-    # If the choices converter still called _g().Enum (the #1609 gap) this class
-    # statement (metaclass runs construct_fields) would raise. The per-class
-    # native OUTPUT type is also built at class-def time, so reaching the
-    # assertions proves the WHOLE choices OUTPUT path is graphene-free (no global
-    # ``compile_all_outputs`` needed — that pollutes the shared registry).
+    # S-del-backend-11: the choices converter has no ``_g().Enum`` to call (the
+    # graphene backend was deleted), so defining a choices DjangoObjectType and
+    # building its native OUTPUT type is structurally graphene-free. The per-class
+    # native OUTPUT type is built at class-def time, so reaching the assertions
+    # proves the choices OUTPUT path renders the native ``GraphQLEnumType``.
     class _ChoicesItemImport(DjangoObjectType):
         class Meta:
             model = EnumCollisionItemA
@@ -633,22 +520,14 @@ def test_choices_define_object_type_does_not_import_graphene(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_choices_output_converter_returns_dead_scalar(monkeypatch):
+def test_choices_output_converter_returns_dead_scalar():
     """``convert_django_field_with_choices`` on OUTPUT (input_flag is None) for a
     choices field returns the dead-scalar sentinel without calling ``_g()``."""
-    import django_graphex.converter as converter_mod
     from django_graphex.converter import (
         _DEAD_SCALAR,
         convert_django_field_with_choices,
     )
     from tests.models import EnumCollisionItemA
-
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "choices OUTPUT path called _g() — must be graphene-free in S-enum-2"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
 
     field = EnumCollisionItemA._meta.get_field("status")
     out = convert_django_field_with_choices(field, Registry(), input_flag=None)
@@ -659,21 +538,12 @@ def test_choices_output_converter_returns_dead_scalar(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_choices_input_path_off_graphene(monkeypatch):
+def test_choices_input_path_off_graphene():
     """S-input-5: the INPUT / mutation choices converter path is now graphene-free
     too — it returns the dead-scalar sentinel (the native input compiler renders
     the SHARED native ``GraphQLEnumType`` from ``model._meta``)."""
-    import django_graphex.converter as converter_mod
     from django_graphex.converter import _DEAD_SCALAR, convert_django_field_with_choices
     from tests.models import EnumCollisionItemA
-
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "converter._g() was called on the INPUT choices path — it must be "
-            "graphene-free in S-input-5"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
 
     field = EnumCollisionItemA._meta.get_field("status")
     for input_flag in ("create", "update"):

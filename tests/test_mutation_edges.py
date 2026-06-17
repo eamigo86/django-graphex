@@ -9,7 +9,6 @@ file-merge in ``create`` / ``update``, the update-save failure path, and the
 import warnings
 from types import SimpleNamespace
 
-import pytest
 from django.test import TestCase
 
 from django_graphex import DjangoModelMutation
@@ -72,12 +71,18 @@ class MultipartTest(TestCase):
 
 class InputDeprecationTest(TestCase):
     def test_input_class_emits_deprecation_warning(self):
+        # S-del-backend-11: the legacy ``class Input`` deprecation contract is about
+        # the ``Input``-vs-``Arguments`` naming, not graphene. The arg is declared
+        # with the native ``GraphQLArgument`` form (the graphene arg form was removed
+        # in the v2.0 CLEAN BREAK, decision #1603).
+        from graphql import GraphQLArgument, GraphQLString
+
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
 
             class _LegacyMutation(DjangoModelMutation):
                 class Input:
-                    extra = pytest.importorskip("graphene").String()
+                    extra = GraphQLArgument(GraphQLString)
 
                 class Meta:
                     model = Author

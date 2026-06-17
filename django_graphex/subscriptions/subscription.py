@@ -53,17 +53,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from typing import Callable
 
     from django.db.models import QuerySet
-    from graphene import Enum as _GrapheneEnum
     from graphql import GraphQLResolveInfo
-
-    # S-sub-6: ``ActionSubscriptionEnum`` (graphene ``Enum``) is built LAZILY
-    # (module ``__getattr__`` below) ONLY for the graphene-backend-only test
-    # contract (deleted in S-del-tests-10); the native build path never touches
-    # it. This alias binds the name for static analysis / ``__all__`` without a
-    # top-level graphene import at runtime. ``SubscriptionField`` is now a NATIVE
-    # marker class defined at module level (no graphene base), so it needs no
-    # TYPE_CHECKING alias.
-    ActionSubscriptionEnum = _GrapheneEnum
 
 
 # --------------------------------------------------------------------------- #
@@ -121,52 +111,6 @@ class SubscriptionField(NativeMountedField):
         )
         self._subscribe_fn = subscribe
         self.kwargs = kwargs
-
-
-#: Process-wide cache for the lazily built graphene ``ActionSubscriptionEnum``.
-#: S-sub-6: kept ONLY for the graphene-backend-only public re-export contract
-#: (``test_unit``/``test_isolation`` iterate it); the native build path never
-#: touches it. Retired with its consumers in S-del-tests-10.
-_ACTION_SUBSCRIPTION_ENUM: Any = None
-
-
-def _build_action_subscription_enum() -> type:
-    """Build (and cache) the graphene ``ActionSubscriptionEnum`` class.
-
-    S-sub-6: this graphene ``Enum`` is NO LONGER on the subscription build path
-    (the native ``_meta.arguments`` + ``_build_native_field`` build a graphql-core
-    action enum instead). It survives ONLY as a lazily built public re-export for
-    the graphene-backend-only test contract (deleted in S-del-tests-10). Built on
-    first attribute access so a bare module import never imports graphene.
-    """
-    import graphene  # noqa: PLC0415
-
-    class ActionSubscriptionEnum(graphene.Enum):
-        """Model change actions a subscriber can listen to."""
-
-        CREATE = "create"
-        UPDATE = "update"
-        DELETE = "delete"
-        ALL_ACTIONS = "all_actions"
-
-    return ActionSubscriptionEnum
-
-
-def __getattr__(name: str) -> Any:
-    """Lazily resolve the graphene-backend-only ``ActionSubscriptionEnum`` (PEP 562).
-
-    S-sub-6: only ``ActionSubscriptionEnum`` is resolved lazily now (kept for the
-    graphene-backend-only public re-export contract; deleted in S-del-tests-10).
-    ``SubscriptionField`` is a real module-level native class, so it is found by
-    normal attribute lookup and never reaches this hook. Any other attribute name
-    raises ``AttributeError`` as usual.
-    """
-    if name == "ActionSubscriptionEnum":
-        global _ACTION_SUBSCRIPTION_ENUM
-        if _ACTION_SUBSCRIPTION_ENUM is None:
-            _ACTION_SUBSCRIPTION_ENUM = _build_action_subscription_enum()
-        return _ACTION_SUBSCRIPTION_ENUM
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _enum_value(value: Any) -> Any:
@@ -995,7 +939,6 @@ class Subscription(NativeObjectType):
 
 # Re-exported for convenience / typing.
 __all__ = [
-    "ActionSubscriptionEnum",
     "Subscription",
     "SubscriptionField",
     "SubscriptionOptions",

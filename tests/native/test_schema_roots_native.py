@@ -21,125 +21,21 @@ pytestmark = pytest.mark.native_only
 
 
 # --------------------------------------------------------------------------- #
-# Slice A — plain graphene.ObjectType field dispatch in compile_native_root    #
-# --------------------------------------------------------------------------- #
-def test_plain_objecttype_field_compiles_native_and_resolves():
-    """A ``graphene.Field(PlainObjectType)`` compiles to a native
-    ``GraphQLObjectType`` and resolves end-to-end (no GDX_SCALAR_MAP KeyError)."""
-    import graphene
-    from graphql import GraphQLObjectType, graphql_sync
-
-    from django_graphex.native.schema_compiler import compile_native_root
-
-    class _Nested(graphene.ObjectType):
-        me = graphene.String()
-
-        def resolve_me(root, info):
-            return "nested-me"
-
-    class _Q(graphene.ObjectType):
-        nested = graphene.Field(_Nested)
-        plain_scalar = graphene.String()
-
-        def resolve_nested(root, info):
-            return _Nested()
-
-        def resolve_plain_scalar(root, info):
-            return "scalar-val"
-
-    native_root = compile_native_root(_Q, name="Query")
-    assert isinstance(native_root, GraphQLObjectType)
-
-    nested_field_type = native_root.fields["nested"].type
-    assert isinstance(nested_field_type, GraphQLObjectType)
-    # D8 invariant: native object type carries extensions['gdx'].
-    assert "gdx" in (nested_field_type.extensions or {})
-
-    from graphql import GraphQLSchema
-
-    schema = GraphQLSchema(query=native_root)
-    result = graphql_sync(schema, "{ nested { me } plainScalar }")
-    assert result.errors is None, result.errors
-    assert result.data == {"nested": {"me": "nested-me"}, "plainScalar": "scalar-val"}
-
-
-def test_plain_objecttype_single_instance_when_referenced_twice():
-    """Two ``graphene.Field`` references to the SAME plain ObjectType compile to
-    ONE native instance (identity-stable, no duplicate-name TypeError)."""
-    import graphene
-    from graphql import GraphQLSchema
-
-    from django_graphex.native.schema_compiler import compile_native_root
-
-    class _Shared(graphene.ObjectType):
-        v = graphene.String()
-
-    class _Q(graphene.ObjectType):
-        a = graphene.Field(_Shared)
-        b = graphene.Field(_Shared)
-
-    native_root = compile_native_root(_Q, name="Query")
-    type_a = native_root.fields["a"].type
-    type_b = native_root.fields["b"].type
-    assert type_a is type_b, "plain-ObjectType references must share ONE native instance"
-
-    # No duplicate-name error when assembled into a schema.
-    GraphQLSchema(query=native_root)
-
-
-def test_plain_objecttype_recurses_nested_plain_types():
-    """A plain ObjectType referencing ANOTHER plain ObjectType compiles
-    recursively without falling into _build_scalar_field."""
-    import graphene
-    from graphql import GraphQLObjectType, GraphQLSchema, graphql_sync
-
-    from django_graphex.native.schema_compiler import compile_native_root
-
-    class _Leaf(graphene.ObjectType):
-        leaf_val = graphene.String()
-
-        def resolve_leaf_val(root, info):
-            return "leaf"
-
-    class _Branch(graphene.ObjectType):
-        leaf = graphene.Field(_Leaf)
-
-        def resolve_leaf(root, info):
-            return _Leaf()
-
-    class _Q(graphene.ObjectType):
-        branch = graphene.Field(_Branch)
-
-        def resolve_branch(root, info):
-            return _Branch()
-
-    native_root = compile_native_root(_Q, name="Query")
-    branch_type = native_root.fields["branch"].type
-    assert isinstance(branch_type, GraphQLObjectType)
-    leaf_type = branch_type.fields["leaf"].type
-    assert isinstance(leaf_type, GraphQLObjectType)
-
-    schema = GraphQLSchema(query=native_root)
-    result = graphql_sync(schema, "{ branch { leaf { leafVal } } }")
-    assert result.errors is None, result.errors
-    assert result.data == {"branch": {"leaf": {"leafVal": "leaf"}}}
-
-
-# --------------------------------------------------------------------------- #
 # C12 — native _merge_root field-union + collision RAISES ValueError           #
 # --------------------------------------------------------------------------- #
 def test_merge_root_collision_raises_value_error():
     """_merge_root RAISES ValueError when public and private declare a field of
-    the SAME name (inverse-MRO security hazard — graphene silently shadows)."""
-    import graphene
+    the SAME name (inverse-MRO security hazard the merge must reject)."""
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _Pub(graphene.ObjectType):
-        foo = graphene.String()
+    class _Pub(ObjectType):
+        foo = field(GraphQLString)
 
-    class _Priv(graphene.ObjectType):
-        foo = graphene.String()  # COLLISION with public foo
+    class _Priv(ObjectType):
+        foo = field(GraphQLString)  # COLLISION with public foo
 
     with pytest.raises(ValueError) as exc:
         DjangoGraphQLSchema._merge_root("Query", _Pub, _Priv)
@@ -150,15 +46,16 @@ def test_merge_root_collision_raises_value_error():
 
 def test_merge_root_disjoint_union_succeeds():
     """_merge_root field-unions disjoint public + private without error."""
-    import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _Pub(graphene.ObjectType):
-        pub_only = graphene.String()
+    class _Pub(ObjectType):
+        pub_only = field(GraphQLString)
 
-    class _Priv(graphene.ObjectType):
-        priv_only = graphene.String()
+    class _Priv(ObjectType):
+        priv_only = field(GraphQLString)
 
     merged = DjangoGraphQLSchema._merge_root("Query", _Pub, _Priv)
     # native merge returns a GraphQLObjectType field-union; both fields present.
@@ -171,19 +68,20 @@ def test_merge_root_disjoint_union_succeeds():
 def test_merge_root_subset_short_circuit_returns_public():
     """When private fields are a SUBSET of public (full-root + marker idiom),
     _merge_root short-circuits to the public root unchanged."""
-    import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _Full(graphene.ObjectType):
-        a = graphene.String()
-        b = graphene.String()
+    class _Full(ObjectType):
+        a = field(GraphQLString)
+        b = field(GraphQLString)
 
-    class _Marker(graphene.ObjectType):
-        a = graphene.String()  # subset of _Full
+    class _Marker(ObjectType):
+        a = field(GraphQLString)  # subset of _Full
 
     merged = DjangoGraphQLSchema._merge_root("Query", _Full, _Marker)
-    # Subset short-circuit: public root returned unchanged (still graphene class).
+    # Subset short-circuit: public root returned unchanged.
     assert merged is _Full
 
 
@@ -228,15 +126,16 @@ def test_protected_fields_stored_in_schema_extensions():
     ``schema.graphql_schema.extensions['gdx_protected_fields']``."""
     import warnings
 
-    import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _Pub(graphene.ObjectType):
-        pub = graphene.String()
+    class _Pub(ObjectType):
+        pub = field(GraphQLString)
 
-    class _Priv(graphene.ObjectType):
-        secret = graphene.String()
+    class _Priv(ObjectType):
+        secret = field(GraphQLString)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)

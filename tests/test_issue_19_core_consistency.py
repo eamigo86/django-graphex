@@ -25,16 +25,20 @@ from django_graphex.registry import Registry
 from tests.models import Author
 
 
-def _is_graphene_list(obj):
-    """True when ``obj`` is a graphene ``List`` wrapper.
+def _is_dead_scalar(obj):
+    """True when ``obj`` is the converter's dead-scalar sentinel.
 
-    The PostgreSQL ArrayField / RangeField converters are NOT yet migrated off
-    graphene (they still emit a ``graphene.types.structures.List`` on the native
-    path); assert their wrapper structurally instead of importing graphene.
+    S-del-backend-11: the PostgreSQL ArrayField / RangeField converters are now
+    graphene-free — they return the ``_DEAD_SCALAR`` sentinel so ``construct_fields``
+    OMITS the field. The native OUTPUT compiler derives every field from
+    ``model._meta`` directly and has NO ArrayField / RangeField entry (a documented
+    native feature gap — see #1617 AUDIT WATCH-ITEM), so the field is absent from
+    native output SDL either way. The old graphene ``List`` wrapper (with its
+    ``required`` / ``description`` kwargs) is gone; assert the native sentinel.
     """
-    return type(obj).__name__ == "List" and type(obj).__module__.startswith(
-        "graphene"
-    )
+    from django_graphex.converter import _DEAD_SCALAR
+
+    return obj is _DEAD_SCALAR
 
 
 # --------------------------------------------------------------------------- #
@@ -250,49 +254,46 @@ def test_multiselectfield_direct_class_still_detected():
 # --------------------------------------------------------------------------- #
 
 
-def test_arrayfield_preserves_required_flag():
-    """ArrayField: the outer required flag must be preserved in the List wrapper."""
-    # A required ArrayField (in a create input) should yield a required List.
+def test_arrayfield_converter_returns_dead_scalar_on_create():
+    """ArrayField: the converter returns the dead-scalar sentinel (native).
+
+    S-del-backend-11: the graphene ``List`` wrapper (and its ``required`` kwarg)
+    is gone — ArrayField is OMITTED from native output and the native input
+    compiler derives the input surface from ``model._meta``.
+    """
     field = ArrayField(models.IntegerField())
     field.name = "scores"
     field.model = Author
-    # blank=False, null=False => required on create
     out = convert_postgres_array_to_list(field, Registry(), input_flag="create")
-    assert _is_graphene_list(out)
-    # The required flag should propagate to the outer List (NonNull or required kwarg).
-    # graphene List stores required as a kwarg; it doesn't wrap in NonNull itself.
-    # We check that the field has the right required kwarg set.
-    assert out.kwargs.get("required") is True
+    assert _is_dead_scalar(out)
 
 
-def test_arrayfield_not_required_without_create_flag():
-    """ArrayField: required=False when not in create input context."""
+def test_arrayfield_converter_returns_dead_scalar_on_output():
+    """ArrayField: the converter returns the dead-scalar sentinel on output."""
     field = ArrayField(models.IntegerField())
     out = convert_postgres_array_to_list(field, Registry(), input_flag=None)
-    assert _is_graphene_list(out)
-    assert not out.kwargs.get("required", False)
+    assert _is_dead_scalar(out)
 
 
-def test_rangefield_preserves_required_flag():
-    """RangeField: the outer required flag must be preserved in the List wrapper."""
+def test_rangefield_converter_returns_dead_scalar_on_create():
+    """RangeField: the converter returns the dead-scalar sentinel (native)."""
     field = ArrayField(models.IntegerField())  # has .base_field; used as range stand-in
     field.name = "score_range"
-    # Make it required by Django field conventions (blank=False, null=False).
     out = convert_postgres_range_to_string(field, Registry(), input_flag="create")
-    assert _is_graphene_list(out)
-    assert out.kwargs.get("required") is True
+    assert _is_dead_scalar(out)
 
 
-def test_rangefield_not_required_without_create_flag():
-    """RangeField: required=False when not in create input context."""
+def test_rangefield_converter_returns_dead_scalar_on_output():
+    """RangeField: the converter returns the dead-scalar sentinel on output."""
     field = ArrayField(models.IntegerField())
     out = convert_postgres_range_to_string(field, Registry(), input_flag=None)
-    assert _is_graphene_list(out)
-    assert not out.kwargs.get("required", False)
+    assert _is_dead_scalar(out)
 
 
-def test_arrayfield_inner_type_description_preserved():
-    """ArrayField: description from the outer field is passed to the List wrapper."""
+def test_arrayfield_inner_type_description_returns_dead_scalar():
+    """ArrayField: the converter returns the dead-scalar sentinel regardless of
+    the source field's ``help_text`` (the graphene ``List`` description wrapper is
+    gone)."""
     field = ArrayField(models.IntegerField(), help_text="list of scores")
     out = convert_postgres_array_to_list(field, Registry())
-    assert out.kwargs.get("description") == "list of scores"
+    assert _is_dead_scalar(out)

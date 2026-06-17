@@ -27,7 +27,7 @@ pytestmark = pytest.mark.native_only
 @pytest.mark.django_db
 def test_compile_native_root_returns_graphql_object_type():
     """compile_native_root(Query) returns a graphql-core GraphQLObjectType."""
-    import graphene
+    from django_graphex import ObjectType as _NativeRoot
     from graphql import GraphQLObjectType
 
     from django_graphex.fields import DjangoObjectField
@@ -42,7 +42,7 @@ def test_compile_native_root_returns_graphql_object_type():
 
     compile_all_outputs()
 
-    class _SeedQuery(graphene.ObjectType):
+    class _SeedQuery(_NativeRoot):
         category = DjangoObjectField(_RootCatType)
 
     native_root = compile_native_root(_SeedQuery, name="Query")
@@ -58,7 +58,7 @@ def test_compile_native_root_field_type_is_canonical_native_instance():
 
     A graphene fallback would NOT produce this identity nor extensions['gdx'].
     """
-    import graphene
+    from django_graphex import ObjectType as _NativeRoot
     from graphql import GraphQLObjectType
 
     from django_graphex.fields import DjangoObjectField
@@ -74,7 +74,7 @@ def test_compile_native_root_field_type_is_canonical_native_instance():
 
     compile_all_outputs()
 
-    class _SeedQuery(graphene.ObjectType):
+    class _SeedQuery(_NativeRoot):
         category = DjangoObjectField(_AntiTautCatType)
 
     native_root = compile_native_root(_SeedQuery, name="Query")
@@ -99,7 +99,7 @@ def test_compile_native_root_field_type_is_canonical_native_instance():
 @pytest.mark.django_db
 def test_compile_native_root_wires_resolver():
     """The native field's resolve is wired (not a dead no-op)."""
-    import graphene
+    from django_graphex import ObjectType as _NativeRoot
 
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -113,7 +113,7 @@ def test_compile_native_root_wires_resolver():
 
     compile_all_outputs()
 
-    class _SeedQuery(graphene.ObjectType):
+    class _SeedQuery(_NativeRoot):
         category = DjangoObjectField(_ResolverCatType)
 
     native_root = compile_native_root(_SeedQuery, name="Query")
@@ -130,7 +130,7 @@ def test_compile_native_root_builds_list_object_field():
 
     (Previously this asserted NotImplementedError; WU6a added the builder.)
     """
-    import graphene
+    from django_graphex import ObjectType as _NativeRoot
     from graphql import GraphQLObjectType
 
     from django_graphex.fields import DjangoListObjectField
@@ -145,7 +145,7 @@ def test_compile_native_root_builds_list_object_field():
 
     compile_all_outputs()
 
-    class _ListQuery(graphene.ObjectType):
+    class _ListQuery(_NativeRoot):
         categories = DjangoListObjectField(_NIListType)
 
     native_root = compile_native_root(_ListQuery, name="Query")
@@ -165,7 +165,7 @@ def test_compile_native_root_builds_filter_list_field():
 
     (Previously this asserted NotImplementedError; WU6a added the builder.)
     """
-    import graphene
+    from django_graphex import ObjectType as _NativeRoot
     from graphql import GraphQLInputObjectType, GraphQLList
 
     from django_graphex.fields import DjangoFilterListField
@@ -181,7 +181,7 @@ def test_compile_native_root_builds_filter_list_field():
 
     compile_all_outputs()
 
-    class _FilterQuery(graphene.ObjectType):
+    class _FilterQuery(_NativeRoot):
         cats = DjangoFilterListField(_FilterCatType)
 
     native_root = compile_native_root(_FilterQuery, name="Query")

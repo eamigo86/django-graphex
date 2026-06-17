@@ -709,33 +709,30 @@ class TestWalkerPaginationArgExtraction(TestCase):
         assert result.errors is None, result.errors
         return result.data
 
-    def test_paginator_resolution_helper_returns_paginator_for_generic_pagination_field(
+    def test_paginator_resolution_helper_returns_paginator_for_native_pagination_field(
         self,
     ):
-        """G2 guard: _resolve_results_paginator returns paginator from GenericPaginationField.
+        """G2 guard: _resolve_results_paginator returns paginator from a
+        NativePaginationField's wrap_resolve closure.
 
-        Calls the production function directly so that removing or breaking the
-        getattr chain in _resolve_results_paginator makes this test go RED.
+        S-del-backend-11: the graphene ``GenericPaginationField`` was deleted; the
+        native ``NativePaginationField.wrap_resolve`` exposes ``paginator_instance``
+        directly on the returned closure. Calls the production function directly so
+        breaking the getattr chain in ``_resolve_results_paginator`` goes RED.
         """
-        from functools import partial
-
         from django_graphex.paginations.pagination import (
             BaseDjangoGraphqlPagination,
             LimitOffsetGraphqlPagination,
         )
-        from django_graphex.paginations.utils import GenericPaginationField
+        from django_graphex.paginations.utils import NativePaginationField
         from django_graphex.utils import _resolve_results_paginator
 
         paginator_instance = LimitOffsetGraphqlPagination(default_limit=5)
 
-        # Simulate what GenericPaginationField.wrap_resolve produces:
-        # resolve is a partial(GenericPaginationField.list_resolver, manager)
-        # with __self__ being the field instance that owns paginator_instance.
-        field = GenericPaginationField.__new__(GenericPaginationField)
-        field.paginator_instance = paginator_instance
-
-        bound_method = field.list_resolver
-        resolve_fn = partial(bound_method, object())
+        # NativePaginationField.wrap_resolve returns a plain closure carrying
+        # ``paginator_instance`` directly (the native recovery path).
+        field = NativePaginationField(type=None, paginator=paginator_instance)
+        resolve_fn = field.wrap_resolve(parent_resolver=None)
 
         class _FakeFieldDef:
             resolve = resolve_fn
@@ -1521,18 +1518,21 @@ class TestAlreadyPaginatedListResolver(TestCase):
         )
 
     def test_already_paginated_no_double_slice(self):
-        """8.1: GenericPaginationField must NOT re-slice when already_paginated=True.
+        """8.1: the pagination field must NOT re-slice when already_paginated=True.
 
         The rows returned are exactly the DB slice; re-slicing would corrupt
         results (e.g. returning slice[0:5] of a 5-element list at offset=5 gives []).
+
+        S-del-backend-11: the graphene ``GenericPaginationField`` was deleted; the
+        backend-neutral slicing logic (honoring ``already_paginated``) lives on the
+        native ``NativePaginationField``.
         """
         from django_graphex.base_types import DjangoListObjectBase
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
-        from django_graphex.paginations.utils import GenericPaginationField
+        from django_graphex.paginations.utils import NativePaginationField
 
         paginator = LimitOffsetGraphqlPagination(default_limit=5)
-        field = GenericPaginationField.__new__(GenericPaginationField)
-        field.paginator_instance = paginator
+        field = NativePaginationField(type=None, paginator=paginator)
 
         # Simulate rows already sliced by DB: 5 sentinel objects.
         sentinel = [object() for _ in range(5)]

@@ -77,33 +77,38 @@ def test_zero_toplevel_graphene_imports_in_whole_package():
 
 
 def test_descriptor_tuples_keep_native_currency_drop_graphene():
-    """The detection tuples keep NATIVE currency and drop the graphene markers.
+    """The field-descriptor detection tuple keeps NATIVE currency only.
 
-    ``_FIELD_DESCRIPTOR_TYPES`` (the union recognized as a field descriptor) and
-    ``_GRAPHENE_DESCRIPTOR_TYPES`` (the container payload-name collector) must NO
-    LONGER contain graphene ``MountedType`` / ``UnmountedType`` (2.0 contract) but
+    ``_FIELD_DESCRIPTOR_TYPES`` (the union recognized as a field descriptor) must
+    NOT contain graphene ``MountedType`` / ``UnmountedType`` (2.0 contract) but
     MUST keep ``NativeField`` / ``NativeMountedField`` (+ ``GraphQLField`` for the
     field union) so a ``field()`` declaration and a re-parented ``Django*Field``
     still land in ``_meta.fields`` — no silent drop.
+
+    S-del-backend-11: the dead ``_GRAPHENE_DESCRIPTOR_TYPES`` tuple was deleted
+    (``_FIELD_DESCRIPTOR_TYPES`` is the live collector).
     """
     from graphql import GraphQLField
 
     from django_graphex.native.descriptors import NativeField, NativeMountedField
 
     field_types = base_mod._FIELD_DESCRIPTOR_TYPES
-    desc_types = base_mod._GRAPHENE_DESCRIPTOR_TYPES
 
     # Native currency retained.
     assert NativeField in field_types
     assert NativeMountedField in field_types
     assert GraphQLField in field_types
-    assert NativeMountedField in desc_types
+
+    # The dead graphene-named descriptor tuple is gone.
+    assert not hasattr(base_mod, "_GRAPHENE_DESCRIPTOR_TYPES"), (
+        "_GRAPHENE_DESCRIPTOR_TYPES (dead) must be deleted in S-del-backend-11"
+    )
 
     # Graphene markers GONE — assert by class name so we never import graphene
     # here (the whole point is base.py is graphene-free).
     leaked = [
         t.__name__
-        for t in (field_types + desc_types)
+        for t in field_types
         if t.__name__ in ("MountedType", "UnmountedType")
     ]
     assert leaked == [], f"graphene descriptor markers still present: {leaked}"

@@ -162,27 +162,18 @@ def test_build_choices_enum_returns_none_without_choices():
 
 
 # --------------------------------------------------------------------------- #
-# (e) IMPORT-REMOVAL: the choices OUTPUT path must NOT call converter._g()     #
-#     (i.e. must not import graphene). Monkeypatch _g to raise and assert the  #
-#     OUTPUT choices branch builds without touching it.                        #
+# (e) IMPORT-REMOVAL: the choices OUTPUT path is graphene-free.                #
+#     S-del-backend-11: the converter has no ``_g()`` graphene accessor (the   #
+#     graphene backend was deleted), so the choices OUTPUT enum is built from   #
+#     ``model._meta`` natively — assert the native ``GraphQLEnumType`` result.  #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_output_choices_path_does_not_import_graphene(monkeypatch):
-    """Building the choices OUTPUT enum must not fire converter._g()."""
-    import django_graphex.converter as converter_mod
+def test_output_choices_path_does_not_import_graphene():
+    """The choices OUTPUT enum is built natively (graphene-free)."""
     from django_graphex.native.output_compiler import _to_graphql_field
-
-    def _boom():
-        raise AssertionError(
-            "converter._g() was called from the choices OUTPUT path — that "
-            "path must be graphene-free in S-enum-1"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
 
     registry = Registry()
     field = EnumCollisionItemA._meta.get_field("status")
 
-    # Must NOT raise — proves the choices output branch does not import graphene.
     out = _to_graphql_field(field, registry, graphene_registry=registry)
     assert isinstance(_unwrap(out["status"].type), GraphQLEnumType)

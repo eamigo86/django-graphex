@@ -661,24 +661,21 @@ def _custom_filter_gql_type(meta: dict[str, Any]) -> Any:
     ``@filter_field(GraphQLInt)`` / ``@filter_field(graphene.Int)`` arg renders
     ``Int``, not ``String``).
 
-    Two input shapes are accepted (the parameter name is kept for backward
-    compat — S4):
-    - A native graphql-core type (``GraphQLScalarType`` / ``GraphQLList`` /
-      ``GraphQLNonNull`` / ``GraphQLEnumType`` / ``GraphQLInputObjectType``).
-      This is the new default (``GraphQLString``) and what native callers pass;
-      it is returned as-is (it is already what the compiler emits).
-    - A legacy graphene scalar/type (``graphene.Int`` etc.). It is translated to
-      its graphql-core twin via the output-path scalar bridge
-      (``native/_args.py``) so the resolved scalar is the SAME singleton the rest
-      of the native compiler emits — and graphene is imported only lazily, inside
-      that bridge, never at this module's import time.
+    S-del-backend-11: the graphene backend is deleted, so the legacy graphene
+    scalar/type back-compat arm (``@filter_field(graphene.Int)`` translated via the
+    ``native/_args.py`` bridge) is removed. A native graphql-core type
+    (``GraphQLScalarType`` / ``GraphQLList`` / ``GraphQLNonNull`` /
+    ``GraphQLEnumType`` / ``GraphQLInputObjectType``) is returned as-is (it is
+    already what the compiler emits). A leftover graphene type raises ``TypeError``
+    via the bridge (the v2.0 CLEAN BREAK — declare ``@filter_field`` arg types with
+    graphql-core types).
 
     Args:
         meta: The ``@filter_field`` metadata dict (carries ``graphene_type``).
 
     Returns:
         The graphql-core type for the argument. Falls back to ``GraphQLString``
-        only when no type is present (matching the historical graphene default).
+        only when no type is present (the historical default).
     """
     from graphql import GraphQLType
 
@@ -686,13 +683,13 @@ def _custom_filter_gql_type(meta: dict[str, Any]) -> Any:
     if graphene_type is None:
         return GraphQLString
 
-    # New default / native callers: a graphql-core type is already what the
-    # compiler emits — pass it through without touching graphene.
+    # Native callers: a graphql-core type is already what the compiler emits —
+    # pass it through.
     if isinstance(graphene_type, GraphQLType):
         return graphene_type
 
-    # Legacy graphene scalar/type (1.x back-compat): translate via the bridge,
-    # which imports graphene lazily (import-safe when graphene is absent).
+    # Anything else (e.g. a leftover graphene type) is rejected by the bridge with
+    # a clear TypeError (the v2.0 CLEAN BREAK off graphene).
     from django_graphex.native._args import _unwrap_graphene_type
 
     return _unwrap_graphene_type(graphene_type)

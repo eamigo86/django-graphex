@@ -79,72 +79,17 @@ _HEAD_SEED_SDL_LEN = 4659
 # (a) IMPORT-REMOVAL — the to-ONE relation + PK OUTPUT paths never call _g().  #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_to_one_output_converters_do_not_import_graphene(monkeypatch):
-    """The to-ONE relation OUTPUT converters (FK + forward-O2O + self-ref-O2O +
-    reverse-O2O) and the PK OUTPUT converter must NOT fire converter._g() (i.e.
-    must not import graphene).
+def test_pk_output_path_returns_dead_scalar():
+    """``convert_field_to_id`` on OUTPUT (input_flag is None) returns the
+    dead-scalar sentinel (graphene-free).
 
-    NOTE: this exercises the to-ONE relation + PK converters DIRECTLY rather than
-    building a full ``DjangoObjectType``, because the to-MANY relations on these
-    models (reverse-FK / M2M / reverse-M2M) STILL emit graphene ``Dynamic``s —
-    that is S-rel-3's scope, not S-rel-2. S-rel-2 retires graphene only on the
-    to-ONE relation + PK OUTPUT paths.
+    S-del-backend-11: the converter no longer has a ``_g()`` graphene accessor to
+    monkeypatch — the to-ONE relation + PK OUTPUT paths are structurally
+    graphene-free (the whole graphene backend was deleted). This asserts the
+    behavioral result: the PK OUTPUT converter returns ``_DEAD_SCALAR`` (the
+    native compiler emits ``id: ID!`` from ``model._meta``).
     """
-    import django_graphex.converter as converter_mod
-    from django_graphex.converter import (
-        convert_field_to_djangomodel,
-        convert_field_to_id,
-        convert_onetoone_field_to_djangomodel,
-    )
-
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "converter._g() was called from a to-ONE relation / PK OUTPUT "
-            "converter — that path must be graphene-free in S-rel-2"
-        )
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
-
-    reg = Registry()
-
-    # FK (Post.author / Post.category), forward-O2O (AuthorProfile.author),
-    # self-ref-O2O (PersonWithSpouse.spouse): convert_field_to_djangomodel.
-    convert_field_to_djangomodel(Post._meta.get_field("author"), reg, input_flag=None)
-    convert_field_to_djangomodel(Post._meta.get_field("category"), reg, input_flag=None)
-    convert_field_to_djangomodel(
-        AuthorProfile._meta.get_field("author"), reg, input_flag=None
-    )
-    convert_field_to_djangomodel(
-        PersonWithSpouse._meta.get_field("spouse"), reg, input_flag=None
-    )
-
-    # reverse-O2O (Author.author_profile): convert_onetoone_field_to_djangomodel.
-    rev_o2o_field = next(
-        f
-        for f in Author._meta.get_fields()
-        if getattr(f, "name", None) == "author_profile"
-    )
-    convert_onetoone_field_to_djangomodel(rev_o2o_field, reg, input_flag=None)
-
-    # PK OUTPUT (Author.id / Post.id): convert_field_to_id.
-    convert_field_to_id(Author._meta.get_field("id"), reg, input_flag=None)
-    convert_field_to_id(Post._meta.get_field("id"), reg, input_flag=None)
-
-    # Reaching here without AssertionError proves the to-ONE relation OUTPUT path
-    # (FK / forward-O2O / reverse-O2O / self-ref-O2O) and the PK OUTPUT path are
-    # graphene-free.
-
-
-@pytest.mark.django_db
-def test_pk_output_path_does_not_import_graphene(monkeypatch):
-    """``convert_field_to_id`` on OUTPUT (input_flag is None) must not call _g()."""
-    import django_graphex.converter as converter_mod
     from django_graphex.converter import _DEAD_SCALAR, convert_field_to_id
-
-    def _boom(*_a, **_k):
-        raise AssertionError("PK OUTPUT path called _g() — must be graphene-free")
-
-    monkeypatch.setattr(converter_mod, "_g", _boom)
 
     pk_field = Post._meta.get_field("id")
     out = convert_field_to_id(pk_field, Registry(), input_flag=None)

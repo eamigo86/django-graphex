@@ -228,11 +228,16 @@ def test_generic_foreign_key_input_returns_input_type():
     assert out is not None
 
 
-def test_generic_relation_input_flag_returns_none():
+def test_generic_relation_input_flag_returns_dead_scalar():
+    from django_graphex.converter import _DEAD_SCALAR
+
     registry = Registry()
     rel = next(f for f in GfkHost._meta.get_fields() if isinstance(f, GenericRelation))
-    # The input branch of a GenericRelation produces no input field.
-    assert _resolve(rel, registry=registry, input_flag="create") is None
+    # The input branch of a GenericRelation produces no input field. S-del-backend-11:
+    # the converter returns the dead-scalar sentinel so ``construct_fields`` OMITS it
+    # (the native equivalent of the retired graphene Dynamic resolving to ``None``).
+    out = convert_django_field(rel, registry=registry, input_flag="create")
+    assert out is _DEAD_SCALAR
 
 
 # --------------------------------------------------------------------------- #

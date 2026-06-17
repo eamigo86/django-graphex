@@ -88,16 +88,18 @@ def _is_lazy_closure(obj):
     )
 
 
-def _is_graphene_list(obj):
-    """True when ``obj`` is a graphene ``List`` wrapper.
+def _is_dead_scalar(obj):
+    """True when ``obj`` is the converter's dead-scalar sentinel.
 
-    The PostgreSQL ArrayField / RangeField converters are NOT yet migrated off
-    graphene (they still emit a ``graphene.types.structures.List`` on the native
-    path); assert their wrapper structurally instead of importing graphene.
+    S-del-backend-11: the PostgreSQL ArrayField / RangeField converters are now
+    graphene-free — they return the ``_DEAD_SCALAR`` sentinel (the native OUTPUT
+    compiler derives every field from ``model._meta`` and has no ArrayField /
+    RangeField entry, so the descriptor is OMITTED). Assert the native sentinel
+    instead of the retired graphene ``List`` wrapper.
     """
-    return type(obj).__name__ == "List" and type(obj).__module__.startswith(
-        "graphene"
-    )
+    from django_graphex.converter import _DEAD_SCALAR
+
+    return obj is _DEAD_SCALAR
 
 
 def _resolve(field, **kwargs):
@@ -273,7 +275,7 @@ def test_construct_fields_create_sorts_required_first():
 def test_arrayfield_wraps_base_field_in_list():
     field = ArrayField(models.IntegerField())
     out = convert_django_field(field)
-    assert _is_graphene_list(out)
+    assert _is_dead_scalar(out)
 
 
 def test_arrayfield_with_list_base_keeps_inner_list():
@@ -281,7 +283,7 @@ def test_arrayfield_with_list_base_keeps_inner_list():
     inner = ArrayField(models.CharField(max_length=5))
     field = ArrayField(inner)
     out = convert_django_field(field)
-    assert _is_graphene_list(out)
+    assert _is_dead_scalar(out)
 
 
 # --------------------------------------------------------------------------- #
@@ -428,7 +430,7 @@ def test_assert_valid_name_rejects_bad_name():
 def test_range_field_wraps_base_field_in_list():
     field = ArrayField(models.IntegerField())  # has a .base_field
     out = convert_postgres_range_to_string(field)
-    assert _is_graphene_list(out)
+    assert _is_dead_scalar(out)
 
 
 def test_range_field_list_base_keeps_inner_list():
@@ -436,7 +438,7 @@ def test_range_field_list_base_keeps_inner_list():
     # path (983->985 false side).
     field = ArrayField(ArrayField(models.IntegerField()))
     out = convert_postgres_range_to_string(field)
-    assert _is_graphene_list(out)
+    assert _is_dead_scalar(out)
 
 
 # --------------------------------------------------------------------------- #

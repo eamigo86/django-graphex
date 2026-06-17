@@ -112,18 +112,17 @@ def test_module_import_leaves_own_lazy_graphene_cache_dormant():
             "SubscriptionField is now a native class; its lazy cache is retired"
         )
 
-        # Importing the module must NOT materialize the surviving lazy enum cache.
-        assert m._ACTION_SUBSCRIPTION_ENUM is None, m._ACTION_SUBSCRIPTION_ENUM
+        # S-del-backend-11: the lazy graphene ``ActionSubscriptionEnum`` (and its
+        # cache + builder + __getattr__ seam) are DELETED with the graphene backend.
+        assert not hasattr(m, "_ACTION_SUBSCRIPTION_ENUM")
+        assert not hasattr(m, "_build_action_subscription_enum")
+        assert not hasattr(m, "ActionSubscriptionEnum")
 
         # ``SubscriptionField`` is a real native module-level class (no lazy build).
         from django_graphex.native.descriptors import NativeMountedField
         assert isinstance(m.SubscriptionField, type)
         assert issubclass(m.SubscriptionField, NativeMountedField)
         assert m.SubscriptionField.__name__ == "SubscriptionField"
-
-        # First access to the lazy enum materializes the cache; it then stays stable.
-        enum_cls = m.ActionSubscriptionEnum
-        assert m._ACTION_SUBSCRIPTION_ENUM is enum_cls
         print("DORMANT_OK")
         """
     )
@@ -134,28 +133,26 @@ def test_module_import_leaves_own_lazy_graphene_cache_dormant():
     assert "DORMANT_OK" in proc.stdout
 
 
-def test_action_subscription_enum_is_lazy_graphene_enum():
-    """``ActionSubscriptionEnum`` resolves (lazily) to a graphene ``Enum`` subclass.
+def test_action_subscription_enum_is_deleted():
+    """S-del-backend-11: the graphene ``ActionSubscriptionEnum`` (and its lazy
+    builder / cache / module ``__getattr__`` seam) are DELETED with the graphene
+    backend, and dropped from the public ``subscriptions`` surface.
 
-    Native-default contract (tests/subscriptions/test_unit.py iterates it and
-    pins it on ``_meta.arguments``). Accessing it materializes the cache.
+    The subscription action enum is now the native graphql-core ``GraphQLEnumType``
+    built into ``_meta.arguments['action']`` (asserted in
+    ``test_meta_arguments_built_natively_graphene_free`` +
+    ``tests/subscriptions/test_unit.py``).
     """
-    import graphene
+    import django_graphex.subscriptions as subscriptions
 
-    enum_cls = sub_mod.ActionSubscriptionEnum
-    assert issubclass(enum_cls, graphene.Enum)
-    assert {e.name: e.value for e in enum_cls} == {
-        "CREATE": "create",
-        "UPDATE": "update",
-        "DELETE": "delete",
-        "ALL_ACTIONS": "all_actions",
-    }
-    # Cache is stable (same class on a second access).
-    assert sub_mod.ActionSubscriptionEnum is enum_cls
-    # Public re-export resolves to the same class.
-    from django_graphex.subscriptions import ActionSubscriptionEnum as reexport
-
-    assert reexport is enum_cls
+    assert not hasattr(sub_mod, "ActionSubscriptionEnum"), (
+        "the graphene ActionSubscriptionEnum must be deleted from subscription.py"
+    )
+    assert not hasattr(sub_mod, "_build_action_subscription_enum")
+    assert not hasattr(sub_mod, "_ACTION_SUBSCRIPTION_ENUM")
+    assert not hasattr(subscriptions, "ActionSubscriptionEnum"), (
+        "ActionSubscriptionEnum must be dropped from the public subscriptions surface"
+    )
 
 
 def test_subscription_field_is_native_marker_with_mount_name():

@@ -22,18 +22,19 @@ from __future__ import annotations
 
 import json
 
-import graphene
 import pytest
 from django.test import RequestFactory
+from graphql import GraphQLString
 
+from django_graphex import ObjectType, field
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.views import BaseGraphQLView
 
 pytestmark = pytest.mark.native_only
 
 
-class _Query(graphene.ObjectType):
-    hello = graphene.String()
+class _Query(ObjectType):
+    hello = field(GraphQLString)
 
     def resolve_hello(root, info):  # noqa: N805
         return "world"

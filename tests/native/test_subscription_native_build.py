@@ -71,7 +71,7 @@ class _BlockGraphene:
 # (a) IMPORT-REMOVAL — defining + mounting + building a Subscription does not   #
 #     fire graphene.                                                            #
 # --------------------------------------------------------------------------- #
-def test_subscription_define_mount_build_does_not_import_graphene(monkeypatch):
+def test_subscription_define_mount_build_does_not_import_graphene():
     """Defining + mounting + building a native subscription imports no graphene.
 
     The subscription build path must not touch graphene at all: not the retired
@@ -82,20 +82,15 @@ def test_subscription_define_mount_build_does_not_import_graphene(monkeypatch):
     """
     from django_graphex.subscriptions import subscription as sub_mod
 
-    # Tripwire: the only surviving graphene factory must NOT fire on the build
-    # path (it exists solely for the graphene-backend-only public re-export).
-    def _boom(*_a, **_k):
-        raise AssertionError(
-            "subscription build fired the graphene ActionSubscriptionEnum factory "
-            "(S-sub-6 regression)"
-        )
-
-    monkeypatch.setattr(sub_mod, "_build_action_subscription_enum", _boom)
-    # The retired accessors must be gone from the module surface.
-    assert not hasattr(sub_mod, "_g"), "_g() must be retired in S-sub-6"
-    assert not hasattr(
-        sub_mod, "_generic_scalar"
-    ), "_generic_scalar() must be retired in S-sub-6"
+    # S-del-backend-11: the retired graphene accessors AND the lazy graphene
+    # ``ActionSubscriptionEnum`` factory/cache are all GONE from the module surface
+    # (the graphene backend was deleted), so the build path is structurally
+    # graphene-free.
+    assert not hasattr(sub_mod, "_g"), "_g() must be retired"
+    assert not hasattr(sub_mod, "_generic_scalar"), "_generic_scalar() must be retired"
+    assert not hasattr(sub_mod, "_build_action_subscription_enum")
+    assert not hasattr(sub_mod, "_ACTION_SUBSCRIPTION_ENUM")
+    assert not hasattr(sub_mod, "ActionSubscriptionEnum")
 
     from django_graphex.subscriptions import Subscription
     from tests.models import DummyModel
@@ -130,9 +125,10 @@ def test_subscription_build_runs_with_graphene_blocked():
     block any re-import, and exercise the full subscription build. It must
     succeed without importing graphene.
     """
-    # Purge graphene + reset the lazy enum cache so a fresh import would fire.
+    # Purge graphene from sys.modules and block any re-import.
+    # S-del-backend-11: the lazy graphene ``ActionSubscriptionEnum`` cache is gone
+    # (deleted with the graphene backend), so there is no cache to reset.
     from django_graphex.subscriptions import Subscription
-    from django_graphex.subscriptions import subscription as sub_mod
     from tests.models import DummyModel
 
     saved_modules = {
@@ -140,10 +136,8 @@ def test_subscription_build_runs_with_graphene_blocked():
         for name, mod in list(sys.modules.items())
         if name == "graphene" or name.startswith("graphene.")
     }
-    saved_cache = sub_mod._ACTION_SUBSCRIPTION_ENUM
     for name in saved_modules:
         del sys.modules[name]
-    sub_mod._ACTION_SUBSCRIPTION_ENUM = None
     guard = _BlockGraphene()
     sys.meta_path.insert(0, guard)
     try:
@@ -169,7 +163,6 @@ def test_subscription_build_runs_with_graphene_blocked():
     finally:
         sys.meta_path.remove(guard)
         sys.modules.update(saved_modules)
-        sub_mod._ACTION_SUBSCRIPTION_ENUM = saved_cache
 
 
 # --------------------------------------------------------------------------- #

@@ -1,35 +1,28 @@
-"""Graphene Argument → graphql-core GraphQLArgument converter.
+"""Native arg declaration → graphql-core GraphQLArgument (graphene-free, v2.0).
 
-Provides ``graphene_arg_to_graphql_argument(arg, name=None) -> GraphQLArgument``.
+Provides:
+- ``native_arg(value, name=None)`` — the v2.0 native arg-declaration API
+  (decision #1603): accepts a ``GraphQLArgument``, a bare graphql-core type, or a
+  zero-arg thunk returning one; resolves ``out_name`` from the declared key.
+- ``graphene_arg_to_graphql_argument(arg, name=None)`` — a thin adapter used by
+  the mutation / schema-compiler call sites that may receive a non-
+  ``GraphQLArgument`` arg value (a bare graphql-core type, or a wrapper around
+  one). It resolves the inner type and wraps it in a ``GraphQLArgument``.
 
-Design:
-- Unwraps graphene's ``NonNull`` / ``List`` wrappers recursively to produce
-  the equivalent ``GraphQLNonNull`` / ``GraphQLList`` structure.
-- Resolves leaf scalar types via ``GDX_SCALAR_MAP`` (keyed by graphene
-  ``_meta.name``).
-- Preserves ``default_value`` and ``description`` from the graphene Argument.
-- Accepts an optional ``name`` kwarg (the dict key / camelCase field name).
-  When provided, ``out_name`` is set to the snake_case form of that name.
-
-Graphene import policy:
-- This module READS graphene ``Argument`` objects to convert them, so a
-  runtime import of graphene is required when the converter is called.
-- The module itself has NO top-level ``import graphene`` — graphene is imported
-  lazily inside ``_unwrap_graphene_type`` so the module can be imported cleanly
-  even when graphene is absent (import-time safety).
-
-Zero graphene symbols in the output path (``GraphQLArgument`` is graphql-core).
+S-del-backend-11: the graphene backend is deleted. Both helpers are graphene-free
+— ``_unwrap_graphene_type`` returns a graphql-core type verbatim and RAISES
+``TypeError`` for any leftover graphene type (the v2.0 CLEAN BREAK). The module
+has ZERO graphene imports at any scope.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from graphql import GraphQLArgument, GraphQLList, GraphQLNonNull, GraphQLScalarType
+from graphql import GraphQLArgument
 from graphql.type.definition import GraphQLType
 
 from django_graphex._strconv import to_snake_case
-from django_graphex.native.scalars import GDX_SCALAR_MAP
 
 
 # ---------------------------------------------------------------------------
@@ -39,62 +32,37 @@ from django_graphex.native.scalars import GDX_SCALAR_MAP
 def _unwrap_graphene_type(gtype: Any) -> Any:
     """Resolve a field/arg ``type`` to the equivalent graphql-core type.
 
-    Two currencies reach here:
-
-    - **Native** (S-ROOTS-a) — an already-built graphql-core ``GraphQLType``
-      (a scalar / object / enum / input, OR a ``GraphQLList`` / ``GraphQLNonNull``
-      wrapper around one). It is returned VERBATIM: the native ``field()`` helper
-      and the native scalar singletons already produce real graphql-core types,
-      so there is nothing to convert. This is the path the native descriptor
-      currency uses; it carries no graphene dependency.
-    - **Graphene** (transitional fallback, graphene still installed) — a graphene
-      ``NonNull`` / ``List`` wrapper, or a leaf scalar/enum class with
-      ``_meta.name`` resolved via ``GDX_SCALAR_MAP``.
+    S-del-backend-11: the graphene backend is deleted, so only the NATIVE currency
+    reaches here — an already-built graphql-core ``GraphQLType`` (a scalar / object
+    / enum / input, OR a ``GraphQLList`` / ``GraphQLNonNull`` wrapper around one).
+    It is returned VERBATIM: the native ``field()`` helper and the native scalar
+    singletons already produce real graphql-core types, so there is nothing to
+    convert. The graphene fallback (a graphene ``NonNull`` / ``List`` wrapper or a
+    leaf scalar/enum class with ``_meta.name`` resolved via ``GDX_SCALAR_MAP``) was
+    removed — v2.0 declares args/fields with graphql-core types only.
 
     Args:
-        gtype: A graphql-core ``GraphQLType`` (native), OR a graphene type —
-            either a wrapper (``NonNull``/``List``) or a scalar/enum/object
-            class (anything with ``_meta.name``).
+        gtype: A graphql-core ``GraphQLType`` (native currency).
 
     Returns:
-        The corresponding graphql-core type object.
+        The corresponding graphql-core type object (returned as-is).
 
     Raises:
-        KeyError: If the leaf graphene type name is not found in ``GDX_SCALAR_MAP``.
-        TypeError: If ``gtype`` is neither a graphql-core type nor a recognised
-            graphene type.
+        TypeError: If ``gtype`` is not a graphql-core type (e.g. a leftover
+            graphene type — the CLEAN BREAK off graphene, decision #1603).
     """
     # Native currency: a graphql-core type is already in the target shape.
-    # Returned as-is (List/NonNull wrappers included) — no graphene import on
-    # this path, so it stays valid after graphene is uninstalled.
+    # Returned as-is (List/NonNull wrappers included).
     if isinstance(gtype, GraphQLType):
         return gtype
 
-    # Graphene fallback — lazy import keeps the module graphene-free at import
-    # time (and lets the native path above run with graphene uninstalled).
-    from graphene.types.structures import List as GList, NonNull as GNonNull
-
-    if isinstance(gtype, GNonNull):
-        return GraphQLNonNull(_unwrap_graphene_type(gtype.of_type))
-
-    if isinstance(gtype, GList):
-        return GraphQLList(_unwrap_graphene_type(gtype.of_type))
-
-    # Leaf node — must be a graphene scalar / type class with _meta.name
-    try:
-        name = gtype._meta.name
-    except AttributeError as exc:
-        raise TypeError(
-            f"Cannot convert graphene type {gtype!r} to a graphql-core type: "
-            "expected NonNull, List, or a scalar/type class with ._meta.name"
-        ) from exc
-
-    if name not in GDX_SCALAR_MAP:
-        raise KeyError(
-            f"Scalar {name!r} is not in GDX_SCALAR_MAP. "
-            "Add a custom scalar mapping or extend GDX_SCALAR_MAP."
-        )
-    return GDX_SCALAR_MAP[name]
+    raise TypeError(
+        f"Cannot convert {gtype!r} to a graphql-core type: expected a graphql-core "
+        "GraphQLType (scalar / object / enum / input or a GraphQLList / "
+        "GraphQLNonNull wrapper). The graphene type form was removed in 2.0 "
+        "(decision #1603); declare args/fields with graphql-core types. See the "
+        "2.0 upgrade guide."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -175,53 +143,47 @@ def native_arg(value: Any, name: str | None = None) -> GraphQLArgument:
 
 
 # ---------------------------------------------------------------------------
-# Transitional graphene converter (still-graphene ROOTS / legacy @filter_field)
+# Non-native arg adapter (mutation/declared-arg compile fallback)
 # ---------------------------------------------------------------------------
-# DEFERRED (open-Q#3): tests + fixtures still declare schema ROOTS as
-# ``graphene.ObjectType`` with graphene scalar fields, and ``@filter_field`` may
-# pass a graphene scalar. Those paths route through this converter and the
-# graphene FALLBACK in ``_unwrap_graphene_type`` above. They are retired together
-# with the graphene-root short-circuits in S-del-backend-11 once every root is
-# native. The NATIVE arg-declaration path (Mutation.args / declared field args)
-# no longer touches this — it uses ``native_arg`` (graphene-free).
+# S-del-backend-11: the graphene-ROOT compile capability + the graphene leaf
+# branch of ``_unwrap_graphene_type`` are removed. This adapter still exists for
+# the mutation / schema-compiler call sites that receive an arg value which is NOT
+# already a ``GraphQLArgument`` (a bare graphql-core type, or a wrapper around
+# one). A graphql-core type is converted to a ``GraphQLArgument`` verbatim; a
+# leftover graphene type now raises ``TypeError`` (via ``_unwrap_graphene_type``)
+# — the v2.0 CLEAN BREAK (decision #1603). The NATIVE arg-declaration path
+# (``Mutation.args`` / declared field ``args``) uses ``native_arg`` directly.
 
 def graphene_arg_to_graphql_argument(
     arg: Any,
     name: str | None = None,
 ) -> GraphQLArgument:
-    """Convert a graphene ``Argument`` to a graphql-core ``GraphQLArgument``.
+    """Adapt a non-``GraphQLArgument`` arg value to a ``GraphQLArgument``.
 
     Args:
-        arg: A ``graphene.Argument`` instance.
+        arg: A graphql-core type (scalar / enum / input or a ``GraphQLList`` /
+            ``GraphQLNonNull`` wrapper around one), or a ``GraphQLArgument``.
         name: Optional camelCase (or snake_case) field name.  When provided,
             ``out_name`` is set to the snake_case form of *name* so that
             graphql-core maps the argument back to the correct Python kwarg.
 
     Returns:
-        A ``GraphQLArgument`` whose ``.type`` mirrors the graphene type
-        hierarchy (``GraphQLNonNull`` / ``GraphQLList`` wrappers around the
-        leaf ``GraphQLScalarType``).
+        A ``GraphQLArgument`` wrapping the resolved graphql-core type.
 
-    Example::
-
-        import graphene
-        arg = graphene.Argument(graphene.String, required=True)
-        garg = graphene_arg_to_graphql_argument(arg, name="firstName")
-        # garg.type   → GraphQLNonNull(GraphQLString)
-        # garg.out_name → "first_name"
+    Raises:
+        TypeError: If *arg* (or its ``.type``) is a leftover graphene type (the
+            v2.0 CLEAN BREAK — declare args with graphql-core types).
     """
-    # A graphene ``Argument`` carries its scalar/enum on ``.type``; a bare mounted
-    # scalar instance (e.g. ``graphene.String()`` declared directly in a legacy
-    # ``Input`` class) IS the type and has no ``.type`` attribute. Fall back to the
-    # arg itself so both forms convert to a graphql-core ``GraphQLArgument``.
-    graphene_type = arg.type if hasattr(arg, "type") else arg
-    graphql_type = _unwrap_graphene_type(graphene_type)
+    # A ``GraphQLArgument`` carries its type on ``.type``; a bare graphql-core
+    # type IS the type and (for scalars/enums) has no ``.type`` attribute. Fall
+    # back to the arg itself so both forms resolve to a graphql-core type.
+    inner_type = arg.type if hasattr(arg, "type") else arg
+    graphql_type = _unwrap_graphene_type(inner_type)
 
     out_name: str | None = None
     if name is not None:
         out_name = to_snake_case(name)
 
-    # Retrieve optional attrs; graphene.Argument may carry these.
     default_value = getattr(arg, "default_value", None)
     description = getattr(arg, "description", None)
 

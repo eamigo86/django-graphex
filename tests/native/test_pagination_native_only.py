@@ -173,55 +173,30 @@ def test_to_graphql_fields_is_native_only() -> None:
         )
 
 
-def test_graphene_pagination_factories_never_fire_on_native_build() -> None:
-    """Monkeypatch every graphene pagination factory + graphene-path method to
-    RAISE, then build a schema with limit/offset AND cursor paginated list
-    fields. The build must SUCCEED — proving the native container path never
-    touches the graphene pagination machinery.
+def test_pagination_factories_are_native_and_graphene_free() -> None:
+    """Build a schema with limit/offset AND cursor paginated list fields; the
+    container SDL is assembled natively.
+
+    S-del-backend-11: the graphene pagination factories (``_g`` accessors,
+    ``_build_generic_pagination_field``, ``_build_cursor_page_info``, the graphene
+    ``get_pagination_field`` / graphene-bodied ``get_page_info_field``) were all
+    DELETED with the graphene backend, so the native container path is structurally
+    graphene-free. This asserts the native containers + cursor pageInfo render in
+    the compiled SDL, and that the deleted graphene factories are truly gone.
     """
     from django_graphex.paginations import pagination as ppag
     from django_graphex.paginations import utils as putils
-    from django_graphex.paginations.pagination import (
-        BaseDjangoGraphqlPagination,
-        CursorGraphqlPagination,
-    )
 
-    fired: list[str] = []
+    # The graphene pagination factories were deleted (not merely dormant).
+    assert not hasattr(putils, "_g")
+    assert not hasattr(ppag, "_g")
+    assert not hasattr(putils, "_build_generic_pagination_field")
+    assert not hasattr(ppag, "_build_cursor_page_info")
+    assert not hasattr(ppag, "CursorPageInfo")
+    assert not hasattr(putils, "GenericPaginationField")
 
-    def trip(name: str):
-        def _raise(*_a, **_k):
-            fired.append(name)
-            raise AssertionError(
-                f"GRAPHENE PAGINATION FACTORY FIRED ON NATIVE BUILD PATH: {name}"
-            )
+    schema, sdl = _build_paginated_schema()
 
-        return _raise
-
-    saved: list[tuple[object, str, object]] = []
-
-    def patch(obj: object, attr: str, name: str) -> None:
-        saved.append((obj, attr, getattr(obj, attr)))
-        setattr(obj, attr, trip(name))
-
-    try:
-        # Lazy graphene accessors (would import graphene).
-        patch(putils, "_g", "utils._g")
-        patch(ppag, "_g", "pagination._g")
-        # Graphene factory builders. (``_graphene_paginator_args`` was RETIRED in
-        # S-page-7 — its only consumer was the dead graphene container branch.)
-        patch(putils, "_build_generic_pagination_field", "_build_generic_pagination_field")
-        patch(ppag, "_build_cursor_page_info", "_build_cursor_page_info")
-        # Graphene-path container methods (the removed else-branch called these).
-        patch(BaseDjangoGraphqlPagination, "get_pagination_field", "get_pagination_field")
-        patch(BaseDjangoGraphqlPagination, "get_page_info_field", "base.get_page_info_field")
-        patch(CursorGraphqlPagination, "get_page_info_field", "cursor.get_page_info_field")
-
-        schema, sdl = _build_paginated_schema()
-    finally:
-        for obj, attr, orig in reversed(saved):
-            setattr(obj, attr, orig)
-
-    assert not fired, f"graphene pagination factories fired on native build: {fired}"
     # The container SDL was built natively.
     assert "type S7LimitOffsetContainer" in sdl
     assert "type S7CursorContainer" in sdl

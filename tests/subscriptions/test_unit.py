@@ -8,7 +8,6 @@ retired with the bespoke transport. What remains are the transport-agnostic
 engine units the native path still relies on.
 """
 
-from django_graphex.subscriptions import ActionSubscriptionEnum
 from django_graphex.subscriptions.mixins import (
     MAX_GROUP_NAME_LENGTH,
     safe_group_name,
@@ -49,7 +48,21 @@ def test_safe_group_name_hashes_invalid_charset():
 
 
 def test_action_enum_values_snapshot():
-    assert {e.name: e.value for e in ActionSubscriptionEnum} == {
+    """The native action enum (built into ``_meta.arguments``) carries the
+    canonical {CREATE, UPDATE, DELETE, ALL_ACTIONS} values.
+
+    S-del-backend-11: the graphene ``ActionSubscriptionEnum`` re-export was deleted
+    with the graphene backend; the action enum is now the native graphql-core
+    ``GraphQLEnumType`` the subscription field carries.
+    """
+    from graphql import GraphQLNonNull
+
+    action_type = UserSubscription._meta.arguments["action"].type
+    assert isinstance(action_type, GraphQLNonNull)
+    enum_values = {
+        name: value.value for name, value in action_type.of_type.values.items()
+    }
+    assert enum_values == {
         "CREATE": "create",
         "UPDATE": "update",
         "DELETE": "delete",

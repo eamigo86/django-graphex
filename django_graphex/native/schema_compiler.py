@@ -32,7 +32,6 @@ Per-field-kind dispatch (extensible by WU3/WU5/WU6):
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
 from django_graphex._strconv import to_camel_case
@@ -408,12 +407,11 @@ def _is_plain_object_type(graphene_cls: Any) -> bool:
             return False
         return True
 
-    # Transitional graphene fallback — graphene stays installed until S8; nested
-    # plain-object fields may still be graphene ``ObjectType`` subclasses until the
-    # remaining sub-slices convert them.
-    import graphene
-
-    return issubclass(graphene_cls, graphene.ObjectType)
+    # S-del-backend-11: the graphene-ROOT compile capability is removed. A plain
+    # output object MUST be a native ``ObjectType`` (the branch above); a leftover
+    # ``graphene.ObjectType`` is no longer recognised as a plain object type (v2.0
+    # cannot accept a graphene root). Anything else falls through to the scalar arm.
+    return False
 
 
 def _compile_plain_object_type(
@@ -743,30 +741,11 @@ def _compile_wrapped_field_type(
     if isinstance(field_type, NativeList):
         return GraphQLList(_compile_wrapped_field_type(field_type.of_type, registries))
 
-    # GRAPHENE wrappers (transitional, graphene-ROOT path — open-Q#3, retired in
-    # S-del-backend-11). A graphene ``List`` / ``NonNull`` wrapper can ONLY exist
-    # when graphene is already imported (the wrapper instance was constructed by
-    # graphene). So we consult ``graphene.types.structures`` ONLY when it is
-    # ALREADY in ``sys.modules`` — we NEVER trigger the import ourselves. This
-    # keeps a fully-native field/root compile graphene-free at RUNTIME (the
-    # S-milestone-9 zero-graphene gate): even a native leaf type that falls
-    # through the native-wrapper checks above must not drag in graphene. An
-    # uninstalled graphene (S8i) is likewise a no-op here.
-    _structures = sys.modules.get("graphene.types.structures")
-    if _structures is not None:  # pragma: no cover - graphene-ROOT path only
-        GList = getattr(_structures, "List", ())
-        GNonNull = getattr(_structures, "NonNull", ())
-    else:
-        GList = GNonNull = ()  # type: ignore[assignment]
-
-    # graphene wrappers share the ``.of_type`` read-contract; recurse + preserve
-    # the wrapper shape.
-    if GNonNull and isinstance(field_type, GNonNull):
-        return GraphQLNonNull(
-            _compile_wrapped_field_type(field_type.of_type, registries)
-        )
-    if GList and isinstance(field_type, GList):
-        return GraphQLList(_compile_wrapped_field_type(field_type.of_type, registries))
+    # S-del-backend-11: the graphene-ROOT wrapper handling (a graphene ``List`` /
+    # ``NonNull`` wrapper consulted via ``sys.modules['graphene.types.structures']``)
+    # is removed — v2.0 cannot accept a graphene root. Only the native ``NativeList``
+    # / ``NativeNonNull`` wrappers (handled above) are recognised; a leaf falls
+    # through to the polymorphic / plain-object / scalar arms below.
 
     polymorphic = _polymorphic_field_type(field_type, registries)
     if polymorphic is not None:

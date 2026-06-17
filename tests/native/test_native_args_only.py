@@ -268,53 +268,36 @@ def test_helper_constant_in_class_args_still_ignored():
 # --------------------------------------------------------------------------- #
 # (d) SDL PARITY — native arg SDL byte-identical to graphene.Argument form      #
 # --------------------------------------------------------------------------- #
-def test_native_arg_sdl_byte_identical_to_graphene_form():
-    """The native ``GraphQLArgument`` declaration renders the SAME arg SDL as the
-    ``graphene.Argument`` form it replaces (byte-identical)."""
-    import graphene
+def test_native_arg_sdl_renders_required_string():
+    """The native ``GraphQLArgument`` declaration renders the expected arg SDL.
+
+    S-del-backend-11: the graphene-bridge comparison was dropped (the graphene
+    backend is deleted). The native ``GraphQLNonNull(GraphQLString)`` arg renders
+    as ``a: String!`` — the byte-stable shape the graphene form used to produce.
+    """
     from graphql import GraphQLArgument, GraphQLNonNull, GraphQLString
 
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
-
-    # Graphene form (the OLD declaration) → converted via the transitional bridge.
-    graphene_arg = graphene_arg_to_graphql_argument(
-        graphene.Argument(graphene.String, required=True), name="a"
-    )
-    # Native form (the NEW declaration) — accepted verbatim.
     native_arg = GraphQLArgument(GraphQLNonNull(GraphQLString), out_name="a")
-
-    assert _arg_sdl(native_arg) == _arg_sdl(graphene_arg), (
-        "native GraphQLArgument SDL must be byte-identical to the graphene.Argument form"
-    )
+    assert _arg_sdl(native_arg) == "probe(a: String!): String"
 
 
-def test_native_arg_with_default_sdl_byte_identical():
-    """Default-value rendering is byte-identical between native + graphene forms."""
-    import graphene
+def test_native_arg_with_default_sdl_renders_default():
+    """Default-value rendering for a native ``GraphQLArgument`` is byte-stable."""
     from graphql import GraphQLArgument, GraphQLString
 
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
-
-    graphene_arg = graphene_arg_to_graphql_argument(
-        graphene.Argument(graphene.String, default_value="hello"), name="a"
-    )
     native_arg = GraphQLArgument(GraphQLString, default_value="hello", out_name="a")
+    assert _arg_sdl(native_arg) == 'probe(a: String = "hello"): String'
 
-    assert _arg_sdl(native_arg) == _arg_sdl(graphene_arg)
 
+def test_full_mutation_field_arg_sdl_renders_expected_shape():
+    """A whole mutation field's arg SDL — declared via the NATIVE arg form —
+    renders the expected byte-stable shape.
 
-def test_full_mutation_field_arg_sdl_byte_identical_to_graphene_bridge():
-    """A whole mutation field's arg SDL — declared via the NATIVE arg form — is
-    byte-identical to what the transitional graphene.Argument bridge produced for
-    the SAME logical declaration.
-
-    The native ``class args`` declaration is compiled by ``Mutation.Field()``
-    (S-args-8 graphene-free path); the graphene baseline is built directly via the
-    still-graphene ``graphene_arg_to_graphql_argument`` bridge (used by graphene
-    ROOTS until S-del-backend-11) — so this asserts SDL CONTINUITY across the break
-    without declaring a forbidden graphene-arg Mutation.
+    S-del-backend-11: the graphene-bridge baseline was dropped (the graphene
+    backend is deleted). The native ``class args`` declaration is compiled by
+    ``Mutation.Field()`` (graphene-free); its arg SDL is asserted directly against
+    the expected ``name: String!, note: String`` shape the graphene form produced.
     """
-    import graphene
     from graphql import (
         GraphQLArgument,
         GraphQLBoolean,
@@ -327,7 +310,6 @@ def test_full_mutation_field_arg_sdl_byte_identical_to_graphene_bridge():
     )
 
     from django_graphex import Mutation, field
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
 
     class _NativeArgsMutation(Mutation):
         class args:
@@ -339,16 +321,6 @@ def test_full_mutation_field_arg_sdl_byte_identical_to_graphene_bridge():
         @staticmethod
         def mutate(root, info, **kw):
             return _NativeArgsMutation(ok=True)
-
-    # Graphene baseline arg dict — the SAME logical declaration via the bridge.
-    graphene_args = {
-        "name": graphene_arg_to_graphql_argument(
-            graphene.Argument(graphene.String, required=True), name="name"
-        ),
-        "note": graphene_arg_to_graphql_argument(
-            graphene.Argument(graphene.String), name="note"
-        ),
-    }
 
     def _args_sdl(args_dict, wire_name):
         schema = GraphQLSchema(
@@ -363,9 +335,9 @@ def test_full_mutation_field_arg_sdl_byte_identical_to_graphene_bridge():
         raise AssertionError(f"{wire_name} field not found:\n{sdl}")
 
     native_field = _NativeArgsMutation.Field()
-    assert _args_sdl(native_field.args, "doThing") == _args_sdl(
-        graphene_args, "doThing"
-    ), "native arg declaration must render byte-identical arg SDL to the graphene bridge"
+    assert _args_sdl(native_field.args, "doThing") == "name: String!, note: String): String", (
+        "native arg declaration must render the expected byte-stable arg SDL"
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -276,12 +276,17 @@ def test_unwrap_passes_through_native_wrappers() -> None:
     assert _unwrap_graphene_type(wrapped) is wrapped
 
 
-def test_unwrap_still_handles_graphene_scalar_fallback() -> None:
-    """The graphene leaf path is still honoured (graphene stays installed)."""
+def test_unwrap_rejects_graphene_scalar_clean_break() -> None:
+    """The graphene leaf path is DELETED — a graphene scalar raises TypeError.
+
+    S-del-backend-11: ``_unwrap_graphene_type`` no longer converts graphene types
+    (the v2.0 CLEAN BREAK, decision #1603); it returns graphql-core types verbatim
+    and rejects anything else. A leftover ``graphene.String`` raises ``TypeError``.
+    """
     import graphene
-    from graphql import GraphQLString
+    import pytest
 
     from django_graphex.native._args import _unwrap_graphene_type
 
-    # graphene.String()'s mounted type resolves via _meta.name → GDX_SCALAR_MAP.
-    assert _unwrap_graphene_type(graphene.String) is GraphQLString
+    with pytest.raises(TypeError, match="Cannot convert"):
+        _unwrap_graphene_type(graphene.String)

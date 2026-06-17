@@ -60,8 +60,6 @@ class _FakeInfo:
 
 def _build_union_pair():
     """Return (Registry, AccountType, InvoiceType, union) wired in a fresh registry."""
-    import graphene
-
     from django_graphex.registry import Registry
     from django_graphex.types import DjangoObjectType, DjangoUnionType
     from tests.models import Track2Account, Track2Invoice  # noqa: F401
@@ -101,8 +99,7 @@ def test_schema_sets_gdx_registry_extension_to_default_pair():
     TEETH: before B3 the extension does not exist, so ``.get('gdx_registry')`` is
     ``None`` and this identity assertion fails.
     """
-    import graphene
-
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.base import default_schema_registries
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -116,7 +113,7 @@ def test_schema_sets_gdx_registry_extension_to_default_pair():
 
     compile_all_outputs()
 
-    class _ScopedQuery(graphene.ObjectType):
+    class _ScopedQuery(_NativeRoot):
         category = DjangoObjectField(_ScopedCatType)
 
     schema = DjangoGraphQLSchema(query=_ScopedQuery)
@@ -134,15 +131,16 @@ def test_schema_keeps_protected_fields_extension_alongside_registry():
     TEETH: if B3 replaced ``extensions`` (instead of adding a key), the protected
     set would vanish and the auth middleware read path would break.
     """
-    import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _PubQuery(graphene.ObjectType):
-        hello = graphene.String()
+    class _PubQuery(ObjectType):
+        hello = field(GraphQLString)
 
-    class _PrivQuery(graphene.ObjectType):
-        secret = graphene.String()
+    class _PrivQuery(ObjectType):
+        secret = field(GraphQLString)
 
     schema = DjangoGraphQLSchema(query=_PubQuery, private_query=_PrivQuery)
     extensions = schema.graphql_schema.extensions or {}
@@ -162,8 +160,7 @@ def test_explicit_registries_kwarg_is_used_for_extension():
     TEETH: if ``__init__`` ignored ``registries=`` and always used the global
     default, this identity check against the custom pair fails.
     """
-    import graphene
-
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.base import (
         SchemaRegistries,
@@ -180,7 +177,7 @@ def test_explicit_registries_kwarg_is_used_for_extension():
 
     compile_all_outputs()
 
-    class _ExplicitQuery(graphene.ObjectType):
+    class _ExplicitQuery(_NativeRoot):
         category = DjangoObjectField(_ExplicitCatType)
 
     # A pair that REUSES the global registries (so compile stays byte-identical)

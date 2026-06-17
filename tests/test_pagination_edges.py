@@ -136,9 +136,12 @@ def test_cursor_inmemory_page_info_empty_window():
 
 
 def test_cursor_page_info_field_resolver_non_list_root_returns_none():
+    # S-del-backend-11: the graphene-bodied ``get_page_info_field`` was deleted;
+    # the native cursor pageInfo field is ``get_native_page_info_field`` (a
+    # graphql-core ``GraphQLField`` with a ``resolve`` callable).
     p = CursorGraphqlPagination(ordering="name")
-    field = p.get_page_info_field(None)
-    assert field.resolver("not-a-base", None) is None
+    field = p.get_native_page_info_field(None)
+    assert field.resolve("not-a-base", None) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -172,10 +175,13 @@ class CursorPageInfoDbTest(TestCase):
         assert info["end_cursor"] is None
 
     def test_page_info_field_resolver_with_list_base(self):
+        # S-del-backend-11: use the native pageInfo field (``get_native_page_info_field``);
+        # its resolver remaps the snake_case ``get_page_info`` keys to the camelCase
+        # wire names the native CursorPageInfo type exposes.
         p = CursorGraphqlPagination(ordering="name", page_size=2)
-        field = p.get_page_info_field(None)
+        field = p.get_native_page_info_field(None)
         base = DjangoListObjectBase(
             results=Author.objects.all(), count=4, results_field_name="results"
         )
-        info = field.resolver(base, None, first=2)
-        assert info["has_next_page"] is True
+        info = field.resolve(base, None, first=2)
+        assert info["hasNextPage"] is True

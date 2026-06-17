@@ -46,8 +46,8 @@ from django_graphex.native.descriptors import NativeField, NativeMountedField
 # class attribute is recognized AND shielded from Pydantic model-field inference.
 # S8h dropped the graphene ``MountedType`` / ``UnmountedType`` markers (graphene
 # descriptors on a native type are no longer supported in 2.0; users migrate to
-# ``field()``).
-_GRAPHENE_DESCRIPTOR_TYPES = (NativeMountedField,)
+# ``field()``). S-del-backend-11 removed the dead ``_GRAPHENE_DESCRIPTOR_TYPES``
+# tuple — ``_FIELD_DESCRIPTOR_TYPES`` (below) is the live collector.
 
 # A class-attribute is treated as a FIELD DESCRIPTOR (collected into
 # ``_meta.fields`` and shielded from Pydantic model-field inference) when it is an

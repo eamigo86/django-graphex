@@ -67,18 +67,24 @@ def _build_list_types():
 
 @pytest.mark.django_db
 def test_results_is_not_graphene_pagination_field_on_native():
-    """On native, the list type must NOT build the graphene
-    ``GenericPaginationField`` (``get_pagination_field``) into ``_meta.fields``.
+    """On native, the list type must NOT build a graphene pagination descriptor
+    into ``_meta.fields``.
 
-    The native container is thunk-built on ``_meta.graphql_output_type``; the
-    graphene field is dead overhead.
+    S-del-backend-11: the graphene ``GenericPaginationField`` was DELETED with the
+    graphene backend. The native container is thunk-built on
+    ``_meta.graphql_output_type``; assert the deleted class is gone and that the
+    ``results`` descriptor is not a graphene ``GenericPaginationField`` (by name).
     """
-    from django_graphex.paginations.utils import GenericPaginationField
+    from django_graphex.paginations import utils
+
+    assert not hasattr(utils, "GenericPaginationField"), (
+        "graphene GenericPaginationField must be deleted in S-del-backend-11"
+    )
 
     lo, page, cursor = _build_list_types()
     for cls in (lo, page, cursor):
         results = cls._meta.fields.get("results")
-        assert not isinstance(results, GenericPaginationField), (
+        assert type(results).__name__ != "GenericPaginationField", (
             f"{cls.__name__}: graphene GenericPaginationField must NOT be built "
             f"on native (dead descriptor); got {type(results)!r}"
         )
@@ -86,17 +92,27 @@ def test_results_is_not_graphene_pagination_field_on_native():
 
 @pytest.mark.django_db
 def test_cursor_page_info_graphene_field_not_built_on_native():
-    """On native, the cursor list type must NOT build the graphene
-    ``CursorPageInfo`` ``page_info`` field (``get_page_info_field``)."""
+    """On native, the cursor list type must NOT build a graphene ``CursorPageInfo``
+    ``page_info`` field.
+
+    S-del-backend-11: the graphene ``CursorPageInfo`` ``ObjectType`` was DELETED;
+    assert it is gone and that any ``page_info`` field is not named CursorPageInfo
+    from the (deleted) graphene module.
+    """
+    from django_graphex.paginations import pagination as ppag
+
+    assert not hasattr(ppag, "CursorPageInfo"), (
+        "graphene CursorPageInfo must be deleted in S-del-backend-11"
+    )
+
     _lo, _page, cursor = _build_list_types()
     page_info = cursor._meta.fields.get("page_info")
     if page_info is not None:
-        # A graphene Field wrapping the graphene CursorPageInfo must not be here.
-        from django_graphex.paginations.pagination import CursorPageInfo
-
         ftype = getattr(page_info, "type", None) or getattr(page_info, "_type", None)
-        assert ftype is not CursorPageInfo, (
-            "graphene CursorPageInfo page_info field must NOT be built on native"
+        # Whatever the page_info field is, it must be the native CursorPageInfo
+        # (the graphql-core NATIVE_CURSOR_PAGE_INFO), never a graphene descriptor.
+        assert type(ftype).__module__.startswith("graphql") or ftype is None, (
+            f"page_info field type must be graphql-core native; got {ftype!r}"
         )
 
 

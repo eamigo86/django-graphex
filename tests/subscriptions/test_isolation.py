@@ -112,7 +112,6 @@ def test_public_exports():
         "Subscription",
         "SubscriptionField",
         "SubscriptionBinding",
-        "ActionSubscriptionEnum",
         "SubscriptionClientView",
     ):
         assert name in subscriptions.__all__, f"{name} must stay public"
@@ -139,11 +138,12 @@ def test_public_exports():
         )
 
     # The exact public surface is the spec §Public API Contract set — no extras.
+    # S-del-backend-11: ``ActionSubscriptionEnum`` (graphene ``Enum``) was dropped
+    # from the public surface with the graphene backend.
     assert set(subscriptions.__all__) == {
         "Subscription",
         "SubscriptionField",
         "SubscriptionBinding",
-        "ActionSubscriptionEnum",
         "SubscriptionClientView",
     }
 

@@ -161,47 +161,47 @@ def test_utils_module_body_is_graphene_token_free() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 2. The graphene pagination descriptors stay graphene (test contract)         #
+# 2. The graphene pagination descriptors are DELETED (S-del-backend-11)        #
 # --------------------------------------------------------------------------- #
-def test_generic_pagination_field_is_graphene_field_subclass() -> None:
-    """``GenericPaginationField`` must still subclass graphene ``Field``.
-
-    The optimizer + pagination-internals tests build it via ``__new__`` and read
-    ``paginator_instance`` / ``list_resolver``; the class identity (a graphene
-    ``Field`` subclass) is part of the protected native-default test contract.
+def test_generic_pagination_field_is_deleted() -> None:
+    """S-del-backend-11: the graphene ``GenericPaginationField`` factory + class
+    are deleted with the graphene backend. The backend-neutral slicing logic now
+    lives on the native ``NativePaginationField`` (tested in
+    ``test_pagination_internals.py`` / ``test_optimizer_phase_c.py``).
     """
-    import graphene  # graphene is still installed (uninstall is S8i)
+    from django_graphex.paginations import utils
 
-    from django_graphex.paginations.utils import GenericPaginationField
-
-    assert issubclass(GenericPaginationField, graphene.Field), (
-        "GenericPaginationField must remain a graphene.Field subclass."
+    assert not hasattr(utils, "GenericPaginationField"), (
+        "GenericPaginationField (graphene Field subclass) must be deleted."
     )
+    assert not hasattr(utils, "_build_generic_pagination_field")
+    assert not hasattr(utils, "_g")
+    # The native replacement is present.
+    assert hasattr(utils, "NativePaginationField")
 
 
-def test_cursor_page_info_field_is_graphene_field() -> None:
-    """``CursorGraphqlPagination.get_page_info_field`` returns a graphene Field.
+def test_cursor_page_info_graphene_descriptors_are_deleted() -> None:
+    """S-del-backend-11: the graphene ``CursorPageInfo`` ``ObjectType`` + the
+    graphene-bodied ``CursorGraphqlPagination.get_page_info_field`` are deleted.
 
-    The field wraps the graphene ``CursorPageInfo`` ``ObjectType`` and exposes a
-    ``.resolver`` attribute (read by ``tests/test_pagination_edges.py``). The
-    lazy-defer must keep this byte-identical.
+    The native cursor pageInfo is the graphql-core ``NATIVE_CURSOR_PAGE_INFO`` +
+    ``get_native_page_info_field`` (tested below + in ``test_pagination_edges.py``).
     """
-    import graphene
+    from django_graphex.paginations import pagination as ppag
+    from django_graphex.paginations.pagination import CursorGraphqlPagination
 
-    from django_graphex.paginations.pagination import (
-        CursorGraphqlPagination,
-        CursorPageInfo,
+    assert not hasattr(ppag, "CursorPageInfo"), (
+        "the graphene CursorPageInfo ObjectType must be deleted."
     )
+    assert not hasattr(ppag, "_build_cursor_page_info")
+    assert not hasattr(ppag, "_g")
 
-    assert issubclass(CursorPageInfo, graphene.ObjectType), (
-        "CursorPageInfo must remain a graphene.ObjectType subclass."
-    )
-
+    # The base get_page_info_field is graphene-free (returns None); the Cursor
+    # graphene override is gone — the native pageInfo is get_native_page_info_field.
     p = CursorGraphqlPagination(ordering="name")
-    field = p.get_page_info_field(None)
-    assert isinstance(field, graphene.Field)
-    # The graphene field exposes a `.resolver` that returns None off a non-base.
-    assert field.resolver("not-a-base", None) is None
+    assert p.get_page_info_field(None) is None
+    native_field = p.get_native_page_info_field(None)
+    assert native_field.resolve("not-a-base", None) is None
 
 
 def test_graphene_paginator_args_helper_is_retired() -> None:
@@ -332,5 +332,6 @@ def test_pagination_modules_import_and_expose_public_api() -> None:
     assert hasattr(pagination, "CursorGraphqlPagination")
     assert hasattr(pagination, "NATIVE_CURSOR_PAGE_INFO")
     assert hasattr(utils, "NativePaginationField")
-    assert hasattr(utils, "GenericPaginationField")
     assert hasattr(utils, "_paginate_list_base")
+    # S-del-backend-11: the graphene GenericPaginationField was deleted.
+    assert not hasattr(utils, "GenericPaginationField")

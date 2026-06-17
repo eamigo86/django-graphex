@@ -15,9 +15,9 @@ pytestmark = pytest.mark.native_only
 def test_native_schema_query_type_is_canonical_native_instance():
     """ANTI-TAUTOLOGY (schema level): the assembled native schema's query field
     type for the DjangoObjectField IS the canonical native instance with gdx."""
-    import graphene
     from graphql import GraphQLObjectType, GraphQLSchema
 
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.base import get_shared_output_registry
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -31,7 +31,7 @@ def test_native_schema_query_type_is_canonical_native_instance():
 
     compile_all_outputs()
 
-    class _SeedQuery(graphene.ObjectType):
+    class _SeedQuery(_NativeRoot):
         category = DjangoObjectField(_AssemblyCatType)
 
     schema = DjangoGraphQLSchema(query=_SeedQuery)
@@ -53,8 +53,7 @@ def test_native_schema_query_type_is_canonical_native_instance():
 @pytest.mark.django_db
 def test_native_schema_no_duplicate_type_name():
     """The native schema assembles without a duplicate-name TypeError."""
-    import graphene
-
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
@@ -67,7 +66,7 @@ def test_native_schema_no_duplicate_type_name():
 
     compile_all_outputs()
 
-    class _SeedQuery(graphene.ObjectType):
+    class _SeedQuery(_NativeRoot):
         category = DjangoObjectField(_NoDupCatType)
 
     # Must not raise "Schema must contain uniquely named types ...".
@@ -99,9 +98,9 @@ def test_native_single_object_query_executes_returns_real_data():
     fix (root carries ``extensions['gdx']`` with the source graphene class +
     ``_get_custom_resolver`` reads it via the bridge) it PASSES with real data.
     """
-    import graphene
     from graphql import graphql_sync
 
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
@@ -114,7 +113,7 @@ def test_native_single_object_query_executes_returns_real_data():
 
     compile_all_outputs()
 
-    class _ExecQuery(graphene.ObjectType):
+    class _ExecQuery(_NativeRoot):
         category = DjangoObjectField(_ExecCatType)
 
     schema = DjangoGraphQLSchema(query=_ExecQuery)
@@ -142,8 +141,7 @@ def test_native_root_type_carries_gdx_with_source_graphene_class():
     """The compiled native root carries ``extensions['gdx']`` (D8 invariant)
     whose GdxMeta exposes the SOURCE graphene root class, so dual-backend
     read-sites can recover ``resolve_<field>`` methods under native."""
-    import graphene
-
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.compat import _gdx_graphene_type
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -157,7 +155,7 @@ def test_native_root_type_carries_gdx_with_source_graphene_class():
 
     compile_all_outputs()
 
-    class _GdxQuery(graphene.ObjectType):
+    class _GdxQuery(_NativeRoot):
         category = DjangoObjectField(_GdxCatType)
 
     schema = DjangoGraphQLSchema(query=_GdxQuery)
@@ -192,8 +190,7 @@ def test_native_schema_build_failure_raises_not_silent_fallback():
     ``DjangoGraphQLSchema`` rather than being swallowed by a graphene fallback)
     is STILL intact for any kind that does not yet have a builder.
     """
-    import graphene
-
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoListObjectField
     from django_graphex.native import schema_compiler
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -207,7 +204,7 @@ def test_native_schema_build_failure_raises_not_silent_fallback():
 
     compile_all_outputs()
 
-    class _ListQuery(graphene.ObjectType):
+    class _ListQuery(_NativeRoot):
         categories = DjangoListObjectField(_RaiseListType)
 
     # Temporarily mark DjangoListObjectField as deferred so the compiler raises
@@ -228,27 +225,30 @@ def test_native_schema_build_failure_raises_not_silent_fallback():
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
 def test_native_schema_forwards_unreferenced_plain_object_type():
-    """An UNREFERENCED plain ``graphene.ObjectType`` passed via ``types=`` lands
-    in the native schema's ``type_map`` (graphene parity).
+    """An UNREFERENCED plain native ``ObjectType`` passed via ``types=`` lands in
+    the native schema's ``type_map``.
 
     Against the unfixed assembly this FAILS: the native ``GraphQLSchema(...)``
     call did NOT forward ``types=``, so the unreferenced type is dropped (it is
-    not reachable from Query). graphene's ``graphene.Schema`` forwards ``types=``
-    to its graphql-core schema, so the type IS present there. After the fix the
-    native type_map contains the forwarded type as a gdx-bearing native instance.
-    """
-    import graphene
-    from graphql import GraphQLObjectType
+    not reachable from Query). After the fix the native type_map contains the
+    forwarded type as a gdx-bearing native instance.
 
+    S-del-backend-11: the root + forwarded type are NATIVE ``ObjectType``s (the
+    graphene-ROOT compile capability was removed); the forwarding behavior is
+    unchanged.
+    """
+    from graphql import GraphQLObjectType, GraphQLString
+
+    from django_graphex import ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _UnreferencedType(graphene.ObjectType):
-        secret = graphene.String()
+    class _UnreferencedType(ObjectType):
+        secret = field(GraphQLString)
 
-    class _TypesQuery(graphene.ObjectType):
+    class _TypesQuery(ObjectType):
         # Does NOT reference _UnreferencedType.
-        hello = graphene.String()
+        hello = field(GraphQLString)
 
     compile_all_outputs()
 
@@ -273,9 +273,9 @@ def test_native_schema_forwards_unreferenced_plain_object_type():
 def test_native_schema_forwards_django_object_type_canonical_instance():
     """A ``DjangoObjectType`` passed via ``types=`` reuses its CANONICAL native
     output instance (identity-stable) and lands in the type_map."""
-    import graphene
-    from graphql import GraphQLObjectType
+    from graphql import GraphQLObjectType, GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.native.base import get_shared_output_registry
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
@@ -286,8 +286,8 @@ def test_native_schema_forwards_django_object_type_canonical_instance():
         class Meta:
             model = Category
 
-    class _TypesQuery2(graphene.ObjectType):
-        hello = graphene.String()
+    class _TypesQuery2(ObjectType):
+        hello = field(GraphQLString)
 
     compile_all_outputs()
 
@@ -314,8 +314,7 @@ def test_native_schema_types_referenced_and_listed_no_duplicate_name():
     in ``types=`` while a field also references it does not create a second
     same-named type.
     """
-    import graphene
-
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
@@ -326,7 +325,7 @@ def test_native_schema_types_referenced_and_listed_no_duplicate_name():
         class Meta:
             model = Category
 
-    class _DupQuery(graphene.ObjectType):
+    class _DupQuery(_NativeRoot):
         category = DjangoObjectField(_DupCatType)  # references _DupCatType
 
     compile_all_outputs()
@@ -347,13 +346,15 @@ def test_native_schema_forwards_scalar_type_via_types():
     """A graphene SCALAR class passed via ``types=`` maps to its native scalar
     singleton and lands in the type_map (graphene parity)."""
     import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.scalars import GdxUUID
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _ScalarTypesQuery(graphene.ObjectType):
-        hello = graphene.String()
+    class _ScalarTypesQuery(ObjectType):
+        hello = field(GraphQLString)
 
     compile_all_outputs()
 
@@ -375,15 +376,17 @@ def test_native_schema_types_unsupported_kind_raises_not_implemented():
     ``NotImplementedError`` naming the type — NEVER a silent drop (honest, no
     silent SDL divergence)."""
     import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
 
     class _SomeInput(graphene.InputObjectType):
         value = graphene.String()
 
-    class _UnsupportedQuery(graphene.ObjectType):
-        hello = graphene.String()
+    class _UnsupportedQuery(ObjectType):
+        hello = field(GraphQLString)
 
     compile_all_outputs()
 
@@ -427,13 +430,13 @@ def test_s6f_public_surface_preserved_without_graphene_base():
     ``mutation`` / ``subscription``; SDL tooling reads ``str(schema)`` and
     ``schema.graphql_schema``. ``auto_camelcase`` is exposed for parity readers.
     """
-    import graphene
-    from graphql import GraphQLSchema
+    from graphql import GraphQLSchema, GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _S6fQuery(graphene.ObjectType):
-        hello = graphene.String()
+    class _S6fQuery(ObjectType):
+        hello = field(GraphQLString)
 
     schema = DjangoGraphQLSchema(query=_S6fQuery)
 
@@ -456,15 +459,16 @@ def test_s6f_protected_fields_attached_without_graphene_branch():
     branch). The native build attaches both the legacy ``_gde_protected_fields``
     marker and the canonical ``extensions['gdx_protected_fields']``.
     """
-    import graphene
+    from graphql import GraphQLString
 
+    from django_graphex import ObjectType, field
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _PubQ(graphene.ObjectType):
-        pub_only = graphene.String()
+    class _PubQ(ObjectType):
+        pub_only = field(GraphQLString)
 
-    class _PrivQ(graphene.ObjectType):
-        priv_only = graphene.String()
+    class _PrivQ(ObjectType):
+        priv_only = field(GraphQLString)
 
     import warnings
 

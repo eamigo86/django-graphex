@@ -47,7 +47,6 @@ Graphene import policy:
 from __future__ import annotations
 
 import inspect
-import sys
 from functools import partial, total_ordering
 from typing import Any, Callable, Optional
 
@@ -58,47 +57,28 @@ from typing import Any, Callable, Optional
 # ``creation_counter`` so the SDL field order matches declaration order — exactly
 # what graphene's ``OrderedType`` provided. ``NativeMountedField`` carries one so
 # a field declared off graphene keeps stable, declaration-ordered output. The
-# counter is a SHARED, monotonically-increasing process-global integer (graphene
-# parity: graphene's ``OrderedType.creation_counter`` is one global counter, so a
-# graphene ``Field`` and a ``NativeMountedField`` interleave in a single order
-# space during the transitional dual-currency window).
+# counter is a process-global, monotonically-increasing integer.
 #
-# We deliberately reuse graphene's OWN global counter at runtime (when graphene is
-# importable) so a class body mixing a graphene descriptor (e.g. a relation
-# ``Dynamic`` mounted via ``_as``) and a native list field keeps the SAME relative
-# order graphene would have produced. The lazy import is wrapped so the descriptor
-# stays import-safe after graphene is uninstalled (S8i): it then falls back to a
-# local counter.
+# S-del-backend-11: the graphene backend is deleted, so the transitional shared-
+# counter sync with graphene's ``OrderedType`` (consulted via ``sys.modules`` when
+# a graphene-ROOT schema was built in the same process) is GONE. ``_yank_fields``
+# only keeps native descriptors (``NativeMountedField`` / ``NativeField``), so
+# there is no mixed native+graphene order space to share — the local counter is
+# the only path.
 _LOCAL_COUNTER = [0]
 
 
 def _next_creation_counter() -> int:
-    """Return the next monotonic creation counter (graphene-free on the native path).
+    """Return the next monotonic creation counter (graphene-free).
 
     Mirrors ``graphene.utils.orderedtype.OrderedType.gen_counter``: a single
     process-global, monotonically-increasing integer that lets ``_yank_fields``
-    sort ``_meta.fields`` by declaration order for SDL parity.
-
-    The native path NEVER imports graphene to obtain this counter (S-milestone-9
-    zero-graphene gate): a ``field()`` / ``Django*Field`` declared at RUNTIME must
-    not drag in the whole graphene tree. ``_yank_fields`` only keeps native
-    descriptors (``NativeMountedField`` / ``NativeField``) — the migration retired
-    the graphene-marker branch (S-input-5) — so there is no longer a mixed
-    native+graphene order space to share, and a local counter is sufficient.
-
-    For belt-and-suspenders parity during the brief window where a graphene-ROOT
-    schema is built in the SAME process AND graphene is ALREADY imported, we keep
-    advancing graphene's OWN counter so the two stay interleaved — but ONLY when
-    graphene is already in ``sys.modules`` (we never trigger the import ourselves).
-    After graphene is uninstalled (S8i) the local counter is the only path.
+    sort ``_meta.fields`` by declaration order for SDL parity. The native path
+    NEVER imports graphene to obtain this counter: a ``field()`` / ``Django*Field``
+    declared at RUNTIME must not drag in graphene. ``_yank_fields`` only keeps
+    native descriptors (``NativeMountedField`` / ``NativeField``), so a local
+    counter is sufficient.
     """
-    g = sys.modules.get("graphene.utils.orderedtype")
-    if g is not None:  # pragma: no cover - graphene already loaded by another path
-        ordered_type = getattr(g, "OrderedType", None)
-        if ordered_type is not None:
-            counter = ordered_type.creation_counter
-            ordered_type.creation_counter += 1
-            return counter
     _LOCAL_COUNTER[0] += 1
     return _LOCAL_COUNTER[0]
 

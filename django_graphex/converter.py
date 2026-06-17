@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from functools import singledispatch
@@ -23,17 +22,8 @@ from django.utils.translation import override as translation_override
 from graphql.pyutils import register_description
 
 from ._strconv import to_camel_case
-from .base_types import (
-    Binary,
-    CustomDate,
-    CustomDateTime,
-    CustomTime,
-    GenericForeignKeyInputType,
-    GenericForeignKeyType,
-)
 from .fields import (
     ArrayField,
-    DjangoListField,
     DjangoNestedListObjectField,
     HStoreField,
     RangeField,
@@ -58,120 +48,22 @@ if TYPE_CHECKING:
 _NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 
-class _GrapheneConstructs:
-    """Lazy holder for the graphene descriptor classes the converter builds.
-
-    S8e (graphene-removal): the converter no longer imports graphene at the
-    MODULE top level — that ``from graphene import (...)`` blocked the graphene
-    uninstall (S8i). The graphene constructs are STILL genuinely consumed,
-    though:
-
-    * ``Enum`` — ``convert_django_field_with_choices`` returns a graphene
-      ``Enum`` instance and carries the choices->enum registry side-effect (the
-      native-default converter test contract asserts ``isinstance(out, Enum)``).
-    * ``Dynamic`` / ``Field`` / ``ID`` — the FK / O2O / M2M / reverse / GFK
-      relation closures; the native output thunk consumes the ``Dynamic``
-      descriptor, and the converter tests assert ``isinstance(out, Dynamic)``
-      plus ``out.type.of_type.of_type is ID`` on native.
-    * ``List`` / ``NonNull`` — the ArrayField / RangeField list wrappers and the
-      Boolean-NonNull create branch.
-    * ``String`` / ``Int`` / ``Float`` / ``Boolean`` / ``UUID`` / ``JSONString``
-      — the SCALAR descriptors, DEAD on the native OUTPUT path (built only on
-      the graphene path via ``_scalar_or_dead``), so their import is deferred to
-      the moment the graphene scalar is actually built.
-
-    So the constructs stay graphene; only the uninstall-blocking TOP-LEVEL
-    import moves here, resolved LAZILY on first use and cached. Each construct is
-    exposed as an attribute so call sites read ``_g().Enum`` / ``_g().Dynamic``
-    etc., one-for-one with the old direct names.
-    """
-
-    __slots__ = (
-        "ID",
-        "UUID",
-        "Boolean",
-        "Dynamic",
-        "Enum",
-        "Field",
-        "Float",
-        "Int",
-        "List",
-        "NonNull",
-        "String",
-        "JSONString",
-    )
-
-    def __init__(self) -> None:
-        """Import the graphene constructs once and pin them as attributes."""
-        from graphene import (  # noqa: PLC0415
-            ID,
-            UUID,
-            Boolean,
-            Dynamic,
-            Enum,
-            Field,
-            Float,
-            Int,
-            List,
-            NonNull,
-            String,
-        )
-        from graphene.types.json import JSONString  # noqa: PLC0415
-
-        self.ID = ID
-        self.UUID = UUID
-        self.Boolean = Boolean
-        self.Dynamic = Dynamic
-        self.Enum = Enum
-        self.Field = Field
-        self.Float = Float
-        self.Int = Int
-        self.List = List
-        self.NonNull = NonNull
-        self.String = String
-        self.JSONString = JSONString
-
-
-#: Process-wide cache for the lazily imported graphene constructs.
-_GRAPHENE_CONSTRUCTS: _GrapheneConstructs | None = None
-
-
-def _g() -> _GrapheneConstructs:
-    """Return the lazily imported, cached graphene constructs namespace.
-
-    The first call imports graphene (still installed until S8i) and caches the
-    construct classes; subsequent calls reuse the cache. This keeps every
-    descriptor the converter builds byte-identical while removing the
-    uninstall-blocking top-level ``import graphene``.
-    """
-    global _GRAPHENE_CONSTRUCTS
-    if _GRAPHENE_CONSTRUCTS is None:
-        _GRAPHENE_CONSTRUCTS = _GrapheneConstructs()
-    return _GRAPHENE_CONSTRUCTS
-
-
 class _DeadScalarSentinel:
-    """Marker returned by SCALAR converters under ``GDX_BACKEND=native``.
+    """Marker returned by SCALAR converters (the native OUTPUT/INPUT path).
 
     The native OUTPUT compiler (``native/output_compiler.compile_output_fields``)
     reads ``model._meta`` DIRECTLY and maps each Django scalar field to a native
     scalar (DateField->GdxDate, BinaryField->GraphQLString, CharField->
-    GraphQLString, …). It NEVER reads the graphene scalar DESCRIPTORS that the
-    converter builds into ``_meta.fields`` (``Binary(...)`` / ``CustomDate(...)`` /
-    ``String(...)`` / …) — so those descriptors are DEAD on native (verified
-    empirically: the entire converter ``_meta.fields`` output is unread on the
-    native output path, see #1552 and S-ROOTS-d).
+    GraphQLString, …). It NEVER reads a per-field DESCRIPTOR from the converter —
+    so building one would be DEAD work. Each SCALAR ``convert_django_field``
+    dispatcher therefore returns this sentinel, and ``construct_fields`` OMITS the
+    field from the produced dict — a PER-FIELD-TYPE skip (#1552): GFK, the relation
+    markers, and the nested-list (``_nested_list_object_field``) descriptors are
+    NOT scalars and so are KEPT, never returning this sentinel.
 
-    To avoid BUILDING the dead graphene scalar descriptors on native (and so let
-    the now-unused graphene scalar classes retire once graphene is uninstalled in
-    S8), each SCALAR ``convert_django_field`` dispatcher returns this sentinel
-    when ``_NATIVE_BACKEND`` is True. ``construct_fields`` then OMITS the field
-    from the produced dict — a PER-FIELD-TYPE skip (#1552): GFK, the relation
-    ``Dynamic`` descriptors, and the nested-list (``_nested_list_object_field``)
-    descriptors are NOT scalars and so are KEPT, never returning this sentinel.
-
-    The graphene path (``GDX_BACKEND`` unset) is UNCHANGED — the dispatchers build
-    the real graphene scalar descriptors exactly as before.
+    S-del-backend-11: the graphene scalar descriptors the converter used to build
+    on the graphene path are GONE (the graphene backend is deleted). Scalars now
+    unconditionally return this sentinel.
     """
 
     __slots__ = ()
@@ -179,25 +71,6 @@ class _DeadScalarSentinel:
 
 #: Singleton sentinel instance (identity-comparable in ``construct_fields``).
 _DEAD_SCALAR = _DeadScalarSentinel()
-
-
-def _scalar_or_dead(build: "Callable[[], Any]") -> Any:
-    """Return the built graphene scalar descriptor, or the dead-scalar sentinel.
-
-    On native the descriptor is dead (see ``_DeadScalarSentinel``) so we return
-    the sentinel WITHOUT building (or even importing) the graphene scalar — the
-    native output compiler derives the field from ``model._meta`` directly. On
-    graphene we build the descriptor normally.
-
-    Args:
-        build: a zero-arg callable that builds the graphene scalar descriptor.
-
-    Returns:
-        The dead-scalar sentinel on native, otherwise the built descriptor.
-    """
-    if _NATIVE_BACKEND:
-        return _DEAD_SCALAR
-    return build()
 
 
 def _nested_list_object_field(
@@ -384,71 +257,16 @@ def convert_django_field_with_choices(
     """
     choices = getattr(field, "choices", None)
     if choices:
-        # Native path (S-enum-2 OUTPUT; S-input-5 INPUT): the choices field is
-        # rendered as a ``GraphQLEnumType`` built GRAPHENE-FREE from ``model._meta``
-        # (``build_choices_enum_type``, S-enum-1) — on OUTPUT by
-        # ``output_compiler._compile_choices_enum_field`` and on INPUT by
-        # ``input_compiler.compile_input_type`` (the shared canonical enum). The
-        # graphene ``Enum`` descriptor built below is therefore DEAD on both paths:
-        # it is never read, and building it only PINS graphene (the #1609 gap:
-        # defining a choices DjangoObjectType / DjangoInputObjectType imported
-        # graphene at class-def time, and the graphene Enum reached the
-        # ``_yank_fields`` graphene-marker branch). Return the dead-scalar sentinel
-        # so ``construct_fields`` OMITS it — like the PK (``convert_field_to_id``)
-        # and the relation markers (S-rel-2/3/4). OUTPUT stays byte-identical;
-        # INPUT changes ``status: String`` -> the shared enum (output/input parity).
-        if _NATIVE_BACKEND:
-            return _DEAD_SCALAR
-
-        meta = field.model._meta
-
-        # Key enums by (app_label, object_name, field_name) so two models that
-        # share a class name across different Django apps — and carry the same
-        # choices-field name — never collide in the registry.  This mirrors the
-        # (model_class, for_input) keying used for object/input types.
-        name = f"{meta.app_label}_{meta.object_name}_{field.name}_Enum"
-        if input_flag:
-            name = f"{name}_{input_flag}"
-        name = to_camel_case(name)
-
-        enum = registry.get_type_for_enum(name)
-        if not enum:
-            choices = list(get_choices(choices))
-            named_choices = [(c[0], c[1]) for c in choices]
-            named_choices_descriptions = {c[0]: c[2] for c in choices}
-
-            class EnumWithDescriptionsType:
-                @property
-                def description(self) -> Any:
-                    """Return the description for the current enum member."""
-                    return named_choices_descriptions[self.name]
-
-            enum = _g().Enum(
-                name, list(named_choices), type=EnumWithDescriptionsType
-            )
-            registry.register_enum(name, enum)
-
-        # Detect django-multiselectfield's MultiSelectField via isinstance when the
-        # package is installed (covers subclasses); fall back to a name check only
-        # when the import fails so the converter works without the optional dep.
-        try:
-            from multiselectfield import MultiSelectField as _MSField  # noqa: PLC0415
-
-            _is_multiselect = isinstance(field, _MSField)  # pragma: no cover
-        except ImportError:
-            # multiselectfield not installed — fall back to a class-name check.
-            _is_multiselect = type(field).__name__ == "MultiSelectField"
-
-        if _is_multiselect:
-            return DjangoListField(
-                enum,
-                description=field.help_text or field.verbose_name,
-                required=is_required(field) and input_flag == "create",
-            )
-        return enum(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
+        # The choices field is rendered as a ``GraphQLEnumType`` built
+        # GRAPHENE-FREE from ``model._meta`` (``build_choices_enum_type``,
+        # S-enum-1) — on OUTPUT by ``output_compiler._compile_choices_enum_field``
+        # and on INPUT by ``input_compiler.compile_input_type`` (the shared
+        # canonical enum). No converter descriptor is read on either path, so
+        # return the dead-scalar sentinel and let ``construct_fields`` OMIT it —
+        # like the PK (``convert_field_to_id``) and the relation markers
+        # (S-rel-2/3/4). S-del-backend-11: the graphene ``Enum`` descriptor this
+        # used to build on the graphene path is GONE.
+        return _DEAD_SCALAR
     return convert_django_field(field, registry, input_flag, nested_field)
 
 
@@ -696,12 +514,7 @@ def convert_field_to_string(
     Returns:
         A GraphQL String field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: _g().String(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.AutoField)
@@ -722,34 +535,15 @@ def convert_field_to_id(
     Returns:
         A GraphQL ID field for the Django field.
     """
-    # INPUT (create / update): on the native path the PK input surface is built
-    # by ``input_compiler.compile_input_type`` from the generated Pydantic model
-    # (``id: Int`` on update; omitted on create). This graphene ``ID`` descriptor
-    # is DEAD on native input — it flows into ``_meta.fields`` unread and only
-    # pins graphene. Return the dead-scalar sentinel so ``construct_fields`` omits
-    # it (S-input-5). The graphene path (``GDX_BACKEND`` unset) is UNCHANGED.
-    if input_flag:
-        if _NATIVE_BACKEND:
-            return _DEAD_SCALAR
-        return _g().ID(
-            description=field.help_text or "Django object unique identification field",
-            required=input_flag == "update",
-        )
-    # OUTPUT (``input_flag is None``): the native output compiler renders the PK
-    # as ``id: ID!`` directly from ``model._meta`` (AutoField -> GraphQLID +
-    # ``GraphQLNonNull`` for the primary key, see
-    # ``output_compiler._to_graphql_field``); this graphene ``ID`` descriptor is
-    # DEAD and only pins graphene on the output path. Return the dead-scalar
-    # sentinel under ``GDX_BACKEND=native`` so ``construct_fields`` omits it and
-    # the graphene import never fires for the PK on output (S-rel-2). The
-    # graphene path (``GDX_BACKEND`` unset) is UNCHANGED.
-    return _scalar_or_dead(
-        lambda: _g().ID(
-            description=field.help_text
-            or "Django object unique identification field",
-            required=not field.null,
-        )
-    )
+    # INPUT (create / update): the native PK input surface is built by
+    # ``input_compiler.compile_input_type`` from the generated Pydantic model
+    # (``id: Int`` on update; omitted on create). OUTPUT (``input_flag is None``):
+    # the native output compiler renders the PK as ``id: ID!`` directly from
+    # ``model._meta`` (AutoField -> GraphQLID + ``GraphQLNonNull`` for the primary
+    # key, see ``output_compiler._to_graphql_field``). Neither path reads a
+    # converter descriptor, so return the dead-scalar sentinel and let
+    # ``construct_fields`` omit it (S-rel-2 / S-input-5).
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.UUIDField)
@@ -770,12 +564,7 @@ def convert_field_to_uuid(
     Returns:
         A GraphQL UUID field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: _g().UUID(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.PositiveIntegerField)
@@ -800,12 +589,7 @@ def convert_field_to_int(
     Returns:
         A GraphQL Int field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: _g().Int(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.BooleanField)
@@ -826,13 +610,7 @@ def convert_field_to_boolean(
     Returns:
         A GraphQL Boolean field, non-null when required on create.
     """
-    if _NATIVE_BACKEND:
-        return _DEAD_SCALAR
-    g = _g()
-    required = is_required(field) and input_flag == "create"
-    if required:
-        return g.NonNull(g.Boolean, description=field.help_text or field.verbose_name)
-    return g.Boolean(description=field.help_text)
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.NullBooleanField)
@@ -853,12 +631,7 @@ def convert_field_to_nullboolean(
     Returns:
         A GraphQL Boolean field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: _g().Boolean(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.BinaryField)
@@ -879,12 +652,7 @@ def convert_binary_to_string(
     Returns:
         A GraphQL Binary field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: Binary(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.DecimalField)
@@ -907,12 +675,7 @@ def convert_field_to_float(
     Returns:
         A GraphQL Float field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: _g().Float(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.DateField)
@@ -933,12 +696,7 @@ def convert_date_to_string(
     Returns:
         A GraphQL CustomDate field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: CustomDate(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.DateTimeField)
@@ -959,12 +717,7 @@ def convert_datetime_to_string(
     Returns:
         A GraphQL CustomDateTime field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: CustomDateTime(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.TimeField)
@@ -985,12 +738,7 @@ def convert_time_to_string(
     Returns:
         A GraphQL CustomTime field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: CustomTime(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(models.OneToOneRel)
@@ -1009,38 +757,23 @@ def convert_onetoone_field_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the related type, or a
-        graphene-free ``NativeRelationField`` marker on the native OUTPUT path.
+        A graphene-free ``NativeRelationField`` presence/ordering marker.
     """
     model = field.related_model
 
-    # Native path (S-input-5: OUTPUT *and* INPUT): a reverse OneToOne is compiled
-    # DIRECTLY from ``model._meta`` — on OUTPUT by ``types._compile_reverse_o2o_fields``
-    # (it walks ``OneToOneRel`` reverse relations and resolves via the per-type
-    # registry); on INPUT by ``types._resolve_native_relation_input_fields`` ->
+    # A reverse OneToOne is compiled DIRECTLY from ``model._meta`` — on OUTPUT by
+    # ``types._compile_reverse_o2o_fields`` (it walks ``OneToOneRel`` reverse
+    # relations and resolves via the per-type registry); on INPUT by
+    # ``types._resolve_native_relation_input_fields`` ->
     # ``input_compiler.compile_input_type`` (a reverse-O2O becomes a single
-    # ``ID``). Neither path reads this descriptor: it flows into ``_meta.fields``
-    # only as a PRESENCE/ORDERING marker. Emit a graphene-free
+    # ``ID``). Neither path reads a converter descriptor: it flows into
+    # ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a graphene-free
     # ``NativeRelationField`` (never ``None`` — the silent-drop trap) so the field
     # stays in ``_meta.fields`` with the SAME ``creation_counter`` for SDL field
     # ORDER. (S-rel-2 OUTPUT; S-input-5 INPUT.)
-    if _NATIVE_BACKEND:
-        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    from .native.descriptors import NativeRelationField  # noqa: PLC0415
 
-        return NativeRelationField(related_model=model)
-
-    def dynamic_type() -> Any:
-        """Resolve the related GraphQL type lazily."""
-        if input_flag and not nested_field:
-            return _g().ID()
-        _type = registry.get_type_for_model(model, for_input=input_flag)
-        if not _type:
-            return
-        return _g().Field(
-            _type, required=is_required(field) and input_flag == "create"
-        )
-
-    return _g().Dynamic(dynamic_type)
+    return NativeRelationField(related_model=model)
 
 
 @convert_django_field.register(models.ManyToManyField)
@@ -1059,45 +792,24 @@ def convert_field_to_list_or_connection(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the related list, or a
-        graphene-free ``NativeRelationField`` marker on the native OUTPUT path.
+        A graphene-free ``NativeRelationField`` presence/ordering marker.
     """
     model = get_related_model(field)
 
-    # Native path (S-input-5: OUTPUT *and* INPUT): the forward-M2M to-MANY field
-    # is compiled DIRECTLY from ``model._meta`` — on OUTPUT by
-    # ``types._compile_relation_list_fields`` (which reuses the related node's
-    # ``<Model>ListType`` results/totalCount CONTAINER via
+    # The forward-M2M to-MANY field is compiled DIRECTLY from ``model._meta`` — on
+    # OUTPUT by ``types._compile_relation_list_fields`` (which reuses the related
+    # node's ``<Model>ListType`` results/totalCount CONTAINER via
     # ``_nested_list_object_field`` and emits the final field via
     # ``schema_compiler._build_list_object_field``); on INPUT by
     # ``types._resolve_native_relation_input_fields`` ->
     # ``input_compiler.compile_input_type`` (M2M -> ``[ID!]``). Neither path reads
-    # this descriptor: it flows into ``_meta.fields`` only as a PRESENCE/ORDERING
-    # marker. Emit a graphene-free ``NativeRelationField`` instead (the silent-drop
-    # guard, never ``None`` / ``_DEAD_SCALAR``) carrying the SAME
+    # a converter descriptor: it flows into ``_meta.fields`` only as a
+    # PRESENCE/ORDERING marker. Emit a graphene-free ``NativeRelationField`` (the
+    # silent-drop guard, never ``None`` / ``_DEAD_SCALAR``) carrying the SAME
     # ``creation_counter`` for SDL field ORDER. (S-rel-3 OUTPUT; S-input-5 INPUT.)
-    if _NATIVE_BACKEND:
-        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    from .native.descriptors import NativeRelationField  # noqa: PLC0415
 
-        return NativeRelationField(related_model=model)
-
-    def dynamic_type() -> Any:
-        """Resolve the related GraphQL list field lazily."""
-        if input_flag and not nested_field:
-            return DjangoListField(
-                _g().ID,
-                required=is_required(field) and input_flag == "create",
-                description=field.help_text or field.verbose_name,
-            )
-        if input_flag and nested_field:
-            _type = registry.get_type_for_model(model, for_input=input_flag)
-            if not _type:
-                return
-            return DjangoListField(_type)
-        # Output: uniform results/totalCount nested list (M2M accessor = field.name).
-        return _nested_list_object_field(field, model, registry, accessor=field.name)
-
-    return _g().Dynamic(dynamic_type)
+    return NativeRelationField(related_model=model)
 
 
 @convert_django_field.register(GenericRel)
@@ -1118,53 +830,29 @@ def convert_many_rel_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the related list, or a
-        graphene-free ``NativeRelationField`` marker on the native OUTPUT path
+        A graphene-free ``NativeRelationField`` presence/ordering marker
         (reverse FK / reverse M2M / reverse ``GenericRel``).
     """
     model = field.related_model
 
-    # Native path (S-input-5: OUTPUT *and* INPUT): a reverse-FK (``ManyToOneRel``)
-    # / reverse-M2M (``ManyToManyRel``) to-MANY field is compiled DIRECTLY from
-    # ``model._meta`` — on OUTPUT by ``types._compile_relation_list_fields``
-    # (reusing the related node's ``<Model>ListType`` results/totalCount
-    # CONTAINER); on INPUT by ``types._resolve_native_relation_input_fields`` ->
+    # A reverse-FK (``ManyToOneRel``) / reverse-M2M (``ManyToManyRel``) to-MANY
+    # field is compiled DIRECTLY from ``model._meta`` — on OUTPUT by
+    # ``types._compile_relation_list_fields`` (reusing the related node's
+    # ``<Model>ListType`` results/totalCount CONTAINER); on INPUT by
+    # ``types._resolve_native_relation_input_fields`` ->
     # ``input_compiler.compile_input_type`` (reverse to-many -> ``[ID!]``, reverse
-    # O2O -> ``ID``). Neither path reads this descriptor: it flows into
+    # O2O -> ``ID``). Neither path reads a converter descriptor: it flows into
     # ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a graphene-free
-    # ``NativeRelationField`` instead (the silent-drop guard, never ``None`` /
+    # ``NativeRelationField`` (the silent-drop guard, never ``None`` /
     # ``_DEAD_SCALAR``) carrying the SAME ``creation_counter`` for SDL field ORDER.
-    #
-    # S-rel-4: this converter ALSO handles the reverse ``GenericRel`` (the reverse
-    # side of a ``GenericRelation`` declared with ``related_query_name``). A
-    # reverse ``GenericRel`` is NOT rendered by the native output compiler at all
-    # (``output_compiler._is_many_relation`` is False for ``GenericRel``), so its
-    # Dynamic is doubly dead — pure import-removal, SDL-neutral. The S-rel-3
-    # ``not isinstance(field, GenericRel)`` exclusion is REMOVED so the reverse
-    # GenericRel arm ALSO returns the native marker. (S-rel-4 OUTPUT; S-input-5
-    # INPUT.)
-    if _NATIVE_BACKEND:
-        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    # This converter ALSO handles the reverse ``GenericRel`` (the reverse side of a
+    # ``GenericRelation`` declared with ``related_query_name``), which is NOT
+    # rendered by the native output compiler at all
+    # (``output_compiler._is_many_relation`` is False for ``GenericRel``).
+    # (S-rel-3/4 OUTPUT; S-input-5 INPUT.)
+    from .native.descriptors import NativeRelationField  # noqa: PLC0415
 
-        return NativeRelationField(related_model=model)
-
-    def dynamic_type() -> Any:
-        """Resolve the related GraphQL list field lazily."""
-        if input_flag and not nested_field:
-            return DjangoListField(_g().ID)
-        if input_flag and nested_field:
-            _type = registry.get_type_for_model(model, for_input=input_flag)
-            if not _type:
-                return
-            return DjangoListField(_type)
-        # Output: uniform results/totalCount nested list (reverse accessor).
-        try:
-            accessor = field.get_accessor_name()
-        except Exception:  # noqa: BLE001 - fall back to the relation name
-            accessor = field.name
-        return _nested_list_object_field(field, model, registry, accessor=accessor)
-
-    return _g().Dynamic(dynamic_type)
+    return NativeRelationField(related_model=model)
 
 
 @convert_django_field.register(models.OneToOneField)
@@ -1184,54 +872,23 @@ def convert_field_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the related type, or a
-        graphene-free ``NativeRelationField`` marker on the native OUTPUT path.
+        A graphene-free ``NativeRelationField`` presence/ordering marker.
     """
     model = get_related_model(field)
 
-    # Native path (S-input-5: OUTPUT *and* INPUT): the to-ONE FK / forward-O2O
-    # field is compiled DIRECTLY from ``model._meta`` — on OUTPUT by
-    # ``output_compiler._to_graphql_field`` (the to-ONE arm); on INPUT by
-    # ``types._resolve_native_relation_input_fields`` ->
+    # The to-ONE FK / forward-O2O field is compiled DIRECTLY from ``model._meta``
+    # — on OUTPUT by ``output_compiler._to_graphql_field`` (the to-ONE arm); on
+    # INPUT by ``types._resolve_native_relation_input_fields`` ->
     # ``input_compiler.compile_input_type`` (FK / forward-O2O -> single ``ID``,
-    # ``ID!`` when required on create). Neither path reads this descriptor: it
-    # flows into ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a
-    # graphene-free ``NativeRelationField`` instead so the field stays in
-    # ``_meta.fields`` (the silent-drop guard, never ``None`` / ``_DEAD_SCALAR`` —
-    # cf. test_issue52 self-ref O2O) with the SAME ``creation_counter`` for SDL
-    # field ORDER. (S-rel-2 OUTPUT; S-input-5 INPUT.)
-    if _NATIVE_BACKEND:
-        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    # ``ID!`` when required on create). Neither path reads a converter descriptor:
+    # it flows into ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a
+    # graphene-free ``NativeRelationField`` so the field stays in ``_meta.fields``
+    # (the silent-drop guard, never ``None`` / ``_DEAD_SCALAR`` — cf. test_issue52
+    # self-ref O2O) with the SAME ``creation_counter`` for SDL field ORDER.
+    # (S-rel-2 OUTPUT; S-input-5 INPUT.)
+    from .native.descriptors import NativeRelationField  # noqa: PLC0415
 
-        return NativeRelationField(related_model=model)
-
-    def dynamic_type() -> Any:
-        """Resolve the related GraphQL type lazily."""
-        # Skip the MTI auto-generated parent_link OneToOneField (Django sets
-        # ``remote_field.parent_link = True`` on these).  The old issubclass()
-        # guard also matched genuine self-referential O2O (spouse = O2O('self'))
-        # because issubclass(X, X) is always True — silently dropping the field
-        # from both output and input types.  Checking parent_link instead is
-        # precise: it is True only for Django-generated MTI links.
-        if getattr(getattr(field, "remote_field", None), "parent_link", False):
-            return
-        if input_flag and not nested_field:
-            return _g().ID(
-                description=field.help_text or field.verbose_name,
-                required=is_required(field) and input_flag == "create",
-            )
-
-        _type = registry.get_type_for_model(model, for_input=input_flag)
-        if not _type:
-            return
-
-        return _g().Field(
-            _type,
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-
-    return _g().Dynamic(dynamic_type)
+    return NativeRelationField(related_model=model)
 
 
 @convert_django_field.register(GenericForeignKey)
@@ -1250,114 +907,27 @@ def convert_generic_foreign_key_to_object(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the generic type, or a
-        graphene-free ``NativeRelationField`` marker on the native OUTPUT FLAT
-        path (the typed GFK-union path stays graphene — see SCOPE BOUNDARY below).
+        A graphene-free ``NativeRelationField`` presence/ordering marker.
     """
     model = field.model
 
-    # Native path (S-input-5: OUTPUT flat *and* INPUT). The FLAT GenericForeignKey
-    # field is compiled DIRECTLY from ``model._meta`` — on OUTPUT by
-    # ``output_compiler._compile_generic_foreign_key`` (the flat
+    # The FLAT GenericForeignKey field is compiled DIRECTLY from ``model._meta`` —
+    # on OUTPUT by ``output_compiler._compile_generic_foreign_key`` (the flat
     # ``GenericForeignKeyType`` with appLabel / id / modelName); the INPUT GFK
     # surface is built by the native input compiler from ``model._meta`` too. The
-    # descriptor below (a flat ``GenericForeignKeyType`` Dynamic on OUTPUT, a
-    # graphene-free ``GenericForeignKeyInputType`` Dynamic on INPUT) is NEVER read
-    # on the native path — it flows into ``_meta.fields`` only as a
-    # PRESENCE/ORDERING marker. The eager ``_g().Dynamic(...)`` wrapper STILL pins
-    # graphene, so emit a graphene-free ``NativeRelationField`` instead (the
-    # silent-drop guard, never ``None`` / ``_DEAD_SCALAR``) with the SAME
-    # ``creation_counter`` for SDL field ORDER. (S-rel-4 OUTPUT-flat; S-input-5
-    # INPUT.)
-    #
-    # SCOPE BOUNDARY — the Track-2 typed GFK-UNION path is OUTPUT-only and stays on
-    # graphene: when the owning type declares ``Meta.gfk_unions`` for THIS GFK on
-    # OUTPUT, the converter emits a graphene ``Field`` to the union (the native
-    # union injector ``types._compile_gfk_union_output_fields`` reads
-    # ``model._meta`` + ``registry.get_gfk_union`` directly and last-wins-overrides
-    # the flat field, but a converter-level contract still asserts the graphene
-    # union Field). So the native marker is emitted for ALL INPUT GFKs and for
-    # OUTPUT GFKs with NO declared union; only a union-declared OUTPUT GFK keeps
-    # the graphene ``Dynamic`` (union path intact). The union retires with the
-    # graphene backend deletion (S-del-backend-11).
-    if _NATIVE_BACKEND and (
-        input_flag is not None
-        or (registry is not None and registry.get_gfk_union(model, field.name) is None)
-    ):
-        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    # Track-2 typed GFK-UNION OUTPUT path is ALSO native: the union injector
+    # ``types._compile_gfk_union_output_fields`` reads ``model._meta`` +
+    # ``registry.get_gfk_union`` DIRECTLY and last-wins-overrides the flat field.
+    # No converter descriptor is read on any path — flat OUTPUT, union OUTPUT, or
+    # INPUT — so emit a graphene-free ``NativeRelationField`` presence/ordering
+    # marker (the silent-drop guard, never ``None`` / ``_DEAD_SCALAR``) with the
+    # SAME ``creation_counter`` for SDL field ORDER. S-del-backend-11: the graphene
+    # ``Dynamic``/``Field`` closure (flat type, union Field, and mis-order WARNING)
+    # this used to build on the graphene path is GONE; the mis-order WARNING is now
+    # emitted by the native union injector. (S-rel-4 / S-input-5 / S-del-backend-11.)
+    from .native.descriptors import NativeRelationField  # noqa: PLC0415
 
-        return NativeRelationField(related_model=model)
-
-    def dynamic_type() -> Any:
-        """Resolve the generic foreign-key GraphQL type lazily."""
-        key = f"{field.name}_{field.model.__name__.lower()}"
-        if input_flag is not None:
-            key = f"{key}_{input_flag}"
-
-        key = to_camel_case(key)
-        model = field.model
-        ct_field = None
-        fk_field = None
-        required = False
-        for f in get_model_fields(model):
-            if f[0] == field.ct_field:
-                ct_field = f[1]
-            elif f[0] == field.fk_field:
-                fk_field = f[1]
-            if fk_field is not None and ct_field is not None:
-                break
-
-        if ct_field is not None and fk_field is not None:
-            required = (is_required(ct_field) and is_required(fk_field)) or required
-
-        if input_flag:
-            return GenericForeignKeyInputType(
-                description="Input Type for a GenericForeignKey field",
-                required=required and input_flag == "create",
-            )
-
-        # Track 2: when the owning DjangoObjectType declares a companion union
-        # for THIS GFK via ``Meta.gfk_unions``, emit a typed Union field instead
-        # of the flat GenericForeignKeyType. Members come ONLY from the union's
-        # explicit ``Meta.gfk_types`` -- the ContentType table is never queried.
-        union_cls = registry.get_gfk_union(model, field.name)
-        if union_cls is not None:
-            return _g().Field(
-                union_cls,
-                description="Typed union for a GenericForeignKey field",
-                required=required and input_flag == "create",
-            )
-
-        # The owner declared gfk_unions for this FK but the union is not
-        # registered (mis-ordered declaration: the owner's Meta was evaluated
-        # before the union was registered). Warn and fall back to the flat type
-        # so a mis-ordered declaration is observable, not a silent regression.
-        owner = registry.get_type_for_model(model)
-        owner_gfk_unions = getattr(getattr(owner, "_meta", None), "gfk_unions", None)
-        if owner_gfk_unions and field.name in owner_gfk_unions:
-            warnings.warn(
-                "{owner}: Meta.gfk_unions declares a union for GFK "
-                "{fk!r} but that union is not registered; falling back to "
-                "GenericForeignKeyType. Declare member ObjectTypes, then the "
-                "DjangoUnionType, then the owning type's Meta.gfk_unions "
-                "(in that order).".format(
-                    owner=getattr(owner, "__name__", model.__name__),
-                    fk=field.name,
-                ),
-                stacklevel=2,
-            )
-
-        _type = registry.get_type_for_enum(key)
-        if not _type:
-            _type = GenericForeignKeyType
-
-        return _g().Field(
-            _type,
-            description="Type for a GenericForeignKey field",
-            required=required and input_flag == "create",
-        )
-
-    return _g().Dynamic(dynamic_type)
+    return NativeRelationField(related_model=model)
 
 
 @convert_django_field.register(GenericRelation)
@@ -1381,30 +951,22 @@ def convert_generic_relation_to_object_list(
     """
     model = field.related_model
 
-    # Native OUTPUT path (``input_flag is None``): a forward ``GenericRelation``
-    # to-MANY field is compiled DIRECTLY from ``model._meta`` by
+    # OUTPUT (``input_flag is None``): a forward ``GenericRelation`` to-MANY field
+    # is compiled DIRECTLY from ``model._meta`` by
     # ``types._compile_relation_list_fields`` (``output_compiler._is_many_relation``
     # matches ``GenericRelation``, reusing the related node's ``<Model>ListType``
-    # results/totalCount CONTAINER) — it NEVER reads this descriptor. The graphene
-    # ``Dynamic`` below is therefore dead and only pins graphene; emit a
-    # graphene-free ``NativeRelationField`` presence/ordering marker instead so
-    # the field stays in ``_meta.fields`` (the silent-drop guard, never ``None`` /
-    # ``_DEAD_SCALAR``) with the SAME ``creation_counter`` for SDL field ORDER.
-    # The INPUT path produces no field (``GenericRelation`` has no input), so the
-    # graphene branch only ever returned an output Dynamic. (S-rel-4.)
-    if _NATIVE_BACKEND and input_flag is None:
+    # results/totalCount CONTAINER) — it NEVER reads a converter descriptor. Emit a
+    # graphene-free ``NativeRelationField`` presence/ordering marker so the field
+    # stays in ``_meta.fields`` (the silent-drop guard, never ``None``) with the
+    # SAME ``creation_counter`` for SDL field ORDER. The INPUT path produces NO
+    # field (``GenericRelation`` has no input) — return the dead-scalar sentinel so
+    # ``construct_fields`` OMITS it (matching the graphene path, whose Dynamic
+    # closure resolved to ``None`` for input). (S-rel-4.)
+    if input_flag is None:
         from .native.descriptors import NativeRelationField  # noqa: PLC0415
 
         return NativeRelationField(related_model=model)
-
-    def dynamic_type() -> Any:
-        """Resolve the related GraphQL list field lazily."""
-        if input_flag:
-            return
-        # Output: uniform results/totalCount nested list (GenericRelation name).
-        return _nested_list_object_field(field, model, registry, accessor=field.name)
-
-    return _g().Dynamic(dynamic_type)
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(ArrayField)
@@ -1425,15 +987,11 @@ def convert_postgres_array_to_list(
     Returns:
         A GraphQL List field wrapping the converted base field type.
     """
-    g = _g()
-    base_type = convert_django_field(field.base_field)
-    if not isinstance(base_type, (g.List, g.NonNull)):
-        base_type = type(base_type)
-    return g.List(
-        base_type,
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
-    )
+    # S-del-backend-11: the native OUTPUT compiler derives every field from
+    # ``model._meta`` directly and has NO ArrayField entry — no converter
+    # descriptor is read. Return the dead-scalar sentinel so ``construct_fields``
+    # OMITS it (SDL-neutral — ArrayField is already absent from native output SDL).
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(HStoreField)
@@ -1455,12 +1013,7 @@ def convert_postgres_field_to_string(
     Returns:
         A GraphQL JSONString field for the Django field.
     """
-    return _scalar_or_dead(
-        lambda: _g().JSONString(
-            description=field.help_text or field.verbose_name,
-            required=is_required(field) and input_flag == "create",
-        )
-    )
+    return _DEAD_SCALAR
 
 
 @convert_django_field.register(RangeField)
@@ -1481,12 +1034,8 @@ def convert_postgres_range_to_string(
     Returns:
         A GraphQL List field wrapping the converted inner field type.
     """
-    g = _g()
-    inner_type = convert_django_field(field.base_field)
-    if not isinstance(inner_type, (g.List, g.NonNull)):
-        inner_type = type(inner_type)
-    return g.List(
-        inner_type,
-        description=field.help_text or field.verbose_name,
-        required=is_required(field) and input_flag == "create",
-    )
+    # S-del-backend-11: the native OUTPUT compiler derives every field from
+    # ``model._meta`` directly and has NO RangeField entry — no converter
+    # descriptor is read. Return the dead-scalar sentinel so ``construct_fields``
+    # OMITS it (SDL-neutral — RangeField is already absent from native output SDL).
+    return _DEAD_SCALAR

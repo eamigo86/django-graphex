@@ -36,11 +36,6 @@ _LOOKUP_SEP = "__"
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from graphene import Field
-    from graphql import GraphQLResolveInfo
-
-    from django_graphex.paginations.utils import GenericPaginationField
-
 __all__ = (
     "LimitOffsetGraphqlPagination",
     "PageGraphqlPagination",
@@ -50,43 +45,16 @@ __all__ = (
 
 
 # --------------------------------------------------------------------------- #
-# Lazy graphene accessor (S8f -> S-page-7 graphene-removal)                     #
+# Native pagination build path (S-del-backend-11 — graphene backend deleted)  #
 # --------------------------------------------------------------------------- #
-# ``pagination.py`` no longer imports graphene at the MODULE top level — that
-# ``from graphene import Boolean, Field, Int, ObjectType, String`` blocked the
-# graphene uninstall (S8i).
-#
 # S-page-7 migrated the pagination CONTAINER BUILD path off graphene entirely:
 # ``to_graphql_fields`` is NATIVE-ONLY (always graphql-core ``GraphQLArgument``),
-# the dead graphene branch in ``types.py`` (``get_pagination_field`` /
-# ``get_page_info_field``) is removed, and ``_graphene_paginator_args`` is
-# retired. The only remaining graphene constructs are DEAD-BUT-DEFINED, kept for
-# graphene-backend-only tests and RETIRED in S-del-backend-11:
-#
-# * ``CursorPageInfo`` (graphene ``ObjectType``, built lazily via module
-#   ``__getattr__`` below) wrapped by the graphene ``get_page_info_field`` —
-#   NEVER called on a build (the native compiler uses ``get_native_page_info_field``
-#   + ``NATIVE_CURSOR_PAGE_INFO``).
-#
-# The NATIVE machinery (``NATIVE_CURSOR_PAGE_INFO``, ``get_native_page_info_field``,
+# the dead graphene branch in ``types.py`` is removed, and the native machinery
+# (``NATIVE_CURSOR_PAGE_INFO``, ``get_native_page_info_field``,
 # ``to_graphql_fields``) is graphql-core and is the ONLY pagination build path.
-_GRAPHENE: Any = None
-
-
-def _g() -> Any:
-    """Return the lazily imported, cached ``graphene`` module.
-
-    S-page-7: retained ONLY for the dead-but-defined graphene ``CursorPageInfo``
-    + graphene ``get_page_info_field`` (retired in S-del-backend-11). NEVER called
-    on a native pagination build — the native cursor pageInfo is the graphql-core
-    ``NATIVE_CURSOR_PAGE_INFO`` via ``get_native_page_info_field``.
-    """
-    global _GRAPHENE
-    if _GRAPHENE is None:
-        import graphene  # noqa: PLC0415
-
-        _GRAPHENE = graphene
-    return _GRAPHENE
+# S-del-backend-11 deleted the last DEAD-BUT-DEFINED graphene constructs (the
+# graphene ``CursorPageInfo`` ``ObjectType`` + the graphene-bodied
+# ``CursorGraphqlPagination.get_page_info_field``) and the lazy graphene accessor.
 
 # ---------------------------------------------------------------------------
 # B7 — Native CursorPageInfo (GDX_BACKEND=native only)
@@ -304,35 +272,22 @@ class BaseDjangoGraphqlPagination:
         value = _positive_int(value, strict=True)
         return min(value, maximum) if maximum is not None else value
 
-    def get_pagination_field(self, type: Any) -> GenericPaginationField:
-        """Get a pagination field for the given GraphQL type.
-
-        Args:
-            type: The GraphQL type to paginate.
-
-        Returns:
-            A pagination field bound to this paginator instance.
-        """
-        # Lazy import: GenericPaginationField is a graphene Field subclass built
-        # on first access (S8f), so importing it here keeps the module top level
-        # graphene-free.
-        from django_graphex.paginations.utils import (  # noqa: PLC0415
-            GenericPaginationField,
-        )
-
-        return GenericPaginationField(type, paginator_instance=self)
-
-    def get_page_info_field(self, type: Any) -> Field | None:
+    def get_page_info_field(self, type: Any) -> Any | None:
         """Return a "pageInfo" field for this paginator, or "None".
 
         Paginators that do not expose pagination metadata (limit/offset, page)
         return "None" so their list types gain no "pageInfo" field.
 
+        S-del-backend-11: the native build path uses
+        :meth:`get_native_page_info_field` (graphql-core); this base hook only
+        ever returns ``None``. The graphene-bodied ``CursorGraphqlPagination``
+        override was deleted with the graphene backend.
+
         Args:
             type: The GraphQL list type the field belongs to.
 
         Returns:
-            The "pageInfo" field, or "None" when no metadata is exposed.
+            ``None`` (no pagination metadata at the base level).
         """
         return None
 
@@ -849,74 +804,6 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         return (offset, page_size, order)
 
 
-#: Process-wide cache for the lazily built graphene ``CursorPageInfo`` class.
-_CURSOR_PAGE_INFO: Any = None
-
-
-def _build_cursor_page_info() -> type:
-    """Build (and cache) the graphene ``CursorPageInfo`` ``ObjectType``.
-
-    S8f (graphene-removal): ``CursorPageInfo`` subclasses graphene
-    ``ObjectType``, which the ``class`` statement would evaluate at MODULE import
-    time (re-introducing the uninstall-blocking top-level graphene import). The
-    class is therefore built lazily here against the graphene module resolved by
-    :func:`_g`, and cached so its identity is stable. The resulting graphene type
-    is byte-identical to the eager definition; only the import timing moved. This
-    is the GRAPHENE-path page-info type; the native compiler uses the separate
-    graphql-core :data:`NATIVE_CURSOR_PAGE_INFO` singleton.
-    """
-    graphene = _g()
-
-    class CursorPageInfo(graphene.ObjectType):
-        """Forward keyset pagination metadata for "CursorGraphqlPagination"."""
-
-        class Meta:
-            """Meta configuration for CursorPageInfo."""
-
-            description = "Forward keyset pagination metadata."
-
-        has_next_page = graphene.Boolean(
-            required=True,
-            description=(
-                "True if at least one row exists after the last row of the page."
-            ),
-        )
-        has_previous_page = graphene.Boolean(
-            required=True,
-            description=(
-                "True if at least one row exists before the first row of the page."
-            ),
-        )
-        start_cursor = graphene.String(
-            description=(
-                "Cursor of the first row of the page (null if the page is empty)."
-            )
-        )
-        end_cursor = graphene.String(
-            description=(
-                "Cursor of the last row of the page (null if the page is empty)."
-            )
-        )
-
-    return CursorPageInfo
-
-
-def __getattr__(name: str) -> Any:
-    """Lazily resolve module-level ``CursorPageInfo`` (PEP 562).
-
-    Accessing ``pagination.CursorPageInfo`` (import or attribute) builds the
-    graphene ``ObjectType`` on first use and caches it, so a bare ``import`` of
-    this module never triggers the graphene import. Any other attribute name
-    raises ``AttributeError`` as usual.
-    """
-    if name == "CursorPageInfo":
-        global _CURSOR_PAGE_INFO
-        if _CURSOR_PAGE_INFO is None:
-            _CURSOR_PAGE_INFO = _build_cursor_page_info()
-        return _CURSOR_PAGE_INFO
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
     """Forward keyset (cursor) pagination over a single ordering field.
 
@@ -1134,52 +1021,6 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         return qs[:page_size]
 
     # -- pageInfo -----------------------------------------------------------
-    def get_page_info_field(self, type: Any) -> Field:
-        """Return the "pageInfo" field for a cursor-paginated list type.
-
-        Args:
-            type: The GraphQL list type the field belongs to.
-
-        Returns:
-            The "pageInfo" field exposing the cursor pagination metadata.
-        """
-
-        def resolver(
-            root: Any, info: GraphQLResolveInfo, **kwargs: Any
-        ) -> dict[str, Any] | None:
-            """Resolve the cursor pagination metadata for the list root.
-
-            Args:
-                root: The root value passed to the resolver.
-                info: The GraphQL resolve info for the current query.
-                **kwargs: The pagination arguments from the query.
-
-            Returns:
-                The page info mapping, or "None" when "root" is not a list base.
-            """
-            if isinstance(root, DjangoListObjectBase):
-                return self.get_page_info(root.results, **kwargs)
-            return None
-
-        graphene = _g()
-        # Resolve the lazily built graphene CursorPageInfo via the module's
-        # PEP 562 __getattr__ (bare-name lookup would NameError here since the
-        # class is no longer a module-level binding).
-        cursor_page_info = __getattr__("CursorPageInfo")
-        return graphene.Field(
-            cursor_page_info,
-            args={
-                self.first_query_param: graphene.Int(
-                    description=self.first_query_description
-                ),
-                self.cursor_query_param: graphene.String(
-                    description=self.cursor_query_description
-                ),
-            },
-            resolver=resolver,
-            description="Forward keyset pagination metadata.",
-        )
-
     def get_native_page_info_field(self, node_type: Any) -> Any:
         """Return a native ``CursorPageInfo`` field with first/cursor args.
 

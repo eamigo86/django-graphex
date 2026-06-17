@@ -189,23 +189,26 @@ def test_base_paginator_abstract_methods_raise():
 
 
 # --------------------------------------------------------------------------- #
-# GenericPaginationField.list_resolver only paginates a list base             #
+# NativePaginationField.list_resolver only paginates a list base              #
+# (S-del-backend-11: the graphene GenericPaginationField was deleted; the      #
+#  backend-neutral slicing logic lives on the native NativePaginationField.)   #
 # --------------------------------------------------------------------------- #
-def test_generic_pagination_field_resolver_non_list_base_returns_none():
-    from django_graphex.paginations.utils import GenericPaginationField
+def test_native_pagination_field_resolver_non_list_base_returns_none():
+    from django_graphex.paginations.utils import NativePaginationField
 
-    field = GenericPaginationField.__new__(GenericPaginationField)
-    field.paginator_instance = LimitOffsetGraphqlPagination(default_limit=5)
+    field = NativePaginationField(
+        type=None, paginator=LimitOffsetGraphqlPagination(default_limit=5)
+    )
     # root is not a DjangoListObjectBase -> None.
     assert field.list_resolver(None, "not-a-base", None) is None
 
 
-def test_generic_pagination_field_resolver_paginates_list_base():
-    from django_graphex.paginations.utils import GenericPaginationField
+def test_native_pagination_field_resolver_paginates_list_base():
+    from django_graphex.paginations.utils import NativePaginationField
 
-    field = GenericPaginationField.__new__(GenericPaginationField)
-    field.paginator_instance = LimitOffsetGraphqlPagination(
-        default_limit=2, max_limit=10
+    field = NativePaginationField(
+        type=None,
+        paginator=LimitOffsetGraphqlPagination(default_limit=2, max_limit=10),
     )
     base = DjangoListObjectBase(
         results=list(range(5)), count=5, results_field_name="results"
