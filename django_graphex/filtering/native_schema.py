@@ -688,6 +688,6 @@ def _custom_filter_gql_type(meta: dict[str, Any]) -> Any:
 
     # Anything else (e.g. a leftover graphene type) is rejected by the bridge with
     # a clear TypeError (the v2.0 CLEAN BREAK off graphene).
-    from django_graphex.native._args import _unwrap_graphene_type
+    from django_graphex.native._args import _unwrap_graphql_type
 
-    return _unwrap_graphene_type(graphene_type)
+    return _unwrap_graphql_type(graphene_type)

@@ -425,10 +425,11 @@ def _get_custom_resolver(info: GraphQLResolveInfo) -> Any | None:
     from django_graphex.native.compat import _gdx_graphene_type
 
     parent = info.parent_type
-    # Dual-backend: graphene carries the source class as ``parent.graphene_type``;
-    # native carries it as ``parent.extensions['gdx']._meta.graphene_type``. The
-    # bridge tries graphene first, then native, returning None when neither is
-    # present (so a root with no custom resolver resolves uniformly).
+    # The source class is recovered from
+    # ``parent.extensions['gdx']._meta.graphene_type`` (the DjangoObjectType /
+    # root ObjectType carried at native compile time). ``_gdx_graphene_type``
+    # returns None when none is present, so a root with no custom resolver
+    # resolves uniformly.
     parent_graphene_type = _gdx_graphene_type(parent)
     if parent_graphene_type is None:
         return None
@@ -439,7 +440,7 @@ def _get_custom_resolver(info: GraphQLResolveInfo) -> Any | None:
 
 
 def _get_field_optimize_hook(gql_type: Any, graphql_field_name: str) -> Any | None:
-    """Resolve the optimize_<snake_field> hook on the PARENT graphene type, or None.
+    """Resolve the optimize_<snake_field> hook on the PARENT source class, or None.
 
     The hook is looked up on ``gql_type.graphene_type`` — the level-local parent
     type resolved inside ``_walk_filtered_prefetches``.  Do NOT use
@@ -457,10 +458,10 @@ def _get_field_optimize_hook(gql_type: Any, graphql_field_name: str) -> Any | No
     """
     if gql_type is None:
         return None
-    # The native source class is carried on ``extensions['gdx']._meta.graphene_type``.
-    # Reading the raw attribute returns None for native NESTED types (they have no
-    # direct ``graphene_type``) so the bridge is required — otherwise every nested
-    # ``optimize_<field>`` hook is silently inert (DEFECT A).
+    # The source class is carried on ``extensions['gdx']._meta.graphene_type``.
+    # Reading the raw attribute returns None for nested types (they have no
+    # direct ``graphene_type``) so ``_gdx_graphene_type`` is required — otherwise
+    # every nested ``optimize_<field>`` hook is silently inert.
     from django_graphex.native.compat import _gdx_graphene_type
 
     parent = _gdx_graphene_type(gql_type)
@@ -672,9 +673,9 @@ def _inline_fragment_applies(
     Decision table:
 
     - ``type_condition is None`` -> ``True`` (bare inline fragment; descend).
-    - condition name == current type's GraphQL name / graphene ``__name__`` /
+    - condition name == current type's GraphQL name / source class ``__name__`` /
       model ``__name__`` -> ``True`` (same type; descend).
-    - current graphene type declares an INTERFACE whose name matches the
+    - current source class declares an INTERFACE whose name matches the
       condition -> ``True`` (forward-compat, best-effort).
     - condition names a DIFFERENT concrete type AND a reliable GraphQL-type-name
       identity is available -> ``False`` (SKIP; the fix).
@@ -682,8 +683,8 @@ def _inline_fragment_applies(
       (preserve today's transparent-descent behaviour; never make it worse).
 
     Forward-compat scope (best-effort, interfaces ONLY): the "current type
-    contains/implements the condition" branch recognises only graphene
-    ``Interface`` membership (via ``_meta.interfaces``).  Graphene ``Union``
+    contains/implements the condition" branch recognises only ``Interface``
+    membership (via ``_meta.interfaces``).  ``Union``
     membership is NOT detected here — a Union member type carries no back-pointer
     to its unions (only the Union exposes ``_meta.types``), so walking a concrete
     member and meeting ``... on <Union>`` will SKIP, not descend.  Django
@@ -697,7 +698,7 @@ def _inline_fragment_applies(
     CONFIRM "same type" (descend); it can never be the SOLE basis for a SKIP,
     or every legitimate ``... on <Model>Type`` fragment would be dropped.  We
     only skip when a GraphQL-type-name identity (``current_type_name`` or the
-    graphene type's ``_meta.name`` / ``__name__``) is present and the condition
+    source class's ``_meta.name`` / ``__name__``) is present and the condition
     does not match any accepted name.
 
     Args:
@@ -707,7 +708,7 @@ def _inline_fragment_applies(
             name).
         current_model: The Django model being walked, if known (enables a
             best-effort POSITIVE match against the model class ``__name__``).
-        current_graphene_type: The graphene type being walked, if known
+        current_graphene_type: The source class being walked, if known
             (enables GraphQL-name + ``__name__`` match plus best-effort
             interface lookup).
 
@@ -746,7 +747,7 @@ def _inline_fragment_applies(
         if gt_name:
             accepted_names.add(gt_name)
             have_gql_identity = True
-        # Forward-compat (best-effort, INTERFACES ONLY): if the graphene type
+        # Forward-compat (best-effort, INTERFACES ONLY): if the source class
         # declares interfaces whose name matches the condition, the fragment
         # applies.  Union/abstract-parent membership is intentionally NOT handled
         # here (see the docstring "Forward-compat scope" note).
@@ -772,7 +773,7 @@ def _inline_fragment_applies(
 
     if not have_gql_identity:
         # No reliable GraphQL-type-name identity -> a non-match is inconclusive
-        # (the graphene type name usually differs from the model name).
+        # (the GraphQL type name usually differs from the model name).
         # Preserve today's transparent-descent behaviour; never make it worse.
         return True
 
@@ -824,23 +825,22 @@ def _resolve_fragment_target(
         return None
 
     gql = schema.get_type(name)
-    # Dual-backend: graphene carries the source class as ``gql.graphene_type``;
-    # native carries it on ``gql.extensions['gdx']._meta.graphene_type`` (DEFECT A
-    # lands ``graphene_type=cls`` on every nested DjangoObjectType). The bridge
-    # reads whichever is present, so the member model resolves under native too —
-    # without it ``gql.graphene_type`` is None on native and EVERY GFK-union bucket
-    # silently degrades to full-load (N+1).
+    # The source class is recovered from
+    # ``gql.extensions['gdx']._meta.graphene_type`` (set on every nested
+    # DjangoObjectType at native compile time). ``_gdx_graphene_type`` returns it
+    # so the member model resolves — without this the GFK-union bucket would
+    # silently degrade to full-load (N+1).
     from django_graphex.native.compat import _gdx_graphene_type
 
     graphene_type = _gdx_graphene_type(gql) if gql is not None else None
     model = getattr(getattr(graphene_type, "_meta", None), "model", None)
     if gql is None or graphene_type is None or model is None:
-        # Unknown type, non-graphene type, or an interface (model is None).
+        # Unknown type, source class without a model, or an interface.
         return None
 
     # CONSISTENCY BY CONSTRUCTION: the three returned values all derive from the
     # single ``gql`` object resolved above — ``graphene_type`` is ``gql``'s own
-    # ``graphene_type`` and ``model`` is that graphene type's own ``_meta.model``.
+    # source class and ``model`` is that source class's own ``_meta.model``.
     # Divergence between them is therefore structurally impossible, so no runtime
     # cross-check is needed here.  The caller (``_collect_gfk_union_buckets``) is
     # what restricts routing to genuine union members, via ``_inline_fragment_applies``.
@@ -1156,7 +1156,7 @@ def _collect_only_fields(
         _prefix: The dotted ORM path prefix for the current model.
         _only: The accumulating set of dotted only paths.
         annotated_names: snake_case field names of AnnotatedFields on the model's
-            graphene output type.  These leaves must NOT be added to ``.only()``
+            GraphQL output type.  These leaves must NOT be added to ``.only()``
             and must NOT trigger ``model_full=True``.
         current_type_name: GraphQL type name of the type being walked, if known
             (GAP-5 inline-fragment guard).  ``None`` falls back to model-name
@@ -1333,7 +1333,7 @@ def _collect_only_fields_is_full_load(
         selection_set: The GraphQL selection set to walk.
         fragments: The fragment definitions keyed by name.
         annotated_names: snake_case field names of AnnotatedFields on the model's
-            graphene output type.  These leaves do NOT trigger full-load.
+            GraphQL output type.  These leaves do NOT trigger full-load.
         current_type_name: GraphQL type name of the type being walked, if known.
             Required for the GAP-5 inline-fragment guard to SKIP a foreign-typed
             fragment (model name alone can never trigger a SKIP).  Threaded so
@@ -1477,7 +1477,7 @@ def _compute_child_only(
     string (full load).
 
     Also self-collects any AnnotatedField annotations declared on the child's
-    graphene type (phase-d).  When an annotation is present, the plan is returned
+    source class (phase-d).  When an annotation is present, the plan is returned
     even if ``OPTIMIZE_ONLY_FIELDS`` is off (annotate-only mode, empty only_cols).
 
     The returned ``PrefetchPlan.child_select`` list contains the forward-FK head
@@ -1492,7 +1492,7 @@ def _compute_child_only(
         fragments: Fragment definitions keyed by name.
         child_gql_type: The GraphQLObjectType for the child (optional).  When
             provided, enables AnnotatedField self-collection on the child.
-        child_graphene_type: The graphene type for the child (optional).
+        child_graphene_type: The source class for the child (optional).
         fmap_cache: Optional request-scoped memoization dict (see
             ``_relation_field_map``).  Threading it prevents redundant
             ``_meta.get_fields()`` calls from the .only()-narrowing pass (#66).
@@ -1845,11 +1845,10 @@ def _collect_prefetch_only_sets(
     if _out is None:
         _out = {}
 
-    # Dual-backend (DEFECT A): the child's source class for AnnotatedField
-    # self-collection lives on ``child_gql.graphene_type`` under graphene but on
-    # ``extensions['gdx']._meta.graphene_type`` under native. The bridge reads
-    # either; without it the select->prefetch promotion + child-annotation
-    # injection never fires for native NESTED types.
+    # The child's source class for AnnotatedField self-collection lives on
+    # ``child_gql.extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type``
+    # reads it; without this the select->prefetch promotion + child-annotation
+    # injection never fires for nested types.
     from django_graphex.native.compat import _gdx_graphene_type
 
     rel_map = _relation_field_map(model, fmap_cache)
@@ -1881,7 +1880,7 @@ def _collect_prefetch_only_sets(
         if isinstance(field, InlineFragmentNode):
             # GAP-5 guard: skip inline fragments targeting a different concrete
             # type than the model being walked.  Thread the FULL GraphQL identity
-            # (type name + graphene type) exactly as ``_walk_filtered_prefetches``
+            # (type name + source class) exactly as ``_walk_filtered_prefetches``
             # does — passing only ``current_model`` leaves the guard INERT
             # (a model name alone can never trigger a SKIP).
             if not _inline_fragment_applies(
@@ -2269,12 +2268,12 @@ def _resolve_results_paginator(
     from .paginations.pagination import BaseDjangoGraphqlPagination
 
     resolve_fn = getattr(results_field_def, "resolve", None)
-    # GRAPHENE path: resolve is partial(GenericPaginationField.list_resolver, …);
+    # Partial form: resolve is partial(GenericPaginationField.list_resolver, …);
     # the field (carrying paginator_instance) is func.__self__.
     func = getattr(resolve_fn, "func", None)  # functools.partial → bound method
     bound = getattr(func, "__self__", None)  # the GenericPaginationField, or None
     paginator = getattr(bound, "paginator_instance", None)
-    # NATIVE path (WU6b): NativePaginationField.wrap_resolve returns a PLAIN
+    # Native closure form: NativePaginationField.wrap_resolve returns a PLAIN
     # closure (not a partial) with ``paginator_instance`` set directly on it.
     # Read it off the resolve callable itself so the window optimizer can recover
     # the paginator.
@@ -2499,12 +2498,12 @@ def _walk_filtered_prefetches(
                         _inner_candidate = get_named_type(_res_field_def.type)
                         if isinstance(_inner_candidate, GraphQLObjectType):
                             inner_gql = _inner_candidate
-                            # Dual-backend (WU6b): graphene carries the row class
-                            # as ``inner_gql.graphene_type``; native carries it on
-                            # ``extensions['gdx']._meta``. ``_gdx_graphene_type``
-                            # reads either so child AnnotatedField self-collection
-                            # and GAP-5 .only()-narrowing identity work on the
-                            # native window path too (graceful None when absent).
+                            # The row source class is recovered from
+                            # ``inner_gql.extensions['gdx']._meta.graphene_type``.
+                            # ``_gdx_graphene_type`` reads it so child
+                            # AnnotatedField self-collection and GAP-5
+                            # .only()-narrowing identity work on the window path
+                            # (graceful None when absent).
                             from django_graphex.native.compat import (
                                 _gdx_graphene_type,
                             )
@@ -2642,7 +2641,7 @@ def _walk_annotated_fields(
 
     Args:
         gql_type: The GraphQLObjectType at the current position.
-        graphene_type: The matching graphene type (has ``_meta.fields``).
+        graphene_type: The matching source class (has ``_meta.fields``).
         selection_set: The GraphQL SelectionSetNode to walk.
         info: The GraphQL resolve info (for fragments).
         annotations: Accumulator dict for ``{ann_key: expression}``.
@@ -2708,7 +2707,7 @@ def _walk_annotated_fields(
         name = field.name.value
         snake = to_snake_case(name)
 
-        # Look up the graphene field instance on the current graphene type.
+        # Look up the field instance on the current source class.
         meta_fields = (
             getattr(getattr(graphene_type, "_meta", None), "fields", None) or {}
         )
@@ -2744,7 +2743,7 @@ def _walk_annotated_fields(
             continue
         sub_gql = get_named_type(field_def.type)
         sub_gql = sub_gql if isinstance(sub_gql, GraphQLObjectType) else None
-        # Dual-backend (DEFECT A): use the bridge so native wrapper descent (e.g.
+        # Use ``_gdx_graphene_type`` so wrapper descent (e.g.
         # DjangoListObjectType ``results`` -> inner row type) recovers the inner
         # row's source class from ``extensions['gdx']._meta.graphene_type``.
         from django_graphex.native.compat import _gdx_graphene_type
@@ -2793,11 +2792,10 @@ def _collect_annotated_fields(
     field_nodes = info.field_nodes
     if not field_nodes or not isinstance(return_type, GraphQLObjectType):
         return {}, {}, set()
-    # Dual-backend (DEFECT A): graphene carries the source class as
-    # ``return_type.graphene_type``; native carries it on
-    # ``extensions['gdx']._meta.graphene_type``. The bridge tries graphene first,
-    # then native — without it the raw attribute is None for native NESTED types
-    # and no AnnotatedField annotations are ever collected.
+    # The source class is recovered from
+    # ``return_type.extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type``
+    # reads it — the raw attribute is None for nested types, so without this
+    # helper no AnnotatedField annotations would ever be collected.
     from django_graphex.native.compat import _gdx_graphene_type
 
     graphene_type = _gdx_graphene_type(return_type)
@@ -2854,7 +2852,7 @@ def build_filtered_prefetches(
     if not field_node.selection_set:
         return [], {}
 
-    # WU6b: the native source class is carried on ``extensions['gdx']._meta``.
+    # The source class is carried on ``extensions['gdx']._meta``.
     # ``_gdx_meta`` reads it, so the root model is recovered — without it ``model``
     # is None and the walker never finds nested list fields (window-prefetch never
     # fires).
@@ -3041,10 +3039,10 @@ def _apply_optimizations(
     # inspect the same model's field map.
     _fmap_cache: dict[tuple[int, str], Any] = {}
 
-    # Dual-backend (DEFECT A): GraphQL types expose the source class on
-    # ``.graphene_type`` (graphene) or ``extensions['gdx']._meta.graphene_type``
-    # (native). The bridge reads either so the GAP-5 root identity and the
-    # AnnotatedField select->prefetch promotion detection both fire under native.
+    # GraphQL types expose the source class on
+    # ``extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type`` reads it
+    # so the GAP-5 root identity and the AnnotatedField select->prefetch
+    # promotion detection both fire.
     from django_graphex.native.compat import _gdx_graphene_type
 
     relation_map = _relation_field_map(model, _fmap_cache)

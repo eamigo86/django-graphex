@@ -456,14 +456,14 @@ def test_args_converter_native_passthrough_no_graphene():
     no graphene while doing so."""
     from graphql import GraphQLArgument, GraphQLNonNull, GraphQLString
 
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
 
     saved = _purge_graphene_modules()
     guard = _BlockGraphene()
     sys.meta_path.insert(0, guard)
     try:
         native = GraphQLArgument(GraphQLNonNull(GraphQLString))
-        result = graphene_arg_to_graphql_argument(native, name="firstName")
+        result = to_graphql_argument(native, name="firstName")
         assert isinstance(result, GraphQLArgument)
         assert isinstance(result.type, GraphQLNonNull)
         assert result.type.of_type is GraphQLString

@@ -31,7 +31,7 @@ from .utils import get_model_fields, get_related_model, is_required, to_const
 
 # Allow Django's lazy ``gettext_lazy``/``verbose_name``/``help_text`` proxies to
 # be used as GraphQL descriptions (graphql-core only accepts ``str`` otherwise).
-# graphene-django did this on import; we now do it ourselves.
+# Registered at import so lazy proxies survive description rendering.
 # See https://github.com/graphql-python/graphql-core-next/issues/58.
 register_description(Promise)
 
@@ -55,9 +55,8 @@ class _DeadScalarSentinel:
     markers, and the nested-list (``_nested_list_object_field``) descriptors are
     NOT scalars and so are KEPT, never returning this sentinel.
 
-    S-del-backend-11: the graphene scalar descriptors the converter used to build
-    on the graphene path are GONE (the graphene backend is deleted). Scalars now
-    unconditionally return this sentinel.
+    Scalars unconditionally return this sentinel — no per-field descriptor is
+    built for them.
     """
 
     __slots__ = ()
@@ -251,15 +250,13 @@ def convert_django_field_with_choices(
     """
     choices = getattr(field, "choices", None)
     if choices:
-        # The choices field is rendered as a ``GraphQLEnumType`` built
-        # GRAPHENE-FREE from ``model._meta`` (``build_choices_enum_type``,
-        # S-enum-1) — on OUTPUT by ``output_compiler._compile_choices_enum_field``
-        # and on INPUT by ``input_compiler.compile_input_type`` (the shared
-        # canonical enum). No converter descriptor is read on either path, so
-        # return the dead-scalar sentinel and let ``construct_fields`` OMIT it —
-        # like the PK (``convert_field_to_id``) and the relation markers
-        # (S-rel-2/3/4). S-del-backend-11: the graphene ``Enum`` descriptor this
-        # used to build on the graphene path is GONE.
+        # The choices field is rendered as a ``GraphQLEnumType`` built from
+        # ``model._meta`` (``build_choices_enum_type``, S-enum-1) — on OUTPUT by
+        # ``output_compiler._compile_choices_enum_field`` and on INPUT by
+        # ``input_compiler.compile_input_type`` (the shared canonical enum). No
+        # converter descriptor is read on either path, so return the dead-scalar
+        # sentinel and let ``construct_fields`` OMIT it — like the PK
+        # (``convert_field_to_id``) and the relation markers (S-rel-2/3/4).
         return _DEAD_SCALAR
     return convert_django_field(field, registry, input_flag, nested_field)
 
@@ -276,9 +273,8 @@ def choices_enum_name(
     the name is suffixed so an input-only enum never clobbers the output slot.
 
     This is the SINGLE source of truth for the choices-enum name shared by the
-    graphene converter, the native OUTPUT compiler and the native filter-input
-    builder, so all three resolve the SAME registry slot for one ``(model,
-    field)``.
+    converter, the native OUTPUT compiler and the native filter-input builder, so
+    all three resolve the SAME registry slot for one ``(model, field)``.
 
     Args:
         field: the Django model field carrying choices.
@@ -294,14 +290,11 @@ def choices_enum_name(
     return to_camel_case(name)
 
 
-#: Prefix for the NATIVE choices-enum registry slot. The legacy graphene
-#: converter (``convert_django_field_with_choices``) registers a graphene
-#: ``Enum`` under the BARE canonical name; storing the native graphql-core
-#: ``GraphQLEnumType`` under a distinct, native-namespaced key keeps the two
-#: from poisoning each other while still giving the native OUTPUT and
-#: FILTER-INPUT paths ONE shared slot to converge on (S-enum-1). The whole
-#: graphene branch — and this dual-slot dance — disappears with the converter's
-#: graphene enum in S-del-backend-11.
+#: Prefix for the NATIVE choices-enum registry slot. The native graphql-core
+#: ``GraphQLEnumType`` is stored under a distinct, native-namespaced key so the
+#: native OUTPUT and FILTER-INPUT paths share ONE slot to converge on
+#: (S-enum-1) without colliding with any other registry entry keyed by the bare
+#: canonical name.
 _NATIVE_ENUM_SLOT_PREFIX = "__native__"
 
 
@@ -312,24 +305,23 @@ def build_choices_enum_type(
 ) -> Any:
     """Build (or fetch the cached) graphql-core ``GraphQLEnumType`` for a choices field.
 
-    GRAPHENE-FREE canonical builder. Reuses :func:`get_choices` (the 4-tier
-    ``choice_enum_name`` cascade) for the value names + per-choice descriptions,
-    and compiles via ``native.compiler.compile_enum`` so the native OUTPUT and
-    FILTER-INPUT paths share ONE instance per ``(model, field)``:
+    Canonical builder. Reuses :func:`get_choices` (the 4-tier ``choice_enum_name``
+    cascade) for the value names + per-choice descriptions, and compiles via
+    ``native.compiler.compile_enum`` so the native OUTPUT and FILTER-INPUT paths
+    share ONE instance per ``(model, field)``:
 
     * ``GraphQLEnumValue.value`` carries the RAW python value, so resolution
-      returns the stored value (mirrors graphene's ``EnumWithDescriptionsType``).
+      returns the stored value.
     * ``GraphQLEnumValue.description`` carries the per-choice label so the SDL
-      keeps the descriptions graphene emits (oracle req #7).
+      keeps per-choice descriptions (oracle req #7).
 
     Sharing slot: the enum is memoized in the registry under a NATIVE-namespaced
     key (:data:`_NATIVE_ENUM_SLOT_PREFIX` + :func:`choices_enum_name`). The
-    legacy graphene converter registers a graphene ``Enum`` under the BARE
-    canonical name; the namespaced key keeps the graphql-core enum from being
-    clobbered by — or returned in place of — that graphene object, while the
-    OUTPUT and FILTER-INPUT paths both converge on this one native slot. The
-    GraphQLEnumType STILL carries the bare canonical NAME for SDL parity; only
-    the registry KEY is namespaced.
+    namespaced key keeps the graphql-core enum from being clobbered by — or
+    returned in place of — any other registry entry under the bare canonical
+    name, while the OUTPUT and FILTER-INPUT paths both converge on this one
+    native slot. The GraphQLEnumType STILL carries the bare canonical NAME for
+    SDL parity; only the registry KEY is namespaced.
 
     Args:
         field: the Django model field carrying choices.
@@ -751,7 +743,7 @@ def convert_onetoone_field_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A graphene-free ``NativeRelationField`` presence/ordering marker.
+        A ``NativeRelationField`` presence/ordering marker.
     """
     model = field.related_model
 
@@ -761,7 +753,7 @@ def convert_onetoone_field_to_djangomodel(
     # ``types._resolve_native_relation_input_fields`` ->
     # ``input_compiler.compile_input_type`` (a reverse-O2O becomes a single
     # ``ID``). Neither path reads a converter descriptor: it flows into
-    # ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a graphene-free
+    # ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a
     # ``NativeRelationField`` (never ``None`` — the silent-drop trap) so the field
     # stays in ``_meta.fields`` with the SAME ``creation_counter`` for SDL field
     # ORDER. (S-rel-2 OUTPUT; S-input-5 INPUT.)
@@ -786,7 +778,7 @@ def convert_field_to_list_or_connection(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A graphene-free ``NativeRelationField`` presence/ordering marker.
+        A ``NativeRelationField`` presence/ordering marker.
     """
     model = get_related_model(field)
 
@@ -798,7 +790,7 @@ def convert_field_to_list_or_connection(
     # ``types._resolve_native_relation_input_fields`` ->
     # ``input_compiler.compile_input_type`` (M2M -> ``[ID!]``). Neither path reads
     # a converter descriptor: it flows into ``_meta.fields`` only as a
-    # PRESENCE/ORDERING marker. Emit a graphene-free ``NativeRelationField`` (the
+    # PRESENCE/ORDERING marker. Emit a ``NativeRelationField`` (the
     # silent-drop guard, never ``None`` / ``_DEAD_SCALAR``) carrying the SAME
     # ``creation_counter`` for SDL field ORDER. (S-rel-3 OUTPUT; S-input-5 INPUT.)
     from .native.descriptors import NativeRelationField  # noqa: PLC0415
@@ -824,7 +816,7 @@ def convert_many_rel_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A graphene-free ``NativeRelationField`` presence/ordering marker
+        A ``NativeRelationField`` presence/ordering marker
         (reverse FK / reverse M2M / reverse ``GenericRel``).
     """
     model = field.related_model
@@ -836,7 +828,7 @@ def convert_many_rel_to_djangomodel(
     # ``types._resolve_native_relation_input_fields`` ->
     # ``input_compiler.compile_input_type`` (reverse to-many -> ``[ID!]``, reverse
     # O2O -> ``ID``). Neither path reads a converter descriptor: it flows into
-    # ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a graphene-free
+    # ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a
     # ``NativeRelationField`` (the silent-drop guard, never ``None`` /
     # ``_DEAD_SCALAR``) carrying the SAME ``creation_counter`` for SDL field ORDER.
     # This converter ALSO handles the reverse ``GenericRel`` (the reverse side of a
@@ -866,7 +858,7 @@ def convert_field_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A graphene-free ``NativeRelationField`` presence/ordering marker.
+        A ``NativeRelationField`` presence/ordering marker.
     """
     model = get_related_model(field)
 
@@ -876,7 +868,7 @@ def convert_field_to_djangomodel(
     # ``input_compiler.compile_input_type`` (FK / forward-O2O -> single ``ID``,
     # ``ID!`` when required on create). Neither path reads a converter descriptor:
     # it flows into ``_meta.fields`` only as a PRESENCE/ORDERING marker. Emit a
-    # graphene-free ``NativeRelationField`` so the field stays in ``_meta.fields``
+    # ``NativeRelationField`` so the field stays in ``_meta.fields``
     # (the silent-drop guard, never ``None`` / ``_DEAD_SCALAR`` — cf. test_issue52
     # self-ref O2O) with the SAME ``creation_counter`` for SDL field ORDER.
     # (S-rel-2 OUTPUT; S-input-5 INPUT.)
@@ -901,7 +893,7 @@ def convert_generic_foreign_key_to_object(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A graphene-free ``NativeRelationField`` presence/ordering marker.
+        A ``NativeRelationField`` presence/ordering marker.
     """
     model = field.model
 
@@ -913,12 +905,11 @@ def convert_generic_foreign_key_to_object(
     # ``types._compile_gfk_union_output_fields`` reads ``model._meta`` +
     # ``registry.get_gfk_union`` DIRECTLY and last-wins-overrides the flat field.
     # No converter descriptor is read on any path — flat OUTPUT, union OUTPUT, or
-    # INPUT — so emit a graphene-free ``NativeRelationField`` presence/ordering
+    # INPUT — so emit a ``NativeRelationField`` presence/ordering
     # marker (the silent-drop guard, never ``None`` / ``_DEAD_SCALAR``) with the
-    # SAME ``creation_counter`` for SDL field ORDER. S-del-backend-11: the graphene
-    # ``Dynamic``/``Field`` closure (flat type, union Field, and mis-order WARNING)
-    # this used to build on the graphene path is GONE; the mis-order WARNING is now
-    # emitted by the native union injector. (S-rel-4 / S-input-5 / S-del-backend-11.)
+    # SAME ``creation_counter`` for SDL field ORDER. The flat type, union Field,
+    # and mis-order WARNING are emitted by the native union injector.
+    # (S-rel-4 / S-input-5.)
     from .native.descriptors import NativeRelationField  # noqa: PLC0415
 
     return NativeRelationField(related_model=model)
@@ -941,7 +932,7 @@ def convert_generic_relation_to_object_list(
 
     Returns:
         A GraphQL Dynamic field that resolves lazily to the related list, or a
-        graphene-free ``NativeRelationField`` marker on the native OUTPUT path.
+        ``NativeRelationField`` marker on the native OUTPUT path.
     """
     model = field.related_model
 
@@ -950,12 +941,11 @@ def convert_generic_relation_to_object_list(
     # ``types._compile_relation_list_fields`` (``output_compiler._is_many_relation``
     # matches ``GenericRelation``, reusing the related node's ``<Model>ListType``
     # results/totalCount CONTAINER) — it NEVER reads a converter descriptor. Emit a
-    # graphene-free ``NativeRelationField`` presence/ordering marker so the field
+    # ``NativeRelationField`` presence/ordering marker so the field
     # stays in ``_meta.fields`` (the silent-drop guard, never ``None``) with the
     # SAME ``creation_counter`` for SDL field ORDER. The INPUT path produces NO
     # field (``GenericRelation`` has no input) — return the dead-scalar sentinel so
-    # ``construct_fields`` OMITS it (matching the graphene path, whose Dynamic
-    # closure resolved to ``None`` for input). (S-rel-4.)
+    # ``construct_fields`` OMITS it. (S-rel-4.)
     if input_flag is None:
         from .native.descriptors import NativeRelationField  # noqa: PLC0415
 

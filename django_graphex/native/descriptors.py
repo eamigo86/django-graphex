@@ -160,7 +160,7 @@ class NativeMountedField:
       ``NativeList`` / ``NativeNonNull`` lazy wrapper. Thunks (str / callable) are
       resolved lazily, byte-equivalent to graphene ``Field.type``.
     - ``args`` -> a ``{name: arg}`` dict. Each value is forwarded to
-      ``graphene_arg_to_graphql_argument`` (which accepts a graphql-core type, a
+      ``to_graphql_argument`` (which accepts a graphql-core type, a
       ``GraphQLArgument``, OR a transitional graphene Argument), so the field's
       own ``__init__`` decides the arg currency.
     - ``name`` -> an explicit wire name or ``None`` (compiler camelCases).
@@ -241,7 +241,7 @@ class NativeMountedField:
         ``get_type()`` (its class) becomes the field type, the ``required`` /
         ``description`` / ``name`` kwargs carry over, and the creation counter is
         preserved so ordering is stable. The native compiler then reads ``.type``
-        and resolves the graphene scalar via ``_unwrap_graphene_type``. (The mounted
+        and resolves the graphene scalar via ``_unwrap_graphql_type``. (The mounted
         descriptor is METADATA only — the schema is compiled from
         ``_meta.graphql_output_type`` / ``_meta.graphql_input_type``, not from these.)
 
@@ -452,7 +452,7 @@ def _resolve_field_type(declared_type: Any) -> Any:
     2. Anything else (a graphql-core ``GraphQLType``: scalar / object / enum /
        input / ``GraphQLList`` / ``GraphQLNonNull`` wrapper, OR a graphene type
        left as a transitional fallback) -> returned VERBATIM. The compiler's
-       ``_unwrap_graphene_type`` / ``_is_plain_object_type`` /
+       ``_unwrap_graphql_type`` / ``_is_plain_object_type`` /
        ``_plain_django_output_type`` dispatch already handles each of those
        shapes, so the descriptor stays a thin pass-through.
 

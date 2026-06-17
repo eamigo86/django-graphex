@@ -10,7 +10,7 @@
 - ``AuthenticatedGraphQLView`` — gates the whole endpoint behind the library's own
   permission classes (no DRF).
 
-Reads the project's ``GRAPHENE`` Django setting (``SCHEMA``, ``MIDDLEWARE``,
+Reads the project's ``GRAPHEX`` Django setting (``SCHEMA``, ``MIDDLEWARE``,
 ``SUBSCRIPTION_PATH``, ``MAX_VALIDATION_ERRORS``, ``ATOMIC_MUTATIONS``) directly.
 """
 
@@ -197,9 +197,9 @@ class BaseGraphQLView(View):
         execution_context_class: Any = None,
         validation_rules: Any = None,
     ) -> None:
-        """Configure the view, falling back to the ``GRAPHENE`` setting.
+        """Configure the view, reading defaults from the ``GRAPHEX`` setting.
 
-        Args mirror graphene-django's ``GraphQLView`` (plus ``graphiql_template``).
+        Args mirror the classic ``GraphQLView`` signature (plus ``graphiql_template``).
         """
         if not schema:
             schema = graphex_or_graphene_settings.SCHEMA
@@ -226,12 +226,10 @@ class BaseGraphQLView(View):
         else:
             self.subscription_path = subscription_path
 
-        # Native 2.0: the view executes against ``self.schema.graphql_schema``
-        # (the graphql-core ``GraphQLSchema``).  We therefore duck-type on that
-        # attribute rather than ``isinstance(self.schema, graphene.Schema)``:
-        # a native ``DjangoGraphQLSchema`` (no longer a ``graphene.Schema``
-        # subclass as of S6f) exposes ``graphql_schema`` and must be accepted,
-        # while a graphene ``Schema`` instance also exposes it (backward compat).
+        # The view executes against ``self.schema.graphql_schema`` (the
+        # graphql-core ``GraphQLSchema``). We therefore duck-type on that
+        # attribute: a native ``DjangoGraphQLSchema`` exposes ``graphql_schema``
+        # and must be accepted, and any schema object exposing it works too.
         assert hasattr(self.schema, "graphql_schema"), (
             "A Schema exposing `graphql_schema` is required to be provided to "
             "GraphQLView."

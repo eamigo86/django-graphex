@@ -215,7 +215,7 @@ def _build_object_field(
     Returns:
         A graphql-core ``GraphQLField``.
     """
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
     from django_graphex.native.base import resolved_output_type
 
     registries = _resolve_registries(registries)
@@ -230,7 +230,7 @@ def _build_object_field(
         )
 
     args = {
-        arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+        arg_name: to_graphql_argument(arg, name=arg_name)
         for arg_name, arg in (field.args or {}).items()
     }
 
@@ -260,15 +260,15 @@ def _build_scalar_field(
     Returns:
         A graphql-core ``GraphQLField``.
     """
-    from django_graphex.native._args import _unwrap_graphene_type
+    from django_graphex.native._args import _unwrap_graphql_type
 
-    gql_type = _unwrap_graphene_type(field.type)
+    gql_type = _unwrap_graphql_type(field.type)
     args = {}
     if getattr(field, "args", None):
-        from django_graphex.native._args import graphene_arg_to_graphql_argument
+        from django_graphex.native._args import to_graphql_argument
 
         args = {
-            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            arg_name: to_graphql_argument(arg, name=arg_name)
             for arg_name, arg in field.args.items()
         }
     parent_resolver = _resolver_for(source_cls, field_name)
@@ -395,7 +395,7 @@ def _is_plain_object_type(graphene_cls: Any) -> bool:
     # plain ``ObjectType`` (e.g. ``ErrorType``) is a ``native.base.ObjectType``
     # subclass with ``type(cls) is pydantic.ModelMetaclass``; it is NOT a
     # ``graphene.ObjectType``, so without this branch a native ErrorType would
-    # fall through to the scalar arm (``_unwrap_graphene_type``) and KeyError /
+    # fall through to the scalar arm (``_unwrap_graphql_type``) and KeyError /
     # silently vanish (the silent-drop EPICENTER). ``InputType`` is EXCLUDED: it
     # shares the native base but is an INPUT type, never a plain output object.
     from django_graphex.native.base import InputType
@@ -424,7 +424,7 @@ def _compile_plain_object_type(
       scalar arm);
     - a ``DjangoObjectType`` / ``DjangoListObjectType`` field reuses its
       canonical ``_meta.graphql_output_type``;
-    - anything else is a scalar/enum converted via ``_unwrap_graphene_type``.
+    - anything else is a scalar/enum converted via ``_unwrap_graphql_type``.
 
     Resolvers are wired EXACTLY like graphene's TypeMap: the field's own
     ``resolver`` wins; otherwise the source class' ``resolve_<name>`` method (if
@@ -636,7 +636,7 @@ def compile_declared_field(
       ``_meta.graphql_output_type``;
     - a ``List`` / ``NonNull`` wrapper -> the inner leaf compiled, wrapper shape
       preserved;
-    - any other leaf (scalar / enum) -> ``_unwrap_graphene_type``.
+    - any other leaf (scalar / enum) -> ``_unwrap_graphql_type``.
 
     Resolvers are wired EXACTLY like graphene: the field's own ``resolver`` wins,
     else the source class' ``resolve_<field_name>`` method, else graphql-core's
@@ -653,7 +653,7 @@ def compile_declared_field(
     Returns:
         A graphql-core ``GraphQLField`` mirroring the graphene declaration.
     """
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
 
     registries = _resolve_registries(registries)
 
@@ -671,14 +671,14 @@ def compile_declared_field(
             # A graphene List/NonNull wrapper around a plain ObjectType
             # (e.g. ``errors: [ErrorType]`` on a mutation payload) must
             # compile the inner plain type and preserve the wrapper shape;
-            # _unwrap_graphene_type only handles scalar leaves and would
+            # _unwrap_graphql_type only handles scalar leaves and would
             # raise a GDX_SCALAR_MAP KeyError for an inner ObjectType.
             gql_type = _compile_wrapped_field_type(field_type, registries)
 
     args = {}
     if getattr(field, "args", None):
         args = {
-            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            arg_name: to_graphql_argument(arg, name=arg_name)
             for arg_name, arg in field.args.items()
         }
 
@@ -703,7 +703,7 @@ def _compile_wrapped_field_type(
       on-the-fly via ``_compile_plain_object_type`` (single-instance, memoized);
     - an inner ``DjangoObjectType`` / ``DjangoListObjectType`` reuses its
       canonical ``_meta.graphql_output_type``;
-    - any other leaf (scalar/enum) goes through ``_unwrap_graphene_type``.
+    - any other leaf (scalar/enum) goes through ``_unwrap_graphql_type``.
 
     This is what lets a mutation-payload field like ``errors: [ErrorType]`` —
     a ``graphene.List`` (transitional) OR a native ``NativeList`` (S-ROOTS-c)
@@ -726,7 +726,7 @@ def _compile_wrapped_field_type(
     Returns:
         The corresponding graphql-core type (wrappers preserved).
     """
-    from django_graphex.native._args import _unwrap_graphene_type
+    from django_graphex.native._args import _unwrap_graphql_type
     from django_graphex.native.descriptors import NativeList, NativeNonNull
 
     registries = _resolve_registries(registries)
@@ -754,7 +754,7 @@ def _compile_wrapped_field_type(
     target = _plain_django_output_type(field_type, registries)
     if target is not None:
         return target
-    return _unwrap_graphene_type(field_type)
+    return _unwrap_graphql_type(field_type)
 
 
 def _polymorphic_field_type(
@@ -853,7 +853,7 @@ def _build_plain_object_field(
     Returns:
         A graphql-core ``GraphQLField``.
     """
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
 
     output_type = _compile_plain_object_type(
         field.type, _resolve_registries(registries)
@@ -862,7 +862,7 @@ def _build_plain_object_field(
     args = {}
     if getattr(field, "args", None):
         args = {
-            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            arg_name: to_graphql_argument(arg, name=arg_name)
             for arg_name, arg in field.args.items()
         }
 
@@ -902,7 +902,7 @@ def _build_django_output_field(
     Returns:
         A graphql-core ``GraphQLField``.
     """
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
 
     registries = _resolve_registries(registries)
     output_type = _plain_django_output_type(field.type, registries)
@@ -910,7 +910,7 @@ def _build_django_output_field(
     args = {}
     if getattr(field, "args", None):
         args = {
-            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            arg_name: to_graphql_argument(arg, name=arg_name)
             for arg_name, arg in field.args.items()
         }
 
@@ -949,14 +949,14 @@ def _build_polymorphic_field(
     Returns:
         A graphql-core ``GraphQLField`` whose type is the polymorphic abstract type.
     """
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
 
     output_type = _polymorphic_field_type(field.type, _resolve_registries(registries))
 
     args = {}
     if getattr(field, "args", None):
         args = {
-            arg_name: graphene_arg_to_graphql_argument(arg, name=arg_name)
+            arg_name: to_graphql_argument(arg, name=arg_name)
             for arg_name, arg in field.args.items()
         }
 
@@ -1298,7 +1298,7 @@ def compile_native_root(
             # root field whose type is a DjangoUnionType / DjangoInterfaceType
             # compiles to a graphql-core GraphQLUnionType / GraphQLInterfaceType.
             # Without this it would fall to _build_scalar_field →
-            # _unwrap_graphene_type → GDX_SCALAR_MAP KeyError on the member type.
+            # _unwrap_graphql_type → GDX_SCALAR_MAP KeyError on the member type.
             fields[wire_name] = _build_polymorphic_field(
                 field, source_cls=root, field_name=field_name, registries=registries
             )
@@ -1330,7 +1330,7 @@ def compile_native_root(
             # Slice A: a plain graphene.ObjectType field (NOT a DjangoObjectType,
             # NOT a scalar) compiles on-the-fly to a single-instance native
             # GraphQLObjectType (recurses; carries extensions['gdx']). Without
-            # this it would fall to _build_scalar_field → _unwrap_graphene_type →
+            # this it would fall to _build_scalar_field → _unwrap_graphql_type →
             # GDX_SCALAR_MAP KeyError (e.g. the test_security `_Nested` field).
             fields[wire_name] = _build_plain_object_field(
                 field, source_cls=root, field_name=field_name, registries=registries

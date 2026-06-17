@@ -1,8 +1,8 @@
 """native/_args.py — graphql-core arg adapter (graphene-free, v2.0).
 
-S-del-backend-11: the graphene backend is deleted. ``_unwrap_graphene_type`` now
+S-del-backend-11: the graphene backend is deleted. ``_unwrap_graphql_type`` now
 returns a graphql-core type VERBATIM and RAISES ``TypeError`` for any leftover
-graphene type (the v2.0 CLEAN BREAK, decision #1603). ``graphene_arg_to_graphql_argument``
+graphene type (the v2.0 CLEAN BREAK, decision #1603). ``to_graphql_argument``
 is a thin adapter that wraps a graphql-core type (or passes a ``GraphQLArgument``
 through) into a ``GraphQLArgument``. These tests exercise the graphql-core
 (native) inputs and the loud-fail on a graphene input.
@@ -20,9 +20,9 @@ import pytest
 
 
 def _converter():
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
 
-    return graphene_arg_to_graphql_argument
+    return to_graphql_argument
 
 
 # ---------------------------------------------------------------------------
@@ -105,9 +105,9 @@ def test_out_name_snake_case_from_camel_key():
     """``out_name`` is the snake_case form of a camelCase declared key."""
     from graphql import GraphQLString
 
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
 
-    result = graphene_arg_to_graphql_argument(GraphQLString, name="firstName")
+    result = to_graphql_argument(GraphQLString, name="firstName")
     assert result.out_name == "first_name"
 
 
@@ -115,9 +115,9 @@ def test_out_name_snake_key_unchanged():
     """``out_name`` stays the same when the declared key is already snake_case."""
     from graphql import GraphQLString
 
-    from django_graphex.native._args import graphene_arg_to_graphql_argument
+    from django_graphex.native._args import to_graphql_argument
 
-    result = graphene_arg_to_graphql_argument(GraphQLString, name="first_name")
+    result = to_graphql_argument(GraphQLString, name="first_name")
     assert result.out_name == "first_name"
 
 
@@ -127,20 +127,20 @@ def test_out_name_snake_key_unchanged():
 
 
 def test_unwrap_raises_type_error_for_unrecognised_type():
-    """``_unwrap_graphene_type`` raises TypeError for a non-graphql-core type."""
-    from django_graphex.native._args import _unwrap_graphene_type
+    """``_unwrap_graphql_type`` raises TypeError for a non-graphql-core type."""
+    from django_graphex.native._args import _unwrap_graphql_type
 
     class NotAGraphQLType:
         """Has no graphql-core type identity."""
 
     with pytest.raises(TypeError, match="Cannot convert"):
-        _unwrap_graphene_type(NotAGraphQLType())
+        _unwrap_graphql_type(NotAGraphQLType())
 
 
 def test_unwrap_returns_graphql_core_type_verbatim():
-    """A graphql-core type is returned as-is by ``_unwrap_graphene_type``."""
+    """A graphql-core type is returned as-is by ``_unwrap_graphql_type``."""
     from graphql import GraphQLInt
 
-    from django_graphex.native._args import _unwrap_graphene_type
+    from django_graphex.native._args import _unwrap_graphql_type
 
-    assert _unwrap_graphene_type(GraphQLInt) is GraphQLInt
+    assert _unwrap_graphql_type(GraphQLInt) is GraphQLInt

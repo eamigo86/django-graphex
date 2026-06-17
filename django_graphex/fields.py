@@ -96,7 +96,7 @@ def _id_argument() -> Any:
 
     Replaces the graphene ``ID(required=True, description=...)`` extra-arg the
     field used to mount. The native compiler's
-    ``graphene_arg_to_graphql_argument`` accepts a graphql-core ``GraphQLArgument``
+    ``to_graphql_argument`` accepts a graphql-core ``GraphQLArgument``
     verbatim, so this is the byte-equivalent native currency.
     """
     from graphql import GraphQLArgument

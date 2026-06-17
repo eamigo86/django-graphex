@@ -243,44 +243,44 @@ def test_native_root_compiles_field_declared_object_and_scalar_and_list() -> Non
 
 
 # ---------------------------------------------------------------------------
-# _args._unwrap_graphene_type generalization: native graphql-core types pass
+# _args._unwrap_graphql_type generalization: native graphql-core types pass
 # through as-is; graphene path stays as a fallback.
 # ---------------------------------------------------------------------------
 
 
 def test_unwrap_passes_through_native_scalar() -> None:
-    """``_unwrap_graphene_type`` returns a graphql-core scalar unchanged."""
+    """``_unwrap_graphql_type`` returns a graphql-core scalar unchanged."""
     from graphql import GraphQLString
 
-    from django_graphex.native._args import _unwrap_graphene_type
+    from django_graphex.native._args import _unwrap_graphql_type
 
-    assert _unwrap_graphene_type(GraphQLString) is GraphQLString
+    assert _unwrap_graphql_type(GraphQLString) is GraphQLString
 
 
 def test_unwrap_passes_through_native_wrappers() -> None:
-    """``_unwrap_graphene_type`` returns graphql-core List/NonNull unchanged."""
+    """``_unwrap_graphql_type`` returns graphql-core List/NonNull unchanged."""
     from graphql import GraphQLList, GraphQLNonNull, GraphQLString
 
-    from django_graphex.native._args import _unwrap_graphene_type
+    from django_graphex.native._args import _unwrap_graphql_type
 
     wrapped = GraphQLNonNull(GraphQLList(GraphQLString))
-    assert _unwrap_graphene_type(wrapped) is wrapped
+    assert _unwrap_graphql_type(wrapped) is wrapped
 
 
 def test_unwrap_rejects_non_native_type_clean_break() -> None:
     """The graphene leaf path is DELETED — a non-native type raises TypeError.
 
-    S-del-backend-11: ``_unwrap_graphene_type`` no longer converts graphene types
+    S-del-backend-11: ``_unwrap_graphql_type`` no longer converts graphene types
     (the v2.0 CLEAN BREAK, decision #1603); it returns graphql-core types verbatim
     and rejects anything else. graphene is gone, so a generic non-native value
     (the stand-in for the legacy ``graphene.String``) raises ``TypeError``.
     """
     import pytest
 
-    from django_graphex.native._args import _unwrap_graphene_type
+    from django_graphex.native._args import _unwrap_graphql_type
 
     class _NotAGraphQLType:
         """No graphql-core type identity."""
 
     with pytest.raises(TypeError, match="Cannot convert"):
-        _unwrap_graphene_type(_NotAGraphQLType())
+        _unwrap_graphql_type(_NotAGraphQLType())

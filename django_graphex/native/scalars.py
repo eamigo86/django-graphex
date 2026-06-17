@@ -386,7 +386,7 @@ GdxGenericScalar = GraphQLScalarType(
 # ---------------------------------------------------------------------------
 
 # Keys are the GraphQL scalar NAMES as graphene renders them — this is what
-# ``_unwrap_graphene_type`` looks up via ``gtype._meta.name`` and what the
+# ``_unwrap_graphql_type`` looks up via ``gtype._meta.name`` and what the
 # native compiler seeds into ``_TYPE_CACHE``. The Python symbol names keep the
 # ``Gdx`` prefix (so callers importing ``GdxDate`` etc. are unaffected); only the
 # GraphQL ``.name`` and these map KEYS match graphene. (See #1508.)

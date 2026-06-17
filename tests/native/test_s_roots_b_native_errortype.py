@@ -14,7 +14,7 @@ S-ROOTS-b is the SILENT-DROP EPICENTER of the descriptor-surface conversion
    recognises a native ``ObjectType`` (like ErrorType) BEFORE the transitional
    ``issubclass(graphene.ObjectType)`` fallback, so it routes to the object arm
    (``_compile_plain_object_type``) — NOT the scalar arm where
-   ``_unwrap_graphene_type`` would KeyError, dropping the field silently.
+   ``_unwrap_graphql_type`` would KeyError, dropping the field silently.
 
 PARAMOUNT GUARD: the compiler is duck-typed; a mis-classified native ErrorType
 would either KeyError in the scalar arm OR vanish from the compiled SDL. The

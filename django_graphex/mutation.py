@@ -500,7 +500,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             from graphql import GraphQLArgument as _GQLArg
 
             from django_graphex.native._args import (
-                graphene_arg_to_graphql_argument as _arg_conv,
+                to_graphql_argument as _arg_conv,
             )
 
             _args = {}
