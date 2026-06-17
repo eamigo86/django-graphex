@@ -1,31 +1,27 @@
 # -*- coding: utf-8 -*-
-"""S8g (graphene-removal): subscriptions/subscription.py top-level graphene imports GONE.
+"""S8g + S-sub-6 (graphene-removal): subscription build path is graphene-free.
 
-The uninstall-blocking top-level imports
+S8g removed subscription.py's TOP-LEVEL graphene imports (lazy-defer). S-sub-6
+goes further and MIGRATES the subscription BUILD path off graphene entirely —
+defining + mounting a ``Subscription`` subclass no longer fires graphene at all
+(S8g only deferred the import; the firing still happened at subclass-def + mount,
+pinning graphene for the process lifetime):
 
-    from graphene import (ID, Argument, Enum, Field)
-    from graphene.types.generic import GenericScalar
-
-must NOT execute at module import time (they would block ``pip uninstall
-graphene`` in S8i). The graphene constructs they build are GENUINELY consumed by
-the native-default test contract:
-
-  * ``ActionSubscriptionEnum`` (graphene ``Enum``) — iterated in
-    ``tests/subscriptions/test_unit.py`` and pinned as
-    ``NonNull(ActionSubscriptionEnum)`` on ``_meta.arguments['action']``;
-  * ``SubscriptionField`` (graphene ``Field``) — the MOUNT SEAM the native root
-    compiler detects by class name (``schema_compiler._is_subscription_field``);
-  * ``Argument`` / ``ID`` / ``GenericScalar`` — build ``_meta.arguments``
-    (``action``/``id``/``filters``).
-
-So the strategy is LAZY-DEFER (same as S8e/S8f), NOT removal: the class bases
-(``ActionSubscriptionEnum``/``SubscriptionField``) are built via a module-level
-PEP 562 ``__getattr__`` + cached factory; the ``Argument``/``ID``/``GenericScalar``
-calls go through an in-function ``_g()`` accessor. Every graphene construct stays
-byte-identical; only the uninstall-blocking top-level import moves.
+  * ``_meta.arguments`` is now a NATIVE graphql-core ``{action, id, filters}``
+    dict (``GraphQLArgument`` + a graphql-core action ``GraphQLEnumType``), NOT
+    graphene ``Argument(ActionSubscriptionEnum)``/``ID``/``GenericScalar``. The
+    ``_g()`` accessor + ``_generic_scalar`` factory are RETIRED.
+  * ``SubscriptionField`` is now a NATIVE marker class subclassing
+    ``NativeMountedField`` (no graphene ``Field`` base). The native root compiler
+    recovers it off a graphene root via ``_collect_dropped_native_fields`` and
+    detects it by class NAME (``schema_compiler._is_subscription_field``).
+  * ``ActionSubscriptionEnum`` (the graphene ``Enum``) survives ONLY as a lazily
+    built public re-export for the graphene-backend-only test contract
+    (``test_unit``/``test_isolation``); it is RETIRED in S-del-tests-10. Nothing
+    on the native build path references it.
 
 The NATIVE delivery path (``_build_native_field``, the serialize-once event type)
-stays graphene-free and byte-identical (asserted separately in
+stays graphene-free (asserted here + in
 ``tests/subscriptions/test_subscription_base_native.py``).
 """
 
@@ -63,20 +59,22 @@ def test_no_toplevel_graphene_import_in_subscription_module():
     )
 
 
-def test_module_import_leaves_own_lazy_graphene_caches_dormant():
-    """A FRESH import of subscription.py leaves THIS module's lazy caches DORMANT.
+def test_module_import_leaves_own_lazy_graphene_cache_dormant():
+    """A FRESH import of subscription.py leaves the lazy enum cache DORMANT.
 
-    Importing subscription.py must not materialize this module's OWN graphene
-    constructs: the ``_GRAPHENE`` accessor cache and the lazily built class caches
-    (``ActionSubscriptionEnum``/``SubscriptionField``) stay ``None`` until first
-    access. Asserted in a clean subprocess so an already-warmed cache in this
-    process does not mask a load-time materialization.
+    S-sub-6: the only surviving lazy graphene cache is
+    ``_ACTION_SUBSCRIPTION_ENUM`` (kept for the graphene-backend-only public
+    re-export contract; deleted in S-del-tests-10). Importing subscription.py must
+    not materialize it — it stays ``None`` until first attribute access. The
+    ``_GRAPHENE`` accessor cache and the ``_SUBSCRIPTION_FIELD`` cache are GONE
+    (``SubscriptionField`` is a native module-level class now). Asserted in a clean
+    subprocess so an already-warmed cache in this process does not mask a
+    load-time materialization.
 
     NOTE: ``graphene`` may still appear in ``sys.modules`` after the import via a
-    TRANSITIVE dependency (``django_graphex.backends`` still imports graphene at
-    its own top level — an S8h+ concern, OUT OF S8g scope). S8g only removes
-    subscription.py's OWN top-level graphene import and proves its OWN lazy seam
-    stays dormant; the transitive pull is asserted-against in a later slice.
+    TRANSITIVE dependency (other modules still import graphene at their own top
+    level — out of S-sub-6 scope; retired in the deletion slices). S-sub-6 proves
+    subscription.py's OWN build path never materializes the lazy enum.
     """
     import subprocess
     import sys
@@ -107,18 +105,25 @@ def test_module_import_leaves_own_lazy_graphene_caches_dormant():
 
         import django_graphex.subscriptions.subscription as m
 
-        # Importing the module must NOT materialize THIS module's lazy graphene
-        # caches (the accessor cache + the two lazily built class bases).
-        assert m._GRAPHENE is None, m._GRAPHENE
-        assert m._ACTION_SUBSCRIPTION_ENUM is None, m._ACTION_SUBSCRIPTION_ENUM
-        assert m._SUBSCRIPTION_FIELD is None, m._SUBSCRIPTION_FIELD
+        # The retired accessors are GONE from the module surface.
+        assert not hasattr(m, "_GRAPHENE"), "_g()/_GRAPHENE must be retired"
+        assert not hasattr(m, "_generic_scalar"), "_generic_scalar must be retired"
+        assert not hasattr(m, "_SUBSCRIPTION_FIELD"), (
+            "SubscriptionField is now a native class; its lazy cache is retired"
+        )
 
-        # First access materializes the cache; it then stays stable.
+        # Importing the module must NOT materialize the surviving lazy enum cache.
+        assert m._ACTION_SUBSCRIPTION_ENUM is None, m._ACTION_SUBSCRIPTION_ENUM
+
+        # ``SubscriptionField`` is a real native module-level class (no lazy build).
+        from django_graphex.native.descriptors import NativeMountedField
+        assert isinstance(m.SubscriptionField, type)
+        assert issubclass(m.SubscriptionField, NativeMountedField)
+        assert m.SubscriptionField.__name__ == "SubscriptionField"
+
+        # First access to the lazy enum materializes the cache; it then stays stable.
         enum_cls = m.ActionSubscriptionEnum
         assert m._ACTION_SUBSCRIPTION_ENUM is enum_cls
-        field_cls = m.SubscriptionField
-        assert m._SUBSCRIPTION_FIELD is field_cls
-        assert m._GRAPHENE is not None
         print("DORMANT_OK")
         """
     )
@@ -153,36 +158,44 @@ def test_action_subscription_enum_is_lazy_graphene_enum():
     assert reexport is enum_cls
 
 
-def test_subscription_field_is_lazy_graphene_field_with_mount_name():
-    """``SubscriptionField`` resolves to a graphene ``Field`` subclass; name intact.
+def test_subscription_field_is_native_marker_with_mount_name():
+    """S-sub-6: ``SubscriptionField`` is a NATIVE marker class (no graphene base).
 
-    The class NAME (``SubscriptionField``) is the mount seam the native root
+    It now subclasses ``NativeMountedField`` (graphene-free) so the native schema
+    compiler's ``_collect_dropped_native_fields`` recovers it off a graphene root.
+    The class NAME (``SubscriptionField``) is still the mount seam the native root
     compiler detects (``schema_compiler._is_subscription_field`` gates on
     ``type(field).__name__ == 'SubscriptionField'``).
     """
     import graphene
 
+    from django_graphex.native.descriptors import NativeMountedField
+
     field_cls = sub_mod.SubscriptionField
-    assert issubclass(field_cls, graphene.Field)
+    assert not issubclass(field_cls, graphene.Field), (
+        "S-sub-6: SubscriptionField must NOT be a graphene Field subclass"
+    )
+    assert issubclass(field_cls, NativeMountedField)
     assert field_cls.__name__ == "SubscriptionField"
-    # Cache is stable.
-    assert sub_mod.SubscriptionField is field_cls
     # Public re-export resolves to the same class.
     from django_graphex.subscriptions import SubscriptionField as reexport
 
     assert reexport is field_cls
 
 
-def test_meta_arguments_built_via_lazy_graphene(db):
-    """``_meta.arguments`` keep the graphene Argument shape (native-default contract).
+def test_meta_arguments_built_natively_graphene_free(db):
+    """S-sub-6: ``_meta.arguments`` is now a NATIVE graphql-core dict (no graphene).
 
-    ``action`` -> ``NonNull(ActionSubscriptionEnum)``; ``id`` -> graphene ``ID``;
-    ``filters`` -> graphene ``GenericScalar``. Built through the lazy graphene
-    accessor, byte-identical to the eager build.
+    S8g lazy-deferred the graphene ``Argument``/``ID``/``GenericScalar`` build;
+    S-sub-6 RETIRES it from the subclass-def path. ``_meta.arguments`` now holds
+    graphql-core ``GraphQLArgument`` values: ``action`` -> ``GraphQLNonNull`` of a
+    graphql-core action ``GraphQLEnumType``; ``id`` -> ``GraphQLID``; ``filters``
+    -> ``GraphQLString``. The native compile path never read this dict — it is now
+    a graphene-free presence/keys contract built from ``_build_native_field_args``.
     """
     from django.contrib.auth.models import User
-    from graphene import NonNull
-    from graphene.types.generic import GenericScalar
+    from graphql import GraphQLID, GraphQLNonNull, GraphQLString
+    from graphql.type import GraphQLEnumType
 
     from django_graphex.subscriptions.subscription import Subscription
 
@@ -194,13 +207,18 @@ def test_meta_arguments_built_via_lazy_graphene(db):
     args = UserSubS8g._meta.arguments
     assert set(args) == {"action", "id", "filters"}
     action_type = args["action"].type
-    assert isinstance(action_type, NonNull)
-    assert action_type.of_type is sub_mod.ActionSubscriptionEnum
-    # id is graphene ID scalar; filters is graphene GenericScalar.
-    from graphene import ID as GrapheneID
-
-    assert args["id"].type is GrapheneID
-    assert args["filters"].type is GenericScalar
+    assert isinstance(action_type, GraphQLNonNull)
+    assert isinstance(action_type.of_type, GraphQLEnumType)
+    assert action_type.of_type.name == "UserSubscriptionAction"
+    assert set(action_type.of_type.values) == {
+        "CREATE",
+        "UPDATE",
+        "DELETE",
+        "ALL_ACTIONS",
+    }
+    # id is a graphql-core ID scalar; filters is a graphql-core String.
+    assert args["id"].type is GraphQLID
+    assert args["filters"].type is GraphQLString
 
 
 def test_mount_seam_field_is_named_subscription_field(db):

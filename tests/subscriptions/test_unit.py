@@ -78,15 +78,22 @@ def test_generated_arguments_contract():
 
     The bespoke ``channel_id``/``operation`` args and the ``data`` field-projection
     enum are gone (selection-set projection + WS/SSE auth boundary replaced them).
+
+    S-sub-6: ``_meta.arguments`` is now built NATIVELY (graphene-free) — graphql-core
+    ``GraphQLArgument`` values, ``action`` wrapped in ``GraphQLNonNull`` of a
+    graphql-core action ``GraphQLEnumType``. (The graphene ``ActionSubscriptionEnum``
+    is no longer on the build path.)
     """
-    from graphene import NonNull
+    from graphql import GraphQLNonNull
+    from graphql.type import GraphQLEnumType
 
     args = UserSubscription._meta.arguments
     assert set(args) == {"action", "id", "filters"}
-    # `action` is required -> wrapped in NonNull(ActionSubscriptionEnum).
+    # `action` is required -> wrapped in GraphQLNonNull of the action enum.
     action_type = args["action"].type
-    assert isinstance(action_type, NonNull)
-    assert action_type.of_type is ActionSubscriptionEnum
+    assert isinstance(action_type, GraphQLNonNull)
+    assert isinstance(action_type.of_type, GraphQLEnumType)
+    assert action_type.of_type.name == "UserSubscriptionAction"
 
 
 def test_serialize_instance_returns_jsonable_dict(db, django_user_model):

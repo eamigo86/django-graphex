@@ -18,33 +18,33 @@ from asgiref.sync import sync_to_async
 # metaclass-identity invariant). ``SubscriptionOptions`` becomes a thin subclass
 # of the mutable ``NativeObjectTypeOptions`` (graphene-free _meta).
 #
-# S8g (graphene-removal): the top-level ``from graphene import (ID, Argument,
-# Enum, Field)`` + ``from graphene.types.generic import GenericScalar`` are GONE
-# (they blocked the graphene uninstall in S8i). The graphene constructs they
-# built are still GENUINELY consumed by the native-default test contract, so they
-# are LAZY-DEFERRED (same strategy as S8e/S8f), NOT removed:
-#   * ``ID``/``Argument``/``GenericScalar`` build ``_meta.arguments`` (graphene
-#     ``Argument(ActionSubscriptionEnum, required=True)`` -> ``test_unit`` asserts
-#     the ``NonNull(ActionSubscriptionEnum)`` identity). The NATIVE compile path
-#     (``_build_native_field``) builds its OWN graphql-core enum + args and does
-#     NOT consume ``_meta.arguments``, but the graphene mount path still does, so
-#     these stay (lazily) until S8i migrates the arg-path test contract. Resolved
-#     in-function via the cached ``_g()`` accessor.
-#   * ``ActionSubscriptionEnum`` (graphene ``Enum`` subclass) and
-#     ``SubscriptionField`` (graphene ``Field`` subclass) are CLASS BASES — the
-#     ``class`` statement would evaluate graphene at MODULE import time. They are
-#     therefore built via a module-level PEP 562 ``__getattr__`` + cached factory
-#     (``_build_action_subscription_enum`` / ``_build_subscription_field``).
-#     ``SubscriptionField`` is the MOUNT SEAM the native root compiler detects by
-#     class name (``schema_compiler._is_subscription_field``); the name is
-#     preserved by the factory. PEP 562 only fires on module-attribute access, so
-#     in-module references use ``__getattr__("ActionSubscriptionEnum")`` /
-#     ``__getattr__("SubscriptionField")`` explicitly (a bare name would NameError).
+# S-sub-6 (graphene-removal): the subscription BUILD path is now graphene-free.
+# Defining a ``Subscription`` subclass and mounting it (``.Field()``) no longer
+# fires graphene at all (S8g had only LAZY-DEFERRED these — the firing still
+# happened at subclass-def + mount time, pinning graphene for the process):
+#   * ``_meta.arguments`` is now a NATIVE ``{action, id, filters}`` dict built
+#     from graphql-core (``GraphQLArgument`` + a graphql-core action enum), NOT
+#     graphene ``Argument(ActionSubscriptionEnum)``/``ID``/``GenericScalar``. It
+#     mirrors the ``_build_native_field`` arg shape (the native compile path
+#     already builds its OWN args and never read this dict — the dict is now a
+#     graphene-free presence/keys contract). ``_generic_scalar`` and the cached
+#     ``_g()`` accessor are RETIRED.
+#   * ``SubscriptionField`` is now a NATIVE marker class (NOT a graphene ``Field``
+#     subclass). The native root compiler detects it purely by class NAME
+#     (``schema_compiler._is_subscription_field`` gates on
+#     ``type(field).__name__ == 'SubscriptionField'`` + ``field.type`` carrying
+#     ``_build_native_field``); a graphene base was never required for the mount.
+#   * ``ActionSubscriptionEnum`` (the graphene ``Enum``) is retired from the build
+#     path. It is kept lazily (PEP 562 ``__getattr__`` + cached factory) ONLY for
+#     the graphene-backend-only test contract (``test_unit``/``test_isolation``
+#     iterate the public re-export); those tests are deleted in S-del-tests-10 and
+#     the lazy factory with them. Nothing on the native build path references it.
 from graphql import GraphQLError
 
 from ..backends import resolve_backend
 from ..native.base import NativeObjectTypeOptions
 from ..native.base import ObjectType as NativeObjectType
+from ..native.descriptors import NativeMountedField
 from ..settings import graphql_api_settings
 from .bindings import SubscriptionBinding
 from .mixins import safe_group_name
@@ -54,69 +54,92 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     from django.db.models import QuerySet
     from graphene import Enum as _GrapheneEnum
-    from graphene import Field as _GrapheneField
     from graphql import GraphQLResolveInfo
 
-    # S8g: ``ActionSubscriptionEnum`` (graphene ``Enum``) and ``SubscriptionField``
-    # (graphene ``Field``) are built LAZILY (module ``__getattr__`` below), so they
-    # are not bound as runtime module-level statements. These aliases bind the
-    # names for static analysis / annotations (``Field`` return type, ``__all__``)
-    # without re-introducing a top-level graphene import at runtime.
+    # S-sub-6: ``ActionSubscriptionEnum`` (graphene ``Enum``) is built LAZILY
+    # (module ``__getattr__`` below) ONLY for the graphene-backend-only test
+    # contract (deleted in S-del-tests-10); the native build path never touches
+    # it. This alias binds the name for static analysis / ``__all__`` without a
+    # top-level graphene import at runtime. ``SubscriptionField`` is now a NATIVE
+    # marker class defined at module level (no graphene base), so it needs no
+    # TYPE_CHECKING alias.
     ActionSubscriptionEnum = _GrapheneEnum
-    SubscriptionField = _GrapheneField
 
 
 # --------------------------------------------------------------------------- #
-# Lazy graphene accessors (S8g graphene-removal)                              #
+# Native subscription mount marker (S-sub-6 graphene-removal)                 #
 # --------------------------------------------------------------------------- #
-# This module no longer imports graphene at the MODULE top level. graphene is
-# still installed (until S8i) and is consumed by the native-default test
-# contract, so the imports below are deferred to first use and cached.
-_GRAPHENE: Any = None
+class SubscriptionField(NativeMountedField):
+    """Provide the MOUNT-SEAM marker the native root compiler detects.
 
+    S-sub-6: this is now a NATIVE marker class (graphene-free) subclassing
+    :class:`~django_graphex.native.descriptors.NativeMountedField`. Subclassing
+    that base is what keeps the MOUNT SEAM intact on a *graphene* root: graphene's
+    root metaclass DROPS any non-graphene attribute from ``_meta.fields``, but the
+    native schema compiler's ``_collect_dropped_native_fields`` recovers every
+    class-body ``NativeMountedField`` (and orders them by ``creation_counter``), so
+    the dropped subscription field is re-merged and ordered for byte-stable SDL.
 
-def _g() -> Any:
-    """Return the lazily imported, cached ``graphene`` module.
+    The native root compiler (``schema_compiler._is_subscription_field``) then
+    detects the recovered field purely by class NAME (``type(field).__name__ ==
+    'SubscriptionField'``) and ``field.type`` carrying ``_build_native_field`` — it
+    never required a graphene ``Field`` base. The compiler ignores the args /
+    subscribe carried here and calls ``field.type._build_native_field()`` to build
+    the DIRECT graphql-core subscription field (its own action enum + ``{action,
+    id, filters}`` args + native event output type).
 
-    The first call imports graphene (still installed until S8i) and caches it;
-    subsequent calls reuse the cache. Keeps the graphene ``_meta.arguments`` shape
-    (``Argument``/``ID``) byte-identical while removing the uninstall-blocking
-    top-level ``import graphene``.
+    ``field.type`` resolves to the ``Subscription`` subclass verbatim (a class is
+    returned as-is by ``_resolve_thunk``); ``args`` carries the native
+    ``_meta.arguments`` (presence/keys contract).
     """
-    global _GRAPHENE
-    if _GRAPHENE is None:
-        import graphene  # noqa: PLC0415
 
-        _GRAPHENE = graphene
-    return _GRAPHENE
+    def __init__(
+        self,
+        type: Any,  # noqa: A002 - mirrors the historic graphene Field(type) API
+        *,
+        args: Any = None,
+        subscribe: Callable[..., Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Store the mounted ``Subscription`` subclass + its args/subscribe.
+
+        Args:
+            type: The ``Subscription`` subclass (``_meta.output``) this field
+                mounts. The native compiler reads ``_build_native_field`` off it
+                (via ``NativeMountedField.type``, which returns a class verbatim).
+            args: The native ``_meta.arguments`` mapping (presence/keys contract;
+                unused by the native compile path which builds its own args).
+            subscribe: An optional subscribe resolver (unused under native — the
+                native field carries its own ``subscribe`` source factory).
+            **kwargs: Extra mount kwargs (e.g. ``description``); ``description`` is
+                forwarded to the base, the rest retained for API parity.
+        """
+        super().__init__(
+            type,
+            args=args or {},
+            description=kwargs.pop("description", None),
+        )
+        self._subscribe_fn = subscribe
+        self.kwargs = kwargs
 
 
-def _generic_scalar() -> Any:
-    """Return the graphene ``GenericScalar`` (lazily imported, not cached).
-
-    Used to type the ``filters`` argument on ``_meta.arguments``. Resolved on
-    demand so a bare module import never pulls graphene.
-    """
-    from graphene.types.generic import GenericScalar  # noqa: PLC0415
-
-    return GenericScalar
-
-
-#: Process-wide caches for the lazily built graphene class bases.
+#: Process-wide cache for the lazily built graphene ``ActionSubscriptionEnum``.
+#: S-sub-6: kept ONLY for the graphene-backend-only public re-export contract
+#: (``test_unit``/``test_isolation`` iterate it); the native build path never
+#: touches it. Retired with its consumers in S-del-tests-10.
 _ACTION_SUBSCRIPTION_ENUM: Any = None
-_SUBSCRIPTION_FIELD: Any = None
 
 
 def _build_action_subscription_enum() -> type:
     """Build (and cache) the graphene ``ActionSubscriptionEnum`` class.
 
-    S8g: ``ActionSubscriptionEnum`` subclasses graphene ``Enum``, which the
-    ``class`` statement would evaluate at MODULE import time, re-introducing the
-    uninstall-blocking top-level graphene import. Built lazily here against the
-    graphene module resolved by :func:`_g`. The resulting class is byte-identical
-    to the eager definition (same members/values); only the import timing moved.
+    S-sub-6: this graphene ``Enum`` is NO LONGER on the subscription build path
+    (the native ``_meta.arguments`` + ``_build_native_field`` build a graphql-core
+    action enum instead). It survives ONLY as a lazily built public re-export for
+    the graphene-backend-only test contract (deleted in S-del-tests-10). Built on
+    first attribute access so a bare module import never imports graphene.
     """
-    graphene = _g()
+    import graphene  # noqa: PLC0415
 
     class ActionSubscriptionEnum(graphene.Enum):
         """Model change actions a subscriber can listen to."""
@@ -129,75 +152,20 @@ def _build_action_subscription_enum() -> type:
     return ActionSubscriptionEnum
 
 
-def _build_subscription_field() -> type:
-    """Build (and cache) the graphene ``SubscriptionField`` class.
-
-    S8g: ``SubscriptionField`` subclasses graphene ``Field`` (same class-base
-    timing problem as the enum). Built lazily here. The class NAME is preserved
-    (``SubscriptionField``) — it is the MOUNT SEAM the native root compiler
-    detects (``schema_compiler._is_subscription_field`` gates on
-    ``type(field).__name__ == 'SubscriptionField'``).
-    """
-    graphene = _g()
-
-    class SubscriptionField(graphene.Field):
-        """Provide a "Field" carrying its own graphql-core subscribe resolver.
-
-        graphene only wires a "subscribe_<name>" method declared on the root
-        subscription type. By overriding "wrap_subscribe" we attach the resolver
-        defined on the "Subscription" subclass itself, regardless of the attribute
-        name it is mounted under on the root type.
-        """
-
-        def __init__(
-            self,
-            *args: Any,
-            subscribe: Callable[..., Any] | None = None,
-            **kwargs: Any,
-        ) -> None:
-            """Store the field's own subscribe resolver before building the field.
-
-            Args:
-                subscribe: The graphql-core subscribe resolver for this field.
-            """
-            self._subscribe_fn = subscribe
-            super().__init__(*args, **kwargs)
-
-        def wrap_subscribe(
-            self, parent_subscribe: Callable[..., Any] | None
-        ) -> Callable[..., Any] | None:
-            """Prefer a root "subscribe_<name>" if present, else our resolver.
-
-            Args:
-                parent_subscribe: The resolver declared on the root type, if any.
-
-            Returns:
-                The chosen subscribe resolver, or "None" when neither is set.
-            """
-            return parent_subscribe or self._subscribe_fn
-
-    return SubscriptionField
-
-
 def __getattr__(name: str) -> Any:
-    """Lazily resolve the module-level graphene class bases (PEP 562).
+    """Lazily resolve the graphene-backend-only ``ActionSubscriptionEnum`` (PEP 562).
 
-    Accessing ``subscription.ActionSubscriptionEnum`` / ``.SubscriptionField``
-    (import, attribute, or the in-module ``__getattr__(...)`` calls) builds the
-    graphene subclass on first use and caches it, so a bare ``import`` of this
-    module never triggers the graphene import. Any other attribute name raises
-    ``AttributeError`` as usual.
+    S-sub-6: only ``ActionSubscriptionEnum`` is resolved lazily now (kept for the
+    graphene-backend-only public re-export contract; deleted in S-del-tests-10).
+    ``SubscriptionField`` is a real module-level native class, so it is found by
+    normal attribute lookup and never reaches this hook. Any other attribute name
+    raises ``AttributeError`` as usual.
     """
     if name == "ActionSubscriptionEnum":
         global _ACTION_SUBSCRIPTION_ENUM
         if _ACTION_SUBSCRIPTION_ENUM is None:
             _ACTION_SUBSCRIPTION_ENUM = _build_action_subscription_enum()
         return _ACTION_SUBSCRIPTION_ENUM
-    if name == "SubscriptionField":
-        global _SUBSCRIPTION_FIELD
-        if _SUBSCRIPTION_FIELD is None:
-            _SUBSCRIPTION_FIELD = _build_subscription_field()
-        return _SUBSCRIPTION_FIELD
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -349,36 +317,17 @@ class Subscription(NativeObjectType):
         # selection set, and the WS/SSE transports are the auth boundary, so no
         # channel handshake id is needed). The reduced set mirrors the native
         # ``_build_native_field`` args (subscription.py native compile path).
-        # S8g: graphene constructs resolved lazily (top-level import removed).
-        # ``Argument``/``ID`` come from the cached ``_g()`` accessor;
-        # ``ActionSubscriptionEnum`` (a graphene Enum class base) is resolved via
-        # the module-level PEP 562 ``__getattr__`` (a bare name would NameError
-        # since PEP 562 does not fire on function-local lookups);
-        # ``GenericScalar`` is lazily imported. Byte-identical to the eager build.
-        graphene = _g()
-        action_enum = __getattr__("ActionSubscriptionEnum")
-        arguments = {
-            "action": graphene.Argument(
-                action_enum,
-                required=True,
-                description="Model change action to listen to: create, update, delete or all_actions.",
-            ),
-            "id": graphene.Argument(
-                graphene.ID,
-                description="ID field value that has the object to which you wish to subscribe",
-            ),
-            "filters": graphene.Argument(
-                _generic_scalar(),
-                description=(
-                    "Optional per-subscriber field filters as a mapping of "
-                    "Django ORM lookup to value, e.g. {post: 7} or "
-                    '{text__icontains: "urgent"}. Notifications are delivered '
-                    "only when the changed instance matches."
-                ),
-            ),
-        }
-
-        _meta.arguments = arguments
+        # S-sub-6: built NATIVELY (graphene-free) — graphql-core ``GraphQLArgument``
+        # + a graphql-core action enum, NOT graphene ``Argument(ActionSubscription
+        # Enum)``/``ID``/``GenericScalar``. The native compile path
+        # (``_build_native_field``) already builds its OWN args and never read this
+        # dict; it now exists as a graphene-free presence/keys contract (the only
+        # native consumer reads ``set(_meta.arguments)``). Built from this class'
+        # own ``_build_native_field`` so the arg shape stays in lockstep. The
+        # model is passed explicitly: ``_meta`` is not yet bound on ``cls`` here
+        # (it is assigned by the ``super()`` call below), so the builder cannot
+        # read ``cls._meta.model`` at this point.
+        _meta.arguments = cls._build_native_field_args(model=model)
 
         super().__init_subclass_with_meta__(
             _meta=_meta, description=description, **options
@@ -643,6 +592,7 @@ class Subscription(NativeObjectType):
                 _to_camel_case,
                 compile_output_fields,
             )
+            from ..registry import get_global_registry
 
             # 1) Scalars via the SHARED output registry — the SAME builder the
             # DjangoObjectType output thunk uses, so scalar NAMES/nullability are
@@ -650,8 +600,20 @@ class Subscription(NativeObjectType):
             # compile_output_fields also emits FK/O2O as the NESTED object type,
             # which is DB-backed and WRONG for the flat-pk payload; those entries
             # are OVERWRITTEN below with the deliverable pk scalar.
+            #
+            # S-sub-6 (watch-item #6 reconcile): thread the SHARED graphene
+            # ``Registry`` (the DEFAULT pair's ``graphene`` member IS
+            # ``get_global_registry()`` — see types._schema_scoped_registry) so a
+            # choices field in the payload renders the CANONICAL ``GraphQLEnumType``
+            # (the SAME instance the regular OUTPUT + FILTER-INPUT paths resolve via
+            # ``converter.build_choices_enum_type``'s memoized registry slot), NOT
+            # the ``String`` fallback ``graphene_registry=None`` produced before.
             built: dict[str, Any] = dict(
-                compile_output_fields(model, get_shared_output_registry())
+                compile_output_fields(
+                    model,
+                    get_shared_output_registry(),
+                    graphene_registry=get_global_registry(),
+                )
             )
 
             def _pk_scalar(related_model: type) -> Any:
@@ -850,6 +812,67 @@ class Subscription(NativeObjectType):
         )
 
     @classmethod
+    def _build_native_field_args(cls, model: Any = None) -> dict[str, Any]:
+        """Build the native ``{action, id, filters}`` graphql-core args (graphene-free).
+
+        S-sub-6: the single source of truth for the subscription field arguments.
+        Used both for ``_meta.arguments`` (the graphene-free presence/keys
+        contract built at subclass-def) and for the live ``_build_native_field``
+        compile (the DIRECT graphql-core ``GraphQLField`` the native root compiler
+        mounts). Building it here keeps the two in lockstep with ZERO graphene.
+
+        Args:
+            model: The Django model whose name scopes the action enum. Passed
+                explicitly at subclass-def (where ``cls._meta`` is not yet bound);
+                defaults to ``cls._meta.model`` for the live compile call.
+
+        Returns:
+            A ``{name: GraphQLArgument}`` mapping with a non-null model-scoped
+            action enum, an optional ``id`` (``GraphQLID``), and an optional
+            JSON-encoded ``filters`` (``GraphQLString``).
+        """
+        from graphql import (
+            GraphQLArgument,
+            GraphQLNonNull,
+        )
+        from graphql import (
+            GraphQLID as _GraphQLID,
+        )
+        from graphql import (
+            GraphQLString as _GraphQLString,
+        )
+        from graphql.type import GraphQLEnumType, GraphQLEnumValue
+
+        if model is None:
+            model = cls._meta.model
+        action_enum = GraphQLEnumType(
+            f"{model.__name__}SubscriptionAction",
+            {
+                "CREATE": GraphQLEnumValue("create"),
+                "UPDATE": GraphQLEnumValue("update"),
+                "DELETE": GraphQLEnumValue("delete"),
+                "ALL_ACTIONS": GraphQLEnumValue("all_actions"),
+            },
+        )
+        return {
+            "action": GraphQLArgument(
+                GraphQLNonNull(action_enum),
+                description="Model change action to listen to.",
+                out_name="action",
+            ),
+            "id": GraphQLArgument(
+                _GraphQLID,
+                description="Optional object id to scope a per-object subscription.",
+                out_name="id",
+            ),
+            "filters": GraphQLArgument(
+                _GraphQLString,
+                description="Optional JSON-encoded per-subscriber field filters.",
+                out_name="filters",
+            ),
+        }
+
+    @classmethod
     def _build_native_field(
         cls, schema: Any = None, document: Any = None
     ) -> Any:
@@ -888,47 +911,13 @@ class Subscription(NativeObjectType):
             A graphql-core ``GraphQLField``.
         """
         from graphql import (
-            GraphQLArgument,
-            GraphQLNonNull,
-        )
-        from graphql import (
             GraphQLField as _GraphQLField,
         )
-        from graphql import (
-            GraphQLID as _GraphQLID,
-        )
-        from graphql import (
-            GraphQLString as _GraphQLString,
-        )
-        from graphql.type import GraphQLEnumType, GraphQLEnumValue
 
-        action_enum = GraphQLEnumType(
-            f"{cls._meta.model.__name__}SubscriptionAction",
-            {
-                "CREATE": GraphQLEnumValue("create"),
-                "UPDATE": GraphQLEnumValue("update"),
-                "DELETE": GraphQLEnumValue("delete"),
-                "ALL_ACTIONS": GraphQLEnumValue("all_actions"),
-            },
-        )
         # Reduced native arg set: {action, id, filters} (no channel_id/operation).
-        args = {
-            "action": GraphQLArgument(
-                GraphQLNonNull(action_enum),
-                description="Model change action to listen to.",
-                out_name="action",
-            ),
-            "id": GraphQLArgument(
-                _GraphQLID,
-                description="Optional object id to scope a per-object subscription.",
-                out_name="id",
-            ),
-            "filters": GraphQLArgument(
-                _GraphQLString,
-                description="Optional JSON-encoded per-subscriber field filters.",
-                out_name="filters",
-            ),
-        }
+        # S-sub-6: shared with ``_meta.arguments`` via the single builder so the
+        # live field + the subclass-def presence contract stay in lockstep.
+        args = cls._build_native_field_args()
 
         async def _subscribe_source(root: Any, info: Any, **kwargs: Any) -> Any:
             from channels.layers import get_channel_layer
@@ -991,12 +980,13 @@ class Subscription(NativeObjectType):
         )
         # Ensure the signal binding exists as soon as the schema is wired.
         cls.get_binding()
-        # S8g: ``SubscriptionField`` is a graphene class base resolved lazily via
-        # the module-level PEP 562 ``__getattr__`` (a bare name would NameError —
-        # PEP 562 only fires on module-attribute access, not function-local
-        # lookups). The returned class name is ``SubscriptionField`` (mount seam).
-        subscription_field_cls = __getattr__("SubscriptionField")
-        return subscription_field_cls(
+        # S-sub-6: ``SubscriptionField`` is now the NATIVE marker class defined at
+        # module level (no graphene base). The native root compiler detects it by
+        # class NAME (``schema_compiler._is_subscription_field``) and calls
+        # ``cls._build_native_field()`` for the live field, so the marker just
+        # carries ``type`` (the Subscription subclass) + the native
+        # ``_meta.arguments`` (presence/keys contract).
+        return SubscriptionField(
             cls._meta.output,
             args=cls._meta.arguments,
             **kwargs,

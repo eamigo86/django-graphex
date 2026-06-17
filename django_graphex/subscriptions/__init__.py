@@ -39,17 +39,18 @@ __all__ = (
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily re-export the graphene-backed subscription class bases (PEP 562).
+    """Lazily re-export the subscription class bases (PEP 562).
 
-    S8g (graphene-removal): ``ActionSubscriptionEnum`` (graphene ``Enum``) and
-    ``SubscriptionField`` (graphene ``Field``) are built lazily in
-    ``.subscription`` via a module-level ``__getattr__`` so a bare ``import``
-    never pulls graphene. Re-exporting them EAGERLY here (``from .subscription
-    import ActionSubscriptionEnum, SubscriptionField``) would fire that
-    ``__getattr__`` at package import time, defeating the lazy seam. So the
-    package re-export is also deferred: ``subscriptions.ActionSubscriptionEnum``
-    / ``subscriptions.SubscriptionField`` resolve to the lazily built class on
-    first access, identity-stable with the ``.subscription`` cache.
+    S-sub-6 (graphene-removal): ``SubscriptionField`` is now a NATIVE marker class
+    defined at module level in ``.subscription`` (graphene-free), and
+    ``ActionSubscriptionEnum`` (a graphene ``Enum``) is built lazily there via the
+    submodule's ``__getattr__`` ONLY for the graphene-backend-only test contract.
+    Re-exporting ``ActionSubscriptionEnum`` EAGERLY here (``from .subscription
+    import ActionSubscriptionEnum``) would fire that ``__getattr__`` — hence import
+    graphene — at package import time, defeating the lazy seam. So the package
+    re-export is deferred: ``subscriptions.ActionSubscriptionEnum`` /
+    ``subscriptions.SubscriptionField`` resolve on first access, identity-stable
+    with the ``.subscription`` definitions.
     """
     if name in ("ActionSubscriptionEnum", "SubscriptionField"):
         from . import subscription
