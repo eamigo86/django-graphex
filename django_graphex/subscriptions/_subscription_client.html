@@ -108,6 +108,14 @@
   #   title
   # }
 }</textarea>
+        <!-- Optional operationName (for multi-operation documents). -->
+        <div class="gdsx-field" style="flex:0 0 auto;padding:.4rem .85rem;border-top:1px solid var(--line);background:var(--panel)">
+          <label>Op&nbsp;name</label>
+          <input class="gdsx-input" id="gdsx-opname" spellcheck="false" placeholder="(optional)">
+        </div>
+        <!-- Optional GraphQL variables as a JSON object; validated before send. -->
+        <div class="gdsx-panehead"><span>variables (JSON)</span></div>
+        <textarea class="gdsx-editor" id="gdsx-vars" spellcheck="false" style="flex:0 0 auto;height:5.5rem" placeholder='{ "id": 1 }'></textarea>
       </div>
       <div class="gdsx-pane">
         <div class="gdsx-panehead"><span>output</span><span class="gdsx-time" id="gdsx-count">0 events</span></div>
@@ -130,12 +138,14 @@
   // ---- State -----------------------------------------------------------------
   var mode="ws";      // "ws" | "sse"
   var ws=null;        // active WebSocket (WS mode)
-  var sse=null;       // active EventSource (SSE mode)
+  var sseActive=false;// true while an SSE stream (fetch POST) is live
+  var sseAbort=null;  // AbortController for the active SSE fetch stream
   var opId=null;      // current WS subscription id (string)
   var wsAcked=false;  // true after connection_ack received
   var count=0;
   var schemaCandidates=[];
   var opCounter=0;    // monotonic op id generator
+  var wsCounter=0;    // monotonic WebSocket-connection id generator (RANK 4 guard)
 
   // ---- DOM shortcuts ---------------------------------------------------------
   var $=function(id){return document.getElementById(id);};
@@ -143,6 +153,7 @@
   var connectBtn=$("gdsx-connect"), runBtn=$("gdsx-run");
   var out=$("gdsx-out"), countEl=$("gdsx-count");
   var editor=$("gdsx-query"), ac=$("gdsx-ac");
+  var varsEl=$("gdsx-vars"), opNameEl=$("gdsx-opname");
   var wsField=$("gdsx-ws-field"), sseField=$("gdsx-sse-field");
   var opIdEl=$("gdsx-op-id");
 
@@ -182,6 +193,26 @@
     count++; countEl.textContent=count+(count===1?" event":" events");
   }
 
+  // Build the GraphQL request payload from the editor, optional variables JSON,
+  // and optional operationName.  Returns null (and logs an error) when the
+  // variables textarea holds non-empty, invalid JSON — so we never send garbage.
+  function buildPayload(){
+    var payload={query:editor.value};
+    var rawVars=varsEl?varsEl.value.trim():"";
+    if(rawVars){
+      var parsed;
+      try{parsed=JSON.parse(rawVars);}
+      catch(e){log("error","Error","Invalid variables JSON — "+String(e&&e.message||e));return null;}
+      if(parsed===null||typeof parsed!=="object"||Array.isArray(parsed)){
+        log("error","Error","Invalid variables JSON — must be an object, e.g. { \"id\": 1 }.");return null;
+      }
+      payload.variables=parsed;
+    }
+    var opName=opNameEl?opNameEl.value.trim():"";
+    if(opName){payload.operationName=opName;}
+    return payload;
+  }
+
   // ---- Mode selector ---------------------------------------------------------
   function setMode(m){
     mode=m;
@@ -189,9 +220,11 @@
     $("gdsx-mode-sse").className="gdsx-seg-btn"+(m==="sse"?" active":"");
     wsField.style.display=m==="ws"?"":"none";
     sseField.style.display=m==="sse"?"":"none";
-    // Disconnect any active connection when switching modes.
+    // Disconnect any active connection when switching modes.  The WS onclose
+    // handler is guarded by a monotonic connection id (RANK 4), so a stale
+    // close firing after a later reconnect cannot null the live socket.
     if(ws){ws.close();}
-    if(sse){sse.close();sse=null;setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;runBtn.disabled=true;}
+    if(sseActive){sseStop();setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;runBtn.disabled=true;}
   }
   $("gdsx-mode-ws").addEventListener("click",function(){setMode("ws");});
   $("gdsx-mode-sse").addEventListener("click",function(){setMode("sse");});
@@ -215,18 +248,27 @@
   function wsConnect(){
     var url=$("gdsx-ws").value.trim(); if(!url) return;
     loadSchema();
-    try{ws=new WebSocket(url,"graphql-transport-ws");}catch(e){log("error","WS Error",String(e));return;}
+    // RANK 4: tag this connection with a monotonic id captured in the closure.
+    // When the user switches WS→SSE→WS quickly, an OLD socket's onclose can fire
+    // AFTER wsConnect() created a NEW ws.  We only run cleanup when this
+    // connection is still the current one (myId === wsCounter); a stale close
+    // is ignored so it cannot null the live socket or clobber the status pill.
+    var myId=++wsCounter;
+    var sock;
+    try{sock=new WebSocket(url,"graphql-transport-ws");}catch(e){log("error","WS Error",String(e));return;}
+    ws=sock;
     setStatus("connecting","Connecting…");
     connectBtn.textContent="Connecting…"; connectBtn.disabled=true;
     wsAcked=false; opId=null; opIdEl.textContent="";
 
-    ws.onopen=function(){
+    sock.onopen=function(){
       // Send connection_init as the first message (graphql-transport-ws §4.1).
       wsSend({type:"connection_init"});
       log("handshake","connection_init","Sent connection_init — awaiting connection_ack…");
     };
 
-    ws.onmessage=function(ev){
+    sock.onmessage=function(ev){
+      if(myId!==wsCounter) return; // stale socket — ignore (RANK 4 guard)
       var msg;
       try{msg=JSON.parse(ev.data);}catch(_){log("notify","Frame",ev.data);return;}
       var t=msg&&msg.type;
@@ -255,10 +297,15 @@
       }
     };
 
-    ws.onerror=function(){
+    sock.onerror=function(){
+      if(myId!==wsCounter) return; // stale socket — ignore (RANK 4 guard)
       log("error","WS Error","Could not reach "+$("gdsx-ws").value+". Is the server running?");
     };
-    ws.onclose=function(ev){
+    sock.onclose=function(ev){
+      // RANK 4: only run cleanup for the CURRENT connection.  A stale onclose
+      // (from a socket the user already switched away from) must not null a
+      // newer live socket or reset the status pill back to Disconnected.
+      if(myId!==wsCounter) return;
       setStatus("closed","Disconnected");
       connectBtn.textContent="Connect"; connectBtn.disabled=false;
       runBtn.disabled=true;
@@ -280,17 +327,17 @@
 
   function wsRun(){
     if(!wsAcked){log("error","Error","WS not connected — connect first.");return;}
-    var query=editor.value;
+    var payload=buildPayload(); if(!payload) return; // invalid variables JSON
+    var query=payload.query;
     opId=String(++opCounter);
     opIdEl.textContent="op: "+opId;
-    var payload={query:query};
     wsSend({type:"subscribe",id:opId,payload:payload});
-    log("sent","subscribe",{id:opId,query:query.substring(0,120)+(query.length>120?"…":"")});
+    log("sent","subscribe",{id:opId,query:query.substring(0,120)+(query.length>120?"…":""),variables:payload.variables||null,operationName:payload.operationName||null});
     runBtn.disabled=true;
   }
 
   // ==========================================================================
-  // SSE transport — graphql-sse (text/event-stream) protocol
+  // SSE transport — graphql-sse (text/event-stream), "single connection" via POST
   // https://github.com/enisdenjo/graphql-sse
   //
   // The server endpoint is an async Django view returning:
@@ -298,88 +345,86 @@
   //   event: next\ndata: {json}\n\n    — one per subscription event
   //   event: complete\ndata: \n\n      — terminal frame
   //
-  // The client POSTs the GraphQL subscription query via HTTP first (fetch),
-  // then opens an EventSource on the SSE endpoint URL. Because EventSource
-  // only supports GET, django-graphex's SSE view accepts the subscription via
-  // a query-string or body form depending on server config. For simplicity this
-  // client sends the query via the URL query-string so EventSource can open it
-  // directly (servers that require POST should use the "distinct connections"
-  // mode from the graphql-sse spec — advanced usage, not this demo).
+  // IMPORTANT: this client does NOT use the browser EventSource API.  EventSource
+  // is GET-only and cannot carry a GraphQL document (query/variables/operationName),
+  // so an EventSource opened in sseConnect() would be a dead, query-less
+  // connection (RANK 7).  Instead the subscription is started by a fetch() POST in
+  // sseRun(), and the streaming response body is read frame by frame.  This
+  // matches how django-graphex's native SSE view works (POST body carries
+  // query/variables/operationName) and avoids the GET-only EventSource limitation.
   //
-  // Simpler approach used here: POST the query via fetch to the SSE endpoint
-  // to start the stream, then read the response body as a stream of SSE frames.
-  // This avoids the GET-only EventSource limitation and matches how the native
-  // SSE view works (POST body carries query/variables/operationName).
+  // sseConnect() therefore performs no network I/O — it just marks the client
+  // "ready" so the user can press run; the actual stream is owned by sseRun().
   // ==========================================================================
+
+  // Abort + reset the active SSE fetch stream, if any.
+  function sseStop(){
+    if(sseAbort){try{sseAbort.abort();}catch(_){/* ignore */}}
+    sseAbort=null; sseActive=false;
+  }
 
   function sseConnect(){
     var url=$("gdsx-sse").value.trim(); if(!url) return;
     loadSchema();
-    setStatus("connecting","Connecting…");
-    connectBtn.textContent="Connecting…"; connectBtn.disabled=true;
-    // Use EventSource for the SSE connection to the graphql-sse endpoint.
-    // The query document is not sent here — it is sent when the user presses
-    // the run button (per the graphql-sse distinct-connections mode: one
-    // EventSource connection per subscription).
-    // For demo purposes, open EventSource now to verify connectivity, and
-    // send the subscription query when the user presses run.
-    try{
-      sse=new EventSource(url);
-    }catch(e){log("error","SSE Error",String(e));setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;return;}
-
-    sse.onopen=function(){
-      connectBtn.textContent="Disconnect"; connectBtn.disabled=false;
-      setStatus("open","Connected (SSE)");
-      runBtn.disabled=false;
-      log("handshake","SSE Open","EventSource connected — ready to subscribe.");
-    };
-    sse.onerror=function(){
-      log("error","SSE Error","EventSource connection error. Is the server running?");
-      sse.close(); sse=null;
-      setStatus("closed","Disconnected");
-      connectBtn.textContent="Connect"; connectBtn.disabled=false;
-      runBtn.disabled=true;
-    };
-    // Handle named SSE events per graphql-sse protocol.
-    sse.addEventListener("next",function(ev){
-      var data;try{data=JSON.parse(ev.data);}catch(_){data=ev.data;}
-      log("notify","next",data);
-    });
-    sse.addEventListener("complete",function(){
-      log("complete","complete","Stream completed.");
-      sse.close(); sse=null;
-      setStatus("closed","Disconnected");
-      connectBtn.textContent="Connect"; connectBtn.disabled=false;
-      runBtn.disabled=true;
-    });
+    // No EventSource is opened here (RANK 7): the GraphQL document can only be
+    // delivered via the POST in sseRun().  We just enable the run button and
+    // give the user correct "ready" feedback.
+    sseActive=true;
+    connectBtn.textContent="Disconnect"; connectBtn.disabled=false;
+    setStatus("open","Connected (SSE)");
+    runBtn.disabled=false;
+    log("handshake","SSE Ready","SSE mode armed — press ▶ to POST your subscription and start the stream.");
   }
 
   function sseDisconnect(){
-    if(sse){sse.close();sse=null;}
+    sseStop();
     setStatus("closed","Disconnected");
     connectBtn.textContent="Connect"; connectBtn.disabled=false;
     runBtn.disabled=true;
   }
 
   function sseRun(){
-    // SSE distinct-connections mode: send the subscription via HTTP POST to the
-    // SSE endpoint; the server's StreamingHttpResponse carries event frames.
-    // Close the current EventSource (it was opened just for connectivity check),
-    // then POST the query and stream the response.
-    if(sse){sse.close();sse=null;}
+    // Single-connection mode: send the subscription via HTTP POST to the SSE
+    // endpoint; the server's StreamingHttpResponse carries the event frames,
+    // which we read off the response body stream.
     var url=$("gdsx-sse").value.trim();
-    var query=editor.value;
-    log("sent","subscribe",{query:query.substring(0,120)+(query.length>120?"…":"")});
+    var payload=buildPayload(); if(!payload) return; // invalid variables JSON
+    var query=payload.query;
+    // Abort any previous in-flight stream before starting a new one.
+    sseStop(); sseActive=true;
+    var ctrl=(typeof AbortController!=="undefined")?new AbortController():null;
+    sseAbort=ctrl;
+    log("sent","subscribe",{query:query.substring(0,120)+(query.length>120?"…":""),variables:payload.variables||null,operationName:payload.operationName||null});
     runBtn.disabled=true;
     setStatus("connecting","Streaming…");
+
+    // Parse a single SSE frame (event:/data: lines) and log it.
+    function flushFrame(frame){
+      if(!frame.trim()) return;
+      var eventType="message", dataLines=[];
+      frame.split("\n").forEach(function(line){
+        if(line.startsWith("event: ")){eventType=line.slice(7).trim();}
+        else if(line.startsWith("data: ")){dataLines.push(line.slice(6));}
+      });
+      var raw=dataLines.join("\n");
+      if(eventType==="next"){
+        var data;try{data=JSON.parse(raw);}catch(_){data=raw;}
+        log("notify","next",data);
+      } else if(eventType==="complete"){
+        log("complete","complete","Stream complete.");
+        runBtn.disabled=false;
+        setStatus("open","Connected (SSE)");
+      }
+    }
 
     fetch(url,{
       method:"POST",
       headers:{"Content-Type":"application/json","Accept":"text/event-stream,application/json"},
-      body:JSON.stringify({query:query})
+      body:JSON.stringify(payload),
+      signal:ctrl?ctrl.signal:undefined
     }).then(function(resp){
       if(!resp.ok){
-        return resp.text().then(function(t){log("error","HTTP "+resp.status,t);runBtn.disabled=false;setStatus("open","Connected (SSE)");});
+        return resp.text().then(function(t){log("error","HTTP "+resp.status,t);runBtn.disabled=false;setStatus("closed","Connection Error");});
       }
       setStatus("open","Streaming (SSE)");
       // Read the streaming SSE response body frame by frame.
@@ -388,6 +433,12 @@
       function pump(){
         reader.read().then(function(chunk){
           if(chunk.done){
+            // RANK 14: a valid final frame may arrive without the trailing blank
+            // line, so flush whatever remains in the buffer before completing
+            // instead of silently dropping it.
+            buf+=decoder.decode(); // flush any multi-byte tail
+            if(buf.trim()){flushFrame(buf);}
+            buf="";
             log("complete","complete","Stream ended.");
             runBtn.disabled=false;
             setStatus("open","Connected (SSE)");
@@ -397,28 +448,24 @@
           // Parse SSE frames: each frame ends with \n\n
           var frames=buf.split("\n\n");
           buf=frames.pop(); // keep incomplete tail
-          frames.forEach(function(frame){
-            if(!frame.trim()) return;
-            var eventType="message", dataLines=[];
-            frame.split("\n").forEach(function(line){
-              if(line.startsWith("event: ")){eventType=line.slice(7).trim();}
-              else if(line.startsWith("data: ")){dataLines.push(line.slice(6));}
-            });
-            var raw=dataLines.join("\n");
-            if(eventType==="next"){
-              var data;try{data=JSON.parse(raw);}catch(_){data=raw;}
-              log("notify","next",data);
-            } else if(eventType==="complete"){
-              log("complete","complete","Stream complete.");
-              runBtn.disabled=false;
-              setStatus("open","Connected (SSE)");
-            }
-          });
+          frames.forEach(flushFrame);
           pump();
-        }).catch(function(err){log("error","Stream Error",String(err));runBtn.disabled=false;setStatus("open","Connected (SSE)");});
+        }).catch(function(err){
+          if(err&&err.name==="AbortError") return; // user disconnected — not an error
+          // RANK 15: a read error after the 200 must NOT re-assert a healthy
+          // "Connected (SSE)" status — surface the failure instead.
+          log("error","Stream Error",String(err));
+          runBtn.disabled=false;
+          setStatus("closed","Connection Error");
+        });
       }
       pump();
-    }).catch(function(err){log("error","Fetch Error",String(err));runBtn.disabled=false;setStatus("open","Connected (SSE)");});
+    }).catch(function(err){
+      if(err&&err.name==="AbortError") return;
+      log("error","Fetch Error",String(err));
+      runBtn.disabled=false;
+      setStatus("closed","Connection Error");
+    });
   }
 
   // ---- Unified connect / run -------------------------------------------------
@@ -524,7 +571,7 @@
   editor.addEventListener("input",openAc);
   editor.addEventListener("blur",function(){ setTimeout(closeAc,120); });
 
-  connectBtn.addEventListener("click",function(){ if(ws||(sse&&sse.readyState!==EventSource.CLOSED)){disconnect();}else{connect();} });
+  connectBtn.addEventListener("click",function(){ if(ws||sseActive){disconnect();}else{connect();} });
   runBtn.addEventListener("click",run);
   $("gdsx-clear").addEventListener("click",function(){out.innerHTML='<div class="gdsx-empty">Cleared. Press &#9654; to send your subscription.</div>';count=0;countEl.textContent="0 events";});
   $("gdsx-http").addEventListener("change",loadSchema);

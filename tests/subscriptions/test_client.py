@@ -147,3 +147,86 @@ def test_client_sse_http_path_used():
     """The SSE client path uses the http_path attribute (the SSE endpoint URL)."""
     body = _get_body(http_path="/api/subscriptions")
     assert "/api/subscriptions" in body
+
+
+# ---------------------------------------------------------------------------
+# Round-2 repair (#1623): demo-client robustness fixes (ranks 4/7/13/14/15)
+#
+# These are static-HTML assertions — the page is served as a Django template,
+# so we assert the JavaScript markers that guard each fix are present in the
+# served body.  Full browser e2e remains deferred (no browser dependency).
+# ---------------------------------------------------------------------------
+
+
+def test_client_ws_onclose_has_monotonic_connection_id_guard():
+    """RANK 4: a monotonic connection id guards onclose against the WS→SSE→WS race.
+
+    Switching transport modes can let an OLD WebSocket.onclose fire AFTER
+    wsConnect() created a NEW ws, nulling the live connection.  Each connection
+    captures a monotonic id in the wsConnect closure; onclose only runs cleanup
+    when that captured id is still the current one.
+    """
+    body = _get_body()
+    # A monotonic counter is incremented per connection and captured in closure.
+    assert "wsCounter" in body
+    assert "myId" in body
+    # The captured id is compared against the live counter before cleanup.
+    assert "myId===wsCounter" in body or "myId === wsCounter" in body
+
+
+def test_client_sse_connect_has_no_queryless_eventsource():
+    """RANK 7: sseConnect() no longer opens a dead, query-less EventSource.
+
+    EventSource is GET-only and cannot carry a GraphQL document, so opening one
+    in sseConnect() created a dead connection.  The real subscription is sent via
+    the fetch POST in sseRun(); sseConnect() must not construct an EventSource.
+    """
+    body = _get_body()
+    # The whole SSE-open seam now lives in sseRun()'s fetch POST.  sseConnect()
+    # must not contain a `new EventSource(` construction.
+    assert "new EventSource(" not in body
+    # And the dead "EventSource connected" connectivity log is gone.
+    assert "EventSource connected" not in body
+
+
+def test_client_has_variables_and_operation_name_inputs():
+    """RANK 13: the client exposes optional variables (JSON) + operationName inputs."""
+    body = _get_body()
+    # Input element ids for the new fields.
+    assert "gdsx-vars" in body
+    assert "gdsx-opname" in body
+    # The variables textarea is labelled and the JSON is parsed (with validation).
+    assert "JSON.parse" in body
+    # The payload helper builds {query, variables?, operationName?}.
+    assert "operationName" in body
+    assert "variables" in body
+
+
+def test_client_variables_json_is_validated():
+    """RANK 13: invalid variables JSON is rejected with an error, not sent as garbage."""
+    body = _get_body()
+    # A dedicated helper parses+validates the variables JSON and logs an error
+    # on parse failure rather than sending malformed input.
+    assert "Invalid variables JSON" in body
+
+
+def test_client_sse_done_flushes_trailing_buffer():
+    """RANK 14: a buffered partial SSE frame is flushed on chunk.done, not dropped.
+
+    A valid final SSE frame may arrive without the trailing blank line; on
+    chunk.done the remaining buffer must be parsed/flushed instead of discarded.
+    """
+    body = _get_body()
+    # On done we flush whatever remains in the buffer before completing.
+    assert "flushFrame" in body or "flushBuffer" in body
+    # The done branch references the buffer (it is no longer ignored).
+    assert "buf.trim()" in body
+
+
+def test_client_sse_pump_error_sets_connection_error_status():
+    """RANK 15: a pump() error sets status to 'Connection Error', not 'Connected (SSE)'."""
+    body = _get_body()
+    assert "Connection Error" in body
+    # The pump() catch must NOT re-assert a healthy "Connected (SSE)" status.
+    # We assert the error label is wired to the failure path.
+    assert 'setStatus("closed","Connection Error")' in body
