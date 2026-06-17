@@ -32,6 +32,7 @@ Per-field-kind dispatch (extensible by WU3/WU5/WU6):
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from django_graphex._strconv import to_camel_case
@@ -743,14 +744,19 @@ def _compile_wrapped_field_type(
         return GraphQLList(_compile_wrapped_field_type(field_type.of_type, registries))
 
     # GRAPHENE wrappers (transitional, graphene-ROOT path — open-Q#3, retired in
-    # S-del-backend-11). The import is DEFERRED here and guarded so it fires ONLY
-    # for a field whose type is not a native wrapper / leaf — a fully-native build
-    # never reaches it, and an uninstalled graphene degrades gracefully to the leaf
-    # dispatch below instead of raising at import.
-    try:
-        from graphene.types.structures import List as GList
-        from graphene.types.structures import NonNull as GNonNull
-    except ModuleNotFoundError:
+    # S-del-backend-11). A graphene ``List`` / ``NonNull`` wrapper can ONLY exist
+    # when graphene is already imported (the wrapper instance was constructed by
+    # graphene). So we consult ``graphene.types.structures`` ONLY when it is
+    # ALREADY in ``sys.modules`` — we NEVER trigger the import ourselves. This
+    # keeps a fully-native field/root compile graphene-free at RUNTIME (the
+    # S-milestone-9 zero-graphene gate): even a native leaf type that falls
+    # through the native-wrapper checks above must not drag in graphene. An
+    # uninstalled graphene (S8i) is likewise a no-op here.
+    _structures = sys.modules.get("graphene.types.structures")
+    if _structures is not None:  # pragma: no cover - graphene-ROOT path only
+        GList = getattr(_structures, "List", ())
+        GNonNull = getattr(_structures, "NonNull", ())
+    else:
         GList = GNonNull = ()  # type: ignore[assignment]
 
     # graphene wrappers share the ``.of_type`` read-contract; recurse + preserve

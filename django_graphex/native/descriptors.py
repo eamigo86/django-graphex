@@ -47,6 +47,7 @@ Graphene import policy:
 from __future__ import annotations
 
 import inspect
+import sys
 from functools import partial, total_ordering
 from typing import Any, Callable, Optional
 
@@ -72,24 +73,34 @@ _LOCAL_COUNTER = [0]
 
 
 def _next_creation_counter() -> int:
-    """Return the next monotonic creation counter (graphene-shared when present).
+    """Return the next monotonic creation counter (graphene-free on the native path).
 
     Mirrors ``graphene.utils.orderedtype.OrderedType.gen_counter``: a single
-    process-global, monotonically-increasing integer. During the transitional
-    dual-currency window we advance graphene's OWN counter so native + graphene
-    descriptors share ONE order space (declaration order preserved on mixed class
-    bodies). After graphene is uninstalled the local fallback keeps native-only
-    bodies ordered.
-    """
-    try:  # pragma: no cover - graphene present in the transitional window
-        from graphene.utils.orderedtype import OrderedType as _GOrderedType
+    process-global, monotonically-increasing integer that lets ``_yank_fields``
+    sort ``_meta.fields`` by declaration order for SDL parity.
 
-        counter = _GOrderedType.creation_counter
-        _GOrderedType.creation_counter += 1
-        return counter
-    except Exception:  # pragma: no cover - graphene uninstalled (S8i)
-        _LOCAL_COUNTER[0] += 1
-        return _LOCAL_COUNTER[0]
+    The native path NEVER imports graphene to obtain this counter (S-milestone-9
+    zero-graphene gate): a ``field()`` / ``Django*Field`` declared at RUNTIME must
+    not drag in the whole graphene tree. ``_yank_fields`` only keeps native
+    descriptors (``NativeMountedField`` / ``NativeField``) — the migration retired
+    the graphene-marker branch (S-input-5) — so there is no longer a mixed
+    native+graphene order space to share, and a local counter is sufficient.
+
+    For belt-and-suspenders parity during the brief window where a graphene-ROOT
+    schema is built in the SAME process AND graphene is ALREADY imported, we keep
+    advancing graphene's OWN counter so the two stay interleaved — but ONLY when
+    graphene is already in ``sys.modules`` (we never trigger the import ourselves).
+    After graphene is uninstalled (S8i) the local counter is the only path.
+    """
+    g = sys.modules.get("graphene.utils.orderedtype")
+    if g is not None:  # pragma: no cover - graphene already loaded by another path
+        ordered_type = getattr(g, "OrderedType", None)
+        if ordered_type is not None:
+            counter = ordered_type.creation_counter
+            ordered_type.creation_counter += 1
+            return counter
+    _LOCAL_COUNTER[0] += 1
+    return _LOCAL_COUNTER[0]
 
 
 def _source_resolver(source: str, root: Any, info: Any, **args: Any) -> Any:
