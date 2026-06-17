@@ -123,6 +123,12 @@ jobs:
     - name: Run security checks
       run: uvx --with tox-uv tox -e security
 
+    - name: Audit the built release artifact
+      # pip-audit in `tox -e security` only sees the editable dev install and
+      # skips django-graphex itself. This builds the wheel and audits its
+      # declared transitive closure so release-artifact vulnerabilities are caught.
+      run: uvx --with tox-uv tox -e release-audit
+
   coverage:
     runs-on: ubuntu-latest
     steps:

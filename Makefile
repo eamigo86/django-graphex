@@ -1,4 +1,4 @@
-.PHONY: help install test test-all quality security build docs clean format lint type-check
+.PHONY: help install test test-all quality security release-audit build docs clean format lint type-check
 .DEFAULT_GOAL := help
 
 help: ## Show this help message
@@ -19,6 +19,9 @@ quality: ## Run code quality checks (black, isort, flake8, mypy)
 
 security: ## Run security checks (bandit, pip-audit)
 	uv run tox -e security
+
+release-audit: ## Audit the BUILT wheel's transitive deps (not the editable install)
+	uv run tox -e release-audit
 
 build: ## Build the package (uv + hatchling)
 	uv build

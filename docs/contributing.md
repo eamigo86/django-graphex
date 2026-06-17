@@ -58,8 +58,14 @@ make test-all
 # Code quality checks
 make quality
 
-# Security checks
+# Security checks (bandit + pip-audit on the dev environment)
 make security
+
+# Audit the BUILT release artifact's transitive dependencies. pip-audit in
+# `make security` only sees the editable dev install and skips django-graphex
+# itself; this builds the wheel and audits the dependency closure that would
+# actually ship to PyPI. Runs in CI on every push/PR (lint-and-security job).
+make release-audit
 
 # Format code
 make format
