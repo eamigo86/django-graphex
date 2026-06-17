@@ -30,10 +30,11 @@ dead-scalar sentinel (the silent-drop trap). The container itself is unchanged
 (it was already native), so the SDL is byte-identical.
 
 SCOPE (carefully bounded):
-* The forward ``GenericRelation`` list (``convert_generic_relation_to_object_list``)
-  and the reverse ``GenericRel`` arm of ``convert_many_rel_to_djangomodel`` stay
-  on graphene ``Dynamic`` — they retire in S-rel-4 (GFK flat + GenericRelation
-  list). This slice touches ONLY M2M / reverse-FK / reverse-M2M.
+* S-rel-3 touched ONLY forward M2M / reverse-FK / reverse-M2M. The forward
+  ``GenericRelation`` list (``convert_generic_relation_to_object_list``) and the
+  reverse ``GenericRel`` arm of ``convert_many_rel_to_djangomodel`` retired in
+  S-rel-4 (GFK flat + GenericRelation list); the GenericRelation assertion below
+  was updated then to expect the native marker.
 * The INPUT path is unchanged (it stays on graphene until S-input-5): the marker
   is OUTPUT-only.
 
@@ -404,24 +405,35 @@ def test_to_many_relation_shapes_unchanged_in_seed_sdl():
 
 
 # --------------------------------------------------------------------------- #
-# (e) GenericRel / GenericRelation stay on graphene (S-rel-4 scope guard).     #
+# (e) forward GenericRelation list — retired in S-rel-4 (native marker).        #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_generic_relation_list_still_graphene_dynamic():
-    """The forward ``GenericRelation`` list converter stays on graphene Dynamic in
-    S-rel-3 (it retires in S-rel-4). This pins the slice boundary."""
-    import graphene
-
-    from django_graphex.converter import convert_generic_relation_to_object_list
+def test_generic_relation_list_returns_native_marker_in_s_rel_4():
+    """The forward ``GenericRelation`` list converter retired graphene in S-rel-4:
+    on the native OUTPUT path it now returns a graphene-free ``NativeRelationField``
+    marker (it was a graphene Dynamic through S-rel-3). On the graphene backend the
+    legacy Dynamic is UNCHANGED."""
+    from django_graphex.converter import (
+        _NATIVE_BACKEND,
+        convert_generic_relation_to_object_list,
+    )
     from tests.test_optimizer_coverage import Profile
 
     reg = Registry()
     notes_field = Profile._meta.get_field("notes")  # GenericRelation
     out = convert_generic_relation_to_object_list(notes_field, reg, input_flag=None)
-    assert isinstance(out, graphene.Dynamic), (
-        "forward GenericRelation list must STILL be a graphene Dynamic in S-rel-3 "
-        f"(retires in S-rel-4); got {out!r}"
-    )
+    if _NATIVE_BACKEND:
+        assert isinstance(out, NativeRelationField), (
+            "forward GenericRelation list must return a NativeRelationField on the "
+            f"native OUTPUT path in S-rel-4; got {out!r}"
+        )
+    else:
+        import graphene
+
+        assert isinstance(out, graphene.Dynamic), (
+            "the graphene backend GenericRelation list must STILL be a graphene "
+            f"Dynamic; got {out!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #

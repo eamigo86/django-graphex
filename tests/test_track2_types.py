@@ -560,11 +560,23 @@ def test_converter_emits_union_when_gfk_unions_declared():
 
 
 def test_converter_falls_back_to_generic_type_when_no_union():
-    """No companion union declared -> GenericForeignKeyType (no regression).
+    """No companion union declared -> flat GFK output (no regression).
 
-    TEETH: if the new branch hijacked every GFK, a plain GFK owner would lose
-    GenericForeignKeyType; this asserts the fallback is intact.
+    TEETH: if the union branch hijacked every GFK, a plain GFK owner would lose
+    the flat ``GenericForeignKeyType`` output; this asserts the flat fallback is
+    intact.
+
+    S-rel-4: the FLAT GFK output path retired graphene on the native backend — a
+    plain GFK (no declared union) now converts to a graphene-free
+    ``NativeRelationField`` marker, and the native output compiler renders the
+    flat ``GenericForeignKeyType`` from ``model._meta`` (the union path is
+    UNTOUCHED — see ``test_converter_emits_union_when_gfk_unions_declared``). On
+    the graphene backend the legacy ``Dynamic`` closure is UNCHANGED and still
+    resolves to a graphene ``Field`` wrapping ``GenericForeignKeyType``.
     """
+    from django_graphex.converter import _NATIVE_BACKEND
+    from django_graphex.native.descriptors import NativeRelationField
+
     reg = Registry()
     _make_member_types(reg)
 
@@ -574,9 +586,14 @@ def test_converter_falls_back_to_generic_type_when_no_union():
             registry = reg
             # No gfk_unions declared.
 
-    field = _resolve_dynamic(convert_django_field(_gfk_field(), registry=reg))
-    assert isinstance(field, Field)
-    assert field.type is GenericForeignKeyType
+    converted = convert_django_field(_gfk_field(), registry=reg)
+    if _NATIVE_BACKEND:
+        # S-rel-4: the flat GFK output is a graphene-free native marker.
+        assert isinstance(converted, NativeRelationField)
+    else:
+        field = _resolve_dynamic(converted)
+        assert isinstance(field, Field)
+        assert field.type is GenericForeignKeyType
 
 
 @pytest.mark.django_db
@@ -613,7 +630,22 @@ def test_converter_warns_and_falls_back_on_misordered_declaration():
     TEETH: if a mis-ordered declaration crashed (or silently fell back with no
     signal), this would either raise or see no warning. The contract is: warn
     AND degrade to GenericForeignKeyType.
+
+    S-rel-4: the converter-level warning lives INSIDE the graphene flat-GFK
+    closure (``dynamic_type``). On the native OUTPUT path that closure is dead —
+    the converter now returns a graphene-free ``NativeRelationField`` marker when
+    no union is registered for the GFK (``registry.get_gfk_union`` is None), so the
+    converter-level warning is NOT emitted on native. The mis-order DEGRADE
+    semantics are preserved at the SCHEMA level instead: the native union injector
+    (``types._compile_gfk_union_output_fields``) skips an unregistered union,
+    leaving the flat ``GenericForeignKeyType`` field (verified by the S-rel-4
+    schema-level GFK-union tests). This test therefore asserts the graphene-path
+    warning contract on the graphene backend and the native-marker fallback on
+    native.
     """
+    from django_graphex.converter import _NATIVE_BACKEND
+    from django_graphex.native.descriptors import NativeRelationField
+
     reg = Registry()
     _make_member_types(reg)
 
@@ -630,16 +662,24 @@ def test_converter_warns_and_falls_back_on_misordered_declaration():
             registry = reg
             gfk_unions = {"target": union}
 
-    # Simulate mis-order: the union is not yet in the registry when the Dynamic
-    # resolves (owner Meta declared before the union was registered).
+    # Simulate mis-order: the union is not yet in the registry when the field is
+    # converted (owner Meta declared before the union was registered).
     reg._union_types.pop(union._meta.name, None)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        field = _resolve_dynamic(convert_django_field(_gfk_field(), registry=reg))
+        converted = convert_django_field(_gfk_field(), registry=reg)
 
-    assert field.type is GenericForeignKeyType
-    assert any(
-        "gfk_union" in str(w.message).lower() or "union" in str(w.message).lower()
-        for w in caught
-    )
+    if _NATIVE_BACKEND:
+        # S-rel-4: an unregistered union -> the flat path returns the native
+        # marker (the schema-level injector degrades to the flat type; the
+        # converter-level warning is a dead graphene-closure artifact on native).
+        assert isinstance(converted, NativeRelationField)
+    else:
+        field = _resolve_dynamic(converted)
+        assert field.type is GenericForeignKeyType
+        assert any(
+            "gfk_union" in str(w.message).lower()
+            or "union" in str(w.message).lower()
+            for w in caught
+        )
