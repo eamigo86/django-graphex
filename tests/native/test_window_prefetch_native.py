@@ -54,9 +54,9 @@ def _build_native_nested_schema(pagination=None):
     (NOT graphene.Schema). The ``posts`` field is a
     ``DjangoNestedListObjectField`` over the reverse FK ``Author.posts``.
     """
-    import graphene
     from graphql import GraphQLSchema
 
+    from django_graphex import ObjectType
     from django_graphex.fields import (
         DjangoListObjectField,
         DjangoNestedListObjectField,
@@ -93,7 +93,7 @@ def _build_native_nested_schema(pagination=None):
 
     query_root = type(
         "_WU6bQuery",
-        (graphene.ObjectType,),
+        (ObjectType,),
         {"authors": DjangoListObjectField(_AuthorList)},
     )
     native_query = compile_native_root(query_root, name="Query")
@@ -176,109 +176,6 @@ def test_native_nested_pagination_query_count_bounded_no_n_plus_1():
         "WU6b: native nested paginated query is N+1 (scales with parent count). "
         f"Expected a BOUNDED window-prefetch count (<=5), got {n_queries}:\n"
         + "\n".join(q["sql"] for q in ctx.captured_queries)
-    )
-
-
-@pytest.mark.skip(
-    reason="S6b: DjangoObjectType/DjangoListObjectType are re-parented off "
-    "graphene and can no longer be assembled into a graphene Schema (the "
-    "graphene schema-build path for these types is retired; pruned in S7). The "
-    "native query-count bound is still proven by "
-    "test_native_nested_pagination_query_count_bounded_no_n_plus_1."
-)
-@pytest.mark.django_db
-def test_native_nested_pagination_count_matches_graphene():
-    """Native nested paginated query count must MATCH the graphene backend's count
-    for the same query — true cross-backend DB-efficiency parity.
-
-    The graphene count is computed in-process here using a graphene Schema over
-    the SAME models/fixture; both must emit the same number of queries."""
-    from django.db import connection
-    from django.test.utils import CaptureQueriesContext
-    from graphql import graphql_sync
-
-    _seed(num_authors=4, posts_each=6)
-    native_schema = _build_native_nested_schema()
-    graphene_schema = _build_graphene_nested_schema()
-
-    query = """
-    { authors { results {
-        posts { results(limit: 2, offset: 0, ordering: "title") { title } totalCount }
-    } totalCount } }
-    """
-    with CaptureQueriesContext(connection) as native_ctx:
-        native_result = graphql_sync(native_schema, query)
-    assert native_result.errors is None, native_result.errors
-
-    with CaptureQueriesContext(connection) as graphene_ctx:
-        graphene_result = graphene_schema.execute(query)
-    assert graphene_result.errors is None, graphene_result.errors
-
-    n_native = len(native_ctx.captured_queries)
-    n_graphene = len(graphene_ctx.captured_queries)
-    assert n_native <= n_graphene, (
-        "WU6b: native nested paginated query must be within graphene's query "
-        f"budget. native={n_native}, graphene={n_graphene}.\n"
-        "native SQL:\n" + "\n".join(q["sql"] for q in native_ctx.captured_queries)
-    )
-
-
-def _build_graphene_nested_schema():
-    """Build the equivalent GRAPHENE nested-list schema (same models/fixture)."""
-    import graphene
-    from graphene import Schema
-
-    from django_graphex.fields import DjangoNestedListObjectField
-    from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
-    from django_graphex.types import (
-        DjangoListObjectField,
-        DjangoListObjectType,
-        DjangoObjectType,
-    )
-    from tests.models import Author, Post
-
-    reg: dict = {}
-    _PostType = type(
-        "_WU6bGPostType",
-        (DjangoObjectType,),
-        {"Meta": type("Meta", (), {"model": Post, "registry": reg})},
-    )
-    _PostList = type(
-        "_WU6bGPostList",
-        (DjangoListObjectType,),
-        {
-            "Meta": type(
-                "Meta",
-                (),
-                {
-                    "model": Post,
-                    "pagination": LimitOffsetGraphqlPagination(
-                        default_limit=5, max_limit=100
-                    ),
-                    "registry": reg,
-                },
-            )
-        },
-    )
-    _AuthorType = type(
-        "_WU6bGAuthorType",
-        (DjangoObjectType,),
-        {
-            "posts": DjangoNestedListObjectField(_PostList, accessor="posts"),
-            "Meta": type("Meta", (), {"model": Author, "registry": reg}),
-        },
-    )
-    _AuthorList = type(
-        "_WU6bGAuthorList",
-        (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": reg})},
-    )
-    return Schema(
-        query=type(
-            "_WU6bGQuery",
-            (graphene.ObjectType,),
-            {"authors": DjangoListObjectField(_AuthorList)},
-        )
     )
 
 

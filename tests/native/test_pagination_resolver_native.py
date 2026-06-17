@@ -37,9 +37,9 @@ def _build_native_schema(pagination=None, results_field_name=None):
     Returns ``(schema, list_type)``. ``schema`` is a ``graphql.GraphQLSchema``
     assembled by ``compile_native_root`` (NOT graphene.Schema).
     """
-    import graphene
     from graphql import GraphQLSchema
 
+    from django_graphex import ObjectType
     from django_graphex.fields import DjangoListObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
@@ -73,7 +73,7 @@ def _build_native_schema(pagination=None, results_field_name=None):
 
     query_root = type(
         "_WU6aQuery",
-        (graphene.ObjectType,),
+        (ObjectType,),
         {"authors": DjangoListObjectField(list_type)},
     )
 

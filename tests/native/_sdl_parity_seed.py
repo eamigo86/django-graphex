@@ -10,13 +10,12 @@ Django relation taxonomy and renders its SDL on the native backend:
   default for ``tests/``).
 
 This module is GRAPHENE-FREE: every helper here builds and renders SDL through
-the native compiler only. The graphene-side baseline that the S-rel-0 oracle
-(``test_sdl_parity_oracle.py``) compares against lives in the oracle module
-itself (a DELETE-LATER artifact), so this seed — imported by the permanent
-relation verifiers (``test_relation_*_native.py``) and the zero-graphene gate —
-carries no graphene dependency. The native helpers below (``render_native_sdl`` /
-``extract_type_block`` / ``extract_enum_block``) are the graphene-free surface
-those consumers rely on.
+the native compiler only. The S-rel-0 graphene-as-oracle scaffold that once
+consumed a graphene baseline has been removed (S-del-tests-10); this seed — now
+imported only by the permanent relation verifiers (``test_relation_*_native.py``)
+and the zero-graphene gate — carries no graphene dependency. The native helpers
+below (``render_native_sdl`` / ``extract_type_block`` / ``extract_enum_block``)
+are the graphene-free surface those consumers rely on.
 
 Seed taxonomy coverage (all reused from existing ``tests`` models)
 ------------------------------------------------------------------

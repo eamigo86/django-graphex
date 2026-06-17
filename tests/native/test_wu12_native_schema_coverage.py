@@ -326,9 +326,11 @@ def test_nonexistent_own_field_is_skipped(db):
 
 
 def test_custom_filter_with_graphene_type(db):
-    """A custom filter carrying graphene_type=Int renders an Int arg (495-501)."""
-    import graphene
+    """A custom filter carrying graphene_type=Int renders an Int arg (495-501).
 
+    The native filter builder normalizes the declared ``graphene_type`` and
+    accepts a graphql-core scalar AS-IS, so a native ``GraphQLInt`` is the
+    canonical end-state arg type (the metadata key name is 1.x-historical)."""
     from django_graphex.filtering.native_schema import (
         _NATIVE_INPUT_CACHE,
         build_filter_input_type,
@@ -340,7 +342,7 @@ def test_custom_filter_with_graphene_type(db):
     def _by_year(qs, value):  # pragma: no cover - not invoked here
         return qs
 
-    custom = [("byYear", _by_year, {"graphene_type": graphene.Int, "description": "yr"})]
+    custom = [("byYear", _by_year, {"graphene_type": GraphQLInt, "description": "yr"})]
     result = build_filter_input_type(Post, ["title"], custom_filters=custom)
     assert "byYear" in result.fields
     assert result.fields["byYear"].type is GraphQLInt
@@ -358,8 +360,6 @@ def test_custom_filter_without_graphene_type_defaults_string(db):
 
 def test_custom_filter_only_no_declared_fields(db):
     """custom_filters with no filter_fields still builds an input (not None)."""
-    import graphene
-
     from django_graphex.filtering.native_schema import (
         _NATIVE_INPUT_CACHE,
         build_filter_input_type,
@@ -371,7 +371,7 @@ def test_custom_filter_only_no_declared_fields(db):
     def _flag(qs, value):  # pragma: no cover - not invoked
         return qs
 
-    custom = [("isFeatured", _flag, {"graphene_type": graphene.Boolean})]
+    custom = [("isFeatured", _flag, {"graphene_type": GraphQLBoolean})]
     result = build_filter_input_type(Post, None, custom_filters=custom)
     assert isinstance(result, GraphQLInputObjectType)
     assert result.fields["isFeatured"].type is GraphQLBoolean

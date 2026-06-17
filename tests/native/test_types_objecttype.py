@@ -96,6 +96,27 @@ def test_django_object_type_honest_metaclass():
     )
 
 
+def test_polymorphic_types_reparented_onto_native_base():
+    """S6d structural invariant (restored): the POLYMORPHIC bases
+    ``DjangoUnionType`` / ``DjangoInterfaceType`` are re-parented off graphene
+    onto ``native.base.ObjectType``, whose sole metaclass is pydantic's
+    ``ModelMetaclass`` (#1452 invariant). Mirrors the DjangoObjectType analog in
+    ``test_django_object_type_honest_metaclass`` — assert the POSITIVE native
+    invariant (no graphene import needed)."""
+    from pydantic._internal._model_construction import ModelMetaclass
+    from django_graphex.native.base import ObjectType as NativeObjectType
+    from django_graphex.types import DjangoInterfaceType, DjangoUnionType
+
+    for poly in (DjangoUnionType, DjangoInterfaceType):
+        assert issubclass(poly, NativeObjectType), (
+            f"{poly.__name__} must be re-parented onto native.base.ObjectType"
+        )
+        assert type(poly) is ModelMetaclass, (
+            f"type({poly.__name__}) must be pydantic.ModelMetaclass "
+            "(re-parented off graphene)."
+        )
+
+
 @pytest.mark.django_db
 def test_django_object_type_native_fields_include_scalars():
     """Compiled GraphQLObjectType must include scalar fields for the model."""

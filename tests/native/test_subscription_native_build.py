@@ -178,10 +178,9 @@ def test_subscription_build_runs_with_graphene_blocked():
 @pytest.mark.django_db
 def test_mount_seam_subscription_present_in_schema_root():
     """The subscription field appears in the compiled schema's subscription root."""
-    import graphene
-    from graphql import GraphQLObjectType
+    from graphql import GraphQLBoolean, GraphQLObjectType
 
-    from django_graphex import DjangoModelType
+    from django_graphex import DjangoModelType, ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
     from django_graphex.types import DjangoObjectType
@@ -209,10 +208,10 @@ def test_mount_seam_subscription_present_in_schema_root():
             stream = "ms-posts"
             serialize_data = True
 
-    class _MSQuery(graphene.ObjectType):
-        ok = graphene.Boolean()
+    class _MSQuery(ObjectType):
+        ok = field(GraphQLBoolean)
 
-    class _MSRoot(graphene.ObjectType):
+    class _MSRoot(ObjectType):
         post = _MSPostModel.SubscriptionField()
 
     compile_all_outputs()
@@ -234,10 +233,10 @@ def test_subscription_root_sdl_action_enum_id_filters():
     """The subscription root SDL renders ``action`` enum + ``id`` + ``filters``."""
     import re
 
-    import graphene
+    from graphql import GraphQLBoolean
     from graphql.utilities import print_schema
 
-    from django_graphex import DjangoModelType
+    from django_graphex import DjangoModelType, ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
     from django_graphex.types import DjangoObjectType
@@ -265,10 +264,10 @@ def test_subscription_root_sdl_action_enum_id_filters():
             stream = "sdl-posts"
             serialize_data = True
 
-    class _SdlQuery(graphene.ObjectType):
-        ok = graphene.Boolean()
+    class _SdlQuery(ObjectType):
+        ok = field(GraphQLBoolean)
 
-    class _SdlRoot(graphene.ObjectType):
+    class _SdlRoot(ObjectType):
         post = _SdlPostModel.SubscriptionField()
 
     compile_all_outputs()
