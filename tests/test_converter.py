@@ -217,13 +217,22 @@ class ConverterTest(TestCase):
         )
 
     def test_convert_foreign_key_field(self):
-        """Test ForeignKey field conversion."""
+        """Test ForeignKey field conversion (S-rel-2: native OUTPUT marker)."""
+        from django_graphex.converter import _NATIVE_BACKEND
+        from django_graphex.native.descriptors import NativeRelationField
+
         field = TestModel._meta.get_field("user")
         graphql_field = convert_django_field(field)
 
-        # Foreign key converts to a Dynamic descriptor (KEPT on native — the
-        # native output thunk consumes it; only SCALAR descriptors are dead).
-        self.assertIsInstance(graphql_field, graphene.Dynamic)
+        if _NATIVE_BACKEND:
+            # S-rel-2: on the native OUTPUT path a to-ONE ForeignKey converts to a
+            # graphene-free ``NativeRelationField`` presence/ordering marker (the
+            # native output type is built from ``model._meta`` directly; the old
+            # graphene ``Dynamic`` was dead weight that only pinned graphene).
+            self.assertIsInstance(graphql_field, NativeRelationField)
+        else:
+            # The graphene backend is UNCHANGED: still a graphene ``Dynamic``.
+            self.assertIsInstance(graphql_field, graphene.Dynamic)
 
     def test_convert_many_to_many_field(self):
         """Test ManyToManyField conversion."""
@@ -395,6 +404,9 @@ class FieldConversionIntegrationTest(TestCase):
 
     def test_relationship_field_conversion(self):
         """Test relationship field conversion."""
+        from django_graphex.converter import _NATIVE_BACKEND
+        from django_graphex.native.descriptors import NativeRelationField
+
         # Test that foreign keys and m2m fields are converted correctly
         user_field = TestModel._meta.get_field("user")
         basics_field = TestModel._meta.get_field("basics")
@@ -402,8 +414,14 @@ class FieldConversionIntegrationTest(TestCase):
         user_graphql_field = convert_django_field(user_field)
         basics_graphql_field = convert_django_field(basics_field)
 
-        # User field (FK) converts to a Dynamic descriptor.
-        self.assertIsInstance(user_graphql_field, graphene.Dynamic)
+        if _NATIVE_BACKEND:
+            # S-rel-2: User field (to-ONE FK) converts to a graphene-free
+            # ``NativeRelationField`` marker on the native OUTPUT path.
+            self.assertIsInstance(user_graphql_field, NativeRelationField)
+        else:
+            # The graphene backend is UNCHANGED: still a graphene ``Dynamic``.
+            self.assertIsInstance(user_graphql_field, graphene.Dynamic)
 
-        # Basics field (M2M) converts to a Dynamic descriptor.
+        # Basics field (to-MANY M2M) still converts to a graphene ``Dynamic``
+        # on BOTH backends (out of S-rel-2 scope; retires in S-rel-3).
         self.assertIsInstance(basics_graphql_field, graphene.Dynamic)

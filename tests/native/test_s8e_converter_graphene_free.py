@@ -169,16 +169,26 @@ def test_choices_enum_is_graphene_enum_and_registered() -> None:
 # --------------------------------------------------------------------------- #
 # 3. The relation Dynamic / Field / ID constructs stay graphene               #
 # --------------------------------------------------------------------------- #
-def test_fk_converts_to_graphene_dynamic() -> None:
-    """FK / M2M still convert to a graphene ``Dynamic`` on native (test contract)."""
+def test_fk_converts_to_native_marker_m2m_stays_graphene() -> None:
+    """to-ONE FK -> native marker (S-rel-2); to-MANY M2M still graphene Dynamic.
+
+    S-rel-2 retired graphene on the to-ONE relation OUTPUT path: a ForeignKey now
+    converts to a graphene-free ``NativeRelationField`` presence/ordering marker
+    (the native compiler builds the actual field from ``model._meta``). The
+    to-MANY M2M relation is OUT of S-rel-2 scope (it retires in S-rel-3), so it
+    still converts to a graphene ``Dynamic``.
+    """
     import graphene
 
     from django_graphex.converter import convert_django_field
+    from django_graphex.native.descriptors import NativeRelationField
     from tests.test_converter import TestModel
 
     fk = TestModel._meta.get_field("user")
     m2m = TestModel._meta.get_field("basics")
-    assert isinstance(convert_django_field(fk), graphene.Dynamic)
+    # to-ONE FK on OUTPUT (input_flag default None): graphene-free native marker.
+    assert isinstance(convert_django_field(fk), NativeRelationField)
+    # to-MANY M2M: still graphene Dynamic (S-rel-3 scope).
     assert isinstance(convert_django_field(m2m), graphene.Dynamic)
 
 

@@ -706,14 +706,27 @@ def convert_field_to_id(
     Returns:
         A GraphQL ID field for the Django field.
     """
+    # INPUT (create / update): keep the graphene ``ID`` descriptor — the native
+    # input compiler still consumes it. Retired in S-input-5.
     if input_flag:
         return _g().ID(
             description=field.help_text or "Django object unique identification field",
             required=input_flag == "update",
         )
-    return _g().ID(
-        description=field.help_text or "Django object unique identification field",
-        required=not field.null,
+    # OUTPUT (``input_flag is None``): the native output compiler renders the PK
+    # as ``id: ID!`` directly from ``model._meta`` (AutoField -> GraphQLID +
+    # ``GraphQLNonNull`` for the primary key, see
+    # ``output_compiler._to_graphql_field``); this graphene ``ID`` descriptor is
+    # DEAD and only pins graphene on the output path. Return the dead-scalar
+    # sentinel under ``GDX_BACKEND=native`` so ``construct_fields`` omits it and
+    # the graphene import never fires for the PK on output (S-rel-2). The
+    # graphene path (``GDX_BACKEND`` unset) is UNCHANGED.
+    return _scalar_or_dead(
+        lambda: _g().ID(
+            description=field.help_text
+            or "Django object unique identification field",
+            required=not field.null,
+        )
     )
 
 
@@ -974,9 +987,23 @@ def convert_onetoone_field_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the related type.
+        A GraphQL Dynamic field that resolves lazily to the related type, or a
+        graphene-free ``NativeRelationField`` marker on the native OUTPUT path.
     """
     model = field.related_model
+
+    # Native OUTPUT path (``input_flag is None``): a reverse OneToOne is compiled
+    # DIRECTLY from ``model._meta`` by ``types._compile_reverse_o2o_fields`` (it
+    # walks ``OneToOneRel`` reverse relations and resolves via the per-type
+    # registry) — this descriptor is NEVER read on output. Emit a graphene-free
+    # ``NativeRelationField`` presence/ordering marker (never ``None`` — the
+    # silent-drop trap) so the field stays in ``_meta.fields`` with the SAME
+    # ``creation_counter`` for SDL field ORDER. INPUT stays graphene until
+    # S-input-5. (S-rel-2.)
+    if _NATIVE_BACKEND and input_flag is None:
+        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+
+        return NativeRelationField(related_model=model)
 
     def dynamic_type() -> Any:
         """Resolve the related GraphQL type lazily."""
@@ -1089,9 +1116,24 @@ def convert_field_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the related type.
+        A GraphQL Dynamic field that resolves lazily to the related type, or a
+        graphene-free ``NativeRelationField`` marker on the native OUTPUT path.
     """
     model = get_related_model(field)
+
+    # Native OUTPUT path (``input_flag is None``): the to-ONE FK / forward-O2O
+    # field is compiled DIRECTLY from ``model._meta`` by
+    # ``output_compiler._to_graphql_field`` (the to-ONE arm) — it NEVER reads
+    # this descriptor. The graphene ``Dynamic`` below is therefore dead and only
+    # pins graphene; emit a graphene-free ``NativeRelationField`` presence/
+    # ordering marker instead so the field stays in ``_meta.fields`` (the
+    # silent-drop guard, never ``None`` / ``_DEAD_SCALAR`` — cf. test_issue52
+    # self-ref O2O) with the SAME ``creation_counter`` for SDL field ORDER. The
+    # INPUT path keeps graphene until S-input-5. (S-rel-2.)
+    if _NATIVE_BACKEND and input_flag is None:
+        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+
+        return NativeRelationField(related_model=model)
 
     def dynamic_type() -> Any:
         """Resolve the related GraphQL type lazily."""

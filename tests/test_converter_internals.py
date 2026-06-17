@@ -93,14 +93,17 @@ def test_reverse_relation_input_flag_not_nested_is_list_of_id():
     assert out.type.of_type.of_type is ID
 
 
-def test_fk_output_unregistered_model_returns_none():
-    # No type registered for the related model -> the closure returns None.
-    registry = Registry()
+def test_fk_output_returns_native_marker():
+    # S-rel-2: a to-ONE FK on the native OUTPUT path converts to a graphene-free
+    # ``NativeRelationField`` marker (registered-or-not). The actual output field
+    # (and the drop-when-unregistered decision) is owned by the native compiler
+    # (``output_compiler._to_graphql_field`` reads ``model._meta`` directly), not
+    # by this descriptor. ``_resolve`` returns the marker verbatim (not a Dynamic).
+    # On the graphene backend the legacy Dynamic closure is UNCHANGED.
+    from django_graphex.converter import _NATIVE_BACKEND
+    from django_graphex.native.descriptors import NativeRelationField
+
     fk = Post._meta.get_field("author")
-    assert _resolve(fk, registry=registry) is None
-
-
-def test_fk_output_registered_model_returns_field():
     reg = Registry()
 
     class _AuthorType(DjangoObjectType):
@@ -108,10 +111,16 @@ def test_fk_output_registered_model_returns_field():
             model = Author
             registry = reg
 
-    fk = Post._meta.get_field("author")
-    out = _resolve(fk, registry=reg)
-    # A Field wrapping the registered type.
-    assert out.type is _AuthorType
+    out_unregistered = _resolve(fk, registry=Registry())
+    out_registered = _resolve(fk, registry=reg)
+
+    if _NATIVE_BACKEND:
+        assert isinstance(out_unregistered, NativeRelationField)
+        assert isinstance(out_registered, NativeRelationField)
+    else:
+        # graphene: closure drops when unregistered, wraps the type otherwise.
+        assert out_unregistered is None
+        assert out_registered.type is _AuthorType
 
 
 def test_m2m_nested_input_registered_returns_list():

@@ -305,6 +305,80 @@ class NativeMountedField:
         return hash(self.creation_counter)
 
 
+class NativeRelationField(NativeMountedField):
+    """Graphene-free PRESENCE/ORDERING marker for a to-ONE relation (S-rel-2).
+
+    Why this exists (import-removal, SDL-neutral)
+    ---------------------------------------------
+    On the native OUTPUT path the converter historically emitted a graphene
+    ``Dynamic`` for every to-ONE relation (ForeignKey / forward OneToOne /
+    reverse OneToOne) via ``converter.convert_field_to_djangomodel`` /
+    ``convert_onetoone_field_to_djangomodel``. Building that ``Dynamic`` imports
+    graphene (``converter._g()``), yet its output is NEVER read on the native
+    path: the native output type is compiled ENTIRELY from
+    ``model._meta.get_fields()`` —
+
+    - FK / forward-O2O by ``output_compiler._to_graphql_field`` (the to-ONE arm);
+    - reverse-O2O by ``types._compile_reverse_o2o_fields``.
+
+    So the ``Dynamic`` is built-then-DISCARDED (dead weight that nonetheless
+    pins graphene). The ONLY thing the relation descriptor in ``_meta.fields``
+    is used for on the native path is PRESENCE + ORDERING: ``_yank_fields``
+    keeps it (so ``"spouse" in Type._meta.fields`` holds — the issue #52
+    self-ref-O2O canary) and sorts ``_meta.fields`` by ``creation_counter``.
+
+    ``NativeRelationField`` replaces the graphene ``Dynamic`` on the native
+    OUTPUT path with a graphene-free marker that:
+
+    - subclasses :class:`NativeMountedField`, so ``_yank_fields`` recognizes it
+      in its FIRST branch (``isinstance(value, (NativeMountedField, NativeField))``)
+      and keeps it AS-IS — NO ``_yank_fields`` change, and NEVER the silent-drop
+      ``continue`` (the test_issue52 trap);
+    - carries the SAME ``creation_counter`` graphene's ``Dynamic`` would have
+      received (sourced from :func:`_next_creation_counter`, the shared global
+      counter), so ``_meta.fields`` ordering — and therefore SDL field order —
+      is byte-identical to the graphene-descriptor era;
+    - exposes an INERT ``.type`` (it is never read on the native output path;
+      the field is a presence/ordering marker only).
+
+    The INPUT path is unchanged (it stays on graphene until S-input-5): this
+    marker is OUTPUT-only.
+    """
+
+    __slots__ = ("related_model",)
+
+    def __init__(
+        self,
+        related_model: Any = None,
+        *,
+        _creation_counter: Optional[int] = None,
+    ) -> None:
+        """Build a to-ONE relation presence/ordering marker.
+
+        Args:
+            related_model: The Django model the relation targets (metadata only;
+                the native compiler resolves the related type from
+                ``model._meta`` independently — this is never read to build the
+                field).
+            _creation_counter: The graphene-parity creation counter to carry so
+                ``_meta.fields`` ordering matches the legacy ``Dynamic`` order.
+                When ``None`` a fresh counter is allocated (graphene-shared in
+                the transitional window).
+        """
+        super().__init__(
+            type_=None,
+            _creation_counter=_creation_counter,
+        )
+        self.related_model = related_model
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        """Return a short debug representation of the relation marker."""
+        return (
+            f"<NativeRelationField related_model={self.related_model!r} "
+            f"counter={self.creation_counter}>"
+        )
+
+
 class NativeList:
     """Graphene-free, LAZY ``[T]`` wrapper for a deferred-compile element type.
 

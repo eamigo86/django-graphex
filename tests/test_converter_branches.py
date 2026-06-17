@@ -253,8 +253,15 @@ def test_arrayfield_with_list_base_keeps_inner_list():
 # FK / O2O dynamic-closure inheritance skip                                     #
 # --------------------------------------------------------------------------- #
 def test_o2o_inheritance_parent_link_returns_none():
-    # A OneToOneField whose model subclasses its related_model (multi-table
-    # inheritance parent link) is skipped by the closure (returns None).
+    # S-rel-2: on the native OUTPUT path a to-ONE O2O (incl. an MTI parent_link)
+    # converts to a graphene-free ``NativeRelationField`` marker — the actual
+    # output field (and the parent_link drop) is decided by the native compiler
+    # from ``model._meta``, not by this descriptor. On the graphene backend the
+    # legacy ``Dynamic`` closure is UNCHANGED and still returns None for a
+    # parent_link link.
+    from django_graphex.converter import _NATIVE_BACKEND
+    from django_graphex.native.descriptors import NativeRelationField
+
     class _Base(models.Model):
         class Meta:
             app_label = "tests"
@@ -269,8 +276,11 @@ def test_o2o_inheritance_parent_link_returns_none():
         if isinstance(f, models.OneToOneField) and f.remote_field.parent_link
     )
     converted = convert_django_field(parent_link, Registry())
-    assert isinstance(converted, Dynamic)
-    assert converted.get_type() is None
+    if _NATIVE_BACKEND:
+        assert isinstance(converted, NativeRelationField)
+    else:
+        assert isinstance(converted, Dynamic)
+        assert converted.get_type() is None
 
 
 # --------------------------------------------------------------------------- #
@@ -293,12 +303,18 @@ def test_onetoone_rel_input_not_nested_is_id():
     assert isinstance(out, ID)
 
 
-def test_onetoone_rel_output_unregistered_returns_none():
-    rel = Author._meta.get_field("profile")
-    assert _resolve(rel, registry=Registry()) is None
+def test_onetoone_rel_output_returns_native_marker():
+    # S-rel-2: a reverse OneToOneRel on the native OUTPUT path converts to a
+    # graphene-free ``NativeRelationField`` marker (registered-or-not). The
+    # graphene-faithful drop-when-unregistered / Field-when-registered logic
+    # moved to ``types._compile_reverse_o2o_fields`` (which resolves via the
+    # per-type registry from ``model._meta``); this converter no longer decides
+    # it. ``_resolve`` returns the marker verbatim (it is not a graphene Dynamic).
+    # On the graphene backend the legacy Dynamic closure is UNCHANGED.
+    from django_graphex.converter import _NATIVE_BACKEND
+    from django_graphex.native.descriptors import NativeRelationField
 
-
-def test_onetoone_rel_output_registered_returns_field():
+    rel = Author._meta.get_field("profile")  # OneToOneRel
     reg = Registry()
 
     class _ProfileType(DjangoObjectType):
@@ -306,10 +322,16 @@ def test_onetoone_rel_output_registered_returns_field():
             model = _Profile
             registry = reg
 
-    rel = Author._meta.get_field("profile")
-    out = _resolve(rel, registry=reg)
-    # A Field wrapping the registered profile type.
-    assert out.type is _ProfileType
+    out_unregistered = _resolve(rel, registry=Registry())
+    out_registered = _resolve(rel, registry=reg)
+
+    if _NATIVE_BACKEND:
+        assert isinstance(out_unregistered, NativeRelationField)
+        assert isinstance(out_registered, NativeRelationField)
+    else:
+        # graphene: closure drops when unregistered, wraps the type otherwise.
+        assert out_unregistered is None
+        assert out_registered.type is _ProfileType
 
 
 # --------------------------------------------------------------------------- #
