@@ -1,0 +1,137 @@
+"""R6 coverage — behavioral tests for ``native.factory`` uncovered branches.
+
+``native_factory_type`` builds native output / list type subclasses via
+``type(name, (base,), {...})``. The happy paths (``output`` / ``list`` with a
+model, ``input`` delegation) are covered by ``test_factory.py``; this file pins
+the remaining name-derivation and error branches by asserting actual behaviour:
+
+- ``output`` with NO ``name`` and NO ``model`` → ``"GenericOutputType"``.
+- ``output`` with NO ``name`` but a ``model`` → camelCased ``<Model>GenericType``.
+- ``list`` with NO ``name`` and NO ``model`` → ``"GenericListType"``.
+- ``list`` with NO ``name`` but a ``model`` → camelCased ``<Model>ListType``.
+- unknown ``op`` → ``ValueError`` naming the bad op.
+- ``input`` op → ``NotImplementedError`` (Phase 2 delegation boundary).
+
+Run: .venv/bin/python -m pytest \
+    tests/native/test_factory_coverage.py -q -o addopts=""
+"""
+from __future__ import annotations
+
+import os
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
+
+import django
+
+django.setup()
+
+import pytest  # noqa: E402
+from django.db import models  # noqa: E402
+
+
+class _FactoryCovBase:
+    """Minimal base for factory subclassing tests."""
+
+
+class FactoryCovModel(models.Model):
+    name = models.CharField(max_length=50)
+
+    class Meta:
+        app_label = "tests"
+
+
+# ---------------------------------------------------------------------------
+# output: name derivation
+# ---------------------------------------------------------------------------
+
+
+def test_output_no_name_no_model_uses_generic_output_type() -> None:
+    """``output`` with neither name nor model falls back to ``GenericOutputType``."""
+    from django_graphex.native.factory import native_factory_type
+
+    cls = native_factory_type("output", _FactoryCovBase)
+    assert cls._gdx_name == "GenericOutputType"
+    assert cls.__name__ == "GenericOutputType"
+    assert cls._gdx_model is None
+    assert issubclass(cls, _FactoryCovBase)
+
+
+def test_output_no_name_with_model_camelcases_generic_type() -> None:
+    """``output`` with a model (no name) derives ``<Model>GenericType`` camelCased."""
+    from django_graphex._strconv import to_camel_case
+    from django_graphex.native.factory import native_factory_type
+
+    cls = native_factory_type("output", _FactoryCovBase, model=FactoryCovModel)
+    expected = to_camel_case("FactoryCovModel_Generic_Type")
+    assert cls._gdx_name == expected
+    assert cls._gdx_model is FactoryCovModel
+
+
+def test_output_explicit_name_is_honored() -> None:
+    """An explicit ``name`` is used verbatim for the output type."""
+    from django_graphex.native.factory import native_factory_type
+
+    cls = native_factory_type("output", _FactoryCovBase, name="MyOutput")
+    assert cls._gdx_name == "MyOutput"
+    assert cls.__name__ == "MyOutput"
+
+
+# ---------------------------------------------------------------------------
+# list: name derivation + three-field spec
+# ---------------------------------------------------------------------------
+
+
+def test_list_no_name_no_model_uses_generic_list_type() -> None:
+    """``list`` with neither name nor model falls back to ``GenericListType``."""
+    from django_graphex.native.factory import native_factory_type
+
+    cls = native_factory_type("list", _FactoryCovBase)
+    assert cls._gdx_name == "GenericListType"
+    # default results field name.
+    assert cls._gdx_results_field_name == "results"
+    assert cls._gdx_list_fields["results_field_name"] == "results"
+    assert cls._gdx_list_fields["totalCount"] == "Int"
+    assert cls._gdx_list_fields["pageInfo"] == "PageInfo"
+
+
+def test_list_no_name_with_model_camelcases_list_type() -> None:
+    """``list`` with a model (no name) derives ``<Model>ListType`` camelCased."""
+    from django_graphex._strconv import to_camel_case
+    from django_graphex.native.factory import native_factory_type
+
+    cls = native_factory_type("list", _FactoryCovBase, model=FactoryCovModel)
+    expected = to_camel_case("FactoryCovModel_List_Type")
+    assert cls._gdx_name == expected
+    assert cls._gdx_model is FactoryCovModel
+
+
+def test_list_custom_results_field_name_is_carried() -> None:
+    """A custom ``results_field_name`` lands in both the attr and the field spec."""
+    from django_graphex.native.factory import native_factory_type
+
+    cls = native_factory_type(
+        "list", _FactoryCovBase, name="ThingList", results_field_name="items"
+    )
+    assert cls._gdx_results_field_name == "items"
+    assert cls._gdx_list_fields["results_field_name"] == "items"
+
+
+# ---------------------------------------------------------------------------
+# op error paths
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_op_raises_value_error_naming_op() -> None:
+    """An unrecognised op raises ``ValueError`` naming the bad value."""
+    from django_graphex.native.factory import native_factory_type
+
+    with pytest.raises(ValueError, match="bogus"):
+        native_factory_type("bogus", _FactoryCovBase)
+
+
+def test_input_op_raises_not_implemented() -> None:
+    """The ``input`` op is delegated to Phase 2 → ``NotImplementedError``."""
+    from django_graphex.native.factory import native_factory_type
+
+    with pytest.raises(NotImplementedError, match="Phase 2"):
+        native_factory_type("input", _FactoryCovBase, model=FactoryCovModel)
