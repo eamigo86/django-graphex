@@ -113,43 +113,51 @@ class UserModelMutation(DjangoModelMutation):
 
 ### Traditional Mutations
 
+A hand-written mutation subclasses `django_graphex.Mutation`. Declare its output
+payload with `field()` (graphql-core scalars/types), its inputs in a nested
+`class args` using `GraphQLArgument`, and implement a `mutate(root, info, ...)`
+classmethod that returns an instance of the mutation:
+
 ```python title="mutations.py"
-import graphene
-from .types import UserType
-from .inputs import UserInput
+from graphql import GraphQLArgument, GraphQLBoolean, GraphQLNonNull, GraphQLString
 
-class UserMutation(graphene.Mutation):
-    """Traditional mutation - requires implementing mutate function"""
+from django_graphex import Mutation, field
 
-    user = graphene.Field(UserType, required=False)
 
-    class Arguments:
-        new_user = graphene.Argument(UserInput)
+class CreateUser(Mutation):
+    """Traditional mutation - implement the mutate function yourself."""
 
-    class Meta:
-        description = "Graphene traditional mutation for Users"
+    ok = field(GraphQLBoolean)
+    username = field(GraphQLString)
 
-    @classmethod
-    def mutate(cls, root, info, *args, **kwargs):
-        # Implement your mutation logic here
-        pass
+    class args:
+        username = GraphQLArgument(GraphQLNonNull(GraphQLString))
+        password = GraphQLArgument(GraphQLNonNull(GraphQLString))
+
+    @staticmethod
+    def mutate(root, info, username, password):
+        from django.contrib.auth.models import User
+
+        user = User.objects.create_user(username=username, password=password)
+        return CreateUser(ok=True, username=user.username)
 ```
 
 ## Schema Definition
 
 ```python title="schema.py"
-import graphene
 from django_graphex import (
     DjangoObjectField,
     DjangoListObjectField,
     DjangoFilterPaginateListField,
     DjangoFilterListField,
-    LimitOffsetGraphqlPagination
+    DjangoGraphQLSchema,
+    LimitOffsetGraphqlPagination,
+    ObjectType,
 )
 from .types import UserType, UserListType, UserModelType
-from .mutations import UserMutation, UserModelMutation
+from .mutations import CreateUser, UserModelMutation
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     # Different ways to define user list queries
     users = DjangoListObjectField(UserListType, description='All Users query')
     users_paginated = DjangoFilterPaginateListField(
@@ -167,7 +175,7 @@ class Query(graphene.ObjectType):
         description='User queries with model type'
     )
 
-class Mutation(graphene.ObjectType):
+class Mutation(ObjectType):
     # Model-based mutations
     user_create = UserModelMutation.CreateField()
     user_delete = UserModelMutation.DeleteField()
@@ -177,9 +185,9 @@ class Mutation(graphene.ObjectType):
     user_create_alt, user_delete_alt, user_update_alt = UserModelType.MutationFields()
 
     # Traditional mutation
-    traditional_user_mutation = UserMutation.Field()
+    create_user = CreateUser.Field()
 
-schema = graphene.Schema(query=Query, mutation=Mutation)
+schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
 ```
 
 ## Example Queries

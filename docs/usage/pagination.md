@@ -55,10 +55,10 @@ The most common pagination method, using `limit` and `offset` parameters to cont
 === "Use with Fields"
 
     ```python
-    from django_graphex import DjangoFilterPaginateListField
+    from django_graphex import DjangoFilterPaginateListField, ObjectType
     from .types import UserType
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         users = DjangoFilterPaginateListField(
             UserType,
             pagination=LimitOffsetGraphqlPagination(default_limit=10)
@@ -354,11 +354,11 @@ page's last row — so it stays fast and stable. The list type also exposes a
 ### Basic Usage
 
 ```python
-import graphene
 from django_graphex import (
     DjangoListObjectType,
     DjangoListObjectField,
     CursorGraphqlPagination,
+    ObjectType,
 )
 from .models import Event
 
@@ -370,7 +370,7 @@ class EventListType(DjangoListObjectType):
         pagination = CursorGraphqlPagination(ordering="id")  # use "-id" for newest-first
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     events = DjangoListObjectField(EventListType)
 ```
 
@@ -816,8 +816,8 @@ pagination = LimitOffsetGraphqlPagination(
 
     ```python
     import pytest
-    from graphene.test import Client
-    from .schema import schema
+    from graphql import graphql_sync
+    from .schema import schema   # a DjangoGraphQLSchema
 
     @pytest.mark.django_db
     def test_users_pagination():
@@ -828,7 +828,6 @@ pagination = LimitOffsetGraphqlPagination(
                 email=f'user{i}@example.com'
             )
 
-        client = Client(schema)
         query = """
             query GetUsers($limit: Int!, $offset: Int!) {
                 users {
@@ -841,10 +840,12 @@ pagination = LimitOffsetGraphqlPagination(
             }
         """
 
-        result = client.execute(query, variables={'limit': 10, 'offset': 20})
+        result = graphql_sync(
+            schema.graphql_schema, query, variable_values={'limit': 10, 'offset': 20}
+        )
 
-        assert len(result['data']['users']['results']) == 10
-        assert result['data']['users']['totalCount'] == 50
+        assert len(result.data['users']['results']) == 10
+        assert result.data['users']['totalCount'] == 50
     ```
 
 === "Test Ordering"

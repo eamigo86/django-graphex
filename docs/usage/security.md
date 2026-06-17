@@ -18,10 +18,10 @@ your resolvers.
     `Meta.max_deep`, `Meta.complexity`) now live on their own page —
     [Query depth & cost limits](query-limits.md).
 
-Wire the middlewares through `GRAPHENE['MIDDLEWARE']`:
+Wire the middlewares through `GRAPHEX['MIDDLEWARE']`:
 
 ```python
-GRAPHENE = {
+GRAPHEX = {
     "SCHEMA": "myapp.schema.schema",
     "MIDDLEWARE": [
         "django_graphex.DisableIntrospectionMiddleware",
@@ -82,7 +82,7 @@ The private field set is resolved from, in order:
 1. the registry attached by [`DjangoGraphQLSchema`](#declaring-private-fields-djangographqlschema)
    (recommended), or
 2. `DJANGO_GRAPHEX["PROTECTED_FIELDS"]` — a list of top-level field names,
-   for plain `graphene.Schema` setups.
+   for setups that don't use `DjangoGraphQLSchema`.
 
 ```python
 # plain-schema setup, without DjangoGraphQLSchema
@@ -92,7 +92,7 @@ DJANGO_GRAPHEX = {"PROTECTED_FIELDS": ["me", "allOrders", "createOrder"]}
 ## Declaring private fields: `DjangoGraphQLSchema`
 
 The cleanest way to declare what is private is right where you build the schema.
-`DjangoGraphQLSchema` is a `graphene.Schema` subclass that accepts `private_query`,
+`DjangoGraphQLSchema` accepts `private_query`,
 `private_mutation` and `private_subscription` (all optional, all symmetric). Each
 `private_*` root is **unioned** into its operation root, so you keep public and
 private fields in **separate** roots: the schema exposes the union, and the
@@ -100,15 +100,16 @@ private ones require auth. Field names are collected and attached automatically 
 no settings, no naming conventions, always in sync with the schema.
 
 ```python
-import graphene
-from django_graphex import DjangoGraphQLSchema, all_directives
+from graphql import GraphQLString
+from django_graphex import DjangoGraphQLSchema, ObjectType, all_directives, field
+from django_graphex.native.descriptors import NativeList
 
-class PublicQueries(graphene.ObjectType):
-    server_time = graphene.String()
+class PublicQueries(ObjectType):
+    server_time = field(GraphQLString)
 
-class PrivateQueries(graphene.ObjectType):
-    me = graphene.Field(UserType)
-    all_orders = graphene.List(OrderType)
+class PrivateQueries(ObjectType):
+    me = field(UserType)
+    all_orders = field(NativeList(OrderType))
 
 schema = DjangoGraphQLSchema(
     query=PublicQueries,                      # public-only subset
@@ -132,10 +133,12 @@ matched against `info.field_name` (camelCase under the default
     level aggregate them with multiple inheritance and pass the aggregates:
 
     ```python
+    from django_graphex import ObjectType
+
     class RootSubscription(blog.PublicSubscriptions, shop.PublicSubscriptions,
-                           graphene.ObjectType): pass
+                           ObjectType): pass
     class RootPrivateSubscription(blog.PrivateSubscriptions, shop.PrivateSubscriptions,
-                                  graphene.ObjectType): pass
+                                  ObjectType): pass
     ```
 
 !!! note "Subscriptions are symmetric"
@@ -148,15 +151,14 @@ matched against `info.field_name` (camelCase under the default
 !!! warning "Add the middleware"
 
     If you pass `private_query`/`private_mutation`/`private_subscription` but
-    `AuthenticatedFieldsMiddleware` is **not** in `GRAPHENE['MIDDLEWARE']`,
+    `AuthenticatedFieldsMiddleware` is **not** in `GRAPHEX['MIDDLEWARE']`,
     `DjangoGraphQLSchema` emits a `RuntimeWarning` — the private fields would
-    otherwise go unprotected. (The check inspects `GRAPHENE['MIDDLEWARE']`;
-    middleware wired only via `schema.execute(middleware=…)` or the view is not
-    detected.)
+    otherwise go unprotected. (The check inspects `GRAPHEX['MIDDLEWARE']`;
+    middleware wired only via the view is not detected.)
 
 ### Behavior matrix
 
-| Middleware in `GRAPHENE['MIDDLEWARE']` | Schema declares private fields | Result |
+| Middleware in `GRAPHEX['MIDDLEWARE']` | Schema declares private fields | Result |
 |---|---|---|
 | ✅ | ✅ | declared fields require auth |
 | ✅ | ❌ | everything public |
@@ -186,7 +188,7 @@ class MyAuthMiddleware(AuthenticatedFieldsMiddleware):
 ```
 
 - **`collect_field_names(*object_types, camelcase=True)`** — returns the camelCased
-  field names of the given graphene `ObjectType`s (from `ObjectType._meta.fields`).
+  field names of the given `ObjectType`s (from `ObjectType._meta.fields`).
 - **`DenyAllRegistry`** — a fail-closed `frozenset` whose membership test is always
   `True`. Return it from `get_protected_fields` when your schema/registry can't be
   built, so a broken schema **fails closed** (every field requires auth) instead of

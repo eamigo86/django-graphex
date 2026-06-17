@@ -8,7 +8,7 @@
 ![Downloads](https://img.shields.io/pepy/dt/django-graphex){ .md-badge }
 ![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json){ .md-badge }
 
-django-graphex builds on graphene and Pydantic to make Django GraphQL APIs easy, without Relay:
+django-graphex builds on graphql-core and Pydantic to make Django GraphQL APIs easy, without Relay:
 
 1. **Allow pagination and filtering on Queries**
 2. **Allow defining Pydantic-backed Mutations directly from Django models**

@@ -14,10 +14,23 @@ uv add django-graphex
 pip install django-graphex
 ```
 
-This pulls in the core dependencies (`graphene`, `pydantic`, `python-dateutil`,
-`text-unidecode`) — **not** `graphene-django` and **not** `djangorestframework`
-(the package depends on neither). Filtering is built on Django's ORM lookups +
+This pulls in the core dependencies (`graphql-core`, `pydantic`,
+`python-dateutil`, `text-unidecode`) — **not** `graphene`, **not**
+`graphene-django` and **not** `djangorestframework` (the package depends on
+none of them). As of v2.0, `graphene` has been removed entirely; the schema is
+built directly on `graphql-core`. Filtering is built on Django's ORM lookups +
 `Q` objects, so there is **no `django-filter` dependency**.
+
+!!! info "Upgrading from django-graphex 1.x?"
+    v2.0 is a clean break: `graphene` is gone and the public API moved to the
+    native `graphql-core` symbols (`ObjectType`, `field`, `Mutation`,
+    `DjangoGraphQLSchema`). See the [2.0 Upgrade Guide](UPGRADE-2.0.md) for
+    the full diff, and run the bundled codemod to rewrite most call sites
+    automatically:
+
+    ```bash
+    python scripts/migrate_2_0.py --apply
+    ```
 
 Validation and persistence use the built-in **native (Pydantic) backend**
 (`Meta.model`) — see [Model backend (Pydantic)](usage/backends.md).
@@ -44,7 +57,7 @@ This adds `channels` and `channels-redis`. See the
 
 - **Python**: 3.12, 3.13, 3.14
 - **Django**: 5.2 (LTS), 6.0
-- **graphene**: >=3.3,<4
+- **graphql-core**: >=3.2.11,<3.3
 - **pydantic**: >=2,<3
 
 !!! warning "Django 4.x / 5.0 / 5.1 users"

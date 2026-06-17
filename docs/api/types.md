@@ -323,15 +323,14 @@ Return the base `DjangoObjectType` wrapped by this list type.
 === "Scoping via a custom resolver"
 
     ```python
-    import graphene
-    from django_graphex import DjangoListObjectField
+    from django_graphex import DjangoListObjectField, ObjectType
 
     class UserListType(DjangoListObjectType):
         class Meta:
             model = User
             pagination = LimitOffsetGraphqlPagination(default_limit=25)
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         active_users = DjangoListObjectField(UserListType)
 
         def resolve_active_users(self, info, **kwargs):
@@ -343,17 +342,16 @@ Return the base `DjangoObjectType` wrapped by this list type.
 === "Schema Integration"
 
     ```python
-    import graphene
-    from django_graphex import DjangoListObjectField
+    from django_graphex import DjangoGraphQLSchema, DjangoListObjectField, ObjectType
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         # Preferred: DjangoListObjectField takes the list type directly
         all_users = DjangoListObjectField(UserListType)
 
         # RetrieveField() shorthand is available on DjangoListObjectType
         user = UserListType.RetrieveField()
 
-    schema = graphene.Schema(query=Query)
+    schema = DjangoGraphQLSchema(query=Query)
     ```
 
     !!! warning "`ListField()` is not available on `DjangoListObjectType`"
@@ -516,9 +514,9 @@ checks. See `django_graphex.permissions`.
 === "Schema Integration"
 
     ```python
-    import graphene
+    from django_graphex import DjangoGraphQLSchema, ObjectType
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         # Generate both fields automatically
         user, users = UserType.QueryFields()
 
@@ -526,7 +524,7 @@ checks. See `django_graphex.permissions`.
         user_list = UserType.ListField()
         single_user = UserType.RetrieveField()
 
-    schema = graphene.Schema(query=Query)
+    schema = DjangoGraphQLSchema(query=Query)
     ```
 
 ---
@@ -572,11 +570,12 @@ class UserType(DjangoObjectType):
 ### Custom Field Resolvers
 
 ```python
-import graphene
+from graphql import GraphQLInt, GraphQLString
+from django_graphex import field
 
 class UserType(DjangoObjectType):
-    full_name = graphene.String()
-    post_count = graphene.Int()
+    full_name = field(GraphQLString)
+    post_count = field(GraphQLInt)
 
     class Meta:
         model = User
@@ -598,7 +597,9 @@ class UserType(DjangoObjectType):
     @classmethod
     def __init_subclass_with_meta__(cls, **options):
         # Add dynamic fields before calling super
-        cls.custom_field = graphene.String()
+        from graphql import GraphQLString
+        from django_graphex import field
+        cls.custom_field = field(GraphQLString)
         super().__init_subclass_with_meta__(**options)
 ```
 
@@ -644,8 +645,11 @@ class UserType(DjangoObjectType):
 ### Field Resolution Errors
 
 ```python
+from graphql import GraphQLString
+from django_graphex import field
+
 class UserType(DjangoObjectType):
-    avatar_url = graphene.String()
+    avatar_url = field(GraphQLString)
 
     class Meta:
         model = User
@@ -763,8 +767,8 @@ class DjangoInterfaceType(Interface)
 
 ### Meta Options
 
-No additional Meta options beyond what `graphene.Interface` already provides.
-Implementors declare membership via the existing graphene `Meta.interfaces` kwarg.
+No additional Meta options beyond the GraphQL interface basics.
+Implementors declare membership via the `Meta.interfaces` kwarg.
 
 ### Methods
 
@@ -779,11 +783,11 @@ You do not override this method.
 ### Example Usage
 
 ```python
-import graphene
-from django_graphex import DjangoInterfaceType, DjangoObjectType
+from graphql import GraphQLString
+from django_graphex import DjangoInterfaceType, DjangoObjectType, field
 
 class ProductInterface(DjangoInterfaceType):
-    name = graphene.String()
+    name = field(GraphQLString)
 
     class Meta:
         pass

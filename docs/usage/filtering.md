@@ -223,7 +223,7 @@ directly on a `DjangoObjectType` or `DjangoModelType`. The method name becomes
 the GraphQL argument name; the method body returns a queryset.
 
 ```python
-import graphene
+from graphql import GraphQLString
 from django.db.models import Q
 from django_graphex import DjangoObjectType, filter_field
 
@@ -233,7 +233,7 @@ class PostType(DjangoObjectType):
         # filter_fields only for REAL model fields:
         filter_fields = {"title": ("exact", "icontains")}
 
-    @filter_field(graphene.String, description="Full-text search over title and body")
+    @filter_field(GraphQLString, description="Full-text search over title and body")
     def search(cls, queryset, info, value):
         return queryset.filter(
             Q(title__icontains=value) | Q(body__icontains=value)
@@ -244,7 +244,7 @@ class PostType(DjangoObjectType):
 query {
   posts(filter: {
     title: { icontains: "django" }   # standard lookup
-    search: "graphene"               # custom filter
+    search: "tutorial"               # custom filter
   }) {
     results { id title }
   }
@@ -254,14 +254,14 @@ query {
 ### Decorator signature
 
 ```python
-@filter_field(graphene_type=graphene.String, *, description=None)
+@filter_field(graphene_type=GraphQLString, *, description=None)
 def <name>(cls, queryset, info, value):
     ...
 ```
 
 | Parameter | Default | Description |
 |---|---|---|
-| `graphene_type` | `graphene.String` | Graphene scalar or type for the GraphQL argument. |
+| `graphene_type` | `GraphQLString` | The graphql-core scalar or type for the GraphQL argument. The parameter name is kept for backward compatibility with 1.x; pass graphql-core types (`GraphQLInt`, `GraphQLString`, ...). |
 | `description` | `None` | Optional GraphQL description string for the argument. |
 
 - **`cls`** — the type class (classmethod semantics handled internally; do NOT stack `@classmethod`).
@@ -272,7 +272,9 @@ def <name>(cls, queryset, info, value):
 ### Type override
 
 ```python
-@filter_field(graphene.Int, description="Minimum view count")
+from graphql import GraphQLInt
+
+@filter_field(GraphQLInt, description="Minimum view count")
 def min_views(cls, queryset, info, value):
     return queryset.filter(views__gte=value)
 ```
@@ -295,7 +297,7 @@ class definition:
 
 ```python
 # This raises ImproperlyConfigured immediately at class definition:
-@filter_field(graphene.String)
+@filter_field(GraphQLString)
 def limit(cls, queryset, info, value):   # ← name conflict!
     ...
 ```
@@ -344,11 +346,14 @@ Filtering composes with the list field's pagination/ordering, which live on the
 argument; declare the filterable fields on the underlying type (or pass `fields=`):
 
 ```python
-import graphene
-from django_graphex import DjangoFilterListField, DjangoFilterPaginateListField
+from django_graphex import (
+    DjangoFilterListField,
+    DjangoFilterPaginateListField,
+    ObjectType,
+)
 from django_graphex.paginations import PageGraphqlPagination
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterListField(UserType)
     paged_users = DjangoFilterPaginateListField(
         UserType, pagination=PageGraphqlPagination(page_size=20)

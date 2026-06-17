@@ -13,7 +13,7 @@ GraphQL directives in `django-graphex` allow you to transform field values at qu
     Add it to your settings before using any directive:
 
     ```python
-    GRAPHENE = {
+    GRAPHEX = {
         "SCHEMA": "myapp.schema.schema",
         "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
     }
@@ -22,9 +22,9 @@ GraphQL directives in `django-graphex` allow you to transform field values at qu
     And pass `all_directives` (or your combined directive list) to the schema:
 
     ```python
-    from django_graphex import all_directives
+    from django_graphex import DjangoGraphQLSchema, all_directives
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         mutation=Mutation,
         directives=all_directives,
@@ -506,18 +506,14 @@ built-ins plus the standard `@skip` / `@include` / `@deprecated`):
 
 ```python
 # myapp/schema.py
-import graphene
-from django_graphex import all_directives
+from django_graphex import DjangoGraphQLSchema, all_directives
 from myapp.directives import MaskGraphQLDirective
 
-schema = graphene.Schema(
+schema = DjangoGraphQLSchema(
     query=Query,
     directives=[*all_directives, MaskGraphQLDirective()],
 )
 ```
-
-`django_graphex.DjangoGraphQLSchema` accepts the same `directives=`
-argument, so the snippet works with either schema class.
 
 ### 3. Enable the middleware
 
@@ -526,7 +522,7 @@ directive parses and validates but does nothing:
 
 ```python
 # settings.py
-GRAPHENE = {
+GRAPHEX = {
     "SCHEMA": "myapp.schema.schema",
     "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
 }
@@ -568,14 +564,13 @@ Add directives to your GraphQL schema:
 === "Schema Setup"
 
     ```python
-    import graphene
-    from django_graphex import all_directives
+    from django_graphex import DjangoGraphQLSchema, ObjectType, all_directives
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         # Your query fields here
         pass
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         directives=all_directives  # Include all built-in directives
     )
@@ -584,7 +579,7 @@ Add directives to your GraphQL schema:
 === "Custom Directives"
 
     ```python
-    from django_graphex import all_directives
+    from django_graphex import DjangoGraphQLSchema, all_directives
     from .directives import MaskGraphQLDirective
 
     # all_directives already includes the built-in @skip / @include /
@@ -594,7 +589,7 @@ Add directives to your GraphQL schema:
         MaskGraphQLDirective()
     ]
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         directives=custom_directives
     )
@@ -607,7 +602,7 @@ Enable directive processing with middleware:
 === "Django Settings"
 
     ```python
-    GRAPHENE = {
+    GRAPHEX = {
         'SCHEMA': 'myapp.schema.schema',
         'MIDDLEWARE': [
             'django_graphex.GraphQLDirectiveMiddleware',

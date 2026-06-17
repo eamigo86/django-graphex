@@ -22,7 +22,9 @@
 === "Custom Resolver Optimization"
 
     ```python
-    class Query(graphene.ObjectType):
+    from django_graphex import ObjectType
+
+    class Query(ObjectType):
         popular_posts = DjangoFilterListField(PostType)
 
         def resolve_popular_posts(self, info, **kwargs):

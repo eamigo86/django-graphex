@@ -74,8 +74,7 @@ class Post(models.Model):
 
 ```python
 # schema.py
-import graphene
-from django_graphex import DjangoListObjectField, DjangoListObjectType, DjangoObjectType
+from django_graphex import DjangoListObjectField, DjangoListObjectType, DjangoObjectType, ObjectType
 
 
 class AuthorType(DjangoObjectType):
@@ -94,7 +93,7 @@ class PostListType(DjangoListObjectType):
     class Meta:
         model = Post
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     all_posts = DjangoListObjectField(PostListType)
 ```
 
@@ -238,7 +237,7 @@ class Post(models.Model):
 # schema.py
 from django_graphex import (
     DjangoListObjectField, DjangoListObjectType, DjangoObjectType,
-    LimitOffsetGraphqlPagination,
+    LimitOffsetGraphqlPagination, ObjectType,
 )
 
 class PostType(DjangoObjectType):
@@ -259,7 +258,7 @@ class AuthorListType(DjangoListObjectType):
     class Meta:
         model = Author
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     authors = DjangoListObjectField(AuthorListType)
 ```
 
@@ -305,7 +304,7 @@ ordering, full-load sub-selection, `.distinct()`, `OPTIMIZE_QUERYSET=False`).
 
 To customize the child queryset for a **specific** nested list field — add a
 `select_related`, a custom annotation, a default ordering — declare an
-**`optimize_<snake_field>`** static method on the **parent** graphene type:
+**`optimize_<snake_field>`** static method on the **parent** type:
 
 ```python
 from django_graphex import DjangoNestedListObjectField
@@ -405,16 +404,17 @@ Declare it on the type and let the selection drive it (`Author (1) ─→ (N) Po
 
 ```python
 # schema.py
-import graphene
+from graphql import GraphQLInt
 from django.db.models import Count
 from django_graphex import (
     AnnotatedField, DjangoListObjectField, DjangoListObjectType, DjangoObjectType,
+    ObjectType,
 )
 
 class AuthorType(DjangoObjectType):
     # Injected ONLY when `postCount` is selected; the built-in resolver reads it
     # off the row, so no resolve_post_count is needed.
-    post_count = AnnotatedField(graphene.Int, Count("posts"))
+    post_count = AnnotatedField(GraphQLInt, Count("posts"))
 
     class Meta:
         model = Author
@@ -423,7 +423,7 @@ class AuthorListType(DjangoListObjectType):
     class Meta:
         model = Author
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     authors = DjangoListObjectField(AuthorListType)
 ```
 
@@ -501,15 +501,14 @@ anything other than a `QuerySet` are left untouched.
 **Example** — scope a list to the current user while keeping optimizer benefits:
 
 ```python
-import graphene
-from django_graphex import DjangoListObjectField, DjangoListObjectType
+from django_graphex import DjangoListObjectField, DjangoListObjectType, ObjectType
 
 class PostListType(DjangoListObjectType):
     class Meta:
         model = Post
         pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="-id")
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     my_posts = DjangoListObjectField(PostListType, description="Posts by the current user")
 
     def resolve_my_posts(self, info, **kwargs):

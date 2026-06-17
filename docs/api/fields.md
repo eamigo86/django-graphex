@@ -50,18 +50,22 @@ Wraps the resolver with the object resolver functionality.
 ### Example Usage
 
 ```python
-import graphene
-from django_graphex import DjangoObjectField, DjangoObjectType
+from django_graphex import (
+    DjangoGraphQLSchema,
+    DjangoObjectField,
+    DjangoObjectType,
+    ObjectType,
+)
 from .models import User
 
 class UserType(DjangoObjectType):
     class Meta:
         model = User
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     user = DjangoObjectField(UserType, description="Get a single user")
 
-schema = graphene.Schema(query=Query)
+schema = DjangoGraphQLSchema(query=Query)
 ```
 
 ### GraphQL Query
@@ -83,8 +87,8 @@ query GetUser($id: ID!) {
 A basic GraphQL field for querying a list of Django model objects.
 
 ```python
-# Subclasses graphene.Field
-class DjangoListField(Field)
+# Subclasses the native NativeMountedField
+class DjangoListField(NativeMountedField)
 ```
 
 ### Parameters
@@ -104,9 +108,10 @@ class DjangoListField(Field)
 ### Example Usage
 
 ```python
+from django_graphex import ObjectType
 from django_graphex.fields import DjangoListField
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListField(UserType)
 ```
 
@@ -163,9 +168,9 @@ Static method that resolves a filtered list of objects.
 ### Example Usage
 
 ```python
-from django_graphex import DjangoFilterListField
+from django_graphex import DjangoFilterListField, ObjectType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterListField(
         UserType,
         description="Filtered list of users"
@@ -248,10 +253,11 @@ Resolve a filtered and paginated list of objects.
 ```python
 from django_graphex import (
     DjangoFilterPaginateListField,
-    LimitOffsetGraphqlPagination
+    LimitOffsetGraphqlPagination,
+    ObjectType,
 )
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterPaginateListField(
         UserType,
         pagination=LimitOffsetGraphqlPagination(default_limit=20),
@@ -323,14 +329,14 @@ Resolve a list object with count and results.
 ### Example Usage
 
 ```python
-from django_graphex import DjangoListObjectField, DjangoListObjectType
+from django_graphex import DjangoListObjectField, DjangoListObjectType, ObjectType
 
 class UserListType(DjangoListObjectType):
     class Meta:
         model = User
         pagination = LimitOffsetGraphqlPagination(default_limit=25)
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     all_users = DjangoListObjectField(
         UserListType,
         description="All users with count and pagination"
@@ -383,15 +389,15 @@ while pagination and ordering arguments (`limit`, `offset`, `page`, `pageSize`,
 ### Basic Field Setup
 
 ```python
-import graphene
 from django_graphex import (
     DjangoObjectField,
     DjangoFilterListField,
     DjangoFilterPaginateListField,
-    DjangoListObjectField
+    DjangoListObjectField,
+    ObjectType,
 )
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     # Single object
     user = DjangoObjectField(UserType)
 
@@ -408,9 +414,10 @@ class Query(graphene.ObjectType):
 ### Advanced Field Configuration
 
 ```python
+from django_graphex import ObjectType
 from .paginations import CustomPagination
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     # Custom filtered list — `fields=` overrides the type's `filter_fields`
     staff_users = DjangoFilterListField(
         UserType,
@@ -436,7 +443,9 @@ class Query(graphene.ObjectType):
 ### Error Handling
 
 ```python
-class Query(graphene.ObjectType):
+from django_graphex import ObjectType
+
+class Query(ObjectType):
     user = DjangoObjectField(UserType)
 
     def resolve_user(self, info, **kwargs):
@@ -469,7 +478,7 @@ class UserListType(DjangoListObjectType):
     def get_queryset(cls, queryset, info):
         return queryset.select_related('profile').prefetch_related('posts')
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListObjectField(UserListType)
 ```
 

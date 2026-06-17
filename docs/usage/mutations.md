@@ -31,29 +31,29 @@ The `DjangoModelMutation` is the cornerstone of mutations in `django-graphex`. I
 === "Add to Schema"
 
     ```python
-    import graphene
+    from django_graphex import DjangoGraphQLSchema, ObjectType
     from .mutations import UserMutation
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         # Get all mutation fields (create, update, delete)
         user_create, user_delete, user_update = UserMutation.MutationFields()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 === "Alternative Schema Setup"
 
     ```python
-    import graphene
+    from django_graphex import DjangoGraphQLSchema, ObjectType
     from .mutations import UserMutation
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         # Individual mutation fields
         create_user = UserMutation.CreateField()
         update_user = UserMutation.UpdateField()
         delete_user = UserMutation.DeleteField()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 ### Configuration Options
@@ -110,7 +110,7 @@ class UserMutation(DjangoModelMutation):
 You can add custom arguments to your mutations:
 
 ```python
-import graphene
+from graphql import GraphQLArgument, GraphQLBoolean
 from django.contrib.auth.models import User
 from django_graphex import DjangoModelMutation
 
@@ -119,9 +119,10 @@ class UserMutation(DjangoModelMutation):
         model = User
 
     class Arguments:
-        send_email = graphene.Boolean(
+        send_email = GraphQLArgument(
+            GraphQLBoolean,
             default_value=False,
-            description="Send welcome email after user creation"
+            description="Send welcome email after user creation",
         )
 
     @classmethod
@@ -253,7 +254,7 @@ Here's a complete example showing all features:
 === "mutations.py"
 
     ```python
-    import graphene
+    from graphql import GraphQLArgument, GraphQLBoolean
     from django.contrib.auth.models import User
     from django_graphex import DjangoModelMutation
     from .models import Address, Profile
@@ -265,19 +266,19 @@ Here's a complete example showing all features:
             nested_fields = {'profile': Profile, 'addresses': Address}
 
         class Arguments:
-            send_welcome_email = graphene.Boolean(default_value=True)
+            send_welcome_email = GraphQLArgument(GraphQLBoolean, default_value=True)
     ```
 
 === "schema.py"
 
     ```python
-    import graphene
+    from django_graphex import DjangoGraphQLSchema, ObjectType
     from .mutations import UserMutation
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         create_user, delete_user, update_user = UserMutation.MutationFields()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 === "GraphQL client"
@@ -553,24 +554,30 @@ While `DjangoModelMutation` covers most use cases, you can still create traditio
 === "Traditional Mutation"
 
     ```python
-    import graphene
-    from django_graphex import DjangoObjectType
+    from graphql import (
+        GraphQLArgument,
+        GraphQLBoolean,
+        GraphQLNonNull,
+        GraphQLString,
+    )
+    from django_graphex import DjangoObjectType, Mutation, field
     from django.contrib.auth.models import User
 
     class UserType(DjangoObjectType):
         class Meta:
             model = User
 
-    class CreateUser(graphene.Mutation):
-        class Arguments:
-            username = graphene.String(required=True)
-            email = graphene.String(required=True)
-            password = graphene.String(required=True)
+    class CreateUser(Mutation):
+        class args:
+            username = GraphQLArgument(GraphQLNonNull(GraphQLString))
+            email = GraphQLArgument(GraphQLNonNull(GraphQLString))
+            password = GraphQLArgument(GraphQLNonNull(GraphQLString))
 
-        ok = graphene.Boolean()
-        user = graphene.Field(UserType)
+        ok = field(GraphQLBoolean)
+        user = field(UserType)
 
-        def mutate(self, info, username, email, password):
+        @staticmethod
+        def mutate(root, info, username, email, password):
             user = User.objects.create_user(
                 username=username,
                 email=email,
@@ -582,19 +589,30 @@ While `DjangoModelMutation` covers most use cases, you can still create traditio
 === "With Error Handling"
 
     ```python
+    from graphql import (
+        GraphQLArgument,
+        GraphQLBoolean,
+        GraphQLNonNull,
+        GraphQLString,
+    )
+    from django_graphex import Mutation, field
     from django_graphex.errors import ErrorType
+    # ErrorType is a native ObjectType (a Python class), so wrap it in the
+    # lazy NativeList rather than graphql-core's GraphQLList.
+    from django_graphex.native.descriptors import NativeList
 
-    class CreateUser(graphene.Mutation):
-        class Arguments:
-            username = graphene.String(required=True)
-            email = graphene.String(required=True)
-            password = graphene.String(required=True)
+    class CreateUser(Mutation):
+        class args:
+            username = GraphQLArgument(GraphQLNonNull(GraphQLString))
+            email = GraphQLArgument(GraphQLNonNull(GraphQLString))
+            password = GraphQLArgument(GraphQLNonNull(GraphQLString))
 
-        ok = graphene.Boolean()
-        user = graphene.Field(UserType)
-        errors = graphene.List(ErrorType)
+        ok = field(GraphQLBoolean)
+        user = field(UserType)
+        errors = field(NativeList(ErrorType))
 
-        def mutate(self, info, username, email, password):
+        @staticmethod
+        def mutate(root, info, username, email, password):
             # Validation
             errors = []
 
@@ -669,13 +687,11 @@ authoritative reference:
 
     ```python
     import pytest
-    from graphene.test import Client
-    from .schema import schema
+    from graphql import graphql_sync
+    from .schema import schema   # a DjangoGraphQLSchema
 
     @pytest.mark.django_db
     def test_create_user_mutation():
-        client = Client(schema)
-
         mutation = """
             mutation CreateUser($userData: UserInput!) {
                 createUser(newUser: $userData) {
@@ -701,18 +717,19 @@ authoritative reference:
             }
         }
 
-        result = client.execute(mutation, variables=variables)
-        assert result['data']['createUser']['ok'] is True
-        assert result['data']['createUser']['user']['username'] == 'testuser'
+        result = graphql_sync(schema.graphql_schema, mutation, variable_values=variables)
+        assert result.errors is None
+        assert result.data['createUser']['ok'] is True
+        assert result.data['createUser']['user']['username'] == 'testuser'
     ```
 
 === "Error Handling Test"
 
     ```python
+    from graphql import graphql_sync
+
     @pytest.mark.django_db
     def test_create_user_validation_error():
-        client = Client(schema)
-
         mutation = """
             mutation CreateUser($userData: UserInput!) {
                 createUser(newUser: $userData) {
@@ -733,9 +750,9 @@ authoritative reference:
             }
         }
 
-        result = client.execute(mutation, variables=variables)
-        assert result['data']['createUser']['ok'] is False
-        assert len(result['data']['createUser']['errors']) > 0
+        result = graphql_sync(schema.graphql_schema, mutation, variable_values=variables)
+        assert result.data['createUser']['ok'] is False
+        assert len(result.data['createUser']['errors']) > 0
     ```
 
 The mutation system in `django-graphex` provides a robust foundation for handling data modifications in your GraphQL API, with built-in validation, error handling, and support for complex operations.
@@ -766,24 +783,41 @@ input Base64FileInput {
 #### Resolver usage
 
 ```python
-import graphene
-from django_graphex import Base64FileInput
+from graphql import GraphQLArgument, GraphQLBoolean, GraphQLNonNull
+from django_graphex import Base64FileInput, Mutation, field
 
-class UploadAvatarMutation(graphene.Mutation):
-    class Arguments:
-        avatar = Base64FileInput(required=True)
+class UploadAvatarMutation(Mutation):
+    class args:
+        # The compiled GraphQLInputObjectType is referenced LAZILY via a zero-arg
+        # thunk, because `_meta.graphql_input_type` is built at schema-compile time.
+        avatar = lambda: GraphQLArgument(  # noqa: E731 - native lazy arg thunk
+            GraphQLNonNull(Base64FileInput._meta.graphql_input_type)
+        )
 
-    ok = graphene.Boolean()
+    ok = field(GraphQLBoolean)
 
-    def mutate(self, info, avatar):
-        # avatar.to_uploaded_file() → Django SimpleUploadedFile
+    @classmethod
+    def mutate(cls, root, info, **kwargs):
+        # The input object arrives as a dict (snake-cased keys); rehydrate it into a
+        # Base64FileInput so .to_uploaded_file() is available.
+        avatar = Base64FileInput(**kwargs["avatar"])
         # Pass max_size to override the global MAX_UPLOAD_SIZE for this field:
         uploaded = avatar.to_uploaded_file(max_size=512 * 1024)  # 512 KB cap
         profile.avatar.save(uploaded.name, uploaded, save=True)
-        return UploadAvatarMutation(ok=True)
+        return cls(ok=True)
 ```
 
-The value received by the resolver (the `avatar` argument) is a dict-like container with `.filename`, `.data`, `.content_type` attributes **and** a `.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
+The `avatar` argument arrives in the resolver as a plain `dict` of the input
+fields; rehydrate it with `Base64FileInput(**kwargs["avatar"])` to get a validated
+instance with `.filename`, `.data`, `.content_type` attributes **and** a
+`.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
+
+!!! note "Why the lazy thunk?"
+    `Base64FileInput._meta.graphql_input_type` is compiled at schema-build time.
+    Listing `django_graphex` in `INSTALLED_APPS` triggers that compilation from
+    `AppConfig.ready()`, so the thunk resolves to the real compiled input type when
+    the schema mounts the field. The thunk avoids reading the attribute (which would
+    be `None`) at class-definition time.
 
 You can also call the module-level helper directly if you hold the raw dict:
 

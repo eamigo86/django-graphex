@@ -180,9 +180,8 @@ and the budget, then set `MAX_QUERY_COST` to start enforcing.
 !!! note "Per-type only (for now)"
 
     Weights are declared per **type** via `Meta.complexity`. Per-**field** weights
-    aren't supported yet (graphene rejects an unknown `complexity=` kwarg on
-    `Field`); wrap an expensive field's return in a type with `Meta.complexity`,
-    or watch for a future `@cost` directive.
+    aren't supported yet; wrap an expensive field's return in a type with
+    `Meta.complexity`, or watch for a future `@cost` directive.
 
 ## Programmatic cost analysis
 
@@ -222,7 +221,7 @@ print(report.max_cost)  # the configured MAX_QUERY_COST budget (or None)
 
 `analyze_cost(schema, document, operation_name=None, variable_values=None)` takes:
 
-- **`schema`** — the graphql-core schema (`schema.graphql_schema` on a graphene `Schema`).
+- **`schema`** — the graphql-core schema (`schema.graphql_schema` on a `DjangoGraphQLSchema`).
 - **`document`** — the parsed query (`graphql.parse(...)`).
 - **`operation_name`** — required only when the document holds several operations;
   otherwise the sole/first operation is costed.

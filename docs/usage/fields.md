@@ -7,10 +7,10 @@ django-graphex provides several field types for building GraphQL schemas with en
 Used for single object queries with automatic ID filtering.
 
 ```python
-from django_graphex import DjangoObjectField
+from django_graphex import DjangoObjectField, ObjectType
 from .types import UserType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     user = DjangoObjectField(UserType, description='Single User query')
 ```
 
@@ -35,10 +35,10 @@ class Query(graphene.ObjectType):
 Provides filtering capabilities for list queries without pagination.
 
 ```python
-from django_graphex import DjangoFilterListField
+from django_graphex import DjangoFilterListField, ObjectType
 from .types import UserType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterListField(UserType)
 ```
 
@@ -64,11 +64,11 @@ class Query(graphene.ObjectType):
 Combines filtering and pagination for list queries.
 
 ```python
-from django_graphex import DjangoFilterPaginateListField
+from django_graphex import DjangoFilterPaginateListField, ObjectType
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 from .types import UserType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterPaginateListField(
         UserType,
         pagination=LimitOffsetGraphqlPagination(default_limit=20)
@@ -103,10 +103,10 @@ class Query(graphene.ObjectType):
     This is the most flexible approach for list queries with built-in support for filtering and pagination.
 
 ```python
-from django_graphex import DjangoListObjectField
+from django_graphex import DjangoListObjectField, ObjectType
 from .types import UserListType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListObjectField(UserListType, description='All Users query')
 ```
 
@@ -166,7 +166,7 @@ See [Permissions & hooks](permissions.md) and the [Filtering guide](filtering.md
 
 ## AnnotatedField
 
-A `graphene.Field` backed by a Django ORM annotation that is injected into the
+A field backed by a Django ORM annotation that is injected into the
 queryset **only when the field is selected** in the GraphQL query. A built-in
 default resolver reads the annotated value off the row, so no `resolve_<field>`
 is needed — and when the field is not selected, no annotation (and no extra SQL)
@@ -187,13 +187,13 @@ AnnotatedField(type_, expression, aliases=None, annotation_name=None, **kwargs)
 **Example** — a per-author post count, computed in the database:
 
 ```python
-import graphene
+from graphql import GraphQLInt
 from django.db.models import Count
 from django_graphex import AnnotatedField, DjangoObjectType
 
 class AuthorType(DjangoObjectType):
     # Backed by a DB annotation, injected ONLY when `postCount` is selected.
-    post_count = AnnotatedField(graphene.Int, Count("posts"))
+    post_count = AnnotatedField(GraphQLInt, Count("posts"))
 
     class Meta:
         model = Author
@@ -221,14 +221,14 @@ injected and the query is unchanged.
 
 | Argument | Meaning |
 |----------|---------|
-| `type_` | The graphene output type (e.g. `graphene.Int`). |
+| `type_` | The graphql-core output type (e.g. `GraphQLInt`). |
 | `expression` | A Django `Expression` instance **or** a zero-arg callable returning one. The callable is invoked lazily at injection time, per request — useful for constructing a fresh expression on each resolve. |
 | `aliases` | Optional `dict[str, Expression \| callable]` applied via `.alias()` **before** `.annotate()` (for intermediate expressions the annotation depends on). |
 | `annotation_name` | Overrides the auto-derived annotation key. Defaults to `_gqx_ann_<snake_field>`. Set it when the auto key would collide with a model attname. |
 
 ```python
 # expression may also be a zero-arg callable for fresh construction per request:
-post_count = AnnotatedField(graphene.Int, lambda: Count("posts"))
+post_count = AnnotatedField(GraphQLInt, lambda: Count("posts"))
 ```
 
 !!! note "Selection-driven and gated by a setting"
@@ -311,7 +311,6 @@ DjangoNestedListObjectField(list_type, accessor=None, fields=None, **kwargs)
 **Example** — expose a per-author paginated list of posts:
 
 ```python
-import graphene
 from django_graphex import (
     DjangoObjectType,
     DjangoListObjectType,
@@ -371,12 +370,14 @@ resolver. `DjangoFilterPaginateListField` returns a flat list with no wrapper
 shape, which limits client-side pagination controls.
 
 ```python
+from django_graphex import ObjectType
+
 # ✅ Recommended
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListObjectField(UserListType, description='All users')
 
 # ❌ Less flexible — no totalCount, no results wrapper
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterPaginateListField(UserType)
 ```
 
@@ -404,7 +405,9 @@ separate API docs. Include intent in the name (`active_users` > `users`) and
 always add a `description=`.
 
 ```python
-class Query(graphene.ObjectType):
+from django_graphex import ObjectType
+
+class Query(ObjectType):
     # ✅ Clear and descriptive
     active_users = DjangoListObjectField(
         UserListType,
@@ -430,7 +433,7 @@ the base queryset; `filter_backend.apply(qs, kwargs.get("filter"))` applies the
 nested `filter:` argument:
 
 ```python
-from django_graphex import DjangoListObjectField
+from django_graphex import DjangoListObjectField, ObjectType
 from django_graphex.base_types import DjangoListObjectBase
 from graphql import GraphQLError
 
@@ -441,6 +444,6 @@ def staff_only_users(manager, filter_backend, root, info, **kwargs):
     qs = filter_backend.apply(qs, kwargs.get("filter"))
     return DjangoListObjectBase(count=qs.count(), results=qs)
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListObjectField(UserListType, resolver=staff_only_users)
 ```

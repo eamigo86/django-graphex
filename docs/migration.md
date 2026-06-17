@@ -1,5 +1,10 @@
 # Migration Guide
 
+> **Audience: `graphene-django-extras` users.** This guide moves you from the old
+> `graphene-django-extras` (or plain `graphene-django`) library to
+> `django-graphex`. **Already on `django-graphex` 1.x?** That's a different
+> migration — see the [2.0 Upgrade Guide](UPGRADE-2.0.md) instead.
+
 `django-graphex` is a near-complete rewrite and the successor to
 `graphene-django-extras`. This guide walks you, step by step, from the old library
 to the new one.
@@ -30,9 +35,10 @@ to the new one.
 !!! warning "Runtime Requirements"
     django-graphex requires **Python 3.12+** (3.12, 3.13, 3.14) and **Django 5.2 (LTS) or 6.0**.
     Django 4.2, 5.0 and 5.1 are EOL and no longer supported as of v1.3.0.
-    It depends on **graphene >=3.3,<4** directly (the
-    `graphene-django` dependency was dropped) and **pydantic >=2,<3**.
-    Each Django version is tested on the Python versions it officially supports.
+    As of **v2.0** it is built directly on **graphql-core >=3.2.11,<3.3** and
+    **pydantic >=2,<3** — `graphene` and `graphene-django` are no longer
+    dependencies. Each Django version is tested on the Python versions it
+    officially supports.
 
 #### 2. Django REST Framework removed — use `Meta.model`
 
@@ -141,7 +147,8 @@ bespoke transport was replaced by native SSE + `graphql-transport-ws`:
   native WebSocket consumer and/or mount the SSE view instead.
 - `SubscriptionBinding.consumer` alias → use `.subscription_cls`.
 
-Subscriptions are **native-only** in v2.0 (`GDX_BACKEND=native`). See the
+Subscriptions are **native-only** in v2.0 — there is nothing to configure (the
+old `GDX_BACKEND` toggle is gone with graphene). See the
 [Subscriptions guide](usage/subscriptions.md).
 
 #### 6. Filtering: a single nested `filter:` argument (django-filter removed)
@@ -210,8 +217,8 @@ so its filter, `limit`, `offset` and `ordering` all stay on the field (no
 
 ### Migration Steps
 
-1. **Update your environment** to Python 3.12+ and Django 4.2+ (graphene
-   `>=3.3,<4`, pydantic `>=2,<3`).
+1. **Update your environment** to Python 3.12+ and Django 5.2+ (graphql-core
+   `>=3.2.11,<3.3`, pydantic `>=2,<3`).
 2. **Swap the dependency** — uninstall the old package, install the new one:
 
    ```bash

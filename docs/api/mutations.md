@@ -208,16 +208,17 @@ Get all mutation fields (create, delete, update).
 === "Custom Arguments"
 
     ```python
-    import graphene
+    from graphql import GraphQLArgument, GraphQLBoolean
 
     class UserMutation(DjangoModelMutation):
         class Meta:
             model = User
 
         class Arguments:
-            send_email = graphene.Boolean(
+            send_email = GraphQLArgument(
+                GraphQLBoolean,
                 default_value=False,
-                description="Send welcome email"
+                description="Send welcome email",
             )
 
         @classmethod
@@ -255,23 +256,25 @@ Get all mutation fields (create, delete, update).
 === "Individual Fields"
 
     ```python
-    import graphene
+    from django_graphex import DjangoGraphQLSchema, ObjectType
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         create_user = UserMutation.CreateField()
         update_user = UserMutation.UpdateField()
         delete_user = UserMutation.DeleteField()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 === "All Fields at Once"
 
     ```python
-    class Mutation(graphene.ObjectType):
+    from django_graphex import DjangoGraphQLSchema, ObjectType
+
+    class Mutation(ObjectType):
         create_user, delete_user, update_user = UserMutation.MutationFields()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 ### GraphQL Operations
@@ -478,9 +481,15 @@ class UserMutation(DjangoModelMutation):
 Standard error type used in mutation responses.
 
 ```python
-class ErrorType:
-    field = graphene.String()
-    messages = graphene.List(graphene.String)
+from graphql import GraphQLList, GraphQLNonNull, GraphQLString
+from django_graphex import field
+from django_graphex.native.base import ObjectType
+
+class ErrorType(ObjectType):
+    field = field(GraphQLNonNull(GraphQLString))                  # String!
+    messages = field(
+        GraphQLNonNull(GraphQLList(GraphQLNonNull(GraphQLString)))  # [String!]!
+    )
 ```
 
 ## Best Practices

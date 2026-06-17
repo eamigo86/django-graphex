@@ -55,10 +55,9 @@ class Post(models.Model):
 
 ```python
 # schema.py
-import graphene
 from django_graphex import (
     DjangoListObjectField, DjangoListObjectType, DjangoObjectType,
-    LimitOffsetGraphqlPagination,
+    LimitOffsetGraphqlPagination, ObjectType,
 )
 
 class PostType(DjangoObjectType):
@@ -75,7 +74,7 @@ class AuthorListType(DjangoListObjectType):
         model = Author
         pagination = LimitOffsetGraphqlPagination(default_limit=50)
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     authors = DjangoListObjectField(AuthorListType)
 ```
 
@@ -251,7 +250,7 @@ returned.
 For cases where you need to customize the child queryset for a specific nested
 list field — for example to add a `select_related`, a custom annotation, or a
 default ordering — declare an **`optimize_<snake_field>`** static method on the
-**parent** graphene type:
+**parent** type:
 
 ```python
 class AuthorType(DjangoObjectType):
@@ -315,7 +314,7 @@ default `False` setting the exception propagates normally.
 
 ```python
 from django.db.models import Prefetch
-from django_graphex import DjangoObjectType, DjangoListObjectType, DjangoListObjectField, DjangoNestedListObjectField
+from django_graphex import DjangoObjectType, DjangoListObjectType, DjangoListObjectField, DjangoNestedListObjectField, ObjectType
 
 class PostListType(DjangoListObjectType):
     class Meta:
@@ -337,7 +336,7 @@ class AuthorListType(DjangoListObjectType):
     class Meta:
         model = Author
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     authors = DjangoListObjectField(AuthorListType)
 ```
 

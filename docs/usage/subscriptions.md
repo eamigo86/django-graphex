@@ -20,10 +20,11 @@ as an opt-in extra so that the base install never depends on `channels`.
 
 !!! warning "Subscriptions are native-only in v2.0"
     The v2.0 subscription engine runs exclusively on the native graphql-core
-    backend. Set `GDX_BACKEND=native` (read at import time) for subscriptions to
-    work. The legacy graphene transport (the HTTP `channelId` handshake, the
-    demultiplexer consumer, and `SubscriptionGraphQLView`) was removed in v2.0 and
-    replaced by two standards-based transports — see
+    backend — there is nothing to configure (`graphene` is gone, so the old
+    `GDX_BACKEND` toggle no longer exists). The legacy graphene transport (the HTTP
+    `channelId` handshake, the demultiplexer consumer, and
+    `SubscriptionGraphQLView`) was removed in v2.0 and replaced by two
+    standards-based transports — see
     [Serve subscriptions](#3-serve-subscriptions-over-sse-or-websocket).
 
 ## How it works
@@ -92,15 +93,15 @@ subscription, not the legacy one-shot confirmation object. It exposes:
 ## 2. Mount it on the schema
 
 ```python
-import graphene
+from django_graphex import DjangoGraphQLSchema, ObjectType
 from myapp.subscriptions import UserSubscription
 
 
-class Subscription(graphene.ObjectType):
+class Subscription(ObjectType):
     user_subscription = UserSubscription.Field()
 
 
-schema = graphene.Schema(query=Query, subscription=Subscription)
+schema = DjangoGraphQLSchema(query=Query, subscription=Subscription)
 ```
 
 ## 3. Serve subscriptions over SSE or WebSocket
@@ -195,10 +196,12 @@ Mount it on the schema — then serve it through either transport (see
 
 ```python
 # schema.py
-class Subscription(graphene.ObjectType):
+from django_graphex import DjangoGraphQLSchema, ObjectType
+
+class Subscription(ObjectType):
     user_subscription = UserModelType.SubscriptionField()
 
-schema = graphene.Schema(query=Query, subscription=Subscription)
+schema = DjangoGraphQLSchema(query=Query, subscription=Subscription)
 ```
 
 `UserModelType.subscription_type()` builds (and caches) the `Subscription`
@@ -576,18 +579,17 @@ The transport changed in v2.0: the HTTP `channelId` handshake, the
 favor of native SSE and `graphql-transport-ws`. To migrate:
 
 1. Install the extra: `uv add "django-graphex[subscriptions]"` (or `pip install "django-graphex[subscriptions]"`).
-2. Set `GDX_BACKEND=native` — subscriptions are native-only in v2.0.
-3. Update imports to `django_graphex.subscriptions`.
-4. Replace the demultiplexer consumer + `SubscriptionGraphQLView` URL with the
+2. Update imports to `django_graphex.subscriptions`.
+3. Replace the demultiplexer consumer + `SubscriptionGraphQLView` URL with the
    native transports: route `subscription_ws_consumer(schema=...)` for WebSocket
    and/or mount `subscription_sse_view(schema=...)` for SSE (see
    [Serve subscriptions](#3-serve-subscriptions-over-sse-or-websocket)).
-5. Update clients: drop the `channelId` / `operation` arguments and the
+4. Update clients: drop the `channelId` / `operation` arguments and the
    `{ok, error, stream, operation, action}` confirmation selection — select the
    model's fields instead, and rely on the transport for unsubscribe (close the
    `EventSource` or send a `graphql-transport-ws` `complete`).
-6. Notifications are **id-only by default**. If your clients relied on the full
+5. Notifications are **id-only by default**. If your clients relied on the full
    serialized payload, set `Meta.serialize_data = True` on those subscriptions or
    `DJANGO_GRAPHEX["SUBSCRIPTION_SERIALIZE_DATA"] = True` globally. See
    [Notification payload](#notification-payload).
-7. Configure a Redis channel layer for multi-process deployments.
+6. Configure a Redis channel layer for multi-process deployments.

@@ -606,7 +606,9 @@ queryset is returned. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` /
 ### Multiple Pagination Strategies
 
 ```python
-class Query(graphene.ObjectType):
+from django_graphex import ObjectType
+
+class Query(ObjectType):
     # Limit/Offset pagination
     posts_limit_offset = DjangoFilterPaginateListField(
         PostType,

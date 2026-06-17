@@ -1,6 +1,6 @@
 # Types
 
-django-graphex provides enhanced type classes built on top of graphene's basic functionality.
+django-graphex provides enhanced type classes built directly on graphql-core.
 
 !!! note "Model `choices` → GraphQL enum"
 
@@ -44,7 +44,7 @@ as nested lists with the uniform `results` / `totalCount` shape — see
 GraphQL filter argument** directly on the type, co-located with its logic:
 
 ```python
-import graphene
+from graphql import GraphQLString
 from django.db.models import Q
 from django_graphex import DjangoObjectType, filter_field
 
@@ -53,7 +53,7 @@ class PostType(DjangoObjectType):
         model = Post
         filter_fields = {"title": ("exact", "icontains")}
 
-    @filter_field(graphene.String, description="Full-text search")
+    @filter_field(GraphQLString, description="Full-text search")
     def search(cls, queryset, info, value):
         return queryset.filter(
             Q(title__icontains=value) | Q(body__icontains=value)
@@ -205,10 +205,9 @@ class UserListType(DjangoListObjectType):
 ### Helper Methods
 
 ```python
-import graphene
-from django_graphex import DjangoListObjectField
+from django_graphex import DjangoListObjectField, ObjectType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     # Preferred: use DjangoListObjectField directly
     users = DjangoListObjectField(UserListType, description="List all users")
     # Or use the RetrieveField shorthand for a single object
@@ -241,14 +240,14 @@ class UserInput(DjangoInputObjectType):
 ### Advanced Configuration
 
 ```python
-import graphene
-from django_graphex import DjangoInputObjectType
+from graphql import GraphQLString
+from django_graphex import DjangoInputObjectType, field
 
 class UserCreateInput(DjangoInputObjectType):
     """Input for creating new users"""
 
     # Add custom fields
-    confirm_password = graphene.String(required=True)
+    confirm_password = field(GraphQLString, required=True)
 
     class Meta:
         model = User
@@ -266,20 +265,39 @@ class UserUpdateInput(DjangoInputObjectType):
 
 ### Usage in Mutations
 
+A `DjangoInputObjectType` is most often wired through a
+[`DjangoModelMutation`](mutations.md), which consumes it automatically. For a
+hand-written `Mutation`, reference the compiled graphql-core input type
+(`UserCreateInput._meta.graphql_input_type`) as a `GraphQLArgument` — via a zero-arg
+**thunk**, since the input type is compiled at schema-build time:
+
 ```python
-class CreateUserMutation(graphene.Mutation):
-    class Arguments:
-        input = UserCreateInput(required=True)
+from graphql import GraphQLArgument, GraphQLBoolean, GraphQLNonNull
+from django_graphex import Mutation, field
 
-    user = graphene.Field(UserType)
-    success = graphene.Boolean()
+class CreateUserMutation(Mutation):
+    class args:
+        new_user = lambda: GraphQLArgument(  # noqa: E731 - native lazy arg thunk
+            GraphQLNonNull(UserCreateInput._meta.graphql_input_type)
+        )
 
-    def mutate(self, info, input):
-        # Access input fields
-        username = input.username
-        email = input.email
+    user = field(UserType)
+    success = field(GraphQLBoolean)
+
+    @classmethod
+    def mutate(cls, root, info, **kwargs):
+        # The input object arrives as a dict of the declared fields.
+        new_user = kwargs["new_user"]
+        username = new_user["username"]
+        email = new_user["email"]
         # ... mutation logic
+        return cls(user=..., success=True)
 ```
+
+!!! tip "Prefer `DjangoModelMutation` for model inputs"
+    For ordinary create/update/delete against a model, use
+    [`DjangoModelMutation`](mutations.md) — it builds the input type, validates,
+    and persists for you. Hand-written `Mutation` classes are for bespoke logic.
 
 ## DjangoModelType
 
@@ -383,20 +401,21 @@ It is added to the generated output type, so it shows up in **both**
 `RetrieveField()` and `ListField()` — no separate `DjangoObjectType` required:
 
 ```python
-import graphene
+from graphql import GraphQLInt, GraphQLString
+from django_graphex import field
 
 class PropertyManagerType(DjangoModelType):
-    # Plain graphene fields, resolved from the instance (here from the
+    # Native field() declarations, resolved from the instance (here from the
     # annotations added in get_queryset above, and a model property).
-    lease_count = graphene.Int(source="lease_count")
-    email = graphene.String(source="email")
-    logo_url = graphene.String(source="logo_url")   # a model @property
+    lease_count = field(GraphQLInt, source="lease_count")
+    email = field(GraphQLString, source="email")
+    logo_url = field(GraphQLString, source="logo_url")   # a model @property
 
     class Meta:
         model = PropertyManager
 ```
 
-- The field is resolved like any graphene field: `source="x"` reads
+- The field is resolved like any native field: `source="x"` reads
   `getattr(instance, "x")`, or add a `resolve_<name>` method for custom logic.
 - It appears in the detail **and** the list, because the list reuses the same
   item type.
@@ -409,14 +428,13 @@ generated output type, so it runs for both the retrieve and the list. This lets 
 custom field return another GraphQL type with arbitrary logic:
 
 ```python
-import graphene
-from django_graphex import DjangoModelType
+from django_graphex import DjangoModelType, field
 from myapp.types import PersonType
 from myapp.models import Company
 
 class CompanyType(DjangoModelType):
     # A computed object field, resolved by the method below.
-    owner = graphene.Field(PersonType)
+    owner = field(PersonType)
 
     class Meta:
         model = Company
@@ -440,14 +458,17 @@ Custom fields are **inherited** like normal class attributes, so shared fields
 can live on an abstract base and a subclass may override one by redeclaring it:
 
 ```python
+from graphql import GraphQLInt, GraphQLString
+from django_graphex import field
+
 class TimestampedType(DjangoModelType):
-    age = graphene.String(source="age_display")   # shared by subclasses
+    age = field(GraphQLString, source="age_display")   # shared by subclasses
 
     class Meta:
         abstract = True
 
 class InvoiceType(TimestampedType):
-    total = graphene.Int(source="total_cents")     # adds its own
+    total = field(GraphQLInt, source="total_cents")     # adds its own
 
     class Meta:
         model = Invoice        # gets `age` + `total`
@@ -463,7 +484,9 @@ class InvoiceType(TimestampedType):
 ### Auto-generated Query Fields
 
 ```python
-class Query(graphene.ObjectType):
+from django_graphex import ObjectType
+
+class Query(ObjectType):
     # Generate both retrieve and list queries automatically
     user_retrieve, user_list = UserModelType.QueryFields(
         description='User queries',
@@ -482,7 +505,9 @@ class Query(graphene.ObjectType):
 ### Auto-generated Mutation Fields
 
 ```python
-class Mutation(graphene.ObjectType):
+from django_graphex import ObjectType
+
+class Mutation(ObjectType):
     # Generate all CRUD mutations
     user_create, user_delete, user_update = UserModelType.MutationFields(
         description='User CRUD operations'
@@ -620,11 +645,11 @@ introduces no new queryset/fetch path; each implementor's own model drives its
 column narrowing.
 
 ```python
-import graphene
-from django_graphex import DjangoInterfaceType, DjangoObjectType
+from graphql import GraphQLString
+from django_graphex import DjangoInterfaceType, DjangoObjectType, field
 
 class ProductInterface(DjangoInterfaceType):
-    name = graphene.String()
+    name = field(GraphQLString)
     class Meta:
         pass
 
@@ -639,7 +664,7 @@ class MagazineType(DjangoObjectType):
         interfaces = (ProductInterface,)
 ```
 
-Implementors declare membership with the existing graphene `Meta.interfaces`
+Implementors declare membership with the `Meta.interfaces`
 kwarg. Like `DjangoUnionType`, `DjangoInterfaceType` provides a mandatory
 `resolve_type` that maps each row to its concrete implementor.
 
@@ -804,7 +829,7 @@ class UserModelType(DjangoModelType):
 
 # Use DjangoListObjectType for complex list logic
 class UserAnalyticsType(DjangoListObjectType):
-    total_posts = graphene.Int()
+    total_posts = field(GraphQLInt)
 
     class Meta:
         model = User
@@ -814,10 +839,17 @@ class UserAnalyticsType(DjangoListObjectType):
 
 # Use DjangoInputObjectType for complex input validation
 class UserRegistrationInput(DjangoInputObjectType):
-    confirm_password = graphene.String(required=True)
-    terms_accepted = graphene.Boolean(required=True)
+    confirm_password = field(GraphQLString, required=True)
+    terms_accepted = field(GraphQLBoolean, required=True)
 
     class Meta:
         model = User
         only_fields = ("username", "email", "password")
+```
+
+These examples assume native imports at the top of the module:
+
+```python
+from graphql import GraphQLBoolean, GraphQLInt, GraphQLString
+from django_graphex import field
 ```

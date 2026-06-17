@@ -562,7 +562,7 @@ class GraphQLDirectiveMiddleware:
 #### Django Settings
 
 ```python
-GRAPHENE = {
+GRAPHEX = {
     'SCHEMA': 'myapp.schema.schema',
     'MIDDLEWARE': [
         'django_graphex.GraphQLDirectiveMiddleware',
@@ -615,8 +615,7 @@ class MaskGraphQLDirective(BaseExtraGraphQLDirective):
 ### Registering Custom Directives
 
 ```python
-import graphene
-from django_graphex import all_directives
+from django_graphex import DjangoGraphQLSchema, all_directives
 
 # Add custom directive to the list (all_directives already includes the
 # built-in @skip / @include / @deprecated directives).
@@ -625,7 +624,7 @@ custom_directives = [
     MaskGraphQLDirective()
 ]
 
-schema = graphene.Schema(
+schema = DjangoGraphQLSchema(
     query=Query,
     directives=custom_directives
 )
@@ -773,14 +772,14 @@ class SecureDirective(BaseExtraGraphQLDirective):
 
 ```python
 import pytest
-from graphene.test import Client
+from graphql import graphql_sync
+from django_graphex import DjangoGraphQLSchema
 
 def test_uppercase_directive():
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         directives=all_directives
     )
-    client = Client(schema)
 
     query = '''
         query {
@@ -790,8 +789,8 @@ def test_uppercase_directive():
         }
     '''
 
-    result = client.execute(query)
-    assert result['data']['user']['name'] == 'JOHN DOE'
+    result = graphql_sync(schema.graphql_schema, query)
+    assert result.data['user']['name'] == 'JOHN DOE'
 ```
 
 This comprehensive API reference covers all directive classes and utilities in `django-graphex`, providing developers with the knowledge needed to use and create custom GraphQL directives for their applications.

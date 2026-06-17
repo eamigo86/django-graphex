@@ -290,11 +290,10 @@ Let's start with a blog application to demonstrate the features:
 === "schema.py"
 
     ```python
-    import graphene
     from django_graphex import (
-        DjangoObjectField, DjangoFilterListField,
+        DjangoGraphQLSchema, DjangoObjectField, DjangoFilterListField,
         DjangoFilterPaginateListField, DjangoListObjectField,
-        LimitOffsetGraphqlPagination, all_directives
+        LimitOffsetGraphqlPagination, ObjectType, all_directives
     )
     from .types import (
         UserType, CategoryType, TagType, PostType, CommentType,
@@ -306,7 +305,7 @@ Let's start with a blog application to demonstrate the features:
         PostMutation, CommentMutation
     )
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         # Single object queries
         user = DjangoObjectField(UserType, description="Get a single user")
         post = DjangoObjectField(PostType, description="Get a single post")
@@ -336,7 +335,7 @@ Let's start with a blog application to demonstrate the features:
         user_model, users_model = UserModelType.QueryFields()
         post_model, posts_model = PostModelType.QueryFields()
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         # User mutations
         create_user, delete_user, update_user = UserMutation.MutationFields()
 
@@ -352,7 +351,7 @@ Let's start with a blog application to demonstrate the features:
         # Comment mutations
         create_comment, delete_comment, update_comment = CommentMutation.MutationFields()
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         mutation=Mutation,
         directives=all_directives
