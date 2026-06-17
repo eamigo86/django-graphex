@@ -200,7 +200,9 @@ class ConverterTest(TestCase):
         self.assertIs(_native_scalar(field), GdxJSONString)
 
     def test_convert_choice_field(self):
-        """Test field with choices conversion."""
+        """Test field with choices conversion (S-enum-2: native OUTPUT sentinel)."""
+        from django_graphex.converter import _DEAD_SCALAR, _NATIVE_BACKEND
+
         field = TestModel._meta.get_field("choice_field")
 
         # Need to mock a registry for choices
@@ -210,11 +212,20 @@ class ConverterTest(TestCase):
 
         graphql_field = convert_django_field_with_choices(field, registry=registry)
 
-        # A choices field converts to a graphene Enum carrying both choices.
-        self.assertIsInstance(graphql_field, graphene.Enum)
-        self.assertEqual(
-            set(graphql_field._meta.enum.__members__), {"CHOICE_A", "CHOICE_B"}
-        )
+        if _NATIVE_BACKEND:
+            # S-enum-2: on the native OUTPUT path (input_flag is None) a choices
+            # field returns the dead-scalar sentinel — the native output compiler
+            # renders the enum from ``model._meta`` directly (S-enum-1); the old
+            # graphene ``Enum`` descriptor was dead weight that only pinned
+            # graphene at class-definition time.
+            self.assertIs(graphql_field, _DEAD_SCALAR)
+        else:
+            # The graphene backend is UNCHANGED: a choices field converts to a
+            # graphene Enum carrying both choices.
+            self.assertIsInstance(graphql_field, graphene.Enum)
+            self.assertEqual(
+                set(graphql_field._meta.enum.__members__), {"CHOICE_A", "CHOICE_B"}
+            )
 
     def test_convert_foreign_key_field(self):
         """Test ForeignKey field conversion (S-rel-2: native OUTPUT marker)."""
@@ -325,17 +336,26 @@ class ConverterUtilsTest(TestCase):
     """Test cases for converter utility functions (backend-independent)."""
 
     def test_convert_choices_with_enum(self):
-        """Test conversion of choices creates proper enum."""
+        """Test conversion of choices creates proper enum (S-enum-2: INPUT path).
+
+        S-enum-2 retired graphene on the choices OUTPUT path (it now returns the
+        dead-scalar sentinel — the native compiler renders the enum from
+        ``model._meta``). The INPUT / mutation choices path is UNCHANGED and still
+        builds the graphene ``Enum`` descriptor on both backends, so this asserts
+        the enum members via the INPUT path (``input_flag="create"``).
+        """
         field = TestModel._meta.get_field("choice_field")
 
         from django_graphex.registry import get_global_registry
 
         registry = get_global_registry()
 
-        graphql_field = convert_django_field_with_choices(field, registry=registry)
+        graphql_field = convert_django_field_with_choices(
+            field, registry=registry, input_flag="create"
+        )
 
         # An integer choices field converts to a graphene Enum whose members
-        # mirror the declared choice labels.
+        # mirror the declared choice labels (the INPUT path, unchanged in S-enum-2).
         self.assertIsInstance(graphql_field, graphene.Enum)
         self.assertEqual(
             set(graphql_field._meta.enum.__members__), {"CHOICE_A", "CHOICE_B"}

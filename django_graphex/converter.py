@@ -384,6 +384,22 @@ def convert_django_field_with_choices(
     """
     choices = getattr(field, "choices", None)
     if choices:
+        # Native OUTPUT path (``input_flag is None``): the native output compiler
+        # renders the choices field as a ``GraphQLEnumType`` built GRAPHENE-FREE
+        # from ``model._meta`` (``output_compiler._compile_choices_enum_field`` ->
+        # ``build_choices_enum_type``, S-enum-1). The graphene ``Enum`` descriptor
+        # built below is therefore DEAD on OUTPUT — it is never read, and building
+        # it only PINS graphene (the #1609 gap: defining a choices DjangoObjectType
+        # imported graphene at class-def time, and the graphene Enum descriptor
+        # reached the ``_yank_fields`` graphene-marker branch). Return the
+        # dead-scalar sentinel so ``construct_fields`` OMITS it — like the PK
+        # (``convert_field_to_id``) and the relation markers (S-rel-2/3/4). The
+        # native compiler still emits the enum, so this is SDL-NEUTRAL. The INPUT /
+        # mutation choices path is UNCHANGED below (it still builds the graphene
+        # ``Enum``; retired in S-input-5). (S-enum-2.)
+        if _NATIVE_BACKEND and input_flag is None:
+            return _DEAD_SCALAR
+
         meta = field.model._meta
 
         # Key enums by (app_label, object_name, field_name) so two models that

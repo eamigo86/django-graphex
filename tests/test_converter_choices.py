@@ -82,8 +82,14 @@ def test_convert_field_with_choices_builds_enum_for_each_form():
         field.model = BasicModel  # the converter reads field.model._meta for the name
         # Each modern form converts without raising (it raised ValueError /
         # TypeError before the normalization fix) and yields an Enum field whose
-        # members match the declared choices.
-        converted = convert_django_field_with_choices(field, registry)
+        # members match the declared choices. S-enum-2 retired graphene on the
+        # OUTPUT choices path (it returns the dead-scalar sentinel — the native
+        # compiler renders the enum from ``model._meta``), so the enum-building is
+        # exercised via the INPUT path (``input_flag="create"``), which is
+        # unchanged until S-input-5.
+        converted = convert_django_field_with_choices(
+            field, registry, input_flag="create"
+        )
         assert isinstance(converted, graphene.Enum), label
         assert set(converted._meta.enum.__members__) == expected_members, label
 

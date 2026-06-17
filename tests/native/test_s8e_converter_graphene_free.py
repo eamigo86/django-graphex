@@ -131,34 +131,57 @@ def test_converter_module_body_is_graphene_token_free() -> None:
 # 2. The choices->Enum REGISTRY side-effect is preserved natively              #
 # --------------------------------------------------------------------------- #
 def test_choices_enum_is_graphene_enum_and_registered() -> None:
-    """``convert_django_field_with_choices`` still returns a graphene Enum.
+    """The INPUT choices path still returns a graphene Enum AND registers it.
 
-    AND it registers the enum in the registry (the side-effect other code reads).
-    The lazy-defer must keep BOTH the return type and the registry write byte
-    identical.
+    S-enum-2 retired graphene on the choices OUTPUT path: on the native backend
+    ``convert_django_field_with_choices`` with ``input_flag is None`` now returns
+    the dead-scalar sentinel (the native compiler renders the enum from
+    ``model._meta`` — S-enum-1). The INPUT / mutation choices path is UNCHANGED:
+    it still builds the graphene ``Enum`` descriptor AND writes the enum to the
+    registry under the ``(app_label, object_name, field_name [, input_flag])``
+    key (the side-effect other code reads). This asserts BOTH for the INPUT path
+    (retired later in S-input-5).
     """
     import graphene  # graphene is still installed (uninstall is S8i)
 
-    from django_graphex.converter import convert_django_field_with_choices
+    from django_graphex.converter import (
+        _DEAD_SCALAR,
+        _NATIVE_BACKEND,
+        convert_django_field_with_choices,
+    )
     from django_graphex.registry import Registry
     from tests.test_converter import TestModel
 
     field = TestModel._meta.get_field("choice_field")
-    registry = Registry()
 
-    out = convert_django_field_with_choices(field, registry=registry)
+    # OUTPUT path (native): the choices descriptor is the dead-scalar sentinel.
+    if _NATIVE_BACKEND:
+        out_output = convert_django_field_with_choices(field, registry=Registry())
+        assert out_output is _DEAD_SCALAR, (
+            "S-enum-2: a choices field on the native OUTPUT path must return the "
+            f"dead-scalar sentinel; got {out_output!r}"
+        )
+
+    # INPUT path: still a graphene Enum + registry side-effect (unchanged).
+    registry = Registry()
+    out = convert_django_field_with_choices(
+        field, registry=registry, input_flag="create"
+    )
     assert isinstance(out, graphene.Enum), (
-        "convert_django_field_with_choices must still return a graphene Enum "
-        "instance (native default test contract)."
+        "the INPUT choices path must still return a graphene Enum instance "
+        "(retired in S-input-5)."
     )
     assert set(out._meta.enum.__members__) == {"CHOICE_A", "CHOICE_B"}
 
-    # The choices->Enum REGISTRY SIDE-EFFECT is preserved: the enum class is
-    # registered under the (app_label, object_name, field_name) key.
+    # The choices->Enum REGISTRY SIDE-EFFECT is preserved on the INPUT path: the
+    # enum class is registered under the (app_label, object_name, field_name,
+    # input_flag) key.
     meta = field.model._meta
     from django_graphex._strconv import to_camel_case
 
-    key = to_camel_case(f"{meta.app_label}_{meta.object_name}_{field.name}_Enum")
+    key = to_camel_case(
+        f"{meta.app_label}_{meta.object_name}_{field.name}_Enum_create"
+    )
     registered = registry.get_type_for_enum(key)
     assert registered is not None, (
         "The choices->Enum registry side-effect must survive the lazy-defer."

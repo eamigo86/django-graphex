@@ -197,13 +197,19 @@ def test_multiselectfield_direct_class_still_detected():
     when multiselectfield package is absent and name-check is the only heuristic.
     """
 
+    from django_graphex.converter import _NATIVE_BACKEND
+
     class MultiSelectField(models.CharField):
         pass
 
     field = MultiSelectField(max_length=20, choices=[("a", "A"), ("b", "B")])
     field.name = "tags"
     field.model = Author
-    out = convert_django_field_with_choices(field, Registry())
+    # S-enum-2: the OUTPUT choices path returns the dead-scalar sentinel on native;
+    # exercise the graphene MultiSelectField -> DjangoListField branch via the INPUT
+    # path (unchanged until S-input-5). On graphene the OUTPUT path is unchanged.
+    _input_flag = "create" if _NATIVE_BACKEND else None
+    out = convert_django_field_with_choices(field, Registry(), input_flag=_input_flag)
     # S8c: DjangoListField is off graphene ``Field`` onto ``NativeMountedField``
     # (the same field-shaped descriptor the native compiler reads).
     from django_graphex.fields import DjangoListField

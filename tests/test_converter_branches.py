@@ -115,13 +115,28 @@ def test_choice_enum_name_opaque_value_falls_back_to_a_prefix():
 # MultiSelectField -> DjangoListField branch                                   #
 # --------------------------------------------------------------------------- #
 def test_multiselectfield_choice_returns_list():
+    from django_graphex.converter import _DEAD_SCALAR, _NATIVE_BACKEND
+
     class MultiSelectField(models.CharField):
         pass
 
     field = MultiSelectField(max_length=20, choices=[("a", "A"), ("b", "B")])
     field.name = "tags_multi"
     field.model = BasicModel
-    out = convert_django_field_with_choices(field, Registry())
+
+    # S-enum-2: the OUTPUT choices path returns the dead-scalar sentinel on native
+    # (the native compiler renders a MultiSelectField as ``[Enum]`` from
+    # ``model._meta``). Use the INPUT path to exercise the graphene MultiSelectField
+    # -> ``DjangoListField`` branch (unchanged until S-input-5).
+    if _NATIVE_BACKEND:
+        out_output = convert_django_field_with_choices(field, Registry())
+        assert out_output is _DEAD_SCALAR
+        out = convert_django_field_with_choices(
+            field, Registry(), input_flag="create"
+        )
+    else:
+        out = convert_django_field_with_choices(field, Registry())
+
     # The MultiSelectField branch wraps the enum in a DjangoListField. S8c: the
     # field class is off graphene ``Field`` onto the native ``NativeMountedField``
     # descriptor — the SAME field-shaped descriptor, no graphene base.

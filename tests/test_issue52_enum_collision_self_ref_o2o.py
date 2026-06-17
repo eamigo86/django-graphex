@@ -64,8 +64,16 @@ class TestEnumKeyCollision:
             field_a.model = ModelA
             field_b.model = ModelB
 
-            enum_a = convert_django_field_with_choices(field_a, local_registry)
-            enum_b = convert_django_field_with_choices(field_b, local_registry)
+            # S-enum-2: the converter's choices enum-keying runs on the INPUT path
+            # (the OUTPUT path now returns the dead-scalar sentinel — the native
+            # compiler builds + keys the enum from ``model._meta``). The
+            # cross-app collision contract is asserted via ``input_flag="create"``.
+            enum_a = convert_django_field_with_choices(
+                field_a, local_registry, input_flag="create"
+            )
+            enum_b = convert_django_field_with_choices(
+                field_b, local_registry, input_flag="create"
+            )
         finally:
             field_a.model = original_a
             field_b.model = original_b
@@ -84,14 +92,23 @@ class TestEnumKeyCollision:
         assert members_b == {"X", "Y", "Z"}, f"ItemB enum members wrong: {members_b}"
 
     def test_distinct_model_classes_produce_independent_enums(self):
-        """Using distinct model classes, each field produces its own enum."""
+        """Using distinct model classes, each field produces its own enum.
+
+        S-enum-2: the converter's choices enum-keying runs on the INPUT path (the
+        OUTPUT path now returns the dead-scalar sentinel — the native compiler
+        builds + keys the enum from ``model._meta``).
+        """
         local_registry = Registry()
 
         field_a = EnumCollisionItemA._meta.get_field("status")
         field_b = EnumCollisionItemB._meta.get_field("status")
 
-        enum_a = convert_django_field_with_choices(field_a, local_registry)
-        enum_b = convert_django_field_with_choices(field_b, local_registry)
+        enum_a = convert_django_field_with_choices(
+            field_a, local_registry, input_flag="create"
+        )
+        enum_b = convert_django_field_with_choices(
+            field_b, local_registry, input_flag="create"
+        )
 
         assert enum_a is not enum_b
 
