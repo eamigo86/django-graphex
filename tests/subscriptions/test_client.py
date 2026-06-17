@@ -174,6 +174,25 @@ def test_client_ws_onclose_has_monotonic_connection_id_guard():
     assert "myId===wsCounter" in body or "myId === wsCounter" in body
 
 
+def test_client_ws_all_four_handlers_carry_the_stale_connection_guard():
+    """RANK 4 (round-3 completion): the monotonic guard must be present in ALL
+    four WS event handlers (onopen, onmessage, onerror, onclose), not just three.
+
+    A stale socket's onopen firing after a newer socket is OPEN would otherwise
+    send a duplicate ``connection_init`` on the live socket (close code 4429).
+    Pinning the guard per-handler keeps them symmetric even if the button-disable
+    gating that currently makes the race unreachable is ever changed.
+    """
+    body = _get_body()
+    for handler in ("onopen", "onmessage", "onerror", "onclose"):
+        anchor = f"sock.{handler}=function("
+        assert anchor in body, f"WS handler {handler} not found"
+        block = body[body.index(anchor) : body.index(anchor) + 400]
+        assert "myId!==wsCounter" in block or "myId !== wsCounter" in block, (
+            f"WS {handler} handler is missing the monotonic RANK-4 stale-connection guard"
+        )
+
+
 def test_client_sse_connect_has_no_queryless_eventsource():
     """RANK 7: sseConnect() no longer opens a dead, query-less EventSource.
 

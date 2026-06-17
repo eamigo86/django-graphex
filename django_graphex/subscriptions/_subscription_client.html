@@ -262,6 +262,7 @@
     wsAcked=false; opId=null; opIdEl.textContent="";
 
     sock.onopen=function(){
+      if(myId!==wsCounter) return; // stale socket — ignore (RANK 4 guard; symmetric with onmessage/onerror/onclose)
       // Send connection_init as the first message (graphql-transport-ws §4.1).
       wsSend({type:"connection_init"});
       log("handshake","connection_init","Sent connection_init — awaiting connection_ack…");
