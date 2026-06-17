@@ -44,10 +44,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-pytestmark = pytest.mark.native_only
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # The child program runs in a CLEAN subprocess. It (1) asserts graphene is not yet
@@ -57,10 +53,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # sys.modules and the finder never fired. Any graphene import fails LOUD with the
 # offending name; the child exits non-zero and the parent surfaces its output.
 _CHILD = r'''
-import os
 import sys
-
-os.environ.setdefault("GDX_BACKEND", "native")
 
 # (1) BASELINE: graphene must NOT be imported before django_graphex.
 assert "graphene" not in sys.modules, (
@@ -515,7 +508,6 @@ def _run_gate_subprocess() -> subprocess.CompletedProcess:
     ``'graphene' not in sys.modules`` assertions are trustworthy.
     """
     env = dict(os.environ)
-    env["GDX_BACKEND"] = "native"
     env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     return subprocess.run(
         [sys.executable, "-c", _CHILD],

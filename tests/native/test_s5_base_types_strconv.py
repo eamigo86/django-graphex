@@ -14,17 +14,13 @@ What S5 DOES land here: the byte-safe ``to_camel_case`` import is repointed from
 byte-equivalent by ``tests/native/test_strconv.py``). This removes ONE graphene
 import line and proves ``factory_type`` naming is unchanged.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s5_base_types_strconv.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import ast
 import inspect
-
-import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 def _module_imports(module: object) -> list[ast.stmt]:

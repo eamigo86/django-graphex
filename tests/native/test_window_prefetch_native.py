@@ -1,6 +1,6 @@
 """WU6b TDD RED/GREEN — Native DB-side window-prefetch optimizer port (B8 part 2).
 
-Proves the CARDINAL WU6b property: under ``GDX_BACKEND=native`` a NESTED paginated
+Proves the CARDINAL WU6b property: a NESTED paginated
 list query slices the page DB-SIDE via the window-function prefetch
 (``ROW_NUMBER()`` + ``COUNT(*) OVER``), NOT in-memory after a full per-relation
 load. The signal is the SQL: a windowable nested page MUST emit ``ROW_NUMBER()``
@@ -14,14 +14,12 @@ correctness + perf gap: ``totalCount`` rides ``_gqx_total`` only on the window
 path, and the unbounded load defeats the optimizer.
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest \
+    .venv/bin/python -m pytest \
         tests/native/test_window_prefetch_native.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 def _make_django_type(name: str, base: type, meta_attrs: dict, **extra) -> type:

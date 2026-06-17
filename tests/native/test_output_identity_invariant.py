@@ -10,7 +10,7 @@ These two tests are the permanent guards for the dual-path identity hazard:
    BOTH directions, with ``extensions['gdx']`` present on both.
 
 2. ``test_schema_assembly_no_duplicate_type_name`` — the reviewer's probe 3.
-   Under GDX_BACKEND=native, two cross-referencing DjangoObjectTypes PLUS a
+   two cross-referencing DjangoObjectTypes PLUS a
    mutation referencing one of them; after ``compile_all_outputs()``, assemble
    a ``graphql.GraphQLSchema(query=..., mutation=...)`` from the compiled roots
    and assert it constructs WITHOUT the duplicate-name ``TypeError``.
@@ -26,15 +26,12 @@ Both tests FAIL against the buggy dual-path apply:
   named '<TypeName>'".
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest \
+    .venv/bin/python -m pytest \
         tests/native/test_output_identity_invariant.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # (1) Relation identity — single instance, no String fallback, both directions

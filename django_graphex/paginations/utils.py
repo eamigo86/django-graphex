@@ -6,7 +6,6 @@ a generic pagination field class for reusable pagination logic.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from dataclasses import field as _dc_field
 from typing import Any
@@ -14,9 +13,6 @@ from typing import Any
 from django.db import DatabaseError
 
 from ..base_types import DjangoListObjectBase
-
-#: True when GDX_BACKEND=native is set in the process environment.
-_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 
 # --------------------------------------------------------------------------- #

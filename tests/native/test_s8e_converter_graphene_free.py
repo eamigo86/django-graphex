@@ -12,11 +12,8 @@ test contract in ``tests/test_converter*.py``, all run on the native default):
 
 * SCALARS (``String`` / ``Int`` / ``Float`` / ``Boolean`` / ``UUID`` /
   ``JSONString`` + the ``base_types`` scalars) are DEAD on the native OUTPUT
-  path (``_scalar_or_dead`` returns the dead sentinel under
-  ``GDX_BACKEND=native``; the native output compiler derives scalars from
-  ``model._meta`` directly). They are built ONLY on the graphene path, so the
-  graphene scalar classes are imported LAZILY (gated behind the graphene
-  build), never at module top level.
+  path (the scalar converters return the dead sentinel; the native output
+  compiler derives scalars from ``model._meta`` directly).
 
 * ``Enum`` is GENUINELY CONSUMED on native: ``convert_django_field_with_choices``
   returns a ``graphene.Enum`` instance (``tests/test_converter.py`` and
@@ -43,17 +40,13 @@ So S8e is a LAZY-DEFER slice: every construct keeps producing the EXACT same
 graphene object (test contract + SDL byte-parity preserved); only the
 uninstall-blocking TOP-LEVEL graphene imports move to a lazy, gated accessor.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s8e_converter_graphene_free.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import ast
 import inspect
-
-import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 # --------------------------------------------------------------------------- #
@@ -145,7 +138,6 @@ def test_choices_converter_off_graphene_on_both_paths() -> None:
 
     from django_graphex.converter import (
         _DEAD_SCALAR,
-        _NATIVE_BACKEND,
         build_choices_enum_type,
         convert_django_field_with_choices,
     )
@@ -154,16 +146,15 @@ def test_choices_converter_off_graphene_on_both_paths() -> None:
 
     field = TestModel._meta.get_field("choice_field")
 
-    if _NATIVE_BACKEND:
-        # OUTPUT and INPUT (create/update): all return the dead-scalar sentinel.
-        for input_flag in (None, "create", "update"):
-            out = convert_django_field_with_choices(
-                field, registry=Registry(), input_flag=input_flag
-            )
-            assert out is _DEAD_SCALAR, (
-                "S-input-5: the native choices converter must return the "
-                f"dead-scalar sentinel for input_flag={input_flag!r}; got {out!r}"
-            )
+    # OUTPUT and INPUT (create/update): all return the dead-scalar sentinel.
+    for input_flag in (None, "create", "update"):
+        out = convert_django_field_with_choices(
+            field, registry=Registry(), input_flag=input_flag
+        )
+        assert out is _DEAD_SCALAR, (
+            "S-input-5: the native choices converter must return the "
+            f"dead-scalar sentinel for input_flag={input_flag!r}; got {out!r}"
+        )
 
     # The SHARED native enum is built + registered by ``build_choices_enum_type``
     # (the side-effect the OUTPUT / FILTER-INPUT / mutation-INPUT paths converge

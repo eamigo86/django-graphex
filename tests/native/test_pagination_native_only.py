@@ -1,14 +1,9 @@
 # -*- coding: utf-8 -*-
-"""S-page-7 (graphene-removal): the pagination CONTAINER build path is graphene-free.
+"""The pagination CONTAINER build path is graphene-free.
 
-S8f lazy-DEFERRED the pagination modules' top-level graphene imports. S-page-7
-goes further and MIGRATES the pagination BUILD path off graphene entirely: the
-``<Model>ListType`` container (``results``/``totalCount`` + cursor ``pageInfo``)
-is now built UNCONDITIONALLY by the native machinery, and the dead graphene
-branch in ``types.py`` (the ``if not _NATIVE_BACKEND:`` else-branch that called
-``paginator.get_pagination_field``/``get_page_info_field`` to allocate graphene
-``GenericPaginationField``/``CursorPageInfo`` objects that never reached the
-schema) is REMOVED.
+The pagination BUILD path is fully native: the ``<Model>ListType`` container
+(``results``/``totalCount`` + cursor ``pageInfo``) is built UNCONDITIONALLY by
+the native machinery.
 
 STEP 0 ground truth (proven empirically; probes deleted):
 
@@ -22,16 +17,10 @@ STEP 0 ground truth (proven empirically; probes deleted):
   the dead graphene path (the removed ``types.py`` else-branch + the graphene
   ``get_pagination_field``/``get_page_info_field`` methods it called).
 
-So S-page-7 stops the graphene factories from FIRING on the build path (by
-removing the dead else-branch + collapsing ``to_graphql_fields`` to native-only)
-and proves the native container builds the full results/totalCount/pageInfo SDL
-without graphene. The pure dead-code deletion of the graphene
-``GenericPaginationField``/``CursorPageInfo`` factory classes is deferred to
-S-del-backend-11 (they are still referenced by graphene-backend-only tests via
-``__new__`` that never call ``__init__`` — those tests are retired in
-S-del-tests-10); but they must NEVER fire on a native build.
+The native container builds the full results/totalCount/pageInfo SDL without
+graphene.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_pagination_native_only.py -q -o addopts=""
 """
 from __future__ import annotations
@@ -42,8 +31,6 @@ import sys
 import textwrap
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 # --------------------------------------------------------------------------- #
@@ -95,16 +82,11 @@ def _build_paginated_schema() -> tuple[object, str]:
 #     pagination build.                                                         #
 # --------------------------------------------------------------------------- #
 def test_types_pagination_build_has_no_graphene_branch() -> None:
-    """RED->GREEN: ``types.py`` must no longer build the dead graphene pagination
-    container at class-def time.
+    """``types.py`` must not build a graphene pagination container at class-def
+    time.
 
-    At HEAD the ``DjangoListObjectType`` metaclass had an
-    ``if not _NATIVE_BACKEND:`` else-branch that called
-    ``paginator.get_pagination_field(...)`` / ``paginator.get_page_info_field(...)``
-    to allocate dead graphene ``GenericPaginationField`` / ``CursorPageInfo``
-    objects (never reached the schema). S-page-7 removes that branch so the
-    native ``_meta.fields = OrderedDict()`` body is UNCONDITIONAL — the graphene
-    container factories can NEVER fire on a build.
+    The ``DjangoListObjectType`` metaclass sets ``_meta.fields = OrderedDict()``
+    UNCONDITIONALLY — there is no graphene container factory to fire on a build.
     """
     import ast
     import inspect
@@ -218,9 +200,6 @@ def test_native_pagination_build_does_not_import_graphene_subprocess() -> None:
     """
     code = textwrap.dedent(
         """
-        import os
-        os.environ["GDX_BACKEND"] = "native"
-
         import django
         from django.conf import settings
         settings.configure(

@@ -9,14 +9,11 @@ Tests:
 - ``from django_graphex import Mutation`` works (public export).
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest -q tests/native/test_mutation_base.py
+    .venv/bin/python -m pytest -q tests/native/test_mutation_base.py
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # 2.3.1  Mutation can be imported from native module

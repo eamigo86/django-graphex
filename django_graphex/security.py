@@ -69,9 +69,9 @@ class AuthenticatedFieldsMiddleware:
 
     1. the native schema extensions
        ("info.schema.extensions['gdx_protected_fields']", set by
-       "DjangoGraphQLSchema" under GDX_BACKEND=native), or
+       "DjangoGraphQLSchema"), or
     2. the legacy registry attribute attached by "DjangoGraphQLSchema"
-       (the "info.schema._gde_protected_fields" attribute, graphene path), or
+       (the "info.schema._gde_protected_fields" attribute), or
     3. the "DJANGO_GRAPHEX['PROTECTED_FIELDS']" setting.
 
     Nothing is protected unless declared. Override "get_protected_fields" /

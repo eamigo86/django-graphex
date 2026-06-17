@@ -7,10 +7,10 @@ of ``_get_related_type``, the ``compile_all`` ``compiled is None`` BuildError, t
 the canonical-None fallback, and the missing-gdx BuildError on per-class outputs.
 
 Each test asserts the real BuildError message / stub identity — not bare
-execution. All run under GDX_BACKEND=native.
+execution. All run.
 
 Run:
-  GDX_BACKEND=native .venv/bin/python -m pytest -q tests/native/test_wu12_registry_compiler_coverage.py
+  .venv/bin/python -m pytest -q tests/native/test_wu12_registry_compiler_coverage.py
 """
 from __future__ import annotations
 
@@ -24,9 +24,6 @@ django.setup()
 
 import pytest
 from graphql import GraphQLObjectType
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # _get_related_type — returns an in-progress stub (line 207-209)

@@ -7,8 +7,8 @@ uninstall (S8i), so they are gone. The constructs that USED them are now
 graphene-free:
 
 * ``Binary`` / ``CustomDate`` / ``CustomDateTime`` / ``CustomTime`` are SCALAR
-  descriptors built ONLY by ``converter.py`` and ONLY on the graphene path
-  (``_scalar_or_dead`` returns the dead sentinel under ``GDX_BACKEND=native``).
+  descriptors that the converter no longer builds (every scalar converter
+  returns the dead-scalar sentinel).
   The native output compiler derives the scalar from ``model._meta`` directly
   (BinaryField -> GraphQLString, DateField -> GdxDate, …; see #1552 /
   S-ROOTS-d), so the graphene Scalar / Date / Time bases were DEAD on native.
@@ -304,13 +304,11 @@ class GenericForeignKeyInputType:
 class _NativeScalarDescriptor:
     """Graphene-free base for the custom scalar descriptors (Binary / Custom*).
 
-    Mirrors the parts of graphene ``Scalar`` the still-graphene converter relies
-    on when it builds a scalar descriptor on the graphene path
-    (``Binary(description=…, required=…)``): a tolerant ``__init__`` that accepts
-    and stores ``description`` / ``required`` / ``name`` / extra kwargs. On the
-    native path these descriptors are never built (the converter returns the dead
-    sentinel — see ``converter._scalar_or_dead`` / #1552). ``serialize`` /
-    ``parse_value`` / ``parse_literal`` are supplied by each subclass.
+    Provides a tolerant ``__init__`` that accepts and stores ``description`` /
+    ``required`` / ``name`` / extra kwargs. The converter never builds these
+    descriptors (every scalar converter returns the dead sentinel — see #1552).
+    ``serialize`` / ``parse_value`` / ``parse_literal`` are supplied by each
+    subclass.
     """
 
     def __init__(

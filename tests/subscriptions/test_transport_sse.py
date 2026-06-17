@@ -29,14 +29,11 @@ It drives the serialize-once native engine end-to-end:
   * ``assertNumQueries(0)`` on the delivery path (serialize-once: the snake
     closure projects the flat pk dict, never the ORM).
 
-All native assertions are gated behind ``GDX_BACKEND=native`` and skipped under
-graphene (the bespoke transport stays UNCHANGED until WU11).
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 
 import pytest
 
@@ -44,40 +41,31 @@ pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
 
-from tests.models import Post  # noqa: E402
-
-_NATIVE = os.environ.get("GDX_BACKEND", "graphene") == "native"
-
-native_only = pytest.mark.skipif(
-    not _NATIVE, reason="native SSE transport (GDX_BACKEND=native)"
-)
-
-
 # ---------------------------------------------------------------------------
 # Helpers — node types + a native subscription schema mounting a PostModelType
 # SubscriptionField, mirroring test_capability_parity's module-scope registration
 # (a DjangoObjectType is identity-stable; per-test registration pollutes the
 # shared output registry).
 # ---------------------------------------------------------------------------
+from django_graphex.types import DjangoObjectType as _DOT
+from tests.models import Post  # noqa: E402
 
-if _NATIVE:
-    from django_graphex.types import DjangoObjectType as _DOT
 
-    class _TagT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Tag"]).Tag
+class _TagT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Tag"]).Tag
 
-    class _CategoryT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Category"]).Category
+class _CategoryT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Category"]).Category
 
-    class _AuthorT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Author"]).Author
+class _AuthorT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Author"]).Author
 
-    class _PostT(_DOT):
-        class Meta:
-            model = Post
+class _PostT(_DOT):
+    class Meta:
+        model = Post
 
 
 def _build_native_schema():
@@ -170,7 +158,6 @@ async def _drain_frames(response, *, max_frames: int, timeout: float = 1.0):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_sse_next_frame_then_complete_with_flat_pk_data(monkeypatch):
     """A broadcast event → an ``event: next`` frame with the serialize-once flat
     data (relations as pks per WU7); completion → ``event: complete\\ndata: \\n\\n``.
@@ -252,7 +239,6 @@ async def test_sse_next_frame_then_complete_with_flat_pk_data(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_post_200_validation_error_is_in_stream_not_http_4xx(monkeypatch):
     """A validation error AFTER the 200 stream started arrives as ``next{errors}``
     then ``complete`` — NEVER an HTTP 4xx.
@@ -298,7 +284,6 @@ async def test_post_200_validation_error_is_in_stream_not_http_4xx(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_unauthenticated_request_is_rejected_no_stream(monkeypatch):
     """An authorize-deny (unauthenticated) request yields NO stream.
 
@@ -370,7 +355,6 @@ async def test_unauthenticated_request_is_rejected_no_stream(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_client_disconnect_acloses_source_and_discards_groups(monkeypatch):
     """Client abort → ``source.aclose()`` → every joined group discarded.
 
@@ -434,7 +418,6 @@ async def test_client_disconnect_acloses_source_and_discards_groups(monkeypatch)
 # ---------------------------------------------------------------------------
 
 
-@native_only
 @pytest.mark.django_db
 async def test_delivery_path_is_zero_queries(monkeypatch):
     """Delivering one event over the SSE stream issues ZERO DB queries.
@@ -495,7 +478,6 @@ async def test_delivery_path_is_zero_queries(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_view_reads_max_validation_errors_via_shim(monkeypatch):
     """The SSE view reads MAX_VALIDATION_ERRORS through ``graphex_or_graphene_settings``.
 
@@ -508,7 +490,6 @@ def test_view_reads_max_validation_errors_via_shim(monkeypatch):
     assert not hasattr(sse, "graphene_settings")
 
 
-@native_only
 def test_sse_module_does_not_import_graphene():
     """``transports/sse.py`` must not import graphene (the no-graphene-import gate).
 

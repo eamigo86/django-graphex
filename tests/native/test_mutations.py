@@ -3,16 +3,13 @@
 Covers:
 - WU-B / task 2.4: factory_type("input",...) call sites produce GraphQLArgument under native.
 - WU-3 / tasks 3.1-3.3: DjangoModelMutation.*Field() and DjangoModelType.*Field() return
-  GraphQLField instances with correct args and resolvers under GDX_BACKEND=native.
+  GraphQLField instances with correct args and resolvers.
 
-Tests run under GDX_BACKEND=native via native_only mark.
+Tests run.
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # Task 2.4: factory_type("input",...) call sites produce GraphQLArgument
@@ -28,8 +25,9 @@ def test_compile_input_type_produces_graphql_argument_type():
     can be wrapped in a GraphQLArgument with out_name.
     """
     from graphql import GraphQLArgument, GraphQLInputObjectType
-    from django_graphex.native.input_compiler import compile_input_type
+
     from django_graphex.native.fields import build_model_schema
+    from django_graphex.native.input_compiler import compile_input_type
     from tests.models import Category
 
     pydantic_model = build_model_schema(Category, partial=False)
@@ -50,8 +48,9 @@ def test_meta_arguments_structure_for_native_input():
     to verify the structure, then the GREEN phase will wire it.
     """
     from graphql import GraphQLArgument, GraphQLNonNull
-    from django_graphex.native.input_compiler import compile_input_type
+
     from django_graphex.native.fields import build_model_schema
+    from django_graphex.native.input_compiler import compile_input_type
     from tests.models import Category
 
     pydantic_model = build_model_schema(Category, partial=False)
@@ -73,8 +72,9 @@ def test_meta_arguments_structure_for_native_input():
 def test_graphql_argument_out_name_matches_snake_input_field_name():
     """GraphQLArgument out_name must carry the snake_case field name."""
     from graphql import GraphQLArgument
-    from django_graphex.native.input_compiler import compile_input_type
+
     from django_graphex.native.fields import build_model_schema
+    from django_graphex.native.input_compiler import compile_input_type
     from tests.models import Post
 
     pydantic_model = build_model_schema(Post, partial=False)
@@ -95,9 +95,10 @@ def test_input_fields_camel_key_snake_out_name():
     data["firstName"] == "Alice" when the wire sends {firstName: "Alice"}.
     """
     from graphql import GraphQLNonNull
+
+    from django_graphex.native.fields import build_model_schema
     from django_graphex.native.input_compiler import compile_input_type
     from tests.models import Author
-    from django_graphex.native.fields import build_model_schema
 
     pydantic_model = build_model_schema(Author, partial=False)
     gql_input_type = compile_input_type(pydantic_model, name="WuBAuthorInput")
@@ -115,13 +116,14 @@ def test_input_fields_camel_key_snake_out_name():
 def test_graphene_argument_import_absent_conceptually():
     """The native compile path does not need graphene.Argument.
 
-    Under GDX_BACKEND=native, the 6 call sites use GraphQLArgument
+    the 6 call sites use GraphQLArgument
     (from graphql) instead of graphene.Argument. This test verifies that
     compile_input_type + GraphQLArgument covers the same need.
     """
     from graphql import GraphQLArgument
-    from django_graphex.native.input_compiler import compile_input_type
+
     from django_graphex.native.fields import build_model_schema
+    from django_graphex.native.input_compiler import compile_input_type
     from tests.models import Category
 
     pydantic_model = build_model_schema(Category, partial=False)
@@ -144,12 +146,13 @@ def test_graphene_argument_import_absent_conceptually():
 
 @pytest.mark.django_db
 def test_django_model_mutation_create_arg_is_graphql_argument():
-    """Under GDX_BACKEND=native, DjangoModelMutation._meta.arguments['create']
+    """DjangoModelMutation._meta.arguments['create']
     must hold GraphQLArgument values, not graphene.Argument values.
 
     This tests the integrated mutation call-site wiring, not isolated compilation.
     """
     from graphql import GraphQLArgument
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -165,17 +168,18 @@ def test_django_model_mutation_create_arg_is_graphql_argument():
         if key != "id":
             assert isinstance(val, GraphQLArgument), (
                 f"DjangoModelMutation 'create' arg '{key}' must be GraphQLArgument "
-                f"under GDX_BACKEND=native, got {type(val)}"
+                f"got {type(val)}"
             )
             break
 
 
 @pytest.mark.django_db
 def test_django_model_mutation_update_arg_is_graphql_argument():
-    """Under GDX_BACKEND=native, DjangoModelMutation._meta.arguments['update']
+    """DjangoModelMutation._meta.arguments['update']
     must hold GraphQLArgument for the input (partial model path).
     """
     from graphql import GraphQLArgument, GraphQLInputObjectType
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -190,7 +194,7 @@ def test_django_model_mutation_update_arg_is_graphql_argument():
         if key != "id":
             assert isinstance(val, GraphQLArgument), (
                 f"DjangoModelMutation 'update' arg '{key}' must be GraphQLArgument "
-                f"under GDX_BACKEND=native, got {type(val)}"
+                f"got {type(val)}"
             )
             # The type of that argument may be wrapped in GraphQLNonNull
             # (required=True); unwrap to check the underlying input type.
@@ -212,10 +216,11 @@ def test_django_model_mutation_update_arg_is_graphql_argument():
 
 @pytest.mark.django_db
 def test_django_model_mutation_create_field_returns_graphql_field():
-    """Under GDX_BACKEND=native, DjangoModelMutation.CreateField() must return
+    """DjangoModelMutation.CreateField() must return
     a graphql-core GraphQLField, not a graphene Field.
     """
     from graphql import GraphQLField
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -233,6 +238,7 @@ def test_django_model_mutation_create_field_returns_graphql_field():
 def test_django_model_mutation_create_field_args_are_graphql_arguments():
     """Under native, CreateField().args must be dict[str, GraphQLArgument]."""
     from graphql import GraphQLArgument, GraphQLField
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -254,6 +260,7 @@ def test_django_model_mutation_create_field_type_is_graphql_object_type():
     not a graphene class (R7: NEVER pass cls itself to graphql-core).
     """
     from graphql import GraphQLField, GraphQLNonNull, GraphQLObjectType
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -282,7 +289,9 @@ def test_django_model_mutation_create_field_type_is_graphql_object_type():
 def test_django_model_mutation_create_field_resolve_dispatches_to_create():
     """Under native, CreateField().resolve must dispatch to cls.create."""
     import inspect
+
     from graphql import GraphQLField
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -308,10 +317,11 @@ def test_django_model_mutation_create_field_resolve_dispatches_to_create():
 
 @pytest.mark.django_db
 def test_django_model_mutation_delete_field_returns_graphql_field():
-    """Under GDX_BACKEND=native, DjangoModelMutation.DeleteField() must return
+    """DjangoModelMutation.DeleteField() must return
     a GraphQLField with a GraphQLArgument for 'id'.
     """
     from graphql import GraphQLArgument, GraphQLField
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -332,10 +342,11 @@ def test_django_model_mutation_delete_field_returns_graphql_field():
 
 @pytest.mark.django_db
 def test_django_model_mutation_update_field_returns_graphql_field():
-    """Under GDX_BACKEND=native, DjangoModelMutation.UpdateField() must return
+    """DjangoModelMutation.UpdateField() must return
     a GraphQLField.
     """
     from graphql import GraphQLField
+
     from django_graphex.mutation import DjangoModelMutation
     from tests.models import Category
 
@@ -351,10 +362,10 @@ def test_django_model_mutation_update_field_returns_graphql_field():
 
 @pytest.mark.django_db
 def test_django_model_mutation_native_slot_keyed_by_backend():
-    """Under GDX_BACKEND=native, the field registry uses (model, op, 'native') key.
+    """the field registry uses (model, op, 'native') key.
     The (model, op, 'graphene') slot must be absent.
     """
-    from django_graphex.mutation import DjangoModelMutation, _NATIVE_FIELD_REGISTRY
+    from django_graphex.mutation import _NATIVE_FIELD_REGISTRY, DjangoModelMutation
     from tests.models import Author
 
     class _WU3AuthorMutation(DjangoModelMutation):
@@ -378,10 +389,11 @@ def test_django_model_mutation_native_slot_keyed_by_backend():
 
 @pytest.mark.django_db
 def test_django_model_type_create_field_returns_graphql_field():
-    """Under GDX_BACKEND=native, DjangoModelType.CreateField() must return
+    """DjangoModelType.CreateField() must return
     a GraphQLField, not a graphene Field.
     """
     from graphql import GraphQLField
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 
@@ -400,6 +412,7 @@ def test_django_model_type_create_field_returns_graphql_field():
 def test_django_model_type_create_field_args_are_graphql_arguments():
     """Under native, DjangoModelType.CreateField().args must be GraphQLArgument."""
     from graphql import GraphQLArgument, GraphQLField
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 
@@ -422,6 +435,7 @@ def test_django_model_type_create_field_type_is_graphql_object_type():
     GraphQLObjectType (R7 compliance).
     """
     from graphql import GraphQLField, GraphQLNonNull, GraphQLObjectType
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 
@@ -448,6 +462,7 @@ def test_django_model_type_create_field_type_is_graphql_object_type():
 def test_django_model_type_delete_field_returns_graphql_field():
     """Under native, DjangoModelType.DeleteField() must return GraphQLField."""
     from graphql import GraphQLArgument, GraphQLField
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 
@@ -468,6 +483,7 @@ def test_django_model_type_delete_field_returns_graphql_field():
 def test_django_model_type_update_field_returns_graphql_field():
     """Under native, DjangoModelType.UpdateField() must return GraphQLField."""
     from graphql import GraphQLField
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 
@@ -486,6 +502,7 @@ def test_django_model_type_update_field_returns_graphql_field():
 def test_django_model_type_create_field_resolve_is_create_classmethod():
     """Under native, DjangoModelType.CreateField().resolve must dispatch to cls.create."""
     from graphql import GraphQLField
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 

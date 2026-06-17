@@ -29,7 +29,6 @@ Native-gated (the WS transport is native-only post-WU11).
 from __future__ import annotations
 
 import asyncio
-import os
 
 import pytest
 
@@ -40,35 +39,29 @@ from channels.testing import WebsocketCommunicator  # noqa: E402
 
 from tests.models import Post  # noqa: E402
 
-_NATIVE = os.environ.get("GDX_BACKEND", "graphene") == "native"
-
-native_only = pytest.mark.skipif(
-    not _NATIVE, reason="native WS transport (GDX_BACKEND=native)"
-)
-
 # A Channels consumer touches the DB connection registry on every dispatched
 # message; transaction=True is required (the consumer runs off the test txn).
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-if _NATIVE:
-    from django_graphex.types import DjangoObjectType as _DOT
+from django_graphex.types import DjangoObjectType as _DOT
 
-    class _TagT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Tag"]).Tag
 
-    class _CategoryT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Category"]).Category
+class _TagT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Tag"]).Tag
 
-    class _AuthorT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Author"]).Author
+class _CategoryT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Category"]).Category
 
-    class _PostT(_DOT):
-        class Meta:
-            model = Post
+class _AuthorT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Author"]).Author
+
+class _PostT(_DOT):
+    class Meta:
+        model = Post
 
 
 def _build_native_schema():
@@ -139,7 +132,6 @@ def _app(layer, monkeypatch, **kwargs):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_ping_without_payload_pong_has_no_payload_key(monkeypatch):
     """A ``ping`` with no ``payload`` → a bare ``pong`` (no ``payload`` key).
 
@@ -157,7 +149,6 @@ async def test_ping_without_payload_pong_has_no_payload_key(monkeypatch):
     await communicator.disconnect()
 
 
-@native_only
 async def test_ping_with_payload_pong_echoes_it(monkeypatch):
     """A ``ping`` WITH a payload → ``pong`` echoing it (the True arm).
 
@@ -179,7 +170,6 @@ async def test_ping_with_payload_pong_echoes_it(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_client_pong_is_ignored(monkeypatch):
     """A client ``pong`` (answering a server ping) needs no reply.
 
@@ -207,7 +197,6 @@ async def test_client_pong_is_ignored(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_connection_init_with_no_timer_still_acks(monkeypatch):
     """``connection_init`` acks even if the watchdog timer is already done.
 
@@ -238,7 +227,6 @@ async def test_connection_init_with_no_timer_still_acks(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_without_id_closes_4400(monkeypatch):
     """A ``subscribe`` frame WITHOUT an ``id`` → close code 4400 (Bad Request).
 
@@ -262,7 +250,6 @@ async def test_subscribe_without_id_closes_4400(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_empty_query_sends_error_frame(monkeypatch):
     """A ``subscribe`` with an empty/absent query → an ``error{id}`` frame.
 
@@ -292,7 +279,6 @@ async def test_subscribe_empty_query_sends_error_frame(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_syntax_error_sends_error_frame(monkeypatch):
     """A ``subscribe`` whose query has a syntax error → an ``error{id}`` frame.
 
@@ -318,7 +304,6 @@ async def test_subscribe_syntax_error_sends_error_frame(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_non_subscription_operation_sends_error_frame(monkeypatch):
     """A ``query`` operation over the subscribe channel → an ``error{id}`` frame.
 
@@ -344,7 +329,6 @@ async def test_subscribe_non_subscription_operation_sends_error_frame(monkeypatc
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_validation_error_sends_error_frame(monkeypatch):
     """A ``subscribe`` selecting an undeclared field → an ``error{id}`` frame.
 
@@ -372,7 +356,6 @@ async def test_subscribe_validation_error_sends_error_frame(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_resolver_error_result_sends_error_frame(monkeypatch):
     """A subscribe entry returning an ``ExecutionResult`` with errors → ``error``.
 
@@ -407,7 +390,6 @@ async def test_subscribe_resolver_error_result_sends_error_frame(monkeypatch):
     await communicator.disconnect()
 
 
-@native_only
 async def test_subscribe_resolver_empty_error_result_sends_fallback(monkeypatch):
     """A subscribe entry returning an ``ExecutionResult`` with NO errors → fallback.
 
@@ -446,7 +428,6 @@ async def test_subscribe_resolver_empty_error_result_sends_fallback(monkeypatch)
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_resolver_raises_sends_error_frame(monkeypatch):
     """A subscribe entry that RAISES (authorize-deny) → an ``error{id}`` frame.
 
@@ -483,7 +464,6 @@ async def test_subscribe_resolver_raises_sends_error_frame(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_next_frame_carries_field_errors(monkeypatch):
     """A delivered ``ExecutionResult`` with field errors → ``next`` carries them.
 
@@ -526,7 +506,6 @@ async def test_next_frame_carries_field_errors(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_client_complete_without_id_is_ignored(monkeypatch):
     """A client ``complete`` with no ``id`` is silently ignored (no crash).
 
@@ -545,7 +524,6 @@ async def test_client_complete_without_id_is_ignored(monkeypatch):
     await communicator.disconnect()
 
 
-@native_only
 async def test_client_complete_unknown_id_is_noop(monkeypatch):
     """A client ``complete`` for an UNKNOWN id is a no-op (no crash).
 
@@ -569,7 +547,6 @@ async def test_client_complete_unknown_id_is_noop(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_non_dict_message_closes_4400(monkeypatch):
     """A non-mapping decoded message (a JSON array) → close code 4400.
 
@@ -591,7 +568,6 @@ async def test_non_dict_message_closes_4400(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_next_frame_data_only_omits_errors_key(monkeypatch):
     """A clean ``ExecutionResult`` (data, no errors) → ``next`` with no ``errors``.
 
@@ -624,7 +600,6 @@ async def test_next_frame_data_only_omits_errors_key(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_cancel_operation_with_already_done_task_does_not_recancel(monkeypatch):
     """``_cancel_operation`` for a task that is ALREADY done skips the cancel call.
 
@@ -678,7 +653,6 @@ class _FakeSource:
             raise RuntimeError("teardown error")
 
 
-@native_only
 async def test_disconnect_cancels_init_timer_and_sweeps_leftover_source(monkeypatch):
     """``disconnect`` cancels a live init timer AND aclose()s a leftover source.
 
@@ -721,7 +695,6 @@ async def test_disconnect_cancels_init_timer_and_sweeps_leftover_source(monkeypa
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_close_is_idempotent_when_already_closing(monkeypatch):
     """``_close`` while ``_closing`` is already True returns early (no double close).
 
@@ -746,7 +719,6 @@ async def test_close_is_idempotent_when_already_closing(monkeypatch):
     assert closed["n"] == 0
 
 
-@native_only
 async def test_close_sweeps_leftover_source_defensively(monkeypatch):
     """``_close`` aclose()s a leftover source (no backing task) before closing.
 
@@ -783,7 +755,6 @@ async def test_close_sweeps_leftover_source_defensively(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_init_watchdog_skips_close_when_already_acked(monkeypatch):
     """The watchdog does NOT close when ``_acked`` is already True at expiry.
 
@@ -814,7 +785,6 @@ async def test_init_watchdog_skips_close_when_already_acked(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_receive_json_after_close_flag_is_ignored(monkeypatch):
     """A message dispatched while ``_closing`` is True is ignored.
 

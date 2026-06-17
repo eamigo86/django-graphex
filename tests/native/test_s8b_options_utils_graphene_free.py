@@ -20,17 +20,13 @@ equivalents already built in S6a (``native.base``):
 These tests are AST-based so a regression is caught even while graphene is still
 installed (it is not uninstalled until S8i).
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s8b_options_utils_graphene_free.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import ast
 import inspect
-
-import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 def _top_level_imported_names(module) -> set[str]:

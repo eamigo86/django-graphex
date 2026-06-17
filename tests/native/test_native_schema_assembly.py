@@ -1,14 +1,12 @@
 """WU2 (reworked): native DjangoGraphQLSchema assembly + query=None guard.
 
-Under GDX_BACKEND=native, ``DjangoGraphQLSchema`` builds a graphql-core
+``DjangoGraphQLSchema`` builds a graphql-core
 ``GraphQLSchema`` from the native root compiler (NO graphene.Schema for the
 graphql_schema, NO duplicate-name error). ``query=None`` raises ``GraphQLError``.
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 @pytest.mark.django_db

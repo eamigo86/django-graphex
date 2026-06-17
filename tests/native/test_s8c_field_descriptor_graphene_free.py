@@ -25,7 +25,7 @@ cannot read VANISHES from the SDL. These tests assert every field kind still
 appears in the compiled SDL with the right type / args, and that the SDL is
 byte-identical to the pre-S8c baseline.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s8c_field_descriptor_graphene_free.py -q -o addopts=""
 """
 from __future__ import annotations
@@ -34,8 +34,6 @@ import ast
 import inspect
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 def _top_level_imported_names(module) -> set[str]:

@@ -5,27 +5,10 @@ Covers WU-4 tasks:
 - 4.2 GREEN: fields.py edits (backend guard + graphql-core isinstance)
 - 4.3 VERIFY: AnnotatedField.annotation_name uses _strconv.to_snake_case
 
-All tests run under GDX_BACKEND=native via native_only mark.
 """
 from __future__ import annotations
 
-import os
 import pytest
-
-pytestmark = pytest.mark.native_only
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _assert_gdx_native() -> None:
-    """Assert that GDX_BACKEND is set to 'native'."""
-    assert os.environ.get("GDX_BACKEND", "graphene") == "native", (
-        "These tests require GDX_BACKEND=native"
-    )
-
 
 # ---------------------------------------------------------------------------
 # 4.1 RED: DjangoObjectField.model under native resolves graphql-core wrapped types
@@ -36,14 +19,14 @@ def _assert_gdx_native() -> None:
 def test_django_object_field_model_property_under_native():
     """DjangoObjectField.model must unwrap graphql-core wrappers under native.
 
-    Under GDX_BACKEND=native, self.type may be a graphql-core wrapped type
+    self.type may be a graphql-core wrapped type
     (e.g. GraphQLNonNull(GraphQLObjectType)).  The model property must unwrap
     using isinstance(t, (GraphQLNonNull, GraphQLList)), not Structure.
     """
-    _assert_gdx_native()
-    from graphql import GraphQLNonNull, GraphQLObjectType, GraphQLString
-    from django_graphex.fields import DjangoObjectField
     from django.contrib.auth.models import User
+    from graphql import GraphQLNonNull, GraphQLObjectType, GraphQLString
+
+    from django_graphex.fields import DjangoObjectField
 
     # Build a mock graphql-core type that carries ._meta.model
     # The field's .type property returns whatever was passed, but under native
@@ -51,7 +34,6 @@ def test_django_object_field_model_property_under_native():
     # We test the model property directly by constructing the field with
     # a DjangoObjectType (which sets self.type to the graphene type, but
     # validates that the unwrap is branch-correct under native).
-
     from django_graphex.types import DjangoObjectType
 
     class _TestUserType(DjangoObjectType):
@@ -67,10 +49,10 @@ def test_django_object_field_model_property_under_native():
 @pytest.mark.django_db
 def test_django_filter_list_field_model_property_under_native():
     """DjangoFilterListField.model must resolve the correct model under native."""
-    _assert_gdx_native()
+    from django.contrib.auth.models import User
+
     from django_graphex.fields import DjangoFilterListField
     from django_graphex.types import DjangoObjectType
-    from django.contrib.auth.models import User
 
     class _TestUserType2(DjangoObjectType):
         class Meta:
@@ -84,10 +66,10 @@ def test_django_filter_list_field_model_property_under_native():
 @pytest.mark.django_db
 def test_django_filter_paginate_list_field_model_property_under_native():
     """DjangoFilterPaginateListField.model must resolve the correct model under native."""
-    _assert_gdx_native()
+    from django.contrib.auth.models import User
+
     from django_graphex.fields import DjangoFilterPaginateListField
     from django_graphex.types import DjangoObjectType
-    from django.contrib.auth.models import User
 
     class _TestUserType3(DjangoObjectType):
         class Meta:
@@ -105,8 +87,7 @@ def test_django_filter_paginate_list_field_model_property_under_native():
 
 def test_graphql_core_unwrap_nonNull_list_gives_named_type():
     """Under native, unwrapping (GraphQLNonNull, GraphQLList) reaches the named type."""
-    _assert_gdx_native()
-    from graphql import GraphQLNonNull, GraphQLList, GraphQLObjectType, GraphQLString
+    from graphql import GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString
 
     # Build GraphQLNonNull(GraphQLList(GraphQLNonNull(inner))) pattern
     inner = GraphQLObjectType("Inner", lambda: {"id": GraphQLString})
@@ -121,8 +102,7 @@ def test_graphql_core_unwrap_nonNull_list_gives_named_type():
 
 def test_graphql_core_unwrap_single_non_null():
     """GraphQLNonNull over a named type unwraps in one step."""
-    _assert_gdx_native()
-    from graphql import GraphQLNonNull, GraphQLList, GraphQLObjectType, GraphQLString
+    from graphql import GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString
 
     inner = GraphQLObjectType("Inner2", lambda: {"id": GraphQLString})
     wrapped = GraphQLNonNull(inner)
@@ -136,8 +116,7 @@ def test_graphql_core_unwrap_single_non_null():
 
 def test_graphql_core_unwrap_plain_named_type_is_noop():
     """A plain GraphQLObjectType (no wrapper) is returned as-is."""
-    _assert_gdx_native()
-    from graphql import GraphQLObjectType, GraphQLString, GraphQLNonNull, GraphQLList
+    from graphql import GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString
 
     inner = GraphQLObjectType("Plain", lambda: {"id": GraphQLString})
     # No wrapper — loop should not execute
@@ -155,9 +134,9 @@ def test_graphql_core_unwrap_plain_named_type_is_noop():
 
 def test_graphene_structure_import_still_works():
     """graphene.types.structures.Structure is still importable (graphene path intact)."""
-    _assert_gdx_native()
-    from graphene.types.structures import Structure, NonNull, List as GList
-    from graphql import GraphQLNonNull, GraphQLList
+    from graphene.types.structures import List as GList
+    from graphene.types.structures import NonNull, Structure
+    from graphql import GraphQLList, GraphQLNonNull
 
     # graphene types are NOT instances of graphql-core wrappers
     gn = NonNull("String")
@@ -172,16 +151,16 @@ def test_graphene_structure_import_still_works():
 def test_annotated_field_annotation_name_uses_strconv_snake_case():
     """AnnotatedField.annotation_name must return the correct _gqx_ann_<snake> key.
 
-    Under GDX_BACKEND=native, AnnotatedField.annotation_name should use
+    AnnotatedField.annotation_name should use
     django_graphex._strconv.to_snake_case (not graphene's str_converters).
     Both produce the same output for standard camelCase inputs, but the
     import path under native should be _strconv.
     """
-    _assert_gdx_native()
     import graphene
     from django.db.models.functions import Length
-    from django_graphex.fields import AnnotatedField
+
     from django_graphex._strconv import to_snake_case
+    from django_graphex.fields import AnnotatedField
 
     # Construct an AnnotatedField
     field = AnnotatedField(graphene.Int, expression=Length("name"))
@@ -194,9 +173,9 @@ def test_annotated_field_annotation_name_uses_strconv_snake_case():
 
 def test_annotated_field_annotation_name_with_explicit_name():
     """AnnotatedField with annotation_name= override skips to_snake_case."""
-    _assert_gdx_native()
     import graphene
     from django.db.models.functions import Length
+
     from django_graphex.fields import AnnotatedField
 
     field = AnnotatedField(
@@ -209,11 +188,11 @@ def test_annotated_field_annotation_name_with_explicit_name():
 
 def test_annotated_field_default_resolver_annotation_name():
     """AnnotatedField._default_resolver derives annotation name from info.field_name."""
-    _assert_gdx_native()
     import graphene
     from django.db.models.functions import Length
-    from django_graphex.fields import AnnotatedField
+
     from django_graphex._strconv import to_snake_case
+    from django_graphex.fields import AnnotatedField
 
     field = AnnotatedField(graphene.Int, expression=Length("name"))
 
@@ -245,9 +224,8 @@ def test_unwrap_graphql_core_nonnull_gives_of_type():
     We test the unwrap logic directly (not via field.model) since field.type
     is always a graphene type in current field constructors.
     """
-    _assert_gdx_native()
-    from graphql import GraphQLNonNull, GraphQLList, GraphQLObjectType, GraphQLString
     from graphene.types.structures import Structure
+    from graphql import GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString
 
     inner = GraphQLObjectType("TestModel", lambda: {"id": GraphQLString})
     wrapped_nn = GraphQLNonNull(inner)
@@ -287,10 +265,10 @@ def test_fields_module_does_not_import_graphene_strconv_at_module_level():
     under native). The behavioral result is identical since both functions are
     equivalent, but the import source must shift to _strconv.
     """
-    _assert_gdx_native()
     # Verify that _strconv provides the same result as graphene's function
-    from django_graphex._strconv import to_snake_case as _gdx_snake
     from graphene.utils.str_converters import to_snake_case as _gph_snake
+
+    from django_graphex._strconv import to_snake_case as _gdx_snake
 
     test_cases = ["createdAt", "firstName", "myFieldName", "id", "updatedAt"]
     for name in test_cases:
@@ -306,11 +284,11 @@ def test_annotated_field_annotation_name_result_matches_strconv():
     This is the behavioral gate: after WU-4 GREEN, annotation_name() output
     must exactly match what _strconv.to_snake_case produces.
     """
-    _assert_gdx_native()
     import graphene
     from django.db.models.functions import Length
-    from django_graphex.fields import AnnotatedField
+
     from django_graphex._strconv import to_snake_case
+    from django_graphex.fields import AnnotatedField
 
     field = AnnotatedField(graphene.Int, expression=Length("name"))
 
@@ -330,10 +308,10 @@ def test_annotated_field_annotation_name_result_matches_strconv():
 @pytest.mark.django_db
 def test_django_filter_list_field_wrap_resolve_uses_correct_manager():
     """DjangoFilterListField.wrap_resolve must bind the correct model manager."""
-    _assert_gdx_native()
+    from django.contrib.auth.models import User
+
     from django_graphex.fields import DjangoFilterListField
     from django_graphex.types import DjangoObjectType
-    from django.contrib.auth.models import User
 
     class _TestUserType4(DjangoObjectType):
         class Meta:
@@ -352,10 +330,10 @@ def test_django_filter_list_field_wrap_resolve_uses_correct_manager():
 @pytest.mark.django_db
 def test_django_filter_paginate_wrap_resolve_under_native():
     """DjangoFilterPaginateListField.wrap_resolve must bind the correct manager."""
-    _assert_gdx_native()
+    from django.contrib.auth.models import User
+
     from django_graphex.fields import DjangoFilterPaginateListField
     from django_graphex.types import DjangoObjectType
-    from django.contrib.auth.models import User
 
     class _TestUserType5(DjangoObjectType):
         class Meta:

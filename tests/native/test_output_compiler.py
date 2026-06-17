@@ -12,16 +12,14 @@ Run: .venv/bin/python -m pytest -q tests/native/test_output_compiler.py
 """
 from __future__ import annotations
 
-import django
 import os
+
+import django
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
 django.setup()
 
-import pytest
 from django.db import models
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # Minimal stub models for testing (no DB required)
@@ -101,6 +99,7 @@ class StubRegistry:
 def test_char_field_maps_to_string():
     """CharField → GraphQLString."""
     from graphql import GraphQLString
+
     from django_graphex.native.output_compiler import _to_graphql_field
 
     registry = StubRegistry()
@@ -123,7 +122,8 @@ def test_char_field_maps_to_string():
 
 def test_int_field_maps_to_int():
     """IntegerField → GraphQLInt."""
-    from graphql import GraphQLInt, GraphQLNonNull, GraphQLField
+    from graphql import GraphQLField, GraphQLInt, GraphQLNonNull
+
     from django_graphex.native.output_compiler import _to_graphql_field
 
     registry = StubRegistry()
@@ -138,6 +138,7 @@ def test_int_field_maps_to_int():
 def test_bool_field_maps_to_boolean():
     """BooleanField → GraphQLBoolean."""
     from graphql import GraphQLBoolean, GraphQLNonNull
+
     from django_graphex.native.output_compiler import _to_graphql_field
 
     registry = StubRegistry()
@@ -176,6 +177,7 @@ def test_created_at_has_camel_case_key():
 def test_fk_field_returns_thunk():
     """ForeignKey field → zero-arg callable (thunk)."""
     from graphql import GraphQLField
+
     from django_graphex.native.output_compiler import _to_graphql_field
 
     registry = StubRegistry()
@@ -197,7 +199,7 @@ def test_fk_field_returns_thunk():
     # The key contract is: the field resolves to the registered type
     resolved_type = gql_field.type
     # Unwrap NonNull/List if present
-    from graphql import GraphQLNonNull, GraphQLList
+    from graphql import GraphQLList, GraphQLNonNull
     while isinstance(resolved_type, (GraphQLNonNull, GraphQLList)):
         resolved_type = resolved_type.of_type
     assert resolved_type is author_type, (
@@ -212,7 +214,8 @@ def test_fk_field_returns_thunk():
 
 def test_three_fk_fields_no_aliasing():
     """Three distinct FK fields resolve to their respective types (no loop-var aliasing)."""
-    from graphql import GraphQLObjectType, GraphQLNonNull, GraphQLList
+    from graphql import GraphQLList, GraphQLNonNull, GraphQLObjectType
+
     from django_graphex.native.output_compiler import compile_output_fields
 
     # Build registry with three distinct compiled types

@@ -14,10 +14,6 @@ present) AND the field TYPE for each, in the COMPILED + EXECUTED schema.
 """
 from __future__ import annotations
 
-import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # --------------------------------------------------------------------------- #
 # Public API export — from django_graphex import ObjectType, field             #

@@ -25,13 +25,10 @@ Delivery-path invariants: ``assertNumQueries(0)`` (serialize-once snake closure)
 authorize-deny handled (error frame / close), ``add_done_callback`` per-task
 cleanup fires on abnormal task end.
 
-All native assertions are gated behind ``GDX_BACKEND=native`` and skipped under
-graphene (the bespoke transport stays UNCHANGED until WU11).
 """
 from __future__ import annotations
 
 import asyncio
-import os
 
 import pytest
 
@@ -41,12 +38,6 @@ from channels.layers import InMemoryChannelLayer  # noqa: E402
 from channels.testing import WebsocketCommunicator  # noqa: E402
 
 from tests.models import Post  # noqa: E402
-
-_NATIVE = os.environ.get("GDX_BACKEND", "graphene") == "native"
-
-native_only = pytest.mark.skipif(
-    not _NATIVE, reason="native WS transport (GDX_BACKEND=native)"
-)
 
 # A Channels AsyncJsonWebsocketConsumer touches the DB connection registry on
 # EVERY dispatched message (``aclose_old_connections`` in ``dispatch``), so every
@@ -63,24 +54,24 @@ pytestmark = pytest.mark.django_db(transaction=True)
 # output registry).
 # ---------------------------------------------------------------------------
 
-if _NATIVE:
-    from django_graphex.types import DjangoObjectType as _DOT
+from django_graphex.types import DjangoObjectType as _DOT
 
-    class _TagT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Tag"]).Tag
 
-    class _CategoryT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Category"]).Category
+class _TagT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Tag"]).Tag
 
-    class _AuthorT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Author"]).Author
+class _CategoryT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Category"]).Category
 
-    class _PostT(_DOT):
-        class Meta:
-            model = Post
+class _AuthorT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Author"]).Author
+
+class _PostT(_DOT):
+    class Meta:
+        model = Post
 
 
 def _build_native_schema():
@@ -218,7 +209,6 @@ async def _await_operation_gone(ws, communicator, op_id, *, timeout=2.0):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_handshake_connection_init_ack(monkeypatch):
     """``connection_init`` is answered with ``connection_ack`` (the auth boundary)."""
     from django_graphex.subscriptions.transports import ws
@@ -245,7 +235,6 @@ async def test_handshake_connection_init_ack(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_next_then_complete(monkeypatch):
     """``subscribe`` → a broadcast → ``next{id, payload}`` (flat pk data) → ``complete``."""
     from django_graphex.subscriptions.transports import ws
@@ -291,7 +280,6 @@ async def test_subscribe_next_then_complete(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_multiplex_two_independent_operations(monkeypatch):
     """Two ids over ONE socket → independent streams (each id gets only its own)."""
     from django_graphex.subscriptions.transports import ws
@@ -332,7 +320,6 @@ async def test_multiplex_two_independent_operations(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_client_complete_cancels_only_that_id(monkeypatch):
     """Client ``complete{id}`` cancels ONLY that id's task + discards ITS groups;
     the other id keeps streaming."""
@@ -383,7 +370,6 @@ async def test_client_complete_cancels_only_that_id(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_disconnect_cancels_all_and_discards_all(monkeypatch):
     """Disconnect cancels ALL operation tasks + ``group_discard``s every joined group."""
     from django_graphex.subscriptions.transports import ws
@@ -428,7 +414,6 @@ async def test_disconnect_cancels_all_and_discards_all(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_ping_pong(monkeypatch):
     """A ``ping`` message is answered with ``pong``."""
     from django_graphex.subscriptions.transports import ws
@@ -452,7 +437,6 @@ async def test_ping_pong(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_connection_init_timeout_4408(monkeypatch):
     """No ``connection_init`` within the timeout → close code 4408."""
     from django_graphex.subscriptions.transports import ws
@@ -477,7 +461,6 @@ async def test_connection_init_timeout_4408(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_duplicate_subscribe_id_4409(monkeypatch):
     """A second ``subscribe`` with an in-use id → close code 4409."""
     from django_graphex.subscriptions.transports import ws
@@ -507,7 +490,6 @@ async def test_duplicate_subscribe_id_4409(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_subscribe_before_ack_4401(monkeypatch):
     """A ``subscribe`` BEFORE ``connection_ack`` → close code 4401 (Unauthorized)."""
     from django_graphex.subscriptions.transports import ws
@@ -529,7 +511,6 @@ async def test_subscribe_before_ack_4401(monkeypatch):
     assert out["code"] == 4401
 
 
-@native_only
 async def test_too_many_init_requests_4429(monkeypatch):
     """A second ``connection_init`` → close code 4429 (Too many init requests)."""
     from django_graphex.subscriptions.transports import ws
@@ -547,7 +528,6 @@ async def test_too_many_init_requests_4429(monkeypatch):
     assert out["code"] == 4429
 
 
-@native_only
 async def test_malformed_message_4400(monkeypatch):
     """A malformed (unknown-type / non-dict) message → close code 4400."""
     from django_graphex.subscriptions.transports import ws
@@ -587,7 +567,6 @@ class _RecordingLayer(InMemoryChannelLayer):
         return await super().group_discard(group, channel)
 
 
-@native_only
 async def test_server_close_4409_tears_down_live_op(monkeypatch):
     """A 4409 dup-id close with a LIVE op cancels its task + discards ITS group.
 
@@ -643,7 +622,6 @@ async def test_server_close_4409_tears_down_live_op(monkeypatch):
     )
 
 
-@native_only
 async def test_server_close_4429_tears_down_live_op(monkeypatch):
     """A 4429 second-init close with a LIVE op cancels its task + discards its group.
 
@@ -689,7 +667,6 @@ async def test_server_close_4429_tears_down_live_op(monkeypatch):
     assert layer.discards == discards_before
 
 
-@native_only
 async def test_server_close_4400_midstream_tears_down_live_op(monkeypatch):
     """A 4400 malformed-message close MID-STREAM tears down a live op's group.
 
@@ -739,7 +716,6 @@ async def test_server_close_4400_midstream_tears_down_live_op(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_ws_delivery_path_is_zero_queries(monkeypatch):
     """Delivering one event over the WS stream issues ZERO DB queries.
 
@@ -789,7 +765,6 @@ async def test_ws_delivery_path_is_zero_queries(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_ws_module_does_not_import_graphene():
     """``transports/ws.py`` must not import graphene (the no-graphene-import gate)."""
     import ast

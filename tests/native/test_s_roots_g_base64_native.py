@@ -45,7 +45,6 @@ _TINY_PNG_B64 = base64.b64encode(_TINY_PNG).decode()
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_base64_file_input_is_native_input_type():
     """Base64FileInput is a native InputType (Pydantic BaseModel), not graphene."""
     from pydantic import BaseModel
@@ -56,7 +55,6 @@ def test_base64_file_input_is_native_input_type():
     assert issubclass(Base64FileInput, BaseModel)
 
 
-@pytest.mark.native_only
 def test_base64_file_input_fields_declared():
     """The Pydantic model declares filename, data, and content_type fields."""
     fields = Base64FileInput.model_fields
@@ -70,7 +68,6 @@ def test_base64_file_input_fields_declared():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_validated_instance_to_uploaded_file():
     """A validated instance .to_uploaded_file() → SimpleUploadedFile (real decode)."""
     # This is the shape that arrives in a native resolver: a validated Pydantic
@@ -89,7 +86,6 @@ def test_validated_instance_to_uploaded_file():
     assert result.read() == _TINY_PNG
 
 
-@pytest.mark.native_only
 def test_validated_instance_default_content_type():
     """When contentType is omitted, content_type defaults to octet-stream."""
     value = Base64FileInput.model_validate(
@@ -103,7 +99,6 @@ def test_validated_instance_default_content_type():
     assert result.read() == _HELLO_BYTES
 
 
-@pytest.mark.native_only
 def test_validated_instance_over_limit_raises():
     """to_uploaded_file(max_size=N) enforces a per-file cap on the validated value."""
     large_data = base64.b64encode(b"x" * 200).decode()
@@ -119,7 +114,6 @@ def test_validated_instance_over_limit_raises():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_base64_file_input_compiles_to_graphql_input_type():
     """Base64FileInput compiles to a GraphQLInputObjectType with camelCase keys."""
     from graphql import GraphQLInputObjectType
@@ -143,7 +137,6 @@ def test_base64_file_input_compiles_to_graphql_input_type():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_decode_base64_file_helper_unchanged():
     """decode_base64_file(dict) still decodes to a SimpleUploadedFile."""
     result = decode_base64_file(

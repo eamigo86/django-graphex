@@ -1,24 +1,23 @@
 """Tests for B2: DjangoListObjectType native branch.
 
-Under GDX_BACKEND=native, DjangoListObjectType subclasses must:
+DjangoListObjectType subclasses must:
 - Build the three-field shape (results/totalCount/pageInfo) via native compile path.
 - Store compiled type on _meta.graphql_output_type.
 - Delegate pagination to existing paginator classes (unchanged API).
 
-All tests run under GDX_BACKEND=native via the native_only mark.
+All tests run.
 """
 from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 
 @pytest.mark.django_db
 def test_django_list_object_type_native_compiles():
-    """Under GDX_BACKEND=native, DjangoListObjectType subclass must have
+    """DjangoListObjectType subclass must have
     _meta.graphql_output_type set after class construction."""
     from graphql import GraphQLObjectType
+
     from django_graphex.types import DjangoListObjectType
     from tests.models import Category
 
@@ -36,7 +35,7 @@ def test_django_list_object_type_native_compiles():
 def test_django_list_object_type_three_field_shape():
     """DjangoListObjectType must expose results + totalCount (three-field shape).
 
-    S-ROOTS-e: on ``GDX_BACKEND=native`` the LIVE container is the thunk-built
+    S-ROOTS-e: the LIVE container is the thunk-built
     ``_meta.graphql_output_type`` (the native compiler reads it, never
     ``_meta.fields``). The dead graphene ``_meta.fields`` descriptors
     (``GenericPaginationField`` / ``CursorPageInfo``) are no longer built on

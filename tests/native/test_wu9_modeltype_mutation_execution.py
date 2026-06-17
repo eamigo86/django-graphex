@@ -27,8 +27,6 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 
 def _build_post_modeltype_schema():
     """Build a native DjangoGraphQLSchema with a DjangoModelType Post mutation."""

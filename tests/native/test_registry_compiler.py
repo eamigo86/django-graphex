@@ -12,16 +12,15 @@ Run: .venv/bin/python -m pytest -q tests/native/test_registry_compiler.py
 from __future__ import annotations
 
 import os
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
 
 import django
+
 django.setup()
 
 import pytest
-from graphql import GraphQLObjectType, GraphQLField, GraphQLString
-
-pytestmark = pytest.mark.native_only
-
+from graphql import GraphQLField, GraphQLObjectType, GraphQLString
 
 # ---------------------------------------------------------------------------
 # Helpers: minimal fake "registry" for unit tests
@@ -81,7 +80,10 @@ def _make_mutual_recursion_registry():
 
 def test_mutual_recursion_terminates():
     """compile_all with A→B→A mutual reference terminates without RecursionError."""
-    from django_graphex.native.registry_compiler import NativeOutputRegistry, compile_all
+    from django_graphex.native.registry_compiler import (
+        NativeOutputRegistry,
+        compile_all,
+    )
 
     registry = NativeOutputRegistry()
 
@@ -109,7 +111,10 @@ def test_mutual_recursion_terminates():
 
 def test_mutual_recursion_thunks_resolve_correctly():
     """Each type's relation field thunk resolves to the other type (not itself)."""
-    from django_graphex.native.registry_compiler import NativeOutputRegistry, compile_all
+    from django_graphex.native.registry_compiler import (
+        NativeOutputRegistry,
+        compile_all,
+    )
 
     registry = NativeOutputRegistry()
 
@@ -130,7 +135,7 @@ def test_mutual_recursion_thunks_resolve_correctly():
     # NodeA's relation field should point to NodeB
     fields_a = compiled_a.fields
     assert "nodeB" in fields_a, f"NodeA fields: {list(fields_a.keys())}"
-    from graphql import GraphQLNonNull, GraphQLList
+    from graphql import GraphQLList, GraphQLNonNull
     field_type = fields_a["nodeB"].type
     while isinstance(field_type, (GraphQLNonNull, GraphQLList)):
         field_type = field_type.of_type
@@ -156,7 +161,10 @@ def test_mutual_recursion_thunks_resolve_correctly():
 
 def test_self_referential_type_compiles():
     """A type referencing itself (Category → parent → Category) compiles."""
-    from django_graphex.native.registry_compiler import NativeOutputRegistry, compile_all
+    from django_graphex.native.registry_compiler import (
+        NativeOutputRegistry,
+        compile_all,
+    )
 
     registry = NativeOutputRegistry()
 
@@ -172,7 +180,7 @@ def test_self_referential_type_compiles():
     assert compiled.name == "Category"
 
     # Self-referential thunk must resolve to the same type
-    from graphql import GraphQLNonNull, GraphQLList
+    from graphql import GraphQLList, GraphQLNonNull
     fields = compiled.fields
     assert "category" in fields, f"Self-ref field missing. Fields: {list(fields.keys())}"
     field_type = fields["category"].type
@@ -189,9 +197,9 @@ def test_self_referential_type_compiles():
 def test_compile_all_raises_on_missing_gdx_extensions():
     """compile_all raises BuildError when a type is missing extensions['gdx']."""
     from django_graphex.native.registry_compiler import (
+        BuildError,
         NativeOutputRegistry,
         compile_all,
-        BuildError,
     )
 
     registry = NativeOutputRegistry()
@@ -213,7 +221,10 @@ def test_compile_all_raises_on_missing_gdx_extensions():
 
 def test_compile_all_no_error_when_all_types_have_gdx():
     """compile_all succeeds when all types carry extensions['gdx']."""
-    from django_graphex.native.registry_compiler import NativeOutputRegistry, compile_all
+    from django_graphex.native.registry_compiler import (
+        NativeOutputRegistry,
+        compile_all,
+    )
 
     registry = NativeOutputRegistry()
 

@@ -1,6 +1,6 @@
 """WU9: native mutation SCHEMA assembly + end-to-end execution.
 
-Phase 5 / WU9 closes the native mutation seam: under ``GDX_BACKEND=native`` a
+Phase 5 / WU9 closes the native mutation seam: a
 ``DjangoModelMutation`` field built by ``CreateField``/``UpdateField`` resolves to
 a native ``GraphQLObjectType`` for the MUTATION PAYLOAD (the ``ok`` / ``errors`` +
 output-field result type — NOT the bare model node type), with camelCase wire
@@ -18,8 +18,6 @@ bare ``graphene.Schema``.
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 def _build_post_mutation_schema():

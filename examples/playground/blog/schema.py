@@ -7,8 +7,6 @@
 - Subscriptions: public "postSubscription" and private "noteSubscription".
 """
 
-import os
-
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.db.models import Count
@@ -639,17 +637,14 @@ class UploadDocument(Mutation):
 # automatically at startup; this playground triggers them explicitly here,       #
 # AFTER all type declarations and BEFORE ``RootMutation`` calls ``.Field()`` (so #
 # the lazy argument thunks resolve to real compiled input types, not ``None``).  #
-# Gated on the native backend: under the legacy graphene backend these native    #
-# compilers must NOT run (graphene compiles its own types lazily).               #
 # --------------------------------------------------------------------------- #
-if os.environ.get("GDX_BACKEND", "graphene") == "native":
-    from django_graphex.native.base import compile_all_inputs  # noqa: E402
-    from django_graphex.native.registry_compiler import (  # noqa: E402
-        compile_all_outputs,
-    )
+from django_graphex.native.base import compile_all_inputs  # noqa: E402
+from django_graphex.native.registry_compiler import (  # noqa: E402
+    compile_all_outputs,
+)
 
-    compile_all_inputs()
-    compile_all_outputs()
+compile_all_inputs()
+compile_all_outputs()
 
 
 class RootMutation(ObjectType):

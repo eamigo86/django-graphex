@@ -1,6 +1,6 @@
 """WU2 (reworked): native root-ObjectType compiler + anti-tautology guard.
 
-These tests run under GDX_BACKEND=native (native_only mark) and prove the
+These tests prove the
 GENUINE native seam that the discarded first WU2 attempt lacked:
 
 1. ``compile_native_root`` turns a plain ``graphene.ObjectType`` root into a
@@ -21,15 +21,13 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 
 @pytest.mark.django_db
 def test_compile_native_root_returns_graphql_object_type():
     """compile_native_root(Query) returns a graphql-core GraphQLObjectType."""
-    from django_graphex import ObjectType as _NativeRoot
     from graphql import GraphQLObjectType
 
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
@@ -58,9 +56,9 @@ def test_compile_native_root_field_type_is_canonical_native_instance():
 
     A graphene fallback would NOT produce this identity nor extensions['gdx'].
     """
-    from django_graphex import ObjectType as _NativeRoot
     from graphql import GraphQLObjectType
 
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.base import get_shared_output_registry
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -100,7 +98,6 @@ def test_compile_native_root_field_type_is_canonical_native_instance():
 def test_compile_native_root_wires_resolver():
     """The native field's resolve is wired (not a dead no-op)."""
     from django_graphex import ObjectType as _NativeRoot
-
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
@@ -130,9 +127,9 @@ def test_compile_native_root_builds_list_object_field():
 
     (Previously this asserted NotImplementedError; WU6a added the builder.)
     """
-    from django_graphex import ObjectType as _NativeRoot
     from graphql import GraphQLObjectType
 
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoListObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
@@ -165,9 +162,9 @@ def test_compile_native_root_builds_filter_list_field():
 
     (Previously this asserted NotImplementedError; WU6a added the builder.)
     """
-    from django_graphex import ObjectType as _NativeRoot
     from graphql import GraphQLInputObjectType, GraphQLList
 
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoFilterListField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
@@ -198,7 +195,7 @@ def test_compile_native_root_reuses_raw_graphql_field():
     """The compiler REUSES a raw graphql-core GraphQLField placed on the root —
     via the REAL registration path, not a manual ``_NATIVE_FIELD_REGISTRY`` poke.
 
-    Under GDX_BACKEND=native, ``DjangoModelType.CreateField()`` returns a raw
+    ``DjangoModelType.CreateField()`` returns a raw
     ``graphql.GraphQLField`` that graphene's ObjectType metaclass does NOT mount
     into ``_meta.fields`` (it stays as a plain class attribute). The builder
     SELF-REGISTERS that field in ``_NATIVE_FIELD_REGISTRY[(model, op, "native")]``,

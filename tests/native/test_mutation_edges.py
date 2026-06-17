@@ -5,14 +5,11 @@ Tests verify:
 - data["first_name"] == "Alice" via __getitem__ mixin
 - Multi-word field: out_name != alias verified on compiled type
 
-Run under GDX_BACKEND=native via native_only mark.
+Run.
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # Task 2.8: camelCase→snake wire-key integrity
@@ -145,7 +142,8 @@ def test_compile_input_type_out_name_build_time_assert():
     This tests the 'assert out_name != alias' guard that prevents silent
     camelCase/snake slip-through.
     """
-    from pydantic import BaseModel, field_validator, ConfigDict
+    from pydantic import BaseModel, ConfigDict, field_validator
+
     from django_graphex.native.input_compiler import compile_input_type, to_camel
 
     # Build a model where to_camel("first_name") → "firstName" naturally

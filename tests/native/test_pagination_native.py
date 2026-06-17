@@ -1,6 +1,6 @@
 """WU5 TDD RED/GREEN — Native pagination building blocks.
 
-Tests the three WU5 building blocks under GDX_BACKEND=native:
+Tests the three WU5 building blocks:
 
 B7  CursorPageInfo is a GraphQLObjectType with 4 fields + extensions['gdx'].
 B9  Each paginator's to_graphql_fields() returns {name: GraphQLArgument(GraphQLInt)}
@@ -9,15 +9,12 @@ B10 _nested_list_object_field result type carries extensions['gdx'] with
     results_field_name so WU6a resolver + WU6b window-prefetch can read it.
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest tests/native/test_pagination_native.py \
+    .venv/bin/python -m pytest tests/native/test_pagination_native.py \
         -q -o addopts=""
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # B7 — CursorPageInfo is a native GraphQLObjectType with extensions['gdx']
@@ -25,7 +22,7 @@ pytestmark = pytest.mark.native_only
 
 
 def test_cursor_page_info_is_graphql_object_type():
-    """Under GDX_BACKEND=native, NATIVE_CURSOR_PAGE_INFO must be a
+    """NATIVE_CURSOR_PAGE_INFO must be a
     GraphQLObjectType (not a graphene ObjectType)."""
     from graphql import GraphQLObjectType
 
@@ -82,7 +79,7 @@ def test_cursor_page_info_boolean_fields_are_non_null():
 
 def test_limit_offset_to_graphql_fields_native_returns_graphql_arguments():
     """LimitOffsetGraphqlPagination.to_graphql_fields() must return
-    {name: GraphQLArgument} on GDX_BACKEND=native."""
+    {name: GraphQLArgument} ."""
     from graphql import GraphQLArgument
 
     from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination

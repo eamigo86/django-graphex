@@ -7,10 +7,10 @@ per-module ``tests/native/`` gate).
 
 Each test asserts a MEANINGFUL outcome (real input-type shape, ``out_name``
 mapping, scalar/enum dispatch, relation nesting, custom-filter typing) — not
-coverage theater. All run under GDX_BACKEND=native.
+coverage theater. All run.
 
 Run:
-  GDX_BACKEND=native .venv/bin/python -m pytest -q tests/native/test_wu12_native_schema_coverage.py
+  .venv/bin/python -m pytest -q tests/native/test_wu12_native_schema_coverage.py
 """
 from __future__ import annotations
 
@@ -32,9 +32,6 @@ from graphql import (
     GraphQLList,
     GraphQLString,
 )
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # build_filter_input_type — early returns + global-registry default

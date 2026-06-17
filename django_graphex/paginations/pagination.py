@@ -8,23 +8,27 @@ from __future__ import annotations
 
 import base64
 import binascii
-import os
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
-from graphql import GraphQLError
+from graphql import (
+    GraphQLBoolean,
+    GraphQLError,
+    GraphQLField,
+    GraphQLNonNull,
+    GraphQLObjectType,
+    GraphQLString,
+)
 
 from django_graphex.base_types import DjangoListObjectBase
+from django_graphex.native.bridge import GdxPayload
+from django_graphex.native.ir import GdxMeta
 from django_graphex.paginations.utils import (
     _get_count,
     _positive_int,
 )
 from django_graphex.settings import graphql_api_settings
-
-#: True when GDX_BACKEND=native is set in the process environment.
-#: Read once at import time (the flag is process-global and set before import).
-_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 #: Final fallback page size for cursor pagination when neither a default nor a
 #: maximum is configured (the keyset always needs a concrete size).
@@ -57,66 +61,48 @@ __all__ = (
 # ``CursorGraphqlPagination.get_page_info_field``) and the lazy graphene accessor.
 
 # ---------------------------------------------------------------------------
-# B7 — Native CursorPageInfo (GDX_BACKEND=native only)
+# Native CursorPageInfo
 # ---------------------------------------------------------------------------
-# Built eagerly at module import time (only runs when GDX_BACKEND=native so the
-# graphql-core types are always available). The graphene CursorPageInfo class
-# below stays on the graphene path; this singleton is used by the native
+# Built eagerly at module import time. This singleton is used by the native
 # compiler when assembling the CursorGraphqlPagination pageInfo field (WU6a).
 
-if _NATIVE_BACKEND:
-    from graphql import (
-        GraphQLBoolean,
-        GraphQLField,
-        GraphQLNonNull,
-        GraphQLObjectType,
-        GraphQLString,
-    )
-
-    from django_graphex.native.bridge import GdxPayload
-    from django_graphex.native.ir import GdxMeta
-
-    NATIVE_CURSOR_PAGE_INFO: Any = GraphQLObjectType(
-        name="CursorPageInfo",
-        fields=lambda: {
-            "hasNextPage": GraphQLField(
-                GraphQLNonNull(GraphQLBoolean),
-                description=(
-                    "True if at least one row exists after the last row of the page."
-                ),
+NATIVE_CURSOR_PAGE_INFO: Any = GraphQLObjectType(
+    name="CursorPageInfo",
+    fields=lambda: {
+        "hasNextPage": GraphQLField(
+            GraphQLNonNull(GraphQLBoolean),
+            description=(
+                "True if at least one row exists after the last row of the page."
             ),
-            "hasPreviousPage": GraphQLField(
-                GraphQLNonNull(GraphQLBoolean),
-                description=(
-                    "True if at least one row exists before the first row of the page."
-                ),
+        ),
+        "hasPreviousPage": GraphQLField(
+            GraphQLNonNull(GraphQLBoolean),
+            description=(
+                "True if at least one row exists before the first row of the page."
             ),
-            "startCursor": GraphQLField(
-                GraphQLString,
-                description=(
-                    "Cursor of the first row of the page (null if the page is empty)."
-                ),
+        ),
+        "startCursor": GraphQLField(
+            GraphQLString,
+            description=(
+                "Cursor of the first row of the page (null if the page is empty)."
             ),
-            "endCursor": GraphQLField(
-                GraphQLString,
-                description=(
-                    "Cursor of the last row of the page (null if the page is empty)."
-                ),
+        ),
+        "endCursor": GraphQLField(
+            GraphQLString,
+            description=(
+                "Cursor of the last row of the page (null if the page is empty)."
             ),
-        },
-        description="Forward keyset pagination metadata.",
-        extensions={
-            "gdx": GdxPayload(
-                GdxMeta(
-                    name="CursorPageInfo",
-                )
+        ),
+    },
+    description="Forward keyset pagination metadata.",
+    extensions={
+        "gdx": GdxPayload(
+            GdxMeta(
+                name="CursorPageInfo",
             )
-        },
-    )
-else:
-    # Graphene path: NATIVE_CURSOR_PAGE_INFO is not used; set to None so import
-    # sites that guard on _NATIVE_BACKEND don't need a separate check.
-    NATIVE_CURSOR_PAGE_INFO = None
+        )
+    },
+)
 
 
 def _sort_key(value: Any) -> tuple[bool, Any]:
@@ -317,7 +303,7 @@ class BaseDjangoGraphqlPagination:
 
         The base implementation returns ``None`` (no pagination metadata),
         mirroring :meth:`get_page_info_field`. Cursor pagination overrides this
-        to expose a native ``CursorPageInfo`` field under ``GDX_BACKEND=native``.
+        to expose a native ``CursorPageInfo`` field.
 
         Args:
             node_type: The compiled element (node) ``GraphQLObjectType`` the

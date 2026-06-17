@@ -6,14 +6,11 @@ Tests:
 - Unknown attr access via _MetaView raises AttributeError naming the attr
 - _MetaView delegates known attrs to the underlying Options object
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest tests/native/test_options.py -q
+Run: .venv/bin/python -m pytest tests/native/test_options.py -q
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # _GdxOptions base

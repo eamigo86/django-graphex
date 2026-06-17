@@ -21,15 +21,10 @@ PARAMOUNT: the compiled native SDL scalar NAMES must stay BYTE-IDENTICAL
 output compiler, NOT from the skipped converter descriptors — so skipping must not
 change a single byte of the SDL.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s_roots_d_converter_native_aware.py -q -o addopts=""
 """
 from __future__ import annotations
-
-import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # The graphene scalar descriptor types converter builds for scalar field kinds.
 _DEAD_SCALAR_DESC_NAMES = {

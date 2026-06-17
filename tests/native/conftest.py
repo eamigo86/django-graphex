@@ -1,24 +1,10 @@
-"""Conftest for tests/native/ — GDX_BACKEND harness.
+"""Conftest for tests/native/.
 
-Sets up:
-- ``GDX_BACKEND`` env var at collection time (default: ``native`` for this
-  native test directory).
-- ``native_only`` pytest mark so these tests can be excluded from the graphene
-  CI job.
-- ``normalize_sdl()`` utility for SDL structural comparison.
-
-Usage:
-    # Native backend CI job (this directory only):
-    GDX_BACKEND=native .venv/bin/python -m pytest tests/native/ -q
-
-    # Graphene path additivity gate (excludes tests/native/):
-    GDX_BACKEND=graphene .venv/bin/python -m pytest tests/ --ignore=tests/native/ -q
+Provides the ``normalize_sdl()`` utility for SDL structural comparison.
 """
 from __future__ import annotations
 
-import os
 import re
-
 
 # ---------------------------------------------------------------------------
 # normalize_sdl
@@ -125,26 +111,3 @@ def normalize_sdl(sdl: str) -> str:
         result_lines.extend(block)
 
     return "\n".join(result_lines)
-
-
-# ---------------------------------------------------------------------------
-# pytest configuration
-# ---------------------------------------------------------------------------
-
-
-def pytest_configure(config: object) -> None:
-    """Register the ``native_only`` mark (retained for back-compat).
-
-    S7 (graphene-removal): the native backend is now the suite DEFAULT (set in
-    ``tests/conftest.py``), so ``native_only`` no longer gates collection — the
-    mark stays registered only so existing ``@pytest.mark.native_only`` decorators
-    remain valid markers. The auto-skip (which excluded these tests under the old
-    ``GDX_BACKEND=graphene`` default) is gone: a bare ``pytest`` runs native and
-    these tests always run.
-    """
-    import pytest as _pytest
-    _pytest.ini_options = getattr(_pytest, "ini_options", {})
-    config.addinivalue_line(  # type: ignore[attr-defined]
-        "markers",
-        "native_only: mark test as native-backend only (suite default since S7)",
-    )

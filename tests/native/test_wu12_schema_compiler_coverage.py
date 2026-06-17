@@ -8,10 +8,10 @@ pagination args, the ``root is None`` short-circuit, and the subscription-field
 arm (duck-typed, no channels import).
 
 Each test asserts a real compiled shape (field type, args, resolver) — not just
-line execution. All run under GDX_BACKEND=native.
+line execution. All run.
 
 Run:
-  GDX_BACKEND=native .venv/bin/python -m pytest -q tests/native/test_wu12_schema_compiler_coverage.py
+  .venv/bin/python -m pytest -q tests/native/test_wu12_schema_compiler_coverage.py
 """
 from __future__ import annotations
 
@@ -32,9 +32,6 @@ from graphql import (
     GraphQLString,
 )
 from graphql.execution import default_field_resolver
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # _rendered_field_name — explicit name vs camelCase (lines 82-85)

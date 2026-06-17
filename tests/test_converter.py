@@ -6,7 +6,7 @@ OUTPUT type is now performed by the NATIVE output compiler
 (``django_graphex.native.output_compiler``). It reads ``model._meta`` directly and
 maps each Django scalar field to a graphql-core scalar (CharField->GraphQLString,
 DateField->GdxDate, ...). The legacy graphene ``convert_django_field`` SCALAR
-dispatchers return a dead-scalar sentinel under ``GDX_BACKEND=native`` (the
+dispatchers return a dead-scalar sentinel (the
 graphene scalar descriptor is never read on the native output path), so the OLD
 ``isinstance(out, graphene.String)`` assertions no longer describe native
 behavior. Each scalar test below was CONVERTED to drive the SAME conceptual code

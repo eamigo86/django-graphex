@@ -5,18 +5,13 @@ Covers:
 - Confirm _unwrap_enums is a safe no-op under native (plain Python values pass through).
 - Confirm _unwrap_enums handles enum.Enum values, lists, and tuples.
 
-All tests run under GDX_BACKEND=native via native_only mark.
+All tests run.
 """
 from __future__ import annotations
 
 import enum
 import importlib
 import importlib.util
-
-import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # 4.3 VERIFY: nested.py has zero graphene imports
@@ -26,7 +21,7 @@ pytestmark = pytest.mark.native_only
 def test_nested_module_has_no_graphene_imports():
     """nested.py must not import graphene at the module level or inside functions.
 
-    Under GDX_BACKEND=native, nested.py is on the critical path for write
+    nested.py is on the critical path for write
     operations.  Importing graphene from nested.py would make the native
     write-path depend on graphene, violating the isolation contract.
     """

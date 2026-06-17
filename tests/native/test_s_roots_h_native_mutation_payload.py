@@ -20,14 +20,12 @@ PARAMOUNT guards (both asserted here):
   ``graphql_sync`` mutation.
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest -q \
+    .venv/bin/python -m pytest -q \
         tests/native/test_s_roots_h_native_mutation_payload.py -o addopts=""
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 # --------------------------------------------------------------------------- #

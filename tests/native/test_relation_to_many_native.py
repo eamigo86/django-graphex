@@ -63,9 +63,6 @@ from django_graphex.native.descriptors import NativeMountedField, NativeRelation
 from django_graphex.registry import Registry
 from tests.models import Author, Comment, Post, Tag
 
-pytestmark = pytest.mark.native_only
-
-
 # --------------------------------------------------------------------------- #
 # The HEAD (pre-S-rel-3) native seed-schema SDL fingerprint. Captured via      #
 # ``render_native_sdl`` BEFORE the import-removal change (identical to the     #

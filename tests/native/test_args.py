@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 
 def _converter():
     from django_graphex.native._args import graphene_arg_to_graphql_argument

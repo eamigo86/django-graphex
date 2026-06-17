@@ -6,15 +6,12 @@ from resolver-path modules without the escape comment.
 Resolver-path modules: types.py, fields.py, utils.py, converter.py, views.py
 Escape comment: # gdx: output-path-exception
 
-All tests run under GDX_BACKEND=native via the native_only mark.
+All tests run.
 """
 from __future__ import annotations
 
 import os
 import re
-import pytest
-
-pytestmark = pytest.mark.native_only
 
 # Resolver-path modules to lint
 _RESOLVER_PATH_MODULES = [
@@ -112,8 +109,8 @@ def test_escape_comment_allows_violation():
 
     This is a meta-test that verifies our lint checker correctly honors escapes.
     """
-    import tempfile
     import os
+    import tempfile
 
     # Write a temp file with an escaped violation
     content = "# This file tests the escape mechanism\n"

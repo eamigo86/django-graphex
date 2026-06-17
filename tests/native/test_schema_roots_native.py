@@ -1,7 +1,7 @@
 """WU7 — native schema roots: plain-ObjectType dispatch, _merge_root collision,
 collect_field_names, protected-fields-via-extensions.
 
-Under GDX_BACKEND=native:
+Behavior:
 - A ``graphene.Field(PlainObjectType)`` (plain ``graphene.ObjectType``, NOT a
   DjangoObjectType, NOT a scalar) compiles to a native ``GraphQLObjectType``
   on-the-fly (Slice A), carries ``extensions['gdx']``, is single-instance
@@ -16,8 +16,6 @@ Under GDX_BACKEND=native:
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 # --------------------------------------------------------------------------- #

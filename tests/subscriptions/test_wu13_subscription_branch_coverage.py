@@ -11,25 +11,17 @@ combined branch. The misses are: the Meta-validation ``TypeError`` guards, the
 
 Backend-agnostic tests (Meta validation, serialize-data, validate-filters, enum)
 run under BOTH backends and contribute to the COMBINED measurement; native-only
-tests cover the native compile-path branches under ``GDX_BACKEND=native``.
+tests cover the native compile-path branches.
 
 Each test asserts a real raised type / returned value / parsed result.
 """
 from __future__ import annotations
-
-import os
 
 import pytest
 
 pytest.importorskip("channels")
 
 from tests.models import Author, Post  # noqa: E402
-
-_NATIVE = os.environ.get("GDX_BACKEND", "graphene") == "native"
-
-native_only = pytest.mark.skipif(
-    not _NATIVE, reason="native compile path (GDX_BACKEND=native)"
-)
 
 
 def _make_subscription(**meta):
@@ -226,7 +218,6 @@ def test_enum_value_unwraps_nested_value_holders():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_native_pk_scalar_falls_back_to_id_for_unmapped_pk(monkeypatch):
     """``_pk_scalar`` returns ``GraphQLID`` when the pk type is not in the mapping.
 
@@ -249,7 +240,6 @@ def test_native_pk_scalar_falls_back_to_id_for_unmapped_pk(monkeypatch):
     assert event_type.fields["author"].type is GraphQLID
 
 
-@native_only
 async def test_native_db_exists_returns_false_when_event_has_no_pk():
     """``_native_db_exists`` returns False (no query) when the event has no ``id``.
 
@@ -261,7 +251,6 @@ async def test_native_db_exists_returns_false_when_event_has_no_pk():
     assert await result is False
 
 
-@native_only
 async def test_native_subscribe_source_raises_without_channel_layer(monkeypatch):
     """The native subscribe factory raises ``RuntimeError`` with no channel layer.
 
@@ -291,7 +280,6 @@ async def test_native_subscribe_source_raises_without_channel_layer(monkeypatch)
     assert sub_mod  # module referenced
 
 
-@native_only
 async def test_native_subscribe_source_parses_json_string_filters(monkeypatch):
     """A JSON-STRING ``filters`` arg is decoded before reaching the engine.
 
@@ -334,7 +322,6 @@ async def test_native_subscribe_source_parses_json_string_filters(monkeypatch):
     assert captured["filters"] == {"id": 7}
 
 
-@native_only
 async def test_native_subscribe_source_blank_filters_skip_json_branch(monkeypatch):
     """A falsy ``filters`` arg (``""``) is normalized to ``None`` BEFORE the JSON arm.
 

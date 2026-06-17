@@ -34,8 +34,6 @@ import sys
 import pytest
 from django.db import models
 
-pytestmark = pytest.mark.native_only
-
 # The subscription engine needs the optional ``channels`` extra.
 pytest.importorskip("channels")
 

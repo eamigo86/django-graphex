@@ -71,9 +71,6 @@ from tests.models import (
     Post,
 )
 
-pytestmark = pytest.mark.native_only
-
-
 # NOTE: ``DjangoObjectType`` / ``DjangoInputObjectType`` use a pydantic metaclass
 # that requires a class-statement ``Meta``. So each test defines its types with
 # explicit ``class`` statements (mirroring the other native relation slices).

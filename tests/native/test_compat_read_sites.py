@@ -9,18 +9,17 @@ These tests check:
 - _get_field_optimize_hook works under native (utils.py)
 - _get_custom_resolver works under native (utils.py)
 
-All tests run under GDX_BACKEND=native via the native_only mark.
+All tests run.
 """
 from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 
 def _make_graphql_type_with_gdx(max_deep=None, complexity=None, model=None, name="TestType"):
     """Create a mock GraphQLObjectType with extensions['gdx'] populated."""
-    from graphql import GraphQLObjectType, GraphQLString, GraphQLField
+    from graphql import GraphQLField, GraphQLObjectType, GraphQLString
+
     from django_graphex.native.bridge import GdxPayload
     from django_graphex.native.ir import GdxMeta
 
@@ -41,8 +40,9 @@ def _make_graphql_type_with_gdx(max_deep=None, complexity=None, model=None, name
 
 def _make_graphql_type_with_graphene(max_deep=None, complexity=None, model=None, name="GrapheneType"):
     """Create a mock GraphQLObjectType with graphene_type set (graphene path)."""
-    from graphql import GraphQLObjectType, GraphQLString, GraphQLField
     from unittest.mock import MagicMock
+
+    from graphql import GraphQLField, GraphQLObjectType, GraphQLString
 
     mock_graphene_type = MagicMock()
     mock_graphene_type._meta.max_deep = max_deep
@@ -125,7 +125,8 @@ def test_type_complexity_via_gdx_meta_none():
 
 def test_gdx_meta_raises_on_no_extensions():
     """_gdx_meta raises AttributeError if type has neither graphene_type nor extensions['gdx']."""
-    from graphql import GraphQLObjectType, GraphQLString, GraphQLField
+    from graphql import GraphQLField, GraphQLObjectType, GraphQLString
+
     from django_graphex.native.compat import _gdx_meta
 
     bare_type = GraphQLObjectType(

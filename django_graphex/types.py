@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -43,15 +42,6 @@ from .utils import (
 if TYPE_CHECKING:
     from django.db.models import Model
     from graphql import GraphQLResolveInfo as ResolveInfo
-
-#: True when GDX_BACKEND=native is set in the process environment.
-#: Read once at import time (the flag is process-global and set before import).
-#: Canonical pattern shared with paginations/{pagination,utils}.py and
-#: converter.py — used here to SKIP building the dead graphene pagination
-#: descriptors (``get_pagination_field`` / ``get_page_info_field``) on native:
-#: the native list container is thunk-built separately on
-#: ``_meta.graphql_output_type`` and never reads ``_meta.fields`` (S-ROOTS-e).
-_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 __all__ = (
     "DjangoObjectType",
@@ -154,8 +144,8 @@ def _compile_declared_list_fields(
     ``GraphQLField`` via the SAME builder the root compiler uses
     (``schema_compiler._build_list_object_field``). That builder wires the
     pagination args + slicing resolver onto the container's results field, so a
-    nested paginated list under ``GDX_BACKEND=native`` is reachable AND its
-    page is DB-side window-sliced by the optimizer (the WU6b seam).
+    nested paginated list is reachable AND its page is DB-side window-sliced by
+    the optimizer (the WU6b seam).
 
     Only list-shaped fields are injected; plain relation/scalar fields are
     already handled by ``compile_output_fields`` and must NOT be duplicated here.
@@ -922,11 +912,10 @@ class DjangoObjectType(NativeObjectType):
         # class-def time is the SAME object that ends up in the assembled
         # GraphQLSchema — eliminating the duplicate-name TypeError hazard.
         #
-        # S6b: DjangoObjectType is now NATIVE-ONLY (re-parented off graphene onto
-        # ``native.base.ObjectType``). The native compile is UNCONDITIONAL — the
-        # old ``if GDX_BACKEND == "native"`` env guard and the graphene-only
-        # construction were removed. ``model is not None`` is still guarded
-        # because abstract bases (no model) must not build an output type.
+        # S6b: DjangoObjectType is NATIVE-ONLY (re-parented onto
+        # ``native.base.ObjectType``). The native compile is UNCONDITIONAL.
+        # ``model is not None`` is still guarded because abstract bases (no model)
+        # must not build an output type.
         # ----------------------------------------------------------------
         if model is not None:
             from graphql import GraphQLObjectType
@@ -1755,11 +1744,8 @@ class DjangoInputObjectType(NativeInputType):
         input_for = input_for.lower()
 
         # ----------------------------------------------------------------
-        # NATIVE PATH (S6c: now UNCONDITIONAL). DjangoInputObjectType is
-        # re-parented off graphene ``InputObjectType`` onto ``native.base
-        # .InputType``; the old ``GDX_BACKEND == "native"`` env guard, the
-        # graphene else-branch, and the ``InputObjectTypeContainer`` construction
-        # were removed. Resolvers receive a VALIDATED Pydantic model (built from
+        # NATIVE PATH (S6c: UNCONDITIONAL). DjangoInputObjectType is parented on
+        # ``native.base.InputType``. Resolvers receive a VALIDATED Pydantic model (built from
         # ``build_model_schema(model)`` and exposed as ``graphql_input_type``),
         # never a container — so no ``_meta.container`` is needed.
         #
@@ -1991,16 +1977,11 @@ class DjangoListObjectType(NativeObjectType):
         _meta.max_deep = max_deep
         _meta.complexity = complexity
 
-        # S-page-7 (graphene-removal): the pagination container is NATIVE-ONLY.
-        # ``_meta.fields`` is unused by the native compiler (which reads
-        # ``_meta.graphql_output_type``, thunk-built below from
-        # ``to_graphql_fields(native=True)`` + ``NativePaginationField`` +
-        # ``get_native_page_info_field``), so leave it empty. The old
-        # ``if not _NATIVE_BACKEND:`` else-branch built the dead graphene
-        # ``GenericPaginationField``/``CursorPageInfo`` container (allocated via
-        # ``paginator.get_pagination_field``/``get_page_info_field``) that NEVER
-        # reached the schema; it is removed so the graphene pagination factories
-        # can never fire on a build (proven SDL byte-identical).
+        # The pagination container is NATIVE-ONLY. ``_meta.fields`` is unused by
+        # the native compiler (which reads ``_meta.graphql_output_type``,
+        # thunk-built below from ``to_graphql_fields(native=True)`` +
+        # ``NativePaginationField`` + ``get_native_page_info_field``), so leave it
+        # empty.
         _meta.fields = OrderedDict()
 
         super().__init_subclass_with_meta__(_meta=_meta, **options)
@@ -2024,9 +2005,8 @@ class DjangoListObjectType(NativeObjectType):
         # the same Phase-2 thunk-eval + Phase-3 gdx assertion already in place
         # for DjangoObjectType entries — no second instance is ever created.
         #
-        # S6b: DjangoListObjectType is now NATIVE-ONLY (re-parented off graphene
-        # onto ``native.base.ObjectType``). The native compile is UNCONDITIONAL —
-        # the old ``if GDX_BACKEND == "native"`` env guard was removed.
+        # S6b: DjangoListObjectType is NATIVE-ONLY (parented on
+        # ``native.base.ObjectType``). The native compile is UNCONDITIONAL.
         # ----------------------------------------------------------------
         if model is not None:
             from graphql import GraphQLObjectType
@@ -2419,12 +2399,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                             "input", DjangoInputObjectType, operation, **factory_kwargs
                         )
 
-                # S6c: DjangoModelType is now NATIVE-ONLY (re-parented off graphene
-                # onto ``native.base.ObjectType``). The input argument is wrapped
-                # in a graphql-core ``GraphQLArgument`` UNCONDITIONALLY; the old
-                # ``GDX_BACKEND == "native"`` env guard and the graphene
-                # ``Argument(...)`` else-branch were removed — graphene can no
-                # longer build a schema from this re-parented type.
+                # S6c: DjangoModelType is NATIVE-ONLY (parented on
+                # ``native.base.ObjectType``). The input argument is wrapped in a
+                # graphql-core ``GraphQLArgument`` UNCONDITIONALLY.
                 from graphql import GraphQLArgument as _GQLArg
                 from graphql import GraphQLNonNull as _GQLNonNull
 
@@ -2898,7 +2875,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
     def _build_native_mutation_field(cls, operation: str) -> Any:
         """Build a graphql-core GraphQLField for the given mutation operation.
 
-        Used by CreateField / DeleteField / UpdateField under GDX_BACKEND=native.
+        Used by CreateField / DeleteField / UpdateField.
 
         WU9 parity fix — this path now mirrors the DjangoModelMutation native
         field (mutation.py) and graphene's own DjangoModelType mutation shape:

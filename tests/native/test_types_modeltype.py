@@ -1,18 +1,16 @@
 """Tests for B3: DjangoModelType native branch.
 
-Under GDX_BACKEND=native, DjangoModelType subclasses must:
+DjangoModelType subclasses must:
 - Preserve full public API (create/update/delete/retrieve/list/etc.).
 - Have CreateField/UpdateField Phase-5 deferral explicit
   (these delegate to graphene.Field in Phase 3, NOT to native schema assembly).
 - output_type and output_list_type are accessible.
 
-All tests run under GDX_BACKEND=native via the native_only mark.
+All tests run.
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 @pytest.mark.django_db
@@ -60,7 +58,7 @@ def test_django_model_type_output_type_accessible():
 @pytest.mark.django_db
 def test_django_model_type_output_list_type_accessible():
     """DjangoModelType._meta.output_list_type must be accessible."""
-    from django_graphex.types import DjangoModelType, DjangoListObjectType
+    from django_graphex.types import DjangoListObjectType, DjangoModelType
     from tests.models import Category
 
     class _ListTypeTest(DjangoModelType):
@@ -74,7 +72,7 @@ def test_django_model_type_output_list_type_accessible():
 
 @pytest.mark.django_db
 def test_django_model_type_create_field_returns_graphql_field():
-    """WU-3: CreateField() now returns a GraphQLField under GDX_BACKEND=native.
+    """WU-3: CreateField() now returns a GraphQLField.
 
     Phase 4 WU-3 implements DjangoModelType.*Field() native branches.
     Under native, CreateField() and UpdateField() return graphql-core GraphQLField
@@ -85,6 +83,7 @@ def test_django_model_type_create_field_returns_graphql_field():
     GraphQLSchema) remains Phase 5.
     """
     from graphql import GraphQLField
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 

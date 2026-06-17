@@ -71,9 +71,6 @@ from django_graphex.native.descriptors import NativeMountedField, NativeRelation
 from django_graphex.registry import Registry
 from django_graphex.types import DjangoObjectType
 
-pytestmark = pytest.mark.native_only
-
-
 # --------------------------------------------------------------------------- #
 # The HEAD native seed-schema SDL fingerprint (same as S-rel-2 / S-rel-3 — the #
 # relation slices are SDL-neutral). S-rel-4 must keep it byte-identical.       #

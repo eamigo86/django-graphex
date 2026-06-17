@@ -26,8 +26,6 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _PLAYGROUND = _REPO_ROOT / "examples" / "playground"
 
@@ -53,7 +51,6 @@ def _build_playground_mutation_sdl() -> list[str]:
         pytest.skip("playground example not present")
 
     env = dict(os.environ)
-    env["GDX_BACKEND"] = "native"
     env["DJANGO_SETTINGS_MODULE"] = "config.settings"
 
     proc = subprocess.run(

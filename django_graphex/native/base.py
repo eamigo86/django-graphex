@@ -554,7 +554,7 @@ class _GdxOutputEntry:
     """Registration record stored in ``_gdx_output_registry``.
 
     Created by ``DjangoObjectType.__init_subclass_with_meta__`` (and the
-    ``DjangoListObjectType`` equivalent) when ``GDX_BACKEND=native``.
+    ``DjangoListObjectType`` equivalent).
     ``compile_all_outputs()`` reads these entries to perform the deferred
     compilation at app-ready time.
     """

@@ -29,7 +29,7 @@ Construct analysis (consumer-proven, see #1561 / S-ROOTS-d):
   (SDL ``GenericForeignKeyType``) is built independently by
   ``output_compiler._make_generic_foreign_key_type`` and is unaffected.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s8d_base_types_graphene_free.py -q -o addopts=""
 """
 from __future__ import annotations
@@ -39,8 +39,6 @@ import datetime
 import inspect
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 # --------------------------------------------------------------------------- #
@@ -203,10 +201,10 @@ def test_custom_date_time_serialize_contract_preserved() -> None:
 
 
 def test_scalar_classes_still_construct_with_graphene_path_kwargs() -> None:
-    """The graphene-path converter builds ``Binary(description=…, required=…)``.
+    """The scalar descriptors build ``Binary(description=…, required=…)``.
 
-    Re-parenting must keep that call constructible so the graphene converter
-    path (when ``GDX_BACKEND`` is unset) does not crash on instantiation.
+    Re-parenting must keep that call constructible so the descriptor classes do
+    not crash on instantiation.
     """
     from django_graphex.base_types import (
         Binary,

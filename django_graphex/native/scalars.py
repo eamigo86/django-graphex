@@ -98,10 +98,9 @@ def _date_parse_literal(ast: Any, variable_values: Any = None) -> datetime.date:
 
 
 GdxDate = GraphQLScalarType(
-    # GraphQL name MUST match graphene-django's output/input contract. The
-    # library uses the ``CustomDate`` graphene subclass (base_types.py), so the
-    # rendered scalar name is ``CustomDate`` — NOT ``Date``. (See discovery
-    # #1508: probed via print_type under GDX_BACKEND=graphene.)
+    # GraphQL name MUST match graphene-django's historical output/input contract:
+    # the rendered scalar name is ``CustomDate`` — NOT ``Date``. (See discovery
+    # #1508.)
     name="CustomDate",
     description="ISO 8601 date scalar (YYYY-MM-DD). Supports CustomDateFormat bypass.",
     serialize=_date_serialize,

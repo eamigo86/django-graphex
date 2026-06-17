@@ -33,18 +33,14 @@ the event type carries ``extensions['gdx']``; ``check_subscription_output_type``
 sentinel-marked).
 
 The DjangoModelType auto-gen (``types.py`` ``subscription_type`` /
-``SubscriptionField``) targets the native compile path under ``GDX_BACKEND=native``
+``SubscriptionField``) targets the native compile path
 and the native field compiles through ``compile_native_root``'s subscription-root
 path (``schema.py``), so a native schema assembles the Subscription type
 end-to-end and executes serialize-once.
-
-All native assertions are gated behind ``GDX_BACKEND=native`` and skipped under
-graphene (the graphene bespoke auto-gen path stays UNCHANGED).
 """
 from __future__ import annotations
 
 import asyncio
-import os
 
 import pytest
 
@@ -61,15 +57,6 @@ from graphql import (  # noqa: E402
     parse,
 )
 
-from tests.models import Author, Category, Post, Tag  # noqa: E402
-
-_NATIVE = os.environ.get("GDX_BACKEND", "graphene") == "native"
-
-native_only = pytest.mark.skipif(
-    not _NATIVE, reason="native subscription compile path (GDX_BACKEND=native)"
-)
-
-
 # ---------------------------------------------------------------------------
 # Helpers.
 #
@@ -81,25 +68,25 @@ native_only = pytest.mark.skipif(
 # "uniquely named types" guard. Real usage defines node types once, so module-scope
 # registration mirrors production.
 # ---------------------------------------------------------------------------
+from django_graphex.types import DjangoObjectType as _DOT
+from tests.models import Author, Category, Post, Tag  # noqa: E402
 
-if _NATIVE:
-    from django_graphex.types import DjangoObjectType as _DOT
 
-    class TagT(_DOT):
-        class Meta:
-            model = Tag
+class TagT(_DOT):
+    class Meta:
+        model = Tag
 
-    class CategoryT(_DOT):
-        class Meta:
-            model = Category
+class CategoryT(_DOT):
+    class Meta:
+        model = Category
 
-    class AuthorT(_DOT):
-        class Meta:
-            model = Author
+class AuthorT(_DOT):
+    class Meta:
+        model = Author
 
-    class PostT(_DOT):
-        class Meta:
-            model = Post
+class PostT(_DOT):
+    class Meta:
+        model = Post
 
 
 def _register_post_node_types():
@@ -149,7 +136,6 @@ def _unwrap(t):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_event_type_has_all_fields_no_omission():
     """Every ``output_field_names()`` entry is mounted (NO field omitted)."""
     _register_post_node_types()
@@ -165,7 +151,6 @@ def test_event_type_has_all_fields_no_omission():
         assert wire in event_type.fields, f"{wire} ({snake}) must be present after WU7"
 
 
-@native_only
 def test_event_type_scalar_names_and_nullability():
     """Scalars use the Phase-5 native names/nullability (``id: ID!``, rest nullable)."""
     _register_post_node_types()
@@ -183,7 +168,6 @@ def test_event_type_scalar_names_and_nullability():
     assert event_type.fields["views"].type is GraphQLInt
 
 
-@native_only
 def test_event_type_fk_is_deliverable_pk_scalar_not_nested_object():
     """FK / O2O fields render the DELIVERABLE pk SCALAR (the flat payload's value).
 
@@ -208,7 +192,6 @@ def test_event_type_fk_is_deliverable_pk_scalar_not_nested_object():
         assert fk_type is not GraphQLInt, wire
 
 
-@native_only
 def test_event_type_m2m_is_deliverable_pk_list_not_container_not_string():
     """M2M fields render a DELIVERABLE LIST of pk scalars (the flat payload's value).
 
@@ -236,7 +219,6 @@ def test_event_type_m2m_is_deliverable_pk_list_not_container_not_string():
         assert m2m_type is not GraphQLString, wire
 
 
-@native_only
 def test_every_field_is_sentinel_snake_closure_and_cond_b_passes():
     """Every event field carries the sentinel snake-closure; COND-B passes."""
     from django_graphex.subscriptions.guard import check_subscription_output_type
@@ -256,7 +238,6 @@ def test_every_field_is_sentinel_snake_closure_and_cond_b_passes():
     check_subscription_output_type(event_type)
 
 
-@native_only
 def test_event_type_sdl_is_the_deliverable_flat_pk_shape():
     """The event type's SDL is the DELIVERABLE flat-pk shape (NOT the output type).
 
@@ -310,11 +291,10 @@ def test_event_type_sdl_is_the_deliverable_flat_pk_shape():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_djangomodeltype_subscription_field_native_compiles_through_root():
     """A DjangoModelType ``SubscriptionField`` mounts on a native Subscription root.
 
-    Under ``GDX_BACKEND=native`` the generated subscription field compiles
+    the generated subscription field compiles
     through ``compile_native_root``'s subscription-root path: the root assembles
     a native ``GraphQLObjectType`` whose subscription field's return type is the
     native event type (with the full converter mapping + gdx + snake resolvers).
@@ -357,7 +337,6 @@ def test_djangomodeltype_subscription_field_native_compiles_through_root():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_serialize_once_delivers_over_full_converter_event_type():
     """Driving the full-converter event type yields a projected flat-dict result.
 
@@ -423,7 +402,6 @@ def _build_event_schema(sub):
     return GraphQLSchema(query=query_type, subscription=subscription_type)
 
 
-@native_only
 @pytest.mark.django_db
 async def test_nested_fk_and_m2m_selection_delivers_pks_zero_queries():
     """Selecting the FK pk + M2M pk-list delivers the PKS over the flat payload.
@@ -505,7 +483,6 @@ async def test_nested_fk_and_m2m_selection_delivers_pks_zero_queries():
     assert n_queries == 0
 
 
-@native_only
 async def test_nested_m2m_totalcount_selection_is_rejected_at_validation():
     """The old M2M container ``totalCount`` selection no longer validates.
 

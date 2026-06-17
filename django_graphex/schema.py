@@ -321,7 +321,7 @@ class DjangoGraphQLSchema:
             warnings.warn(
                 "DjangoGraphQLSchema received private_query/private_mutation/"
                 "private_subscription but AuthenticatedFieldsMiddleware is not in "
-                "settings.GRAPHENE['MIDDLEWARE']; private fields will NOT be "
+                "settings.GRAPHEX['MIDDLEWARE']; private fields will NOT be "
                 "protected.",
                 RuntimeWarning,
                 stacklevel=2,

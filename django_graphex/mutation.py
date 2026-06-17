@@ -392,12 +392,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                             "input", DjangoInputObjectType, operation, **factory_kwargs
                         )
 
-                # S6c: DjangoModelMutation is now NATIVE-ONLY (re-parented off
-                # graphene onto ``native.base.ObjectType``). The input argument is
-                # wrapped in a graphql-core ``GraphQLArgument`` UNCONDITIONALLY;
-                # the old ``GDX_BACKEND == "native"`` env guard and the graphene
-                # ``Argument(...)`` else-branch were removed — graphene can no
-                # longer build a schema from this re-parented type.
+                # S6c: DjangoModelMutation is NATIVE-ONLY (parented on
+                # ``native.base.ObjectType``). The input argument is wrapped in a
+                # graphql-core ``GraphQLArgument`` UNCONDITIONALLY.
                 from graphql import GraphQLArgument as _GraphQLArgument
                 from graphql import GraphQLNonNull as _GraphQLNonNull
 
@@ -445,10 +442,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
 
         # ---------------------------------------------------------------------------
         # Native field construction (WU-3): build GraphQLField per operation and
-        # store in the backend-keyed registry so *Field() can retrieve them.
-        # S6c: DjangoModelMutation is now NATIVE-ONLY (re-parented off graphene),
-        # so this runs UNCONDITIONALLY — the old ``GDX_BACKEND == "native"`` guard
-        # was removed; graphene can no longer build a schema from this type.
+        # store in the registry so *Field() can retrieve them.
+        # S6c: DjangoModelMutation is NATIVE-ONLY (parented on
+        # ``native.base.ObjectType``), so this runs UNCONDITIONALLY.
         # ---------------------------------------------------------------------------
         from graphql import GraphQLField as _GraphQLField
 

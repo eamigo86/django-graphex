@@ -1,34 +1,10 @@
-"""Tests for the GDX_BACKEND dual-backend harness.
+"""Tests for the native test harness utilities.
 
-Verifies that:
-- GDX_BACKEND env var can be read
-- native_only mark is recognized
-- normalize_sdl utility is importable and functional
-- The graphene CI path is unaffected (additivity gate).
+Verifies that the ``normalize_sdl`` utility is importable and functional.
 
 Run with: .venv/bin/python -m pytest tests/native/test_native_backend.py -x -v
 """
 from __future__ import annotations
-
-import os
-
-import pytest
-
-pytestmark = pytest.mark.native_only
-
-
-def test_gdx_backend_env_readable():
-    """GDX_BACKEND env var should be readable (default 'graphene' or 'native')."""
-    backend = os.environ.get("GDX_BACKEND", "graphene")
-    assert backend in ("graphene", "native"), f"Unexpected GDX_BACKEND value: {backend!r}"
-
-
-def test_native_only_mark_registered():
-    """native_only mark is registered in pytest (no PytestUnknownMarkWarning)."""
-    # This test just ensures the mark is used — the conftest registers it.
-    # If the mark is unregistered, this test would show a warning (but still pass).
-    # The actual registration is in tests/native/conftest.py.
-    pass
 
 
 def test_normalize_sdl_importable():

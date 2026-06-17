@@ -11,8 +11,12 @@ import uuid
 import pytest
 from graphql import GraphQLError
 from graphql.language import ast as gql_ast
-from graphql.language.ast import IntValueNode, FloatValueNode, StringValueNode, BooleanValueNode
-
+from graphql.language.ast import (
+    BooleanValueNode,
+    FloatValueNode,
+    IntValueNode,
+    StringValueNode,
+)
 
 # ---------------------------------------------------------------------------
 # Import gate
@@ -20,8 +24,8 @@ from graphql.language.ast import IntValueNode, FloatValueNode, StringValueNode, 
 
 def test_scalars_has_no_django_graphene_imports():
     """scalars.py must not import from django or graphene."""
-    import re
     import pathlib
+    import re
 
     path = pathlib.Path(__file__).parent.parent.parent / "django_graphex" / "native" / "scalars.py"
     src = path.read_text()
@@ -38,17 +42,16 @@ def test_scalars_has_no_django_graphene_imports():
 # ---------------------------------------------------------------------------
 
 from django_graphex.native.scalars import (
-    GdxDate,
-    GdxDateTime,
-    GdxTime,
-    GdxDecimal,
-    GdxUUID,
-    GdxJSONString,
-    GdxGenericScalar,
     GDX_SCALAR_MAP,
     CustomDateFormat,
+    GdxDate,
+    GdxDateTime,
+    GdxDecimal,
+    GdxGenericScalar,
+    GdxJSONString,
+    GdxTime,
+    GdxUUID,
 )
-
 
 # ---------------------------------------------------------------------------
 # GDX_SCALAR_MAP contents
@@ -67,7 +70,13 @@ class TestGdxScalarMap:
             assert name in GDX_SCALAR_MAP, f"Missing {name} in GDX_SCALAR_MAP"
 
     def test_has_5_builtin_scalars(self):
-        from graphql import GraphQLString, GraphQLInt, GraphQLFloat, GraphQLBoolean, GraphQLID
+        from graphql import (
+            GraphQLBoolean,
+            GraphQLFloat,
+            GraphQLID,
+            GraphQLInt,
+            GraphQLString,
+        )
         builtin_names = {"String", "Int", "Float", "Boolean", "ID"}
         for name in builtin_names:
             assert name in GDX_SCALAR_MAP, f"Missing builtin {name} in GDX_SCALAR_MAP"
@@ -94,7 +103,7 @@ class TestGdxScalarMap:
 
         Date/DateTime/Time use the graphene ``Custom*`` subclass names;
         UUID/JSONString/GenericScalar/Decimal match the plain graphene names.
-        See discovery #1508 (probed via print_type under GDX_BACKEND=graphene).
+        See discovery #1508.
         """
         assert GdxDate.name == "CustomDate"
         assert GdxDateTime.name == "CustomDateTime"

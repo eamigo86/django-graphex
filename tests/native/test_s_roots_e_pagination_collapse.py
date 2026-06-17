@@ -1,6 +1,6 @@
 """S-ROOTS-e RED/GREEN — pagination descriptor collapse (native).
 
-Phase 7 graphene-removal, sub-slice (e). On ``GDX_BACKEND=native`` the
+Phase 7 graphene-removal, sub-slice (e). The
 ``DjangoListObjectType`` must STOP building the dead graphene pagination
 descriptors into ``_meta.fields``:
 
@@ -20,14 +20,12 @@ cursor pageInfo) MUST be byte-identical after the collapse — these guards
 assert the native container is unchanged.
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest \
+    .venv/bin/python -m pytest \
         tests/native/test_s_roots_e_pagination_collapse.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 def _build_list_types():

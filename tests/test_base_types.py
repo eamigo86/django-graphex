@@ -11,7 +11,7 @@ assertion below was CONVERTED to read the native compiled type, preserving the
 original coverage (the types are model-coupled and produce the expected GraphQL
 fields).
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest tests/test_base_types.py \
+Run: .venv/bin/python -m pytest tests/test_base_types.py \
     -q -o addopts=""
 """
 

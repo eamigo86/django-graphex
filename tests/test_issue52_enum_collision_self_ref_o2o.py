@@ -179,19 +179,17 @@ class TestSelfReferentialO2O:
 
         S-rel-2 retired graphene on the to-ONE relation OUTPUT path: a genuine
         self-referential OneToOne now converts to a graphene-free
-        ``NativeRelationField`` presence/ordering marker on the native backend.
-        On the graphene backend the legacy ``Dynamic`` closure is UNCHANGED and
-        must still resolve to a non-None graphene ``Field`` (the issue #52 trap is
+        ``NativeRelationField`` presence/ordering marker (the issue #52 trap is
         the MTI parent_link guard incorrectly firing on a genuine self-ref O2O,
-        which would drop the field on EITHER backend).
+        which would drop the field).
         """
-        from django_graphex.converter import _DEAD_SCALAR, _NATIVE_BACKEND
+        from django_graphex.converter import _DEAD_SCALAR
         from django_graphex.native.descriptors import NativeRelationField
 
         local_registry = Registry()
         field = PersonWithSpouse._meta.get_field("spouse")
 
-        # Register a PersonType so the (graphene) registry lookup can succeed.
+        # Register a PersonType so the registry lookup can succeed.
         class PersonType(DjangoObjectType):
             class Meta:
                 model = PersonWithSpouse
@@ -201,22 +199,14 @@ class TestSelfReferentialO2O:
             field, registry=local_registry, input_flag=None, nested_field=False
         )
 
-        if _NATIVE_BACKEND:
-            assert isinstance(converted, NativeRelationField), (
-                "self-ref O2O OUTPUT must return a graphene-free "
-                f"NativeRelationField marker (S-rel-2); got {converted!r}"
-            )
-            assert converted is not None and converted is not _DEAD_SCALAR, (
-                "the self-ref O2O marker must NEVER be None / dead-scalar — that "
-                "is the issue #52 silent-drop trap (parent_link guard firing)."
-            )
-        else:
-            # graphene backend UNCHANGED: the Dynamic closure must not return None.
-            resolved = converted.type()
-            assert resolved is not None, (
-                "Dynamic resolver for a genuine self-referential O2O must not "
-                "return None. The MTI parent_link guard incorrectly fired."
-            )
+        assert isinstance(converted, NativeRelationField), (
+            "self-ref O2O OUTPUT must return a graphene-free "
+            f"NativeRelationField marker (S-rel-2); got {converted!r}"
+        )
+        assert converted is not None and converted is not _DEAD_SCALAR, (
+            "the self-ref O2O marker must NEVER be None / dead-scalar — that "
+            "is the issue #52 silent-drop trap (parent_link guard firing)."
+        )
 
     def test_self_ref_o2o_present_in_create_input_type(self):
         """The spouse field (as an ID) must be present in the create input type."""

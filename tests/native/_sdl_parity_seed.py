@@ -6,7 +6,7 @@ Django relation taxonomy and renders its SDL on the native backend:
 
 * :func:`render_native_sdl` — renders the seed schema on the NATIVE backend,
   IN-PROCESS, via the real :class:`DjangoGraphQLSchema` native compiler. This is
-  exactly the SDL the library produces today on ``GDX_BACKEND=native`` (the
+  exactly the SDL the library produces today (the
   default for ``tests/``).
 
 This module is GRAPHENE-FREE: every helper here builds and renders SDL through
@@ -41,7 +41,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Seed model imports
 #
@@ -63,7 +62,6 @@ from tests.models import (  # noqa: E402
     Track2GfkComment,
 )
 from tests.test_optimizer_coverage import OptNote, Profile  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Native seed schema

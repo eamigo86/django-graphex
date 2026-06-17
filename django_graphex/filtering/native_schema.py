@@ -1,8 +1,6 @@
-"""Native (graphql-core) ``<Model>FilterInput`` builder for ``GDX_BACKEND=native``.
+"""Native (graphql-core) ``<Model>FilterInput`` builder.
 
-This is the graphql-core twin of :mod:`django_graphex.filtering.schema` (the
-graphene builder). It produces the SAME nested input shape so the cross-process
-SDL parity harness (WU4/WU10) can assert byte-equality:
+It produces the nested input shape:
 
     input <Model>Filterinput {
       <camelField>: <Model><Field>Lookups   # out_name = snake field name

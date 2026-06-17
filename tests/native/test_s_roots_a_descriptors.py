@@ -13,7 +13,7 @@ the correct graphql-core field through the EXISTING compiler entry points
 (``compile_declared_field`` and ``compile_native_root``) — no special-casing
 added to the compiler.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s_roots_a_descriptors.py -q -o addopts=""
 """
 from __future__ import annotations
@@ -22,9 +22,6 @@ import ast
 import inspect
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # Import-safety: descriptors.py must NOT import graphene at module top level

@@ -6,7 +6,7 @@ Tests verify:
 - Resolver receives BaseModel (not a container).
 - data["firstName"] on camel key raises KeyError (snake keys only after coerce_input).
 
-Run under GDX_BACKEND=native via native_only mark.
+Run.
 """
 from __future__ import annotations
 
@@ -14,9 +14,6 @@ import subprocess
 import sys
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # Task 2.6: dict-style access + no InputObjectTypeContainer in django_graphex/
@@ -81,6 +78,7 @@ def test_input_type_container_absent_from_native_modules():
 def test_coerce_input_returns_base_model_not_container():
     """coerce_input returns a BaseModel instance, never a graphene container."""
     from pydantic import BaseModel
+
     from django_graphex.native.base import InputType
     from django_graphex.native.input_compiler import coerce_input
 
@@ -123,6 +121,7 @@ def test_coerce_input_validates_camel_key():
 def test_coerce_input_validation_error_no_pydantic_url():
     """coerce_input raises GraphQLError with no errors.pydantic.dev URL."""
     from graphql import GraphQLError
+
     from django_graphex.native.base import InputType
     from django_graphex.native.input_compiler import coerce_input
 

@@ -106,9 +106,5 @@ class Query(ObjectType):
 # S7: the suite is native-only. ``UserType`` / ``User1ListType`` are native
 # (re-parented off graphene in S6b) and the public roots/fields use the native
 # ``ObjectType`` + ``field()`` API (S-ROOTS-f). The shared test schema is now
-# built directly with the native ``DjangoGraphQLSchema`` — a drop-in for the
-# retired ``graphene.Schema(query=Query, directives=all_directives)``. The old
-# ``GDX_BACKEND``-guarded graphene branch was removed because graphene's
-# ``Schema(query=Query)`` can no longer assemble native types and crashed at
-# import under graphene.
+# built directly with the native ``DjangoGraphQLSchema``.
 schema = DjangoGraphQLSchema(query=Query, directives=all_directives)

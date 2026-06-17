@@ -1,16 +1,8 @@
 import os
 import sys
 
-# S7 (graphene-removal): the NATIVE backend is now the DEFAULT for the whole test
-# suite. A bare ``pytest tests/`` runs the native graphql-core path. The env var is
-# set here, at the FIRST-collected conftest, BEFORE any django_graphex module reads
-# ``os.environ.get("GDX_BACKEND", ...)`` at import time. Set it only when unset so
-# an explicit ``GDX_BACKEND=graphene`` (the transitional graphene-additivity CI job,
-# retired in S8) still overrides. The old default was ``graphene``.
-os.environ.setdefault("GDX_BACKEND", "native")
-
-import django  # noqa: E402
-from django.core import management  # noqa: E402
+import django
+from django.core import management
 
 
 def pytest_addoption(parser):

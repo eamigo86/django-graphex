@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 
 import pytest
 
@@ -30,33 +29,25 @@ pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
 
+from django_graphex.types import DjangoObjectType as _DOT
 from tests.models import Post  # noqa: E402
 
-_NATIVE = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
-native_only = pytest.mark.skipif(
-    not _NATIVE, reason="native SSE transport (GDX_BACKEND=native)"
-)
+class _TagT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Tag"]).Tag
 
+class _CategoryT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Category"]).Category
 
-if _NATIVE:
-    from django_graphex.types import DjangoObjectType as _DOT
+class _AuthorT(_DOT):
+    class Meta:
+        model = __import__("tests.models", fromlist=["Author"]).Author
 
-    class _TagT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Tag"]).Tag
-
-    class _CategoryT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Category"]).Category
-
-    class _AuthorT(_DOT):
-        class Meta:
-            model = __import__("tests.models", fromlist=["Author"]).Author
-
-    class _PostT(_DOT):
-        class Meta:
-            model = Post
+class _PostT(_DOT):
+    class Meta:
+        model = Post
 
 
 def _build_native_schema():
@@ -112,7 +103,6 @@ def _json_request(query, *, variables=None, operation_name=None):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_transport_context_includes_session_when_present():
     """``TransportContext`` exposes ``.user`` and threads ``session`` into scope.
 
@@ -148,7 +138,6 @@ def test_transport_context_includes_session_when_present():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_read_request_body_malformed_json_yields_empty_fields():
     """Malformed JSON in an application/json body → all fields ``None``.
 
@@ -166,7 +155,6 @@ def test_read_request_body_malformed_json_yields_empty_fields():
     assert parsed == {"query": None, "variables": None, "operationName": None}
 
 
-@native_only
 def test_read_request_body_form_encoded_reads_post():
     """A form-encoded body reads ``query`` from ``request.POST``.
 
@@ -191,7 +179,6 @@ def test_read_request_body_form_encoded_reads_post():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_no_query_is_pre_200_bad_request(monkeypatch):
     """A request with NO query → HTTP 400 (PRE-200, never a stream).
 
@@ -216,7 +203,6 @@ async def test_no_query_is_pre_200_bad_request(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_syntax_error_is_pre_200_bad_request(monkeypatch):
     """A query with a syntax error → HTTP 400 (PRE-200, never a stream).
 
@@ -241,7 +227,6 @@ async def test_syntax_error_is_pre_200_bad_request(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_non_subscription_operation_is_pre_200_bad_request(monkeypatch):
     """A ``query`` operation over the SSE transport → HTTP 400 (PRE-200).
 
@@ -262,7 +247,6 @@ async def test_non_subscription_operation_is_pre_200_bad_request(monkeypatch):
     assert b"only serves subscription" in response.content
 
 
-@native_only
 async def test_unknown_operation_name_is_pre_200_bad_request(monkeypatch):
     """An ``operationName`` matching no operation → HTTP 400 (operation_ast None).
 
@@ -291,7 +275,6 @@ async def test_unknown_operation_name_is_pre_200_bad_request(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_no_source_no_pre_result_streams_complete_only(monkeypatch):
     """When neither a source NOR a pre-stream result exists → a complete-only stream.
 
@@ -332,7 +315,6 @@ async def test_no_source_no_pre_result_streams_complete_only(monkeypatch):
     assert frames == ["event: complete\ndata: \n\n"]
 
 
-@native_only
 async def test_no_source_with_pre_result_streams_next_then_complete(monkeypatch):
     """A pre-stream result (no source) → a single ``next`` then ``complete``.
 

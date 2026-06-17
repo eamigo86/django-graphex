@@ -9,16 +9,15 @@ import pytest
 from pydantic import BaseModel
 from pydantic.alias_generators import to_camel
 
-
 # ---------------------------------------------------------------------------
 # 1.6 RED: ObjectType / InputType bases + metaclass identity
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_input_type_is_pydantic_model_metaclass():
     """type(SearchInput) is ModelMetaclass for model-free InputType subclass."""
     from pydantic._internal._model_construction import ModelMetaclass
+
     from django_graphex.native.base import InputType
 
     class SearchInput(InputType):
@@ -30,7 +29,6 @@ def test_input_type_is_pydantic_model_metaclass():
     )
 
 
-@pytest.mark.native_only
 def test_input_type_config_dict_alias_generator():
     """InputType ConfigDict uses pydantic to_camel alias_generator."""
     from django_graphex.native.base import InputType
@@ -44,7 +42,6 @@ def test_input_type_config_dict_alias_generator():
     assert obj.first_name == "Alice"
 
 
-@pytest.mark.native_only
 def test_input_type_populate_by_name():
     """InputType ConfigDict has populate_by_name=True — snake key construction works."""
     from django_graphex.native.base import InputType
@@ -57,7 +54,6 @@ def test_input_type_populate_by_name():
     assert obj.first_name == "Bob"
 
 
-@pytest.mark.native_only
 def test_input_type_camel_key_construction():
     """InputType supports camelCase key construction via alias_generator."""
     from django_graphex.native.base import InputType
@@ -70,7 +66,6 @@ def test_input_type_camel_key_construction():
     assert obj.first_name == "Carol"
 
 
-@pytest.mark.native_only
 def test_object_type_is_base_model():
     """ObjectType is a Pydantic BaseModel subclass."""
     from django_graphex.native.base import ObjectType
@@ -78,7 +73,6 @@ def test_object_type_is_base_model():
     assert issubclass(ObjectType, BaseModel)
 
 
-@pytest.mark.native_only
 def test_input_type_is_object_type():
     """InputType is a subclass of ObjectType."""
     from django_graphex.native.base import InputType, ObjectType
@@ -86,7 +80,6 @@ def test_input_type_is_object_type():
     assert issubclass(InputType, ObjectType)
 
 
-@pytest.mark.native_only
 def test_getitem_mixin_dict_access():
     """InputType instances support dict-style access via __getitem__."""
     from django_graphex.native.base import InputType
@@ -105,7 +98,6 @@ def test_getitem_mixin_dict_access():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_input_type_subclass_registers_in_registry():
     """Subclassing InputType auto-registers the class in _gdx_input_registry."""
     from django_graphex.native.base import InputType, _gdx_input_registry
@@ -119,10 +111,10 @@ def test_input_type_subclass_registers_in_registry():
     assert RegistryTestInput in _gdx_input_registry
 
 
-@pytest.mark.native_only
 def test_compile_all_inputs_sets_meta_on_each():
     """compile_all_inputs sets _meta.graphql_input_type on each registered class."""
     from graphql import GraphQLInputObjectType
+
     from django_graphex.native.base import InputType, compile_all_inputs
 
     class CompileTestInput(InputType):
@@ -136,11 +128,15 @@ def test_compile_all_inputs_sets_meta_on_each():
     assert isinstance(CompileTestInput._meta.graphql_input_type, GraphQLInputObjectType)
 
 
-@pytest.mark.native_only
 def test_compile_all_inputs_duplicate_name_raises():
     """compile_all_inputs raises ImproperlyConfigured on duplicate GraphQL names."""
     from django.core.exceptions import ImproperlyConfigured
-    from django_graphex.native.base import InputType, _gdx_input_registry, compile_all_inputs
+
+    from django_graphex.native.base import (
+        InputType,
+        _gdx_input_registry,
+        compile_all_inputs,
+    )
 
     # We cannot actually create two classes with the same name and have them
     # both register as different entries (Python rebinds the name), so we
@@ -173,13 +169,18 @@ def test_compile_all_inputs_duplicate_name_raises():
         DupInputB.__name__ = "DupInputB"  # restore
 
 
-@pytest.mark.native_only
 def test_compile_all_inputs_model_rebuild_errors():
     """compile_all_inputs re-raises rebuild errors as ImproperlyConfigured."""
-    from django.core.exceptions import ImproperlyConfigured
-    from django_graphex.native.base import InputType, _gdx_input_registry, compile_all_inputs
     from unittest.mock import patch
+
+    from django.core.exceptions import ImproperlyConfigured
     from pydantic import PydanticUserError
+
+    from django_graphex.native.base import (
+        InputType,
+        _gdx_input_registry,
+        compile_all_inputs,
+    )
 
     class RebuildTestInput(InputType):
         value: str

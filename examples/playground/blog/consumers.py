@@ -3,8 +3,6 @@
 The legacy ``GraphqlAPIDemultiplexer`` (HTTP ``channelId`` handshake + per-stream
 demultiplexing) was removed in v2.0. Subscriptions now run on the native engine
 behind two standards-based transports; this module builds the WebSocket one.
-
-Requires ``GDX_BACKEND=native`` (subscriptions are native-only in v2.0).
 """
 
 from django_graphex.subscriptions.transports.ws import subscription_ws_consumer

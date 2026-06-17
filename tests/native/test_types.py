@@ -18,26 +18,10 @@ Tests verify:
 - _meta.graphql_input_type is GraphQLInputObjectType after __init_subclass_with_meta__
   (the real Phase-2 model-coupled deliverable).
 - Accessing _meta.bogus_attr raises AttributeError.
-
-All tests run under GDX_BACKEND=native via the native_only mark.
 """
 from __future__ import annotations
 
-import os
-
 import pytest
-
-pytestmark = pytest.mark.native_only
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _native_only() -> bool:
-    """Return True when GDX_BACKEND=native is set."""
-    return os.environ.get("GDX_BACKEND", "graphene") == "native"
-
 
 # ---------------------------------------------------------------------------
 # Task 2.1: DjangoInputObjectType native compile path
@@ -47,8 +31,9 @@ def _native_only() -> bool:
 def test_django_input_object_type_graphql_input_type_create():
     """DjangoInputObjectType with input_for='create' must expose graphql_input_type."""
     from graphql import GraphQLInputObjectType
-    from django_graphex.native.input_compiler import compile_input_type, GdxInputSpec
+
     from django_graphex.native.fields import build_model_schema
+    from django_graphex.native.input_compiler import GdxInputSpec, compile_input_type
     from django_graphex.native.validators import build_validator_model
     from tests.models import Category
 
@@ -76,8 +61,9 @@ def test_django_input_object_type_graphql_input_type_create():
 def test_django_input_object_type_graphql_input_type_update_all_nullable():
     """DjangoInputObjectType with input_for='update' → all fields nullable (partial)."""
     from graphql import GraphQLNonNull
-    from django_graphex.native.input_compiler import compile_input_type
+
     from django_graphex.native.fields import build_model_schema
+    from django_graphex.native.input_compiler import compile_input_type
     from tests.models import Category
 
     # Update form → partial=True → every field nullable
@@ -106,7 +92,7 @@ def test_model_free_meta_container_absent():
     instance and DOES still expose .container in Phase 2 (graphene.Schema reads
     _meta.container at build time; container removal is Phase 7 work).
     """
-    from django_graphex.native.base import _GdxInputOptions, _GdxInputMeta
+    from django_graphex.native.base import _GdxInputMeta, _GdxInputOptions
 
     opts = _GdxInputOptions()
     meta = _GdxInputMeta(opts)
@@ -154,8 +140,8 @@ def test_assert_input_flag_guard():
     raises an error, confirming the guard isolates the INPUT branch from
     the OUTPUT branch (construct_fields is not called for inputs).
     """
-    from django_graphex.native.input_compiler import compile_input_type
     from django_graphex.native.fields import build_model_schema
+    from django_graphex.native.input_compiler import compile_input_type
     from tests.models import Post
 
     # Verify compile_input_type works for a real model
@@ -177,8 +163,9 @@ def test_assert_input_flag_guard():
 
 def test_gdx_input_meta_graphql_input_type_exposed():
     """_GdxInputMeta exposes graphql_input_type after compilation."""
-    from django_graphex.native.base import _GdxInputOptions, _GdxInputMeta
     from graphql import GraphQLInputObjectType
+
+    from django_graphex.native.base import _GdxInputMeta, _GdxInputOptions
 
     opts = _GdxInputOptions()
     meta = _GdxInputMeta(opts)
@@ -195,7 +182,7 @@ def test_gdx_input_meta_graphql_input_type_exposed():
 
 def test_gdx_input_meta_unknown_attr_raises():
     """_GdxInputMeta must raise AttributeError for unknown attributes."""
-    from django_graphex.native.base import _GdxInputOptions, _GdxInputMeta
+    from django_graphex.native.base import _GdxInputMeta, _GdxInputOptions
 
     opts = _GdxInputOptions()
     meta = _GdxInputMeta(opts)
@@ -212,6 +199,7 @@ def test_type_of_model_free_input_is_model_metaclass():
     This is the Phase-2 metaclass-identity deliverable for the MODEL-FREE path.
     """
     from pydantic._internal._model_construction import ModelMetaclass
+
     from django_graphex.native.base import InputType
 
     class _WuBModelFreeInput2(InputType):
@@ -238,6 +226,7 @@ def test_build_model_schema_returns_pydantic_model():
     (see test_django_input_object_type_meta_graphql_input_type_is_graphql_type).
     """
     from pydantic._internal._model_construction import ModelMetaclass
+
     from django_graphex.native.fields import build_model_schema
     from tests.models import Post
 
@@ -266,6 +255,7 @@ def test_model_coupled_metaclass_is_modelmetaclass_after_s6c():
     ``test_types_objecttype.py``.
     """
     from pydantic._internal._model_construction import ModelMetaclass
+
     from django_graphex.types import DjangoInputObjectType
     from tests.models import Category
 
@@ -360,14 +350,15 @@ def test_input_type_meta_populated_by_compile_all_inputs():
 
 @pytest.mark.django_db
 def test_django_input_object_type_meta_graphql_input_type_is_graphql_type():
-    """Under GDX_BACKEND=native, DjangoInputObjectType subclass must set
+    """DjangoInputObjectType subclass must set
     _meta.graphql_input_type to a real GraphQLInputObjectType at class creation.
 
     This is the core integration gate for WU-B: the production
-    __init_subclass_with_meta__ must branch on GDX_BACKEND and call
+    __init_subclass_with_meta__ must call
     compile_input_type; the existing graphene path must remain intact.
     """
     from graphql import GraphQLInputObjectType
+
     from django_graphex.types import DjangoInputObjectType
     from tests.models import Category
 
@@ -388,11 +379,12 @@ def test_django_input_object_type_meta_graphql_input_type_is_graphql_type():
 
 @pytest.mark.django_db
 def test_django_input_object_type_native_no_container_created():
-    """Under GDX_BACKEND=native, _meta.graphql_input_type is set; no container
+    """_meta.graphql_input_type is set; no container
     is read by the native resolver path (graphene still has a container for its own
     schema build, but that is a graphene-internal detail we don't test here).
     """
     from graphql import GraphQLInputObjectType
+
     from django_graphex.types import DjangoInputObjectType
     from tests.models import Category
 
@@ -409,7 +401,8 @@ def test_django_input_object_type_native_no_container_created():
 @pytest.mark.django_db
 def test_django_input_object_type_update_meta_all_fields_nullable():
     """Under native, update input (partial=True) → all fields nullable."""
-    from graphql import GraphQLNonNull, GraphQLInputObjectType
+    from graphql import GraphQLInputObjectType, GraphQLNonNull
+
     from django_graphex.types import DjangoInputObjectType
     from tests.models import Category
 
@@ -430,7 +423,7 @@ def test_django_input_object_type_update_meta_all_fields_nullable():
 
 @pytest.mark.django_db
 def test_mutation_arguments_use_graphql_argument_under_native():
-    """Under GDX_BACKEND=native, DjangoModelType's _meta.arguments['create'] must
+    """DjangoModelType's _meta.arguments['create'] must
     hold a dict with a GraphQLArgument (not a graphene Argument).
 
     This is the 'call site' integration test: when the 6 factory_type("input", ...)
@@ -438,6 +431,7 @@ def test_mutation_arguments_use_graphql_argument_under_native():
     a graphql-core GraphQLArgument, not a graphene Argument.
     """
     from graphql import GraphQLArgument
+
     from django_graphex.types import DjangoModelType
     from tests.models import Category
 
@@ -457,6 +451,6 @@ def test_mutation_arguments_use_graphql_argument_under_native():
 
     assert input_arg is not None, "Must have an input argument for 'create'"
     assert isinstance(input_arg, GraphQLArgument), (
-        f"Under GDX_BACKEND=native, mutation input arg must be GraphQLArgument, "
+        f"mutation input arg must be GraphQLArgument, "
         f"got {type(input_arg)}"
     )

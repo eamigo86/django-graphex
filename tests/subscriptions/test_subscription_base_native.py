@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
-"""WU6 — subscription.py Subscription base: native compile path (GDX_BACKEND-gated).
+"""WU6 — subscription.py Subscription base: native compile path.
 
-ADD-ONLY: the graphene ``Subscription(ObjectType)`` base + the graphene
-``_subscribe``/``SubscriptionField``/``Field`` path stay INTACT (design C-A,
-#1452 — NO metaclass swap, the swap is Phase 7). WU6 adds, behind
-``GDX_BACKEND=native``, the native subscription compile path:
+WU6 provides the native subscription compile path:
 
   * ``Subscription._build_native_event_type()`` — a graphql-core
     ``GraphQLObjectType`` whose every field carries a ``make_snake_resolver``
@@ -40,7 +37,6 @@ compile path (event type + ``_build_native_field`` mount seam) is UNCHANGED.
 from __future__ import annotations
 
 import asyncio
-import os
 
 import pytest
 
@@ -55,13 +51,6 @@ from graphql import (  # noqa: E402
 )
 
 from tests.models import Author, Post  # noqa: E402
-
-_NATIVE = os.environ.get("GDX_BACKEND", "graphene") == "native"
-
-native_only = pytest.mark.skipif(
-    not _NATIVE, reason="native subscription compile path (GDX_BACKEND=native)"
-)
-
 
 # ---------------------------------------------------------------------------
 # Helpers: build a Subscription subclass + a recording channel layer.
@@ -206,7 +195,6 @@ def test_channel_ownership_block_deleted():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_native_event_type_carries_gdx_and_snake_resolvers():
     """The native event type carries ``extensions['gdx']`` + snake-closure resolvers.
 
@@ -230,7 +218,6 @@ def test_native_event_type_carries_gdx_and_snake_resolvers():
     check_subscription_output_type(event_type)
 
 
-@native_only
 def test_native_field_is_direct_graphql_field_with_reduced_args():
     """``_build_native_field`` returns a DIRECT graphql-core ``GraphQLField``.
 
@@ -269,7 +256,6 @@ def test_native_field_is_direct_graphql_field_with_reduced_args():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_native_event_type_m2m_is_deliverable_pk_list():
     """An M2M wire field is a DELIVERABLE pk-list (``[ID]``), never a bare String.
 
@@ -311,7 +297,6 @@ def test_native_event_type_m2m_is_deliverable_pk_list():
     assert event_type.fields["author"].type is _GraphQLID
 
 
-@native_only
 async def test_native_drive_query_without_selected_m2m_delivers_clean():
     """A query NOT selecting an M2M field delivers with NO coercion error.
 
@@ -374,7 +359,6 @@ _DOC = parse("subscription { postEvent { id title author } }")
 _DOC_SCALARS = parse("subscription { postEvent { id title } }")
 
 
-@native_only
 async def test_native_subscribe_returns_channel_layer_source():
     """The native subscribe factory builds a started ``ChannelLayerSource`` (WU5)."""
     from django_graphex.subscriptions.source import ChannelLayerSource
@@ -394,7 +378,6 @@ async def test_native_subscribe_returns_channel_layer_source():
         await source.aclose()
 
 
-@native_only
 async def test_native_drive_delivers_serialize_once_flat_dict():
     """Driving the native source yields a projected flat-dict ExecutionResult.
 
@@ -428,7 +411,6 @@ async def test_native_drive_delivers_serialize_once_flat_dict():
     assert result.data == {"postEvent": {"id": "1", "title": "hello"}}
 
 
-@native_only
 async def test_native_authorize_deny_short_circuits_before_group_add():
     """A denying ``authorize_subscription`` raises BEFORE any ``group_add``."""
     from graphql import GraphQLError
@@ -457,7 +439,6 @@ async def test_native_authorize_deny_short_circuits_before_group_add():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 @pytest.mark.django_db(transaction=True)
 async def test_native_lookup_filter_delivers_verified_and_drops():
     """A ``__lookup`` native subscription DELIVERS a DB-verified event, DROPS others.
@@ -525,7 +506,6 @@ async def test_native_lookup_filter_delivers_verified_and_drops():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 async def test_index_routing_is_scope_only_not_client_filter():
     """Index routing uses SCOPE-ONLY (parity with the kept ``_subscribe`` hook).
 
@@ -553,7 +533,6 @@ async def test_index_routing_is_scope_only_not_client_filter():
         await source.aclose()
 
 
-@native_only
 async def test_index_routing_uses_server_scope_value():
     """When ``subscription_scope`` supplies the index field, route value-scoped."""
     layer = _RecordingLayer()
@@ -582,7 +561,6 @@ async def test_index_routing_uses_server_scope_value():
 # ---------------------------------------------------------------------------
 
 
-@native_only
 def test_native_field_does_not_use_graphene_field():
     """The native field builder must not return a graphene ``Field`` subclass.
 

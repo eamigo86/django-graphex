@@ -36,17 +36,13 @@ was RETIRED. See ``tests/native/test_pagination_native_only.py``. The graphene
 ``GenericPaginationField``/``CursorPageInfo`` factories survive as dead-but-defined
 for the ``__new__``-based graphene-backend tests only; they never fire on a build.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s8f_paginations_graphene_free.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import ast
 import inspect
-
-import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 # --------------------------------------------------------------------------- #

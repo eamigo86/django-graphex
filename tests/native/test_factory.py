@@ -12,16 +12,14 @@ Run: .venv/bin/python -m pytest -q tests/native/test_factory.py
 from __future__ import annotations
 
 import os
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
 
 import django
+
 django.setup()
 
-import pytest
 from django.db import models
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # Minimal base classes for testing
@@ -147,6 +145,7 @@ def test_native_factory_type_list_includes_standard_field_names():
 def test_graphene_factory_type_output_unchanged():
     """base_types.factory_type('output', ...) still works (graphene path unchanged)."""
     import graphene
+
     from django_graphex.base_types import factory_type
 
     class PersonType(graphene.ObjectType):
@@ -163,8 +162,9 @@ def test_graphene_factory_type_output_unchanged():
 def test_graphene_factory_type_list_unchanged():
     """base_types.factory_type('list', ...) still works (graphene path unchanged)."""
     import graphene
-    from django_graphex.types import DjangoListObjectType
+
     from django_graphex.base_types import factory_type
+    from django_graphex.types import DjangoListObjectType
 
     # Use a simple graphene ObjectType subclass
     class ListBase(DjangoListObjectType):

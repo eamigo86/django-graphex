@@ -455,12 +455,9 @@ class Subscription(NativeObjectType):
         return binding
 
     # -----------------------------------------------------------------------
-    # Native compile path (Phase 6 WU6) — GDX_BACKEND=native ONLY.
+    # Native compile path (Phase 6 WU6).
     #
-    # ADD-ONLY: the graphene ``Subscription(ObjectType)`` base + the graphene
-    # ``_subscribe``/``Field``/``SubscriptionField`` path above stay INTACT
-    # (design C-A, #1452 — the metaclass swap is Phase 7). These methods build
-    # the NATIVE compile path WITHOUT importing graphene: a graphql-core
+    # These methods build the NATIVE compile path: a graphql-core
     # ``GraphQLObjectType`` event type whose fields carry WU1 snake-closure
     # resolvers + ``extensions['gdx']``, a fully-populated WU5
     # ``SubscriptionSpec``, and a DIRECT graphql-core ``GraphQLField`` whose
@@ -910,11 +907,8 @@ class Subscription(NativeObjectType):
         The mounted ``SubscriptionField`` is the seam the native schema compiler
         reads (``schema_compiler.compile_native_root`` detects the field by class
         name and calls ``field.type._build_native_field()`` to build the DIRECT
-        graphql-core subscription field — the native compile path). The bespoke
-        graphene confirmation transport was removed in the WU11 cutover, so no
-        graphene ``subscribe`` resolver is wired here: under ``GDX_BACKEND=native``
-        the native field drives the source; under ``GDX_BACKEND=graphene`` the
-        type still mounts (the base compiles) but has no bespoke transport.
+        graphql-core subscription field — the native compile path). The native
+        field drives the source.
 
         Returns:
             The "SubscriptionField" carrying this subscription's output type.

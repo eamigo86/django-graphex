@@ -38,7 +38,6 @@ from pydantic._internal._model_construction import ModelMetaclass
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_object_subclass_keeps_pydantic_model_metaclass():
     """A native ObjectType subclass keeps ``type() is ModelMetaclass`` (#1452)."""
     from django_graphex.native.base import ObjectType
@@ -58,7 +57,6 @@ def test_object_subclass_keeps_pydantic_model_metaclass():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_meta_class_form_dispatches_options():
     """A class-style ``Meta`` is turned into kwargs and dispatched."""
     from django_graphex.native.base import ObjectType
@@ -82,7 +80,6 @@ def test_meta_class_form_dispatches_options():
     assert captured.get("results_field_name") == "rows"
 
 
-@pytest.mark.native_only
 def test_meta_dict_form_dispatches_options():
     """A dict-style ``Meta`` is dispatched identically to the class form.
 
@@ -114,7 +111,6 @@ def test_meta_dict_form_dispatches_options():
     assert captured.get("pagination") == "page"
 
 
-@pytest.mark.native_only
 def test_meta_deleted_after_dispatch():
     """``Meta`` is removed from the class after dispatch (graphene parity)."""
     from django_graphex.native.base import ObjectType
@@ -134,7 +130,6 @@ def test_meta_deleted_after_dispatch():
     assert "Meta" not in Sub.__dict__, "Meta should be deleted after dispatch"
 
 
-@pytest.mark.native_only
 def test_invalid_meta_type_raises():
     """A ``Meta`` that is neither a class nor a dict raises (graphene parity)."""
     from django_graphex.native.base import ObjectType
@@ -158,7 +153,6 @@ def test_invalid_meta_type_raises():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_abstract_base_skips_dispatch():
     """An abstract base does NOT invoke ``__init_subclass_with_meta__``."""
     from django_graphex.native.base import ObjectType
@@ -184,7 +178,6 @@ def test_abstract_base_skips_dispatch():
     assert "Concrete" in calls
 
 
-@pytest.mark.native_only
 def test_no_meta_dispatches_with_empty_options():
     """A subclass with NO ``Meta`` still dispatches (empty options)."""
     from django_graphex.native.base import ObjectType
@@ -202,7 +195,6 @@ def test_no_meta_dispatches_with_empty_options():
     assert ("Sub", {}) in captured
 
 
-@pytest.mark.native_only
 def test_base_defining_driver_does_not_run_it_on_itself():
     """A non-abstract base that DEFINES a driver must NOT run it on ITSELF.
 
@@ -238,7 +230,6 @@ def test_base_defining_driver_does_not_run_it_on_itself():
     assert "Concrete" in ran_on
 
 
-@pytest.mark.native_only
 def test_intermediate_override_runs_only_on_subclasses():
     """A subclass overriding the driver runs the PARENT's driver, not its own.
 
@@ -319,7 +310,6 @@ _PARITY_ATTRS = (
 )
 
 
-@pytest.mark.native_only
 def test_meta_exposes_full_parity_attr_surface():
     """``_meta`` exposes every parity-table attribute (no AttributeError)."""
     from django_graphex.native.base import ObjectType
@@ -332,7 +322,6 @@ def test_meta_exposes_full_parity_attr_surface():
         assert hasattr(Sub._meta, attr), f"_meta missing parity attribute {attr!r}"
 
 
-@pytest.mark.native_only
 def test_meta_defaults_match_graphene():
     """``_meta`` defaults mirror graphene's Options defaults exactly."""
     from django_graphex.native.base import ObjectType
@@ -373,7 +362,6 @@ def test_meta_defaults_match_graphene():
     assert m.model_operations == ("create", "update", "delete")
 
 
-@pytest.mark.native_only
 def test_meta_is_mutable_plain_assignment():
     """``_meta`` allows plain attribute assignment (no freeze workaround)."""
     from django_graphex.native.base import ObjectType
@@ -391,7 +379,6 @@ def test_meta_is_mutable_plain_assignment():
     assert Sub._meta.model == "SomeModel"
 
 
-@pytest.mark.native_only
 def test_meta_name_defaults_to_class_name():
     """``_meta.name`` defaults to the class name when ``Meta`` omits ``name``."""
     from django_graphex.native.base import ObjectType
@@ -408,7 +395,6 @@ def test_meta_name_defaults_to_class_name():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_graphene_descriptors_collected_into_meta_fields():
     """Native ``field()`` descriptors land in ``_meta.fields``.
 
@@ -437,7 +423,6 @@ def test_graphene_descriptors_collected_into_meta_fields():
     assert "node" in fields
 
 
-@pytest.mark.native_only
 def test_graphene_descriptors_not_pydantic_fields():
     """Native ``field()`` descriptors must NOT leak into Pydantic ``model_fields``."""
     from graphql import GraphQLList, GraphQLString
@@ -456,7 +441,6 @@ def test_graphene_descriptors_not_pydantic_fields():
     assert "errors" not in WithDescriptors.model_fields
 
 
-@pytest.mark.native_only
 def test_descriptors_survive_without_crash():
     """Declaring native ``field()`` descriptors does not raise PydanticUserError."""
     from django_graphex import field
@@ -477,7 +461,6 @@ def test_descriptors_survive_without_crash():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_container_constructor_round_trips_descriptor_payload():
     """``cls(**kwargs)`` round-trips a payload keyed by descriptor field names.
 
@@ -501,7 +484,6 @@ def test_container_constructor_round_trips_descriptor_payload():
     assert inst.errors == ["boom"]
 
 
-@pytest.mark.native_only
 def test_container_constructor_round_trips_driver_injected_field():
     """``cls(**resp)`` round-trips a DYNAMIC output field injected by the driver.
 
@@ -557,7 +539,6 @@ def test_container_constructor_round_trips_driver_injected_field():
     assert inst.errors == ["e"]
 
 
-@pytest.mark.native_only
 def test_container_constructor_partial_payload():
     """``cls(**kwargs)`` accepts a partial payload (missing keys default safely)."""
     from graphql import GraphQLList, GraphQLString
@@ -591,7 +572,6 @@ def test_container_constructor_partial_payload():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_concrete_driver_super_call_assigns_meta():
     """An S6b-shaped concrete driver's ``super().__init_subclass_with_meta__``
     must assign ``cls._meta`` via the native terminal (graphene-free).
@@ -631,7 +611,6 @@ def test_concrete_driver_super_call_assigns_meta():
     assert Concrete._meta.results_field_name == "rows"
 
 
-@pytest.mark.native_only
 def test_terminal_defaults_name_to_class_name():
     """When the driver passes no ``name``, the terminal defaults to ``cls.__name__``."""
     from django_graphex.native.base import NativeObjectTypeOptions, ObjectType
@@ -652,7 +631,6 @@ def test_terminal_defaults_name_to_class_name():
     assert NoNameConcrete._meta.name == "NoNameConcrete"
 
 
-@pytest.mark.native_only
 def test_terminal_trims_docstring_into_description():
     """The terminal sets ``_meta.description`` to the trimmed class docstring."""
     from django_graphex.native.base import NativeObjectTypeOptions, ObjectType
@@ -682,7 +660,6 @@ def test_terminal_trims_docstring_into_description():
     )
 
 
-@pytest.mark.native_only
 def test_terminal_explicit_description_wins_over_docstring():
     """An explicit ``description=`` passed to the terminal wins over the docstring."""
     from django_graphex.native.base import NativeObjectTypeOptions, ObjectType
@@ -707,7 +684,6 @@ def test_terminal_explicit_description_wins_over_docstring():
     assert HasDocstring._meta.description == "explicit"
 
 
-@pytest.mark.native_only
 def test_terminal_keeps_meta_mutable_post_assignment():
     """The terminal must NOT freeze ``_meta`` — plain assignment works after it.
 
@@ -736,7 +712,6 @@ def test_terminal_keeps_meta_mutable_post_assignment():
     assert Concrete._meta.graphql_output_type is sentinel
 
 
-@pytest.mark.native_only
 def test_terminal_builds_meta_when_none():
     """A driver that calls the terminal with ``_meta=None`` gets a fresh ``_meta``.
 
@@ -773,7 +748,6 @@ def test_terminal_builds_meta_when_none():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_input_type_still_pydantic_model_metaclass():
     """InputType subclass still has ``type() is ModelMetaclass``."""
     from django_graphex.native.base import InputType
@@ -788,7 +762,6 @@ def test_input_type_still_pydantic_model_metaclass():
     assert type(DriverGuardSearchInput) is ModelMetaclass
 
 
-@pytest.mark.native_only
 def test_input_type_real_fields_still_work():
     """InputType real annotated fields still validate and round-trip."""
     from django_graphex.native.base import InputType
@@ -803,7 +776,6 @@ def test_input_type_real_fields_still_work():
     assert obj["query"] == "hi"  # __getitem__ mixin unchanged
 
 
-@pytest.mark.native_only
 def test_input_type_camel_alias_still_works():
     """InputType camelCase alias construction is unchanged."""
     from django_graphex.native.base import InputType
@@ -815,7 +787,6 @@ def test_input_type_camel_alias_still_works():
     assert obj.first_name == "Carol"
 
 
-@pytest.mark.native_only
 def test_input_type_still_registers_and_has_input_meta():
     """InputType still auto-registers and keeps its graphql_input_type _meta."""
     from django_graphex.native.base import InputType, _gdx_input_registry

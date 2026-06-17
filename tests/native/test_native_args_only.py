@@ -30,8 +30,6 @@ import sys
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #

@@ -9,9 +9,6 @@ and the per-key dual-read / warn-once fallback shim has been removed. The public
 name ``graphex_or_graphene_settings`` is retained as a backwards-compatible
 alias for the GRAPHEX-only reader so existing reader call-sites (views.py and
 the subscription transports) need no edits.
-
-Backend-agnostic: these tests run under BOTH GDX_BACKEND=native and
-GDX_BACKEND=graphene (no GDX_BACKEND pre-condition needed here).
 """
 
 from __future__ import annotations

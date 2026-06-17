@@ -12,7 +12,7 @@ These tests pin the PLUMBING contract for schema-scoped registries (item-b):
   are NOT the global module-level dicts) — the seam later slices (B3-B5) use to
   fork a per-schema namespace.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest -q \
+Run: .venv/bin/python -m pytest -q \
     tests/native/test_schema_registries.py
 """
 from __future__ import annotations
@@ -25,9 +25,6 @@ import django
 
 django.setup()
 
-import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 def test_default_pair_returns_singleton():

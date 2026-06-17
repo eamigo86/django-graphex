@@ -90,14 +90,13 @@ def _rendered_field_name(field: Any, attr_name: str) -> str:
 
 
 def _collect_root_attrs(root: type) -> dict[str, Any]:
-    """Collect native mutation ``GraphQLField`` attributes graphene dropped.
+    """Collect native mutation ``GraphQLField`` attributes the metaclass dropped.
 
-    graphene's ObjectType metaclass does NOT mount raw graphql-core
+    The ``ObjectType`` metaclass does NOT mount raw graphql-core
     ``GraphQLField`` objects (e.g. native mutation fields returned by
-    ``DjangoModelType.CreateField()`` under GDX_BACKEND=native): they stay as
-    plain class attributes in ``__dict__`` but never enter ``_meta.fields``.
-    Walk the MRO so subclassed roots still surface them; the most-derived class
-    wins on name collisions.
+    ``DjangoModelType.CreateField()``): they stay as plain class attributes in
+    ``__dict__`` but never enter ``_meta.fields``. Walk the MRO so subclassed
+    roots still surface them; the most-derived class wins on name collisions.
 
     Membership in ``_NATIVE_FIELD_REGISTRY`` (not a blanket
     ``isinstance(value, GraphQLField)`` scan) is the gate: a recovered attribute

@@ -1,25 +1,24 @@
 """Tests for B1: DjangoObjectType native branch.
 
-Under GDX_BACKEND=native, DjangoObjectType subclasses must:
+DjangoObjectType subclasses must:
 - Build a GraphQLObjectType via the native compile path.
 - Store compiled type on _meta.graphql_output_type.
 - Attach extensions["gdx"] populated with GdxPayload.
 - Pass the honest metaclass test (Phase-7 re-scope; class is NOT ModelMetaclass).
 
-All tests run under GDX_BACKEND=native via the native_only mark.
+All tests run.
 """
 from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 
 @pytest.mark.django_db
 def test_django_object_type_native_compiles_graphql_output_type():
-    """Under GDX_BACKEND=native, DjangoObjectType subclass must have
+    """DjangoObjectType subclass must have
     _meta.graphql_output_type set to a GraphQLObjectType."""
     from graphql import GraphQLObjectType
+
     from django_graphex.types import DjangoObjectType
     from tests.models import Category
 
@@ -39,7 +38,7 @@ def test_django_object_type_native_compiles_graphql_output_type():
 
 @pytest.mark.django_db
 def test_django_object_type_native_extensions_gdx():
-    """Under GDX_BACKEND=native, the compiled GraphQLObjectType must carry
+    """the compiled GraphQLObjectType must carry
     extensions['gdx'] = GdxPayload."""
     from django_graphex.native.bridge import GdxPayload
     from django_graphex.types import DjangoObjectType
@@ -72,8 +71,9 @@ def test_django_object_type_honest_metaclass():
     Phase-3 assertion is now INVERTED: ``type(X) IS ModelMetaclass``.
     """
     # S6b re-parent: metaclass is now pydantic ModelMetaclass.
-    from pydantic._internal._model_construction import ModelMetaclass
     from graphql import GraphQLObjectType
+    from pydantic._internal._model_construction import ModelMetaclass
+
     from django_graphex.types import DjangoObjectType
     from tests.models import Category
 
@@ -104,6 +104,7 @@ def test_polymorphic_types_reparented_onto_native_base():
     ``test_django_object_type_honest_metaclass`` — assert the POSITIVE native
     invariant (no graphene import needed)."""
     from pydantic._internal._model_construction import ModelMetaclass
+
     from django_graphex.native.base import ObjectType as NativeObjectType
     from django_graphex.types import DjangoInterfaceType, DjangoUnionType
 
@@ -120,7 +121,8 @@ def test_polymorphic_types_reparented_onto_native_base():
 @pytest.mark.django_db
 def test_django_object_type_native_fields_include_scalars():
     """Compiled GraphQLObjectType must include scalar fields for the model."""
-    from graphql import GraphQLObjectType, GraphQLNonNull, GraphQLString
+    from graphql import GraphQLNonNull, GraphQLObjectType, GraphQLString
+
     from django_graphex.types import DjangoObjectType
     from tests.models import Category
 

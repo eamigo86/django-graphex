@@ -19,7 +19,6 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_compile_input_type_multi_word_field_out_name():
     """Multi-word field: dict key = camelCase alias, out_name = snake_name."""
     from django_graphex.native.input_compiler import compile_input_type
@@ -35,7 +34,6 @@ def test_compile_input_type_multi_word_field_out_name():
     )
 
 
-@pytest.mark.native_only
 def test_compile_input_type_snake_key_raises():
     """Snake-case key must NOT be in fields dict (wire uses camelCase)."""
     from django_graphex.native.input_compiler import compile_input_type
@@ -48,7 +46,6 @@ def test_compile_input_type_snake_key_raises():
         _ = result.fields["first_name"]
 
 
-@pytest.mark.native_only
 def test_compile_input_type_single_word_field():
     """Single-word field: key == out_name (no camel conversion needed)."""
     from django_graphex.native.input_compiler import compile_input_type
@@ -68,10 +65,10 @@ def test_compile_input_type_single_word_field():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_compile_input_type_required_field_is_nonnull():
     """Required (no default) fields must be wrapped in GraphQLNonNull."""
     from graphql import GraphQLNonNull
+
     from django_graphex.native.input_compiler import compile_input_type
 
     class RequiredModel(BaseModel):
@@ -84,10 +81,10 @@ def test_compile_input_type_required_field_is_nonnull():
     )
 
 
-@pytest.mark.native_only
 def test_compile_input_type_optional_field_is_nullable():
     """Optional fields (with default / Optional type) must be nullable."""
     from graphql import GraphQLNonNull
+
     from django_graphex.native.input_compiler import compile_input_type
 
     class OptionalModel(BaseModel):
@@ -100,7 +97,6 @@ def test_compile_input_type_optional_field_is_nullable():
     )
 
 
-@pytest.mark.native_only
 def test_compile_input_type_gdx_extension_present():
     """Compiled type must have extensions['gdx'] as a GdxInputSpec instance."""
     from django_graphex.native.input_compiler import GdxInputSpec, compile_input_type
@@ -116,7 +112,6 @@ def test_compile_input_type_gdx_extension_present():
     )
 
 
-@pytest.mark.native_only
 def test_compile_input_type_multiword_build_assert():
     """Build-time: assert out_name != alias fires for multi-word fields.
 
@@ -137,7 +132,6 @@ def test_compile_input_type_multiword_build_assert():
     assert result.fields["lastName"].out_name == "last_name"
 
 
-@pytest.mark.native_only
 def test_compile_input_type_fields_thunk_idempotent():
     """Fields thunk: calling .fields twice returns consistent results."""
     from django_graphex.native.input_compiler import compile_input_type
@@ -157,7 +151,6 @@ def test_compile_input_type_fields_thunk_idempotent():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_coerce_input_valid_returns_model_instance():
     """coerce_input with valid data returns a BaseModel instance."""
     from django_graphex.native.input_compiler import coerce_input
@@ -170,11 +163,11 @@ def test_coerce_input_valid_returns_model_instance():
     assert result.name == "Alice"
 
 
-@pytest.mark.native_only
 def test_coerce_input_accepts_camel_alias():
     """coerce_input with camelCase alias (via alias_generator) returns model instance."""
     from pydantic import ConfigDict
     from pydantic.alias_generators import to_camel
+
     from django_graphex.native.input_compiler import coerce_input
 
     class AliasModel(BaseModel):
@@ -186,10 +179,10 @@ def test_coerce_input_accepts_camel_alias():
     assert result.first_name == "Alice"
 
 
-@pytest.mark.native_only
 def test_coerce_input_invalid_raises_graphql_error():
     """coerce_input with invalid data raises GraphQLError with VALIDATION_ERROR code."""
     from graphql import GraphQLError
+
     from django_graphex.native.input_compiler import coerce_input
 
     class RequiredModel(BaseModel):
@@ -203,10 +196,10 @@ def test_coerce_input_invalid_raises_graphql_error():
     assert err.extensions.get("code") == "VALIDATION_ERROR"
 
 
-@pytest.mark.native_only
 def test_coerce_input_error_extensions_has_fields():
     """ValidationError extensions must include 'fields' describing missing field."""
     from graphql import GraphQLError
+
     from django_graphex.native.input_compiler import coerce_input
 
     class RequiredModel(BaseModel):
@@ -219,10 +212,10 @@ def test_coerce_input_error_extensions_has_fields():
     assert "fields" in extensions, "extensions must have 'fields' key"
 
 
-@pytest.mark.native_only
 def test_coerce_input_no_pydantic_url_in_error():
     """The errors.pydantic.dev URL must NEVER appear in serialized error extensions."""
     from graphql import GraphQLError
+
     from django_graphex.native.input_compiler import coerce_input
 
     class RequiredModel(BaseModel):
@@ -238,10 +231,10 @@ def test_coerce_input_no_pydantic_url_in_error():
     )
 
 
-@pytest.mark.native_only
 def test_coerce_input_error_message_prefix():
     """GraphQLError message must start with 'Input validation failed'."""
     from graphql import GraphQLError
+
     from django_graphex.native.input_compiler import coerce_input
 
     class RequiredModel(BaseModel):
@@ -258,10 +251,10 @@ def test_coerce_input_error_message_prefix():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_translate_validation_error_no_url():
     """translate_validation_error never includes errors.pydantic.dev URL."""
     from pydantic import ValidationError
+
     from django_graphex.native.input_compiler import translate_validation_error
 
     class Strict(BaseModel):
@@ -275,10 +268,10 @@ def test_translate_validation_error_no_url():
         assert "errors.pydantic.dev" not in serialized
 
 
-@pytest.mark.native_only
 def test_translate_validation_error_returns_dict():
     """translate_validation_error returns a dict with field keys."""
     from pydantic import ValidationError
+
     from django_graphex.native.input_compiler import translate_validation_error
 
     class Strict(BaseModel):
@@ -298,11 +291,12 @@ def test_translate_validation_error_returns_dict():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.native_only
 def test_compile_input_type_optional_none_union():
     """Optional[T] / T | None fields are treated as nullable."""
     from typing import Optional
+
     from graphql import GraphQLNonNull
+
     from django_graphex.native.input_compiler import compile_input_type
 
     class NullableModel(BaseModel):
@@ -313,10 +307,10 @@ def test_compile_input_type_optional_none_union():
     assert not isinstance(field_type, GraphQLNonNull)
 
 
-@pytest.mark.native_only
 def test_compile_input_type_with_explicit_alias():
     """Field with explicit Pydantic alias uses that alias as the wire key."""
     from pydantic import Field
+
     from django_graphex.native.input_compiler import compile_input_type
 
     class ExplicitAliasModel(BaseModel):
@@ -327,10 +321,10 @@ def test_compile_input_type_with_explicit_alias():
     assert "myCustomAlias" in result.fields
 
 
-@pytest.mark.native_only
 def test_compile_input_type_enum_field():
     """Enum-annotated fields should compile without error."""
     import enum
+
     from django_graphex.native.input_compiler import compile_input_type
 
     class Status(enum.Enum):
@@ -344,20 +338,20 @@ def test_compile_input_type_enum_field():
     assert "status" in result.fields  # single word, no camel needed
 
 
-@pytest.mark.native_only
 def test_python_type_to_gql_none_type():
     """_python_type_to_gql(None) should return GraphQLString."""
     from graphql import GraphQLString
+
     from django_graphex.native.input_compiler import _python_type_to_gql
 
     result = _python_type_to_gql(None)
     assert result is GraphQLString
 
 
-@pytest.mark.native_only
 def test_python_type_to_gql_datetime():
     """_python_type_to_gql maps datetime types to GDX scalars."""
     import datetime
+
     from django_graphex.native.input_compiler import _python_type_to_gql
 
     # Should return a scalar (either GdxDate or String fallback)
@@ -365,10 +359,10 @@ def test_python_type_to_gql_datetime():
     assert result is not None
 
 
-@pytest.mark.native_only
 def test_unwrap_optional_typing_union():
     """_unwrap_optional handles typing.Optional / typing.Union."""
     from typing import Optional, Union
+
     from django_graphex.native.input_compiler import _unwrap_optional
 
     inner, is_opt = _unwrap_optional(Optional[str])
@@ -376,7 +370,6 @@ def test_unwrap_optional_typing_union():
     assert is_opt is True
 
 
-@pytest.mark.native_only
 def test_unwrap_optional_non_optional():
     """_unwrap_optional on non-optional type returns (type, False)."""
     from django_graphex.native.input_compiler import _unwrap_optional
@@ -386,7 +379,6 @@ def test_unwrap_optional_non_optional():
     assert is_opt is False
 
 
-@pytest.mark.native_only
 def test_unwrap_optional_py310_union():
     """_unwrap_optional handles Python 3.10+ X | None union syntax."""
     from django_graphex.native.input_compiler import _unwrap_optional
@@ -398,11 +390,12 @@ def test_unwrap_optional_py310_union():
     assert is_opt is True
 
 
-@pytest.mark.native_only
 def test_python_type_to_gql_enum():
     """_python_type_to_gql returns GraphQLString for enum types."""
     import enum
+
     from graphql import GraphQLString
+
     from django_graphex.native.input_compiler import _python_type_to_gql
 
     class MyEnum(enum.Enum):
@@ -412,10 +405,10 @@ def test_python_type_to_gql_enum():
     assert result is GraphQLString
 
 
-@pytest.mark.native_only
 def test_unwrap_optional_multi_union():
     """_unwrap_optional with Union[A, B, C] (no None) returns (union, False)."""
     from typing import Union
+
     from django_graphex.native.input_compiler import _unwrap_optional
 
     # Union with multiple non-None types — not Optional
@@ -427,10 +420,10 @@ def test_unwrap_optional_multi_union():
     assert isinstance(is_opt, bool)
 
 
-@pytest.mark.native_only
 def test_python_type_to_gql_unknown_type_fallback():
     """_python_type_to_gql returns GraphQLString for unknown types."""
     from graphql import GraphQLString
+
     from django_graphex.native.input_compiler import _python_type_to_gql
 
     class SomeCustomType:
@@ -440,10 +433,10 @@ def test_python_type_to_gql_unknown_type_fallback():
     assert result is GraphQLString
 
 
-@pytest.mark.native_only
 def test_unwrap_optional_multi_non_none_union():
     """_unwrap_optional with Union[A, B, None] (2 non-None) returns (union, False)."""
     from typing import Union
+
     from django_graphex.native.input_compiler import _unwrap_optional
 
     # Union[str, int, None] → can't collapse to single type (typing.Union path)
@@ -453,7 +446,6 @@ def test_unwrap_optional_multi_non_none_union():
     assert is_opt is False
 
 
-@pytest.mark.native_only
 def test_unwrap_optional_py310_multi_non_none():
     """_unwrap_optional with str | int | None (types.UnionType) returns (union, False)."""
     from django_graphex.native.input_compiler import _unwrap_optional
@@ -464,10 +456,10 @@ def test_unwrap_optional_py310_multi_non_none():
     assert is_opt is False
 
 
-@pytest.mark.native_only
 def test_native_scalar_map_import_error_fallback(monkeypatch):
     """_native_scalar_map returns {} when scalars module can't be imported."""
     import sys
+
     from django_graphex.native import input_compiler
 
     # Temporarily make scalars unimportable

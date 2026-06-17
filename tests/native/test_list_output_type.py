@@ -2,7 +2,7 @@
 
 Tests (WU1b gate, task 1.7):
   (a) A DjangoListObjectType subclass has non-None _meta.graphql_output_type
-      (GraphQLObjectType) after app-ready compilation under GDX_BACKEND=native.
+      (GraphQLObjectType) after app-ready compilation.
   (b) extensions['gdx'] contains pagination arg metadata (results_field_name).
   (c) 'results' and 'totalCount' (exposed as 'totalCount' SDL name) fields are
       present in the compiled container GraphQLObjectType.
@@ -13,15 +13,12 @@ Tests (WU1b gate, task 1.7):
       mirroring test_output_identity_invariant.py pattern for list containers.
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest tests/native/test_list_output_type.py \
+    .venv/bin/python -m pytest tests/native/test_list_output_type.py \
         -q -o addopts=""
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # (a) + (b) + (c): list type has graphql_output_type with gdx + required fields
@@ -30,7 +27,7 @@ pytestmark = pytest.mark.native_only
 
 @pytest.mark.django_db
 def test_list_output_type_has_graphql_output_type():
-    """Under GDX_BACKEND=native a DjangoListObjectType subclass must have a
+    """a DjangoListObjectType subclass must have a
     non-None _meta.graphql_output_type that is a GraphQLObjectType after
     compile_all_outputs() runs."""
     from graphql import GraphQLObjectType
@@ -189,7 +186,7 @@ def test_list_output_type_schema_assembly_no_duplicate():
     This mirrors test_output_identity_invariant.py but for the list container path."""
     from graphql import GraphQLField, GraphQLObjectType, GraphQLSchema
 
-    from django_graphex.mutation import DjangoModelMutation, _NATIVE_FIELD_REGISTRY
+    from django_graphex.mutation import _NATIVE_FIELD_REGISTRY, DjangoModelMutation
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.types import DjangoListObjectType, DjangoObjectType
     from tests.models import Author

@@ -11,15 +11,10 @@ Tests:
 Gate spec: Domain 1 §Compile-at-app-ready + §Circular-reference-guard
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest tests/native/test_global_output_registry.py \
+    .venv/bin/python -m pytest tests/native/test_global_output_registry.py \
         -q -o addopts=""
 """
 from __future__ import annotations
-
-import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # (a) Global output registry exists in native/base.py
@@ -45,7 +40,9 @@ def test_gdx_output_registry_exists_in_base():
 
 def test_compile_all_outputs_exists():
     """compile_all_outputs must be importable from registry_compiler."""
-    from django_graphex.native.registry_compiler import compile_all_outputs  # noqa: F401
+    from django_graphex.native.registry_compiler import (
+        compile_all_outputs,  # noqa: F401
+    )
 
 
 def test_compile_all_outputs_populates_registry():
@@ -61,7 +58,6 @@ def test_compile_all_outputs_populates_registry():
     # Importing the test schema triggers DjangoObjectType/DjangoListObjectType
     # __init_subclass_with_meta__ which registers into _gdx_output_registry.
     import tests.schema  # noqa: F401 — side-effect: registers test types
-
     from django_graphex.native.base import _gdx_output_registry
     from django_graphex.native.registry_compiler import compile_all_outputs
 
@@ -108,12 +104,13 @@ def test_circular_reference_ab_ba_no_recursion():
     We use plain model classes (not real Django models) to keep this a pure
     unit test, mirroring the existing test_registry_compiler.py pattern.
     """
+    from graphql import GraphQLObjectType
+
     from django_graphex.native.registry_compiler import (
         NativeOutputRegistry,
-        compile_all,
         _reset_in_progress,
+        compile_all,
     )
-    from graphql import GraphQLObjectType
 
     class ModelCircleA:
         pass

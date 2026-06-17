@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.native_only
-
 
 @pytest.mark.django_db
 def test_native_filter_input_collision_multi_path_same_model():

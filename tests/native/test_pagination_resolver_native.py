@@ -16,15 +16,12 @@ Gate (per the Phase-5 plan, WU6a):
 - already_paginated prevents double-pagination.
 
 Run:
-    GDX_BACKEND=native .venv/bin/python -m pytest \
+    .venv/bin/python -m pytest \
         tests/native/test_pagination_resolver_native.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # Shared native schema builder (one paginated+filtered list field).

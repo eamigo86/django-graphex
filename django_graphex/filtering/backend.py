@@ -82,10 +82,7 @@ class NativeFilterBackend(FilterBackend):
             A ``GraphQLInputObjectType`` (or ``None`` when no filterable fields
             are declared).
         """
-        # Native (graphql-core) ``<Model>FilterInput`` builder. The legacy
-        # graphene arm (``filtering/schema.build_filter_input_type``) was the dead
-        # half of the dual-backend seam under ``GDX_BACKEND=native``; it is
-        # collapsed away here (the graphene module is pruned in a later slice).
+        # Native (graphql-core) ``<Model>FilterInput`` builder.
         from .native_schema import build_filter_input_type
 
         return build_filter_input_type(

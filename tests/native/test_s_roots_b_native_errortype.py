@@ -22,7 +22,7 @@ final test compiles a payload carrying ``errors = List(ErrorType)`` and asserts
 the ``errors`` field IS present with element type = the ErrorType
 ``GraphQLObjectType`` (field + messages). It FAILS if ErrorType is mis-routed.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s_roots_b_native_errortype.py -q -o addopts=""
 """
 from __future__ import annotations
@@ -31,9 +31,6 @@ import ast
 import inspect
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # ErrorType is NATIVE (pydantic ModelMetaclass, NOT a graphene.ObjectType)

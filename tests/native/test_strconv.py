@@ -9,16 +9,13 @@ Tests:
 
 Zero graphene imports required.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest tests/native/test_strconv.py -q
+Run: .venv/bin/python -m pytest tests/native/test_strconv.py -q
 """
 from __future__ import annotations
 
 import warnings
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # to_camel_case

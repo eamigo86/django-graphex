@@ -214,18 +214,8 @@ def test_input_cache_reuses_built_type():
 
 
 # --------------------------------------------------------------------------- #
-# WU3 — native FilterInput builder (GDX_BACKEND=native only)                   #
+# WU3 — native FilterInput builder                                            #
 # --------------------------------------------------------------------------- #
-import os as _os
-
-NATIVE = _os.environ.get("GDX_BACKEND", "graphene") == "native"
-pytestmark_native = pytest.mark.skipif(
-    not NATIVE,
-    reason="GDX_BACKEND != native — native FilterInput builder tests skipped.",
-)
-
-
-@pytestmark_native
 def test_native_build_filter_input_type_returns_graphql_input_object_type():
     from graphql import GraphQLInputObjectType
 
@@ -242,7 +232,6 @@ def test_native_build_filter_input_type_returns_graphql_input_object_type():
     assert isinstance(built, GraphQLInputObjectType)
 
 
-@pytestmark_native
 def test_native_filter_input_fields_are_non_empty():
     from django_graphex.filtering.native_schema import (
         build_filter_input_type as native_build,
@@ -260,7 +249,6 @@ def test_native_filter_input_fields_are_non_empty():
     assert "rating" in built.fields
 
 
-@pytestmark_native
 def test_native_filter_input_carries_extensions_gdx():
     from django_graphex.filtering.native_schema import (
         build_filter_input_type as native_build,
@@ -273,7 +261,6 @@ def test_native_filter_input_carries_extensions_gdx():
     assert built.extensions["gdx"] is not None
 
 
-@pytestmark_native
 def test_native_filter_every_field_carries_snake_out_name():
     """The cardinal footgun: EVERY field (top-level + nested lookups) must carry
     an ``out_name`` so the coerced dict uses snake ORM keys, never camelCase wire
@@ -321,7 +308,6 @@ def test_native_filter_every_field_carries_snake_out_name():
             )
 
 
-@pytestmark_native
 def test_native_filter_isnull_field_out_name_is_isnull():
     from django_graphex.filtering.native_schema import (
         build_filter_input_type as native_build,
@@ -336,7 +322,6 @@ def test_native_filter_isnull_field_out_name_is_isnull():
     assert isnull_field.out_name == "isnull"
 
 
-@pytestmark_native
 def test_native_choices_field_produces_enum(db):
     from graphql import GraphQLEnumType
 
@@ -362,7 +347,6 @@ def test_native_choices_field_produces_enum(db):
     )
 
 
-@pytestmark_native
 def test_native_filter_to_q_round_trip_icontains_and_isnull(db):
     """End-to-end: coerce a wire payload through the native FilterInput, then
     translate to a Q. The coerced dict MUST use snake keys (via out_name) so
@@ -393,7 +377,6 @@ def test_native_filter_to_q_round_trip_icontains_and_isnull(db):
     assert touched is False
 
 
-@pytestmark_native
 def test_native_filter_to_q_round_trip_multiword_field(db):
     """Multi-word field: wire camelCase -> out_name snake -> correct Q.
     This is the canonical out_name footgun guard.
@@ -424,7 +407,6 @@ def test_native_filter_to_q_round_trip_multiword_field(db):
     assert q == models.Q(published_date__isnull=True)
 
 
-@pytestmark_native
 def test_native_backend_build_input_type_returns_graphql_input_object_type():
     from graphql import GraphQLInputObjectType
 
@@ -438,7 +420,6 @@ def test_native_backend_build_input_type_returns_graphql_input_object_type():
     assert backend.build_input_type(FilterModel, None, registry=R) is None
 
 
-@pytestmark_native
 def test_native_custom_filter_field_uses_declared_graphene_type():
     """A custom ``@filter_field(GraphQLInt)`` arg must render as the matching
     graphql-core scalar (``GraphQLInt``) under the native backend, NOT degrade
@@ -484,7 +465,6 @@ def test_native_custom_filter_field_uses_declared_graphene_type():
     assert fields["textSearch"].out_name == "text_search"
 
 
-@pytestmark_native
 def test_native_custom_filter_field_no_graphene_type_falls_back_to_string():
     """When no ``graphene_type`` is present, the custom arg falls back to
     ``GraphQLString`` (matches graphene's default)."""
@@ -512,9 +492,7 @@ def test_native_custom_filter_field_no_graphene_type_falls_back_to_string():
 
 # --------------------------------------------------------------------------- #
 # WU4 — recursion (and/or/not), completeness assert, native translate enum     #
-# (GDX_BACKEND=native only)                                                     #
 # --------------------------------------------------------------------------- #
-@pytestmark_native
 def test_native_filter_input_has_and_or_not_combinators():
     """The native filter input MUST expose the recursive ``and`` / ``or`` /
     ``not`` combinators, mirroring the graphene builder for SDL parity.
@@ -558,7 +536,6 @@ def test_native_filter_input_has_and_or_not_combinators():
     assert fields["not"].out_name == "not"
 
 
-@pytestmark_native
 def test_native_filter_self_referential_recursion_resolves():
     """Category->parent->Category (self-relation FK): the nested relation filter
     input must resolve with NON-EMPTY ``.fields`` and no RecursionError, proving
@@ -571,6 +548,7 @@ def test_native_filter_self_referential_recursion_resolves():
     from django_graphex.filtering.native_schema import (
         build_filter_input_type as native_build,
     )
+
     from .models import NestedTreeNode
 
     R = Registry()
@@ -601,12 +579,13 @@ def test_native_filter_self_referential_recursion_resolves():
     assert dict(built.fields)
 
 
-@pytestmark_native
 def test_native_assert_filter_type_complete_passes_for_valid_type():
     """``_assert_filter_type_complete`` forces thunk eval and accepts a type with
     non-empty fields without raising."""
     from django_graphex.filtering.native_schema import (
         _assert_filter_type_complete,
+    )
+    from django_graphex.filtering.native_schema import (
         build_filter_input_type as native_build,
     )
 
@@ -616,7 +595,6 @@ def test_native_assert_filter_type_complete_passes_for_valid_type():
     _assert_filter_type_complete(built)
 
 
-@pytestmark_native
 def test_native_assert_filter_type_complete_raises_on_empty_fields():
     """``_assert_filter_type_complete`` raises AssertionError when a thunk
     evaluates to empty ``.fields`` (the silent-empty footgun A6 catches)."""
@@ -631,7 +609,6 @@ def test_native_assert_filter_type_complete_raises_on_empty_fields():
         _assert_filter_type_complete(empty)
 
 
-@pytestmark_native
 def test_native_build_filter_input_type_wires_completeness_assert(monkeypatch):
     """``build_filter_input_type`` MUST wire ``_assert_filter_type_complete`` so a
     type that resolves to empty fields is caught at BUILD time, not silently

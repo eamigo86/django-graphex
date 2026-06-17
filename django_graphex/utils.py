@@ -457,12 +457,10 @@ def _get_field_optimize_hook(gql_type: Any, graphql_field_name: str) -> Any | No
     """
     if gql_type is None:
         return None
-    # Dual-backend: graphene carries the source class as ``gql_type.graphene_type``;
-    # native carries it on ``extensions['gdx']._meta.graphene_type``. Reading the
-    # raw attribute returns None for native NESTED types (they have no direct
-    # ``graphene_type``) so the bridge is required — otherwise every nested
-    # ``optimize_<field>`` hook is silently inert under GDX_BACKEND=native
-    # (DEFECT A).
+    # The native source class is carried on ``extensions['gdx']._meta.graphene_type``.
+    # Reading the raw attribute returns None for native NESTED types (they have no
+    # direct ``graphene_type``) so the bridge is required — otherwise every nested
+    # ``optimize_<field>`` hook is silently inert (DEFECT A).
     from django_graphex.native.compat import _gdx_graphene_type
 
     parent = _gdx_graphene_type(gql_type)
@@ -2279,7 +2277,7 @@ def _resolve_results_paginator(
     # NATIVE path (WU6b): NativePaginationField.wrap_resolve returns a PLAIN
     # closure (not a partial) with ``paginator_instance`` set directly on it.
     # Read it off the resolve callable itself so the window optimizer can recover
-    # the paginator under GDX_BACKEND=native.
+    # the paginator.
     if paginator is None:
         paginator = getattr(resolve_fn, "paginator_instance", None)
     if not isinstance(paginator, BaseDjangoGraphqlPagination):
@@ -2856,11 +2854,10 @@ def build_filtered_prefetches(
     if not field_node.selection_set:
         return [], {}
 
-    # Dual-backend (WU6b): graphene carries the source class as
-    # ``return_type.graphene_type``; native carries it on
-    # ``extensions['gdx']._meta``. ``_gdx_meta`` reads either, so the root model
-    # is recovered under GDX_BACKEND=native too — without it ``model`` is None
-    # and the walker never finds nested list fields (window-prefetch never fires).
+    # WU6b: the native source class is carried on ``extensions['gdx']._meta``.
+    # ``_gdx_meta`` reads it, so the root model is recovered — without it ``model``
+    # is None and the walker never finds nested list fields (window-prefetch never
+    # fires).
     from django_graphex.native.compat import _gdx_meta
 
     try:

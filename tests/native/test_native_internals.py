@@ -5,14 +5,11 @@ Tests verify:
   GraphQLInputObjectType registered without extensions["gdx"].
 - The assertion message names the type.
 
-Run under GDX_BACKEND=native via native_only mark.
+Run.
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # Task 2.10: extensions["gdx"] assertion on compiled input types
@@ -22,7 +19,7 @@ pytestmark = pytest.mark.native_only
 def test_compile_input_type_always_carries_gdx_extension():
     """Every GraphQLInputObjectType from compile_input_type carries extensions["gdx"]."""
     from django_graphex.native.base import InputType
-    from django_graphex.native.input_compiler import compile_input_type, GdxInputSpec
+    from django_graphex.native.input_compiler import GdxInputSpec, compile_input_type
 
     class _WuBGdxExtInput(InputType):
         name: str
@@ -44,10 +41,16 @@ def test_assert_gdx_bridge_catches_input_type_without_extension():
     A manually constructed GraphQLInputObjectType without extensions["gdx"]
     must be caught at build time.
     """
-    from graphql import GraphQLInputObjectType, GraphQLSchema, GraphQLObjectType, GraphQLField, GraphQLString
-    from django_graphex.native.bridge import assert_gdx_bridge, GdxPayload
+    from graphql import (
+        GraphQLField,
+        GraphQLInputField,
+        GraphQLInputObjectType,
+        GraphQLObjectType,
+        GraphQLSchema,
+        GraphQLString,
+    )
 
-    from graphql import GraphQLInputField
+    from django_graphex.native.bridge import GdxPayload, assert_gdx_bridge
     # Build a bare input type with NO extensions["gdx"]
     bare_input_type = GraphQLInputObjectType(
         "BareInput",
@@ -57,6 +60,7 @@ def test_assert_gdx_bridge_catches_input_type_without_extension():
     # Build a minimal schema with a query type (has gdx) and the bare input type
     # To include the input type in the schema, we need to reference it from a field arg
     from graphql import GraphQLArgument, GraphQLNonNull
+
     from django_graphex.native.ir import GdxMeta
     gdx_payload = GdxPayload(GdxMeta(name="Query"))
 
@@ -82,12 +86,19 @@ def test_assert_gdx_bridge_catches_input_type_without_extension():
 
 def test_assert_gdx_bridge_passes_for_compiled_input_type():
     """assert_gdx_bridge passes when all input types carry extensions["gdx"]."""
-    from graphql import GraphQLInputObjectType, GraphQLSchema, GraphQLObjectType, GraphQLField, GraphQLString
-    from graphql import GraphQLArgument
-    from django_graphex.native.bridge import assert_gdx_bridge, GdxPayload
-    from django_graphex.native.ir import GdxMeta
-    from django_graphex.native.input_compiler import compile_input_type, GdxInputSpec
+    from graphql import (
+        GraphQLArgument,
+        GraphQLField,
+        GraphQLInputObjectType,
+        GraphQLObjectType,
+        GraphQLSchema,
+        GraphQLString,
+    )
+
     from django_graphex.native.base import InputType
+    from django_graphex.native.bridge import GdxPayload, assert_gdx_bridge
+    from django_graphex.native.input_compiler import GdxInputSpec, compile_input_type
+    from django_graphex.native.ir import GdxMeta
 
     class _WuBPassInput(InputType):
         name: str
@@ -117,7 +128,7 @@ def test_assert_gdx_bridge_passes_for_compiled_input_type():
 def test_gdx_input_spec_carries_pydantic_model():
     """GdxInputSpec.pydantic_model references the source Pydantic model."""
     from django_graphex.native.base import InputType
-    from django_graphex.native.input_compiler import compile_input_type, GdxInputSpec
+    from django_graphex.native.input_compiler import GdxInputSpec, compile_input_type
 
     class _WuBSpecInput(InputType):
         value: int = 0
@@ -136,7 +147,7 @@ def test_gdx_input_spec_carries_pydantic_model():
 def test_build_model_schema_result_carries_gdx_after_compile():
     """A model-derived Pydantic model produces a compiled type with gdx extension."""
     from django_graphex.native.fields import build_model_schema
-    from django_graphex.native.input_compiler import compile_input_type, GdxInputSpec
+    from django_graphex.native.input_compiler import GdxInputSpec, compile_input_type
     from tests.models import Category
 
     pydantic_model = build_model_schema(Category, partial=False)

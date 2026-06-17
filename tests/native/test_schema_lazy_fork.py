@@ -23,7 +23,7 @@ DISTINCT registry-pairs in one process ->
 2. each schema's type for the model is a DISTINCT instance;
 3. a query against each resolves correctly, including a relation field.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest -q \
+Run: .venv/bin/python -m pytest -q \
     tests/native/test_schema_lazy_fork.py
 """
 from __future__ import annotations
@@ -37,8 +37,6 @@ import django
 django.setup()
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 @pytest.fixture(autouse=True)

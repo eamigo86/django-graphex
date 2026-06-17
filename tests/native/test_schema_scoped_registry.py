@@ -17,7 +17,7 @@ B4 (query-time scoping for polymorphic resolve_type):
 - With the default pair the resolved registry IS the global, so resolution is
   byte-identical.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest -q \
+Run: .venv/bin/python -m pytest -q \
     tests/native/test_schema_scoped_registry.py
 """
 from __future__ import annotations
@@ -31,8 +31,6 @@ import django
 django.setup()
 
 import pytest
-
-pytestmark = pytest.mark.native_only
 
 
 # =========================================================================== #

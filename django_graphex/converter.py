@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
@@ -41,11 +40,6 @@ if TYPE_CHECKING:
     from django.db.models import Model
 
     from .registry import Registry
-
-
-#: True when ``GDX_BACKEND=native`` is set in the process environment. Read ONCE
-#: at import (the canonical pattern used by ``paginations/pagination.py``).
-_NATIVE_BACKEND: bool = os.environ.get("GDX_BACKEND", "graphene") == "native"
 
 
 class _DeadScalarSentinel:
@@ -453,11 +447,11 @@ def construct_fields(
                 field, registry, input_flag, nested_field
             )
             # PER-FIELD-TYPE native skip (#1552 / S-ROOTS-d): a SCALAR converter
-            # returns the dead-scalar sentinel under GDX_BACKEND=native because
-            # the native output compiler derives the scalar from model._meta
-            # directly and never reads this descriptor. OMIT it so the dead
-            # graphene scalar descriptor is not even built. GFK / relation /
-            # nested-list converters never return the sentinel, so they are KEPT.
+            # returns the dead-scalar sentinel because the native output compiler
+            # derives the scalar from model._meta directly and never reads this
+            # descriptor. OMIT it so the dead scalar descriptor is not even built.
+            # GFK / relation / nested-list converters never return the sentinel,
+            # so they are KEPT.
             if converted is _DEAD_SCALAR:
                 continue
             fields[name] = converted

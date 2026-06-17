@@ -23,15 +23,12 @@ at the WIRE level, that a real mutation returns a non-null ``ok`` AND a queryabl
 SDL is byte-identical to the graphene original (``ok: Boolean``,
 ``errors: [ErrorType]``).
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest \
+Run: .venv/bin/python -m pytest \
     tests/native/test_s_roots_c_ok_errors_native.py -q -o addopts=""
 """
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 # ---------------------------------------------------------------------------
 # descriptors.py — NativeList currency for a lazily-resolved native object list

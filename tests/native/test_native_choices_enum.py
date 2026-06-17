@@ -28,8 +28,6 @@ from graphql import (
 from django_graphex.registry import Registry
 from tests.models import EnumCollisionItemA
 
-pytestmark = pytest.mark.native_only
-
 
 def _unwrap(gql_type):
     """Strip a leading ``GraphQLNonNull`` wrapper."""

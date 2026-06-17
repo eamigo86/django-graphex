@@ -6,8 +6,8 @@ Stdlib-only implementation of the helpers previously imported from graphene:
   - props          (graphene.utils.props)
   - warn_deprecation (graphene.utils.deprecated)
 
-Zero graphene imports.  Safe to use in the native write-path (GDX_BACKEND=native)
-and in any stdlib-only context.
+Zero graphene imports.  Safe to use in the native write-path and in any
+stdlib-only context.
 """
 
 from __future__ import annotations

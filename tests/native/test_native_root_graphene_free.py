@@ -21,10 +21,6 @@ from __future__ import annotations
 
 import sys
 
-import pytest
-
-pytestmark = pytest.mark.native_only
-
 
 class _BlockGraphene:
     """A ``sys.meta_path`` finder that raises when graphene is (re-)imported."""
