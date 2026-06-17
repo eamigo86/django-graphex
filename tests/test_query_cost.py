@@ -3,7 +3,6 @@
 
 from types import SimpleNamespace
 
-import graphene
 import pytest
 from django.test import TestCase, override_settings
 from graphql import (
@@ -20,10 +19,13 @@ from graphql import (
 
 from django_graphex import (
     CostLimitValidationRule,
+    DjangoGraphQLSchema,
     DjangoListObjectType,
     DjangoModelType,
     DjangoObjectType,
+    ObjectType,
     analyze_cost,
+    field,
 )
 from django_graphex import cost as cost_module
 from django_graphex.registry import get_global_registry
@@ -214,13 +216,13 @@ class CostViewWiringTest(TestCase):
 
     @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
     def test_get_query_cost_returns_payload(self):
-        class _Owner(graphene.ObjectType):
-            name = graphene.String()
+        class _Owner(ObjectType):
+            name = field(GraphQLString)
 
-        class _Query(graphene.ObjectType):
-            owner = graphene.Field(_Owner)
+        class _Query(ObjectType):
+            owner = field(_Owner)
 
         view = GraphQLView()
-        view.schema = graphene.Schema(query=_Query)
+        view.schema = DjangoGraphQLSchema(query=_Query)
         cost = view.get_query_cost("{ owner { name } }", {}, None)
         self.assertEqual(cost, {"requestedCost": 1, "maxCost": None})

@@ -158,7 +158,7 @@ def test_event_type_has_all_fields_no_omission():
 
     snake_names = sub._meta.backend.output_field_names()
     # WU6 OMITTED M2M (tags / co_authors); WU7 mounts EVERY declared output field.
-    from graphene.utils.str_converters import to_camel_case
+    from django_graphex._strconv import to_camel_case
 
     for snake in snake_names:
         wire = to_camel_case(snake)
@@ -278,7 +278,7 @@ def test_event_type_sdl_is_the_deliverable_flat_pk_shape():
 
     # The event type carries EVERY backend output field name (no omission).
     snake_names = sub._meta.backend.output_field_names()
-    from graphene.utils.str_converters import to_camel_case
+    from django_graphex._strconv import to_camel_case
 
     assert set(event_type.fields) == {to_camel_case(s) for s in snake_names}
 
@@ -319,9 +319,7 @@ def test_djangomodeltype_subscription_field_native_compiles_through_root():
     a native ``GraphQLObjectType`` whose subscription field's return type is the
     native event type (with the full converter mapping + gdx + snake resolvers).
     """
-    import graphene
-
-    from django_graphex import DjangoModelType
+    from django_graphex import DjangoModelType, ObjectType
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
 
@@ -333,7 +331,7 @@ def test_djangomodeltype_subscription_field_native_compiles_through_root():
             stream = "posts"
             serialize_data = True
 
-    class SubscriptionRoot(graphene.ObjectType):
+    class SubscriptionRoot(ObjectType):
         post = PostModelType.SubscriptionField()
 
     compile_all_outputs()

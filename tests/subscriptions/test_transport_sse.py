@@ -82,9 +82,9 @@ if _NATIVE:
 
 def _build_native_schema():
     """Assemble a native subscription schema (PostModelType.SubscriptionField)."""
-    import graphene
+    from graphql import GraphQLBoolean
 
-    from django_graphex import DjangoModelType
+    from django_graphex import DjangoModelType, ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
 
@@ -94,10 +94,10 @@ def _build_native_schema():
             stream = "posts"
             serialize_data = True
 
-    class Query(graphene.ObjectType):
-        ok = graphene.Boolean()
+    class Query(ObjectType):
+        ok = field(GraphQLBoolean)
 
-    class SubscriptionRoot(graphene.ObjectType):
+    class SubscriptionRoot(ObjectType):
         post = PostModelType.SubscriptionField()
 
     compile_all_outputs()
@@ -328,15 +328,16 @@ async def test_unauthenticated_request_is_rejected_no_stream(monkeypatch):
 
                 raise GraphQLError("authentication required")
 
-    import graphene
+    from graphql import GraphQLBoolean
 
+    from django_graphex import ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class Query(graphene.ObjectType):
-        ok = graphene.Boolean()
+    class Query(ObjectType):
+        ok = field(GraphQLBoolean)
 
-    class SubscriptionRoot(graphene.ObjectType):
+    class SubscriptionRoot(ObjectType):
         post = _AuthRequiredPost.Field()
 
     compile_all_outputs()

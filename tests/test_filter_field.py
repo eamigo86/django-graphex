@@ -2,19 +2,27 @@
 
 TDD suite covering:
 - Basic string filter arg appears in schema and filters at query time
-- Type override (graphene.Int)
+- Type override (native ``GraphQLInt``)
 - description flows through to the schema
 - Composition order: standard lookup -> @filter_field -> filter_queryset
 - Reserved-name collision raises ImproperlyConfigured at class definition
 - filter_fields = {"x": None} raises ImproperlyConfigured (not TypeError)
+
+Native conversion (graphene-removal, RISK #6 verified): ``@filter_field`` stores
+its declared scalar verbatim under the ``graphene_type`` metadata key, and the
+native filter builder (``filtering/native_schema._custom_filter_gql_type``)
+accepts a native graphql-core type as-is (``isinstance(t, GraphQLType)`` →
+returned unchanged) — the graphene branch is purely legacy 1.x back-compat. So
+passing ``GraphQLString`` / ``GraphQLInt`` is the native end-state; the decorator
++ builder produce the same ``Int`` / ``String`` filter-arg SDL, asserted below.
 """
 
 from __future__ import annotations
 
-import graphene
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
+from graphql import GraphQLInt, GraphQLString
 
 from django_graphex import DjangoObjectType, filter_field
 from django_graphex.filtering import filter_field as ff_from_filtering
@@ -47,7 +55,7 @@ class _FilterFieldPost(models.Model):
 
 
 # ---------------------------------------------------------------------------
-# 1. Basic: @filter_field(graphene.String) → arg in schema + query-time filter
+# 1. Basic: @filter_field(GraphQLString) → arg in schema + query-time filter
 # ---------------------------------------------------------------------------
 
 
@@ -60,7 +68,7 @@ class PostSearchType(DjangoObjectType):
         filter_fields = {"title": ("exact",)}
         registry = _BASIC_REGISTRY
 
-    @filter_field(graphene.String, description="Full-text search")
+    @filter_field(GraphQLString, description="Full-text search")
     def search(cls, queryset, info, value):
         return queryset.filter(title__icontains=value)
 
@@ -108,7 +116,7 @@ class TestFilterFieldBasic:
 
 
 # ---------------------------------------------------------------------------
-# 2. Type override: @filter_field(graphene.Int)
+# 2. Type override: @filter_field(GraphQLInt)
 # ---------------------------------------------------------------------------
 
 
@@ -121,7 +129,7 @@ class PostIntFilterType(DjangoObjectType):
         filter_fields = {"views": ("exact",)}
         registry = _INT_REGISTRY
 
-    @filter_field(graphene.Int, description="Filter by min views")
+    @filter_field(GraphQLInt, description="Filter by min views")
     def min_views(cls, queryset, info, value):
         return queryset.filter(views__gte=value)
 
@@ -130,7 +138,7 @@ class TestFilterFieldTypeOverride:
     """The graphene_type argument on @filter_field controls the schema arg type."""
 
     def test_int_type_override(self):
-        """@filter_field(graphene.Int) → arg has Int type in the schema."""
+        """@filter_field(GraphQLInt) → arg has Int type in the schema."""
         filter_input = build_filter_input_type(
             _FilterFieldPost,
             {"views": ("exact",)},
@@ -159,7 +167,7 @@ class OrderedFilterType(DjangoObjectType):
         filter_fields = {"title": ("exact",)}
         registry = _COMP_REGISTRY
 
-    @filter_field(graphene.String)
+    @filter_field(GraphQLString)
     def search(cls, queryset, info, value):
         _comp_call_log.append("custom_filter")
         return queryset.filter(title__icontains=value)
@@ -248,7 +256,7 @@ class TestFilterFieldReservedNameCollision:
         ns = {
             "DjangoObjectType": DjangoObjectType,
             "filter_field": filter_field,
-            "graphene": graphene,
+            "GraphQLString": GraphQLString,
             "_FilterFieldPost": _FilterFieldPost,
             "registry": registry,
         }
@@ -258,7 +266,7 @@ class TestFilterFieldReservedNameCollision:
             "        model = _FilterFieldPost\n"
             "        filter_fields = {'title': ('exact',)}\n"
             "        registry = registry\n"
-            "    @filter_field(graphene.String)\n"
+            "    @filter_field(GraphQLString)\n"
             f"    def {reserved_name}(cls, queryset, info, value):\n"
             "        return queryset\n"
         )
@@ -299,21 +307,26 @@ class TestFilterFieldExports:
         assert filter_field is ff_direct
 
     def test_decorator_marks_method(self):
-        """@filter_field attaches _dgx_filter_field metadata to the function."""
+        """@filter_field attaches _dgx_filter_field metadata to the function.
 
-        @filter_field(graphene.String, description="test")
+        The decorator stores the declared scalar VERBATIM under the
+        (back-compat-named) ``graphene_type`` key — here the native
+        ``GraphQLString`` singleton — and the native builder accepts it as-is.
+        """
+
+        @filter_field(GraphQLString, description="test")
         def my_filter(cls, queryset, info, value):
             return queryset
 
         assert hasattr(my_filter, "_dgx_filter_field")
         meta = my_filter._dgx_filter_field
-        assert meta["graphene_type"] is graphene.String
+        assert meta["graphene_type"] is GraphQLString
         assert meta["description"] == "test"
 
     def test_decorator_no_description(self):
         """@filter_field without description defaults to None."""
 
-        @ff_from_filtering(graphene.String)
+        @ff_from_filtering(GraphQLString)
         def my_filter(cls, queryset, info, value):
             return queryset
 

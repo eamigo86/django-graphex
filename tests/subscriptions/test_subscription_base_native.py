@@ -122,16 +122,21 @@ def test_subscription_base_is_native_object_type():
     """The public ``Subscription`` base subclasses the native ObjectType (S6e).
 
     Re-parented off graphene ``ObjectType`` onto ``native.base.ObjectType`` in
-    S6e. It must NO LONGER subclass graphene ``ObjectType``: the metaclass swap is
-    done (Phase 7 / #1452).
+    S6e. It must NO LONGER be a graphene-driven type: the metaclass swap is done
+    (Phase 7 / #1452). The graphene-free proof is twofold — the base IS a
+    ``native.base.ObjectType`` subclass, and its metaclass IS pydantic's
+    ``ModelMetaclass`` (NOT graphene's ``SubclassWithMeta_Meta``), which a graphene
+    ``ObjectType`` subclass could never satisfy.
     """
-    from graphene import ObjectType as GrapheneObjectType
+    from pydantic._internal._model_construction import ModelMetaclass
 
     from django_graphex.native.base import ObjectType as NativeObjectType
     from django_graphex.subscriptions import Subscription
 
     assert issubclass(Subscription, NativeObjectType)
-    assert not issubclass(Subscription, GrapheneObjectType)
+    # The metaclass swap is done: a graphene ``ObjectType`` subclass has graphene's
+    # ``SubclassWithMeta_Meta`` metaclass, never pydantic's ``ModelMetaclass``.
+    assert type(Subscription) is ModelMetaclass
 
 
 def test_subscription_subclass_is_model_metaclass():
@@ -233,14 +238,16 @@ def test_native_field_is_direct_graphql_field_with_reduced_args():
     factory; ``resolve`` is identity (the source dict IS the root); args are
     reduced to ``{action, id, filters}`` under native.
     """
-    from graphene import Field as GrapheneField
-
     sub = _make_subscription()
     schema = _native_schema(sub)
     field = sub._build_native_field(schema, _DOC)
 
+    # A DIRECT graphql-core ``GraphQLField`` (its class lives in the graphql-core
+    # package), NOT a graphene ``Field``: graphene ``Field`` and graphql-core
+    # ``GraphQLField`` are disjoint, unrelated classes, so a graphql-core instance
+    # whose module is ``graphql.*`` can never be a graphene ``Field``.
     assert isinstance(field, GraphQLField)
-    assert not isinstance(field, GrapheneField)
+    assert type(field).__module__.startswith("graphql")
     # Reduced args under native: action, id, filters (channel_id/operation gone).
     assert set(field.args) == {"action", "id", "filters"}
     # Identity resolve: the source dict IS the root.
@@ -577,11 +584,14 @@ async def test_index_routing_uses_server_scope_value():
 
 @native_only
 def test_native_field_does_not_use_graphene_field():
-    """The native field builder must not return a graphene ``Field`` subclass."""
-    from graphene import Field as GrapheneField
+    """The native field builder must not return a graphene ``Field`` subclass.
 
+    Proven graphene-free: the returned field's class is defined in the graphql-core
+    package (``graphql.*``). A graphene ``Field`` lives in the ``graphene`` package
+    and is an unrelated class, so a ``graphql.*`` field is provably not one.
+    """
     sub = _make_subscription()
     schema = _native_schema(sub)
     field = sub._build_native_field(schema, _DOC)
-    assert not isinstance(field, GrapheneField)
+    assert isinstance(field, GraphQLField)
     assert type(field).__module__.startswith("graphql")

@@ -220,9 +220,9 @@ def test_modeltype_payload_sdl_byte_identical_to_graphene() -> None:
 
 def _build_post_modeltype_schema():
     """Build a native DjangoGraphQLSchema with a DjangoModelType Post mutation."""
-    import graphene
+    from graphql import GraphQLString
 
-    from django_graphex import DjangoObjectType
+    from django_graphex import DjangoObjectType, ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
     from django_graphex.types import DjangoModelType
@@ -246,10 +246,10 @@ def _build_post_modeltype_schema():
 
     compile_all_outputs()
 
-    class _RootsCQuery(graphene.ObjectType):
-        hello = graphene.String()
+    class _RootsCQuery(ObjectType):
+        hello = field(GraphQLString)
 
-    class _RootsCMutation(graphene.ObjectType):
+    class _RootsCMutation(ObjectType):
         post_create, post_delete, post_update = _RootsCPostType.MutationFields()
 
     schema = DjangoGraphQLSchema(query=_RootsCQuery, mutation=_RootsCMutation)

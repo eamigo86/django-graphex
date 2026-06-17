@@ -35,9 +35,9 @@ def test_native_filter_input_collision_multi_path_same_model():
     ``OrderChildFilterinput`` shapes → ``Schema must contain uniquely named
     types but contains multiple types named 'OrderChildFilterinput'``.
     """
-    import graphene
     from graphql import GraphQLString
 
+    from django_graphex import ObjectType
     from django_graphex.fields import (
         DjangoFilterPaginateListField,
         DjangoListObjectField,
@@ -80,7 +80,7 @@ def test_native_filter_input_collision_multi_path_same_model():
 
     compile_all_outputs()
 
-    class _CollQuery(graphene.ObjectType):
+    class _CollQuery(ObjectType):
         # Root list-object over the parent (exposes nested `kids` filter input).
         parents = DjangoListObjectField(_CollParentListType)
         # Flat-paginate over the child WITH the custom filter (the WITH-search shape).
@@ -162,9 +162,9 @@ def test_native_custom_filter_search_executes_end_to_end():
          custom filter actually runs (it returned everything before, because the
          dict had no ``search`` attribute).
     """
-    import graphene
     from graphql import GraphQLString, graphql_sync
 
+    from django_graphex import ObjectType
     from django_graphex.fields import DjangoFilterPaginateListField
     from django_graphex.filtering import filter_field
     from django_graphex.native.registry_compiler import compile_all_outputs
@@ -184,7 +184,7 @@ def test_native_custom_filter_search_executes_end_to_end():
 
     compile_all_outputs()
 
-    class _ExecQuery(graphene.ObjectType):
+    class _ExecQuery(ObjectType):
         kids_flat = DjangoFilterPaginateListField(
             _ExecChildType,
             pagination=LimitOffsetGraphqlPagination(default_limit=10),
@@ -219,9 +219,9 @@ def test_native_single_filter_path_name_unchanged_byte_parity():
     'i'), with the fix NOT introducing any suffix/disambiguator for the common
     single-path case.
     """
-    import graphene
     from graphql import print_type
 
+    from django_graphex import ObjectType
     from django_graphex.fields import DjangoListObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
@@ -239,7 +239,7 @@ def test_native_single_filter_path_name_unchanged_byte_parity():
 
     compile_all_outputs()
 
-    class _SingleQuery(graphene.ObjectType):
+    class _SingleQuery(ObjectType):
         parents = DjangoListObjectField(_SingleParentListType)
 
     schema = DjangoGraphQLSchema(query=_SingleQuery)
