@@ -130,23 +130,23 @@ def test_converter_module_body_is_graphene_token_free() -> None:
 # --------------------------------------------------------------------------- #
 # 2. The choices->Enum REGISTRY side-effect is preserved natively              #
 # --------------------------------------------------------------------------- #
-def test_choices_enum_is_graphene_enum_and_registered() -> None:
-    """The INPUT choices path still returns a graphene Enum AND registers it.
+def test_choices_converter_off_graphene_on_both_paths() -> None:
+    """The choices converter path is graphene-free on OUTPUT *and* INPUT.
 
-    S-enum-2 retired graphene on the choices OUTPUT path: on the native backend
-    ``convert_django_field_with_choices`` with ``input_flag is None`` now returns
-    the dead-scalar sentinel (the native compiler renders the enum from
-    ``model._meta`` — S-enum-1). The INPUT / mutation choices path is UNCHANGED:
-    it still builds the graphene ``Enum`` descriptor AND writes the enum to the
-    registry under the ``(app_label, object_name, field_name [, input_flag])``
-    key (the side-effect other code reads). This asserts BOTH for the INPUT path
-    (retired later in S-input-5).
+    S-enum-2 retired graphene on the choices OUTPUT path; S-input-5 retires it on
+    the INPUT path. On the native backend ``convert_django_field_with_choices``
+    now returns the dead-scalar sentinel for BOTH ``input_flag is None`` (output)
+    and ``input_flag in {create, update}`` (input). The native input compiler
+    renders the SHARED native ``GraphQLEnumType`` (built by
+    ``build_choices_enum_type`` — S-enum-1) for the input surface, so the choices
+    field is enum-typed and graphene-free on both sides.
     """
-    import graphene  # graphene is still installed (uninstall is S8i)
+    from graphql import GraphQLEnumType
 
     from django_graphex.converter import (
         _DEAD_SCALAR,
         _NATIVE_BACKEND,
+        build_choices_enum_type,
         convert_django_field_with_choices,
     )
     from django_graphex.registry import Registry
@@ -154,39 +154,26 @@ def test_choices_enum_is_graphene_enum_and_registered() -> None:
 
     field = TestModel._meta.get_field("choice_field")
 
-    # OUTPUT path (native): the choices descriptor is the dead-scalar sentinel.
     if _NATIVE_BACKEND:
-        out_output = convert_django_field_with_choices(field, registry=Registry())
-        assert out_output is _DEAD_SCALAR, (
-            "S-enum-2: a choices field on the native OUTPUT path must return the "
-            f"dead-scalar sentinel; got {out_output!r}"
-        )
+        # OUTPUT and INPUT (create/update): all return the dead-scalar sentinel.
+        for input_flag in (None, "create", "update"):
+            out = convert_django_field_with_choices(
+                field, registry=Registry(), input_flag=input_flag
+            )
+            assert out is _DEAD_SCALAR, (
+                "S-input-5: the native choices converter must return the "
+                f"dead-scalar sentinel for input_flag={input_flag!r}; got {out!r}"
+            )
 
-    # INPUT path: still a graphene Enum + registry side-effect (unchanged).
+    # The SHARED native enum is built + registered by ``build_choices_enum_type``
+    # (the side-effect the OUTPUT / FILTER-INPUT / mutation-INPUT paths converge
+    # on). One canonical instance per (model, field).
     registry = Registry()
-    out = convert_django_field_with_choices(
-        field, registry=registry, input_flag="create"
-    )
-    assert isinstance(out, graphene.Enum), (
-        "the INPUT choices path must still return a graphene Enum instance "
-        "(retired in S-input-5)."
-    )
-    assert set(out._meta.enum.__members__) == {"CHOICE_A", "CHOICE_B"}
-
-    # The choices->Enum REGISTRY SIDE-EFFECT is preserved on the INPUT path: the
-    # enum class is registered under the (app_label, object_name, field_name,
-    # input_flag) key.
-    meta = field.model._meta
-    from django_graphex._strconv import to_camel_case
-
-    key = to_camel_case(
-        f"{meta.app_label}_{meta.object_name}_{field.name}_Enum_create"
-    )
-    registered = registry.get_type_for_enum(key)
-    assert registered is not None, (
-        "The choices->Enum registry side-effect must survive the lazy-defer."
-    )
-    assert issubclass(registered, graphene.Enum)
+    enum = build_choices_enum_type(field, registry)
+    assert isinstance(enum, GraphQLEnumType)
+    assert set(enum.values.keys()) == {"CHOICE_A", "CHOICE_B"}
+    # Built again -> SAME cached instance.
+    assert build_choices_enum_type(field, registry) is enum
 
 
 # --------------------------------------------------------------------------- #
@@ -213,19 +200,24 @@ def test_fk_and_m2m_output_convert_to_native_marker() -> None:
     assert isinstance(convert_django_field(m2m), NativeRelationField)
 
 
-def test_fk_input_dynamic_resolves_to_graphene_id() -> None:
-    """The FK input closure still resolves to a graphene ``ID`` on native."""
-    import graphene
+def test_fk_input_converts_to_native_marker() -> None:
+    """S-input-5: the FK INPUT converter returns a graphene-free native marker.
 
+    The actual ``author: ID!`` create-input field is built by
+    ``input_compiler.compile_input_type`` from a ``RelationInputField`` spec
+    (``types._resolve_native_relation_input_fields`` reads ``model._meta``), NOT
+    from this descriptor — so the converter returns the same
+    ``NativeRelationField`` presence/ordering marker it does on OUTPUT.
+    """
     from django_graphex.converter import convert_django_field
+    from django_graphex.native.descriptors import NativeRelationField
     from django_graphex.registry import Registry
     from tests.models import Post
 
     fk = Post._meta.get_field("author")
-    dyn = convert_django_field(fk, registry=Registry(), input_flag="create")
-    assert isinstance(dyn, graphene.Dynamic)
-    resolved = dyn.get_type()
-    assert isinstance(resolved, graphene.ID)
+    out = convert_django_field(fk, registry=Registry(), input_flag="create")
+    assert isinstance(out, NativeRelationField)
+    assert not type(out).__module__.startswith("graphene")
 
 
 # --------------------------------------------------------------------------- #

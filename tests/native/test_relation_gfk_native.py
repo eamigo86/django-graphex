@@ -433,39 +433,41 @@ def test_forward_generic_relation_renders_native_list_container():
 
 
 # --------------------------------------------------------------------------- #
-# (d) PART B — the _yank_fields graphene-marker branch BLOCKER moved. After      #
-#     S-enum-2 Part 1 (choices OUTPUT off graphene), the OUTPUT build no longer   #
-#     reaches the graphene-marker branch, BUT the INPUT build still does (it      #
-#     emits graphene relation ``Dynamic`` + ``ID`` + choices ``Enum`` until       #
-#     S-input-5). So Part B (retiring the branch) stays DEFERRED — the new        #
-#     blocker is the INPUT path, not the choices OUTPUT path. (S-enum-2.)         #
+# (d) PART B — RETIRED in S-input-5. After the INPUT path went graphene-free     #
+#     (relation Dynamics -> NativeRelationField, choices Enum -> shared native    #
+#     GraphQLEnumType, PK ID -> dead scalar), NO graphene descriptor reaches      #
+#     ``_yank_fields`` on ANY native build (OUTPUT or INPUT). The lazy            #
+#     graphene-marker branch + ``_graphene_descriptor_markers`` are deleted.      #
+#     This test (renamed/flipped from the S-enum-2 tripwire) PROVES the branch    #
+#     is gone and a create-input build reaches ``_yank_fields`` graphene-free.    #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_graphene_marker_branch_output_clean_input_still_reaches_after_choices_migration():
-    """STEP 0 / Part B re-evaluation after S-enum-2 Part 1.
+def test_graphene_marker_branch_retired_input_now_graphene_free():
+    """Part B retirement (S-input-5).
 
-    S-enum-2 Part 1 migrated the converter's choices OUTPUT descriptor off
-    graphene (it now returns the dead-scalar sentinel — the native compiler
-    renders the enum from ``model._meta``). Consequence:
+    The long-deferred Part B (#1609 / S-enum-2) is DONE: the INPUT path no longer
+    emits graphene relation ``Dynamic`` / ``ID`` / choices ``Enum`` descriptors
+    (they became ``NativeRelationField`` / dead-scalar / the shared native
+    ``GraphQLEnumType``). So:
 
-    * the OUTPUT build (``render_native_sdl``) now reaches the ``_yank_fields``
-      graphene-marker branch with ZERO graphene descriptors (the choices Enum was
-      the last one after S-rel-2/3/4) — the OUTPUT path is graphene-free;
-    * BUT a CREATE-INPUT build STILL emits graphene relation ``Dynamic``
-      descriptors (the INPUT relation path stays graphene until S-input-5), which
-      DO reach the graphene-marker branch and rely on ``_as.mounted(value)``.
-
-    So the branch is NOT dead and ``_graphene_descriptor_markers`` is STILL needed
-    — Part B (retiring the branch + the lazy graphene import) stays DEFERRED until
-    the INPUT path retires graphene (S-input-5). Removing the branch now would
-    SILENTLY DROP every graphene INPUT descriptor (proven: a create-input would
-    yield empty ``_meta.fields``). This test documents the NEW blocker."""
+    * the lazy ``types._graphene_descriptor_markers`` helper is DELETED;
+    * a CREATE-INPUT build (formerly the blocker — it emitted graphene relation
+      ``Dynamic`` descriptors that reached the branch via ``_as.mounted``) now
+      reaches ``_yank_fields`` with ZERO graphene descriptors;
+    * the OUTPUT build likewise stays graphene-free at ``_yank_fields``.
+    """
     import django_graphex.types as types_mod
     from django_graphex.converter import _DEAD_SCALAR
     from django_graphex.native.descriptors import NativeField, NativeMountedField
     from django_graphex.registry import Registry
     from django_graphex.types import DjangoInputObjectType
     from tests.models import PersonWithSpouse
+
+    # The graphene-marker branch helper is GONE.
+    assert not hasattr(types_mod, "_graphene_descriptor_markers"), (
+        "S-input-5 must retire types._graphene_descriptor_markers (the "
+        "graphene-marker branch is dead on every native build)"
+    )
 
     def _graphene_reached_during(thunk) -> dict[str, str]:
         reached: dict[str, str] = {}
@@ -489,17 +491,16 @@ def test_graphene_marker_branch_output_clean_input_still_reaches_after_choices_m
             types_mod._yank_fields = orig_yank
         return reached
 
-    # (1) OUTPUT build: graphene-free at the branch (choices Enum is gone).
+    # (1) OUTPUT build: graphene-free at _yank_fields.
     from tests.native._sdl_parity_seed import render_native_sdl
 
     output_reached = _graphene_reached_during(render_native_sdl)
     assert not output_reached, (
-        "after S-enum-2 Part 1 the OUTPUT build must reach the graphene-marker "
-        f"branch with zero graphene descriptors; still found {output_reached}"
+        "the OUTPUT build must reach _yank_fields with zero graphene descriptors; "
+        f"still found {output_reached}"
     )
 
-    # (2) CREATE-INPUT build: graphene relation Dynamics STILL reach the branch
-    # (INPUT relation path stays graphene until S-input-5) — the NEW Part B blocker.
+    # (2) CREATE-INPUT build: now ALSO graphene-free (the former Part B blocker).
     def _build_create_input() -> None:
         reg = Registry()
 
@@ -510,12 +511,9 @@ def test_graphene_marker_branch_output_clean_input_still_reaches_after_choices_m
                 input_for = "create"
 
     input_reached = _graphene_reached_during(_build_create_input)
-    assert any(
-        t == "graphene.types.dynamic.Dynamic" for t in input_reached.values()
-    ), (
-        "a create-input build must STILL emit graphene relation Dynamics that "
-        "reach the graphene-marker branch (the INPUT path is graphene until "
-        f"S-input-5) — Part B stays deferred. reached: {input_reached}"
+    assert not input_reached, (
+        "after S-input-5 a create-input build must reach _yank_fields with zero "
+        f"graphene descriptors (the INPUT path is graphene-free); found {input_reached}"
     )
 
 
@@ -661,19 +659,31 @@ def test_choices_output_converter_returns_dead_scalar(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_choices_input_path_still_builds_graphene_enum():
-    """The INPUT / mutation choices path is UNCHANGED — it still builds the
-    graphene ``Enum`` descriptor (retired later in S-input-5)."""
-    import graphene
-
-    from django_graphex.converter import convert_django_field_with_choices
+def test_choices_input_path_off_graphene(monkeypatch):
+    """S-input-5: the INPUT / mutation choices converter path is now graphene-free
+    too — it returns the dead-scalar sentinel (the native input compiler renders
+    the SHARED native ``GraphQLEnumType`` from ``model._meta``)."""
+    import django_graphex.converter as converter_mod
+    from django_graphex.converter import _DEAD_SCALAR, convert_django_field_with_choices
     from tests.models import EnumCollisionItemA
 
+    def _boom(*_a, **_k):
+        raise AssertionError(
+            "converter._g() was called on the INPUT choices path — it must be "
+            "graphene-free in S-input-5"
+        )
+
+    monkeypatch.setattr(converter_mod, "_g", _boom)
+
     field = EnumCollisionItemA._meta.get_field("status")
-    out = convert_django_field_with_choices(field, Registry(), input_flag="create")
-    assert isinstance(out, graphene.Enum), (
-        f"INPUT choices must stay a graphene Enum descriptor; got {out!r}"
-    )
+    for input_flag in ("create", "update"):
+        out = convert_django_field_with_choices(
+            field, Registry(), input_flag=input_flag
+        )
+        assert out is _DEAD_SCALAR, (
+            f"INPUT choices ({input_flag}) must return the dead-scalar sentinel; "
+            f"got {out!r}"
+        )
 
 
 @pytest.mark.django_db
@@ -700,19 +710,13 @@ def test_choices_field_omitted_from_meta_fields_on_output():
 @pytest.mark.django_db
 def test_choices_output_build_clean_at_yank_fields():
     """A comprehensive native OUTPUT build reaches ``_yank_fields`` with ZERO
-    graphene descriptors AND never calls ``_graphene_descriptor_markers`` (the
-    choices Enum was the last graphene OUTPUT descriptor after S-rel-2/3/4). The
-    graphene-marker branch itself is KEPT for the INPUT path (S-input-5)."""
+    graphene descriptors (the choices Enum was the last graphene OUTPUT descriptor
+    after S-rel-2/3/4; S-enum-2 retired it). S-input-5 retired the graphene-marker
+    branch entirely, so there is no longer a ``_graphene_descriptor_markers`` to
+    spy — the graphene-free assertion is the OUTPUT regression guard."""
     import django_graphex.types as types_mod
     from django_graphex.converter import _DEAD_SCALAR
     from django_graphex.native.descriptors import NativeField, NativeMountedField
-
-    called: list[bool] = []
-    orig_markers = types_mod._graphene_descriptor_markers
-
-    def _spy_markers():
-        called.append(True)
-        return orig_markers()
 
     graphene_reached: list[tuple[str, str]] = []
     orig_yank = types_mod._yank_fields
@@ -728,23 +732,17 @@ def test_choices_output_build_clean_at_yank_fields():
                 graphene_reached.append((name, mod + "." + type(value).__name__))
         return orig_yank(attrs, _as, sort=sort)
 
-    types_mod._graphene_descriptor_markers = _spy_markers
     types_mod._yank_fields = _spy_yank
     try:
         from tests.native._sdl_parity_seed import render_native_sdl
 
         render_native_sdl()
     finally:
-        types_mod._graphene_descriptor_markers = orig_markers
         types_mod._yank_fields = orig_yank
 
     assert not graphene_reached, (
         "graphene descriptors still reach _yank_fields on a native OUTPUT build: "
         f"{graphene_reached}"
-    )
-    assert not called, (
-        "_graphene_descriptor_markers was called during a native OUTPUT build — "
-        "a graphene descriptor still reaches the marker branch on OUTPUT."
     )
 
 

@@ -63,108 +63,48 @@ __all__ = (
 )
 
 
-#: Lazily resolved graphene field-descriptor marker classes
-#: (``MountedType`` / ``UnmountedType``). S8h moved native/base.py OFF graphene,
-#: so these markers are no longer importable from it. They are needed by the
-#: graphene-descriptor branch of ``_yank_fields`` — which is STILL reached under
-#: ``GDX_BACKEND=native``: the converter's ``construct_fields`` emits graphene
-#: relation closures (``Dynamic``, an ``UnmountedType`` subclass) the native
-#: output thunk consumes from ``_meta.fields`` (S8e kept those). So the import
-#: fires on BOTH backends, but only when an actual graphene descriptor flows in —
-#: it is a LAZY import (``types.py`` is graphene-free at the TOP level, the S8h
-#: milestone), matching the converter / paginations / subscription lazy-defer
-#: policy. Cached as a 2-tuple ``(MountedType, UnmountedType)``; a single ``None``
-#: sentinel means "not yet resolved".
-_GRAPHENE_DESCRIPTOR_MARKERS: tuple[type, type] | None = None
-
-
-def _graphene_descriptor_markers() -> tuple[type, type]:
-    """Return ``(MountedType, UnmountedType)`` graphene markers, lazily imported.
-
-    Resolves the graphene field-descriptor base classes on first use and caches
-    them. Keeps ``types.py`` graphene-free at the TOP LEVEL (S8h): the import only
-    fires when ``_yank_fields`` actually meets a graphene descriptor value (a
-    relation ``Dynamic`` from the converter on either backend, or a graphene
-    scalar on the graphene backend), never at module import time.
-    """
-    global _GRAPHENE_DESCRIPTOR_MARKERS
-    if _GRAPHENE_DESCRIPTOR_MARKERS is None:
-        from graphene.types.mountedtype import MountedType
-        from graphene.types.unmountedtype import UnmountedType
-
-        _GRAPHENE_DESCRIPTOR_MARKERS = (MountedType, UnmountedType)
-    return _GRAPHENE_DESCRIPTOR_MARKERS
-
-
 def _yank_fields(
     attrs: dict[str, Any], _as: Any, sort: bool = True
 ) -> dict[str, Any]:
     """Graphene-free re-implementation of ``graphene.utils.yank_fields_from_attrs``.
 
-    S8b: drops the ``graphene.types.utils.yank_fields_from_attrs`` /
-    ``get_field_as`` import. Walks an attribute mapping (the ``construct_fields``
-    output or a class ``__dict__``), keeping only the values that are graphene
-    field DESCRIPTORS and mounting each into the supplied ``_as`` mount class
-    (``Field`` / ``InputField``) — byte-equivalent to graphene's helper:
+    Walks an attribute mapping (the ``construct_fields`` output or a class
+    ``__dict__``), keeping only the values that are NATIVE field-shaped
+    descriptors (``NativeMountedField`` / ``NativeField``) and dropping everything
+    else (plain attributes, dunders, etc.). Results are sorted by the descriptor's
+    ``creation_counter`` (declaration order) so SDL field ordering is preserved.
 
-    - a ``MountedType`` (already mounted, e.g. ``DjangoNestedListObjectField``)
-      is kept AS-IS;
-    - an ``UnmountedType`` (e.g. a relation ``Dynamic``) is mounted via
-      ``_as.mounted(value)`` (which carries ``.type`` the native compiler reads);
-    - anything else (non-descriptor) is skipped.
-
-    Results are sorted by the mounted field's graphene ``creation_counter`` (via
-    ``OrderedType.__lt__``) exactly as graphene did, so SDL field ordering is
-    preserved. The mount classes are STILL graphene ``Field`` / ``InputField``
-    (the field-descriptor SURFACE removed in S8c); only the graphene UTIL import
-    is gone here.
+    S-input-5 (Part B retirement): the legacy graphene-descriptor branch — which
+    lazily imported ``graphene`` ``MountedType`` / ``UnmountedType`` and mounted a
+    raw graphene ``UnmountedType`` (a relation ``Dynamic``) via
+    ``_as.mounted(value)`` — is GONE. After S-rel-2/3/4 + S-enum-2 (OUTPUT) and
+    S-input-5 (INPUT + choices), the converter emits graphene-free markers
+    (``NativeRelationField`` / ``_DEAD_SCALAR``) on EVERY native path, so NO
+    graphene descriptor ever reaches here (proven: a comprehensive OUTPUT + INPUT
+    create/update/delete + choices build reaches ``_yank_fields`` with zero
+    graphene-module values). The ``_as`` mount parameter is retained for call-site
+    compatibility but is now unused.
 
     Args:
         attrs: A ``{name: value}`` mapping to extract field descriptors from.
-        _as: The graphene mount class used to mount ``UnmountedType`` values.
-        sort: Whether to order results by graphene ``creation_counter``.
+        _as: Retained for call-site compatibility (unused since Part B retirement).
+        sort: Whether to order results by ``creation_counter``.
 
     Returns:
-        An ordered ``{name: mounted_field}`` dict.
+        An ordered ``{name: field}`` dict of the native field-shaped descriptors.
     """
     fields_with_names: list[tuple[str, Any]] = []
     for attname, value in list(attrs.items()):
-        # S8c: a native ``NativeMountedField`` (the re-parented ``Django*Field``
-        # classes, e.g. ``DjangoNestedListObjectField`` / ``DjangoListField``) is
-        # ALREADY a mounted, field-shaped descriptor (carries ``.type`` / ``.args``
-        # / ``creation_counter``); keep it AS-IS exactly like a graphene
-        # ``MountedType``. Recognizing it here is the silent-drop guard — without
-        # it the field would fall to the ``continue`` and vanish from ``_meta.fields``.
-        # Checked FIRST so the native path never resolves the lazy graphene markers
-        # (S8h: ``types.py`` stays graphene-free under ``GDX_BACKEND=native``).
+        # A native ``NativeMountedField`` (the re-parented ``Django*Field``
+        # classes, e.g. ``DjangoNestedListObjectField`` / ``DjangoListField`` /
+        # ``NativeRelationField``) or a native ``field()`` (``NativeField``) is a
+        # field-shaped descriptor (carries ``.type`` / ``.args`` /
+        # ``creation_counter``); keep it AS-IS. Anything else is a plain attribute
+        # and is skipped. This is the silent-drop guard: a relation/choices marker
+        # must be a recognized native descriptor or it would vanish from
+        # ``_meta.fields`` (the test_issue52 self-ref-O2O canary).
         if isinstance(value, (NativeMountedField, NativeField)):
-            # S8h: a native ``field()`` (``NativeField``) declared on a
-            # ``DjangoModelType`` / ``DjangoObjectType`` body is ALSO field-shaped
-            # (exposes ``.type`` / ``.args`` / ``.wrap_resolve``) and is the 2.0
-            # replacement for a ``name = graphene.String()`` descriptor — keep it
-            # AS-IS so it lands in ``_meta.fields`` (silent-drop guard). Checked
-            # FIRST so the native currency never resolves the lazy graphene markers.
             fields_with_names.append((attname, value))
-            continue
-        # Graphene descriptor path. STILL reached under ``GDX_BACKEND=native``: the
-        # converter's ``construct_fields`` emits graphene relation closures
-        # (``Dynamic`` — an ``UnmountedType`` subclass — for FK / O2O / M2M /
-        # reverse / GFK) that the native output thunk consumes from ``_meta.fields``
-        # (S8e kept the converter's graphene relation descriptors). So an
-        # already-mounted ``MountedType`` is kept AS-IS; a raw ``UnmountedType``
-        # (relation ``Dynamic`` / a graphene scalar on the graphene backend) is
-        # mounted via ``_as.mounted(value)``. The graphene marker classes are
-        # imported LAZILY (S8h: ``types.py`` is graphene-free at the TOP level; the
-        # import only fires when a real graphene descriptor flows in — same
-        # lazy-defer policy as converter.py / paginations / subscription).
-        mounted_type, unmounted_type = _graphene_descriptor_markers()
-        if isinstance(value, mounted_type):
-            field = value
-        elif isinstance(value, unmounted_type):
-            field = _as.mounted(value) if _as is not None else value
-        else:
-            continue
-        fields_with_names.append((attname, field))
 
     if sort:
         # Order by graphene ``creation_counter`` (declaration order, SDL parity).
@@ -1653,6 +1593,67 @@ def _resolve_native_relation_input_fields(
     return tuple(specs)
 
 
+def _resolve_native_choices_input_fields(
+    model: type[Model],
+    registry: Registry,
+    input_for: str,
+) -> tuple[Any, ...]:
+    """Resolve a model's choices fields into native ``GraphQLEnumType`` input specs.
+
+    S-input-5 (choices INPUT off graphene): the choices field's INPUT surface
+    becomes the SHARED native ``GraphQLEnumType`` (the SAME canonical enum the
+    OUTPUT + FILTER-INPUT paths resolve, S-enum-1) instead of the ``String``
+    fallback the input compiler would otherwise emit from the pydantic Enum
+    annotation. This is built GRAPHENE-FREE via ``converter.build_choices_enum_type``
+    (``input_flag=None`` so it shares the OUTPUT slot — one enum per
+    ``(model, field)`` across output + filter-input + mutation input).
+
+    A ``MultiSelectField`` renders ``[Enum]`` (mirroring the converter's
+    ``DjangoListField(enum)`` branch); a plain choices field renders a single
+    ``Enum`` (``Enum!`` when required on create). Non-editable / auto fields and
+    fields without usable choices are skipped (the enum builder returns ``None``).
+
+    Args:
+        model: The Django model the input is built for.
+        registry: The registry whose shared enum slot the native paths converge on.
+        input_for: The operation ("create", "update"); required-ness only applies
+            to "create".
+
+    Returns:
+        A tuple of ``ChoicesInputField`` specs (empty when the model has no
+        choices fields).
+    """
+    from ._strconv import to_camel_case
+    from .converter import build_choices_enum_type
+    from .utils import is_required
+
+    from django_graphex.native.input_compiler import ChoicesInputField
+
+    is_create = input_for == "create"
+    specs: list[Any] = []
+    for field in model._meta.get_fields():
+        if not getattr(field, "choices", None):
+            continue
+        # Skip non-editable fields on input (mirrors construct_fields' editable
+        # guard) so an auto/computed choices field is not exposed for write.
+        if not getattr(field, "editable", True):
+            continue
+        enum_type = build_choices_enum_type(field, registry)
+        if enum_type is None:
+            continue
+        is_multiselect = type(field).__name__ == "MultiSelectField"
+        specs.append(
+            ChoicesInputField(
+                out_name=field.name,
+                alias=to_camel_case(field.name),
+                enum_type=enum_type,
+                is_list=is_multiselect,
+                required=is_create and is_required(field),
+            )
+        )
+    return tuple(specs)
+
+
 class DjangoInputObjectType(NativeInputType):
     """A Django model GraphQL input type."""
 
@@ -1792,12 +1793,20 @@ class DjangoInputObjectType(NativeInputType):
             native_relations = _resolve_native_relation_input_fields(
                 model, input_for, nested_parent_model=nested_parent_model
             )
+            # Resolve choices fields into shared native ``GraphQLEnumType`` input
+            # specs (S-input-5): the choices INPUT surface becomes the SAME
+            # canonical enum the OUTPUT + FILTER-INPUT paths use, instead of the
+            # ``String`` fallback. Graphene-free; output/input symmetric.
+            native_choices = _resolve_native_choices_input_fields(
+                model, registry, input_for
+            )
             graphql_input_type = compile_input_type(
                 pydantic_model,
                 name=gql_type_name,
                 description=getattr(cls, "__doc__", None),
                 nested_fields=native_nested,
                 relation_fields=native_relations,
+                choices_fields=native_choices,
                 # issue #65: honor Meta only/include/exclude on the input wire type.
                 only_fields=only_fields or None,
                 exclude_fields=exclude_fields or None,

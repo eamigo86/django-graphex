@@ -15,11 +15,9 @@ Defect B — Genuine self-referential OneToOneField silently dropped:
 
 from __future__ import annotations
 
-import graphene
-
 from django_graphex import DjangoObjectType
 from django_graphex.converter import (
-    convert_django_field_with_choices,
+    build_choices_enum_type,
     convert_field_to_djangomodel,
 )
 from django_graphex.registry import Registry
@@ -64,16 +62,13 @@ class TestEnumKeyCollision:
             field_a.model = ModelA
             field_b.model = ModelB
 
-            # S-enum-2: the converter's choices enum-keying runs on the INPUT path
-            # (the OUTPUT path now returns the dead-scalar sentinel — the native
-            # compiler builds + keys the enum from ``model._meta``). The
-            # cross-app collision contract is asserted via ``input_flag="create"``.
-            enum_a = convert_django_field_with_choices(
-                field_a, local_registry, input_flag="create"
-            )
-            enum_b = convert_django_field_with_choices(
-                field_b, local_registry, input_flag="create"
-            )
+            # S-input-5: both the OUTPUT and the INPUT converter paths now return
+            # the dead-scalar sentinel (graphene-free). The choices enum is built +
+            # KEYED by the native canonical builder ``build_choices_enum_type``
+            # (keyed by ``(app_label, object_name, field_name)`` like the converter
+            # was), so the cross-app collision contract is asserted on it.
+            enum_a = build_choices_enum_type(field_a, local_registry)
+            enum_b = build_choices_enum_type(field_b, local_registry)
         finally:
             field_a.model = original_a
             field_b.model = original_b
@@ -85,8 +80,8 @@ class TestEnumKeyCollision:
         )
 
         # Each enum must carry its own members.
-        members_a = set(enum_a._meta.enum.__members__)
-        members_b = set(enum_b._meta.enum.__members__)
+        members_a = set(enum_a.values.keys())
+        members_b = set(enum_b.values.keys())
 
         assert members_a == {"A", "B"}, f"ItemA enum members wrong: {members_a}"
         assert members_b == {"X", "Y", "Z"}, f"ItemB enum members wrong: {members_b}"
@@ -94,32 +89,33 @@ class TestEnumKeyCollision:
     def test_distinct_model_classes_produce_independent_enums(self):
         """Using distinct model classes, each field produces its own enum.
 
-        S-enum-2: the converter's choices enum-keying runs on the INPUT path (the
-        OUTPUT path now returns the dead-scalar sentinel — the native compiler
-        builds + keys the enum from ``model._meta``).
+        S-input-5: both the OUTPUT and INPUT converter paths return the dead-scalar
+        sentinel (graphene-free); the native ``build_choices_enum_type`` builds +
+        keys the enum from ``model._meta``.
         """
         local_registry = Registry()
 
         field_a = EnumCollisionItemA._meta.get_field("status")
         field_b = EnumCollisionItemB._meta.get_field("status")
 
-        enum_a = convert_django_field_with_choices(
-            field_a, local_registry, input_flag="create"
-        )
-        enum_b = convert_django_field_with_choices(
-            field_b, local_registry, input_flag="create"
-        )
+        enum_a = build_choices_enum_type(field_a, local_registry)
+        enum_b = build_choices_enum_type(field_b, local_registry)
 
         assert enum_a is not enum_b
 
-        members_a = set(enum_a._meta.enum.__members__)
-        members_b = set(enum_b._meta.enum.__members__)
+        members_a = set(enum_a.values.keys())
+        members_b = set(enum_b.values.keys())
 
         assert members_a == {"A", "B"}
         assert members_b == {"X", "Y", "Z"}
 
     def test_input_flag_enums_keyed_independently_per_model_class(self):
-        """The same fix must apply to input-flagged enums (create/update)."""
+        """The same fix must apply to the native enums per model class.
+
+        S-input-5: the INPUT choices surface now uses the SHARED native enum (the
+        same ``build_choices_enum_type`` slot the OUTPUT path uses), so the
+        per-model-class keying contract is asserted on that builder.
+        """
         local_registry = Registry()
 
         field_a = EnumCollisionItemA._meta.get_field("status")
@@ -143,18 +139,14 @@ class TestEnumKeyCollision:
             field_a.model = ModelA
             field_b.model = ModelB
 
-            enum_a_create = convert_django_field_with_choices(
-                field_a, local_registry, input_flag="create"
-            )
-            enum_b_create = convert_django_field_with_choices(
-                field_b, local_registry, input_flag="create"
-            )
+            enum_a_create = build_choices_enum_type(field_a, local_registry)
+            enum_b_create = build_choices_enum_type(field_b, local_registry)
         finally:
             field_a.model = original_a
             field_b.model = original_b
 
         assert enum_a_create is not enum_b_create, (
-            "Input-flag enums for same-named fields on same-object_name models "
+            "Native enums for same-named fields on same-object_name models "
             "must not collide."
         )
 

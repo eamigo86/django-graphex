@@ -336,26 +336,41 @@ class ConverterUtilsTest(TestCase):
     """Test cases for converter utility functions (backend-independent)."""
 
     def test_convert_choices_with_enum(self):
-        """Test conversion of choices creates proper enum (S-enum-2: INPUT path).
+        """Test conversion of choices creates proper enum.
 
-        S-enum-2 retired graphene on the choices OUTPUT path (it now returns the
-        dead-scalar sentinel — the native compiler renders the enum from
-        ``model._meta``). The INPUT / mutation choices path is UNCHANGED and still
-        builds the graphene ``Enum`` descriptor on both backends, so this asserts
-        the enum members via the INPUT path (``input_flag="create"``).
+        S-enum-2 (OUTPUT) + S-input-5 (INPUT) retired graphene on the choices
+        converter path: on native it returns the dead-scalar sentinel for BOTH
+        output and input, and the choices enum is built by the native canonical
+        builder ``build_choices_enum_type`` (a graphql-core ``GraphQLEnumType``
+        shared by the output + filter-input + mutation-input paths). On the legacy
+        graphene backend the converter still builds the graphene ``Enum``.
         """
         field = TestModel._meta.get_field("choice_field")
 
-        from django_graphex.registry import get_global_registry
+        from django_graphex.converter import (
+            _DEAD_SCALAR,
+            _NATIVE_BACKEND,
+            build_choices_enum_type,
+        )
+        from django_graphex.registry import Registry, get_global_registry
+
+        if _NATIVE_BACKEND:
+            from graphql import GraphQLEnumType
+
+            for input_flag in (None, "create", "update"):
+                out = convert_django_field_with_choices(
+                    field, registry=Registry(), input_flag=input_flag
+                )
+                self.assertIs(out, _DEAD_SCALAR)
+            enum = build_choices_enum_type(field, Registry())
+            self.assertIsInstance(enum, GraphQLEnumType)
+            self.assertEqual(set(enum.values.keys()), {"CHOICE_A", "CHOICE_B"})
+            return
 
         registry = get_global_registry()
-
         graphql_field = convert_django_field_with_choices(
             field, registry=registry, input_flag="create"
         )
-
-        # An integer choices field converts to a graphene Enum whose members
-        # mirror the declared choice labels (the INPUT path, unchanged in S-enum-2).
         self.assertIsInstance(graphql_field, graphene.Enum)
         self.assertEqual(
             set(graphql_field._meta.enum.__members__), {"CHOICE_A", "CHOICE_B"}

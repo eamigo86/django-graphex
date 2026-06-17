@@ -116,6 +116,36 @@ class RelationInputField:
     inject_only: bool
 
 
+@dataclass(frozen=True)
+class ChoicesInputField:
+    """A Django choices field rendered as a ``GraphQLEnumType`` input field.
+
+    S-input-5 (choices INPUT off graphene): a choices field's INPUT surface
+    historically rendered as ``GraphQLString`` (the ``_python_type_to_gql`` enum
+    fallback) while the graphene converter built a dead ``graphene.Enum``. This
+    spec carries the SHARED native ``GraphQLEnumType`` (the SAME canonical enum
+    the OUTPUT + FILTER-INPUT paths resolve, S-enum-1) so the choices field is
+    enum-typed on INPUT too — graphene-free and output/input symmetric.
+
+    Attributes:
+        out_name: snake_case field/accessor name (the base ``model_fields`` key it
+            REPLACES, delivered to the resolver via graphql-core ``out_name``).
+        alias: camelCase wire key the client sends.
+        enum_type: the shared ``GraphQLEnumType`` instance (built via
+            ``converter.build_choices_enum_type``).
+        is_list: ``True`` -> ``[Enum]`` (a ``MultiSelectField``); ``False`` ->
+            single ``Enum``.
+        required: ``True`` -> wrap the single enum in ``GraphQLNonNull`` (a
+            required field on create).
+    """
+
+    out_name: str
+    alias: str
+    enum_type: Any
+    is_list: bool
+    required: bool
+
+
 # ---------------------------------------------------------------------------
 # Pydantic FieldInfo → graphql-core type mapping
 # ---------------------------------------------------------------------------
@@ -325,6 +355,7 @@ def compile_input_type(
     description: str | None = None,
     nested_fields: tuple[NestedInputField, ...] = (),
     relation_fields: tuple[RelationInputField, ...] = (),
+    choices_fields: tuple[ChoicesInputField, ...] = (),
     only_fields: tuple[str, ...] | list[str] | None = None,
     exclude_fields: tuple[str, ...] | list[str] | None = None,
     include_fields: tuple[str, ...] | list[str] | None = None,
@@ -373,6 +404,9 @@ def compile_input_type(
         _relation_replace = {
             rf.out_name for rf in relation_fields if not rf.inject_only
         }
+        # out_names a choices spec REPLACES (the ``String`` the base loop would
+        # emit from the pydantic Enum annotation) -> skip so the enum field lands.
+        _choices_replace = {cf.out_name for cf in choices_fields}
 
         # issue #65: Meta only/include/exclude field selection on the INPUT type.
         # ``include_fields`` force-includes a field even when only/exclude would
@@ -388,6 +422,8 @@ def compile_input_type(
             if field_name in _nested_out_names:
                 continue
             if field_name in _relation_replace:
+                continue
+            if field_name in _choices_replace:
                 continue
             _forced = _incl is not None and field_name in _incl
             if not _forced and _only is not None and field_name not in _only:
@@ -456,6 +492,40 @@ def compile_input_type(
             fields[rf.alias] = GraphQLInputField(
                 type_=rel_type,
                 out_name=rf.out_name,
+            )
+
+        # ----------------------------------------------------------------
+        # Choices enum injection (S-input-5). A choices field's INPUT surface is
+        # the SHARED native ``GraphQLEnumType`` (the SAME canonical enum the
+        # OUTPUT + FILTER-INPUT paths use, S-enum-1) instead of the ``String``
+        # fallback the pydantic Enum annotation would otherwise produce. A
+        # ``MultiSelectField`` becomes ``[Enum]`` (mirroring the converter's
+        # ``DjangoListField(enum)``); a plain choices field becomes a single
+        # ``Enum`` (``Enum!`` when required on create). out_name routes the value
+        # to the resolver, where pydantic coerces it (the enum value carries the
+        # RAW python value, so resolution is identical to graphene's).
+        # ----------------------------------------------------------------
+        for cf in choices_fields:
+            # issue #65: honor Meta only/include/exclude on the choices INPUT
+            # field too. ``include_fields`` force-includes even when only/exclude
+            # would skip it — EXACT same gating the base ``model_fields`` loop
+            # applies on the snake field_name (cf.out_name is the same snake key
+            # space). Without this a choices field excluded via ``exclude_fields``
+            # (or filtered out by ``only_fields``) would LEAK onto the input.
+            _forced = _incl is not None and cf.out_name in _incl
+            if not _forced and _only is not None and cf.out_name not in _only:
+                continue
+            if not _forced and _excl is not None and cf.out_name in _excl:
+                continue
+            if cf.is_list:
+                ch_type: Any = GraphQLList(cf.enum_type)
+            elif cf.required:
+                ch_type = GraphQLNonNull(cf.enum_type)
+            else:
+                ch_type = cf.enum_type
+            fields[cf.alias] = GraphQLInputField(
+                type_=ch_type,
+                out_name=cf.out_name,
             )
 
         # ----------------------------------------------------------------

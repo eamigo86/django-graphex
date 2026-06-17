@@ -22,13 +22,12 @@ from django.contrib.contenttypes.fields import (
 )
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from graphene import ID, Dynamic, List, NonNull
+from graphene import Dynamic
 
 from django_graphex.converter import (
     construct_fields,
     convert_django_field,
 )
-from django_graphex.fields import DjangoListField
 from django_graphex.native.output_compiler import (
     _to_graphql_field,
     compile_output_fields,
@@ -58,39 +57,45 @@ def _resolve(field, **kwargs):
 # --------------------------------------------------------------------------- #
 # FK / O2O / M2M / reverse: the input_flag dynamic branches                    #
 # --------------------------------------------------------------------------- #
-def test_fk_input_flag_not_nested_is_id():
+def test_fk_input_flag_not_nested_returns_native_marker():
+    # S-input-5: a to-ONE FK on the native INPUT path converts to a graphene-free
+    # ``NativeRelationField`` presence/ordering marker. The actual ``id: ID``
+    # input field is built by ``input_compiler.compile_input_type`` from a
+    # ``RelationInputField`` spec (``types._resolve_native_relation_input_fields``
+    # reads ``model._meta``), NOT from this descriptor.
+    from django_graphex.native.descriptors import NativeRelationField
+
     registry = Registry()
     fk = Post._meta.get_field("author")
-    out = _resolve(fk, registry=registry, input_flag="create")
-    assert isinstance(out, ID)
+    out = convert_django_field(fk, registry=registry, input_flag="create")
+    assert isinstance(out, NativeRelationField)
+    assert not type(out).__module__.startswith("graphene")
 
 
-def test_m2m_input_flag_not_nested_is_list_of_id():
+def test_m2m_input_flag_not_nested_returns_native_marker():
+    # S-input-5: a forward M2M on the native INPUT path converts to a graphene-free
+    # ``NativeRelationField`` marker. The actual ``[ID!]`` input list is built by
+    # ``compile_input_type`` from the relation spec.
+    from django_graphex.native.descriptors import NativeRelationField
+
     registry = Registry()
     m2m = Post._meta.get_field("tags")
-    out = _resolve(m2m, registry=registry, input_flag="create")
-    # DjangoListField wrapping [ID!]. S8c: the field is off graphene, so the wrapper
-    # currency is NativeList(NativeNonNull(...)); the inner ID is still the graphene
-    # scalar the converter (S8e) emits.
-    from django_graphex.native.descriptors import NativeList, NativeNonNull
-
-    assert isinstance(out, DjangoListField)
-    assert isinstance(out.type, NativeList)
-    assert isinstance(out.type.of_type, NativeNonNull)
-    assert out.type.of_type.of_type is ID
+    out = convert_django_field(m2m, registry=registry, input_flag="create")
+    assert isinstance(out, NativeRelationField)
+    assert not type(out).__module__.startswith("graphene")
 
 
-def test_reverse_relation_input_flag_not_nested_is_list_of_id():
+def test_reverse_relation_input_flag_not_nested_returns_native_marker():
+    # S-input-5: a reverse FK on the native INPUT path converts to a graphene-free
+    # ``NativeRelationField`` marker. The actual ``[ID!]`` list is built by
+    # ``compile_input_type`` from the (injected) relation spec.
+    from django_graphex.native.descriptors import NativeRelationField
+
     registry = Registry()
     reverse = Author._meta.get_field("posts")  # reverse FK (ManyToOneRel)
-    out = _resolve(reverse, registry=registry, input_flag="create")
-    # DjangoListField wrapping [ID!]. S8c: native wrapper currency (see above).
-    from django_graphex.native.descriptors import NativeList, NativeNonNull
-
-    assert isinstance(out, DjangoListField)
-    assert isinstance(out.type, NativeList)
-    assert isinstance(out.type.of_type, NativeNonNull)
-    assert out.type.of_type.of_type is ID
+    out = convert_django_field(reverse, registry=registry, input_flag="create")
+    assert isinstance(out, NativeRelationField)
+    assert not type(out).__module__.startswith("graphene")
 
 
 def test_fk_output_returns_native_marker():

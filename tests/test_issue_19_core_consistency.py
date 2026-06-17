@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import graphene
 import pytest
 from django.db import models
 from django.test import override_settings
@@ -191,13 +190,20 @@ def test_multiselectfield_subclass_with_different_name_detected():
 
 
 def test_multiselectfield_direct_class_still_detected():
-    """A class literally named MultiSelectField still converts to DjangoListField.
+    """A class literally named MultiSelectField still renders as a list of enum.
 
-    This is a regression guard — the isinstance path must fall back gracefully
-    when multiselectfield package is absent and name-check is the only heuristic.
+    Regression guard — the isinstance path must fall back gracefully when the
+    multiselectfield package is absent and the name-check is the only heuristic.
+
+    S-enum-2 (OUTPUT) + S-input-5 (INPUT) retired graphene on the choices
+    converter (it returns the dead-scalar sentinel on native). The name-based
+    MultiSelectField detection now lives in
+    ``types._resolve_native_choices_input_fields`` (``is_list=True`` -> ``[Enum]``)
+    for the INPUT surface and the native output compiler for OUTPUT. The graphene
+    backend still routes a MultiSelectField to ``DjangoListField``.
     """
 
-    from django_graphex.converter import _NATIVE_BACKEND
+    from django_graphex.converter import _DEAD_SCALAR, _NATIVE_BACKEND
 
     class MultiSelectField(models.CharField):
         pass
@@ -205,13 +211,21 @@ def test_multiselectfield_direct_class_still_detected():
     field = MultiSelectField(max_length=20, choices=[("a", "A"), ("b", "B")])
     field.name = "tags"
     field.model = Author
-    # S-enum-2: the OUTPUT choices path returns the dead-scalar sentinel on native;
-    # exercise the graphene MultiSelectField -> DjangoListField branch via the INPUT
-    # path (unchanged until S-input-5). On graphene the OUTPUT path is unchanged.
-    _input_flag = "create" if _NATIVE_BACKEND else None
-    out = convert_django_field_with_choices(field, Registry(), input_flag=_input_flag)
-    # S8c: DjangoListField is off graphene ``Field`` onto ``NativeMountedField``
-    # (the same field-shaped descriptor the native compiler reads).
+
+    if _NATIVE_BACKEND:
+        # Converter is graphene-free on both paths (dead-scalar sentinel). The
+        # MultiSelectField -> ``[Enum]`` input rendering is driven by the
+        # name-based heuristic in ``_resolve_native_choices_input_fields``
+        # (``is_list = type(field).__name__ == "MultiSelectField"``).
+        for input_flag in (None, "create"):
+            out = convert_django_field_with_choices(
+                field, Registry(), input_flag=input_flag
+            )
+            assert out is _DEAD_SCALAR
+        assert type(field).__name__ == "MultiSelectField"
+        return
+
+    out = convert_django_field_with_choices(field, Registry(), input_flag=None)
     from django_graphex.fields import DjangoListField
     from django_graphex.native.descriptors import NativeMountedField
 

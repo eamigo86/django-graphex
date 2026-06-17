@@ -76,17 +76,27 @@ def test_convert_field_with_choices_builds_enum_for_each_form():
         ),
         "tuples": (models.CharField(choices=_TUPLES, max_length=10), {"C", "D"}),
     }
+    from django_graphex.converter import _NATIVE_BACKEND, build_choices_enum_type
+
     registry = get_global_registry()
     for label, (field, expected_members) in forms.items():
         field.name = f"field_{label}"
         field.model = BasicModel  # the converter reads field.model._meta for the name
         # Each modern form converts without raising (it raised ValueError /
-        # TypeError before the normalization fix) and yields an Enum field whose
-        # members match the declared choices. S-enum-2 retired graphene on the
-        # OUTPUT choices path (it returns the dead-scalar sentinel — the native
-        # compiler renders the enum from ``model._meta``), so the enum-building is
-        # exercised via the INPUT path (``input_flag="create"``), which is
-        # unchanged until S-input-5.
+        # TypeError before the normalization fix) and yields an enum whose members
+        # match the declared choices. S-enum-2 (OUTPUT) + S-input-5 (INPUT) retired
+        # graphene on the choices converter path — on native it returns the
+        # dead-scalar sentinel for both paths and the enum is built by the native
+        # canonical builder ``build_choices_enum_type`` (a graphql-core
+        # ``GraphQLEnumType``). On the graphene backend it still builds a graphene
+        # ``Enum``.
+        if _NATIVE_BACKEND:
+            from graphql import GraphQLEnumType
+
+            enum = build_choices_enum_type(field, registry)
+            assert isinstance(enum, GraphQLEnumType), label
+            assert set(enum.values.keys()) == expected_members, label
+            continue
         converted = convert_django_field_with_choices(
             field, registry, input_flag="create"
         )

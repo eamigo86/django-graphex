@@ -21,10 +21,9 @@ as the ``String`` scalar (graphene-django SDL parity), not a dedicated Binary
 scalar.
 """
 
-import graphene
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from graphene import Dynamic, List, NonNull
+from graphene import Dynamic, List
 from graphql import (
     GraphQLBoolean,
     GraphQLFloat,
@@ -124,22 +123,25 @@ def test_multiselectfield_choice_returns_list():
     field.name = "tags_multi"
     field.model = BasicModel
 
-    # S-enum-2: the OUTPUT choices path returns the dead-scalar sentinel on native
-    # (the native compiler renders a MultiSelectField as ``[Enum]`` from
-    # ``model._meta``). Use the INPUT path to exercise the graphene MultiSelectField
-    # -> ``DjangoListField`` branch (unchanged until S-input-5).
+    # S-enum-2 (OUTPUT) + S-input-5 (INPUT): the choices converter path is
+    # graphene-free on BOTH paths on native — it returns the dead-scalar sentinel.
+    # The native compiler renders a MultiSelectField as ``[Enum]`` from
+    # ``model._meta`` (OUTPUT) and the native input compiler renders ``[Enum]``
+    # from the ``ChoicesInputField`` spec (INPUT). The graphene MultiSelectField ->
+    # ``DjangoListField`` branch only runs on the legacy graphene backend.
     if _NATIVE_BACKEND:
-        out_output = convert_django_field_with_choices(field, Registry())
-        assert out_output is _DEAD_SCALAR
-        out = convert_django_field_with_choices(
-            field, Registry(), input_flag="create"
-        )
-    else:
-        out = convert_django_field_with_choices(field, Registry())
+        for input_flag in (None, "create"):
+            out = convert_django_field_with_choices(
+                field, Registry(), input_flag=input_flag
+            )
+            assert out is _DEAD_SCALAR, (
+                "S-input-5: a MultiSelectField choices converter must return the "
+                f"dead-scalar sentinel for input_flag={input_flag!r}; got {out!r}"
+            )
+        return
 
-    # The MultiSelectField branch wraps the enum in a DjangoListField. S8c: the
-    # field class is off graphene ``Field`` onto the native ``NativeMountedField``
-    # descriptor — the SAME field-shaped descriptor, no graphene base.
+    # The MultiSelectField branch wraps the enum in a DjangoListField on graphene.
+    out = convert_django_field_with_choices(field, Registry())
     from django_graphex.fields import DjangoListField
     from django_graphex.native.descriptors import NativeMountedField
 
@@ -310,12 +312,24 @@ class _Profile(models.Model):
         app_label = "tests"
 
 
-def test_onetoone_rel_input_not_nested_is_id():
-    from graphene import ID
+def test_onetoone_rel_input_not_nested_returns_native_marker():
+    # S-input-5: a reverse OneToOneRel on the native INPUT path converts to a
+    # graphene-free ``NativeRelationField`` marker. The actual ``ID`` input field
+    # is built by ``input_compiler.compile_input_type`` from a
+    # ``RelationInputField`` spec, not from this descriptor.
+    from django_graphex.converter import _NATIVE_BACKEND, convert_django_field
+    from django_graphex.native.descriptors import NativeRelationField
 
     rel = Author._meta.get_field("profile")  # OneToOneRel
-    out = _resolve(rel, registry=Registry(), input_flag="create")
-    assert isinstance(out, ID)
+    if _NATIVE_BACKEND:
+        out = convert_django_field(rel, registry=Registry(), input_flag="create")
+        assert isinstance(out, NativeRelationField)
+        assert not type(out).__module__.startswith("graphene")
+    else:
+        from graphene import ID
+
+        out = _resolve(rel, registry=Registry(), input_flag="create")
+        assert isinstance(out, ID)
 
 
 def test_onetoone_rel_output_returns_native_marker():
@@ -353,22 +367,51 @@ def test_onetoone_rel_output_returns_native_marker():
 # M2M / reverse-relation nested-input with no registered type -> None           #
 # --------------------------------------------------------------------------- #
 def test_m2m_nested_input_unregistered_returns_none():
+    # S-input-5: on native the M2M converter returns a graphene-free marker for
+    # BOTH the flat and the nested-input path (the nested OBJECT-input rendering
+    # — and the unregistered-child skip — moved to
+    # ``types._resolve_native_nested_input_fields`` + ``compile_input_type``, which
+    # read ``model._meta`` directly). The graphene-path Dynamic still drops an
+    # unregistered nested child.
+    from django_graphex.converter import _NATIVE_BACKEND, convert_django_field
+    from django_graphex.native.descriptors import NativeRelationField
+
     m2m = Post._meta.get_field("tags")
-    assert (
-        _resolve(m2m, registry=Registry(), input_flag="create", nested_field=True)
-        is None
-    )
+    if _NATIVE_BACKEND:
+        out = convert_django_field(
+            m2m, registry=Registry(), input_flag="create", nested_field=True
+        )
+        assert isinstance(out, NativeRelationField)
+    else:
+        assert (
+            _resolve(m2m, registry=Registry(), input_flag="create", nested_field=True)
+            is None
+        )
 
 
 def test_reverse_relation_nested_input_unregistered_returns_none():
+    from django_graphex.converter import _NATIVE_BACKEND, convert_django_field
+    from django_graphex.native.descriptors import NativeRelationField
+
     reverse = Author._meta.get_field("posts")  # ManyToOneRel
-    assert (
-        _resolve(reverse, registry=Registry(), input_flag="create", nested_field=True)
-        is None
-    )
+    if _NATIVE_BACKEND:
+        out = convert_django_field(
+            reverse, registry=Registry(), input_flag="create", nested_field=True
+        )
+        assert isinstance(out, NativeRelationField)
+    else:
+        assert (
+            _resolve(
+                reverse, registry=Registry(), input_flag="create", nested_field=True
+            )
+            is None
+        )
 
 
 def test_reverse_relation_nested_input_registered_returns_list():
+    from django_graphex.converter import _NATIVE_BACKEND, convert_django_field
+    from django_graphex.native.descriptors import NativeRelationField
+
     reg = Registry()
 
     class _PostInput(DjangoInputObjectType):
@@ -377,6 +420,15 @@ def test_reverse_relation_nested_input_registered_returns_list():
             registry = reg
 
     reverse = Author._meta.get_field("posts")
+    if _NATIVE_BACKEND:
+        # The converter returns the graphene-free marker; the nested ``[_PostInput!]``
+        # list rendering is owned by the native input compiler.
+        out = convert_django_field(
+            reverse, registry=reg, input_flag="create", nested_field=True
+        )
+        assert isinstance(out, NativeRelationField)
+        return
+
     out = _resolve(reverse, registry=reg, input_flag="create", nested_field=True)
     # A list of the registered nested input type: [_PostInput!]. S8c: native wrapper
     # currency (NativeList / NativeNonNull); the inner input type is unchanged.
