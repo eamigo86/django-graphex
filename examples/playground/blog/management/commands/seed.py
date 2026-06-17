@@ -1,4 +1,20 @@
-"""Seed the playground with sample data (idempotent-ish: clears first)."""
+"""Seed the playground with sample data (idempotent-ish: clears first).
+
+The dataset is intentionally large enough to exercise *multi-page* nested
+queries. With the default ``DEFAULT_PAGE_SIZE`` / ``default_limit`` of 10, a
+nested list that holds <= 10 rows always fits in a single page, so the DB-side
+``ROW_NUMBER() OVER (PARTITION BY ...)`` window-pagination path and multi-page
+nested filtering are never reached. The defaults below (15 authors x 12 posts
+each) push every author's ``posts`` list past one page, so a query asking for
+``results(offset: 10, ...)`` on a nested list returns a genuine *second page*.
+
+Counts are configurable so the demo can be scaled up or down without editing
+the file::
+
+    python manage.py seed                       # defaults: 15 authors x 12 posts
+    python manage.py seed --authors 25 --posts 15
+    python manage.py seed --scale 2             # doubles authors + posts
+"""
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
@@ -17,11 +33,63 @@ from blog.models import (
 
 User = get_user_model()
 
+# Defaults sized so each author's nested ``posts`` list spans MORE THAN ONE page
+# at the playground's default page size of 10 (so window pagination + multi-page
+# nested filtering are actually exercised by the example queries).
+DEFAULT_AUTHORS = 15
+DEFAULT_POSTS_PER_AUTHOR = 12
+DEFAULT_COMMENTS_PER_POST = 3
+DEFAULT_NOTES = 12
+
 
 class Command(BaseCommand):
     help = "Populate the database with demo authors, posts, comments and notes."
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--authors",
+            type=int,
+            default=DEFAULT_AUTHORS,
+            help=f"Number of authors to create (default {DEFAULT_AUTHORS}).",
+        )
+        parser.add_argument(
+            "--posts",
+            type=int,
+            default=DEFAULT_POSTS_PER_AUTHOR,
+            help=(
+                "Number of posts per author (default "
+                f"{DEFAULT_POSTS_PER_AUTHOR}). Keep this > the page size (10) so "
+                "nested `posts` lists span multiple pages."
+            ),
+        )
+        parser.add_argument(
+            "--comments",
+            type=int,
+            default=DEFAULT_COMMENTS_PER_POST,
+            help=f"Number of comments per post (default {DEFAULT_COMMENTS_PER_POST}).",
+        )
+        parser.add_argument(
+            "--notes",
+            type=int,
+            default=DEFAULT_NOTES,
+            help=f"Number of private notes for the demo user (default {DEFAULT_NOTES}).",
+        )
+        parser.add_argument(
+            "--scale",
+            type=int,
+            default=1,
+            help=(
+                "Convenience multiplier applied to --authors and --posts "
+                "(default 1). E.g. --scale 2 doubles both."
+            ),
+        )
+
     def handle(self, *args, **options):
+        n_authors = max(1, options["authors"] * options["scale"])
+        n_posts = max(1, options["posts"] * options["scale"])
+        n_comments = max(0, options["comments"])
+        n_notes = max(0, options["notes"])
+
         Attachment.objects.all().delete()
         Account.objects.all().delete()
         Invoice.objects.all().delete()
@@ -47,27 +115,51 @@ class Command(BaseCommand):
         tags = [Tag.objects.create(name=n) for n in ("django", "graphql", "python")]
 
         statuses = [Post.Status.DRAFT, Post.Status.PUBLISHED, Post.Status.ARCHIVED]
-        for a in range(5):
+
+        # Bulk-create for speed: build all posts/comments in memory, then write
+        # them in a couple of round-trips instead of one INSERT per row. (M2M tag
+        # links still need per-post .add() since bulk_create skips m2m.)
+        total_posts = 0
+        total_comments = 0
+        for a in range(n_authors):
             author = Author.objects.create(
                 name=f"Author {a}",
                 bio=f"Bio of author {a}",
                 user=user if a == 0 else None,
             )
-            for p in range(4):  # 5 authors x 4 posts -> nested N+1 demo
-                post = Post.objects.create(
-                    title=f"Author {a} Post {p}",
-                    body=f"Body of post {p} by author {a}.",
-                    status=statuses[(a + p) % 3],
-                    author=author,
-                    category=categories[(a + p) % len(categories)],
-                )
-                post.tags.add(tags[p % len(tags)])
-                for c in range(3):  # nested comments
-                    Comment.objects.create(
-                        post=post, author_name=f"Commenter {c}", text=f"Comment {c}"
+            posts = Post.objects.bulk_create(
+                [
+                    Post(
+                        title=f"Author {a} Post {p}",
+                        body=f"Body of post {p} by author {a}.",
+                        status=statuses[(a + p) % 3],
+                        author=author,
+                        category=categories[(a + p) % len(categories)],
                     )
+                    for p in range(n_posts)
+                ]
+            )
+            total_posts += len(posts)
 
-        for n in range(3):
+            # Attach a tag per post (M2M -- one .add() per post; bulk_create skips m2m).
+            for p, post in enumerate(posts):
+                post.tags.add(tags[p % len(tags)])
+
+            comments = []
+            for post in posts:
+                comments.extend(
+                    Comment(
+                        post=post,
+                        author_name=f"Commenter {c}",
+                        text=f"Comment {c}",
+                    )
+                    for c in range(n_comments)
+                )
+            if comments:
+                Comment.objects.bulk_create(comments)
+                total_comments += len(comments)
+
+        for n in range(n_notes):
             Note.objects.create(
                 title=f"Demo note {n}", body="A private note.", owner=user
             )
@@ -94,8 +186,11 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                "Seeded: 5 authors, 20 posts, 60 comments, 3 notes, "
+                f"Seeded: {n_authors} authors, {total_posts} posts "
+                f"({n_posts}/author), {total_comments} comments, {n_notes} notes, "
                 "2 accounts, 2 invoices, 4 attachments. "
-                "Login: demo / demo12345 (superuser)."
+                "Login: demo / demo12345 (superuser). "
+                "Each author's `posts` list spans multiple pages at page size 10 — "
+                "try `results(offset: 10, ...)` on a nested list."
             )
         )

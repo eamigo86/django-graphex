@@ -11,18 +11,31 @@ argument type on a mutation; the validated value that arrives in the resolver
 exposes ``filename`` / ``data`` / ``content_type`` and a ``to_uploaded_file()``
 helper::
 
-    from django_graphex import Mutation
+    from graphql import GraphQLArgument, GraphQLNonNull
+    from django_graphex import Mutation, field
     from django_graphex.uploads import Base64FileInput, decode_base64_file
 
     class MyMutation(Mutation):
         class args:
-            avatar = Base64FileInput(required=True)
+            # A native Mutation arg is a graphql-core ``GraphQLArgument``. The
+            # compiled input type lives on ``Base64FileInput._meta.graphql_input_type``
+            # but is ``None`` until ``compile_all_inputs()`` runs (AppConfig.ready),
+            # so reference it via a zero-arg ``lambda`` thunk that resolves at
+            # ``Field()`` build time.
+            avatar = lambda: GraphQLArgument(  # noqa: E731
+                GraphQLNonNull(Base64FileInput._meta.graphql_input_type)
+            )
 
-        @staticmethod
-        def mutate(root, info, avatar):
+        ok = field(GraphQLBoolean)
+
+        @classmethod
+        def mutate(cls, root, info, **kwargs):
+            # Input-object args arrive as a plain dict (snake-case out_name keys);
+            # rehydrate it into a Base64FileInput before calling to_uploaded_file().
+            avatar = Base64FileInput(**kwargs["avatar"])
             uploaded = avatar.to_uploaded_file(max_size=2 * 1024 * 1024)
             profile.avatar.save(uploaded.name, uploaded)
-            return uploaded.name
+            return cls(ok=True)
 
 Settings
 --------
@@ -242,19 +255,36 @@ class Base64FileInput(InputType):
 
     Example::
 
-        from django_graphex import Mutation
+        from graphql import GraphQLArgument, GraphQLNonNull
+        from django_graphex import Mutation, field
         from django_graphex.uploads import Base64FileInput
 
         class UploadAvatarMutation(Mutation):
             class args:
-                avatar = Base64FileInput(required=True)
+                # A native Mutation argument is a graphql-core ``GraphQLArgument``.
+                # ``Base64FileInput`` is a Pydantic ``InputType`` whose compiled
+                # ``GraphQLInputObjectType`` lives on ``_meta.graphql_input_type``
+                # — but that attribute is ``None`` until ``compile_all_inputs()``
+                # runs (the package AppConfig.ready() does this at startup when
+                # ``django_graphex`` is in ``INSTALLED_APPS``). Reference it via a
+                # zero-arg ``lambda`` thunk so it resolves at ``Field()`` build
+                # time, NOT at class-definition time.
+                avatar = lambda: GraphQLArgument(  # noqa: E731
+                    GraphQLNonNull(Base64FileInput._meta.graphql_input_type)
+                )
 
-            @staticmethod
-            def mutate(root, info, avatar):
+            ok = field(GraphQLBoolean)
+
+            @classmethod
+            def mutate(cls, root, info, **kwargs):
+                # Input-object arguments arrive as a plain ``dict`` (snake-case
+                # ``out_name`` keys), so rehydrate it into a ``Base64FileInput``
+                # instance before calling ``.to_uploaded_file()``.
+                avatar = Base64FileInput(**kwargs["avatar"])
                 file = avatar.to_uploaded_file(max_size=2 * 1024 * 1024)
                 # file is a SimpleUploadedFile — assign to a FileField:
                 profile.avatar.save(file.name, file, save=True)
-                return file.name
+                return cls(ok=True)
 
     Fields
     ------

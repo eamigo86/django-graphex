@@ -1,7 +1,8 @@
 # django-graphex — Playground
 
-> **Targets django-graphex v1.3.x** — includes v1.1.0 query-optimization,
-> v1.2.0 typed-GFK unions, and v1.2.2 `get_queryset` scoping + safe ordering.
+> **Targets django-graphex v2.0 — native `graphql-core` backend (no graphene).**
+> Exercises the whole 2.0 surface: query-optimization, typed-GFK unions,
+> `get_queryset` scoping + safe ordering, and native subscriptions (SSE + WS).
 
 A small, runnable Django project that exercises **every major feature** of
 `django-graphex` end-to-end: queries, all three paginators, filtering,
@@ -37,8 +38,11 @@ cd examples/playground
 
 make install     # uv sync — installs the local library + daphne
 make migrate     # create + apply migrations (SQLite)
-make seed        # demo data: 5 authors × 4 posts × 3 comments, 3 notes,
-                 #            2 accounts + 2 invoices + 4 attachments (GFK union)
+make seed        # demo data: 15 authors × 12 posts × 3 comments, 12 notes,
+                 #            2 accounts + 2 invoices + 4 attachments (GFK union).
+                 #            Each author's posts list spans multiple pages at
+                 #            page size 10, so nested window pagination is real.
+                 #            Scale with: python manage.py seed --authors N --posts M
 make run         # ASGI server at http://127.0.0.1:8000/graphql/
 ```
 
@@ -110,9 +114,9 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `IsAdmin` | ✅ | imported; available for `permission_classes` |
 | `IsAdminOrReadOnly` | ✅ | imported; available for `permission_classes` |
 | **Security / middleware** | | |
-| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
-| `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
-| `GraphQLDirectiveMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
+| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` GRAPHEX.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
+| `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` GRAPHEX.MIDDLEWARE |
+| `GraphQLDirectiveMiddleware` | ✅ | `config/settings.py` GRAPHEX.MIDDLEWARE |
 | `DjangoGraphQLSchema` (public + private roots) | ✅ | `schema.py` — `private_query=PrivateQuery`, `private_subscription=PrivateSubscriptions` |
 | `collect_field_names` | note | Used internally by `DjangoGraphQLSchema`; can be called directly to build a custom protected-field set |
 | `DenyAllRegistry` | note | Fail-closed sentinel for broken schemas; not needed in a healthy project |
@@ -133,7 +137,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `OPTIMIZE_QUERYSET` | ✅ | Enabled by default; `select_related`/`prefetch_related` derived from the selection. Commented in `config/settings.py` to show how to flip it |
 | `OPTIMIZE_ONLY_FIELDS` | ✅ | Enabled by default; `.only()` column narrowing (root span + inside each `Prefetch` child) |
 | `OPTIMIZE_NESTED_PAGINATION` (DB-side window slicing) | ✅ | Exercised by `authors { results { posts(filter:…) { results(limit:…, ordering:…) } } }` — `ROW_NUMBER() OVER PARTITION BY author_id` slices each author's page DB-side |
-| `OPTIMIZE_ANNOTATED_FIELDS` / `AnnotatedField` | ✅ | `schema.py` — `AuthorType.post_count = AnnotatedField(graphene.Int, Count("posts"))`; `Count` injected only when `postCount` is selected |
+| `OPTIMIZE_ANNOTATED_FIELDS` / `AnnotatedField` | ✅ | `schema.py` — `AuthorType.post_count = AnnotatedField(GraphQLInt, Count("posts"))`; `Count` injected only when `postCount` is selected |
 | Per-field `optimize_<field>` hook | ✅ | `schema.py` — `AuthorType.optimize_posts` (composes on the optimizer-built `posts` child queryset, once per query) |
 | `OPTIMIZER_SAFE_MODE` | note | Default `False` (fail loud); listed commented in `config/settings.py` — flip to `True` to degrade to the un-optimized base on any optimizer exception |
 | **Generic relations (typed GFK union)** | | |
@@ -166,11 +170,52 @@ make run            daphne ASGI server (HTTP + WebSocket)
 make collectstatic  collect static files into STATIC_ROOT
 make superuser      create your own superuser
 make shell          Django shell
+make test           run the end-to-end tests (WS + SSE round-trips, schema, client)
 make reset          drop the SQLite db, re-migrate, re-seed
 make clean          remove the db and caches
 ```
 
 The `make run` command starts daphne at <http://127.0.0.1:8000/graphql/>.
+
+---
+
+## Tests
+
+The `tests/` directory holds **end-to-end** tests that run under the
+playground's **own** Django settings (`config.settings`), not the library's
+`tests/` settings. They drive the real `blog.schema`, the real WebSocket
+consumer (`config/asgi.py` → `blog.consumers.AppWSConsumer`), and the real SSE
+view (`config/urls.py`):
+
+- **WS round-trip** — open a `postSubscription` over the graphql-transport-ws
+  consumer, create a `Post` through the ORM (a genuine `post_save` broadcast),
+  and assert a `next` frame with the new post arrives.
+- **SSE round-trip** — open the same subscription over the SSE
+  (`text/event-stream`) view, create a `Post`, and assert an `event: next`
+  frame is delivered.
+- **Schema + permission smoke** — the playground schema builds; a protected
+  field (`me`) requires auth through `GraphQLView`/`AuthenticatedFieldsMiddleware`.
+- **Subscription client** — `/graphql/client/` serves the HTML client with both
+  transports (graphql-transport-ws + graphql-sse) and the playground's WS/HTTP
+  endpoints wired. (A full headless-browser round-trip is intentionally deferred
+  — no Playwright/Selenium dependency is added.)
+
+Run them with **make** (uses `uv`, installs the `test` dependency group):
+
+```bash
+cd examples/playground
+make test
+```
+
+Or directly, with any environment that already has `pytest`, `pytest-django`,
+`pytest-asyncio`, `channels`, and `daphne` available (e.g. the repo's own dev
+venv) — `--no-migrations` builds the test DB straight from the models, since
+the playground ships no migration files:
+
+```bash
+cd examples/playground
+DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations
+```
 
 ---
 
@@ -226,7 +271,8 @@ explode (visible via the SQL panel, `django-debug-toolbar`, or
 `assertNumQueries` in a test).
 
 **(a) `AnnotatedField` — selection-driven DB annotation.**
-`AuthorType.post_count = AnnotatedField(graphene.Int, Count("posts"))`.
+`AuthorType.post_count = AnnotatedField(GraphQLInt, Count("posts"))`
+(`GraphQLInt` is imported from `graphql`, the graphql-core scalar — no graphene).
 
 ```graphql
 {
@@ -321,9 +367,9 @@ prevents the walker from mis-attributing `InvoiceType.amount` against the
 
 > **Note on `@lowercase` and enum fields**: `Post.status` is a `TextChoices`
 > CharField exposed as a GraphQL enum. Applying `@lowercase` to it has no
-> visible effect because graphene re-serializes the field through the enum type
-> *after* the directive runs, always returning the enum name (`PUBLISHED`, etc.).
-> Use `@lowercase` on plain text fields (like `title` above) where the
+> visible effect because graphql-core re-serializes the field through the enum
+> type *after* the directive runs, always returning the enum name (`PUBLISHED`,
+> etc.). Use `@lowercase` on plain text fields (like `title` above) where the
 > transformation is visible in the response.
 
 All directives from `all_directives` are available: `@uppercase`,

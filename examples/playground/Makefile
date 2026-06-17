@@ -1,4 +1,4 @@
-.PHONY: help install migrate seed superuser run shell reset clean collectstatic
+.PHONY: help install migrate seed superuser run shell reset clean collectstatic test
 .DEFAULT_GOAL := help
 
 help: ## Show this help
@@ -25,6 +25,9 @@ run: ## Run the ASGI server (HTTP + WebSocket) at http://127.0.0.1:8000/graphql/
 
 shell: ## Open a Django shell
 	uv run python manage.py shell
+
+test: ## Run the playground end-to-end tests (WS + SSE round-trips, schema, client)
+	uv run --group test pytest -q --no-migrations
 
 reset: ## Drop the SQLite db and re-migrate + re-seed
 	rm -f db.sqlite3

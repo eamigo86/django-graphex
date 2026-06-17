@@ -10,6 +10,18 @@ dependencies = [
     "daphne>=4.0",
 ]
 
+# Test-only deps for the playground's end-to-end suite (tests/). These are the
+# SAME tools the library's own dev extra already pins (pytest / pytest-django /
+# pytest-asyncio); channels + daphne come from the library's [subscriptions]
+# extra above. Run with `make test` (or `uv run --group test pytest -q
+# --no-migrations`). The pytest config lives in ./pytest.ini.
+[dependency-groups]
+test = [
+    "pytest>=9.0.0,<10",
+    "pytest-django>=4.5.0,<5",
+    "pytest-asyncio>=1.0,<2",
+]
+
 [tool.uv.sources]
 # Use the local checkout of the library (editable) so you test your changes.
 # `dependencies` above only says *what* is required; this says *where* it comes
