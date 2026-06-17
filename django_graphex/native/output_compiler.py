@@ -366,6 +366,212 @@ def _compile_choices_enum_field(
 
 
 # ---------------------------------------------------------------------------
+# PostgreSQL ArrayField / RangeField output (audit rank 7)
+# ---------------------------------------------------------------------------
+# v1.x graphene rendered ``django.contrib.postgres.fields.ArrayField`` as a
+# ``GraphQLList`` of the converted base field and a ``RangeField`` as a composite
+# object. The native OUTPUT compiler previously had NO entry for either (the MRO
+# walk over ``DJANGO_TO_GQL`` found nothing → ``{}`` → the field was silently
+# DROPPED from the SDL — a real v1→v2 regression). This block restores native
+# rendering for both.
+#
+# Dispatch is keyed on ``field.get_internal_type()`` (the same string-based seam
+# the Pydantic schema builder in ``native/fields.py`` uses) rather than on
+# ``isinstance`` against the real Django classes. This is deliberate: importing
+# ``django.contrib.postgres.fields`` pulls in the psycopg adapter chain
+# (``postgres.lookups`` → ``postgres.search`` → ``db.backends.postgresql``), so a
+# top-level ``isinstance`` check would crash any install without psycopg — even
+# when no Postgres field is in use. The internal-type string is stable across
+# Django versions (``"ArrayField"`` for arrays; ``"IntegerRangeField"``,
+# ``"BigIntegerRangeField"``, ``"DecimalRangeField"``, ``"DateRangeField"``,
+# ``"DateTimeRangeField"`` for ranges — all end in ``"RangeField"``) and is
+# computed by the field instance itself with no psycopg import required.
+
+#: RangeField internal-type string → the GraphQL scalar of each bound (lower /
+#: upper). Mirrors the element scalar Django uses for the range's base field.
+_RANGE_INTERNAL_TO_BOUND: dict[str, Any] = {
+    "IntegerRangeField": GraphQLInt,
+    "BigIntegerRangeField": GraphQLInt,
+    "DecimalRangeField": GraphQLFloat,
+    "DateRangeField": GdxDate,
+    "DateTimeRangeField": GdxDateTime,
+}
+
+#: Cache of the per-bound-type composite Range GraphQLObjectType, keyed by the
+#: bound scalar's name so ``[Int]`` ranges and ``Date`` ranges get distinct,
+#: reusable types.
+_RANGE_COMPOSITE_TYPES: dict[str, Any] = {}
+
+
+def _is_array_field(field: Any) -> bool:
+    """Return True for a PostgreSQL ``ArrayField`` (psycopg-free detection)."""
+    return field.get_internal_type() == "ArrayField"
+
+
+def _is_range_field(field: Any) -> bool:
+    """Return True for any PostgreSQL ``*RangeField`` (psycopg-free detection).
+
+    Matches the abstract ``RangeField`` and every concrete subtype
+    (``IntegerRangeField``, ``DateTimeRangeField``, …): all report an internal
+    type ending in ``"RangeField"``.
+    """
+    return field.get_internal_type().endswith("RangeField")
+
+
+def _inner_output_type(
+    field: Any,
+    registry: Any,
+    graphene_registry: Any,
+) -> Any | None:
+    """Resolve the GraphQL OUTPUT type for an ArrayField's ``base_field``.
+
+    Threads the base field through the SAME mapping rules the top-level scalar
+    path uses, so an array's element type stays consistent with a standalone
+    field of the same class:
+
+    * a nested ``ArrayField`` recurses → ``GraphQLList(GraphQLList(inner))``
+      (``[[Inner]]``);
+    * a base field with ``choices`` becomes the shared ``GraphQLEnumType`` via
+      the canonical ``build_choices_enum_type`` builder (``[Enum]``);
+    * any other base field maps through ``DJANGO_TO_GQL`` (``CharField`` →
+      ``String`` → ``[String]``; ``IntegerField`` → ``Int`` → ``[Int]``).
+
+    Returns ``None`` when the base field type is unknown (the caller then drops
+    the whole array, matching the scalar path's "skip unknown" behaviour).
+    """
+    if _is_array_field(field):
+        nested = _inner_output_type(field.base_field, registry, graphene_registry)
+        return None if nested is None else GraphQLList(nested)
+
+    # Choices base field → shared enum ([Enum]). Only when the base field is
+    # bound to a model (Django's ArrayField.contribute_to_class binds the base
+    # field's ``model``/``name`` to the owning array field), so the canonical
+    # enum name can be derived.
+    if (
+        graphene_registry is not None
+        and getattr(field, "choices", None)
+        and getattr(field, "model", None) is not None
+    ):
+        from django_graphex.converter import build_choices_enum_type  # noqa: PLC0415
+
+        enum_type = build_choices_enum_type(field, graphene_registry)
+        if enum_type is not None:
+            return enum_type
+
+    django_to_gql = _get_django_to_gql()
+    for klass in type(field).__mro__:
+        if klass in django_to_gql:
+            return django_to_gql[klass]
+    return None
+
+
+def _compile_array_field(
+    field: Any,
+    registry: Any,
+    graphene_registry: Any,
+) -> dict[str, GraphQLField]:
+    """Compile a PostgreSQL ``ArrayField`` → ``GraphQLList(<inner>)``.
+
+    A nested array yields ``[[Inner]]`` (the inner type recurses). The list and
+    its element are nullable, matching the OUTPUT nullability convention used by
+    every other native scalar/relation field (#1494 parity — only the primary
+    key is non-null on output). When the base field type is unknown the field is
+    dropped (empty dict), mirroring the scalar fall-through.
+    """
+    field_name: str = field.name if hasattr(field, "name") else field.attname
+    camel_name: str = _to_camel_case(field_name)
+
+    inner = _inner_output_type(field.base_field, registry, graphene_registry)
+    if inner is None:
+        return {}
+
+    def _default_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
+        if isinstance(root, dict):
+            return root.get(_name)
+        return getattr(root, _name, None)
+
+    return {
+        camel_name: GraphQLField(
+            type_=GraphQLList(inner),
+            resolve=_default_resolver,
+        )
+    }
+
+
+def _get_range_composite_type(bound_scalar: Any) -> Any:
+    """Return the shared composite Range ``GraphQLObjectType`` for a bound scalar.
+
+    DESIGN CHOICE (audit rank 7): a PostgreSQL ``RangeField`` renders as a
+    composite OUTPUT object ``{ lower, upper }`` typed by the range's element
+    scalar (e.g. an ``IntegerRangeField`` → ``{ lower: Int, upper: Int }``,
+    a ``DateTimeRangeField`` → ``{ lower: DateTime, upper: DateTime }``). This
+    was chosen over a flat serialized string because it is the simplest FAITHFUL
+    representation of a range: both endpoints stay individually typed and
+    queryable, and a ``psycopg`` ``Range`` object exposes ``.lower`` / ``.upper``
+    directly, so the default resolver needs no parsing. Both bounds are nullable
+    (a range may be unbounded on either side, and OUTPUT scalars follow the
+    #1494 always-nullable rule). The type is memoized per bound scalar so all
+    ``Int`` ranges share one ``IntRange`` type, all ``Date`` ranges share one
+    ``DateRange`` type, etc.
+    """
+    key = bound_scalar.name
+    cached = _RANGE_COMPOSITE_TYPES.get(key)
+    if cached is not None:
+        return cached
+
+    from graphql import GraphQLObjectType  # noqa: PLC0415
+
+    def _bound_resolver(attr: str):
+        def _resolve(root: Any, _info: Any) -> Any:
+            if root is None:
+                return None
+            if isinstance(root, dict):
+                return root.get(attr)
+            return getattr(root, attr, None)
+
+        return _resolve
+
+    composite = GraphQLObjectType(
+        name=f"{key}Range",
+        description=" Auto generated composite Type for a model's RangeField ",
+        fields={
+            "lower": GraphQLField(bound_scalar, resolve=_bound_resolver("lower")),
+            "upper": GraphQLField(bound_scalar, resolve=_bound_resolver("upper")),
+        },
+    )
+    _RANGE_COMPOSITE_TYPES[key] = composite
+    return composite
+
+
+def _compile_range_field(field: Any) -> dict[str, GraphQLField]:
+    """Compile a PostgreSQL ``*RangeField`` → composite ``{ lower, upper }`` object.
+
+    See :func:`_get_range_composite_type` for the shape rationale. An unknown
+    range subtype (one not in :data:`_RANGE_INTERNAL_TO_BOUND`) falls back to a
+    ``String`` bound so the field is still rendered rather than dropped.
+    """
+    field_name: str = field.name if hasattr(field, "name") else field.attname
+    camel_name: str = _to_camel_case(field_name)
+
+    bound_scalar = _RANGE_INTERNAL_TO_BOUND.get(
+        field.get_internal_type(), GraphQLString
+    )
+    composite = _get_range_composite_type(bound_scalar)
+
+    def _default_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
+        if isinstance(root, dict):
+            return root.get(_name)
+        return getattr(root, _name, None)
+
+    return {
+        camel_name: GraphQLField(
+            type_=composite,
+            resolve=_default_resolver,
+        )
+    }
+
+
+# ---------------------------------------------------------------------------
 # Single field compiler
 # ---------------------------------------------------------------------------
 
@@ -418,6 +624,18 @@ def _to_graphql_field(
     # gfk_unions -> GraphQLUnion variant is #8 / Track 2, out of scope.)
     if _is_generic_foreign_key(field):
         return _compile_generic_foreign_key(field)
+
+    # --- PostgreSQL ArrayField / RangeField (audit rank 7) --------------------
+    # These have no ``DJANGO_TO_GQL`` entry (the MRO walk would find nothing and
+    # the field would be silently dropped — a v1→v2 regression). Render them
+    # natively here, BEFORE the scalar fall-through: an ``ArrayField`` becomes a
+    # ``GraphQLList`` of its (recursively resolved) element type, and a
+    # ``*RangeField`` becomes a composite ``{ lower, upper }`` object. Detection
+    # is by ``get_internal_type()`` so no psycopg import is triggered.
+    if _is_array_field(field):
+        return _compile_array_field(field, registry, graphene_registry)
+    if _is_range_field(field):
+        return _compile_range_field(field)
 
     # --- Relation fields ------------------------------------------------------
     if _is_relation_field(field):
