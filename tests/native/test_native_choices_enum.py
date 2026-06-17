@@ -1,9 +1,9 @@
 """S-enum-1 — native OUTPUT choices-enum generation (focused RED-first tests).
 
 The native OUTPUT compiler (``native/output_compiler.py``) historically rendered
-a ``CharField(choices=...)`` as ``GraphQLString`` (no choices branch), DIVERGING
-from graphene which renders a real ``GraphQLEnumType`` with per-choice
-descriptions. This slice adds a native choices-enum branch that:
+a ``CharField(choices=...)`` as ``GraphQLString`` (no choices branch). The v2.0
+spec renders a real ``GraphQLEnumType`` with per-choice descriptions instead.
+This slice adds a native choices-enum branch that:
 
 * compiles a choices field to a ``GraphQLEnumType`` (canonical name + value
   names matching graphene), ``MultiSelectField`` → ``GraphQLList(enum)``;

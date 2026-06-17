@@ -128,42 +128,24 @@ def test_graphql_core_unwrap_plain_named_type_is_noop():
 
 
 # ---------------------------------------------------------------------------
-# 4.1 RED: graphene Structure unwrap — verify graphene path is unchanged
-# ---------------------------------------------------------------------------
-
-
-def test_graphene_structure_import_still_works():
-    """graphene.types.structures.Structure is still importable (graphene path intact)."""
-    from graphene.types.structures import List as GList
-    from graphene.types.structures import NonNull, Structure
-    from graphql import GraphQLList, GraphQLNonNull
-
-    # graphene types are NOT instances of graphql-core wrappers
-    gn = NonNull("String")
-    assert not isinstance(gn, (GraphQLNonNull, GraphQLList))
-
-
-# ---------------------------------------------------------------------------
-# 4.1 RED: AnnotatedField uses _strconv.to_snake_case under native
+# 4.1: AnnotatedField uses _strconv.to_snake_case under native
 # ---------------------------------------------------------------------------
 
 
 def test_annotated_field_annotation_name_uses_strconv_snake_case():
     """AnnotatedField.annotation_name must return the correct _gqx_ann_<snake> key.
 
-    AnnotatedField.annotation_name should use
-    django_graphex._strconv.to_snake_case (not graphene's str_converters).
-    Both produce the same output for standard camelCase inputs, but the
-    import path under native should be _strconv.
+    AnnotatedField.annotation_name uses django_graphex._strconv.to_snake_case
+    (graphene-free, v2.0). The field type is a graphql-core scalar.
     """
-    import graphene
     from django.db.models.functions import Length
+    from graphql import GraphQLInt
 
     from django_graphex._strconv import to_snake_case
     from django_graphex.fields import AnnotatedField
 
     # Construct an AnnotatedField
-    field = AnnotatedField(graphene.Int, expression=Length("name"))
+    field = AnnotatedField(GraphQLInt, expression=Length("name"))
 
     # annotation_name() should produce _gqx_ann_<snake_field_name>
     result = field.annotation_name("createdAt")
@@ -173,13 +155,13 @@ def test_annotated_field_annotation_name_uses_strconv_snake_case():
 
 def test_annotated_field_annotation_name_with_explicit_name():
     """AnnotatedField with annotation_name= override skips to_snake_case."""
-    import graphene
     from django.db.models.functions import Length
+    from graphql import GraphQLInt
 
     from django_graphex.fields import AnnotatedField
 
     field = AnnotatedField(
-        graphene.Int,
+        GraphQLInt,
         expression=Length("name"),
         annotation_name="my_custom_name",
     )
@@ -188,13 +170,13 @@ def test_annotated_field_annotation_name_with_explicit_name():
 
 def test_annotated_field_default_resolver_annotation_name():
     """AnnotatedField._default_resolver derives annotation name from info.field_name."""
-    import graphene
     from django.db.models.functions import Length
+    from graphql import GraphQLInt
 
     from django_graphex._strconv import to_snake_case
     from django_graphex.fields import AnnotatedField
 
-    field = AnnotatedField(graphene.Int, expression=Length("name"))
+    field = AnnotatedField(GraphQLInt, expression=Length("name"))
 
     # Simulate info with field_name = "createdAt"
     class _FakeInfo:
@@ -216,29 +198,16 @@ def test_annotated_field_default_resolver_annotation_name():
 def test_unwrap_graphql_core_nonnull_gives_of_type():
     """Under native, a graphql-core GraphQLNonNull wrapping an object returns of_type.
 
-    This is the RED test: the current `while isinstance(t, Structure)` loop
-    does NOT unwrap graphql-core wrappers. After GREEN, the native branch
-    uses `isinstance(t, (GraphQLNonNull, GraphQLList))` which correctly handles
-    graphql-core wrapped types.
-
-    We test the unwrap logic directly (not via field.model) since field.type
-    is always a graphene type in current field constructors.
+    The native field-model unwrap uses
+    ``isinstance(t, (GraphQLNonNull, GraphQLList))`` to reach the named type,
+    handling graphql-core wrapped types directly (graphene-free, v2.0).
     """
-    from graphene.types.structures import Structure
     from graphql import GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString
 
     inner = GraphQLObjectType("TestModel", lambda: {"id": GraphQLString})
     wrapped_nn = GraphQLNonNull(inner)
     wrapped_list_nn = GraphQLList(GraphQLNonNull(inner))
     wrapped_nn_list_nn = GraphQLNonNull(GraphQLList(GraphQLNonNull(inner)))
-
-    # graphql-core types are NOT graphene Structure instances
-    assert not isinstance(wrapped_nn, Structure), (
-        "graphql-core GraphQLNonNull must NOT be a graphene Structure"
-    )
-    assert not isinstance(wrapped_list_nn, Structure), (
-        "graphql-core GraphQLList must NOT be a graphene Structure"
-    )
 
     # graphql-core isinstance check DOES unwrap them
     for wrapped in [wrapped_nn, wrapped_list_nn, wrapped_nn_list_nn]:
@@ -255,26 +224,27 @@ def test_unwrap_graphql_core_nonnull_gives_of_type():
 # ---------------------------------------------------------------------------
 
 
-def test_fields_module_does_not_import_graphene_strconv_at_module_level():
-    """Under native, AnnotatedField must NOT depend on graphene's to_snake_case at call time.
+def test_fields_strconv_to_snake_case_matches_canonical_contract():
+    """``_strconv.to_snake_case`` renders the canonical snake_case key.
 
-    After WU-4 GREEN: AnnotatedField methods should call _strconv.to_snake_case,
-    not graphene.utils.str_converters.to_snake_case.
-
-    This test documents the INTENT (graphene-free annotation name derivation
-    under native). The behavioral result is identical since both functions are
-    equivalent, but the import source must shift to _strconv.
+    AnnotatedField derives its annotation name via
+    ``django_graphex._strconv.to_snake_case`` (graphene-free, v2.0). The expected
+    values are the FROZEN canonical spec (byte-for-byte what the historical
+    graphene ``to_snake_case`` produced and the stdlib replacement reproduced).
     """
-    # Verify that _strconv provides the same result as graphene's function
-    from graphene.utils.str_converters import to_snake_case as _gph_snake
-
     from django_graphex._strconv import to_snake_case as _gdx_snake
 
-    test_cases = ["createdAt", "firstName", "myFieldName", "id", "updatedAt"]
-    for name in test_cases:
-        assert _gdx_snake(name) == _gph_snake(name), (
-            f"_strconv.to_snake_case({name!r}) != graphene's version: "
-            f"{_gdx_snake(name)!r} vs {_gph_snake(name)!r}"
+    expected = {
+        "createdAt": "created_at",
+        "firstName": "first_name",
+        "myFieldName": "my_field_name",
+        "id": "id",
+        "updatedAt": "updated_at",
+    }
+    for name, want in expected.items():
+        assert _gdx_snake(name) == want, (
+            f"_strconv.to_snake_case({name!r}) = {_gdx_snake(name)!r}, "
+            f"expected {want!r}"
         )
 
 
@@ -284,13 +254,13 @@ def test_annotated_field_annotation_name_result_matches_strconv():
     This is the behavioral gate: after WU-4 GREEN, annotation_name() output
     must exactly match what _strconv.to_snake_case produces.
     """
-    import graphene
     from django.db.models.functions import Length
+    from graphql import GraphQLInt
 
     from django_graphex._strconv import to_snake_case
     from django_graphex.fields import AnnotatedField
 
-    field = AnnotatedField(graphene.Int, expression=Length("name"))
+    field = AnnotatedField(GraphQLInt, expression=Length("name"))
 
     for gql_name in ["createdAt", "myCustomField", "id", "firstName"]:
         result = field.annotation_name(gql_name)

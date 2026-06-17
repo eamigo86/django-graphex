@@ -164,13 +164,19 @@ def test_subscription_field_is_native_marker_with_mount_name():
     compiler detects (``schema_compiler._is_subscription_field`` gates on
     ``type(field).__name__ == 'SubscriptionField'``).
     """
-    import graphene
-
     from django_graphex.native.descriptors import NativeMountedField
 
     field_cls = sub_mod.SubscriptionField
-    assert not issubclass(field_cls, graphene.Field), (
-        "S-sub-6: SubscriptionField must NOT be a graphene Field subclass"
+    # Assert no graphene class in the MRO (by module name, never importing
+    # graphene) — must hold with graphene ABSENT (v2.0).
+    graphene_bases = [
+        b.__qualname__
+        for b in field_cls.__mro__
+        if b.__module__.split(".")[0] == "graphene"
+    ]
+    assert not graphene_bases, (
+        f"S-sub-6: SubscriptionField MRO must contain no graphene base; "
+        f"found: {graphene_bases}"
     )
     assert issubclass(field_cls, NativeMountedField)
     assert field_cls.__name__ == "SubscriptionField"

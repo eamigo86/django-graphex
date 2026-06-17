@@ -137,16 +137,6 @@ def test_unwrap_raises_type_error_for_unrecognised_type():
         _unwrap_graphene_type(NotAGraphQLType())
 
 
-def test_unwrap_raises_type_error_for_graphene_scalar():
-    """A leftover graphene scalar class raises TypeError (the v2.0 CLEAN BREAK)."""
-    import graphene
-
-    from django_graphex.native._args import _unwrap_graphene_type
-
-    with pytest.raises(TypeError, match="Cannot convert"):
-        _unwrap_graphene_type(graphene.String)
-
-
 def test_unwrap_returns_graphql_core_type_verbatim():
     """A graphql-core type is returned as-is by ``_unwrap_graphene_type``."""
     from graphql import GraphQLInt

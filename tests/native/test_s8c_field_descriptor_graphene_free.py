@@ -105,16 +105,16 @@ _FIELD_CLASS_NAMES = (
 
 @pytest.mark.parametrize("cls_name", _FIELD_CLASS_NAMES)
 def test_field_class_is_not_a_graphene_field_subclass(cls_name: str) -> None:
-    """Every field class is OFF graphene ``Field`` (no graphene MRO)."""
-    import graphene
+    """Every field class is OFF graphene ``Field`` (no graphene MRO).
 
+    Asserted by inspecting each MRO entry's ``__module__`` (string) so this gate
+    never imports graphene — it must pass with graphene ABSENT (v2.0).
+    """
     from django_graphex import fields
 
     cls = getattr(fields, cls_name)
-    assert not issubclass(cls, graphene.Field), (
-        f"{cls_name} must NOT subclass graphene.Field (S8c)."
-    )
-    # Also assert no graphene class anywhere in the MRO.
+    # Assert no graphene class anywhere in the MRO (by module name, never importing
+    # graphene). This subsumes the graphene.Field check.
     graphene_bases = [
         b.__qualname__
         for b in cls.__mro__

@@ -66,33 +66,34 @@ def test_to_camel_case_lowercases_internal_capitals_like_graphene():
 
 
 @pytest.mark.parametrize(
-    "snake",
+    ("snake", "expected"),
     [
-        "tests_SeedArticle_status_Enum",
-        "tests_SeedArticle_status_Enum_create",
-        "tests_Category_status_Enum",
-        "created_at",
-        "first_name_last",
-        "foo__bar",
-        "_leading",
-        "leading_",
-        "name",
-        "a_1_b",
+        ("tests_SeedArticle_status_Enum", "testsSeedarticleStatusEnum"),
+        ("tests_SeedArticle_status_Enum_create", "testsSeedarticleStatusEnumCreate"),
+        ("tests_Category_status_Enum", "testsCategoryStatusEnum"),
+        ("created_at", "createdAt"),
+        ("first_name_last", "firstNameLast"),
+        ("foo__bar", "foo_Bar"),
+        ("_leading", "Leading"),
+        ("leading_", "leading_"),
+        ("name", "name"),
+        ("a_1_b", "a1B"),
     ],
 )
-def test_to_camel_case_byte_equivalent_to_graphene(snake):
-    """The stdlib to_camel_case is byte-equivalent to graphene's for every form.
+def test_to_camel_case_matches_canonical_naming_contract(snake, expected):
+    """``to_camel_case`` renders the canonical camelCase name for every form.
 
     This is the cross-module-naming contract: converter.py, filtering/schema.py,
     filtering/native_schema.py and native/* all key the SAME registry by names
-    built from this function, so any drift between the stdlib and graphene
-    implementations would split a single logical name into two keys.
+    built from this function. The expected values are the FROZEN canonical spec
+    (they were the byte-for-byte output of the historical graphene
+    ``to_camel_case`` that the stdlib replacement reproduced); any drift would
+    split a single logical registry name into two keys. graphene is no longer
+    imported (v2.0) — the native output IS the spec.
     """
-    from graphene.utils.str_converters import to_camel_case as graphene_to_camel
-
     from django_graphex._strconv import to_camel_case
 
-    assert to_camel_case(snake) == graphene_to_camel(snake)
+    assert to_camel_case(snake) == expected
 
 
 # ---------------------------------------------------------------------------

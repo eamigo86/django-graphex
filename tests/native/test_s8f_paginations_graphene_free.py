@@ -2,12 +2,10 @@
 the top level.
 
 S8f takes the pagination modules off graphene at the MODULE level. The two
-TOP-LEVEL graphene imports BLOCK the graphene uninstall (S8i), so they must go::
-
-    # paginations/pagination.py
-    from graphene import Boolean, Field, Int, ObjectType, String
-    # paginations/utils.py
-    import graphene
+TOP-LEVEL graphene imports BLOCK the graphene uninstall (S8i), so they must go:
+``paginations/pagination.py`` pulled the graphene
+``Boolean``/``Field``/``Int``/``ObjectType``/``String`` names and
+``paginations/utils.py`` did a bare ``graphene`` import.
 
 Construct analysis (consumer-proven; the graphene pagination machinery is built
 SEPARATELY from the native pagination container — see #1565 / S-ROOTS-e):

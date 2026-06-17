@@ -191,20 +191,22 @@ def test_compile_declared_field_for_native_list_field() -> None:
 def test_native_root_compiles_field_declared_object_and_scalar_and_list() -> None:
     """SILENT-DROP GUARD: a root carrying field(...) descriptors compiles fully.
 
-    Declares a throwaway ``graphene.ObjectType`` root and injects three
-    ``field(...)`` descriptors into its ``_meta.fields`` (the dict the compiler
-    iterates). Compiles it through the EXISTING ``compile_native_root`` and
+    Declares a native ``ObjectType`` root with three ``field(...)`` descriptors in
+    its class body. Compiles it through the EXISTING ``compile_native_root`` and
     asserts every declared field lands in the compiled SDL with the right type —
     proving the descriptor matches the compiler's read-contract and does NOT
     silently vanish.
+
+    v2.0: the root is a native ``django_graphex.ObjectType`` (the graphene-root
+    compile capability was removed, decision #1603).
     """
-    import graphene
     from graphql import (
         GraphQLList,
         GraphQLObjectType,
         GraphQLString,
     )
 
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.native.descriptors import field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.native.schema_compiler import compile_native_root
@@ -217,18 +219,10 @@ def test_native_root_compiles_field_declared_object_and_scalar_and_list() -> Non
 
     compile_all_outputs()
 
-    class _RootsAQuery(graphene.ObjectType):
-        pass
-
-    # Inject the native descriptors into the graphene root's _meta.fields — the
-    # exact dict compile_native_root iterates. (S-ROOTS-f will mount these from
-    # a native ObjectType body; here we drive the compiler directly so the
-    # read-contract is proven in isolation.)
-    _RootsAQuery._meta.fields["server_time"] = field(
-        GraphQLString, description="now"
-    )
-    _RootsAQuery._meta.fields["me"] = field(_RootsACatType)
-    _RootsAQuery._meta.fields["tags"] = field(GraphQLList(GraphQLString))
+    class _RootsAQuery(_NativeRoot):
+        server_time = field(GraphQLString, description="now")
+        me = field(_RootsACatType)
+        tags = field(GraphQLList(GraphQLString))
 
     native_root = compile_native_root(_RootsAQuery, name="Query")
     assert isinstance(native_root, GraphQLObjectType)
@@ -273,17 +267,20 @@ def test_unwrap_passes_through_native_wrappers() -> None:
     assert _unwrap_graphene_type(wrapped) is wrapped
 
 
-def test_unwrap_rejects_graphene_scalar_clean_break() -> None:
-    """The graphene leaf path is DELETED — a graphene scalar raises TypeError.
+def test_unwrap_rejects_non_native_type_clean_break() -> None:
+    """The graphene leaf path is DELETED — a non-native type raises TypeError.
 
     S-del-backend-11: ``_unwrap_graphene_type`` no longer converts graphene types
     (the v2.0 CLEAN BREAK, decision #1603); it returns graphql-core types verbatim
-    and rejects anything else. A leftover ``graphene.String`` raises ``TypeError``.
+    and rejects anything else. graphene is gone, so a generic non-native value
+    (the stand-in for the legacy ``graphene.String``) raises ``TypeError``.
     """
-    import graphene
     import pytest
 
     from django_graphex.native._args import _unwrap_graphene_type
 
+    class _NotAGraphQLType:
+        """No graphql-core type identity."""
+
     with pytest.raises(TypeError, match="Cannot convert"):
-        _unwrap_graphene_type(graphene.String)
+        _unwrap_graphene_type(_NotAGraphQLType())

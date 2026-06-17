@@ -341,9 +341,12 @@ def test_native_schema_types_referenced_and_listed_no_duplicate_name():
 
 @pytest.mark.django_db
 def test_native_schema_forwards_scalar_type_via_types():
-    """A graphene SCALAR class passed via ``types=`` maps to its native scalar
-    singleton and lands in the type_map (graphene parity)."""
-    import graphene
+    """A graphql-core scalar INSTANCE passed via ``types=`` lands in the type_map.
+
+    v2.0: the graphene-scalar-class forwarding case was dropped (decision #1603).
+    The native ``types=`` API forwards a graphql-core ``GraphQLNamedType`` instance
+    verbatim (case 1). Forwarding the canonical ``GdxUUID`` scalar forces the
+    unreferenced ``UUID`` type into the schema/SDL."""
     from graphql import GraphQLString
 
     from django_graphex import ObjectType, field
@@ -356,32 +359,33 @@ def test_native_schema_forwards_scalar_type_via_types():
 
     compile_all_outputs()
 
-    schema = DjangoGraphQLSchema(query=_ScalarTypesQuery, types=[graphene.UUID])
+    schema = DjangoGraphQLSchema(query=_ScalarTypesQuery, types=[GdxUUID])
     type_map = schema.graphql_schema.type_map
 
     assert "UUID" in type_map, (
-        "types= forwarding dropped the graphene scalar class (UUID)."
+        "types= forwarding dropped the forwarded UUID scalar instance."
     )
     assert type_map["UUID"] is GdxUUID, (
-        "types= forwarding mapped the graphene scalar to a non-canonical native "
-        "scalar instance."
+        "types= forwarding did not keep the canonical native scalar instance."
     )
 
 
 @pytest.mark.django_db
 def test_native_schema_types_unsupported_kind_raises_not_implemented():
-    """An UNSUPPORTED graphene type kind passed via ``types=`` raises a clear
+    """An UNSUPPORTED type kind passed via ``types=`` raises a clear
     ``NotImplementedError`` naming the type — NEVER a silent drop (honest, no
     silent SDL divergence)."""
-    import graphene
     from graphql import GraphQLString
 
     from django_graphex import ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
 
-    class _SomeInput(graphene.InputObjectType):
-        value = graphene.String()
+    # A plain class that is NOT a graphql-core named type, NOT a Django output
+    # type, NOT a native plain ObjectType, and has no GDX_SCALAR_MAP name — the
+    # generic "unsupported kind" the forwarder must reject loudly.
+    class _SomeUnsupported:
+        pass
 
     class _UnsupportedQuery(ObjectType):
         hello = field(GraphQLString)
@@ -389,9 +393,9 @@ def test_native_schema_types_unsupported_kind_raises_not_implemented():
     compile_all_outputs()
 
     with pytest.raises(NotImplementedError) as exc:
-        DjangoGraphQLSchema(query=_UnsupportedQuery, types=[_SomeInput])
+        DjangoGraphQLSchema(query=_UnsupportedQuery, types=[_SomeUnsupported])
     # The error must name the offending type so the failure is honest.
-    assert "_SomeInput" in str(exc.value)
+    assert "_SomeUnsupported" in str(exc.value)
 
 
 # --------------------------------------------------------------------------- #
@@ -406,18 +410,20 @@ def test_s6f_schema_is_not_graphene_schema_subclass():
 
     Against the pre-S6f base this FAILS (it WAS ``graphene.Schema``); after S6f
     it is a plain class that builds ``graphql_schema`` directly via the native
-    compiler. This is the S6 metaclass-swap block's terminal assertion.
+    compiler. Asserted via MRO ``__module__`` strings so the gate never imports
+    graphene — it must hold with graphene ABSENT (v2.0).
     """
-    import graphene
-
     from django_graphex.schema import DjangoGraphQLSchema
 
-    assert not issubclass(DjangoGraphQLSchema, graphene.Schema), (
-        "S6f: DjangoGraphQLSchema must NOT subclass graphene.Schema — it builds "
-        "graphql_schema directly via the native root compiler."
+    graphene_bases = [
+        b.__qualname__
+        for b in DjangoGraphQLSchema.__mro__
+        if b.__module__.split(".")[0] == "graphene"
+    ]
+    assert not graphene_bases, (
+        "S6f: DjangoGraphQLSchema MRO must contain no graphene base — it builds "
+        f"graphql_schema directly via the native root compiler; found: {graphene_bases}."
     )
-    # graphene.Schema must not appear ANYWHERE in the MRO.
-    assert graphene.Schema not in DjangoGraphQLSchema.__mro__
 
 
 @pytest.mark.django_db

@@ -193,33 +193,39 @@ def test_mutation_bare_native_type_is_wrapped_as_argument():
 # --------------------------------------------------------------------------- #
 # (a') CLEAN BREAK — a graphene.Argument in class args FAILS LOUDLY (not dropped)#
 # --------------------------------------------------------------------------- #
-def test_graphene_argument_in_class_args_raises_typeerror():
-    """A ``graphene.Argument`` (or any non-native value) declared in a Mutation
-    ``class args`` raises ``TypeError`` — it is NOT silently dropped.
+def test_non_native_arg_in_class_args_raises_typeerror():
+    """A non-native value declared in a Mutation ``class args`` raises ``TypeError``
+    — it is NOT silently dropped.
 
     Pre-FIX-1 ``_compile_args`` filtered ``isinstance(value, (GraphQLArgument,
-    GraphQLType))`` and SKIPPED everything else, so a leftover ``graphene.Argument``
-    vanished with no error (the mutation lost its arg, and the advertised CLEAN
-    BREAK = TypeError was unreachable). The native API now fails loudly, pointing
-    to the native ``GraphQLArgument`` form.
+    GraphQLType))`` and SKIPPED everything else, so a leftover non-native arg
+    (historically a ``graphene.Argument``) vanished with no error (the mutation
+    lost its arg, and the advertised CLEAN BREAK = TypeError was unreachable). The
+    native API now fails loudly, pointing to the native ``GraphQLArgument`` form.
+
+    v2.0: graphene is gone, so the offending value is a generic non-native arg
+    sentinel — the loud-fail contract is the same.
     """
-    import graphene
     from graphql import GraphQLBoolean
 
     from django_graphex import Mutation, field
 
-    class _CreateWithGrapheneArg(Mutation):
+    class _NotANativeArg:
+        """Stand-in for any non-graphql-core arg value (e.g. the legacy
+        ``graphene.Argument`` that v2.0 no longer accepts)."""
+
+    class _CreateWithBadArg(Mutation):
         class args:
-            name = graphene.Argument(graphene.String, required=True)
+            name = _NotANativeArg()
 
         ok = field(GraphQLBoolean)
 
         @staticmethod
         def mutate(root, info, **kw):
-            return _CreateWithGrapheneArg(ok=True)
+            return _CreateWithBadArg(ok=True)
 
     with pytest.raises(TypeError) as exc:
-        _CreateWithGrapheneArg.Field()
+        _CreateWithBadArg.Field()
 
     msg = str(exc.value)
     assert "name" in msg, f"TypeError must name the offending attribute: {msg!r}"

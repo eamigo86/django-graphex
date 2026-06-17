@@ -1,11 +1,10 @@
 """S8e RED -> GREEN — ``converter.py`` is graphene-free at the top level.
 
 S8e takes ``converter.py`` off graphene at the MODULE level. The two TOP-LEVEL
-graphene imports BLOCK the graphene uninstall (S8i), so they must go::
-
-    from graphene import (ID, UUID, Boolean, Dynamic, Enum, Field, Float, Int,
-                          List, NonNull, String)
-    from graphene.types.json import JSONString
+graphene imports BLOCK the graphene uninstall (S8i), so they must go: the bulk
+scalar/relation import (``ID``/``UUID``/``Boolean``/``Dynamic``/``Enum``/
+``Field``/``Float``/``Int``/``List``/``NonNull``/``String``) and the
+``graphene.types.json.JSONString`` import.
 
 Construct analysis (consumer-proven, see #1561 / S-ROOTS-d and the converter
 test contract in ``tests/test_converter*.py``, all run on the native default):

@@ -2,7 +2,7 @@
 
 Covers:
 - __version__ == importlib.metadata.version("django-graphex") (single source of truth)
-- __version__ == "1.2.1" (matches pyproject.toml for this release)
+- __version__ == "2.0.0" (matches pyproject.toml for this release)
 - py.typed marker present in the installed package
 """
 
@@ -24,9 +24,9 @@ def test_version_matches_importlib_metadata():
 
 
 def test_version_is_current_release():
-    """For the v1.3.0 release, __version__ must equal '1.3.0'."""
-    assert django_graphex.__version__ == "1.3.0", (
-        f"Expected __version__ == '1.3.0', got {django_graphex.__version__!r}. "
+    """For the v2.0.0 release (graphene-free), __version__ must equal '2.0.0'."""
+    assert django_graphex.__version__ == "2.0.0", (
+        f"Expected __version__ == '2.0.0', got {django_graphex.__version__!r}. "
         "Bump `version` in pyproject.toml and reinstall the package."
     )
 

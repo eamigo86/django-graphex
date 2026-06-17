@@ -85,9 +85,11 @@ def _build_schema_over_post(*, type_name_author: str, type_name_post: str):
     The SAME ``type_name_*`` are used by BOTH callers, so the two schemas declare
     same-NAMED types over the same MODELS in distinct registries — exactly the
     cross-schema duplicate-name scenario B5 must make coexist.
-    """
-    import graphene
 
+    v2.0: the root is a native ``django_graphex.ObjectType`` (the graphene-root
+    compile capability was removed, decision #1603).
+    """
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.base import SchemaRegistries
     from django_graphex.native.registry_compiler import NativeOutputRegistry
@@ -123,8 +125,8 @@ def _build_schema_over_post(*, type_name_author: str, type_name_post: str):
         filter_input_cache={},
     )
 
-    class Query(graphene.ObjectType):
-        post = DjangoObjectField(PostType, id=graphene.ID(required=True))
+    class Query(_NativeRoot):
+        post = DjangoObjectField(PostType)
 
     schema = DjangoGraphQLSchema(query=Query, registries=pair)
     return schema, AuthorType, PostType, pair
@@ -370,9 +372,10 @@ def test_default_pair_reuses_class_def_instance_verbatim():
     TEETH: if B5 forked unconditionally (even for the default pair), the schema's
     type would be a NEW instance, not the class-def one, and this identity check
     fails — catching an accidental byte-identical regression.
-    """
-    import graphene
 
+    v2.0: the root is a native ``django_graphex.ObjectType``.
+    """
+    from django_graphex import ObjectType as _NativeRoot
     from django_graphex.fields import DjangoObjectField
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
@@ -385,7 +388,7 @@ def test_default_pair_reuses_class_def_instance_verbatim():
 
     compile_all_outputs()
 
-    class _DefaultPairQuery(graphene.ObjectType):
+    class _DefaultPairQuery(_NativeRoot):
         category = DjangoObjectField(_DefaultPairCatType)
 
     schema = DjangoGraphQLSchema(query=_DefaultPairQuery)

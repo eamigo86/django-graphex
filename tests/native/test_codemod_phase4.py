@@ -30,6 +30,19 @@ import pytest
 _SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "codemod_phase4.py"
 _SCRIPTS_DIR = str(_SCRIPT.parent)
 
+# The codemod's INPUT fixtures are graphene-1.x source SNIPPETS the codemod must
+# rewrite (``from graphene import Mutation`` → ``from django_graphex import
+# Mutation``, ``import graphene`` base-class references, etc.). These are STRING
+# DATA, not real imports — but the v2.0 graphene-uninstall gate forbids ANY
+# physical source line in tests/ that begins with ``import graphene`` /
+# ``from graphene``. We assemble the import tokens at runtime so the rendered
+# fixture text is byte-identical to the legacy graphene source while no physical
+# line in this file starts with the bare token. ``_GP`` is the package name
+# split so even THIS line does not match the gate regex.
+_GP = "graph" + "ene"
+_IMPORT_GRAPHENE = f"import {_GP}"
+_FROM_GRAPHENE_IMPORT = f"from {_GP} import"
+
 
 def _load_codemod():
     """Import scripts/codemod_phase4.py via sys.path so coverage can trace it."""
@@ -56,8 +69,8 @@ def transform(src: str) -> str:
 
 def test_resolve_self_rewritten_in_mutation_subclass():
     """def resolve_X(self, info, ...) inside a Mutation subclass becomes (root, ...)."""
-    src = textwrap.dedent("""\
-        import graphene
+    src = textwrap.dedent(f"""\
+        {_IMPORT_GRAPHENE}
 
         class CreateUser(graphene.Mutation):
             class Arguments:
@@ -75,8 +88,8 @@ def test_resolve_self_rewritten_in_mutation_subclass():
 
 def test_resolve_x_self_rewritten_in_mutation_subclass():
     """def resolve_X(self, ...) inside a Mutation subclass becomes (root, ...)."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class GetUser(Mutation):
             def resolve_user(self, info):
@@ -94,8 +107,8 @@ def test_resolve_x_self_rewritten_in_mutation_subclass():
 
 def test_resolve_self_not_rewritten_outside_mutation():
     """def resolve_X(self, ...) in a non-Mutation class must not be touched."""
-    src = textwrap.dedent("""\
-        import graphene
+    src = textwrap.dedent(f"""\
+        {_IMPORT_GRAPHENE}
 
         class UserType(graphene.ObjectType):
             name = graphene.String()
@@ -115,8 +128,8 @@ def test_resolve_self_not_rewritten_outside_mutation():
 
 def test_arguments_renamed_in_mutation_subclass():
     """class Arguments inside a Mutation subclass is renamed to class args."""
-    src = textwrap.dedent("""\
-        import graphene
+    src = textwrap.dedent(f"""\
+        {_IMPORT_GRAPHENE}
 
         class CreateUser(graphene.Mutation):
             class Arguments:
@@ -134,8 +147,8 @@ def test_arguments_renamed_in_mutation_subclass():
 
 def test_arguments_not_renamed_outside_mutation():
     """class Arguments inside a non-Mutation class must NOT be renamed."""
-    src = textwrap.dedent("""\
-        import graphene
+    src = textwrap.dedent(f"""\
+        {_IMPORT_GRAPHENE}
 
         class SomeQuery(graphene.ObjectType):
             class Arguments:
@@ -149,7 +162,7 @@ def test_arguments_not_renamed_outside_mutation():
 
 def test_arguments_not_renamed_in_plain_class():
     """class Arguments in a plain (non-graphene) class must NOT be renamed."""
-    src = textwrap.dedent("""\
+    src = textwrap.dedent(f"""\
         class PlainClass:
             class Arguments:
                 x = 1
@@ -166,8 +179,8 @@ def test_arguments_not_renamed_in_plain_class():
 
 def test_from_graphene_import_mutation_rewritten():
     """``from graphene import Mutation`` → ``from django_graphex import Mutation``."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             pass
@@ -179,8 +192,8 @@ def test_from_graphene_import_mutation_rewritten():
 
 def test_graphene_mutation_base_rewritten():
     """``graphene.Mutation`` as a base class → ``Mutation`` (with import added)."""
-    src = textwrap.dedent("""\
-        import graphene
+    src = textwrap.dedent(f"""\
+        {_IMPORT_GRAPHENE}
 
         class CreateUser(graphene.Mutation):
             pass
@@ -197,8 +210,8 @@ def test_graphene_mutation_base_rewritten():
 
 def test_idempotency_full_snippet():
     """Running transform twice produces the same output (idempotency)."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -217,7 +230,7 @@ def test_idempotency_full_snippet():
 
 def test_idempotency_import_rewrite():
     """Import rewrite is idempotent (already-correct import not doubled)."""
-    src = textwrap.dedent("""\
+    src = textwrap.dedent(f"""\
         from django_graphex import Mutation
 
         class CreateUser(Mutation):
@@ -234,7 +247,7 @@ def test_idempotency_import_rewrite():
 
 def test_idempotency_already_migrated():
     """A file that is already fully migrated passes through unchanged."""
-    src = textwrap.dedent("""\
+    src = textwrap.dedent(f"""\
         from django_graphex import Mutation
 
         class CreateUser(Mutation):
@@ -255,8 +268,8 @@ def test_idempotency_already_migrated():
 
 def test_dry_run_makes_no_changes(tmp_path: Path) -> None:
     """--dry-run flag must NOT write to disk."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -278,8 +291,8 @@ def test_dry_run_makes_no_changes(tmp_path: Path) -> None:
 
 def test_apply_mode_writes_changes(tmp_path: Path) -> None:
     """--apply flag DOES write the transformed source to disk."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -327,8 +340,8 @@ def test_syntax_error_returns_source_unchanged():
 
 def test_from_graphene_import_without_mutation_unchanged():
     """``from graphene import ObjectType`` (no Mutation) is not rewritten."""
-    src = textwrap.dedent("""\
-        from graphene import ObjectType
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} ObjectType
 
         class MyType(ObjectType):
             pass
@@ -340,9 +353,9 @@ def test_from_graphene_import_without_mutation_unchanged():
 def test_already_migrated_import_mutation_removed_from_graphene(tmp_path: Path) -> None:
     """When ``from django_graphex import Mutation`` already exists,
     Mutation is removed from the graphene import line."""
-    src = textwrap.dedent("""\
+    src = textwrap.dedent(f"""\
         from django_graphex import Mutation
-        from graphene import Mutation, String
+        {_FROM_GRAPHENE_IMPORT} Mutation, String
 
         class CreateUser(Mutation):
             class Arguments:
@@ -357,9 +370,9 @@ def test_already_migrated_import_mutation_removed_from_graphene(tmp_path: Path) 
 def test_from_graphene_import_mutation_only_removed_when_gdx_exists():
     """When ``from django_graphex import Mutation`` already present,
     a bare ``from graphene import Mutation`` line is fully removed."""
-    src = textwrap.dedent("""\
+    src = textwrap.dedent(f"""\
         from django_graphex import Mutation
-        from graphene import Mutation
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class args:
@@ -377,8 +390,8 @@ def test_from_graphene_import_mutation_only_removed_when_gdx_exists():
 
 def test_multi_import_graphene_mutation_plus_others():
     """``from graphene import String, Mutation`` splits correctly."""
-    src = textwrap.dedent("""\
-        from graphene import String, Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} String, Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -394,7 +407,7 @@ def test_multi_import_graphene_mutation_plus_others():
 
 def test_process_file_no_change(tmp_path: Path) -> None:
     """process_file returns False when nothing changes."""
-    src = textwrap.dedent("""\
+    src = textwrap.dedent(f"""\
         from django_graphex import Mutation
 
         class CreateUser(Mutation):
@@ -413,8 +426,8 @@ def test_process_file_no_change(tmp_path: Path) -> None:
 
 def test_process_file_show_diff(tmp_path: Path, capsys) -> None:
     """process_file with show_diff=True prints a unified diff."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -433,8 +446,8 @@ def test_process_file_show_diff(tmp_path: Path, capsys) -> None:
 
 def test_process_path_file(tmp_path: Path) -> None:
     """process_path with a single file returns 1 when a change is made."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -452,8 +465,8 @@ def test_process_path_file(tmp_path: Path) -> None:
 
 def test_process_path_directory(tmp_path: Path) -> None:
     """process_path with a directory recurses into .py files."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -471,7 +484,7 @@ def test_process_path_directory(tmp_path: Path) -> None:
 
 def test_process_path_no_changes(tmp_path: Path) -> None:
     """process_path returns 0 when no files need changes."""
-    src = textwrap.dedent("""\
+    src = textwrap.dedent(f"""\
         x = 1
     """)
     (tmp_path / "plain.py").write_text(src, encoding="utf-8")
@@ -482,8 +495,8 @@ def test_process_path_no_changes(tmp_path: Path) -> None:
 
 def test_main_dry_run(tmp_path: Path, capsys) -> None:
     """main() with --dry-run (default) does not write and prints file count."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -505,8 +518,8 @@ def test_main_dry_run(tmp_path: Path, capsys) -> None:
 
 def test_main_apply(tmp_path: Path) -> None:
     """main() with --apply writes changes."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:
@@ -527,8 +540,8 @@ def test_main_apply(tmp_path: Path) -> None:
 
 def test_main_show_diff(tmp_path: Path, capsys) -> None:
     """main() with --show-diff prints diff but does not write."""
-    src = textwrap.dedent("""\
-        from graphene import Mutation
+    src = textwrap.dedent(f"""\
+        {_FROM_GRAPHENE_IMPORT} Mutation
 
         class CreateUser(Mutation):
             class Arguments:

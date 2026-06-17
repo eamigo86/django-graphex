@@ -104,14 +104,20 @@ def test_collect_field_names_reads_native_fields():
     assert names == frozenset({"fooBar", "baz"})
 
 
-def test_collect_field_names_graphene_fallback_still_works():
-    """collect_field_names still reads graphene _meta.fields for graphene types."""
-    import graphene
+def test_collect_field_names_camelcases_meta_fields_keys():
+    """collect_field_names camelCases snake_case ``_meta.fields`` keys.
 
+    A native ``ObjectType`` exposes ``_meta.fields`` with snake_case keys; the
+    reader camelCases them to match ``info.field_name`` under
+    ``auto_camelcase=True`` (the same path the legacy graphene root used).
+    """
+    from graphql import GraphQLString
+
+    from django_graphex import ObjectType, field
     from django_graphex.schema import collect_field_names
 
-    class _G(graphene.ObjectType):
-        my_field = graphene.String()
+    class _G(ObjectType):
+        my_field = field(GraphQLString)
 
     assert collect_field_names(_G) == frozenset({"myField"})
 

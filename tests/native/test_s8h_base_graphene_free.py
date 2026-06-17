@@ -2,10 +2,8 @@
 """S8h (graphene-removal): native/base.py off graphene — the LAST top-level import.
 
 ``native/base.py`` held the final two TOP-LEVEL graphene imports in the entire
-``django_graphex`` package::
-
-    from graphene.types.mountedtype import MountedType
-    from graphene.types.unmountedtype import UnmountedType
+``django_graphex`` package: the ``graphene.types.mountedtype.MountedType`` and
+``graphene.types.unmountedtype.UnmountedType`` imports.
 
 They existed ONLY to DETECT + ignore graphene field descriptors
 (``name = graphene.String()``) declared on a NATIVE ``ObjectType`` class body —

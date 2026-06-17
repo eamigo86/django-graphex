@@ -138,35 +138,18 @@ def test_native_factory_type_list_includes_standard_field_names():
 
 
 # ---------------------------------------------------------------------------
-# A5.3: base_types.factory_type unchanged (graphene path still works)
+# A5.3: base_types.factory_type builds a class for the native list base
 # ---------------------------------------------------------------------------
+# The graphene-base ``factory_type('output', graphene.ObjectType, ...)`` case was
+# dropped with the graphene backend (decision #1603); the native
+# ``DjangoObjectType`` output path is covered by the S6b tests below.
 
 
-def test_graphene_factory_type_output_unchanged():
-    """base_types.factory_type('output', ...) still works (graphene path unchanged)."""
-    import graphene
-
-    from django_graphex.base_types import factory_type
-
-    class PersonType(graphene.ObjectType):
-        class Meta:
-            pass
-
-    # This should not raise
-    result = factory_type("output", PersonType, model=SomeModel)
-    assert isinstance(result, type), (
-        "base_types.factory_type('output', ...) must still return a class"
-    )
-
-
-def test_graphene_factory_type_list_unchanged():
-    """base_types.factory_type('list', ...) still works (graphene path unchanged)."""
-    import graphene
-
+def test_factory_type_list_builds_native_list_base():
+    """base_types.factory_type('list', NativeListBase, ...) returns a class."""
     from django_graphex.base_types import factory_type
     from django_graphex.types import DjangoListObjectType
 
-    # Use a simple graphene ObjectType subclass
     class ListBase(DjangoListObjectType):
         class Meta:
             model = SomeModel
@@ -174,8 +157,9 @@ def test_graphene_factory_type_list_unchanged():
 
     result = factory_type("list", ListBase, model=SomeModel)
     assert isinstance(result, type), (
-        "base_types.factory_type('list', ...) must still return a class"
+        "base_types.factory_type('list', ...) must return a class"
     )
+    assert issubclass(result, ListBase)
 
 
 # ---------------------------------------------------------------------------

@@ -55,12 +55,21 @@ def test_errortype_is_native_objecttype_subclass() -> None:
 
 
 def test_errortype_is_not_graphene_objecttype() -> None:
-    """``ErrorType`` is NOT a ``graphene.ObjectType`` subclass (it left graphene)."""
-    import graphene
+    """``ErrorType`` is NOT a graphene class (it left graphene).
 
+    Asserted via MRO ``__module__`` strings so the gate never imports graphene —
+    it must hold with graphene ABSENT (v2.0).
+    """
     from django_graphex.errors import ErrorType
 
-    assert not issubclass(ErrorType, graphene.ObjectType)
+    graphene_bases = [
+        b.__qualname__
+        for b in ErrorType.__mro__
+        if b.__module__.split(".")[0] == "graphene"
+    ]
+    assert not graphene_bases, (
+        f"ErrorType MRO must contain no graphene base; found: {graphene_bases}."
+    )
 
 
 # ---------------------------------------------------------------------------

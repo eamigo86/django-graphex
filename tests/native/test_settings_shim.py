@@ -247,14 +247,15 @@ class TestViewsUsesShim:
         """When GRAPHEX.SCHEMA is set, BaseGraphQLView.__init__ picks it up."""
         from unittest.mock import patch
 
-        import graphene
+        from graphql import GraphQLString
 
+        from django_graphex import DjangoGraphQLSchema, ObjectType, field
         from django_graphex.settings import graphex_or_graphene_settings
 
-        class _Q(graphene.ObjectType):
-            ping = graphene.String()
+        class _Q(ObjectType):
+            ping = field(GraphQLString)
 
-        schema = graphene.Schema(query=_Q)
+        schema = DjangoGraphQLSchema(query=_Q)
 
         graphex_or_graphene_settings.reload()
 
@@ -266,12 +267,14 @@ class TestViewsUsesShim:
 
     def test_view_reads_subscription_path_from_graphex(self):
         """subscription_path is read from the shim (GRAPHEX.SUBSCRIPTION_PATH)."""
-        import graphene
+        from graphql import GraphQLString
 
-        class _Q(graphene.ObjectType):
-            ping = graphene.String()
+        from django_graphex import DjangoGraphQLSchema, ObjectType, field
 
-        schema = graphene.Schema(query=_Q)
+        class _Q(ObjectType):
+            ping = field(GraphQLString)
+
+        schema = DjangoGraphQLSchema(query=_Q)
 
         from unittest.mock import patch
 

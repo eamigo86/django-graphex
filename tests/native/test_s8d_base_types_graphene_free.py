@@ -118,10 +118,11 @@ def test_base_types_source_is_graphene_token_free() -> None:
 # 2. The four scalar classes are graphene-free                                 #
 # --------------------------------------------------------------------------- #
 def test_scalar_classes_are_not_graphene_subclasses() -> None:
-    """Binary / CustomDate / CustomDateTime / CustomTime are off graphene."""
-    import graphene  # graphene is still installed (uninstall is S8i)
-    from graphene.types.datetime import Date, DateTime, Time
+    """Binary / CustomDate / CustomDateTime / CustomTime are off graphene.
 
+    Asserted by walking each MRO entry's ``__module__`` (string) so this gate
+    never imports graphene — it must pass with graphene ABSENT (v2.0).
+    """
     from django_graphex.base_types import (
         Binary,
         CustomDate,
@@ -129,30 +130,42 @@ def test_scalar_classes_are_not_graphene_subclasses() -> None:
         CustomTime,
     )
 
-    assert not issubclass(Binary, graphene.Scalar), (
-        "Binary must NOT subclass graphene.Scalar after S8d."
-    )
-    assert not issubclass(CustomDate, Date)
-    assert not issubclass(CustomDateTime, DateTime)
-    assert not issubclass(CustomTime, Time)
-    # And none of them should carry a graphene metaclass.
     for cls in (Binary, CustomDate, CustomDateTime, CustomTime):
+        graphene_bases = [
+            b.__qualname__
+            for b in cls.__mro__
+            if b.__module__.split(".")[0] == "graphene"
+        ]
+        assert not graphene_bases, (
+            f"{cls.__name__} MRO must contain no graphene base after S8d; "
+            f"found: {graphene_bases}."
+        )
+        # And none of them should carry a graphene metaclass.
         assert "graphene" not in type(cls).__module__, (
             f"{cls.__name__} metaclass must not come from graphene."
         )
 
 
 def test_gfk_classes_are_not_graphene_subclasses() -> None:
-    """GenericForeignKeyType / InputType are plain (non-graphene) classes."""
-    import graphene
+    """GenericForeignKeyType / InputType are plain (non-graphene) classes.
 
+    Asserted via MRO ``__module__`` strings (never importing graphene).
+    """
     from django_graphex.base_types import (
         GenericForeignKeyInputType,
         GenericForeignKeyType,
     )
 
-    assert not issubclass(GenericForeignKeyType, graphene.ObjectType)
-    assert not issubclass(GenericForeignKeyInputType, graphene.InputObjectType)
+    for cls in (GenericForeignKeyType, GenericForeignKeyInputType):
+        graphene_bases = [
+            b.__qualname__
+            for b in cls.__mro__
+            if b.__module__.split(".")[0] == "graphene"
+        ]
+        assert not graphene_bases, (
+            f"{cls.__name__} MRO must contain no graphene base; "
+            f"found: {graphene_bases}."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -242,22 +255,21 @@ def test_gfk_input_type_constructs() -> None:
     assert inst is not None
 
 
-def test_converter_gfk_identity_contract_preserved() -> None:
-    """The native-path converter still returns ``field.type is GFKType``.
+def test_converter_gfk_output_converts_to_native_marker() -> None:
+    """S-rel-4 / v2.0: the GFK OUTPUT converter returns a graphene-free marker.
 
-    This mirrors ``test_track2_types.test_converter_falls_back_...`` — the
-    converter wraps the (now graphene-free) GenericForeignKeyType in graphene's
-    Field/Dynamic and ``field.type is GenericForeignKeyType`` must still hold.
+    The graphene ``Field``/``Dynamic`` wrapping of ``GenericForeignKeyType`` was
+    deleted with the graphene backend (decision #1603). On the native OUTPUT path
+    ``convert_generic_foreign_key_to_object`` now returns a graphene-free
+    ``NativeRelationField`` presence/ordering marker; the typed
+    ``GenericForeignKeyType`` SDL is built independently by the native output
+    compiler. Assert the marker is native (no graphene module in its type).
     """
-    from graphene import Dynamic, Field
+    from django_graphex.converter import convert_generic_foreign_key_to_object
+    from django_graphex.native.descriptors import NativeRelationField
+    from tests.models import Track2GfkComment
 
-    from django_graphex.base_types import GenericForeignKeyType
-
-    # Identity survives graphene Field wrapping (get_type passes a plain class
-    # through verbatim).
-    field = Field(GenericForeignKeyType, description="Type for a GFK field")
-    assert field.type is GenericForeignKeyType
-    # And a Dynamic wrapping a thunk returning that Field resolves identically.
-    dyn = Dynamic(lambda: field)
-    resolved = dyn.get_type()
-    assert resolved.type is GenericForeignKeyType
+    gfk = Track2GfkComment._meta.get_field("target")
+    out = convert_generic_foreign_key_to_object(gfk)
+    assert isinstance(out, NativeRelationField)
+    assert not type(out).__module__.startswith("graphene")
