@@ -1,29 +1,23 @@
-"""Native root-ObjectType compiler (Phase 5 / WU2).
+"""Native root-ObjectType compiler.
 
-Turns a plain ``graphene.ObjectType`` schema root (Query / Mutation /
-Subscription) into a graphql-core ``GraphQLObjectType`` whose per-field types
-are the CANONICAL native instances (``_meta.graphql_output_type`` carrying
-``extensions['gdx']``), not graphene-built types. This is the GENUINE native
-seam that lets ``DjangoGraphQLSchema`` build a ``graphql.GraphQLSchema`` without
-graphene.Schema and without the duplicate-name TypeError.
+Turns a NATIVE root ``ObjectType`` (Query / Mutation / Subscription — a
+``native.base.ObjectType`` subclass) into a graphql-core ``GraphQLObjectType``
+whose per-field types are the CANONICAL native instances
+(``_meta.graphql_output_type`` carrying ``extensions['gdx']``). This is the seam
+that lets ``DjangoGraphQLSchema`` build a ``graphql.GraphQLSchema`` directly,
+without the duplicate-name TypeError.
 
-Why this exists (WU2 rework, see sdd/filtering-pagination-schema/wu2-design-gap):
-- The user's roots are plain ``graphene.ObjectType`` subclasses with NO
-  ``_meta.graphql_output_type``; nothing compiled them into native types.
-- Query-root field classes (``DjangoObjectField``, ``DjangoListObjectField``,
-  ``DjangoFilterListField`` …) emit NO native ``GraphQLField`` — only mutation
-  fields do (mutation.py ``_NATIVE_FIELD_REGISTRY`` / ``_build_native_mutation_field``).
-- The first WU2 attempt kept graphene.Schema and injected native types via
-  ``GraphQLSchema(types=…)``, which duplicate-named the graphene-built types and
-  silently fell back to graphene (a tautology). FORBIDDEN.
+(v2.0 is native-only: a leftover ``graphene.ObjectType`` root is NOT accepted —
+see ``_is_plain_object_type``. The graphene backend was removed entirely.)
 
-Per-field-kind dispatch (extensible by WU3/WU5/WU6):
-- raw graphql-core ``GraphQLField`` attribute (a native mutation field graphene
-  dropped from ``_meta.fields``) → REUSE as-is.
+Per-field-kind dispatch:
+- raw graphql-core ``GraphQLField`` attribute (e.g. a native mutation field) →
+  REUSE as-is.
 - ``DjangoObjectField`` (single object) → build a native ``GraphQLField`` whose
   type is the canonical ``field.type._meta.graphql_output_type``, with converted
   args and the field's wired resolver.
-- plain graphene scalar field → convert to a graphql-core scalar ``GraphQLField``.
+- a plain scalar field (declared via ``field(GraphQLString)`` etc.) → build a
+  graphql-core scalar ``GraphQLField``.
 - ``DjangoListObjectField`` / ``DjangoFilterListField`` /
   ``DjangoFilterPaginateListField`` / ``DjangoNestedListObjectField`` → RAISE
   ``NotImplementedError`` naming the field + the WU that will add the builder.
@@ -358,10 +352,11 @@ def _is_plain_object_type(graphene_cls: Any) -> bool:
         graphene_cls: The mounted field ``type`` (``field.type``).
 
     Returns:
-        ``True`` when *graphene_cls* is a class that is EITHER a native plain
-        ``ObjectType`` (the S-ROOTS-b marker — e.g. ``ErrorType``) OR a graphene
-        ``ObjectType`` subclass (transitional fallback), but is NOT a
-        django-graphex container/model output type.
+        ``True`` when the field type is a native plain ``ObjectType`` (the
+        S-ROOTS-b marker — e.g. ``ErrorType``) that is NOT a django-graphex
+        container/model output type, a union/interface, or an ``InputType``.
+        A leftover ``graphene.ObjectType`` is rejected (v2.0 is native-only;
+        the graphene-root compile path was removed).
     """
     import inspect
 

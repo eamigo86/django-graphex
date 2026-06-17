@@ -755,6 +755,44 @@ class Profile(models.Model):
 The enum member's *description* carries the original label, so the
 human-readable text is never lost.
 
+## Field type conversion reference
+
+How Django model fields map to GraphQL **output** types:
+
+| Django field | GraphQL output |
+|---|---|
+| `CharField` / `TextField` / `SlugField` / … | `String` |
+| `IntegerField` / `AutoField` / `BigIntegerField` | `Int` |
+| `FloatField` / `DecimalField` | `Float` |
+| `BooleanField` | `Boolean` |
+| `DateField` / `DateTimeField` / `TimeField` | `Date` / `DateTime` / `Time` |
+| any field with `choices` | a generated `Enum` (see above) |
+| `ForeignKey` / `OneToOneField` | the related object type |
+| reverse FK / `ManyToManyField` | a `<Model>ListType` container (`results` + `totalCount`) |
+| `ArrayField(inner)` | `[<inner>]` — nested arrays as `[[<inner>]]`; a `choices` base as `[<Enum>]` |
+| `*RangeField` (Integer/BigInteger/Decimal/Date/DateTime) | a `{ lower, upper }` composite typed by the bound scalar |
+| `GenericForeignKey` | a typed union when declared in `Meta.gfk_unions`, otherwise a flat `GenericForeignKeyType` |
+| File/image, `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
+
+Worked example — `ArrayField` (incl. a `choices` base) and a range field:
+
+```python
+from django.contrib.postgres.fields import ArrayField, IntegerRangeField
+from django.db import models
+
+class Article(models.Model):
+    tags = ArrayField(models.CharField(max_length=50))          # -> tags: [String]
+    grid = ArrayField(ArrayField(models.IntegerField()))        # -> grid: [[Int]]
+    statuses = ArrayField(                                      # -> statuses: [ArticleStatusesEnum]
+        models.CharField(max_length=10, choices=(("draft", "Draft"), ("pub", "Published"))),
+    )
+    span = IntegerRangeField()                                  # -> span: { lower: Int, upper: Int }
+```
+
+```graphql
+{ articles { tags grid statuses span { lower upper } } }
+```
+
 ## Type Comparison
 
 | Feature | DjangoListObjectType | DjangoInputObjectType | DjangoModelType |
