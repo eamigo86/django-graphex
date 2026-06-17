@@ -20,12 +20,15 @@ from django.utils.module_loading import import_string
 
 DEFAULTS = {
     # Pagination
+    # Dotted path (or class) of the default paginator applied to list fields
+    # that don't set their own. None disables default pagination.
     "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
-    "DEFAULT_PAGE_SIZE": None,
-    "MAX_PAGE_SIZE": None,
-    "CLEAN_RESPONSE": False,
-    "CACHE_ACTIVE": False,
-    "CACHE_TIMEOUT": 300,  # seconds (default 5 min)
+    "DEFAULT_PAGE_SIZE": None,  # page size when the client omits one (None = unbounded)
+    "MAX_PAGE_SIZE": None,  # hard ceiling on the effective page size (None = no cap)
+    # Response shaping & cache
+    "CLEAN_RESPONSE": False,  # strip null values from the response payload
+    "CACHE_ACTIVE": False,  # enable per-request response caching in GraphQLView
+    "CACHE_TIMEOUT": 300,  # response cache TTL in seconds (default 5 min)
     # Queryset optimization (N+1)
     # Apply nested select_related / prefetch_related derived from the query.
     "OPTIMIZE_QUERYSET": True,
@@ -114,11 +117,19 @@ DEFAULTS = {
     # Schema / middleware (formerly a separate schema namespace; the key names
     # are kept close to graphene-django's for familiarity).
     # ---------------------------------------------------------------------------
+    # Dotted path (or object) of the schema GraphQLView serves when no schema=
+    # is passed to .as_view(). None = you must pass schema= explicitly.
     "SCHEMA": None,
+    # GraphQL execution middleware (dotted paths or objects); the view's default
+    # when middleware= is not passed. Bundled security middlewares plug in here.
     "MIDDLEWARE": (),
+    # WebSocket subscription endpoint path advertised to clients (None = default).
     "SUBSCRIPTION_PATH": None,
+    # Wrap each mutation in transaction.atomic() so a failure rolls back its writes.
     "ATOMIC_MUTATIONS": False,
+    # Cap the number of GraphQL validation errors returned (None = no cap).
     "MAX_VALIDATION_ERRORS": None,
+    # camelCase the field/path keys in error objects to match the wire schema.
     "CAMELCASE_ERRORS": True,
     # graphql-transport-ws: seconds the server waits for the first
     # ``connection_init`` after the socket opens before closing with 4408
