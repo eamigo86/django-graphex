@@ -21,12 +21,15 @@ No imports from ``graphene``.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from graphql import GraphQLField, GraphQLObjectType, GraphQLString
+from graphql import GraphQLField, GraphQLObjectType
 
 from django_graphex.native.bridge import GdxPayload
 from django_graphex.native.ir import GdxMeta
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # BuildError
@@ -195,19 +198,34 @@ def _compile_one(
             # e.g. "NodeB" → "nodeB", "Category" → "category"
             field_name = gql_type_name[0].lower() + gql_type_name[1:]
 
-            # Default-arg captures the current related_cls (loop-capture fix)
+            # Resolve the related type: compiled first, then in-progress stub.
+            related_type = _reg.get_compiled(related_cls)
+            if related_type is None:
+                related_type = _in_progress.get(id(related_cls))
+
+            # Audit rank 6: a related model that was neither compiled nor
+            # in-progress must NOT be emitted as a silent ``GraphQLString`` (a
+            # wire type mismatch — a String standing in for an object type).
+            # Partial registration is a LEGITIMATE use case, so SKIP the field
+            # with a logged warning rather than emit a String or fail the build.
+            if related_type is None:
+                logger.warning(
+                    "Dropping relation %r on %r: target model %r is not "
+                    "registered/compiled. Register a DjangoObjectType for %r to "
+                    "expose this relation (it was previously emitted as a silent "
+                    "GraphQLString).",
+                    field_name,
+                    model_cls.__name__,
+                    related_cls.__name__,
+                    related_cls.__name__,
+                )
+                continue
+
+            # Default-arg captures the current related_type (loop-capture fix).
             def _get_related_type(
-                _cls: type = related_cls,
-                _r: NativeOutputRegistry = _reg,
+                _t: GraphQLObjectType = related_type,
             ) -> GraphQLObjectType:
-                # Try compiled first, then in-progress stub
-                compiled = _r.get_compiled(_cls)
-                if compiled is not None:
-                    return compiled
-                stub = _in_progress.get(id(_cls))
-                if stub is not None:
-                    return stub
-                return GraphQLString  # type: ignore[return-value]  # fallback
+                return _t
 
             fields[field_name] = GraphQLField(type_=_get_related_type())
 

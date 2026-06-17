@@ -22,6 +22,7 @@ Design contracts:
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -46,6 +47,8 @@ from django_graphex.native.scalars import (
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -444,15 +447,27 @@ def _to_graphql_field(
         # wrap the FK output in ``GraphQLNonNull``, even when the DB column is
         # NOT NULL. (This mirrors the model-scalar #1494 OUTPUT nullability rule;
         # input/filter FK nullability is owned by the input/filter path.)
-        def _make_relation_type(
-            _cls: type = related_cls,
-        ) -> Any:
-            compiled = registry.get_compiled(_cls)
-            if compiled is None:
-                return GraphQLString  # fallback for unregistered relations
-            return compiled
-
-        resolved_type = _make_relation_type()
+        # Audit rank 6: a to-ONE relation whose target model is NOT registered
+        # must NOT silently emit ``GraphQLString`` (a wire type mismatch — a
+        # String standing in for an object type — that only surfaced at query
+        # time). Partial registration is a LEGITIMATE use case (graphene-faithful
+        # "drop-when-unregistered": a model may be exposed while some FK targets
+        # are not), so we SKIP the field with a logged warning instead of
+        # emitting a String or failing the whole build. The field simply does
+        # not appear on the output type; the relation is never typed as a String.
+        resolved_type = registry.get_compiled(related_cls)
+        if resolved_type is None:
+            _owner = getattr(getattr(field, "model", None), "__name__", "<model>")
+            logger.warning(
+                "Dropping to-one relation %r on %r: target model %r is not "
+                "registered. Register a DjangoObjectType for %r to expose this "
+                "relation (it was previously emitted as a silent GraphQLString).",
+                field_name,
+                _owner,
+                related_cls.__name__,
+                related_cls.__name__,
+            )
+            return {}
 
         def _default_resolver(
             root: Any,

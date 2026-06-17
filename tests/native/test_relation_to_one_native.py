@@ -54,15 +54,22 @@ from django_graphex.registry import Registry
 from tests.models import Author, AuthorProfile, Category, PersonWithSpouse, Post
 
 # --------------------------------------------------------------------------- #
-# The HEAD (pre-S-rel-2) native seed-schema SDL fingerprint. Captured from a   #
-# clean ``git worktree HEAD`` checkout via ``render_native_sdl`` BEFORE the    #
-# import-removal change. S-rel-2 must keep the native SDL byte-identical, so   #
-# this golden hash is the byte-level SDL-neutral guard.                        #
+# The native seed-schema SDL fingerprint. Originally captured from a clean      #
+# ``git worktree HEAD`` checkout via ``render_native_sdl`` BEFORE the           #
+# import-removal change (S-rel-2 byte-level SDL-neutral guard).                 #
+#                                                                               #
+# Audit rank 6 (intentional, NON-neutral): the old SDL emitted a silent         #
+# ``GraphQLString`` for any to-ONE relation whose target was unregistered at    #
+# thunk-eval time. That fallback masked two real renderings: ``Post.category``  #
+# now resolves to ``PSCategory`` (its registered object type) and              #
+# ``OptNote.content_type`` (FK to Django's unregistered ``ContentType``) is now #
+# DROPPED with a logged warning instead of leaking as ``String``. The golden    #
+# hash/len were re-baselined to the corrected SDL.                              #
 # --------------------------------------------------------------------------- #
 _HEAD_SEED_SDL_SHA256 = (
-    "b3165b721f46e256f698b634b80eb1e027f8f50f0623ba7803a418b9485ce478"
+    "a41675776f746c960f75d841cad8c9b6c10cdc792ac29e901b1906c9e0c208e9"
 )
-_HEAD_SEED_SDL_LEN = 4659
+_HEAD_SEED_SDL_LEN = 4618
 
 
 # NOTE: ``DjangoObjectType`` uses a pydantic metaclass that requires a

@@ -258,3 +258,45 @@ def test_three_fk_fields_no_aliasing():
     assert book_resolved is not author_resolved
     assert author_resolved is not publisher_resolved
     assert book_resolved is not publisher_resolved
+
+
+# ---------------------------------------------------------------------------
+# Audit rank 6: unregistered to-ONE relation target must FAIL FAST, not
+# silently emit GraphQLString (a silent type mismatch on the wire).
+# ---------------------------------------------------------------------------
+
+
+def test_unregistered_to_one_relation_dropped_not_string(caplog):
+    """A to-ONE FK whose target model is NOT registered must be DROPPED (absent
+    from the output fields) with a logged warning naming the field AND the
+    unregistered target — NOT silently emitted as ``GraphQLString`` (audit rank
+    6). Dropping (vs failing the build) preserves the legitimate partial-
+    registration use case while removing the silent String type mismatch."""
+    import logging
+
+    from graphql import GraphQLString
+
+    from django_graphex.native.output_compiler import _to_graphql_field
+
+    # Empty registry: AuthorModel (the FK target) is NOT registered.
+    registry = StubRegistry()
+    fk_field = BookModel._meta.get_field("author")
+
+    with caplog.at_level(logging.WARNING, logger="django_graphex.native.output_compiler"):
+        field_map = _to_graphql_field(fk_field, registry)
+
+    # The relation must NOT be emitted at all — and crucially NEVER as a String.
+    assert field_map == {}, (
+        "an unregistered to-one relation must be dropped (empty field map), not "
+        f"emitted as a GraphQLString; got {field_map!r}"
+    )
+    for gql_field in field_map.values():
+        assert gql_field.type is not GraphQLString
+
+    # A warning must name the field and the unregistered target so the
+    # misconfiguration is diagnosable at build time.
+    msg = caplog.text
+    assert "author" in msg, f"warning must name the relation field; got {msg!r}"
+    assert "AuthorModel" in msg, (
+        f"warning must name the unregistered target model; got {msg!r}"
+    )

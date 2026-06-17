@@ -499,6 +499,233 @@ def test_choices_input_field_present_without_field_selection():
 
 
 # --------------------------------------------------------------------------- #
+# (f) issue #65 — Meta only/include/exclude gates RELATION (ID-surface) INPUT   #
+#     fields. REGRESSION (audit rank 1): the relation injection loop            #
+#     (input_compiler.py:482-495) injected the ``ID`` / ``[ID!]`` surface       #
+#     UNCONDITIONALLY, bypassing only/exclude/include — so a relation excluded   #
+#     via ``exclude_fields`` (or filtered out by ``only_fields``) LEAKED onto    #
+#     the mutation INPUT (an access-control hole: a client could submit hidden   #
+#     relation data). The loop must mirror the base/choices gating on            #
+#     ``rf.out_name`` (the same snake key space).                                #
+# --------------------------------------------------------------------------- #
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "out_name,wire_name",
+    [
+        ("author", "author"),  # forward FK -> single ID
+        ("co_authors", "coAuthors"),  # M2M -> [ID!]
+    ],
+)
+def test_relation_input_field_dropped_when_excluded(out_name, wire_name):
+    """A relation named in ``Meta.exclude_fields`` (by its snake out_name) must
+    NOT land on the compiled INPUT type — neither the wire alias nor the snake
+    accessor (audit rank 1)."""
+    reg = Registry()
+
+    class _PostCreate(DjangoInputObjectType):
+        class Meta:
+            model = Post  # FK author + M2M co_authors/tags + reverse comments
+            registry = reg
+            input_for = "create"
+            exclude_fields = (out_name,)
+
+    fields = _PostCreate._meta.graphql_input_type.fields
+    assert wire_name not in fields, (
+        f"relation {out_name!r} was excluded via Meta.exclude_fields but its "
+        f"wire alias {wire_name!r} LEAKED onto the compiled INPUT type; got "
+        f"fields {list(fields)}"
+    )
+    assert out_name not in fields, (
+        f"relation {out_name!r} was excluded via Meta.exclude_fields but its "
+        f"snake accessor LEAKED onto the compiled INPUT type; got fields "
+        f"{list(fields)}"
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "out_name,wire_name",
+    [
+        ("author", "author"),
+        ("co_authors", "coAuthors"),
+    ],
+)
+def test_relation_input_field_dropped_when_not_in_only(out_name, wire_name):
+    """A relation absent from ``Meta.only_fields`` must NOT land on the compiled
+    INPUT type (audit rank 1)."""
+    reg = Registry()
+
+    class _PostCreate(DjangoInputObjectType):
+        class Meta:
+            model = Post
+            registry = reg
+            input_for = "create"
+            only_fields = ("id",)
+
+    fields = _PostCreate._meta.graphql_input_type.fields
+    assert wire_name not in fields, (
+        f"relation {out_name!r} is not in Meta.only_fields but its wire alias "
+        f"{wire_name!r} LEAKED onto the compiled INPUT type; got fields "
+        f"{list(fields)}"
+    )
+    assert out_name not in fields, (
+        f"relation {out_name!r} is not in Meta.only_fields but its snake "
+        f"accessor LEAKED onto the compiled INPUT type; got fields {list(fields)}"
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "out_name,wire_name,is_list",
+    [
+        ("author", "author", False),  # FK -> single ID
+        ("co_authors", "coAuthors", True),  # M2M -> [ID!]
+    ],
+)
+def test_relation_input_field_force_included_overrides_only(
+    out_name, wire_name, is_list
+):
+    """``Meta.include_fields`` force-includes a relation even when ``only_fields``
+    would otherwise drop it — EXACT base/choices-loop semantics (audit rank 1)."""
+    reg = Registry()
+
+    class _PostCreate(DjangoInputObjectType):
+        class Meta:
+            model = Post
+            registry = reg
+            input_for = "create"
+            only_fields = ("id",)
+            include_fields = (out_name,)
+
+    fields = _PostCreate._meta.graphql_input_type.fields
+    assert wire_name in fields, (
+        f"relation {out_name!r} was force-included via Meta.include_fields but "
+        f"is missing from the compiled INPUT type; got fields {list(fields)}"
+    )
+    ftype = _unwrap(fields[wire_name].type)
+    if is_list:
+        assert isinstance(ftype, GraphQLList), (
+            f"force-included M2M {out_name!r} must still be a [ID!] list, got "
+            f"{ftype!r}"
+        )
+        assert ftype.of_type.of_type is GraphQLID
+    else:
+        assert ftype is GraphQLID, (
+            f"force-included FK {out_name!r} must still be an ID, got {ftype!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# (g) issue #65 — Meta only/include/exclude gates NESTED object-input fields.    #
+#     REGRESSION (audit rank 2): the nested injection loop                       #
+#     (input_compiler.py:540-554) injected the nested OBJECT input               #
+#     UNCONDITIONALLY, bypassing only/exclude/include. A nested input excluded   #
+#     via ``exclude_fields`` LEAKED onto the mutation INPUT. The loop must        #
+#     mirror the base/choices gating on ``nf.out_name``.                         #
+# --------------------------------------------------------------------------- #
+def _register_author_create_input(reg):
+    """Register an ``Author`` create input so the nested ``author`` child thunk
+    resolves (mirrors ``_ensure_child_generic_input`` the real mutation path runs).
+    """
+
+    class _AuthorCreate(DjangoInputObjectType):
+        class Meta:
+            model = Author
+            registry = reg
+            input_for = "create"
+
+    return _AuthorCreate
+
+
+@pytest.mark.django_db
+def test_nested_input_field_dropped_when_excluded():
+    """A nested object-input named in ``Meta.exclude_fields`` must NOT land on
+    the compiled INPUT type (audit rank 2)."""
+    reg = Registry()
+    _register_author_create_input(reg)
+
+    class _PostCreate(DjangoInputObjectType):
+        class Meta:
+            model = Post
+            registry = reg
+            input_for = "create"
+            nested_fields = {"author": Author}
+            exclude_fields = ("author",)
+
+    fields = _PostCreate._meta.graphql_input_type.fields
+    assert "author" not in fields, (
+        "nested object-input 'author' was excluded via Meta.exclude_fields but "
+        f"LEAKED onto the compiled INPUT type; got fields {list(fields)}"
+    )
+
+
+@pytest.mark.django_db
+def test_nested_input_field_dropped_when_not_in_only():
+    """A nested object-input absent from ``Meta.only_fields`` must NOT land on
+    the compiled INPUT type (audit rank 2)."""
+    reg = Registry()
+    _register_author_create_input(reg)
+
+    class _PostCreate(DjangoInputObjectType):
+        class Meta:
+            model = Post
+            registry = reg
+            input_for = "create"
+            nested_fields = {"author": Author}
+            only_fields = ("id",)
+
+    fields = _PostCreate._meta.graphql_input_type.fields
+    assert "author" not in fields, (
+        "nested object-input 'author' is not in Meta.only_fields but LEAKED "
+        f"onto the compiled INPUT type; got fields {list(fields)}"
+    )
+
+
+@pytest.mark.django_db
+def test_nested_input_field_force_included_overrides_only():
+    """``Meta.include_fields`` force-includes a nested object-input even when
+    ``only_fields`` would otherwise drop it (audit rank 2)."""
+    reg = Registry()
+    _register_author_create_input(reg)
+
+    class _PostCreate(DjangoInputObjectType):
+        class Meta:
+            model = Post
+            registry = reg
+            input_for = "create"
+            nested_fields = {"author": Author}
+            only_fields = ("id",)
+            include_fields = ("author",)
+
+    fields = _PostCreate._meta.graphql_input_type.fields
+    assert "author" in fields, (
+        "nested object-input 'author' was force-included via Meta.include_fields "
+        f"but is missing from the compiled INPUT type; got fields {list(fields)}"
+    )
+
+
+@pytest.mark.django_db
+def test_nested_input_field_present_without_field_selection():
+    """Control: with no only/exclude/include the nested object-input stays
+    present (guards the gating from over-dropping)."""
+    reg = Registry()
+    _register_author_create_input(reg)
+
+    class _PostCreate(DjangoInputObjectType):
+        class Meta:
+            model = Post
+            registry = reg
+            input_for = "create"
+            nested_fields = {"author": Author}
+
+    fields = _PostCreate._meta.graphql_input_type.fields
+    assert "author" in fields, (
+        "nested object-input 'author' must stay present when no field selection "
+        f"is applied; got fields {list(fields)}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # (d) BROAD silent-drop — relation presence preserved in _meta.fields.         #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db

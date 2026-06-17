@@ -64,15 +64,17 @@ from django_graphex.registry import Registry
 from tests.models import Author, Comment, Post, Tag
 
 # --------------------------------------------------------------------------- #
-# The HEAD (pre-S-rel-3) native seed-schema SDL fingerprint. Captured via      #
-# ``render_native_sdl`` BEFORE the import-removal change (identical to the     #
-# S-rel-2 baseline — both slices are SDL-neutral). S-rel-3 must keep the SDL   #
-# byte-identical, so this golden hash is the byte-level SDL-neutral guard.     #
+# The native seed-schema SDL fingerprint (was the S-rel-2 / S-rel-3 baseline).  #
+# Audit rank 6 (intentional, NON-neutral): re-baselined from b3165b...ce478 /   #
+# 4659. The old fingerprint locked in a silent ``GraphQLString`` fallback for   #
+# unregistered to-ONE relations; ``Post.category`` now renders as              #
+# ``PSCategory`` and ``OptNote.content_type`` (FK to the unregistered          #
+# ``ContentType``) is dropped with a logged warning.                           #
 # --------------------------------------------------------------------------- #
 _HEAD_SEED_SDL_SHA256 = (
-    "b3165b721f46e256f698b634b80eb1e027f8f50f0623ba7803a418b9485ce478"
+    "a41675776f746c960f75d841cad8c9b6c10cdc792ac29e901b1906c9e0c208e9"
 )
-_HEAD_SEED_SDL_LEN = 4659
+_HEAD_SEED_SDL_LEN = 4618
 
 
 def _build_post_graph(reg: Registry) -> tuple[type, type, type, type]:

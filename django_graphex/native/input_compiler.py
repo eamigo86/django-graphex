@@ -483,6 +483,18 @@ def compile_input_type(
             if rf.alias in _nested_aliases:
                 # A nested object input claims this accessor — skip the ID form.
                 continue
+            # issue #65 (audit rank 1): honor Meta only/include/exclude on the
+            # relation ID-surface INPUT field too. ``include_fields``
+            # force-includes even when only/exclude would skip it — EXACT same
+            # gating the base ``model_fields`` + choices loops apply on the snake
+            # name (rf.out_name is the same snake key space). Without this a
+            # relation excluded via ``exclude_fields`` (or filtered out by
+            # ``only_fields``) would LEAK onto the input — an access-control hole.
+            _forced = _incl is not None and rf.out_name in _incl
+            if not _forced and _only is not None and rf.out_name not in _only:
+                continue
+            if not _forced and _excl is not None and rf.out_name in _excl:
+                continue
             if rf.is_list:
                 rel_type: Any = GraphQLList(GraphQLNonNull(GraphQLID))
             elif rf.required:
@@ -538,6 +550,17 @@ def compile_input_type(
         # ``data.pop(field)`` matches the Django relation name.
         # ----------------------------------------------------------------
         for nf in nested_fields:
+            # issue #65 (audit rank 2): honor Meta only/include/exclude on the
+            # nested object-input field too — same gating as the base, choices,
+            # and relation loops on the snake name (nf.out_name is the same snake
+            # key space). Without this a nested input excluded via
+            # ``exclude_fields`` (or filtered out by ``only_fields``) would LEAK
+            # onto the mutation input.
+            _forced = _incl is not None and nf.out_name in _incl
+            if not _forced and _only is not None and nf.out_name not in _only:
+                continue
+            if not _forced and _excl is not None and nf.out_name in _excl:
+                continue
             child_type = _resolve_child_input_type(nf.child_input_type)
             if child_type is None:
                 # Child input unresolved (no registered type) -> skip rather

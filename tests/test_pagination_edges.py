@@ -185,3 +185,78 @@ class CursorPageInfoDbTest(TestCase):
         )
         info = field.resolve(base, None, first=2)
         assert info["hasNextPage"] is True
+
+    # ----------------------------------------------------------------------- #
+    # Audit rank 22: documented cursor empty-page / boundary semantics.        #
+    # These lock in the get_page_info hasNextPage / hasPreviousPage / cursor    #
+    # contract at the edges (first page, last row, first row, invalid /         #
+    # out-of-range cursor). Rows are a,b,c,d ordered by name, page_size=2.      #
+    # ----------------------------------------------------------------------- #
+    def test_page_info_first_page_no_cursor_has_no_previous(self):
+        """First page (cursor=None): hasPreviousPage False, hasNextPage True
+        (4 rows > page_size 2), boundary cursors are the first/last in window."""
+        p = CursorGraphqlPagination(ordering="name", page_size=2)
+        info = p.get_page_info(Author.objects.all(), first=2)
+        assert info["has_previous_page"] is False
+        assert info["has_next_page"] is True
+        assert info["start_cursor"] == CursorGraphqlPagination.encode_cursor("a")
+        assert info["end_cursor"] == CursorGraphqlPagination.encode_cursor("b")
+
+    def test_page_info_cursor_at_last_row_has_no_next(self):
+        """Cursor at the second-to-last row 'c' -> the window is the final row
+        'd' only: hasNextPage False (nothing follows), hasPreviousPage True."""
+        p = CursorGraphqlPagination(ordering="name", page_size=2)
+        token = CursorGraphqlPagination.encode_cursor("c")
+        info = p.get_page_info(Author.objects.all(), first=2, cursor=token)
+        assert info["has_next_page"] is False
+        assert info["has_previous_page"] is True
+        assert info["start_cursor"] == CursorGraphqlPagination.encode_cursor("d")
+        assert info["end_cursor"] == CursorGraphqlPagination.encode_cursor("d")
+
+    def test_page_info_cursor_at_first_row_has_previous(self):
+        """Cursor at the first row 'a' -> the window is [b, c]: hasPreviousPage
+        True (row 'a' is strictly before 'b'), hasNextPage True (row 'd' follows)."""
+        p = CursorGraphqlPagination(ordering="name", page_size=2)
+        token = CursorGraphqlPagination.encode_cursor("a")
+        info = p.get_page_info(Author.objects.all(), first=2, cursor=token)
+        assert info["has_previous_page"] is True
+        assert info["has_next_page"] is True
+        assert info["start_cursor"] == CursorGraphqlPagination.encode_cursor("b")
+        assert info["end_cursor"] == CursorGraphqlPagination.encode_cursor("c")
+
+    def test_page_info_cursor_at_exact_last_row_empty_page(self):
+        """Cursor at the last row 'd' -> no rows strictly after it: the empty
+        page contract (all flags False, both boundary cursors None)."""
+        p = CursorGraphqlPagination(ordering="name", page_size=2)
+        token = CursorGraphqlPagination.encode_cursor("d")
+        info = p.get_page_info(Author.objects.all(), first=2, cursor=token)
+        assert info == {
+            "has_next_page": False,
+            "has_previous_page": False,
+            "start_cursor": None,
+            "end_cursor": None,
+        }
+
+    def test_page_info_out_of_range_cursor_empty_page(self):
+        """An out-of-range (valid value, past every row) cursor 'z' -> empty page
+        contract (all flags False, cursors None) — never an error."""
+        p = CursorGraphqlPagination(ordering="name", page_size=2)
+        token = CursorGraphqlPagination.encode_cursor("z")
+        info = p.get_page_info(Author.objects.all(), first=2, cursor=token)
+        assert info == {
+            "has_next_page": False,
+            "has_previous_page": False,
+            "start_cursor": None,
+            "end_cursor": None,
+        }
+
+    def test_page_info_invalid_cursor_raises_graphql_error(self):
+        """A malformed cursor (not decodable) -> GraphQLError('Invalid cursor'),
+        mirroring paginate_queryset's tampered-cursor guard."""
+        from graphql import GraphQLError
+
+        p = CursorGraphqlPagination(ordering="name", page_size=2)
+        with pytest.raises(GraphQLError):
+            p.get_page_info(
+                Author.objects.all(), first=2, cursor="!!!not-base64!!!"
+            )
