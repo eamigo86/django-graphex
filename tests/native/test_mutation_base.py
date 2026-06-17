@@ -36,14 +36,13 @@ def test_mutation_importable():
 
 def test_field_returns_graphql_field():
     """MyMutation(Mutation).Field() returns a GraphQLField instance."""
-    import graphene
-    from graphql import GraphQLField
+    from graphql import GraphQLArgument, GraphQLField, GraphQLString
 
     from django_graphex.native.mutation import Mutation
 
     class MyMutation(Mutation):
         class args:
-            name = graphene.Argument(graphene.String)
+            name = GraphQLArgument(GraphQLString)
 
         @staticmethod
         def mutate(root, info, name=None):
@@ -63,7 +62,7 @@ def test_field_returns_graphql_field():
 def test_field_resolve_wraps_self_first_mutate():
     """If mutate uses 'self' as first param, resolve is the _adapt_self shim."""
     import warnings
-    import graphene
+
     from graphql import GraphQLField
 
     from django_graphex.native.mutation import Mutation
@@ -98,7 +97,7 @@ def test_field_resolve_wraps_self_first_mutate():
 def test_field_resolve_passthrough_for_root_first_mutate():
     """If mutate uses 'root' as first param, resolve is passed through (no shim)."""
     import warnings
-    import graphene
+
     from graphql import GraphQLField
 
     from django_graphex.native.mutation import Mutation
@@ -138,14 +137,13 @@ def test_field_resolve_passthrough_for_root_first_mutate():
 
 def test_field_args_reflect_class_args():
     """Field().args contains GraphQLArgument instances for each class args annotation."""
-    import graphene
     from graphql import GraphQLArgument, GraphQLField, GraphQLNonNull, GraphQLString
 
     from django_graphex.native.mutation import Mutation
 
     class MyMutation(Mutation):
         class args:
-            name = graphene.Argument(graphene.String, required=True)
+            name = GraphQLArgument(GraphQLNonNull(GraphQLString))
 
         @staticmethod
         def mutate(root, info, name=None):
@@ -185,15 +183,20 @@ def test_field_args_empty_when_class_args_is_empty():
 
 def test_field_args_multiple_arguments():
     """Field().args contains all declared arguments."""
-    import graphene
-    from graphql import GraphQLArgument, GraphQLField
+    from graphql import (
+        GraphQLArgument,
+        GraphQLField,
+        GraphQLInt,
+        GraphQLNonNull,
+        GraphQLString,
+    )
 
     from django_graphex.native.mutation import Mutation
 
     class MyMutation(Mutation):
         class args:
-            name = graphene.Argument(graphene.String, required=True)
-            age = graphene.Argument(graphene.Int)
+            name = GraphQLArgument(GraphQLNonNull(GraphQLString))
+            age = GraphQLArgument(GraphQLInt)
 
         @staticmethod
         def mutate(root, info, name=None, age=None):
@@ -214,14 +217,13 @@ def test_field_args_multiple_arguments():
 
 def test_no_schema_assembly_needed():
     """Field() is inspectable in isolation — no GraphQLSchema required."""
-    import graphene
-    from graphql import GraphQLField
+    from graphql import GraphQLArgument, GraphQLField, GraphQLID, GraphQLNonNull
 
     from django_graphex.native.mutation import Mutation
 
     class MyMutation(Mutation):
         class args:
-            pk = graphene.Argument(graphene.ID, required=True)
+            pk = GraphQLArgument(GraphQLNonNull(GraphQLID))
 
         @staticmethod
         def mutate(root, info, pk=None):
@@ -297,18 +299,51 @@ def test_field_raises_when_no_mutate_defined():
         NoMutate.Field()
 
 
-def test_class_args_with_non_argument_attr_is_ignored():
-    """Non-Argument attrs in class args are silently skipped (not in field.args)."""
-    import graphene
-    from graphql import GraphQLField
+def test_class_args_public_non_argument_attr_fails_loudly():
+    """A PUBLIC non-arg attr in ``class args`` now FAILS LOUDLY (CLEAN BREAK).
+
+    Pre-FIX-1 ``_compile_args`` SILENTLY SKIPPED any non-native value (so a stray
+    ``graphene.Argument`` — or any junk — vanished with no error, defeating the
+    advertised clean break). The 2.0 contract (decision #1603) treats every PUBLIC
+    attribute of ``class args`` as an arg declaration: a non-native value raises a
+    clear ``TypeError`` naming the offending key. A genuine helper must be
+    underscore-prefixed (``props`` strips it) — see the companion test below.
+    """
+    import pytest
+    from graphql import GraphQLArgument, GraphQLString
 
     from django_graphex.native.mutation import Mutation
 
     class MyMutation(Mutation):
         class args:
-            # A plain string attr — should not appear in compiled args
+            # A plain public string attr — no longer silently ignored.
             helper_text = "not an argument"
-            name = graphene.Argument(graphene.String)
+            name = GraphQLArgument(GraphQLString)
+
+        @staticmethod
+        def mutate(root, info, name=None):
+            return name
+
+    with pytest.raises(TypeError) as exc:
+        MyMutation.Field()
+    assert "helper_text" in str(exc.value)
+
+
+def test_class_args_underscore_helper_is_ignored():
+    """An UNDERSCORE-prefixed helper in ``class args`` is tolerated (props strips it).
+
+    The CLEAN-BREAK loud-fail targets PUBLIC arg declarations only; a private
+    helper (``_helper_text``) is filtered out by ``props`` and never reaches the
+    arg normaliser, so it does not become a compiled arg and does not error.
+    """
+    from graphql import GraphQLArgument, GraphQLField, GraphQLString
+
+    from django_graphex.native.mutation import Mutation
+
+    class MyMutation(Mutation):
+        class args:
+            _helper_text = "not an argument"  # underscore → stripped by props()
+            name = GraphQLArgument(GraphQLString)
 
         @staticmethod
         def mutate(root, info, name=None):
@@ -317,6 +352,4 @@ def test_class_args_with_non_argument_attr_is_ignored():
     field = MyMutation.Field()
     assert isinstance(field, GraphQLField)
     assert "name" in field.args
-    assert "helper_text" not in field.args, (
-        "Non-Argument class attrs must be excluded from compiled args"
-    )
+    assert "_helper_text" not in field.args

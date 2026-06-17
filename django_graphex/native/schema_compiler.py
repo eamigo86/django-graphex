@@ -282,8 +282,31 @@ def _build_scalar_field(
     )
 
 
+def _get_unbound_function(func: Any) -> Any:
+    """Return *func* unbound from its owning class (graphene-free inline).
+
+    Replaces ``graphene.utils.get_unbound_function.get_unbound_function`` (S-args-8
+    follow-up, decision #1603 — CLEAN BREAK). graphene's helper is a trivial 3-line
+    routine: a bound method (``__self__`` is truthy) is returned as-is, while a
+    method retrieved off a CLASS via ``getattr`` (``func.__self__`` is falsy /
+    absent) is unwrapped to its plain ``__func__`` so graphql-core can call it as a
+    bare ``(root, info, **kw)`` resolver. Inlined here so a pure-native root with a
+    ``resolve_<name>`` method no longer pulls graphene at compile time.
+
+    Args:
+        func: A callable, typically a method object fetched via
+            ``getattr(cls, "resolve_<name>")``.
+
+    Returns:
+        The function unbound from its class when applicable, else *func* verbatim.
+    """
+    if not getattr(func, "__self__", True):
+        return func.__func__
+    return func
+
+
 def _resolver_for(source_cls: type | None, field_name: str | None) -> Any:
-    """Return the graphene parent resolver for a field, or the default resolver.
+    """Return the parent resolver for a field, or the default resolver.
 
     Mirrors graphene's TypeMap wiring: the source ObjectType's
     ``resolve_<field_name>`` (unbound) when declared, else graphql-core's default
@@ -299,11 +322,10 @@ def _resolver_for(source_cls: type | None, field_name: str | None) -> Any:
     """
     if source_cls is None or field_name is None:
         return default_field_resolver
-    from graphene.utils.get_unbound_function import get_unbound_function
 
     method = getattr(source_cls, f"resolve_{field_name}", None)
     if method is not None:
-        return get_unbound_function(method)
+        return _get_unbound_function(method)
     return default_field_resolver
 
 
@@ -706,21 +728,38 @@ def _compile_wrapped_field_type(
     Returns:
         The corresponding graphql-core type (wrappers preserved).
     """
-    from graphene.types.structures import List as GList
-    from graphene.types.structures import NonNull as GNonNull
-
     from django_graphex.native._args import _unwrap_graphene_type
     from django_graphex.native.descriptors import NativeList, NativeNonNull
 
     registries = _resolve_registries(registries)
 
-    # Native lazy wrappers (S-ROOTS-c) AND graphene wrappers share a ``.of_type``
-    # read-contract; recurse the inner element and preserve the wrapper shape.
-    if isinstance(field_type, (GNonNull, NativeNonNull)):
+    # NATIVE wrappers FIRST (S-ROOTS-c) — checked WITHOUT importing graphene so a
+    # fully-native field/root compiles graphene-free (the S-milestone-9 contract).
+    if isinstance(field_type, NativeNonNull):
         return GraphQLNonNull(
             _compile_wrapped_field_type(field_type.of_type, registries)
         )
-    if isinstance(field_type, (GList, NativeList)):
+    if isinstance(field_type, NativeList):
+        return GraphQLList(_compile_wrapped_field_type(field_type.of_type, registries))
+
+    # GRAPHENE wrappers (transitional, graphene-ROOT path — open-Q#3, retired in
+    # S-del-backend-11). The import is DEFERRED here and guarded so it fires ONLY
+    # for a field whose type is not a native wrapper / leaf — a fully-native build
+    # never reaches it, and an uninstalled graphene degrades gracefully to the leaf
+    # dispatch below instead of raising at import.
+    try:
+        from graphene.types.structures import List as GList
+        from graphene.types.structures import NonNull as GNonNull
+    except ModuleNotFoundError:
+        GList = GNonNull = ()  # type: ignore[assignment]
+
+    # graphene wrappers share the ``.of_type`` read-contract; recurse + preserve
+    # the wrapper shape.
+    if GNonNull and isinstance(field_type, GNonNull):
+        return GraphQLNonNull(
+            _compile_wrapped_field_type(field_type.of_type, registries)
+        )
+    if GList and isinstance(field_type, GList):
         return GraphQLList(_compile_wrapped_field_type(field_type.of_type, registries))
 
     polymorphic = _polymorphic_field_type(field_type, registries)

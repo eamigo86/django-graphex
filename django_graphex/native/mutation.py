@@ -5,12 +5,11 @@ native backend — the 2.0 replacement for ``graphene.Mutation``.  Usage (the pu
 2.0 form)::
 
     from django_graphex import Mutation, field
-    from graphql import GraphQLBoolean, GraphQLString
-    import graphene  # only for the transitional argument declaration form
+    from graphql import GraphQLArgument, GraphQLBoolean, GraphQLNonNull, GraphQLString
 
     class CreateCategory(Mutation):
-        class args:                              # input arguments
-            name = graphene.Argument(graphene.String, required=True)
+        class args:                              # input arguments (native form)
+            name = GraphQLArgument(GraphQLNonNull(GraphQLString))
 
         ok = field(GraphQLBoolean)               # output payload fields
         category = field(CategoryType)
@@ -33,9 +32,10 @@ Design (reuses the ``DjangoModelMutation`` machinery — mutation.py):
    payload round-trips through the native ObjectType ``__init__`` (the S6c
    silent-null fix stashes the descriptor-named kwargs as instance attributes).
 
-2. ``class args`` is converted to a ``{name: GraphQLArgument}`` dict exactly like
-   ``DjangoModelMutation`` builds its arguments — via
-   ``graphene_arg_to_graphql_argument`` (accepts the native arg form).
+2. ``class args`` is converted to a ``{name: GraphQLArgument}`` dict via the
+   NATIVE arg API ``native_arg`` (``native/_args.py``): a graphql-core
+   ``GraphQLArgument`` is accepted verbatim (``out_name`` filled from the declared
+   key), a bare graphql-core type is wrapped.  No graphene.
 
 3. ``Field()`` compiles the OUTPUT PAYLOAD by running THIS class through
    ``_compile_plain_object_type`` (the same plain-object compiler
@@ -45,9 +45,9 @@ Design (reuses the ``DjangoModelMutation`` machinery — mutation.py):
    registers the field's identity in ``_NATIVE_FIELD_IDENTITIES`` so the native
    root compiler's ``_collect_root_attrs`` recovers it (never silently dropping it).
 
-Graphene import policy: zero top-level ``import graphene``.  graphene is touched
-only lazily inside ``_compile_args`` when converting an argument declaration that
-is still a ``graphene.Argument`` (the transitional argument form).
+Graphene import policy: ZERO graphene anywhere (S-args-8, decision #1603 — CLEAN
+BREAK).  The argument path uses the graphene-free ``native_arg`` normaliser; the
+transitional ``graphene.Argument`` form is no longer accepted.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ from typing import Any
 from graphql import GraphQLField
 
 from django_graphex._strconv import props
-from django_graphex.native._args import graphene_arg_to_graphql_argument
+from django_graphex.native._args import native_arg
 from django_graphex.native._compat import _adapt_self
 from django_graphex.native.base import ObjectType as NativeObjectType
 
@@ -69,26 +69,45 @@ from django_graphex.native.base import ObjectType as NativeObjectType
 def _compile_args(args_cls: type) -> dict[str, Any]:
     """Convert a ``class args`` inner class to a ``dict[str, GraphQLArgument]``.
 
-    Reads every non-underscore attribute of *args_cls*.  Attributes that are
-    ``graphene.Argument`` instances are converted via
-    ``graphene_arg_to_graphql_argument`` (the same converter ``DjangoModelMutation``
-    uses); other attribute types are skipped.
+    Reads every non-underscore attribute of *args_cls* and normalises EACH through
+    the NATIVE arg API ``native_arg`` (S-args-8, decision #1603 — CLEAN BREAK off
+    graphene).  ``native_arg`` accepts three declaration currencies:
+
+    - a graphql-core ``GraphQLArgument`` (``name = GraphQLArgument(GraphQLNonNull(
+      GraphQLString))``) — accepted VERBATIM, with ``out_name`` set to the
+      snake_case form of the declared (possibly camelCase) key when the user did
+      not already supply one;
+    - a bare graphql-core type (``age = GraphQLInt``, ``tags = GraphQLList(...)``)
+      — wrapped in a ``GraphQLArgument`` for ergonomics;
+    - a zero-arg callable THUNK (``data = lambda: GraphQLArgument(GraphQLNonNull(
+      MyInput._meta.graphql_input_type))``) — called to resolve a deferred type
+      (the native lazy form for an input-object arg whose compiled
+      ``GraphQLInputObjectType`` is not available at class-definition time; the
+      thunk fires here, at ``Field()`` build time, AFTER ``compile_all_inputs``).
+
+    CLEAN BREAK (no silent drops): every public attribute is routed through
+    ``native_arg``, which raises a clear ``TypeError`` naming the offending value
+    when it is not a native arg currency (e.g. a leftover ``graphene.Argument``).
+    Pre-S-args-8 the loop FILTERED to ``(GraphQLArgument, GraphQLType)`` and
+    SILENTLY SKIPPED anything else — so a stray ``graphene.Argument`` dropped the
+    arg with no error and the advertised clean break (= ``TypeError``) was
+    unreachable.  ``props`` already strips dunders / underscore helpers, so a
+    private helper constant is never seen here; a genuine public arg declaration
+    must be a native currency or it fails loudly.  graphene is NEVER imported.
 
     Args:
         args_cls: The ``class args`` inner class of a ``Mutation`` subclass.
 
     Returns:
         ``dict[str, GraphQLArgument]`` ready for ``GraphQLField(args=…)``.
+
+    Raises:
+        TypeError: When any public attribute of *args_cls* is not a native arg
+            currency (the CLEAN BREAK — silent drops are impossible).
     """
     result: dict[str, Any] = {}
     for attr_name, value in props(args_cls).items():
-        # Lazy check: is this a graphene Argument? (transitional arg form)
-        try:
-            from graphene import Argument as GArgument  # noqa: PLC0415
-        except ImportError:  # pragma: no cover — graphene absent
-            break
-        if isinstance(value, GArgument):
-            result[attr_name] = graphene_arg_to_graphql_argument(value, name=attr_name)
+        result[attr_name] = native_arg(value, name=attr_name)
     return result
 
 
@@ -102,8 +121,8 @@ class Mutation(NativeObjectType):
 
     Subclass and define:
 
-    - ``class args``: inner class with ``graphene.Argument`` class attributes
-      (the transitional argument form; converted to native ``GraphQLArgument``).
+    - ``class args``: inner class with graphql-core ``GraphQLArgument`` (or bare
+      graphql-core type) class attributes — the native arg form (S-args-8).
     - Output payload fields declared via ``field()``
       (``ok = field(GraphQLBoolean)``, ``category = field(CategoryType)`` …).
     - ``mutate``: a ``@classmethod`` (or ``@staticmethod`` / bare function) that
@@ -114,7 +133,7 @@ class Mutation(NativeObjectType):
 
         class CreateCategory(Mutation):
             class args:
-                name = graphene.Argument(graphene.String, required=True)
+                name = GraphQLArgument(GraphQLNonNull(GraphQLString))
 
             ok = field(GraphQLBoolean)
             category = field(CategoryType)
@@ -142,9 +161,10 @@ class Mutation(NativeObjectType):
     class args:
         """Default empty args inner class.
 
-        Subclasses override this to declare mutation arguments.  Declared as a
-        plain nested class (a ``type``), which Pydantic's ``ModelMetaclass``
-        ignores — it is not a model field.
+        Subclasses override this to declare mutation arguments via the native
+        arg form (graphql-core ``GraphQLArgument`` / types).  Declared as a plain
+        nested class (a ``type``), which Pydantic's ``ModelMetaclass`` ignores —
+        it is not a model field.
         """
 
     @classmethod

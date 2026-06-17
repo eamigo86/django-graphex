@@ -92,8 +92,7 @@ def test_native_mutation_payload_value_object_roundtrips():
 # --------------------------------------------------------------------------- #
 def test_native_mutation_field_args_compile_from_class_args():
     """``class args`` declarations compile to graphql-core ``GraphQLArgument``s
-    on the returned field (reusing the established native arg form)."""
-    import graphene
+    on the returned field (the native arg form)."""
     from graphql import (
         GraphQLArgument,
         GraphQLBoolean,
@@ -106,7 +105,7 @@ def test_native_mutation_field_args_compile_from_class_args():
 
     class _CreateThing(Mutation):
         class args:
-            name = graphene.Argument(graphene.String, required=True)
+            name = GraphQLArgument(GraphQLNonNull(GraphQLString))
 
         ok = field(GraphQLBoolean)
 
@@ -227,8 +226,10 @@ def test_native_mutation_compiles_and_executes_nonnull_payload():
     NON-NULL payload (``ok`` / a nested object / ``error``) — the silent-null
     (S6c) guard, proven on the wire."""
     from graphql import (
+        GraphQLArgument,
         GraphQLBoolean,
         GraphQLField,
+        GraphQLNonNull,
         GraphQLObjectType,
         GraphQLSchema,
         GraphQLString,
@@ -252,9 +253,7 @@ def test_native_mutation_compiles_and_executes_nonnull_payload():
         """Hand-written native mutation with a structured output payload."""
 
         class args:
-            import graphene  # noqa: PLC0415
-
-            name = graphene.Argument(graphene.String, required=True)
+            name = GraphQLArgument(GraphQLNonNull(GraphQLString))
 
         ok = field(GraphQLBoolean)
         author = field(_HAuthorNode)
@@ -315,8 +314,10 @@ def test_native_mutation_error_path_roundtrips():
     """The error branch ``cls(ok=False, error=...)`` also round-trips on the
     wire — proving the value-object stash works for the falsy/None payload too."""
     from graphql import (
+        GraphQLArgument,
         GraphQLBoolean,
         GraphQLField,
+        GraphQLNonNull,
         GraphQLObjectType,
         GraphQLSchema,
         GraphQLString,
@@ -328,9 +329,7 @@ def test_native_mutation_error_path_roundtrips():
 
     class _HFailMutation(Mutation):
         class args:
-            import graphene  # noqa: PLC0415
-
-            name = graphene.Argument(graphene.String, required=True)
+            name = GraphQLArgument(GraphQLNonNull(GraphQLString))
 
         ok = field(GraphQLBoolean)
         error = field(GraphQLString)

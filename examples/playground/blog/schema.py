@@ -9,12 +9,17 @@
 
 import os
 
-import graphene  # transitional: only the `class args` argument form (graphene.Argument)
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.db.models import Count
 from django.utils import timezone
-from graphql import GraphQLBoolean, GraphQLInt, GraphQLString
+from graphql import (
+    GraphQLArgument,
+    GraphQLBoolean,
+    GraphQLInt,
+    GraphQLNonNull,
+    GraphQLString,
+)
 
 from django_graphex import (
     AllowAny,  # noqa: F401 — available for permission_classes experimentation
@@ -483,7 +488,7 @@ class PostWithCommentsMutation(DjangoModelMutation):
 
 # A model-derived input type. DjangoModelMutation builds these for you, but you
 # can also declare one explicitly and use it as an argument on a hand-written
-# graphene mutation when you need full control over the resolver.
+# native ``Mutation`` when you need full control over the resolver.
 class CategoryInput(DjangoInputObjectType):
     class Meta:
         model = Category
@@ -507,11 +512,13 @@ class CreateCategory(Mutation):
     do it explicitly.)
 
     Native 2.0 form (django_graphex.Mutation):
-    - Arguments live on ``class args`` as ``graphene.Argument`` (the transitional
-      argument form). The ``data`` argument's type is the compiled
-      ``GraphQLInputObjectType`` of ``CategoryInput`` — referenced LAZILY via a
-      thunk so it resolves at schema-build time (after the input compiler runs),
-      not at class-definition time.
+    - Arguments live on ``class args`` declared via the NATIVE arg API: a
+      graphql-core ``GraphQLArgument``. The ``data`` argument's type is the
+      compiled ``GraphQLInputObjectType`` of ``CategoryInput`` — referenced LAZILY
+      via a zero-arg thunk (``lambda: GraphQLArgument(...)``) so it resolves at
+      ``Field()`` build time (after ``compile_all_inputs`` runs), not at
+      class-definition time. (graphql-core validates an argument's type EAGERLY,
+      so the deferral happens at the ARG level, not inside ``GraphQLNonNull``.)
     - The output payload fields are declared via ``field()``.
     - ``mutate`` is a ``@classmethod`` returning ``cls(...)``.
     - Input-object arguments arrive as a plain ``dict`` (snake-case keys, the
@@ -519,8 +526,8 @@ class CreateCategory(Mutation):
     """
 
     class args:
-        data = graphene.Argument(
-            lambda: CategoryInput._meta.graphql_input_type, required=True
+        data = lambda: GraphQLArgument(  # noqa: E731 - native lazy arg thunk
+            GraphQLNonNull(CategoryInput._meta.graphql_input_type)
         )
 
     ok = field(GraphQLBoolean)
@@ -578,9 +585,11 @@ class UploadDocument(Mutation):
         ``Base64FileInput``. See ``config/settings.py``.
 
     Native 2.0 form (django_graphex.Mutation):
-    - ``file`` is a ``Base64FileInput`` argument: its compiled
-      ``GraphQLInputObjectType`` is referenced LAZILY via a thunk so it resolves
-      at schema-build time (after the input compiler runs).
+    - Arguments are declared via the NATIVE arg API: ``name`` is a plain
+      ``GraphQLArgument(GraphQLNonNull(GraphQLString))``; ``file`` is a
+      ``Base64FileInput`` argument whose compiled ``GraphQLInputObjectType`` is
+      referenced LAZILY via a zero-arg thunk (``lambda: GraphQLArgument(...)``) so
+      it resolves at ``Field()`` build time (after ``compile_all_inputs`` runs).
     - Input-object arguments arrive as a plain ``dict`` (snake-case keys, the
       ``out_name`` contract), so the ``file`` payload is rehydrated into a
       ``Base64FileInput`` instance (``Base64FileInput(**file)``) before calling
@@ -589,9 +598,9 @@ class UploadDocument(Mutation):
     """
 
     class args:
-        name = graphene.Argument(graphene.String, required=True)
-        file = graphene.Argument(
-            lambda: Base64FileInput._meta.graphql_input_type, required=True
+        name = GraphQLArgument(GraphQLNonNull(GraphQLString))
+        file = lambda: GraphQLArgument(  # noqa: E731 - native lazy arg thunk
+            GraphQLNonNull(Base64FileInput._meta.graphql_input_type)
         )
 
     ok = field(GraphQLBoolean)
