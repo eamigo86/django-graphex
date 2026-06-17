@@ -37,6 +37,9 @@ DJANGO_GRAPHEX = {
     # --- Subscriptions ----------------------------------------------------- #
     "SUBSCRIPTION_SERIALIZE_DATA": False,
 
+    # --- HTTP / view hardening --------------------------------------------- #
+    "MAX_BATCH_SIZE": 10,            # max operations per batch request (None = unlimited)
+
     # --- Security ---------------------------------------------------------- #
     "ALLOW_INTROSPECTION": False,
     "INTROSPECTION_ALLOW_SUPERUSER": True,
@@ -57,6 +60,22 @@ DJANGO_GRAPHEX = {
     "MAX_REQUEST_BODY_SIZE": None,  # Body-size guard (primary memory cap)
 }
 ```
+
+## Schema & middleware
+
+These keys configure the schema the view serves and the GraphQL execution
+pipeline. In v1.x they lived in the separate `GRAPHENE` dict; in 2.0 they are
+part of `DJANGO_GRAPHEX` like everything else.
+
+| Setting | Default | Description |
+|---|---|---|
+| `SCHEMA` | `None` | Dotted path (or the object) of the schema `GraphQLView` uses **when you don't pass `schema=` to `.as_view()`**. `None` = you must pass `schema=` explicitly. Accepts an import string. |
+| `MIDDLEWARE` | `()` | GraphQL **execution** middleware chain — dotted paths or callables/objects. The bundled security middlewares plug in here, e.g. `"django_graphex.security.DisableIntrospectionMiddleware"` and `"…AuthenticatedFieldsMiddleware"`, plus `"django_graphex.GraphQLDirectiveMiddleware"` if you use directives. Accepts import strings. Used as the view's default when `middleware=` isn't passed. |
+| `SUBSCRIPTION_PATH` | `None` | Path of the WebSocket subscription endpoint advertised to GraphiQL / the bundled client. `None` = default routing. See [Subscriptions](subscriptions.md). |
+| `ATOMIC_MUTATIONS` | `False` | Wrap each mutation in `transaction.atomic()` so a failing mutation rolls back its writes. |
+| `MAX_VALIDATION_ERRORS` | `None` | Cap the number of GraphQL validation errors returned in a single response (also honored by the WS/SSE subscription transports). `None` = no cap. |
+| `CAMELCASE_ERRORS` | `True` | camelCase the `field` / `path` keys in error objects to match the camelCase wire schema. |
+| `SUBSCRIPTION_CONNECTION_INIT_TIMEOUT` | `3.0` | Seconds the `graphql-transport-ws` server waits for the first `connection_init` after the socket opens before closing with code **4408** (`connectionInitWaitTimeout`). The transport factory may override it. |
 
 ## Pagination
 
