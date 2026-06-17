@@ -19,13 +19,17 @@ from __future__ import annotations
 
 from unittest import mock
 
-import graphene
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from graphql import graphql_sync
 
-from django_graphex import DjangoListObjectField, DjangoListObjectType, DjangoObjectType
+from django_graphex import (
+    DjangoListObjectField,
+    DjangoListObjectType,
+    DjangoObjectType,
+    ObjectType,
+)
 from django_graphex.fields import DjangoObjectField
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
@@ -113,7 +117,7 @@ def _build_union_schema():
             registry = reg
             gfk_unions = {"target": CommentTargetUnion}
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         comment = DjangoObjectField(GfkCommentType)
 
     schema = DjangoGraphQLSchema(
@@ -377,7 +381,7 @@ def _build_gfk_union_schema(registry=None):
             model = Track2GfkComment
             registry = reg
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         all_comments = DjangoListObjectField(GfkCommentListType)
 
     schema = DjangoGraphQLSchema(
@@ -679,7 +683,7 @@ def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror():
             model = Track2GfkComment
             registry = reg
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         all_comments = DjangoListObjectField(GfkCommentListType)
 
     schema = DjangoGraphQLSchema(

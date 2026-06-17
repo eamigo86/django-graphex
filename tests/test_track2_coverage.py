@@ -24,11 +24,10 @@ from __future__ import annotations
 
 from unittest import mock
 
-import graphene
 import pytest
 from graphql import GraphQLString
 
-from django_graphex import DjangoInterfaceType, DjangoObjectType, field
+from django_graphex import DjangoInterfaceType, DjangoObjectType, ObjectType, field
 from django_graphex.fields import DjangoObjectField
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
@@ -251,7 +250,7 @@ def _build_union_gql_schema(registry=None):
             registry = reg
             gfk_unions = {"target": CommentTargetUnion}
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         comment = DjangoObjectField(GfkCommentType)
 
     schema = DjangoGraphQLSchema(
@@ -1071,7 +1070,7 @@ def test_collect_gfk_union_buckets_merges_member_child_select_heads():
             registry = reg
             gfk_unions = {"target": OrderTargetUnion}
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         comment = DjangoObjectField(GfkCommentType)
 
     schema = DjangoGraphQLSchema(

@@ -15,9 +15,20 @@ from __future__ import annotations
 
 import warnings
 
-import graphene
 import pytest
 from django.contrib.contenttypes.fields import GenericForeignKey
+
+# NOTE (S-del-tests-10 / Pass 4): graphene is imported here ONLY for the live
+# converter-output assertions in T-07 below. The native backend's GFK→Union
+# converter branch (``convert_generic_foreign_key_to_object`` for a REGISTERED
+# ``Meta.gfk_unions``) STILL returns a graphene ``Dynamic`` whose resolved type
+# is a graphene ``Field`` wrapping the union (see converter.py:1283-1360 — the
+# early native-marker return is gated on ``get_gfk_union(...) is None``, so a
+# registered union deliberately falls through to the graphene ``Dynamic``
+# closure). Asserting on that LIVE graphene object is the behavioral contract;
+# replacing ``graphene.Field``/``Dynamic`` with a graphql-core type would gut
+# the assertion. This import is a deliberate, scoped blocker to be cleared by the
+# production converter migration slice (S-del-backend-11), NOT a test gut.
 from graphene import Dynamic, Field
 from graphql import GraphQLString, GraphQLUnionType
 
@@ -25,6 +36,7 @@ from django_graphex import (
     DjangoInterfaceType,
     DjangoObjectType,
     DjangoUnionType,
+    ObjectType,
     field,
 )
 from django_graphex.base_types import GenericForeignKeyType
@@ -374,8 +386,8 @@ def test_union_schema_builds_without_assertionerror():
     account_type, invoice_type = _make_member_types(reg)
     union = _make_union(reg, (account_type, invoice_type))
 
-    class Query(graphene.ObjectType):
-        payment = Field(union)
+    class Query(ObjectType):
+        payment = field(union)
 
     schema = DjangoGraphQLSchema(query=Query, types=[account_type, invoice_type])
     # The union is present in the built schema as a GraphQLUnionType.
@@ -412,12 +424,12 @@ def test_interface_shared_field_resolves_on_implementors():
             registry = reg
             interfaces = (ProductInterface,)
 
+    class Q(ObjectType):
+        book = field(BookType)
+        magazine = field(MagazineType)
+
     schema = DjangoGraphQLSchema(
-        query=type(
-            "Q",
-            (graphene.ObjectType,),
-            {"book": Field(BookType), "magazine": Field(MagazineType)},
-        ),
+        query=Q,
         types=[BookType, MagazineType],
     )
     book_gql = schema.graphql_schema.get_type("BookType")

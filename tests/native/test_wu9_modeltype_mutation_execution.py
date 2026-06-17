@@ -32,9 +32,9 @@ pytestmark = pytest.mark.native_only
 
 def _build_post_modeltype_schema():
     """Build a native DjangoGraphQLSchema with a DjangoModelType Post mutation."""
-    import graphene
+    from graphql import GraphQLString
 
-    from django_graphex import DjangoObjectType
+    from django_graphex import DjangoObjectType, ObjectType, field
     from django_graphex.native.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
     from django_graphex.types import DjangoModelType
@@ -58,10 +58,10 @@ def _build_post_modeltype_schema():
 
     compile_all_outputs()
 
-    class _W9MtQuery(graphene.ObjectType):
-        hello = graphene.String()
+    class _W9MtQuery(ObjectType):
+        hello = field(GraphQLString)
 
-    class _W9MtMutation(graphene.ObjectType):
+    class _W9MtMutation(ObjectType):
         # MutationFields() returns (create, delete, update).
         post_create, post_delete, post_update = _W9MtPostType.MutationFields()
 

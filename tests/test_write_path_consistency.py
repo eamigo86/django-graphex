@@ -103,14 +103,19 @@ class UnwrapEnumsTest(TestCase):
     def _unwrap(self, item):
         return NestedFieldsMixin._unwrap_enums(dict(item))
 
-    def test_graphene_enum_value_is_unwrapped(self):
-        """A graphene.Enum member (which IS an enum.Enum) must be unwrapped."""
-        import graphene
+    def test_string_valued_enum_member_is_unwrapped(self):
+        """A string-valued ``enum.Enum`` member must be unwrapped to its raw value.
 
-        PythonStatus = enum.Enum("Status", {"ACTIVE": "active", "INACTIVE": "inactive"})
-        GrapheneStatus = graphene.Enum.from_enum(PythonStatus)
+        Historically this exercised a ``graphene.Enum.from_enum(...)`` member; that
+        construction simply returns the underlying ``enum.Enum`` (its members ARE
+        plain ``enum.Enum`` instances with the original ``.value``), so the native
+        equivalent is a string-valued ``enum.Enum`` declared directly. The
+        behavioral contract is unchanged: ``_unwrap_enums`` keys off
+        ``isinstance(value, enum.Enum)`` and must yield the raw ``"active"`` value.
+        """
+        Status = enum.Enum("Status", {"ACTIVE": "active", "INACTIVE": "inactive"})
 
-        item = {"status": GrapheneStatus.ACTIVE}
+        item = {"status": Status.ACTIVE}
         result = self._unwrap(item)
         # The value should be unwrapped to the raw value
         self.assertEqual(result["status"], "active")
