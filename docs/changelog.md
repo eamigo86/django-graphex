@@ -12,6 +12,48 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 2.0.0 — 2026-06-17
+
+**graphene removed — `django-graphex` now runs on native graphql-core + Pydantic
+alone.** The legacy graphene backend is deleted; graphene is no longer a
+dependency and is never imported, even on a full build with mutations,
+subscriptions and pagination. See the [Upgrade Guide](UPGRADE-2.0.md) for
+before/after snippets and a migration codemod (`scripts/migrate_2_0.py`).
+
+### Changed (BREAKING)
+
+- **graphene backend removed entirely.** The `GDX_BACKEND` environment variable
+  that selected the legacy graphene path is gone; the native graphql-core path is
+  the only path. graphene (and graphene-django) are no longer required and can be
+  uninstalled.
+- **`GRAPHENE` settings namespace → `GRAPHEX`.** Schema/middleware settings
+  (`SCHEMA`, `MIDDLEWARE`, `SUBSCRIPTION_PATH`, …) are now read **only** from the
+  canonical `GRAPHEX` dict; the legacy `GRAPHENE` Django-setting namespace is no
+  longer consulted. (The package's own `DJANGO_GRAPHEX` settings dict is
+  unchanged.)
+- **`graphene.ObjectType` schema roots → native `ObjectType`.** Import the root
+  base from `django_graphex` (`from django_graphex import ObjectType`).
+- **`graphene.Schema(...)` → `DjangoGraphQLSchema(...)`.** Build the schema with
+  the public `django_graphex.DjangoGraphQLSchema` class.
+- **graphene field descriptors → native `field(...)`.** Hand-declared (non-model)
+  fields use `field(GraphQLString)` / `field(GraphQLList(...))` with graphql-core
+  types instead of `graphene.String()` / `graphene.Field(...)`.
+- **`graphene.Argument(...)` in a Mutation `class args` → `GraphQLArgument(...)`.**
+  Mutation arguments are declared with native graphql-core `GraphQLArgument` (a
+  bare graphql-core type is auto-wrapped). This is a **clean break**: a non-native
+  value left in `class args` now raises `TypeError` instead of being silently
+  dropped.
+- **`choices` fields now render as a GraphQL enum on both output and input.** A
+  model field with `choices` is exposed as a real `GraphQLEnumType` on the output
+  type and on filter/input types (previously a choices field could render as a
+  plain `String` on the native path). This is an observable wire-format change —
+  review clients that send/read choices values as raw strings.
+
+### Removed
+
+- The graphene backend producer code, the `GDX_BACKEND` / dual-backend switch, and
+  the graphene dependency from `pyproject.toml`.
+
 ## 1.3.0 — 2026-06-13
 
 ### Added
