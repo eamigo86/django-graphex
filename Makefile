@@ -29,8 +29,8 @@ build: ## Build the package (uv + hatchling)
 docs: ## Build documentation with Zensical
 	uv run tox -e docs
 
-docs-serve: ## Build and serve documentation locally
-	uv run zensical serve -f zensical.yml
+docs-serve: ## Build and serve documentation locally (http://127.0.0.1:8888)
+	uv run zensical serve -f zensical.yml -a 127.0.0.1:8888
 
 docs-build: ## Build documentation for production
 	uv run zensical build --clean -f zensical.yml
