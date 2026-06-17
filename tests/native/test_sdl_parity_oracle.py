@@ -7,11 +7,11 @@ later migration slice can flip exactly one aspect from divergent -> matching.
 
 Aspect states at this commit (S8h), verified empirically (NOT assumed):
 
-* choices-enum .............. XFAIL (strict) — native renders ``status: String``;
-                            graphene renders ``status: <Enum>`` + an ``enum`` block
-                            WITH per-choice descriptions. THIS is the canary that
-                            proves the oracle detects a real divergence. S-enum-1
-                            achieves parity and the XPASS will force marker removal.
+* choices-enum .............. PASS-NOW (S-enum-1 applied) — native now renders a
+                            real ``GraphQLEnumType`` (canonical name + per-choice
+                            descriptions) byte-for-byte matching graphene. Was the
+                            XFAIL canary until S-enum-1; the marker is removed and
+                            this is now a regression guard like the others.
 * FK output ................. PASS-NOW (native already renders ``author: PSAuthor``)
 * forward-O2O output ........ PASS-NOW
 * self-ref-O2O output ....... PASS-NOW (issue #52 spouse pattern, never dropped)
@@ -126,18 +126,11 @@ def _enum_name_in(sdl: str) -> str | None:
 # choices-enum aspect — THE CANARY (XFAIL strict, pending S-enum-1)            #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-@pytest.mark.xfail(
-    strict=True,
-    reason="S-enum-1: native output_compiler renders choices CharField as String "
-    "(no choices->enum branch); graphene renders a real Enum with per-choice "
-    "descriptions. S-enum-1 builds the native GraphQLEnumType to achieve parity, "
-    "at which point this XPASSes and the marker must be removed.",
-)
 def test_choices_enum_output_parity(native_sdl, graphene_baseline):
     """The choices field's OUTPUT must render as the SAME enum on both backends.
 
-    Native today: ``status: String`` and NO ``enum`` block. Graphene: ``status:
-    <Enum>`` plus the enum block WITH per-choice descriptions. The assertion
+    Since S-enum-1 the native output_compiler renders ``status: <Enum>`` plus an
+    ``enum`` block WITH per-choice descriptions, matching graphene. The assertion
     compares the enum BLOCK (description-preserving) AND that the owner type's
     ``status`` field references an enum, not String.
     """

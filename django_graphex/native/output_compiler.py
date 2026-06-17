@@ -31,6 +31,7 @@ from graphql import (
     GraphQLFloat,
     GraphQLID,
     GraphQLInt,
+    GraphQLList,
     GraphQLNonNull,
     GraphQLString,
 )
@@ -304,6 +305,64 @@ def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
 
 
 # ---------------------------------------------------------------------------
+# Choices fields -> GraphQLEnumType (S-enum-1)
+# ---------------------------------------------------------------------------
+
+
+def _is_multiselect_field(field: Any) -> bool:
+    """Return True for a django-multiselectfield ``MultiSelectField``.
+
+    Detected via ``isinstance`` when the optional package is installed (covers
+    subclasses); falls back to a class-name check when the import fails, so the
+    compiler works without the optional dependency. Mirrors the converter's
+    detection (``converter.convert_django_field_with_choices``).
+    """
+    try:
+        from multiselectfield import MultiSelectField as _MSField  # noqa: PLC0415
+
+        return isinstance(field, _MSField)  # pragma: no cover
+    except ImportError:
+        return type(field).__name__ == "MultiSelectField"
+
+
+def _compile_choices_enum_field(
+    field: Any,
+    graphene_registry: Any,
+) -> GraphQLField | None:
+    """Compile a choices field to a ``GraphQLField`` wrapping a ``GraphQLEnumType``.
+
+    Builds (or fetches the shared) enum via the graphene-free canonical builder
+    ``converter.build_choices_enum_type``, which memoizes the enum in the
+    ``graphene_registry`` slot the native filter-input path also reads — so
+    OUTPUT and FILTER-INPUT share ONE enum instance per ``(model, field)``.
+
+    A ``MultiSelectField`` renders ``GraphQLList(enum)`` (mirroring the
+    converter's ``DjangoListField(enum)`` branch); a plain choices field renders
+    the enum directly. OUTPUT scalars are always nullable (graphene #1494
+    parity), so the enum is NOT wrapped in ``GraphQLNonNull``.
+
+    Returns ``None`` when the field has no usable choices (caller falls through
+    to the scalar mapping).
+    """
+    from django_graphex.converter import build_choices_enum_type  # noqa: PLC0415
+
+    field_name: str = field.name if hasattr(field, "name") else field.attname
+
+    enum_type = build_choices_enum_type(field, graphene_registry)
+    if enum_type is None:
+        return None
+
+    gql_type: Any = GraphQLList(enum_type) if _is_multiselect_field(field) else enum_type
+
+    def _default_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
+        if isinstance(root, dict):
+            return root.get(_name)
+        return getattr(root, _name, None)
+
+    return GraphQLField(type_=gql_type, resolve=_default_resolver)
+
+
+# ---------------------------------------------------------------------------
 # Single field compiler
 # ---------------------------------------------------------------------------
 
@@ -311,6 +370,7 @@ def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
 def _to_graphql_field(
     field: Any,
     registry: Any,
+    graphene_registry: Any = None,
 ) -> dict[str, GraphQLField]:
     """Map a single Django model field to a ``{camelCase_key: GraphQLField}`` dict.
 
@@ -320,12 +380,32 @@ def _to_graphql_field(
     Args:
         field: A Django model field instance.
         registry: An object with ``get_compiled(model_cls)`` → GraphQLObjectType.
+        graphene_registry: The graphene ``Registry`` whose enum slot is SHARED
+            with the native filter-input path (``register_enum`` /
+            ``get_type_for_enum``). A choices field compiles to the SAME
+            ``GraphQLEnumType`` instance both paths resolve. May be ``None`` for
+            callers that never reach a choices field (the enum branch falls back
+            to the scalar mapping when no shared registry is available).
 
     Returns:
         A dict ``{camel_name: GraphQLField}`` (one entry) or ``{}`` if skipped.
     """
     field_name: str = field.name if hasattr(field, "name") else field.attname
     camel_name: str = _to_camel_case(field_name)
+
+    # --- Choices fields -> GraphQLEnumType (S-enum-1) -------------------------
+    # A field with ``.choices`` renders as a real ``GraphQLEnumType`` (graphene
+    # parity), NOT a scalar. The enum is built by the GRAPHENE-FREE canonical
+    # builder ``converter.build_choices_enum_type`` and memoized in the SHARED
+    # graphene ``Registry`` slot, so the native filter-input path
+    # (``filtering.native_schema._choices_enum``) resolves the SAME instance for
+    # one ``(model, field)``. A ``MultiSelectField`` (django-multiselectfield)
+    # wraps the enum in ``GraphQLList`` to mirror the converter's
+    # ``DjangoListField(enum)`` branch.
+    if graphene_registry is not None and getattr(field, "choices", None):
+        enum_field = _compile_choices_enum_field(field, graphene_registry)
+        if enum_field is not None:
+            return {camel_name: enum_field}
 
     # --- GenericForeignKey (DEFECT B) -----------------------------------------
     # A GFK has ``is_relation == True`` but NO fixed ``related_model`` (it is
@@ -448,6 +528,7 @@ def compile_output_fields(
     only_fields: list[str] | tuple[str, ...] | None = None,
     exclude_fields: list[str] | tuple[str, ...] | None = None,
     include_fields: list[str] | tuple[str, ...] | None = None,
+    graphene_registry: Any = None,
 ) -> dict[str, GraphQLField]:
     """Compile all output fields for a Django model.
 
@@ -465,6 +546,11 @@ def compile_output_fields(
             ``include_fields`` does NOT restrict the output (use ``only_fields``
             for that); it overrides the skip filters for the named fields,
             mirroring ``converter.construct_fields`` on the graphene path.
+        graphene_registry: The graphene ``Registry`` whose enum slot is SHARED
+            with the native filter-input path. Threaded into ``_to_graphql_field``
+            so a choices field compiles to the SAME ``GraphQLEnumType`` instance
+            both paths resolve (S-enum-1). When ``None``, choices fields fall
+            back to the scalar mapping.
 
     Returns:
         Dict of ``{camelCase_name: GraphQLField}``.
@@ -524,7 +610,7 @@ def compile_output_fields(
             if only_fields is None or field_name not in (only_fields or []):
                 continue
 
-        field_map = _to_graphql_field(field, registry)
+        field_map = _to_graphql_field(field, registry, graphene_registry)
         fields.update(field_map)
 
     return fields

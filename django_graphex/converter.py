@@ -436,6 +436,118 @@ def convert_django_field_with_choices(
     return convert_django_field(field, registry, input_flag, nested_field)
 
 
+def choices_enum_name(
+    field: DjangoField, input_flag: str | None = None
+) -> str:
+    """Return the CANONICAL GraphQL enum name for a choices field.
+
+    Keyed by ``(app_label, object_name, field_name)`` so two models that share a
+    class name across different Django apps — and carry the same choices-field
+    name — never collide in the registry (mirrors the ``(model_class,
+    for_input)`` keying used for object/input types). When ``input_flag`` is set
+    the name is suffixed so an input-only enum never clobbers the output slot.
+
+    This is the SINGLE source of truth for the choices-enum name shared by the
+    graphene converter, the native OUTPUT compiler and the native filter-input
+    builder, so all three resolve the SAME registry slot for one ``(model,
+    field)``.
+
+    Args:
+        field: the Django model field carrying choices.
+        input_flag: input action key, or ``None`` for an output field.
+
+    Returns:
+        The canonical camelCase enum name.
+    """
+    meta = field.model._meta
+    name = f"{meta.app_label}_{meta.object_name}_{field.name}_Enum"
+    if input_flag:
+        name = f"{name}_{input_flag}"
+    return to_camel_case(name)
+
+
+#: Prefix for the NATIVE choices-enum registry slot. The legacy graphene
+#: converter (``convert_django_field_with_choices``) registers a graphene
+#: ``Enum`` under the BARE canonical name; storing the native graphql-core
+#: ``GraphQLEnumType`` under a distinct, native-namespaced key keeps the two
+#: from poisoning each other while still giving the native OUTPUT and
+#: FILTER-INPUT paths ONE shared slot to converge on (S-enum-1). The whole
+#: graphene branch — and this dual-slot dance — disappears with the converter's
+#: graphene enum in S-del-backend-11.
+_NATIVE_ENUM_SLOT_PREFIX = "__native__"
+
+
+def build_choices_enum_type(
+    field: DjangoField,
+    registry: Registry,
+    input_flag: str | None = None,
+) -> Any:
+    """Build (or fetch the cached) graphql-core ``GraphQLEnumType`` for a choices field.
+
+    GRAPHENE-FREE canonical builder. Reuses :func:`get_choices` (the 4-tier
+    ``choice_enum_name`` cascade) for the value names + per-choice descriptions,
+    and compiles via ``native.compiler.compile_enum`` so the native OUTPUT and
+    FILTER-INPUT paths share ONE instance per ``(model, field)``:
+
+    * ``GraphQLEnumValue.value`` carries the RAW python value, so resolution
+      returns the stored value (mirrors graphene's ``EnumWithDescriptionsType``).
+    * ``GraphQLEnumValue.description`` carries the per-choice label so the SDL
+      keeps the descriptions graphene emits (oracle req #7).
+
+    Sharing slot: the enum is memoized in the registry under a NATIVE-namespaced
+    key (:data:`_NATIVE_ENUM_SLOT_PREFIX` + :func:`choices_enum_name`). The
+    legacy graphene converter registers a graphene ``Enum`` under the BARE
+    canonical name; the namespaced key keeps the graphql-core enum from being
+    clobbered by — or returned in place of — that graphene object, while the
+    OUTPUT and FILTER-INPUT paths both converge on this one native slot. The
+    GraphQLEnumType STILL carries the bare canonical NAME for SDL parity; only
+    the registry KEY is namespaced.
+
+    Args:
+        field: the Django model field carrying choices.
+        registry: the registry whose enum slot is shared across native paths.
+        input_flag: input action key, or ``None`` for an output field.
+
+    Returns:
+        A ``GraphQLEnumType`` for the field's choices, or ``None`` when the
+        field has no usable choices.
+    """
+    from graphql import GraphQLEnumType  # noqa: PLC0415
+
+    from .native.compiler import compile_enum  # noqa: PLC0415
+    from .native.ir import EnumSpec  # noqa: PLC0415
+
+    name = choices_enum_name(field, input_flag)
+    slot_key = f"{_NATIVE_ENUM_SLOT_PREFIX}{name}"
+
+    cached = registry.get_type_for_enum(slot_key)
+    if isinstance(cached, GraphQLEnumType):
+        return cached
+
+    choices = getattr(field, "choices", None)
+    if not choices:
+        return None
+
+    values: list[tuple[str, Any]] = []
+    descriptions: dict[str, str] = {}
+    for choice_name, value, description in get_choices(choices):
+        values.append((choice_name, value))
+        if description is not None:
+            descriptions[choice_name] = force_str(description)
+    if not values:
+        return None
+
+    enum_type = compile_enum(
+        EnumSpec(
+            name=name,
+            values=tuple(values),
+            descriptions=descriptions or None,
+        )
+    )
+    registry.register_enum(slot_key, enum_type)
+    return enum_type
+
+
 def construct_fields(
     model: type[Model],
     registry: Registry,

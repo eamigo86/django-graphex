@@ -46,8 +46,6 @@ from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db import models
 from graphql import (
     GraphQLBoolean,
-    GraphQLEnumType,
-    GraphQLEnumValue,
     GraphQLFloat,
     GraphQLID,
     GraphQLInputField,
@@ -265,43 +263,32 @@ def _field_scalar(field: models.Field) -> GraphQLScalarType:
 
 
 def _choices_enum(field: models.Field, registry: Registry) -> Any:
-    """Return a ``GraphQLEnumType`` for a choices field, or ``GraphQLString``.
+    """Return the SHARED ``GraphQLEnumType`` for a choices field, or ``GraphQLString``.
 
-    The native output path does not (yet) register a ``GraphQLEnumType`` for
-    choices fields, so we build (and memoize) one here from the field's choices,
-    naming it identically to the graphene path so the future SDL-parity gate
-    holds.  When the field has no choices the caller never reaches this; for
-    open-ended / unresolvable choices we fall back to ``GraphQLString``.
+    Delegates to the GRAPHENE-FREE canonical builder
+    ``converter.build_choices_enum_type``, which memoizes ONE enum instance per
+    ``(model, field)`` in the ``registry`` slot the native OUTPUT compiler also
+    reads (``native.output_compiler._compile_choices_enum_field``). So a given
+    field resolves the SAME ``GraphQLEnumType`` instance on BOTH the output and
+    the filter-input path — no duplicate / divergent enum (S-enum-1).
+
+    When the field has no usable choices we fall back to ``GraphQLString`` (the
+    filter-input path always needs a concrete scalar; the caller never reaches
+    this for a non-choices field).
 
     Args:
         field: The Django model field carrying choices.
-        registry: The registry used to memoize the enum (shared with the
-            graphene path's name keying).
+        registry: The registry used to memoize the enum (shared with the OUTPUT
+            compiler and the graphene path's name keying).
 
     Returns:
         A ``GraphQLEnumType`` for the field's choices, or ``GraphQLString``.
     """
-    from django_graphex.converter import get_choices
+    from django_graphex.converter import build_choices_enum_type
 
-    meta = field.model._meta
-    name = to_camel_case(f"{meta.app_label}_{meta.object_name}_{field.name}_Enum")
-
-    cached = registry.get_type_for_enum(name)
-    if isinstance(cached, GraphQLEnumType):
-        return cached
-
-    choices = getattr(field, "choices", None)
-    if not choices:
+    enum_type = build_choices_enum_type(field, registry)
+    if enum_type is None:
         return GraphQLString
-
-    values: dict[str, GraphQLEnumValue] = {}
-    for choice_name, value, _description in get_choices(choices):
-        values[choice_name] = GraphQLEnumValue(value=value)
-    if not values:
-        return GraphQLString
-
-    enum_type = GraphQLEnumType(name=name, values=values)
-    registry.register_enum(name, enum_type)
     return enum_type
 
 

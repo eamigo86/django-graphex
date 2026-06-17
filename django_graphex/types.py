@@ -710,6 +710,7 @@ def _make_output_thunk_for(
             only_fields=_only_f,
             exclude_fields=_excl_f,
             include_fields=_incl_f,
+            graphene_registry=_graphene_reg,
         )
         _fields.update(
             _compile_relation_list_fields(
