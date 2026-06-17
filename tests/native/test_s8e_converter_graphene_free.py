@@ -169,27 +169,25 @@ def test_choices_enum_is_graphene_enum_and_registered() -> None:
 # --------------------------------------------------------------------------- #
 # 3. The relation Dynamic / Field / ID constructs stay graphene               #
 # --------------------------------------------------------------------------- #
-def test_fk_converts_to_native_marker_m2m_stays_graphene() -> None:
-    """to-ONE FK -> native marker (S-rel-2); to-MANY M2M still graphene Dynamic.
+def test_fk_and_m2m_output_convert_to_native_marker() -> None:
+    """to-ONE FK (S-rel-2) AND to-MANY M2M (S-rel-3) -> native OUTPUT markers.
 
-    S-rel-2 retired graphene on the to-ONE relation OUTPUT path: a ForeignKey now
-    converts to a graphene-free ``NativeRelationField`` presence/ordering marker
-    (the native compiler builds the actual field from ``model._meta``). The
-    to-MANY M2M relation is OUT of S-rel-2 scope (it retires in S-rel-3), so it
-    still converts to a graphene ``Dynamic``.
+    S-rel-2 retired graphene on the to-ONE relation OUTPUT path and S-rel-3 on the
+    to-MANY relation OUTPUT path: a ForeignKey and a ManyToManyField now both
+    convert to a graphene-free ``NativeRelationField`` presence/ordering marker on
+    OUTPUT (the native compiler builds the actual field — a single object for the
+    FK, a ``<Model>ListType`` container for the M2M — from ``model._meta``). The
+    INPUT path stays on graphene until S-input-5.
     """
-    import graphene
-
     from django_graphex.converter import convert_django_field
     from django_graphex.native.descriptors import NativeRelationField
     from tests.test_converter import TestModel
 
     fk = TestModel._meta.get_field("user")
     m2m = TestModel._meta.get_field("basics")
-    # to-ONE FK on OUTPUT (input_flag default None): graphene-free native marker.
+    # OUTPUT (input_flag default None): both are graphene-free native markers.
     assert isinstance(convert_django_field(fk), NativeRelationField)
-    # to-MANY M2M: still graphene Dynamic (S-rel-3 scope).
-    assert isinstance(convert_django_field(m2m), graphene.Dynamic)
+    assert isinstance(convert_django_field(m2m), NativeRelationField)
 
 
 def test_fk_input_dynamic_resolves_to_graphene_id() -> None:

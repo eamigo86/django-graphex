@@ -235,12 +235,23 @@ class ConverterTest(TestCase):
             self.assertIsInstance(graphql_field, graphene.Dynamic)
 
     def test_convert_many_to_many_field(self):
-        """Test ManyToManyField conversion."""
+        """Test ManyToManyField conversion (S-rel-3: native OUTPUT marker)."""
+        from django_graphex.converter import _NATIVE_BACKEND
+        from django_graphex.native.descriptors import NativeRelationField
+
         field = TestModel._meta.get_field("basics")
         graphql_field = convert_django_field(field)
 
-        # M2M converts to a Dynamic descriptor (KEPT on native).
-        self.assertIsInstance(graphql_field, graphene.Dynamic)
+        if _NATIVE_BACKEND:
+            # S-rel-3: on the native OUTPUT path a to-MANY ManyToManyField converts
+            # to a graphene-free ``NativeRelationField`` presence/ordering marker
+            # (the native output type builds the ``<Model>ListType`` results/
+            # totalCount container from ``model._meta`` directly; the old graphene
+            # ``Dynamic`` was dead weight that only pinned graphene).
+            self.assertIsInstance(graphql_field, NativeRelationField)
+        else:
+            # The graphene backend is UNCHANGED: still a graphene ``Dynamic``.
+            self.assertIsInstance(graphql_field, graphene.Dynamic)
 
     def test_convert_choice_name(self):
         """Test choice name conversion."""
@@ -418,10 +429,11 @@ class FieldConversionIntegrationTest(TestCase):
             # S-rel-2: User field (to-ONE FK) converts to a graphene-free
             # ``NativeRelationField`` marker on the native OUTPUT path.
             self.assertIsInstance(user_graphql_field, NativeRelationField)
+            # S-rel-3: Basics field (to-MANY M2M) ALSO converts to a graphene-free
+            # ``NativeRelationField`` marker on the native OUTPUT path (the native
+            # output builds the ``<Model>ListType`` container from ``model._meta``).
+            self.assertIsInstance(basics_graphql_field, NativeRelationField)
         else:
-            # The graphene backend is UNCHANGED: still a graphene ``Dynamic``.
+            # The graphene backend is UNCHANGED: both stay graphene ``Dynamic``.
             self.assertIsInstance(user_graphql_field, graphene.Dynamic)
-
-        # Basics field (to-MANY M2M) still converts to a graphene ``Dynamic``
-        # on BOTH backends (out of S-rel-2 scope; retires in S-rel-3).
-        self.assertIsInstance(basics_graphql_field, graphene.Dynamic)
+            self.assertIsInstance(basics_graphql_field, graphene.Dynamic)

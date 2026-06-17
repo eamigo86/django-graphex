@@ -1035,9 +1035,26 @@ def convert_field_to_list_or_connection(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the related list.
+        A GraphQL Dynamic field that resolves lazily to the related list, or a
+        graphene-free ``NativeRelationField`` marker on the native OUTPUT path.
     """
     model = get_related_model(field)
+
+    # Native OUTPUT path (``input_flag is None``): the forward-M2M to-MANY field
+    # is compiled DIRECTLY from ``model._meta`` by
+    # ``types._compile_relation_list_fields`` (which reuses the related node's
+    # ``<Model>ListType`` results/totalCount CONTAINER via
+    # ``_nested_list_object_field`` and emits the final field via
+    # ``schema_compiler._build_list_object_field``) — it NEVER reads this
+    # descriptor. The graphene ``Dynamic`` below is therefore dead and only pins
+    # graphene; emit a graphene-free ``NativeRelationField`` presence/ordering
+    # marker instead so the field stays in ``_meta.fields`` (the silent-drop
+    # guard, never ``None`` / ``_DEAD_SCALAR``) with the SAME ``creation_counter``
+    # for SDL field ORDER. The INPUT path keeps graphene until S-input-5. (S-rel-3.)
+    if _NATIVE_BACKEND and input_flag is None:
+        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+
+        return NativeRelationField(related_model=model)
 
     def dynamic_type() -> Any:
         """Resolve the related GraphQL list field lazily."""
@@ -1076,9 +1093,31 @@ def convert_many_rel_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL Dynamic field that resolves lazily to the related list.
+        A GraphQL Dynamic field that resolves lazily to the related list, or a
+        graphene-free ``NativeRelationField`` marker on the native OUTPUT path
+        (reverse FK / reverse M2M only — the reverse ``GenericRel`` arm stays on
+        graphene until S-rel-4).
     """
     model = field.related_model
+
+    # Native OUTPUT path (``input_flag is None``): a reverse-FK (``ManyToOneRel``)
+    # / reverse-M2M (``ManyToManyRel``) to-MANY field is compiled DIRECTLY from
+    # ``model._meta`` by ``types._compile_relation_list_fields`` (reusing the
+    # related node's ``<Model>ListType`` results/totalCount CONTAINER) — it NEVER
+    # reads this descriptor. The graphene ``Dynamic`` below is dead and only pins
+    # graphene; emit a graphene-free ``NativeRelationField`` presence/ordering
+    # marker instead (the silent-drop guard, never ``None`` / ``_DEAD_SCALAR``)
+    # carrying the SAME ``creation_counter`` for SDL field ORDER. The INPUT path
+    # keeps graphene until S-input-5.
+    #
+    # SCOPE GUARD: this converter ALSO handles the reverse ``GenericRel`` (the
+    # reverse side of a ``GenericRelation``). The GenericRelation list retires in
+    # S-rel-4, NOT here, so a ``GenericRel`` is EXCLUDED from the native-marker
+    # branch and keeps emitting the graphene ``Dynamic``. (S-rel-3.)
+    if _NATIVE_BACKEND and input_flag is None and not isinstance(field, GenericRel):
+        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+
+        return NativeRelationField(related_model=model)
 
     def dynamic_type() -> Any:
         """Resolve the related GraphQL list field lazily."""
