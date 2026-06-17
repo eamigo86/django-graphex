@@ -2,18 +2,21 @@
 """Converter branches for input flags and relation/generic/postgres fields.
 
 The existing ``test_converter`` covers output scalar conversion; this drives the
-``input_flag`` paths of the FK/O2O/M2M/reverse converters (the ``Dynamic``
-closures), plus the GenericForeignKey, GenericRelation, ArrayField and
-JSON/HStore converters that the scalar tests skip.
+``input_flag`` paths of the FK/O2O/M2M/reverse converters, plus the
+GenericForeignKey, GenericRelation, ArrayField and JSON/HStore converters that
+the scalar tests skip.
 
-Phase 7 graphene-removal: the FK/O2O/M2M/reverse/GFK ``convert_django_field``
-relation closures are KEPT on native (the native output thunk consumes them), so
-those tests are unchanged. The graphene ``construct_fields`` SCALAR fields and the
-JSON scalar descriptor are dead on native (the native output compiler derives them
-from ``model._meta`` directly); the three formerly scalar-asserting tests were
-CONVERTED to drive the native field builders — ``compile_output_fields`` (only/
-exclude) and the native ``DjangoInputObjectType`` create-input compile (id-skip) —
-plus ``_to_graphql_field`` for the JSON scalar, preserving the original coverage.
+Phase 7 graphene-removal: the migrated FK/O2O/M2M/reverse/GFK
+``convert_django_field`` relation converters now return a graphene-free
+``NativeRelationField`` presence/ordering marker that the native output thunk
+consumes. (The ``GenericRelation`` INPUT branch is not yet migrated and still
+returns a lazy closure resolved verbatim by ``_resolve`` / ``_is_lazy_closure``.)
+The graphene ``construct_fields`` SCALAR fields and the JSON scalar descriptor are
+dead on native (the native output compiler derives them from ``model._meta``
+directly); the three formerly scalar-asserting tests were CONVERTED to drive the
+native field builders — ``compile_output_fields`` (only/exclude) and the native
+``DjangoInputObjectType`` create-input compile (id-skip) — plus ``_to_graphql_field``
+for the JSON scalar, preserving the original coverage.
 """
 
 from django.contrib.contenttypes.fields import (
@@ -22,7 +25,6 @@ from django.contrib.contenttypes.fields import (
 )
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
-from graphene import Dynamic
 
 from django_graphex.converter import (
     construct_fields,
@@ -46,10 +48,29 @@ class _StubRegistry:
         return None
 
 
+def _is_lazy_closure(obj):
+    """True for a converter result that defers to a lazy ``get_type()`` closure.
+
+    Some converter paths that have NOT yet been migrated off graphene (e.g. the
+    ``GenericRelation`` INPUT branch, ``converter.py``) still return a graphene
+    ``Dynamic`` whose ``get_type()`` must be called to read the resolved field.
+    Detect it structurally (duck-typed ``get_type`` on a non-native object) so
+    this test file imports no graphene symbol; the migrated relation converters
+    return a ``NativeRelationField`` instead, which this helper returns verbatim.
+    """
+    from django_graphex.native.descriptors import NativeRelationField
+
+    return (
+        not isinstance(obj, NativeRelationField)
+        and callable(getattr(obj, "get_type", None))
+        and type(obj).__module__.startswith("graphene")
+    )
+
+
 def _resolve(field, **kwargs):
-    """Convert a model field then resolve its ``Dynamic`` closure (if any)."""
+    """Convert a model field then resolve its lazy closure (if any)."""
     converted = convert_django_field(field, **kwargs)
-    if isinstance(converted, Dynamic):
+    if _is_lazy_closure(converted):
         return converted.get_type()
     return converted
 
@@ -104,8 +125,6 @@ def test_fk_output_returns_native_marker():
     # (and the drop-when-unregistered decision) is owned by the native compiler
     # (``output_compiler._to_graphql_field`` reads ``model._meta`` directly), not
     # by this descriptor. ``_resolve`` returns the marker verbatim (not a Dynamic).
-    # On the graphene backend the legacy Dynamic closure is UNCHANGED.
-    from django_graphex.converter import _NATIVE_BACKEND
     from django_graphex.native.descriptors import NativeRelationField
 
     fk = Post._meta.get_field("author")
@@ -119,13 +138,8 @@ def test_fk_output_returns_native_marker():
     out_unregistered = _resolve(fk, registry=Registry())
     out_registered = _resolve(fk, registry=reg)
 
-    if _NATIVE_BACKEND:
-        assert isinstance(out_unregistered, NativeRelationField)
-        assert isinstance(out_registered, NativeRelationField)
-    else:
-        # graphene: closure drops when unregistered, wraps the type otherwise.
-        assert out_unregistered is None
-        assert out_registered.type is _AuthorType
+    assert isinstance(out_unregistered, NativeRelationField)
+    assert isinstance(out_registered, NativeRelationField)
 
 
 def test_m2m_nested_input_registered_returns_list():

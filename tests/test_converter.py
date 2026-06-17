@@ -13,18 +13,17 @@ behavior. Each scalar test below was CONVERTED to drive the SAME conceptual code
 path on native — ``_to_graphql_field`` — and assert the graphql-core scalar it
 produces, preserving the original per-field-type coverage.
 
-RELATION conversion (FK / M2M / reverse) is still done by ``convert_django_field``
-on both backends (it returns a graphene ``Dynamic`` descriptor that the native
-output thunk consumes), so the relation tests keep exercising ``convert_django_field``
-unchanged. The pure helpers ``convert_choice_name`` / ``choice_enum_name`` /
-``get_choices`` and the choices->Enum conversion are backend-independent and are
-likewise exercised through their original entry points.
+RELATION conversion (FK / M2M / reverse) is performed by ``convert_django_field``,
+which now returns a graphene-free ``NativeRelationField`` presence/ordering marker
+that the native output thunk consumes (the marker keeps the field in
+``_meta.fields`` so the native compiler can build the output field from
+``model._meta`` directly). The pure helpers ``convert_choice_name`` /
+``choice_enum_name`` / ``get_choices`` and the choices->enum conversion are
+backend-independent and are exercised through their original entry points.
 
-Run: GDX_BACKEND=native .venv/bin/python -m pytest tests/test_converter.py \
-    -q -o addopts=""
+Run: .venv/bin/python -m pytest tests/test_converter.py -q -o addopts=""
 """
 
-import graphene
 from django.contrib.auth.models import User
 from django.db import models
 from django.test import TestCase
@@ -201,7 +200,7 @@ class ConverterTest(TestCase):
 
     def test_convert_choice_field(self):
         """Test field with choices conversion (S-enum-2: native OUTPUT sentinel)."""
-        from django_graphex.converter import _DEAD_SCALAR, _NATIVE_BACKEND
+        from django_graphex.converter import _DEAD_SCALAR
 
         field = TestModel._meta.get_field("choice_field")
 
@@ -212,57 +211,39 @@ class ConverterTest(TestCase):
 
         graphql_field = convert_django_field_with_choices(field, registry=registry)
 
-        if _NATIVE_BACKEND:
-            # S-enum-2: on the native OUTPUT path (input_flag is None) a choices
-            # field returns the dead-scalar sentinel — the native output compiler
-            # renders the enum from ``model._meta`` directly (S-enum-1); the old
-            # graphene ``Enum`` descriptor was dead weight that only pinned
-            # graphene at class-definition time.
-            self.assertIs(graphql_field, _DEAD_SCALAR)
-        else:
-            # The graphene backend is UNCHANGED: a choices field converts to a
-            # graphene Enum carrying both choices.
-            self.assertIsInstance(graphql_field, graphene.Enum)
-            self.assertEqual(
-                set(graphql_field._meta.enum.__members__), {"CHOICE_A", "CHOICE_B"}
-            )
+        # S-enum-2: on the native OUTPUT path (input_flag is None) a choices
+        # field returns the dead-scalar sentinel — the native output compiler
+        # renders the enum from ``model._meta`` directly (S-enum-1); the old
+        # graphene ``Enum`` descriptor was dead weight that only pinned graphene
+        # at class-definition time.
+        self.assertIs(graphql_field, _DEAD_SCALAR)
 
     def test_convert_foreign_key_field(self):
         """Test ForeignKey field conversion (S-rel-2: native OUTPUT marker)."""
-        from django_graphex.converter import _NATIVE_BACKEND
         from django_graphex.native.descriptors import NativeRelationField
 
         field = TestModel._meta.get_field("user")
         graphql_field = convert_django_field(field)
 
-        if _NATIVE_BACKEND:
-            # S-rel-2: on the native OUTPUT path a to-ONE ForeignKey converts to a
-            # graphene-free ``NativeRelationField`` presence/ordering marker (the
-            # native output type is built from ``model._meta`` directly; the old
-            # graphene ``Dynamic`` was dead weight that only pinned graphene).
-            self.assertIsInstance(graphql_field, NativeRelationField)
-        else:
-            # The graphene backend is UNCHANGED: still a graphene ``Dynamic``.
-            self.assertIsInstance(graphql_field, graphene.Dynamic)
+        # S-rel-2: on the native OUTPUT path a to-ONE ForeignKey converts to a
+        # graphene-free ``NativeRelationField`` presence/ordering marker (the
+        # native output type is built from ``model._meta`` directly; the old
+        # graphene ``Dynamic`` was dead weight that only pinned graphene).
+        self.assertIsInstance(graphql_field, NativeRelationField)
 
     def test_convert_many_to_many_field(self):
         """Test ManyToManyField conversion (S-rel-3: native OUTPUT marker)."""
-        from django_graphex.converter import _NATIVE_BACKEND
         from django_graphex.native.descriptors import NativeRelationField
 
         field = TestModel._meta.get_field("basics")
         graphql_field = convert_django_field(field)
 
-        if _NATIVE_BACKEND:
-            # S-rel-3: on the native OUTPUT path a to-MANY ManyToManyField converts
-            # to a graphene-free ``NativeRelationField`` presence/ordering marker
-            # (the native output type builds the ``<Model>ListType`` results/
-            # totalCount container from ``model._meta`` directly; the old graphene
-            # ``Dynamic`` was dead weight that only pinned graphene).
-            self.assertIsInstance(graphql_field, NativeRelationField)
-        else:
-            # The graphene backend is UNCHANGED: still a graphene ``Dynamic``.
-            self.assertIsInstance(graphql_field, graphene.Dynamic)
+        # S-rel-3: on the native OUTPUT path a to-MANY ManyToManyField converts
+        # to a graphene-free ``NativeRelationField`` presence/ordering marker
+        # (the native output type builds the ``<Model>ListType`` results/
+        # totalCount container from ``model._meta`` directly; the old graphene
+        # ``Dynamic`` was dead weight that only pinned graphene).
+        self.assertIsInstance(graphql_field, NativeRelationField)
 
     def test_convert_choice_name(self):
         """Test choice name conversion."""
@@ -342,39 +323,26 @@ class ConverterUtilsTest(TestCase):
         converter path: on native it returns the dead-scalar sentinel for BOTH
         output and input, and the choices enum is built by the native canonical
         builder ``build_choices_enum_type`` (a graphql-core ``GraphQLEnumType``
-        shared by the output + filter-input + mutation-input paths). On the legacy
-        graphene backend the converter still builds the graphene ``Enum``.
+        shared by the output + filter-input + mutation-input paths).
         """
         field = TestModel._meta.get_field("choice_field")
 
+        from graphql import GraphQLEnumType
+
         from django_graphex.converter import (
             _DEAD_SCALAR,
-            _NATIVE_BACKEND,
             build_choices_enum_type,
         )
-        from django_graphex.registry import Registry, get_global_registry
+        from django_graphex.registry import Registry
 
-        if _NATIVE_BACKEND:
-            from graphql import GraphQLEnumType
-
-            for input_flag in (None, "create", "update"):
-                out = convert_django_field_with_choices(
-                    field, registry=Registry(), input_flag=input_flag
-                )
-                self.assertIs(out, _DEAD_SCALAR)
-            enum = build_choices_enum_type(field, Registry())
-            self.assertIsInstance(enum, GraphQLEnumType)
-            self.assertEqual(set(enum.values.keys()), {"CHOICE_A", "CHOICE_B"})
-            return
-
-        registry = get_global_registry()
-        graphql_field = convert_django_field_with_choices(
-            field, registry=registry, input_flag="create"
-        )
-        self.assertIsInstance(graphql_field, graphene.Enum)
-        self.assertEqual(
-            set(graphql_field._meta.enum.__members__), {"CHOICE_A", "CHOICE_B"}
-        )
+        for input_flag in (None, "create", "update"):
+            out = convert_django_field_with_choices(
+                field, registry=Registry(), input_flag=input_flag
+            )
+            self.assertIs(out, _DEAD_SCALAR)
+        enum = build_choices_enum_type(field, Registry())
+        self.assertIsInstance(enum, GraphQLEnumType)
+        self.assertEqual(set(enum.values.keys()), {"CHOICE_A", "CHOICE_B"})
 
     def test_choices_extraction(self):
         """Test choices extraction from different field types."""
@@ -450,7 +418,6 @@ class FieldConversionIntegrationTest(TestCase):
 
     def test_relationship_field_conversion(self):
         """Test relationship field conversion."""
-        from django_graphex.converter import _NATIVE_BACKEND
         from django_graphex.native.descriptors import NativeRelationField
 
         # Test that foreign keys and m2m fields are converted correctly
@@ -460,15 +427,10 @@ class FieldConversionIntegrationTest(TestCase):
         user_graphql_field = convert_django_field(user_field)
         basics_graphql_field = convert_django_field(basics_field)
 
-        if _NATIVE_BACKEND:
-            # S-rel-2: User field (to-ONE FK) converts to a graphene-free
-            # ``NativeRelationField`` marker on the native OUTPUT path.
-            self.assertIsInstance(user_graphql_field, NativeRelationField)
-            # S-rel-3: Basics field (to-MANY M2M) ALSO converts to a graphene-free
-            # ``NativeRelationField`` marker on the native OUTPUT path (the native
-            # output builds the ``<Model>ListType`` container from ``model._meta``).
-            self.assertIsInstance(basics_graphql_field, NativeRelationField)
-        else:
-            # The graphene backend is UNCHANGED: both stay graphene ``Dynamic``.
-            self.assertIsInstance(user_graphql_field, graphene.Dynamic)
-            self.assertIsInstance(basics_graphql_field, graphene.Dynamic)
+        # S-rel-2: User field (to-ONE FK) converts to a graphene-free
+        # ``NativeRelationField`` marker on the native OUTPUT path.
+        self.assertIsInstance(user_graphql_field, NativeRelationField)
+        # S-rel-3: Basics field (to-MANY M2M) ALSO converts to a graphene-free
+        # ``NativeRelationField`` marker on the native OUTPUT path (the native
+        # output builds the ``<Model>ListType`` container from ``model._meta``).
+        self.assertIsInstance(basics_graphql_field, NativeRelationField)

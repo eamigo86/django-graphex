@@ -5,11 +5,9 @@ On the CI floor (Django 4.x) ``field.choices`` is NOT pre-normalized, so these
 exercise the converter's own normalization directly.
 """
 
-import graphene
 from django.db import models
 
 from django_graphex.converter import (
-    convert_django_field_with_choices,
     get_choices,
 )
 from django_graphex.registry import get_global_registry
@@ -76,7 +74,9 @@ def test_convert_field_with_choices_builds_enum_for_each_form():
         ),
         "tuples": (models.CharField(choices=_TUPLES, max_length=10), {"C", "D"}),
     }
-    from django_graphex.converter import _NATIVE_BACKEND, build_choices_enum_type
+    from graphql import GraphQLEnumType
+
+    from django_graphex.converter import build_choices_enum_type
 
     registry = get_global_registry()
     for label, (field, expected_members) in forms.items():
@@ -88,20 +88,10 @@ def test_convert_field_with_choices_builds_enum_for_each_form():
         # graphene on the choices converter path — on native it returns the
         # dead-scalar sentinel for both paths and the enum is built by the native
         # canonical builder ``build_choices_enum_type`` (a graphql-core
-        # ``GraphQLEnumType``). On the graphene backend it still builds a graphene
-        # ``Enum``.
-        if _NATIVE_BACKEND:
-            from graphql import GraphQLEnumType
-
-            enum = build_choices_enum_type(field, registry)
-            assert isinstance(enum, GraphQLEnumType), label
-            assert set(enum.values.keys()) == expected_members, label
-            continue
-        converted = convert_django_field_with_choices(
-            field, registry, input_flag="create"
-        )
-        assert isinstance(converted, graphene.Enum), label
-        assert set(converted._meta.enum.__members__) == expected_members, label
+        # ``GraphQLEnumType``).
+        enum = build_choices_enum_type(field, registry)
+        assert isinstance(enum, GraphQLEnumType), label
+        assert set(enum.values.keys()) == expected_members, label
 
 
 # --------------------------------------------------------------------------- #

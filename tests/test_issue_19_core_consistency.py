@@ -13,7 +13,6 @@ from __future__ import annotations
 import pytest
 from django.db import models
 from django.test import override_settings
-from graphene import List
 
 from django_graphex.converter import (
     construct_fields,
@@ -24,6 +23,19 @@ from django_graphex.converter import (
 from django_graphex.fields import ArrayField
 from django_graphex.registry import Registry
 from tests.models import Author
+
+
+def _is_graphene_list(obj):
+    """True when ``obj`` is a graphene ``List`` wrapper.
+
+    The PostgreSQL ArrayField / RangeField converters are NOT yet migrated off
+    graphene (they still emit a ``graphene.types.structures.List`` on the native
+    path); assert their wrapper structurally instead of importing graphene.
+    """
+    return type(obj).__name__ == "List" and type(obj).__module__.startswith(
+        "graphene"
+    )
+
 
 # --------------------------------------------------------------------------- #
 # (a) Field ordering — unconditional determinism                               #
@@ -165,11 +177,21 @@ def test_multiselectfield_subclass_with_different_name_detected():
     the converter falls back to the name check only if the import fails.
     This test verifies the isinstance path works when the package IS installed
     (skipped otherwise), and verifies the name-check path for the non-installed case.
+
+    S-enum-2 (OUTPUT) + S-input-5 (INPUT) retired graphene on the choices
+    converter: on native it returns the dead-scalar sentinel for a MultiSelectField
+    subclass too, and the multiselect ``[Enum]`` rendering (driven by the guarded
+    isinstance check) moved to ``types._resolve_native_choices_input_fields`` /
+    the native output compiler. We assert the converter recognizes the subclass
+    (no raise, sentinel return) instead of the old graphene ``Field`` wrapper.
     """
+    from django_graphex.converter import _DEAD_SCALAR
+
     try:
         from multiselectfield import MultiSelectField as _MSF  # noqa: F401
 
-        # If the package is installed, the isinstance check should work for subclasses.
+        # If the package is installed, the isinstance check should recognize the
+        # subclass and route it through the (graphene-free) choices converter.
         class _SubMSF(_MSF):
             pass
 
@@ -177,11 +199,11 @@ def test_multiselectfield_subclass_with_different_name_detected():
         field.name = "tags_sub"
         field.model = Author
         out = convert_django_field_with_choices(field, Registry())
-        # Must be detected as a list field, not a single enum field.
-        import graphene as _g
-
-        assert isinstance(out, _g.Field), (
-            "MultiSelectField subclass must yield a DjangoListField (isinstance path)"
+        # Recognized as a choices field (dead-scalar sentinel on native); the
+        # ``[Enum]`` list rendering is owned by the native compiler.
+        assert out is _DEAD_SCALAR, (
+            "MultiSelectField subclass must be recognized by the choices converter "
+            "(isinstance path) and return the native dead-scalar sentinel"
         )
     except ImportError:
         # Package not installed — the name-check fallback is the only heuristic.
@@ -199,11 +221,10 @@ def test_multiselectfield_direct_class_still_detected():
     converter (it returns the dead-scalar sentinel on native). The name-based
     MultiSelectField detection now lives in
     ``types._resolve_native_choices_input_fields`` (``is_list=True`` -> ``[Enum]``)
-    for the INPUT surface and the native output compiler for OUTPUT. The graphene
-    backend still routes a MultiSelectField to ``DjangoListField``.
+    for the INPUT surface and the native output compiler for OUTPUT.
     """
 
-    from django_graphex.converter import _DEAD_SCALAR, _NATIVE_BACKEND
+    from django_graphex.converter import _DEAD_SCALAR
 
     class MultiSelectField(models.CharField):
         pass
@@ -212,25 +233,16 @@ def test_multiselectfield_direct_class_still_detected():
     field.name = "tags"
     field.model = Author
 
-    if _NATIVE_BACKEND:
-        # Converter is graphene-free on both paths (dead-scalar sentinel). The
-        # MultiSelectField -> ``[Enum]`` input rendering is driven by the
-        # name-based heuristic in ``_resolve_native_choices_input_fields``
-        # (``is_list = type(field).__name__ == "MultiSelectField"``).
-        for input_flag in (None, "create"):
-            out = convert_django_field_with_choices(
-                field, Registry(), input_flag=input_flag
-            )
-            assert out is _DEAD_SCALAR
-        assert type(field).__name__ == "MultiSelectField"
-        return
-
-    out = convert_django_field_with_choices(field, Registry(), input_flag=None)
-    from django_graphex.fields import DjangoListField
-    from django_graphex.native.descriptors import NativeMountedField
-
-    assert isinstance(out, DjangoListField)
-    assert isinstance(out, NativeMountedField)
+    # Converter is graphene-free on both paths (dead-scalar sentinel). The
+    # MultiSelectField -> ``[Enum]`` input rendering is driven by the name-based
+    # heuristic in ``_resolve_native_choices_input_fields``
+    # (``is_list = type(field).__name__ == "MultiSelectField"``).
+    for input_flag in (None, "create"):
+        out = convert_django_field_with_choices(
+            field, Registry(), input_flag=input_flag
+        )
+        assert out is _DEAD_SCALAR
+    assert type(field).__name__ == "MultiSelectField"
 
 
 # --------------------------------------------------------------------------- #
@@ -246,7 +258,7 @@ def test_arrayfield_preserves_required_flag():
     field.model = Author
     # blank=False, null=False => required on create
     out = convert_postgres_array_to_list(field, Registry(), input_flag="create")
-    assert isinstance(out, List)
+    assert _is_graphene_list(out)
     # The required flag should propagate to the outer List (NonNull or required kwarg).
     # graphene List stores required as a kwarg; it doesn't wrap in NonNull itself.
     # We check that the field has the right required kwarg set.
@@ -257,7 +269,7 @@ def test_arrayfield_not_required_without_create_flag():
     """ArrayField: required=False when not in create input context."""
     field = ArrayField(models.IntegerField())
     out = convert_postgres_array_to_list(field, Registry(), input_flag=None)
-    assert isinstance(out, List)
+    assert _is_graphene_list(out)
     assert not out.kwargs.get("required", False)
 
 
@@ -267,7 +279,7 @@ def test_rangefield_preserves_required_flag():
     field.name = "score_range"
     # Make it required by Django field conventions (blank=False, null=False).
     out = convert_postgres_range_to_string(field, Registry(), input_flag="create")
-    assert isinstance(out, List)
+    assert _is_graphene_list(out)
     assert out.kwargs.get("required") is True
 
 
@@ -275,7 +287,7 @@ def test_rangefield_not_required_without_create_flag():
     """RangeField: required=False when not in create input context."""
     field = ArrayField(models.IntegerField())
     out = convert_postgres_range_to_string(field, Registry(), input_flag=None)
-    assert isinstance(out, List)
+    assert _is_graphene_list(out)
     assert not out.kwargs.get("required", False)
 
 
