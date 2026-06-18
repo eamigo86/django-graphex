@@ -53,6 +53,24 @@ pip install "django-graphex[subscriptions]"
 This adds `channels` and `channels-redis`. See the
 [Subscriptions guide](usage/subscriptions.md) for the ASGI wiring.
 
+## Add to `INSTALLED_APPS`
+
+```python
+# settings.py
+INSTALLED_APPS = [
+    # … your apps …
+    "django.contrib.contenttypes",  # Django core; django-graphex uses it for GFK support
+    "django_graphex",
+]
+```
+
+Adding `django_graphex` is **optional for basic use** — importing the types,
+fields and `GraphQLView` works without it — but it is **required to use the
+[`graphql_schema`](usage/settings.md#exporting-the-schema) management command**
+(Django only auto-discovers commands from installed apps), and it is
+**recommended** in general: the app's `AppConfig.ready()` eagerly compiles the
+schema at startup instead of lazily on the first request.
+
 ## Requirements
 
 - **Python**: 3.12, 3.13, 3.14
