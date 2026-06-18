@@ -8,11 +8,6 @@ from collections.abc import Callable, Mapping
 from functools import singledispatch
 from typing import TYPE_CHECKING, Any, Iterator
 
-from django.contrib.contenttypes.fields import (
-    GenericForeignKey,
-    GenericRel,
-    GenericRelation,
-)
 from django.db import models
 from django.db.models import Choices, JSONField
 from django.utils.encoding import force_str
@@ -27,7 +22,13 @@ from .fields import (
     HStoreField,
     RangeField,
 )
-from .utils import get_model_fields, get_related_model, is_required, to_const
+from .utils import (
+    _generic_foreign_key_type,
+    get_model_fields,
+    get_related_model,
+    is_required,
+    to_const,
+)
 
 # Allow Django's lazy ``gettext_lazy``/``verbose_name``/``help_text`` proxies to
 # be used as GraphQL descriptions (graphql-core only accepts ``str`` otherwise).
@@ -248,6 +249,10 @@ def convert_django_field_with_choices(
         The GraphQL field for the choices, or the plain converted field when
         the source field has no choices.
     """
+    # Belt-and-braces: ensure the contenttypes converters are registered before
+    # any dispatch (AppConfig.ready already does this, but direct callers and
+    # the test suite may reach here first).
+    _ensure_contenttypes_converters_registered()
     choices = getattr(field, "choices", None)
     if choices:
         # The choices field is rendered as a ``GraphQLEnumType`` built from
@@ -391,6 +396,8 @@ def construct_fields(
     Returns:
         An ordered mapping of field name to converted GraphQL field.
     """
+    _ensure_contenttypes_converters_registered()
+    _generic_foreign_key = _generic_foreign_key_type()
     _model_fields = get_model_fields(model)
 
     # Sort unconditionally so dev and prod SDLs are identical (issue #19).
@@ -430,7 +437,8 @@ def construct_fields(
                 input_flag
                 and not field.editable
                 and not isinstance(
-                    field, (models.fields.related.ForeignObjectRel, GenericForeignKey)
+                    field,
+                    (models.fields.related.ForeignObjectRel, _generic_foreign_key),
                 )
             ):
                 continue
@@ -798,7 +806,6 @@ def convert_field_to_list_or_connection(
     return NativeRelationField(related_model=model)
 
 
-@convert_django_field.register(GenericRel)
 @convert_django_field.register(models.ManyToManyRel)
 @convert_django_field.register(models.ManyToOneRel)
 def convert_many_rel_to_djangomodel(
@@ -877,7 +884,6 @@ def convert_field_to_djangomodel(
     return NativeRelationField(related_model=model)
 
 
-@convert_django_field.register(GenericForeignKey)
 def convert_generic_foreign_key_to_object(
     field: DjangoField,
     registry: Registry | None = None,
@@ -915,7 +921,6 @@ def convert_generic_foreign_key_to_object(
     return NativeRelationField(related_model=model)
 
 
-@convert_django_field.register(GenericRelation)
 def convert_generic_relation_to_object_list(
     field: DjangoField,
     registry: Registry | None = None,
@@ -951,6 +956,48 @@ def convert_generic_relation_to_object_list(
 
         return NativeRelationField(related_model=model)
     return _DEAD_SCALAR
+
+
+# The ``django.contrib.contenttypes.fields`` module imports the ``ContentType``
+# MODEL at its top, so registering the GFK / GenericRel / GenericRelation
+# converters at MODULE LOAD (the natural ``@convert_django_field.register(...)``
+# decorator) would touch the model registry during app-population and raise
+# ``AppRegistryNotReady`` whenever ``django_graphex`` is in ``INSTALLED_APPS``.
+# Those three converters are therefore defined as plain functions above and
+# registered LAZILY once the app registry is ready: ``AppConfig.ready`` calls
+# this, and the conversion entry points call it too as a belt-and-braces guard.
+# ``functools.singledispatch.register`` is idempotent, so repeated calls are
+# safe and cheap.
+_CONTENTTYPES_CONVERTERS_REGISTERED = False
+
+
+def _ensure_contenttypes_converters_registered() -> None:
+    """Register the contenttypes field converters on first use (lazy import).
+
+    Importing ``django.contrib.contenttypes.fields`` is deferred until after the
+    app registry is ready so that importing ``django_graphex`` never loads the
+    ``ContentType`` model prematurely. The registration is performed once and the
+    result memoized in a module flag.
+    """
+    global _CONTENTTYPES_CONVERTERS_REGISTERED
+    if _CONTENTTYPES_CONVERTERS_REGISTERED:
+        return
+    from django.contrib.contenttypes.fields import (  # noqa: PLC0415
+        GenericForeignKey,
+        GenericRel,
+        GenericRelation,
+    )
+
+    # ``GenericRel`` (the reverse side of a ``GenericRelation``) shares the
+    # reverse-many converter with ``ManyToManyRel`` / ``ManyToOneRel``.
+    convert_django_field.register(GenericRel, convert_many_rel_to_djangomodel)
+    convert_django_field.register(
+        GenericForeignKey, convert_generic_foreign_key_to_object
+    )
+    convert_django_field.register(
+        GenericRelation, convert_generic_relation_to_object_list
+    )
+    _CONTENTTYPES_CONVERTERS_REGISTERED = True
 
 
 @convert_django_field.register(ArrayField)

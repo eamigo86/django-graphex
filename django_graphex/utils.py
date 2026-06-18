@@ -10,11 +10,6 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterator
 
 from django.apps import apps
-from django.contrib.contenttypes.fields import (
-    GenericForeignKey,
-    GenericRel,
-    GenericRelation,
-)
 from django.core.exceptions import FieldDoesNotExist, ValidationError
 from django.db.models import (
     NOT_PROVIDED,
@@ -47,6 +42,58 @@ if TYPE_CHECKING:
     from django.db.models import Field
     from graphql import GraphQLResolveInfo, GraphQLType
     from graphql.language.ast import SelectionSetNode
+
+
+# ``django.contrib.contenttypes.fields`` imports the ``ContentType`` MODEL at
+# module top, so importing it eagerly here would touch the model registry during
+# Django app-population and raise ``AppRegistryNotReady`` whenever
+# ``django_graphex`` is listed in ``INSTALLED_APPS``. The contenttypes classes
+# are only ever needed for ``isinstance`` checks at QUERY time (long after
+# ``django.setup()``), so the import is deferred and the resolved classes cached
+# once in a process-global tuple. ``_gfk_field_types()`` returns
+# ``(GenericForeignKey, GenericRel, GenericRelation)``; the named accessors below
+# index into that cached tuple so every hot-path ``isinstance`` site pays only a
+# single attribute/None check after the one-time import.
+_GFK_FIELD_TYPES: tuple[type, type, type] | None = None
+
+
+def _gfk_field_types() -> tuple[type, type, type]:
+    """Return ``(GenericForeignKey, GenericRel, GenericRelation)``, importing once.
+
+    The contenttypes field classes are imported lazily (not at module top) so
+    that importing ``django_graphex`` never loads the ``ContentType`` model
+    before the app registry is ready. The resolved tuple is cached process-wide,
+    so repeated calls on the optimizer hot path cost one global lookup.
+
+    Returns:
+        The three Django generic-relation field classes used by the optimizer's
+        ``isinstance`` checks.
+    """
+    global _GFK_FIELD_TYPES
+    if _GFK_FIELD_TYPES is None:
+        from django.contrib.contenttypes.fields import (
+            GenericForeignKey,
+            GenericRel,
+            GenericRelation,
+        )
+
+        _GFK_FIELD_TYPES = (GenericForeignKey, GenericRel, GenericRelation)
+    return _GFK_FIELD_TYPES
+
+
+def _generic_foreign_key_type() -> type:
+    """Return the cached ``GenericForeignKey`` class (lazy import)."""
+    return _gfk_field_types()[0]
+
+
+def _generic_rel_type() -> type:
+    """Return the cached ``GenericRel`` class (lazy import)."""
+    return _gfk_field_types()[1]
+
+
+def _generic_relation_type() -> type:
+    """Return the cached ``GenericRelation`` class (lazy import)."""
+    return _gfk_field_types()[2]
 
 
 @dataclasses.dataclass
@@ -629,10 +676,11 @@ def get_related_fields(model: type[Model]) -> dict[str, Any]:
     Returns:
         A mapping of field name to field for each non-generic relation.
     """
+    _gfk, _generic_rel, _ = _gfk_field_types()
     return {
         field.name: field
         for field in model._meta.get_fields()
-        if field.is_relation and not isinstance(field, (GenericForeignKey, GenericRel))
+        if field.is_relation and not isinstance(field, (_gfk, _generic_rel))
     }
 
 
@@ -881,9 +929,10 @@ def _relation_optimization(field: Any) -> tuple[str, str] | None:
         "(prefetch, orm_name)" pair for many-to-many or reverse FK, or None
         for non-relations and generic relations.
     """
-    if isinstance(field, GenericForeignKey):
+    _gfk, _generic_rel, _ = _gfk_field_types()
+    if isinstance(field, _gfk):
         return ("prefetch", field.name)
-    if isinstance(field, GenericRel):
+    if isinstance(field, _generic_rel):
         return None
     if not getattr(field, "is_relation", False):
         return None
@@ -1094,7 +1143,7 @@ def recursive_params(
             if path not in target:
                 target.append(path)
             if sub_selection is not None and not isinstance(
-                related_field, GenericForeignKey
+                related_field, _generic_foreign_key_type()
             ):
                 related_model = get_related_model(related_field)
                 recursive_params(
@@ -1236,7 +1285,7 @@ def _collect_only_fields(
             if optimization is None:
                 continue  # pragma: no cover
             kind, orm_name = optimization
-            if isinstance(related_field, GenericForeignKey):
+            if isinstance(related_field, _generic_foreign_key_type()):
                 # GFK needs the two concrete LOCAL columns on the parent row so
                 # Django can run the prefetch_related second query without
                 # re-loading: the content-type id and object id.  Resolve
@@ -1637,7 +1686,8 @@ def _compute_child_only(
             only_cols.append(column)
 
     # Per-relation-kind dispatch (GAP-2): add structural join columns.
-    if isinstance(related_field, GenericRelation):
+    _gfk_cls = _generic_foreign_key_type()
+    if isinstance(related_field, _generic_relation_type()):
         # Discover the child GFK matching this GenericRelation's ct/fk fields.
         ct_field_name = related_field.content_type_field_name  # e.g. "content_type"
         fk_field_name = related_field.object_id_field_name  # e.g. "object_id"
@@ -1645,14 +1695,14 @@ def _compute_child_only(
         # ct_field and fk_field match the GenericRelation's referenced fields.
         gfk = None
         for f in child._meta.get_fields():
-            if isinstance(f, GenericForeignKey):
+            if isinstance(f, _gfk_cls):
                 if f.ct_field == ct_field_name and f.fk_field == fk_field_name:
                     gfk = f
                     break
         if gfk is None:
             # Fallback: try to find any GFK (single-GFK case).
             for f in child._meta.get_fields():
-                if isinstance(f, GenericForeignKey):
+                if isinstance(f, _gfk_cls):
                     gfk = f
                     break
         if gfk is None:
@@ -1942,7 +1992,7 @@ def _collect_prefetch_only_sets(
         # GAP-3 ordering invariant: GFK-target check MUST come FIRST, BEFORE any
         # get_related_model / _leaf_model call (GFK.remote_field is None ->
         # AttributeError if passed to get_related_model).
-        if isinstance(related_field, GenericForeignKey):
+        if isinstance(related_field, _generic_foreign_key_type()):
             # Track-2: when this GFK is exposed as a ``DjangoUnionType`` AND the
             # selection picks concrete members via ``... on MemberType``, build a
             # per-content-type GenericPrefetch bucket plan (Django 5.0+ only).
@@ -2593,7 +2643,7 @@ def _walk_filtered_prefetches(
         if related_field is not None and field.selection_set and sub_gql is not None:
             optimization = _relation_optimization(related_field)
             if optimization is not None and not isinstance(
-                related_field, GenericForeignKey
+                related_field, _generic_foreign_key_type()
             ):  # pragma: no branch
                 _walk_filtered_prefetches(
                     sub_gql,

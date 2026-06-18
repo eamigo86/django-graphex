@@ -77,6 +77,11 @@ def pytest_configure(config):
             "django.contrib.sites",
             "django.contrib.staticfiles",
             *channels_apps,
+            # django_graphex installs as a regular Django app: listing it here
+            # exercises the real app registry every suite run, so the whole suite
+            # is itself a strong, always-on installability proof (the package
+            # import chain must never touch the model registry at module load).
+            "django_graphex",
             "tests",
         ),
         PASSWORD_HASHERS=("django.contrib.auth.hashers.MD5PasswordHasher",),

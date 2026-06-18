@@ -23,9 +23,20 @@ class DjangoGraphexConfig(AppConfig):
     verbose_name = "Django GraphEx"
 
     def ready(self) -> None:
-        """Compile all registered InputType and OutputType subclasses into GraphQL types."""
+        """Compile all registered InputType and OutputType subclasses into GraphQL types.
+
+        Also registers the contenttypes (GenericForeignKey / GenericRel /
+        GenericRelation) field converters now that the app registry is ready.
+        Those converters cannot be registered at module-import time without
+        loading the ``ContentType`` model during app-population, so the
+        registration is deferred to here (see ``converter`` module).
+        """
+        from django_graphex.converter import (
+            _ensure_contenttypes_converters_registered,
+        )
         from django_graphex.native.base import compile_all_inputs
         from django_graphex.native.registry_compiler import compile_all_outputs
 
+        _ensure_contenttypes_converters_registered()
         compile_all_inputs()
         compile_all_outputs()

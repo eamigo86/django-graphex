@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third party
     "channels",
+    "django_graphex",
     # Local
     "blog",
 ]
