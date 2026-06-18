@@ -56,6 +56,18 @@ before/after snippets and a migration codemod (`scripts/migrate_2_0.py`).
 - The graphene backend producer code, the `GDX_BACKEND` / dual-backend switch, and
   the graphene dependency from `pyproject.toml`.
 
+### Added
+
+- **`graphql_schema` management command** (introspection JSON / SDL export).
+  Mirrors graphene-django's command of the same name (a drop-in for migrating
+  users) but is built on graphql-core with no graphene import. Writes
+  introspection JSON wrapped as `{"data": ...}` (matching graphene-django's
+  shape) to `DJANGO_GRAPHEX["SCHEMA_OUTPUT"]` (default `schema.json`), or SDL
+  when the output path ends in `.graphql` / `.gql`. Supports `--out`/`-o`
+  (incl. `-` for stdout), `--indent`/`-i`, and `--schema <dotted.path>`. New
+  settings `SCHEMA_OUTPUT` and `SCHEMA_INDENT` back the command's defaults. See
+  [Settings → Exporting the schema](usage/settings.md#exporting-the-schema).
+
 ## 1.3.0 — 2026-06-13
 
 ### Added

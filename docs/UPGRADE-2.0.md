@@ -111,6 +111,16 @@ The codemod's `--apply` performs exactly this fold: it merges the `GRAPHENE`
 keys into an existing `DJANGO_GRAPHEX` dict (or renames `GRAPHENE` to
 `DJANGO_GRAPHEX` when there is no target dict yet).
 
+!!! note "`SCHEMA_OUTPUT` / `SCHEMA_INDENT` are back — inside `DJANGO_GRAPHEX`"
+
+    graphene-django read `SCHEMA_OUTPUT` and `SCHEMA_INDENT` under its
+    `GRAPHENE` namespace for the `graphql_schema` command. django-graphex ships
+    [the same `graphql_schema` command](usage/settings.md#exporting-the-schema)
+    (a drop-in), and those two keys now live inside `DJANGO_GRAPHEX` like every
+    other setting. Move them there (the codemod folds them in automatically) and
+    your existing `manage.py graphql_schema` export workflow keeps working — the
+    introspection JSON is wrapped as `{"data": ...}`, the same shape as before.
+
 ---
 
 ## 3. `graphene.ObjectType` roots → native `ObjectType`

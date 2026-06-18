@@ -10,6 +10,8 @@ DJANGO_GRAPHEX = {
     # --- Schema & middleware ----------------------------------------------- #
     # (merged in from the legacy GRAPHENE namespace in 2.0)
     "SCHEMA": None,                  # dotted path to your schema, or pass schema= to the view
+    "SCHEMA_OUTPUT": "schema.json",  # default output file for the graphql_schema command
+    "SCHEMA_INDENT": 2,              # JSON indent for graphql_schema output
     "MIDDLEWARE": (),                # GraphQL execution middleware (dotted paths or objects)
     "SUBSCRIPTION_PATH": None,       # WebSocket subscription endpoint exposed to GraphiQL
     "ATOMIC_MUTATIONS": False,       # wrap each mutation in transaction.atomic()
@@ -70,6 +72,8 @@ part of `DJANGO_GRAPHEX` like everything else.
 | Setting | Default | Description |
 |---|---|---|
 | `SCHEMA` | `None` | Dotted path (or the object) of the schema `GraphQLView` uses **when you don't pass `schema=` to `.as_view()`**. `None` = you must pass `schema=` explicitly. Accepts an import string. |
+| `SCHEMA_OUTPUT` | `"schema.json"` | Default output file for the [`graphql_schema`](#exporting-the-schema) management command. A `.json` path writes introspection JSON; a `.graphql` / `.gql` path writes SDL. Override per-run with `--out`. |
+| `SCHEMA_INDENT` | `2` | JSON indentation used by the [`graphql_schema`](#exporting-the-schema) command. Override per-run with `--indent`. Ignored for SDL output. |
 | `MIDDLEWARE` | `()` | GraphQL **execution** middleware chain — dotted paths or callables/objects. The bundled security middlewares plug in here, e.g. `"django_graphex.security.DisableIntrospectionMiddleware"` and `"…AuthenticatedFieldsMiddleware"`, plus `"django_graphex.GraphQLDirectiveMiddleware"` if you use directives. Accepts import strings. Used as the view's default when `middleware=` isn't passed. |
 | `SUBSCRIPTION_PATH` | `None` | Path of the WebSocket subscription endpoint advertised to GraphiQL / the bundled client. `None` = default routing. See [Subscriptions](subscriptions.md). |
 | `ATOMIC_MUTATIONS` | `False` | Wrap each mutation in `transaction.atomic()` so a failing mutation rolls back its writes. |
@@ -226,6 +230,54 @@ For a single-file upload with a 5 MB cap and 100 KB of JSON overhead:
 MAX_UPLOAD_SIZE = 5 * 1024 * 1024          # 5 MB decoded
 MAX_REQUEST_BODY_SIZE = 20 * 1024 * 1024   # 20 MB body (comfortable margin)
 ```
+
+## Exporting the schema
+
+The `graphql_schema` management command exports your schema to a file (or
+stdout). It mirrors graphene-django's command of the **same name**, so it is a
+drop-in for projects migrating off graphene-django — built entirely on
+graphql-core, with no graphene import.
+
+```bash
+# Write introspection JSON to DJANGO_GRAPHEX["SCHEMA_OUTPUT"] (default schema.json)
+python manage.py graphql_schema
+
+# Override the output path
+python manage.py graphql_schema --out build/schema.json
+
+# Write SDL instead — selected by the .graphql / .gql extension
+python manage.py graphql_schema --out schema.graphql
+
+# Print to stdout (handy for piping into codegen tools)
+python manage.py graphql_schema --out -
+
+# Override the JSON indent (ignored for SDL)
+python manage.py graphql_schema --indent 4
+
+# Export a specific schema instead of DJANGO_GRAPHEX["SCHEMA"]
+python manage.py graphql_schema --schema myapp.schema.schema
+```
+
+| Option | Alias | Description |
+|---|---|---|
+| `--out <path>` | `-o` | Output file path; overrides `SCHEMA_OUTPUT`. Use `-` for stdout. A `.graphql` / `.gql` extension writes SDL instead of introspection JSON. |
+| `--indent <int>` | `-i` | JSON indentation; overrides `SCHEMA_INDENT` (default `2`). Ignored for SDL output. |
+| `--schema <dotted.path>` | | Dotted path to the schema (a `DjangoGraphQLSchema`) to export; overrides `SCHEMA`. |
+
+**JSON vs SDL.** The output format is chosen by the file extension: `.json` (or
+stdout, or any non-SDL extension) writes **introspection JSON**, while
+`.graphql` / `.gql` writes **SDL** (via graphql-core `print_schema`). The
+introspection JSON is wrapped as `{"data": <introspection>}` — the same shape
+graphene-django produced — so existing client codegen keeps working unchanged.
+
+When neither `DJANGO_GRAPHEX["SCHEMA"]` is set nor `--schema` is passed, the
+command raises a `CommandError` with an actionable message.
+
+!!! note "Migration path"
+
+    `SCHEMA_OUTPUT` and `SCHEMA_INDENT` are the same keys graphene-django read
+    under its `GRAPHENE` namespace. In django-graphex they live inside
+    `DJANGO_GRAPHEX`, and `graphql_schema` consumes them the same way.
 
 ## How settings are read
 

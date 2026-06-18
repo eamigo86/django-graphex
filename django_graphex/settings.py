@@ -120,6 +120,8 @@ DEFAULTS = {
     # Dotted path (or object) of the schema GraphQLView serves when no schema=
     # is passed to .as_view(). None = you must pass schema= explicitly.
     "SCHEMA": None,
+    "SCHEMA_OUTPUT": "schema.json",  # default output file for the graphql_schema command
+    "SCHEMA_INDENT": 2,  # JSON indent for graphql_schema output
     # GraphQL execution middleware (dotted paths or objects); the view's default
     # when middleware= is not passed. Bundled security middlewares plug in here.
     "MIDDLEWARE": (),
