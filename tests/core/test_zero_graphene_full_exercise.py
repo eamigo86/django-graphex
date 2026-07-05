@@ -40,12 +40,12 @@ Run:
 
 from __future__ import annotations
 
-import pytest
-
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
