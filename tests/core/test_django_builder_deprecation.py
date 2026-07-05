@@ -57,7 +57,11 @@ from django_graphex.types import (
     DjangoModelType,
     DjangoObjectType,
 )
-from tests.models import Category, DeprecationListModel
+from tests.models import (
+    DeprecationCreateModel,
+    DeprecationListModel,
+    DeprecationRetrieveModel,
+)
 
 _REG = Registry()
 
@@ -187,12 +191,12 @@ def test_model_type_retrieve_field_deprecation_reason_in_sdl() -> None:
     of surfacing "@deprecated(reason: ...)" in the SDL.
     """
 
-    class _CategoryModelType(DjangoModelType):
+    class _DeprecationRetrieveType(DjangoModelType):
         class Meta:
-            model = Category
+            model = DeprecationRetrieveModel
 
     class _Root(ObjectType):
-        category = _CategoryModelType.RetrieveField(deprecation_reason="use node")
+        category = _DeprecationRetrieveType.RetrieveField(deprecation_reason="use node")
 
     sdl = _sdl_for_query(_Root)
     assert '@deprecated(reason: "use node")' in sdl
@@ -250,15 +254,15 @@ def test_model_type_create_field_deprecation_reason_in_sdl() -> None:
     surfacing "@deprecated(reason: ...)" in the SDL.
     """
 
-    class _CategoryMutType(DjangoModelType):
+    class _DeprecationCreateType(DjangoModelType):
         class Meta:
-            model = Category
+            model = DeprecationCreateModel
 
     class _Root(ObjectType):
         hello = field(GraphQLString)
 
     class _Mut(ObjectType):
-        category_create = _CategoryMutType.CreateField(
+        category_create = _DeprecationCreateType.CreateField(
             deprecation_reason="use v2 create"
         )
 

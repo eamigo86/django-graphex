@@ -518,6 +518,24 @@ class DeprecationListModel(DummyModel):
     test type or relation can also build, keeping the assertion order-independent.
     """
 
+
+class DeprecationRetrieveModel(DummyModel):
+    """Relation-free model backing the RetrieveField deprecation-reason SDL test.
+
+    Same isolation rationale as "DeprecationListModel": a dedicated model keeps
+    the auto-derived companion type names unique so the assertion stays
+    order-independent under randomized test collection.
+    """
+
+
+class DeprecationCreateModel(DummyModel):
+    """Relation-free model backing the CreateField deprecation-reason SDL test.
+
+    Same isolation rationale as "DeprecationListModel": a dedicated model keeps
+    the auto-derived companion type names unique so the assertion stays
+    order-independent under randomized test collection.
+    """
+
     label = models.CharField(max_length=100)
 
 
