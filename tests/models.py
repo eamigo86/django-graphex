@@ -547,14 +547,22 @@ class DeprecationCreateModel(DummyModel):
 # green local run could still fail in CI. Same isolation pattern as
 # NestedObj*/NestedIntegrity*/OptimizerPerf*.
 class NestedInpAuthor(DummyModel):
-    """Author twin for the nested-input-types module (forward-FK target)."""
+    """Author twin for the nested-input-types module.
+
+    Forward-FK target of "NestedInpPost.author"; isolated so the module's
+    generated companion type names never collide with the shared Author.
+    """
 
     name = models.CharField(max_length=100)
     bio = models.TextField(default="")
 
 
 class NestedInpTag(DummyModel):
-    """Tag twin for the nested-input-types module (M2M target)."""
+    """Tag twin for the nested-input-types module.
+
+    M2M target of "NestedInpPost.tags"; isolated so the module's generated
+    companion type names never collide with the shared Tag.
+    """
 
     label = models.CharField(max_length=50)
 
@@ -576,7 +584,12 @@ class NestedInpPost(DummyModel):
 
 
 class NestedInpComment(DummyModel):
-    """Comment twin for the nested-input-types module (reverse-FK child)."""
+    """Comment twin for the nested-input-types module.
+
+    Reverse-FK child minting the "comments" accessor on "NestedInpPost";
+    isolated so the module's generated names never collide with the shared
+    Comment.
+    """
 
     post = models.ForeignKey(
         NestedInpPost, related_name="comments", on_delete=models.CASCADE

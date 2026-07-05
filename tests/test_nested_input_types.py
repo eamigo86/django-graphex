@@ -38,13 +38,13 @@ from django_graphex.types import DjangoModelType
 from .models import (
     NestedInpAuthor,
     NestedInpComment,
+    NestedInpPost,
+    NestedInpTag,
     NestedTreeNode,
     OrderChild,
     OrderParent,
-    NestedInpPost,
     SnakeChild,
     SnakeParent,
-    NestedInpTag,
 )
 
 
