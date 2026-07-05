@@ -539,6 +539,51 @@ class DeprecationCreateModel(DummyModel):
     label = models.CharField(max_length=100)
 
 
+# Dedicated family for tests/test_nested_input_types.py: that module builds
+# many DjangoModelMutation/DjangoModelType classes with nested_fields on the
+# GLOBAL registry, so sharing Post/Comment/Tag/Author made its auto-derived
+# companion names (PostListType, ...) collide with sibling modules under
+# randomized collection order — the Python-version-dependent shuffle meant a
+# green local run could still fail in CI. Same isolation pattern as
+# NestedObj*/NestedIntegrity*/OptimizerPerf*.
+class NestedInpAuthor(DummyModel):
+    """Author twin for the nested-input-types module (forward-FK target)."""
+
+    name = models.CharField(max_length=100)
+    bio = models.TextField(default="")
+
+
+class NestedInpTag(DummyModel):
+    """Tag twin for the nested-input-types module (M2M target)."""
+
+    label = models.CharField(max_length=50)
+
+
+class NestedInpPost(DummyModel):
+    """Post twin for the nested-input-types module.
+
+    Mirrors the relation shapes the module exercises: forward FK "author",
+    M2M "tags", and the reverse-FK "comments" accessor minted by
+    "NestedInpComment".
+    """
+
+    title = models.CharField(max_length=200)
+    body = models.TextField(default="")
+    author = models.ForeignKey(
+        NestedInpAuthor, related_name="posts", on_delete=models.CASCADE
+    )
+    tags = models.ManyToManyField(NestedInpTag, related_name="posts", blank=True)
+
+
+class NestedInpComment(DummyModel):
+    """Comment twin for the nested-input-types module (reverse-FK child)."""
+
+    post = models.ForeignKey(
+        NestedInpPost, related_name="comments", on_delete=models.CASCADE
+    )
+    body = models.TextField(default="")
+
+
 # --- Dedicated models for test_nested_objects.py -------------------------- #
 # tests/test_nested_objects.py builds several module-level DjangoModelType
 # subclasses (forward-FK, many-to-many, reverse-FK) over the SHARED "Post" /

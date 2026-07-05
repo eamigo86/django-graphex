@@ -36,15 +36,15 @@ from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoModelType
 
 from .models import (
-    Author,
-    Comment,
+    NestedInpAuthor,
+    NestedInpComment,
     NestedTreeNode,
     OrderChild,
     OrderParent,
-    Post,
+    NestedInpPost,
     SnakeChild,
     SnakeParent,
-    Tag,
+    NestedInpTag,
 )
 
 
@@ -169,22 +169,22 @@ class GenericFirstOrderingTest(TestCase):
         """
 
         class PostMutation(DjangoModelMutation):
-            """Plain "Post" mutation with no nested fields."""
+            """Plain "NestedInpPost" mutation with no nested fields."""
 
             class Meta:
-                """Bind the mutation to "Post" with no nested fields."""
+                """Bind the mutation to "NestedInpPost" with no nested fields."""
 
-                model = Post
+                model = NestedInpPost
 
         class PostWithCommentsMutation(DjangoModelMutation):
-            """ "Post" mutation exposing "comments" as a nested field."""
+            """ "NestedInpPost" mutation exposing "comments" as a nested field."""
 
             class Meta:
-                """Bind the mutation to "Post" create with "comments" nested."""
+                """Bind the mutation to "NestedInpPost" create with "comments" nested."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                nested_fields = {"comments": Comment}
+                nested_fields = {"comments": NestedInpComment}
 
         return _native_schema(
             post_create=PostMutation.CreateField(),
@@ -204,31 +204,31 @@ class GenericFirstOrderingTest(TestCase):
         plain_input = _arg_input_type(mt.fields["postCreate"])
 
         # The nested input is a DISTINCT, deterministically named type.
-        self.assertEqual(nested_input.name, "PostCreateNestedCommentsType")
+        self.assertEqual(nested_input.name, "NestedInpPostCreateNestedCommentsType")
         # comments is now an OBJECT-list input, not [ID!] (the bug).
         comments_type = _field_type_str(nested_input, "comments")
         self.assertNotEqual(comments_type, "[ID!]")
-        self.assertIn("Comment", comments_type)
+        self.assertIn("NestedInpComment", comments_type)
         self.assertTrue(comments_type.startswith("["))
 
         # The plain mutation is byte-identical to today: generic name, [ID!].
-        self.assertEqual(plain_input.name, "PostCreateGenericType")
+        self.assertEqual(plain_input.name, "NestedInpPostCreateGenericType")
         self.assertEqual(_field_type_str(plain_input, "comments"), "[ID!]")
 
     def test_child_element_type_is_comment_create_input(self) -> None:
-        """The nested "comments" list element type carries "Comment"'s own fields.
+        """The nested "comments" list element type carries "NestedInpComment"'s own fields.
 
         This test breaks if the list element type stops resolving to the
-        Comment create input, e.g. by degrading to a bare "ID" reference.
+        NestedInpComment create input, e.g. by degrading to a bare "ID" reference.
         """
         gql = self._build_schema()
         nested_input = _arg_input_type(
             gql.mutation_type.fields["postWithCommentsCreate"]
         )
-        # Drill into the list element type and assert it carries Comment fields.
+        # Drill into the list element type and assert it carries NestedInpComment fields.
         list_type = nested_input.fields["comments"].type.of_type  # [X!] -> X!
         element = list_type.of_type if hasattr(list_type, "of_type") else list_type
-        self.assertIn("body", element.fields)  # tests.Comment has post/body
+        self.assertIn("body", element.fields)  # tests.NestedInpComment has post/body
 
 
 # --------------------------------------------------------------------------- #
@@ -316,22 +316,22 @@ class DjangoModelTypeSiteTest(TestCase):
         # The DjangoModelType gate (types.py) mirrors the mutation gate: a nested
         # host builds the distinct skip_registry=True input.
         class PostWithCommentsType(DjangoModelType):
-            """ "Post" type exposing "comments" as a nested field.
+            """ "NestedInpPost" type exposing "comments" as a nested field.
 
             Used to build the nested input this test inspects.
             """
 
             class Meta:
-                """Bind the type to "Post" with "comments" declared as nested.
+                """Bind the type to "NestedInpPost" with "comments" declared as nested.
 
                 No extra options are needed for this test.
                 """
 
-                model = Post
-                nested_fields = {"comments": Comment}
+                model = NestedInpPost
+                nested_fields = {"comments": NestedInpComment}
 
-        name = _meta_arg_input_name(PostWithCommentsType, "create", "new_post")
-        self.assertEqual(name, "PostCreateNestedCommentsType")
+        name = _meta_arg_input_name(PostWithCommentsType, "create", "new_nestedinppost")
+        self.assertEqual(name, "NestedInpPostCreateNestedCommentsType")
 
 
 # --------------------------------------------------------------------------- #
@@ -352,39 +352,43 @@ class DeterministicNameTest(TestCase):
         """
 
         class PostWithCommentsType(DjangoModelType):
-            """ "Post" type exposing "comments" as a nested field.
+            """ "NestedInpPost" type exposing "comments" as a nested field.
 
             Used to build the nested input this test inspects.
             """
 
             class Meta:
-                """Bind the type to "Post" with "comments" declared as nested.
+                """Bind the type to "NestedInpPost" with "comments" declared as nested.
 
                 No extra options are needed for this test.
                 """
 
-                model = Post
-                nested_fields = {"comments": Comment}
+                model = NestedInpPost
+                nested_fields = {"comments": NestedInpComment}
 
         class PostWithTagsType(DjangoModelType):
-            """ "Post" type exposing "tags" as a nested field.
+            """ "NestedInpPost" type exposing "tags" as a nested field.
 
             Used to build the nested input this test inspects.
             """
 
             class Meta:
-                """Bind the type to "Post" with "tags" declared as nested.
+                """Bind the type to "NestedInpPost" with "tags" declared as nested.
 
                 No extra options are needed for this test.
                 """
 
-                model = Post
-                nested_fields = {"tags": Tag}
+                model = NestedInpPost
+                nested_fields = {"tags": NestedInpTag}
 
-        comments_name = _meta_arg_input_name(PostWithCommentsType, "create", "new_post")
-        tags_name = _meta_arg_input_name(PostWithTagsType, "create", "new_post")
-        self.assertEqual(comments_name, "PostCreateNestedCommentsType")
-        self.assertEqual(tags_name, "PostCreateNestedTagsType")
+        comments_name = _meta_arg_input_name(
+            PostWithCommentsType, "create", "new_nestedinppost"
+        )
+        tags_name = _meta_arg_input_name(
+            PostWithTagsType, "create", "new_nestedinppost"
+        )
+        self.assertEqual(comments_name, "NestedInpPostCreateNestedCommentsType")
+        self.assertEqual(tags_name, "NestedInpPostCreateNestedTagsType")
         self.assertNotEqual(comments_name, tags_name)
         self.assertNotIn("Generic", comments_name)
         self.assertNotIn("Generic", tags_name)
@@ -404,40 +408,44 @@ class ProjectionCollisionTest(TestCase):
 
         This test breaks if the projection-aware name suffix stops being
         appended, which would collide both inputs on
-        "PostCreateNestedCommentsType" and raise a duplicate-type error at
+        "NestedInpPostCreateNestedCommentsType" and raise a duplicate-type error at
         schema assembly.
         """
 
         # Same model + same nested_fields, DIFFERENT only_fields. Without the
-        # projection-aware name suffix both would be PostCreateNestedCommentsType
+        # projection-aware name suffix both would be NestedInpPostCreateNestedCommentsType
         # and graphene would raise a duplicate-type error at schema assembly.
         class PostNestedAMutation(DjangoModelMutation):
-            """ "Post" mutation nesting "comments" with the "title" projection."""
+            """ "NestedInpPost" mutation nesting "comments" with the "title" projection."""
 
             class Meta:
-                """Bind the mutation to "Post" create, nesting "comments", projected to "title"."""
+                """Bind the mutation to "NestedInpPost" create, nesting "comments", projected to "title"."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                nested_fields = {"comments": Comment}
+                nested_fields = {"comments": NestedInpComment}
                 only_fields = ("title", "comments")
 
         class PostNestedBMutation(DjangoModelMutation):
-            """ "Post" mutation nesting "comments" with the "body" projection."""
+            """ "NestedInpPost" mutation nesting "comments" with the "body" projection."""
 
             class Meta:
-                """Bind the mutation to "Post" create, nesting "comments", projected to "body"."""
+                """Bind the mutation to "NestedInpPost" create, nesting "comments", projected to "body"."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                nested_fields = {"comments": Comment}
+                nested_fields = {"comments": NestedInpComment}
                 only_fields = ("body", "comments")
 
-        name_a = _meta_arg_input_name(PostNestedAMutation, "create", "new_post")
-        name_b = _meta_arg_input_name(PostNestedBMutation, "create", "new_post")
+        name_a = _meta_arg_input_name(
+            PostNestedAMutation, "create", "new_nestedinppost"
+        )
+        name_b = _meta_arg_input_name(
+            PostNestedBMutation, "create", "new_nestedinppost"
+        )
         # Both encode comments but the projection suffix keeps them distinct.
-        self.assertTrue(name_a.startswith("PostCreateNestedCommentsType_p"))
-        self.assertTrue(name_b.startswith("PostCreateNestedCommentsType_p"))
+        self.assertTrue(name_a.startswith("NestedInpPostCreateNestedCommentsType_p"))
+        self.assertTrue(name_b.startswith("NestedInpPostCreateNestedCommentsType_p"))
         self.assertNotEqual(name_a, name_b)
 
         # The schema must assemble with NO duplicate-type error.
@@ -455,17 +463,19 @@ class ProjectionCollisionTest(TestCase):
         """
 
         class PostNestedMutation(DjangoModelMutation):
-            """ "Post" mutation nesting "comments" with no field projection."""
+            """ "NestedInpPost" mutation nesting "comments" with no field projection."""
 
             class Meta:
-                """Bind the mutation to "Post" create with "comments" nested, unprojected."""
+                """Bind the mutation to "NestedInpPost" create with "comments" nested, unprojected."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                nested_fields = {"comments": Comment}
+                nested_fields = {"comments": NestedInpComment}
 
-        name = _meta_arg_input_name(PostNestedMutation, "create", "new_post")
-        self.assertEqual(name, "PostCreateNestedCommentsType")  # no _p<hex> suffix
+        name = _meta_arg_input_name(PostNestedMutation, "create", "new_nestedinppost")
+        self.assertEqual(
+            name, "NestedInpPostCreateNestedCommentsType"
+        )  # no _p<hex> suffix
 
 
 # --------------------------------------------------------------------------- #
@@ -486,27 +496,27 @@ class UpdateOperationTest(TestCase):
         """
 
         class PostWithCommentsMutation(DjangoModelMutation):
-            """ "Post" mutation exposing "comments" as nested for create and update."""
+            """ "NestedInpPost" mutation exposing "comments" as nested for create and update."""
 
             class Meta:
-                """Bind the mutation to "Post" create/update with "comments" nested."""
+                """Bind the mutation to "NestedInpPost" create/update with "comments" nested."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create", "update")
-                nested_fields = {"comments": Comment}
+                nested_fields = {"comments": NestedInpComment}
 
         gql = _native_schema(
             post_with_comments_create=PostWithCommentsMutation.CreateField(),
             post_with_comments_update=PostWithCommentsMutation.UpdateField(),
         )
         update_input = _named_arg_input_type(
-            gql.mutation_type.fields["postWithCommentsUpdate"], "newPost"
+            gql.mutation_type.fields["postWithCommentsUpdate"], "newNestedinppost"
         )
-        self.assertEqual(update_input.name, "PostUpdateNestedCommentsType")
+        self.assertEqual(update_input.name, "NestedInpPostUpdateNestedCommentsType")
         # The update child input must be the object-list, not [ID!].
         comments_type = _field_type_str(update_input, "comments")
         self.assertNotEqual(comments_type, "[ID!]")
-        self.assertIn("Comment", comments_type)
+        self.assertIn("NestedInpComment", comments_type)
         # The update child element exposes the pk (`id`) for upsert.
         element = update_input.fields["comments"].type.of_type.of_type
         self.assertIn("id", element.fields)
@@ -522,30 +532,30 @@ class ChildInputIdentityTest(TestCase):
     """
 
     def test_nested_comment_element_accepts_comment_fields(self) -> None:
-        """The nested "comments" list element type exposes "Comment"'s own fields.
+        """The nested "comments" list element type exposes "NestedInpComment"'s own fields.
 
         This test breaks if the child element type stops resolving to the
-        actual "Comment" create input even when a dedicated "CommentMutation"
+        actual "NestedInpComment" create input even when a dedicated "CommentMutation"
         is registered alongside the parent.
         """
 
         class PostWithCommentsMutation(DjangoModelMutation):
-            """ "Post" mutation exposing "comments" as a nested field."""
+            """ "NestedInpPost" mutation exposing "comments" as a nested field."""
 
             class Meta:
-                """Bind the mutation to "Post" create with "comments" nested."""
+                """Bind the mutation to "NestedInpPost" create with "comments" nested."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                nested_fields = {"comments": Comment}
+                nested_fields = {"comments": NestedInpComment}
 
         class CommentMutation(DjangoModelMutation):
-            """Plain "Comment" mutation, registered alongside the nested parent."""
+            """Plain "NestedInpComment" mutation, registered alongside the nested parent."""
 
             class Meta:
-                """Bind the mutation to "Comment" with no nested fields."""
+                """Bind the mutation to "NestedInpComment" with no nested fields."""
 
-                model = Comment
+                model = NestedInpComment
 
         gql = _native_schema(
             post_with_comments_create=PostWithCommentsMutation.CreateField(),
@@ -555,7 +565,7 @@ class ChildInputIdentityTest(TestCase):
             gql.mutation_type.fields["postWithCommentsCreate"]
         )
         element = nested_input.fields["comments"].type.of_type.of_type
-        # tests.Comment exposes body (and the post FK).
+        # tests.NestedInpComment exposes body (and the post FK).
         self.assertIn("body", element.fields)
 
 
@@ -578,14 +588,14 @@ class BuildOnDemandTest(TestCase):
 
         # NO CommentMutation / CommentType registered anywhere in this schema.
         class PostWithCommentsMutation(DjangoModelMutation):
-            """ "Post" mutation exposing "comments" as a nested field."""
+            """ "NestedInpPost" mutation exposing "comments" as a nested field."""
 
             class Meta:
-                """Bind the mutation to "Post" create with "comments" nested."""
+                """Bind the mutation to "NestedInpPost" create with "comments" nested."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                nested_fields = {"comments": Comment}
+                nested_fields = {"comments": NestedInpComment}
 
         gql = _native_schema(
             post_with_comments_create=PostWithCommentsMutation.CreateField(),
@@ -597,7 +607,7 @@ class BuildOnDemandTest(TestCase):
         # The field must NOT be silently dropped; it is an object-list input.
         self.assertIn("comments", nested_input.fields)
         self.assertNotEqual(comments_type, "[ID!]")
-        self.assertIn("Comment", comments_type)
+        self.assertIn("NestedInpComment", comments_type)
 
 
 # --------------------------------------------------------------------------- #
@@ -709,21 +719,21 @@ class ForwardFKNestedChildTest(TestCase):
     """
 
     def test_forward_fk_nested_child_is_object_input(self) -> None:
-        """A nested forward-FK field resolves to an "Author" object input, not a bare "ID".
+        """A nested forward-FK field resolves to an "NestedInpAuthor" object input, not a bare "ID".
 
         This test breaks if a forward-FK nested field stops resolving to the
         child's own object input and degrades to a plain "ID" reference.
         """
 
         class PostForwardMutation(DjangoModelMutation):
-            """ "Post" mutation exposing "author" as a nested forward-FK field."""
+            """ "NestedInpPost" mutation exposing "author" as a nested forward-FK field."""
 
             class Meta:
-                """Bind the mutation to "Post" create with "author" nested."""
+                """Bind the mutation to "NestedInpPost" create with "author" nested."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                nested_fields = {"author": Author}
+                nested_fields = {"author": NestedInpAuthor}
 
         gql = _native_schema(
             post_forward_create=PostForwardMutation.CreateField(),
@@ -731,7 +741,7 @@ class ForwardFKNestedChildTest(TestCase):
         nested_input = _arg_input_type(gql.mutation_type.fields["postForwardCreate"])
         author_type = _field_type_str(nested_input, "author")
         self.assertNotEqual(author_type, "ID")
-        self.assertIn("Author", author_type)
+        self.assertIn("NestedInpAuthor", author_type)
 
 
 # --------------------------------------------------------------------------- #
@@ -752,30 +762,30 @@ class M2MNestedChildTest(TestCase):
         """
 
         class PostM2MMutation(DjangoModelMutation):
-            """ "Post" mutation exposing "tags" as a nested M2M field for create and update."""
+            """ "NestedInpPost" mutation exposing "tags" as a nested M2M field for create and update."""
 
             class Meta:
-                """Bind the mutation to "Post" create/update with "tags" nested."""
+                """Bind the mutation to "NestedInpPost" create/update with "tags" nested."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create", "update")
-                nested_fields = {"tags": Tag}
+                nested_fields = {"tags": NestedInpTag}
 
         gql = _native_schema(
             post_m2m_create=PostM2MMutation.CreateField(),
             post_m2m_update=PostM2MMutation.UpdateField(),
         )
         create_input = _named_arg_input_type(
-            gql.mutation_type.fields["postM2mCreate"], "newPost"
+            gql.mutation_type.fields["postM2mCreate"], "newNestedinppost"
         )
         update_input = _named_arg_input_type(
-            gql.mutation_type.fields["postM2mUpdate"], "newPost"
+            gql.mutation_type.fields["postM2mUpdate"], "newNestedinppost"
         )
         self.assertNotEqual(_field_type_str(create_input, "tags"), "[ID!]")
-        self.assertIn("Tag", _field_type_str(create_input, "tags"))
+        self.assertIn("NestedInpTag", _field_type_str(create_input, "tags"))
         # Update uses the update child input (object list, not [ID!]).
         self.assertNotEqual(_field_type_str(update_input, "tags"), "[ID!]")
-        self.assertIn("Tag", _field_type_str(update_input, "tags"))
+        self.assertIn("NestedInpTag", _field_type_str(update_input, "tags"))
 
 
 # --------------------------------------------------------------------------- #
@@ -796,22 +806,22 @@ class E2ENestedCreateTest(TestCase):
         """
 
         class PostWithCommentsMutation(DjangoModelMutation):
-            """ "Post" mutation exposing "comments" as a nested field."""
+            """ "NestedInpPost" mutation exposing "comments" as a nested field."""
 
             class Meta:
-                """Bind the mutation to "Post" create with "comments" nested."""
+                """Bind the mutation to "NestedInpPost" create with "comments" nested."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                nested_fields = {"comments": Comment}
+                nested_fields = {"comments": NestedInpComment}
 
         gql = _native_schema(
             post_with_comments_create=PostWithCommentsMutation.CreateField(),
         )
-        author = Author.objects.create(name="A")
+        author = NestedInpAuthor.objects.create(name="A")
         mutation = """
             mutation ($author: ID!) {
-              postWithCommentsCreate(newPost: {
+              postWithCommentsCreate(newNestedinppost: {
                 title: "Hello"
                 author: $author
                 comments: [{ body: "first" }, { body: "second" }]
@@ -829,8 +839,8 @@ class E2ENestedCreateTest(TestCase):
         )
         self.assertIsNone(result.errors, msg=result.errors)
         self.assertTrue(result.data["postWithCommentsCreate"]["ok"])
-        self.assertEqual(Post.objects.count(), 1)
-        post = Post.objects.get()
+        self.assertEqual(NestedInpPost.objects.count(), 1)
+        post = NestedInpPost.objects.get()
         self.assertEqual(
             set(post.comments.values_list("body", flat=True)), {"first", "second"}
         )
@@ -845,7 +855,7 @@ class NestedInputNameDelimiterCollisionTest(TestCase):
     "to_camel_case" strips EVERY underscore, so the multi-field JOIN delimiter
     "_" collapses into field-internal snake_case underscores. Before the fix
     a single multi-word key {"blog_comments"} and a two-field set
-    {"blog", "comments"} both produced "PostCreateNestedBlogCommentsType".
+    {"blog", "comments"} both produced "NestedInpPostCreateNestedBlogCommentsType".
     graphene then de-duplicates by NAME (keeps the first, silently drops the
     second's fields, raises NO error), so a client mutation is validated against
     the wrong input type and the shadowed mutation's fields vanish.
@@ -863,17 +873,23 @@ class NestedInputNameDelimiterCollisionTest(TestCase):
         letting {"blog_comments"} and {"blog", "comments"} collapse onto the
         same name again.
         """
-        single = _nested_input_name(Post, "create", {"blog_comments": Comment})
-        pair = _nested_input_name(Post, "create", {"blog": Tag, "comments": Comment})
-        # Before the fix BOTH collapsed to "PostCreateNestedBlogCommentsType".
+        single = _nested_input_name(
+            NestedInpPost, "create", {"blog_comments": NestedInpComment}
+        )
+        pair = _nested_input_name(
+            NestedInpPost,
+            "create",
+            {"blog": NestedInpTag, "comments": NestedInpComment},
+        )
+        # Before the fix BOTH collapsed to "NestedInpPostCreateNestedBlogCommentsType".
         self.assertNotEqual(
             single,
             pair,
             msg="multi-word key and two-field set must NOT share a name",
         )
         # Both still keep the human-readable, camelCased stem.
-        self.assertTrue(single.startswith("PostCreateNestedBlogCommentsType"))
-        self.assertTrue(pair.startswith("PostCreateNestedBlogCommentsType"))
+        self.assertTrue(single.startswith("NestedInpPostCreateNestedBlogCommentsType"))
+        self.assertTrue(pair.startswith("NestedInpPostCreateNestedBlogCommentsType"))
         # The disambiguator is the keys-hash suffix.
         self.assertIn("_n", single)
         self.assertIn("_n", pair)
@@ -885,8 +901,10 @@ class NestedInputNameDelimiterCollisionTest(TestCase):
         stops producing distinct names.
         """
         # The minimal ISSUE example: {"a_b"} vs {"a", "b"} -> ...NestedABType.
-        single = _nested_input_name(Post, "create", {"a_b": Comment})
-        pair = _nested_input_name(Post, "create", {"a": Tag, "b": Comment})
+        single = _nested_input_name(NestedInpPost, "create", {"a_b": NestedInpComment})
+        pair = _nested_input_name(
+            NestedInpPost, "create", {"a": NestedInpTag, "b": NestedInpComment}
+        )
         self.assertNotEqual(single, pair)
 
     def test_single_word_key_keeps_suffix_free_human_name(self) -> None:
@@ -899,12 +917,12 @@ class NestedInputNameDelimiterCollisionTest(TestCase):
         # The common case (one key, no internal underscore) is unambiguous and
         # MUST stay byte-identical to today -- no suffix, no regression.
         self.assertEqual(
-            _nested_input_name(Post, "create", {"comments": Comment}),
-            "PostCreateNestedCommentsType",
+            _nested_input_name(NestedInpPost, "create", {"comments": NestedInpComment}),
+            "NestedInpPostCreateNestedCommentsType",
         )
         self.assertEqual(
-            _nested_input_name(Post, "create", {"tags": Tag}),
-            "PostCreateNestedTagsType",
+            _nested_input_name(NestedInpPost, "create", {"tags": NestedInpTag}),
+            "NestedInpPostCreateNestedTagsType",
         )
 
     def test_name_is_deterministic_and_order_independent(self) -> None:
@@ -916,8 +934,16 @@ class NestedInputNameDelimiterCollisionTest(TestCase):
         """
         # Idempotent: same key set in any order yields the same name, so repeated
         # builds of the SAME nested input never trip graphene's duplicate guard.
-        a = _nested_input_name(Post, "create", {"blog": Tag, "comments": Comment})
-        b = _nested_input_name(Post, "create", {"comments": Comment, "blog": Tag})
+        a = _nested_input_name(
+            NestedInpPost,
+            "create",
+            {"blog": NestedInpTag, "comments": NestedInpComment},
+        )
+        b = _nested_input_name(
+            NestedInpPost,
+            "create",
+            {"comments": NestedInpComment, "blog": NestedInpTag},
+        )
         self.assertEqual(a, b)
 
     def test_keys_suffix_composes_with_projection_suffix(self) -> None:
@@ -930,10 +956,16 @@ class NestedInputNameDelimiterCollisionTest(TestCase):
         # An ambiguous key set AND a non-empty projection carry BOTH suffixes;
         # two different projections still diverge on the _p segment.
         proj_a = _nested_input_name(
-            Post, "create", {"blog_comments": Comment}, only_fields=("title",)
+            NestedInpPost,
+            "create",
+            {"blog_comments": NestedInpComment},
+            only_fields=("title",),
         )
         proj_b = _nested_input_name(
-            Post, "create", {"blog_comments": Comment}, only_fields=("body",)
+            NestedInpPost,
+            "create",
+            {"blog_comments": NestedInpComment},
+            only_fields=("body",),
         )
         for name in (proj_a, proj_b):
             self.assertIn("_n", name)
@@ -964,16 +996,16 @@ class NestedInputNameDelimiterCollisionTest(TestCase):
                 nested_fields = {"blog_comments": SnakeChild}
 
         class PostTwoFieldMutation(DjangoModelMutation):
-            """ "Post" mutation nesting two fields whose camelCased join would collide."""
+            """ "NestedInpPost" mutation nesting two fields whose camelCased join would collide."""
 
             class Meta:
-                """Bind the mutation to "Post" create, nesting "comments" and "tags"."""
+                """Bind the mutation to "NestedInpPost" create, nesting "comments" and "tags"."""
 
-                model = Post
+                model = NestedInpPost
                 model_operations = ("create",)
-                # Two real Post relations whose names, joined+camelCased, would
+                # Two real NestedInpPost relations whose names, joined+camelCased, would
                 # collide with a single "tagsComments"-style multi-word key.
-                nested_fields = {"comments": Comment, "tags": Tag}
+                nested_fields = {"comments": NestedInpComment, "tags": NestedInpTag}
 
         gql = _native_schema(
             snake_create=SnakeMultiWordMutation.CreateField(),
