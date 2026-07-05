@@ -1,7 +1,8 @@
 # django-graphex — Playground
 
-> **Targets django-graphex v1.3.x** — includes v1.1.0 query-optimization,
-> v1.2.0 typed-GFK unions, and v1.2.2 `get_queryset` scoping + safe ordering.
+> **Targets django-graphex v2.0 — native `graphql-core` backend (no graphene).**
+> Exercises the whole 2.0 surface: query-optimization, typed-GFK unions,
+> `get_queryset` scoping + safe ordering, and native subscriptions (SSE + WS).
 
 A small, runnable Django project that exercises **every major feature** of
 `django-graphex` end-to-end: queries, all three paginators, filtering,
@@ -37,8 +38,11 @@ cd examples/playground
 
 make install     # uv sync — installs the local library + daphne
 make migrate     # create + apply migrations (SQLite)
-make seed        # demo data: 5 authors × 4 posts × 3 comments, 3 notes,
-                 #            2 accounts + 2 invoices + 4 attachments (GFK union)
+make seed        # demo data: 15 authors × 12 posts × 3 comments, 12 notes,
+                 #            2 accounts + 2 invoices + 4 attachments (GFK union).
+                 #            Each author's posts list spans multiple pages at
+                 #            page size 10, so nested window pagination is real.
+                 #            Scale with: python manage.py seed --authors N --posts M
 make run         # ASGI server at http://127.0.0.1:8000/graphql/
 ```
 
@@ -72,10 +76,10 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DjangoListObjectType` | ✅ | `schema.py` — `PostListType`, `AuthorListType`, `CommentListType` |
 | `DjangoInputObjectType` | ✅ | `schema.py` — `CategoryInput` |
 | `DjangoModelType` | ✅ | `schema.py` — `NoteModelType` |
-| `DjangoUnionType` (typed GFK target) | ✅ | `schema.py` — `AttachmentTargetUnion` (`Meta.gfk_types`) + `AttachmentType.Meta.gfk_unions = {"target": …}` |
+| `DjangoUnionType` (typed GFK target) | ✅ | `schema.py` — `AttachmentTargetUnion` (`Meta.types`) + `AttachmentType.Meta.unions = {"target": …}` |
 | `DjangoInterfaceType` | doc | Covered in `docs/usage/types.md`; not in the playground (no shared abstract base fits Account/Invoice cleanly) |
 | `TextChoices` → GraphQL enum | ✅ | `Post.status` / `PostType` |
-| `max_deep` per-type depth limit | ✅ | `schema.py` — `PostType.Meta.max_deep = 4` |
+| `max_depth` per-type depth limit | ✅ | `schema.py` — `PostType.Meta.max_depth = 4` |
 | `complexity` per-type cost weight | ✅ | `schema.py` — `PostType.Meta.complexity = 2` |
 | **Fields** | | |
 | `DjangoObjectField` | ✅ | `PublicQuery.post` |
@@ -110,33 +114,34 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `IsAdmin` | ✅ | imported; available for `permission_classes` |
 | `IsAdminOrReadOnly` | ✅ | imported; available for `permission_classes` |
 | **Security / middleware** | | |
-| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
-| `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
-| `GraphQLDirectiveMiddleware` | ✅ | `config/settings.py` GRAPHENE.MIDDLEWARE |
+| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
+| `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE |
+| `GraphQLDirectiveMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE |
 | `DjangoGraphQLSchema` (public + private roots) | ✅ | `schema.py` — `private_query=PrivateQuery`, `private_subscription=PrivateSubscriptions` |
 | `collect_field_names` | note | Used internally by `DjangoGraphQLSchema`; can be called directly to build a custom protected-field set |
 | `DenyAllRegistry` | note | Fail-closed sentinel for broken schemas; not needed in a healthy project |
 | **Views** | | |
 | `BaseGraphQLView` | ✅ | base of all views |
-| `GraphQLView` (depth/cost rules, caching) | ✅ | base of `SubscriptionGraphQLView` at `/graphql/` |
+| `GraphQLView` (depth/cost rules, caching) | ✅ | queries + mutations at `/graphql/` |
 | `AuthenticatedGraphQLView` | ✅ | `/graphql/secure/` — rejects unauthenticated requests with HTTP 403 |
-| `SubscriptionGraphQLView` | ✅ | `/graphql/` |
+| `subscription_sse_view` (native SSE) | ✅ | `/graphql/stream` |
+| `subscription_ws_consumer` (graphql-transport-ws) | ✅ | `/ws/graphql/` (see `config/asgi.py`) |
 | `SubscriptionClientView` | ✅ | `/graphql/client/` |
 | **Query depth / cost limiting** | | |
-| `DepthLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.max_deep = 4` activates per-type enforcement |
+| `DepthLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.max_depth = 4` activates per-type enforcement |
 | `CostLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.complexity = 2`; enable budget via `MAX_QUERY_COST` |
 | `analyze_cost` / `CostReport` | ✅ | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
-| `MAX_QUERY_DEPTH` setting | ✅ | **Active at depth 6** in `config/settings.py:94` — the playground rejects any query nested more than 6 levels |
+| `MAX_QUERY_DEPTH` setting | ✅ | **Active at depth 6** in `config/settings.py:112` — the playground rejects any query nested more than 6 levels |
 | `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note | Commented in `config/settings.py` — uncomment to block expensive queries and expose cost |
 | **Queryset optimization** | | |
 | `OPTIMIZE_QUERYSET` | ✅ | Enabled by default; `select_related`/`prefetch_related` derived from the selection. Commented in `config/settings.py` to show how to flip it |
 | `OPTIMIZE_ONLY_FIELDS` | ✅ | Enabled by default; `.only()` column narrowing (root span + inside each `Prefetch` child) |
 | `OPTIMIZE_NESTED_PAGINATION` (DB-side window slicing) | ✅ | Exercised by `authors { results { posts(filter:…) { results(limit:…, ordering:…) } } }` — `ROW_NUMBER() OVER PARTITION BY author_id` slices each author's page DB-side |
-| `OPTIMIZE_ANNOTATED_FIELDS` / `AnnotatedField` | ✅ | `schema.py` — `AuthorType.post_count = AnnotatedField(graphene.Int, Count("posts"))`; `Count` injected only when `postCount` is selected |
+| `OPTIMIZE_ANNOTATED_FIELDS` / `AnnotatedField` | ✅ | `schema.py` — `AuthorType.post_count = AnnotatedField(GraphQLInt, Count("posts"))`; `Count` injected only when `postCount` is selected |
 | Per-field `optimize_<field>` hook | ✅ | `schema.py` — `AuthorType.optimize_posts` (composes on the optimizer-built `posts` child queryset, once per query) |
 | `OPTIMIZER_SAFE_MODE` | note | Default `False` (fail loud); listed commented in `config/settings.py` — flip to `True` to degrade to the un-optimized base on any optimizer exception |
 | **Generic relations (typed GFK union)** | | |
-| `GenericForeignKey` exposed as a typed `DjangoUnionType` | ✅ | `schema.py` — `AttachmentType.target` via `AttachmentTargetUnion` (`Meta.gfk_types`) + `Meta.gfk_unions` |
+| `GenericForeignKey` exposed as a typed `DjangoUnionType` | ✅ | `schema.py` — `AttachmentType.target` via `AttachmentTargetUnion` (`Meta.types`) + `Meta.unions` |
 | Per-content-type `GenericPrefetch` narrowing (Django 5.0+) | ✅ | One `.only()`-narrowed queryset per content type (`AccountType.balance`, `InvoiceType.amount`), batched across all attachments |
 | `GenericForeignKey` / `GenericRelation` prefetch | ✅ / wired | `Attachment.target` (GFK) exercised by the seed; `Post.attachments` (reverse `GenericRelation`) is wired but left empty so the GFK-union demo stays runnable |
 | **File uploads (v1.3.0)** | | |
@@ -150,8 +155,8 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | Private subscription via `DjangoModelType` | ✅ | `NoteModelType.SubscriptionField()` — gated by `AuthenticatedFieldsMiddleware` |
 | `subscription_scope` (server-forced row scope) | ✅ | `NoteModelType.subscription_scope` — only own notes |
 | `subscription_index_fields` | ✅ | `NoteModelType.Meta.subscription_index_fields = ("owner",)` |
-| `serialize_data` | ✅ | `PostSubscription`, `CommentSubscription`, `NoteModelType.Meta.serialize_data = True` |
-| `GraphqlAPIDemultiplexer` | ✅ | `consumers.py` — `AppDemultiplexer` |
+| `payload_mode` | ✅ | `PostSubscription`, `CommentSubscription`, `NoteModelType.Meta.payload_mode = "full"` |
+| Native WS consumer (`subscription_ws_consumer`) | ✅ | `consumers.py` — `AppWSConsumer` |
 
 ---
 
@@ -165,11 +170,52 @@ make run            daphne ASGI server (HTTP + WebSocket)
 make collectstatic  collect static files into STATIC_ROOT
 make superuser      create your own superuser
 make shell          Django shell
+make test           run the end-to-end tests (WS + SSE round-trips, schema, client)
 make reset          drop the SQLite db, re-migrate, re-seed
 make clean          remove the db and caches
 ```
 
 The `make run` command starts daphne at <http://127.0.0.1:8000/graphql/>.
+
+---
+
+## Tests
+
+The `tests/` directory holds **end-to-end** tests that run under the
+playground's **own** Django settings (`config.settings`), not the library's
+`tests/` settings. They drive the real `blog.schema`, the real WebSocket
+consumer (`config/asgi.py` → `blog.consumers.AppWSConsumer`), and the real SSE
+view (`config/urls.py`):
+
+- **WS round-trip** — open a `postSubscription` over the graphql-transport-ws
+  consumer, create a `Post` through the ORM (a genuine `post_save` broadcast),
+  and assert a `next` frame with the new post arrives.
+- **SSE round-trip** — open the same subscription over the SSE
+  (`text/event-stream`) view, create a `Post`, and assert an `event: next`
+  frame is delivered.
+- **Schema + permission smoke** — the playground schema builds; a protected
+  field (`me`) requires auth through `GraphQLView`/`AuthenticatedFieldsMiddleware`.
+- **Subscription client** — `/graphql/client/` serves the HTML client with both
+  transports (graphql-transport-ws + graphql-sse) and the playground's WS/HTTP
+  endpoints wired. (A full headless-browser round-trip is intentionally deferred
+  — no Playwright/Selenium dependency is added.)
+
+Run them with **make** (uses `uv`, installs the `test` dependency group):
+
+```bash
+cd examples/playground
+make test
+```
+
+Or directly, with any environment that already has `pytest`, `pytest-django`,
+`pytest-asyncio`, `channels`, and `daphne` available (e.g. the repo's own dev
+venv) — `--no-migrations` builds the test DB straight from the models, since
+the playground ships no migration files:
+
+```bash
+cd examples/playground
+DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations
+```
 
 ---
 
@@ -225,7 +271,8 @@ explode (visible via the SQL panel, `django-debug-toolbar`, or
 `assertNumQueries` in a test).
 
 **(a) `AnnotatedField` — selection-driven DB annotation.**
-`AuthorType.post_count = AnnotatedField(graphene.Int, Count("posts"))`.
+`AuthorType.post_count = AnnotatedField(GraphQLInt, Count("posts"))`
+(`GraphQLInt` is imported from `graphql`, the graphql-core scalar — no graphene).
 
 ```graphql
 {
@@ -276,8 +323,8 @@ the same prefetch — N+1-safe regardless of how many authors or posts exist.
 
 **(c) Typed `GenericForeignKey` union (per-content-type narrowing).**
 `Attachment.target` is a GFK exposed as `AttachmentTargetUnion` (a
-`DjangoUnionType` with `Meta.gfk_types = (AccountType, InvoiceType)`); the owner
-declares `Meta.gfk_unions = {"target": AttachmentTargetUnion}`. Clients select
+`DjangoUnionType` with `Meta.types = (AccountType, InvoiceType)`); the owner
+declares `Meta.unions = {"target": AttachmentTargetUnion}`. Clients select
 per-member fields with inline fragments:
 
 ```graphql
@@ -320,9 +367,9 @@ prevents the walker from mis-attributing `InvoiceType.amount` against the
 
 > **Note on `@lowercase` and enum fields**: `Post.status` is a `TextChoices`
 > CharField exposed as a GraphQL enum. Applying `@lowercase` to it has no
-> visible effect because graphene re-serializes the field through the enum type
-> *after* the directive runs, always returning the enum name (`PUBLISHED`, etc.).
-> Use `@lowercase` on plain text fields (like `title` above) where the
+> visible effect because graphql-core re-serializes the field through the enum
+> type *after* the directive runs, always returning the enum name (`PUBLISHED`,
+> etc.). Use `@lowercase` on plain text fields (like `title` above) where the
 > transformation is visible in the response.
 
 All directives from `all_directives` are available: `@uppercase`,
@@ -417,7 +464,7 @@ a plain `postCreate`.  Passing an empty list (`comments: []`) is a no-op
 
 ## Query depth and cost limits
 
-Both rules are wired into `GraphQLView` (and therefore `SubscriptionGraphQLView`).
+Both rules are wired into `GraphQLView`.
 
 **`MAX_QUERY_DEPTH` is active** in this playground: `config/settings.py` ships
 with `"MAX_QUERY_DEPTH": 6`, so any query nested more than 6 levels deep is
@@ -435,7 +482,7 @@ DJANGO_GRAPHEX = {
 }
 ```
 
-`PostType` already sets `max_deep = 4` and `complexity = 2` so per-type
+`PostType` already sets `max_depth = 4` and `complexity = 2` so per-type
 enforcement is active for free. A query that nests more than 4 levels under a
 `post` field is rejected with `QUERY_TOO_DEEP`, and the global `MAX_QUERY_DEPTH`
 of 6 applies on top (most-restrictive rule wins).
@@ -467,49 +514,47 @@ it at resolve time; the client cannot bypass it without an authenticated session
 
 ## Subscriptions
 
-Subscriptions use a **two-channel** protocol: a WebSocket carries
-notifications, and an HTTP GraphQL operation registers/unregisters the
-subscription using the channel ID from the WebSocket handshake.
+Subscriptions run over the **native transports**: a `graphql-transport-ws`
+WebSocket (`/ws/graphql/`) or Server-Sent Events (`POST /graphql/stream`).
+The subscription document travels IN the transport — there is no separate
+HTTP registration step.
 
 The easiest way to try them is the built-in browser client at
 <http://127.0.0.1:8000/graphql/client/>:
 
-1. Press **Connect** — the client opens the WebSocket and receives a `channel_id`.
-2. Press **▶ Subscribe** to send the subscribe HTTP call.
-3. Trigger a change (create a `Post` via `postCreate`) — the WebSocket delivers
-   a notification instantly.
+1. Press **Connect** — the client opens the WebSocket (or SSE stream).
+2. Run the pre-filled `postSubscription(action: ALL_ACTIONS) { id title }`.
+3. Trigger a change (create a `Post` via `postCreate`) — the event arrives
+   instantly.
 
-Manual flow (for `wscat` / custom clients):
+Manual WebSocket flow (`wscat -c ws://127.0.0.1:8000/ws/graphql/ -s graphql-transport-ws`):
 
-1. `wscat -c ws://127.0.0.1:8000/ws/graphql/` — receive `{ "channel_id": "…" }`.
+```json
+→ {"type": "connection_init"}
+← {"type": "connection_ack"}
+→ {"type": "subscribe", "id": "1",
+   "payload": {"query": "subscription { postSubscription(action: ALL_ACTIONS) { id title } }"}}
+```
 
-2. Subscribe over HTTP (`/graphql/`):
+Trigger a change from GraphiQL:
 
-   ```graphql
-   subscription {
-     postSubscription(
-       channelId: "<channel_id>"
-       action: ALL_ACTIONS
-       operation: SUBSCRIBE
-     ) { ok error stream operation action }
-   }
-   ```
+```graphql
+mutation {
+  postCreate(newPost: { title: "Live update", author: 1 }) { ok post { id } }
+}
+```
 
-3. Trigger a change:
+The socket delivers a standard GraphQL result frame:
 
-   ```graphql
-   mutation {
-     postCreate(newPost: { title: "Live update", author: 1 }) { ok post { id } }
-   }
-   ```
+```json
+{ "type": "next", "id": "1",
+  "payload": { "data": { "postSubscription": { "id": "21", "title": "Live update" } } } }
+```
 
-   The WebSocket delivers:
-
-   ```json
-   { "stream": "posts",
-     "payload": { "action": "create", "model": "blog.post",
-                  "data": { "id": 21, "title": "Live update", "status": "draft" } } }
-   ```
+Unsubscribe with `{"type": "complete", "id": "1"}` (or just close the socket).
+For SSE, POST the same document to `/graphql/stream` and read the
+`event: next` frames (see the [Subscriptions guide](https://github.com/eamigo86/django-graphex/blob/main/docs/usage/subscriptions.md)
+for the full wire protocol of both transports).
 
 ### Filtered subscription (per-post comments)
 
@@ -517,12 +562,7 @@ Subscribe with `filters: { post: <id> }` to receive only that post's comments:
 
 ```graphql
 subscription {
-  commentSubscription(
-    channelId: "…"
-    action: ALL_ACTIONS
-    operation: SUBSCRIBE
-    filters: { post: 1 }
-  ) { ok error }
+  commentSubscription(action: ALL_ACTIONS, filters: { post: 1 }) { id text }
 }
 ```
 
@@ -535,13 +575,13 @@ mutation { commentCreate(newComment: { post: 2, authorName: "Bob", text: "yo" })
 
 ### Private subscription (auth-gated)
 
-`noteSubscription` requires an authenticated session (gated by
-`AuthenticatedFieldsMiddleware`). Log in via `/admin` first, then subscribe
-from the same browser session.
+`noteSubscription` requires an authenticated session — `authorize_subscription`
+denies the subscribe before any group is joined. Log in via `/admin` first,
+then subscribe from the same browser session.
 
 ```graphql
 subscription {
-  noteSubscription(channelId: "…", action: ALL_ACTIONS, operation: SUBSCRIBE) { ok error }
+  noteSubscription(action: ALL_ACTIONS) { id text }
 }
 ```
 
@@ -551,8 +591,10 @@ subscription {
 
 | Route | View | Notes |
 |-------|------|-------|
-| `/graphql/` | `SubscriptionGraphQLView` | HTTP GraphQL + GraphiQL; handles subscribe/unsubscribe |
-| `/graphql/client/` | `SubscriptionClientView` | Browser client for the WebSocket subscription flow |
+| `/graphql/` | `GraphQLView` | HTTP GraphQL + GraphiQL (queries + mutations) |
+| `/graphql/stream` | `subscription_sse_view` | Native Server-Sent Events subscription transport |
+| `/ws/graphql/` | `subscription_ws_consumer` | Native `graphql-transport-ws` WebSocket (see `config/asgi.py`) |
+| `/graphql/client/` | `SubscriptionClientView` | Browser client for the subscription flow (WS + SSE) |
 | `/graphql/secure/` | `AuthenticatedGraphQLView` | Same schema behind **view-level** HTTP 403 auth |
 
 `AuthenticatedGraphQLView` rejects unauthenticated requests before any query

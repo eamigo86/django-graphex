@@ -1,35 +1,51 @@
 """Base64 file upload support for django-graphex.
 
-Opt-in: import ``Base64FileInput`` (and optionally ``decode_base64_file``)
+Opt-in: import "Base64FileInput" (and optionally "decode_base64_file")
 explicitly — nothing is imported by default.
 
 Usage
 -----
 
-::
+"Base64FileInput" is a native "InputType" (a Pydantic model). Use it as an
+argument type on a mutation; the validated value that arrives in the resolver
+exposes "filename" / "data" / "content_type" and a "to_uploaded_file()"
+helper:
 
+    from graphql import GraphQLArgument, GraphQLNonNull
+    from django_graphex.core import Mutation, field
     from django_graphex.uploads import Base64FileInput, decode_base64_file
 
-    class MyMutation(graphene.Mutation):
+    class MyMutation(Mutation):
         class Arguments:
-            avatar = Base64FileInput(required=True)
+            # A native Mutation arg is a graphql-core "GraphQLArgument". The
+            # compiled input type lives on "Base64FileInput._meta.graphql_input_type"
+            # but is "None" until "compile_all_inputs()" runs (AppConfig.ready),
+            # so reference it via a zero-arg "lambda" thunk that resolves at
+            # "Field()" build time.
+            avatar = lambda: GraphQLArgument(  # noqa: E731
+                GraphQLNonNull(Base64FileInput._meta.graphql_input_type)
+            )
 
-        ok = graphene.Boolean()
+        ok = field(GraphQLBoolean)
 
-        def mutate(self, info, avatar):
+        @classmethod
+        def mutate(cls, root, info, **kwargs):
+            # Input-object args arrive as a plain dict (snake-case out_name keys);
+            # rehydrate it into a Base64FileInput before calling to_uploaded_file().
+            avatar = Base64FileInput(**kwargs["avatar"])
             uploaded = avatar.to_uploaded_file(max_size=2 * 1024 * 1024)
             profile.avatar.save(uploaded.name, uploaded)
-            return MyMutation(ok=True)
+            return cls(ok=True)
 
 Settings
 --------
 
-``MAX_UPLOAD_SIZE`` (int, bytes)
-    Required when ``Base64FileInput`` is used. Raises ``ImproperlyConfigured``
-    if absent and no per-call ``max_size`` override is given.
+"MAX_UPLOAD_SIZE" (int, bytes)
+    Required when "Base64FileInput" is used. Raises "ImproperlyConfigured"
+    if absent and no per-call "max_size" override is given.
 
-``MAX_REQUEST_BODY_SIZE`` (int, bytes, or None)
-    Optional. When set, ``BaseGraphQLView.dispatch`` / ``parse_body`` rejects
+"MAX_REQUEST_BODY_SIZE" (int, bytes, or None)
+    Optional. When set, "BaseGraphQLView.dispatch" / "parse_body" rejects
     any request whose body length exceeds this limit with HTTP 413 — BEFORE
     JSON parsing. This is the primary memory-safety cap: the base64 payload
     is already in RAM once the JSON body is parsed, so a per-field decoded-
@@ -41,31 +57,31 @@ Memory model
 
 For batch requests both guards compose:
 
-* ``MAX_REQUEST_BODY_SIZE`` bounds the total wire bytes of the entire batch.
+* "MAX_REQUEST_BODY_SIZE" bounds the total wire bytes of the entire batch.
 * For each upload field in each batch operation, the per-field decoded-size
-  pre-check (``len(b64_data) * 3 // 4`` estimate vs effective cap) fires
-  before the actual ``base64.b64decode`` call, bounding the decode allocation.
+  pre-check ("len(b64_data) * 3 // 4" estimate vs effective cap) fires
+  before the actual "base64.b64decode" call, bounding the decode allocation.
 
 Peak memory ≈ body_size + MAX_UPLOAD_SIZE (one file decoded at a time because
-batch operations execute sequentially in ``views.py``).
+batch operations execute sequentially in "views.py").
 
 Content validation
 ------------------
 
 Magic-byte / MIME-type validation is intentionally out of scope. Use Django's
-``FileField`` validators (e.g. ``FileExtensionValidator``) or a custom
+"FileField" validators (e.g. "FileExtensionValidator") or a custom
 validator on the model field — that is the correct layer.
 
 Query cost
 ----------
 
 Input payload size is not accounted for in query-cost analysis. The body-
-size guard (``MAX_REQUEST_BODY_SIZE``) is the canonical byte-level cap.
+size guard ("MAX_REQUEST_BODY_SIZE") is the canonical byte-level cap.
 
 Cache
 -----
 
-Upload mutations bypass the response cache (they are ``mutation`` operations;
+Upload mutations bypass the response cache (they are "mutation" operations;
 the cache layer already skips mutations). No special handling needed.
 
 REST side-channel alternative
@@ -74,7 +90,7 @@ REST side-channel alternative
 For gateway-constrained clients that cannot send large JSON bodies (e.g. an
 API gateway with a 10 MB payload limit), the recommended alternative is a
 REST side-channel: upload the file directly to a presigned URL (S3, GCS,
-Azure Blob) or a separate ``/upload/`` endpoint, obtain a file key or URL,
+Azure Blob) or a separate "/upload/" endpoint, obtain a file key or URL,
 and pass that reference as a plain string field in the GraphQL mutation.
 This avoids base64 overhead entirely and scales naturally with file size.
 """
@@ -83,13 +99,13 @@ from __future__ import annotations
 
 import base64
 import binascii
-from typing import Any
+from typing import Any, Optional
 
-import graphene
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import SimpleUploadedFile
 from graphql import GraphQLError
 
+from .core.base import InputType
 from .settings import graphql_api_settings
 
 __all__ = ["Base64FileInput", "decode_base64_file"]
@@ -107,7 +123,7 @@ def _estimate_decoded_size(b64_data: str) -> int:
 
     Args:
         b64_data: The raw base64 string (may contain whitespace/newlines).
-            Coerced to ``str`` so graphene ``String`` scalars also work.
+            Coerced to ``str`` so non-``str`` callers also work.
 
     Returns:
         Estimated decoded byte count.
@@ -153,40 +169,40 @@ def decode_base64_file(
     *,
     max_size: int | None = None,
 ) -> SimpleUploadedFile:
-    """Decode a base64 file payload dict into a Django ``SimpleUploadedFile``.
+    """Decode a base64 file payload dict into a Django "SimpleUploadedFile".
 
     This is the core decode function used internally by
-    ``Base64FileInput.to_uploaded_file()``. You can call it directly when you
+    "Base64FileInput.to_uploaded_file()". You can call it directly when you
     hold the raw dict (e.g. from a custom resolver).
 
     The function performs a **decoded-size pre-check** *before* the actual
-    ``base64.b64decode`` call: it estimates ``len(b64_data) * 3 // 4`` and
+    "base64.b64decode" call: it estimates "len(b64_data) * 3 // 4" and
     rejects payloads that would exceed the effective cap without ever
     allocating the decoded bytes. This saves the decode-allocation overhead
     for oversized uploads.
 
     Args:
         value: A dict with keys:
-            * ``"filename"`` (str, required) — the original filename.
-            * ``"data"`` (str, required) — the base64-encoded file content.
-            * ``"content_type"`` (str, optional) — MIME type; defaults to
-              ``"application/octet-stream"``.
+            * "filename" (str, required) — the original filename.
+            * "data" (str, required) — the base64-encoded file content.
+            * "content_type" (str, optional) — MIME type; defaults to
+              "application/octet-stream".
         max_size: Per-call size cap in bytes. Overrides the global
-            ``MAX_UPLOAD_SIZE`` setting. Pass ``None`` to use the global
-            setting (which must be set, or ``ImproperlyConfigured`` is raised).
+            "MAX_UPLOAD_SIZE" setting. Pass "None" to use the global
+            setting (which must be set, or "ImproperlyConfigured" is raised).
 
     Returns:
-        A ``SimpleUploadedFile`` with ``name``, ``content_type``, and the
-        decoded binary content ready for ``FileField.save()``.
+        A "SimpleUploadedFile" with "name", "content_type", and the
+        decoded binary content ready for "FileField.save()".
 
     Raises:
-        ImproperlyConfigured: When no cap is configured (neither ``max_size``
-            nor ``MAX_UPLOAD_SIZE``).
+        ImproperlyConfigured: When no cap is configured (neither "max_size"
+            nor "MAX_UPLOAD_SIZE").
         GraphQLError: When the estimated decoded size exceeds the effective cap,
-            or when the ``data`` field is not valid base64.
+            or when the "data" field is not valid base64.
     """
-    # Coerce to plain str — graphene InputObjectType field values may arrive
-    # as graphene scalar wrappers (e.g. graphene.String) rather than str.
+    # Coerce to plain str — callers may pass non-str values (e.g. a Pydantic
+    # field that has not been narrowed, or a raw resolver dict) rather than str.
     filename: str = str(value.get("filename", "") or "")
     b64_data: str = str(value.get("data", "") or "")
     _ct_raw = value.get("content_type", None)
@@ -229,45 +245,63 @@ def decode_base64_file(
     )
 
 
-class Base64FileInput(graphene.InputObjectType):
+class Base64FileInput(InputType):
     """GraphQL input type for base64-encoded file uploads (opt-in).
 
-    Use this as a field type in any graphene ``Mutation.Arguments`` class.
-    Call ``.to_uploaded_file()`` in the resolver to obtain a Django
-    ``SimpleUploadedFile`` suitable for assigning to a model ``FileField``.
+    A native "InputType" (a Pydantic model). Use it as an argument type on a
+    "django_graphex.Mutation"; the VALIDATED value that arrives in the resolver
+    is an instance of this class. Call ".to_uploaded_file()" on it to obtain a
+    Django "SimpleUploadedFile" suitable for assigning to a model "FileField".
 
-    Example::
+    For example:
 
+        from graphql import GraphQLArgument, GraphQLNonNull
+        from django_graphex.core import Mutation, field
         from django_graphex.uploads import Base64FileInput
 
-        class UploadAvatarMutation(graphene.Mutation):
+        class UploadAvatarMutation(Mutation):
             class Arguments:
-                avatar = Base64FileInput(required=True)
+                # A native Mutation argument is a graphql-core "GraphQLArgument".
+                # "Base64FileInput" is a Pydantic "InputType" whose compiled
+                # "GraphQLInputObjectType" lives on "_meta.graphql_input_type"
+                # — but that attribute is "None" until "compile_all_inputs()"
+                # runs (the package AppConfig.ready() does this at startup when
+                # "django_graphex" is in "INSTALLED_APPS"). Reference it via a
+                # zero-arg "lambda" thunk so it resolves at "Field()" build
+                # time, NOT at class-definition time.
+                avatar = lambda: GraphQLArgument(  # noqa: E731
+                    GraphQLNonNull(Base64FileInput._meta.graphql_input_type)
+                )
 
-            ok = graphene.Boolean()
+            ok = field(GraphQLBoolean)
 
-            def mutate(self, info, avatar):
+            @classmethod
+            def mutate(cls, root, info, **kwargs):
+                # Input-object arguments arrive as a plain "dict" (snake-case
+                # "out_name" keys), so rehydrate it into a "Base64FileInput"
+                # instance before calling ".to_uploaded_file()".
+                avatar = Base64FileInput(**kwargs["avatar"])
                 file = avatar.to_uploaded_file(max_size=2 * 1024 * 1024)
                 # file is a SimpleUploadedFile — assign to a FileField:
                 profile.avatar.save(file.name, file, save=True)
-                return UploadAvatarMutation(ok=True)
+                return cls(ok=True)
 
     Fields
     ------
 
-    * ``filename`` (String!, required) — the original filename (used as the
-      storage key; Django's ``FileField`` may rename it).
-    * ``data`` (String!, required) — the file content, base64-encoded.
-    * ``content_type`` (String) — MIME type; defaults to
-      ``"application/octet-stream"`` when absent.
+    * "filename" (String!, required) — the original filename (used as the
+      storage key; Django's "FileField" may rename it).
+    * "data" (String!, required) — the file content, base64-encoded.
+    * "content_type" / wire "contentType" (String) — MIME type; defaults to
+      "application/octet-stream" when absent.
 
     Size limits
     -----------
 
-    ``to_uploaded_file()`` accepts an optional ``max_size`` (bytes) that
-    overrides the global ``MAX_UPLOAD_SIZE`` setting for this specific field.
+    "to_uploaded_file()" accepts an optional "max_size" (bytes) that
+    overrides the global "MAX_UPLOAD_SIZE" setting for this specific field.
     Use this to enforce tighter limits on avatar fields while allowing larger
-    documents elsewhere::
+    documents elsewhere:
 
         avatar.to_uploaded_file(max_size=512 * 1024)    # 512 KB avatar
         document.to_uploaded_file(max_size=10 * 1024 * 1024)  # 10 MB document
@@ -275,47 +309,47 @@ class Base64FileInput(graphene.InputObjectType):
     Memory-safety architecture
     --------------------------
 
-    The primary memory guard is ``MAX_REQUEST_BODY_SIZE`` configured on the
+    The primary memory guard is "MAX_REQUEST_BODY_SIZE" configured on the
     view — it rejects the HTTP request before the JSON body is parsed, so the
     entire base64 string never enters RAM. The per-field decoded-size pre-check
     (this class) is a secondary guard that saves the decode allocation for
     payloads that somehow slip past the body-size guard (e.g. when
-    ``MAX_REQUEST_BODY_SIZE`` is unset).
+    "MAX_REQUEST_BODY_SIZE" is unset).
 
     Implementation note
     -------------------
 
-    graphene auto-generates a container class that inherits from both
-    ``InputObjectTypeContainer`` and ``Base64FileInput``. This means methods
-    defined here (like ``to_uploaded_file``) are available on the value that
-    arrives in mutation resolvers — no ``Meta.container`` override needed.
-    ``self`` in that context is a dict-like container with attribute access for
-    field values.
+    Because this is a Pydantic "InputType", the value delivered to a native
+    resolver is a validated instance of this class — "to_uploaded_file" is a
+    plain method on that instance and reads the validated "filename" / "data"
+    / "content_type" attributes directly. The camelCase "contentType" wire key
+    is mapped to the snake "content_type" attribute by the input compiler's
+    "alias_generator" (no "Meta.container" override needed).
     """
 
-    filename = graphene.String(required=True, description="Original filename.")
-    data = graphene.String(required=True, description="Base64-encoded file content.")
-    content_type = graphene.String(
-        description="MIME type (default: application/octet-stream)."
-    )
+    filename: str
+    data: str
+    content_type: Optional[str] = None
 
     def to_uploaded_file(self, *, max_size: int | None = None) -> SimpleUploadedFile:
-        """Decode this upload input into a Django ``SimpleUploadedFile``.
+        """Decode this validated upload input into a Django "SimpleUploadedFile".
 
-        Call this in your mutation resolver:
+        Call this in your mutation resolver on the validated value:
 
-        .. code-block:: python
-
-            def mutate(self, info, avatar):
+            @staticmethod
+            def mutate(root, info, avatar):
                 file = avatar.to_uploaded_file(max_size=2 * 1024 * 1024)
                 profile.avatar.save(file.name, file, save=True)
 
+        Reads the validated Pydantic attributes ("self.filename" / "self.data"
+        / "self.content_type") rather than a graphene input container.
+
         Args:
             max_size: Per-field size cap in bytes. Overrides the global
-                ``MAX_UPLOAD_SIZE`` setting. ``None`` falls back to the global.
+                "MAX_UPLOAD_SIZE" setting. "None" falls back to the global.
 
         Returns:
-            A ``SimpleUploadedFile`` ready for ``FileField.save()``.
+            A "SimpleUploadedFile" ready for "FileField.save()".
 
         Raises:
             ImproperlyConfigured: When no size cap is configured.

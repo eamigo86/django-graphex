@@ -34,6 +34,7 @@ class UserMutation(DjangoModelMutation):
 | `output_field_name` | `str` | `'{model}'` | Name of output field |
 | `description` | `str` | Auto-generated | Mutation description |
 | `nested_fields` | `dict` | `{}` | Nested field configuration |
+| `model_operations` | `tuple` | `("create", "update", "delete")` | Which CRUD operations to generate; any subset of `("create", "update", "delete")`. Calling the `*Field()` builder for an excluded operation raises `AttributeError`. |
 
 ### Fields
 
@@ -170,7 +171,7 @@ Get all mutation fields (create, delete, update).
 === "Basic Mutation"
 
     ```python
-    from django_graphex import DjangoModelMutation
+    from django_graphex.mutation import DjangoModelMutation
     from .models import User
 
     class UserMutation(DjangoModelMutation):
@@ -208,16 +209,16 @@ Get all mutation fields (create, delete, update).
 === "Custom Arguments"
 
     ```python
-    import graphene
+    from django_graphex.core import BooleanField
 
     class UserMutation(DjangoModelMutation):
         class Meta:
             model = User
 
         class Arguments:
-            send_email = graphene.Boolean(
-                default_value=False,
-                description="Send welcome email"
+            send_email = BooleanField(
+                default=False,
+                description="Send welcome email",
             )
 
         @classmethod
@@ -255,23 +256,27 @@ Get all mutation fields (create, delete, update).
 === "Individual Fields"
 
     ```python
-    import graphene
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         create_user = UserMutation.CreateField()
         update_user = UserMutation.UpdateField()
         delete_user = UserMutation.DeleteField()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 === "All Fields at Once"
 
     ```python
-    class Mutation(graphene.ObjectType):
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    class Mutation(ObjectType):
         create_user, delete_user, update_user = UserMutation.MutationFields()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 ### GraphQL Operations
@@ -375,28 +380,11 @@ mutation DeleteUser($id: ID!) {
 }
 ```
 
-## SerializerMutationOptions
+!!! note "Internal options container"
 
-Configuration options class for `DjangoModelMutation`.
-
-```python
-class SerializerMutationOptions(BaseOptions)
-```
-
-### Attributes
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `fields` | `dict` | GraphQL fields for the mutation |
-| `input_fields` | `dict` | Input fields configuration |
-| `interfaces` | `tuple` | GraphQL interfaces |
-| `model` | `Model` | Django model class |
-| `pydantic_model` | `BaseModel` | Pydantic model used for validation |
-| `action` | `str` | Mutation action type |
-| `arguments` | `dict` | GraphQL arguments |
-| `output` | `ObjectType` | Output type |
-| `resolver` | `Callable` | Resolver function |
-| `nested_fields` | `dict` | Nested field configuration |
+    `DjangoModelMutation._meta` is a `NativeObjectTypeOptions` instance
+    (`django_graphex.core.base.NativeObjectTypeOptions`). It is an internal
+    detail — the public API is the `Meta` class options documented above.
 
 ## Advanced Usage
 
@@ -478,10 +466,15 @@ class UserMutation(DjangoModelMutation):
 Standard error type used in mutation responses.
 
 ```python
-class ErrorType:
-    field = graphene.String()
-    messages = graphene.List(graphene.String)
+from django_graphex.errors import ErrorType
 ```
+
+`ErrorType` is a native `ObjectType` (graphene-free) with two fields:
+
+| Field | GraphQL type | Description |
+|-------|-------------|-------------|
+| `field` | `String!` | The name of the field that failed validation |
+| `messages` | `[String!]!` | One or more error messages for that field |
 
 ## Best Practices
 

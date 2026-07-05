@@ -10,17 +10,21 @@ from django.db.models import Count, F, JSONField, Prefetch
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.expressions import Window
 from django.db.models.functions import RowNumber
-from graphene import ID, Argument, Field, List
-from graphene.types.structures import NonNull, Structure
-from graphene.utils.str_converters import to_snake_case
+from graphql import GraphQLID, GraphQLList, GraphQLNonNull
 
 import django_graphex.settings as _settings_module
 from django_graphex.filtering.backend import resolve_filter_backend
 from django_graphex.settings import graphql_api_settings
 
+from ._strconv import to_snake_case
 from .base_types import DjangoListObjectBase
+from .core.descriptors import (
+    NativeList,
+    NativeMountedField,
+    NativeNonNull,
+)
 from .filtering.filter_field import apply_custom_filters
-from .paginations.pagination import BaseDjangoGraphqlPagination
+from .paginations.pagination import BaseDjangoGraphqlPagination, _split_ordering
 from .utils import (
     _apply_field_hook,
     _compute_child_only,
@@ -59,6 +63,50 @@ if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo as ResolveInfo
 
 
+# All list/non-null wrapper currencies a field ``.type`` may carry during the
+# native window: graphql-core ``GraphQLList`` / ``GraphQLNonNull`` (eager,
+# compiled) AND the native lazy ``NativeList`` / ``NativeNonNull`` descriptors
+# (S-ROOTS-c). Every one exposes ``.of_type``; ``_unwrap_type`` peels them to reach
+# the inner node class that carries ``_meta`` (graphene ``Structure`` is gone —
+# S8c).
+_TYPE_WRAPPERS = (GraphQLNonNull, GraphQLList, NativeNonNull, NativeList)
+
+
+def _unwrap_type(current_type: Any) -> Any:
+    """Peel list / non-null wrappers to reach the inner node type.
+
+    Mirrors the graphene ``Structure`` unwrap the field classes used before S8c,
+    but over the native wrapper currency (graphql-core ``GraphQLList`` /
+    ``GraphQLNonNull`` + lazy ``NativeList`` / ``NativeNonNull``). Every wrapper
+    exposes ``.of_type``, so the loop is uniform.
+
+    Args:
+        current_type: A field ``.type`` (possibly wrapped).
+
+    Returns:
+        The innermost wrapped type (the node class carrying ``_meta``).
+    """
+    while isinstance(current_type, _TYPE_WRAPPERS):
+        current_type = current_type.of_type
+    return current_type
+
+
+def _id_argument() -> Any:
+    """Return the ``id: ID!`` argument for ``DjangoObjectField`` (graphene-free).
+
+    Replaces the graphene ``ID(required=True, description=...)`` extra-arg the
+    field used to mount. The native compiler's
+    ``to_graphql_argument`` accepts a graphql-core ``GraphQLArgument``
+    verbatim, so this is the byte-equivalent native currency.
+    """
+    from graphql import GraphQLArgument
+
+    return GraphQLArgument(
+        GraphQLNonNull(GraphQLID),
+        description="Django object unique identification field",
+    )
+
+
 class _MissingType:
     """Placeholder for a Postgres field type that is unavailable."""
 
@@ -89,8 +137,13 @@ except ImportError:  # pragma: no cover
 # *********************************************** #
 # *********** FIELD FOR SINGLE OBJECT *********** #
 # *********************************************** #
-class DjangoObjectField(Field):
-    """GraphQL field for a single Django model object."""
+class DjangoObjectField(NativeMountedField):
+    """GraphQL field for a single Django model object.
+
+    Mounts an "id: ID!" argument and resolves the matching model instance by
+    primary key, applying the output type's "get_queryset" hook and the
+    selection-based query optimizer.
+    """
 
     def __init__(self, _type: Any, *args: Any, **kwargs: Any) -> None:
         """Initialize the Django object field.
@@ -100,9 +153,7 @@ class DjangoObjectField(Field):
             *args: extra positional arguments forwarded to the base field.
             **kwargs: extra keyword arguments forwarded to the base field.
         """
-        kwargs["id"] = ID(
-            required=True, description="Django object unique identification field"
-        )
+        kwargs["id"] = _id_argument()
 
         super().__init__(_type, *args, **kwargs)
 
@@ -113,10 +164,7 @@ class DjangoObjectField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
-        return current_type._meta.model
+        return _unwrap_type(self.type)._meta.model
 
     @staticmethod
     def object_resolver(
@@ -130,8 +178,8 @@ class DjangoObjectField(Field):
 
         Args:
             manager: the model manager used to build the queryset.
-            output_type: the ``DjangoObjectType`` subclass for this field,
-                forwarded to ``queryset_factory`` so its ``get_queryset`` hook
+            output_type: the "DjangoObjectType" subclass for this field,
+                forwarded to "queryset_factory" so its "get_queryset" hook
                 is applied before the optimizer runs.
             root: the root value of the resolution.
             info: the GraphQL resolve info.
@@ -153,13 +201,13 @@ class DjangoObjectField(Field):
     def wrap_resolve(self, parent_resolver: Callable) -> Callable:
         """Honor a custom "resolver" if given, else the built-in object resolver.
 
-        When using the built-in ``object_resolver``, the resolver receives
-        ``(manager, output_type, root, info, **kwargs)`` so the
-        ``DjangoObjectType.get_queryset`` hook can be applied inside
-        ``queryset_factory``.
+        When using the built-in "object_resolver", the resolver receives
+        "(manager, output_type, root, info, **kwargs)" so the
+        "DjangoObjectType.get_queryset" hook can be applied inside
+        "queryset_factory".
 
-        When a custom resolver is provided (e.g. ``DjangoModelType.retrieve``),
-        only the manager is bound — the caller owns its own signature and
+        When a custom resolver is provided (e.g. "DjangoModelType.retrieve"),
+        only the manager is bound -- the caller owns its own signature and
         already manages its own queryset scoping.
 
         Args:
@@ -183,12 +231,12 @@ class DjangoObjectField(Field):
 # *********************************************** #
 # *************** FIELDS FOR LIST *************** #
 # *********************************************** #
-class DjangoListField(Field):
+class DjangoListField(NativeMountedField):
     """GraphQL field for a list of Django model objects.
 
-    A plain ``graphene.Field`` wrapping ``[Type!]``. We deliberately do *not*
-    extend graphene-django's ``DjangoListField`` (which asserts the inner type is
-    its own ``DjangoObjectType``); this library has its own ``DjangoObjectType``.
+    A plain field wrapping "[Type!]". We deliberately do not extend
+    graphene-django's "DjangoListField" (which asserts the inner type is its own
+    "DjangoObjectType"); this library has its own "DjangoObjectType".
     """
 
     def __init__(self, _type: Any, *args: Any, **kwargs: Any) -> None:
@@ -199,21 +247,56 @@ class DjangoListField(Field):
             *args: extra positional arguments forwarded to the base field.
             **kwargs: extra keyword arguments forwarded to the base field.
         """
-        if isinstance(_type, NonNull):
+        # Unwrap an already-non-null inner type so we never double-wrap into
+        # ``[Type!!]``. Covers the native wrappers (``NativeNonNull``), graphql-core
+        # (``GraphQLNonNull``), AND a transitional graphene ``NonNull`` (the
+        # converter still emits graphene types until S8e) — duck-typed by the
+        # ``of_type`` + class-name shape so fields.py stays graphene-free.
+        if isinstance(_type, (NativeNonNull, GraphQLNonNull)) or (
+            hasattr(_type, "of_type") and type(_type).__name__ == "NonNull"
+        ):
             _type = _type.of_type
 
-        super().__init__(List(NonNull(_type)), *args, **kwargs)
+        super().__init__(NativeList(NativeNonNull(_type)), *args, **kwargs)
 
 
-def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
-    """Attach a single ``filter`` argument (the native input type) to a field.
+def _resolve_custom_filters(_type: Any) -> list:
+    """Resolve the ``@filter_field`` custom filters declared on a list type's node.
 
-    Builds the recursive ``<Model>FilterInput`` from the type's declared
-    ``filter_fields`` via the native filter backend and stores both the backend
-    and the input type on the field for the resolver to use.
+    The custom filters are declared on the node ``DjangoObjectType`` (stored as
+    ``_dgx_custom_filters``). A ``DjangoListObjectType`` wraps that node as its
+    ``_meta.baseType`` and does NOT carry ``_dgx_custom_filters`` directly, so we
+    fall back to the ``baseType`` lookup. This is the SINGLE source of truth for
+    custom-filter propagation across EVERY list-field path (flat, list-object,
+    AND nested) — keeping the native ``<Model>FilterInput`` shape identical on all
+    paths so graphql-core never sees two same-named-but-different filter inputs
+    (#1571).
 
-    Also picks up ``@filter_field``-decorated methods from the type and injects
-    them as scalar arguments in the filter input type.
+    Args:
+        _type: The GraphQL object/list type carrying the model + filter config.
+
+    Returns:
+        The list of ``(arg_name, method, metadata)`` triples, or ``[]``.
+    """
+    custom_filters = getattr(_type, "_dgx_custom_filters", None)
+    if custom_filters is None:
+        base_type = getattr(getattr(_type, "_meta", None), "baseType", None)
+        custom_filters = getattr(base_type, "_dgx_custom_filters", None) or []
+    return custom_filters
+
+
+def _build_filter_arg(field: NativeMountedField, _type: Any, fields: Any) -> None:
+    """Record the filter configuration (backend, fields, custom filters) on a field.
+
+    Stores the resolved filter backend and the type's declared ``filter_fields``
+    on the field as backend-agnostic metadata. The native schema compiler
+    (``native.schema_compiler._filter_arg``) reads ``field.fields`` /
+    ``field.custom_filters`` / ``field.model`` and builds the native
+    ``<Model>FilterInput`` (``filtering.native_schema.build_filter_input_type``)
+    when it mounts the field, so no GraphQL input type is constructed here.
+
+    Also picks up ``@filter_field``-decorated methods from the type so the native
+    compiler can inject them as scalar arguments in the filter input type.
 
     Args:
         field: The list field being configured.
@@ -229,24 +312,16 @@ def _build_filter_arg(field: Field, _type: Any, fields: Any) -> None:
 
     # Pick up custom @filter_field methods registered on the type or its baseType
     # (DjangoListObjectType wraps a DjangoObjectType as its baseType).
-    custom_filters = getattr(_type, "_dgx_custom_filters", None)
-    if custom_filters is None:
-        base_type = getattr(getattr(_type, "_meta", None), "baseType", None)
-        custom_filters = getattr(base_type, "_dgx_custom_filters", None) or []
-    field.custom_filters = custom_filters
-
-    if declared_fields or custom_filters:
-        registry = getattr(getattr(_type, "_meta", None), "registry", None)
-        field.filter_type = field.filter_backend.build_input_type(
-            _type._meta.model,
-            declared_fields,
-            registry,
-            custom_filters=custom_filters,
-        )
+    field.custom_filters = _resolve_custom_filters(_type)
 
 
-class DjangoFilterListField(Field):
-    """GraphQL field for a filtered list of Django model objects."""
+class DjangoFilterListField(NativeMountedField):
+    """GraphQL field for a filtered list of Django model objects.
+
+    Mounts a "filter" argument built from the type's "filter_fields" and any
+    "@filter_field" methods, then resolves the list by applying the filter
+    backend and custom filters to the base queryset.
+    """
 
     def __init__(
         self,
@@ -265,15 +340,11 @@ class DjangoFilterListField(Field):
         """
         kwargs.setdefault("args", {})
         _build_filter_arg(self, _type, fields)
-        if self.filter_type is not None:
-            kwargs["args"]["filter"] = Argument(
-                self.filter_type, description="Filtering options for the list"
-            )
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
 
-        super().__init__(List(_type), *args, **kwargs)
+        super().__init__(NativeList(_type), *args, **kwargs)
 
     @property
     def model(self) -> type[Model]:
@@ -282,10 +353,7 @@ class DjangoFilterListField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
-        return current_type._meta.model
+        return _unwrap_type(self.type)._meta.model
 
     @staticmethod
     def list_resolver(
@@ -299,22 +367,22 @@ class DjangoFilterListField(Field):
     ) -> Any:
         """Resolve a filtered list of objects.
 
-        Composition order: standard ORM lookups (via ``filter_backend``) →
-        custom ``@filter_field`` methods (``custom_filters``, in declaration
-        order). The ``get_queryset`` hook fires inside ``queryset_factory``
+        Composition order: standard ORM lookups (via "filter_backend") then
+        custom "@filter_field" methods ("custom_filters", in declaration
+        order). The "get_queryset" hook fires inside "queryset_factory"
         before both filter stages.
 
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
-            custom_filters: list of ``(arg_name, method, metadata)`` triples
-                from ``@filter_field``-decorated methods on the output type.
-            output_type: the ``DjangoObjectType`` subclass for this field,
-                forwarded to ``queryset_factory`` so its ``get_queryset`` hook
+            custom_filters: list of "(arg_name, method, metadata)" triples
+                from "@filter_field"-decorated methods on the output type.
+            output_type: the "DjangoObjectType" subclass for this field,
+                forwarded to "queryset_factory" so its "get_queryset" hook
                 is applied before the optimizer runs.
             root: the root value of the resolution.
             info: the GraphQL resolve info.
-            **kwargs: query arguments, including the ``filter`` value.
+            **kwargs: query arguments, including the "filter" value.
 
         Returns:
             The filtered queryset of model instances.
@@ -353,14 +421,14 @@ class DjangoFilterListField(Field):
     def wrap_resolve(self, parent_resolver: Callable) -> Callable:
         """Honor a custom "resolver" if given, else the built-in list resolver.
 
-        When using the built-in ``list_resolver``, the resolver receives
-        ``(manager, filter_backend, custom_filters, output_type, root, info, **kwargs)``
-        so the ``DjangoObjectType.get_queryset`` hook can be applied inside
-        ``queryset_factory`` and ``@filter_field`` methods run after standard
+        When using the built-in "list_resolver", the resolver receives
+        "(manager, filter_backend, custom_filters, output_type, root, info, **kwargs)"
+        so the "DjangoObjectType.get_queryset" hook can be applied inside
+        "queryset_factory" and "@filter_field" methods run after standard
         lookups.
 
-        When a custom resolver is provided, only ``(manager, filter_backend)``
-        are bound — the caller owns its own signature.
+        When a custom resolver is provided, only "(manager, filter_backend)"
+        are bound -- the caller owns its own signature.
 
         Args:
             parent_resolver: the resolver supplied by the parent field.
@@ -368,9 +436,7 @@ class DjangoFilterListField(Field):
         Returns:
             A partial that binds the leading positional arguments.
         """
-        current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        current_type = _unwrap_type(self.type)
         if self.resolver:
             # Custom resolver: bind only (manager, filter_backend).
             return partial(
@@ -389,8 +455,13 @@ class DjangoFilterListField(Field):
         )
 
 
-class DjangoFilterPaginateListField(Field):
-    """GraphQL field for a filtered and paginated list of Django model objects."""
+class DjangoFilterPaginateListField(NativeMountedField):
+    """GraphQL field for a filtered and paginated list of Django model objects.
+
+    Extends the filtered-list behaviour with a pagination instance whose
+    arguments the native compiler mounts; the resolver applies the filter
+    backend, custom filters, and then paginates the resulting queryset.
+    """
 
     def __init__(
         self,
@@ -411,10 +482,6 @@ class DjangoFilterPaginateListField(Field):
         """
         kwargs.setdefault("args", {})
         _build_filter_arg(self, _type, fields)
-        if self.filter_type is not None:
-            kwargs["args"]["filter"] = Argument(
-                self.filter_type, description="Filtering options for the list"
-            )
 
         if pagination is None:
             # Resolve the global default safely: DEFAULT_PAGINATION_CLASS may be
@@ -427,15 +494,16 @@ class DjangoFilterPaginateListField(Field):
                 'You need to pass a valid DjangoGraphqlPagination in DjangoFilterPaginateListField, received "{}".'
             ).format(pagination)
 
-            pagination_kwargs = pagination.to_graphql_fields()
-
             self.pagination = pagination
-            kwargs.update(**pagination_kwargs)
+
+            # The native compiler (schema_compiler) wires pagination args
+            # directly onto the list-container's ``results`` field, so the
+            # pagination's graphene ``to_graphql_fields()`` are NOT mounted here.
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
 
-        super().__init__(List(NonNull(_type)), *args, **kwargs)
+        super().__init__(NativeList(NativeNonNull(_type)), *args, **kwargs)
 
     @property
     def model(self) -> type[Model]:
@@ -444,10 +512,7 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The Django model class backing the field's type.
         """
-        current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
-        return current_type._meta.model
+        return _unwrap_type(self.type)._meta.model
 
     def get_queryset(
         self, manager: Manager, root: Any, info: ResolveInfo, **kwargs: Any
@@ -463,9 +528,7 @@ class DjangoFilterPaginateListField(Field):
         Returns:
             The base queryset built for the request (hook applied).
         """
-        current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        current_type = _unwrap_type(self.type)
         return queryset_factory(manager, root, info, output_type=current_type, **kwargs)
 
     def list_resolver(
@@ -478,8 +541,8 @@ class DjangoFilterPaginateListField(Field):
     ) -> Any:
         """Resolve a filtered and paginated list of objects.
 
-        Composition order: standard ORM lookups (via ``filter_backend``) →
-        custom ``@filter_field`` methods (from ``self.custom_filters``).
+        Composition order: standard ORM lookups (via "filter_backend") then
+        custom "@filter_field" methods (from "self.custom_filters").
 
         Args:
             manager: the model manager used to build the base queryset.
@@ -521,9 +584,7 @@ class DjangoFilterPaginateListField(Field):
             A partial that binds the manager and filter backend.
         """
         resolver = self.resolver or self.list_resolver
-        current_type = self.type
-        while isinstance(current_type, Structure):
-            current_type = current_type.of_type
+        current_type = _unwrap_type(self.type)
         return partial(
             resolver,
             current_type._meta.model._default_manager,
@@ -531,8 +592,12 @@ class DjangoFilterPaginateListField(Field):
         )
 
 
-class DjangoListObjectField(Field):
-    """GraphQL field for Django list objects with count and results."""
+class DjangoListObjectField(NativeMountedField):
+    """GraphQL field for Django list objects with count and results.
+
+    Resolves a "DjangoListObjectType" wrapper exposing both a "results" list
+    and a lazily computed "totalCount", built from the filtered base queryset.
+    """
 
     def __init__(
         self,
@@ -551,10 +616,6 @@ class DjangoListObjectField(Field):
         """
         kwargs.setdefault("args", {})
         _build_filter_arg(self, _type, fields)
-        if self.filter_type is not None:
-            kwargs["args"]["filter"] = Argument(
-                self.filter_type, description="Filtering options for the list"
-            )
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
@@ -584,13 +645,13 @@ class DjangoListObjectField(Field):
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
-            output_type: the ``DjangoObjectType`` subclass for the list items,
-                forwarded to ``queryset_factory`` so its ``get_queryset`` hook
-                is applied before the optimizer runs.  This is the *item* type
-                (``DjangoListObjectType._meta.baseType``), not the wrapper type.
+            output_type: the "DjangoObjectType" subclass for the list items,
+                forwarded to "queryset_factory" so its "get_queryset" hook
+                is applied before the optimizer runs. This is the item type
+                ("DjangoListObjectType._meta.baseType"), not the wrapper type.
             root: the root value of the resolution.
             info: the GraphQL resolve info.
-            **kwargs: query arguments, including the ``filter`` value.
+            **kwargs: query arguments, including the "filter" value.
 
         Returns:
             A list object holding the total count and result queryset.
@@ -603,10 +664,13 @@ class DjangoListObjectField(Field):
         custom_filters = getattr(self, "custom_filters", None) or []
         qs = apply_custom_filters(qs, custom_filters, info, filter_value)
 
-        count = qs.count()
-
+        # LAZY totalCount: pass a supplier instead of calling qs.count() here.
+        # The COUNT query is deferred to first access of DjangoListObjectBase.count
+        # (i.e. only when the client selects totalCount), saving ~1 SQL + ~1.4ms
+        # per request otherwise. count() clones the queryset, so the deferred call
+        # is correct even after the results were iterated.
         return DjangoListObjectBase(
-            count=count,
+            count=lambda qs=qs: qs.count(),
             results=maybe_queryset(qs),
             results_field_name=self.type._meta.results_field_name,
         )
@@ -617,14 +681,14 @@ class DjangoListObjectField(Field):
         The resolver receives (manager, filter_backend, output_type) as its
         leading positional arguments, then root, info, **kwargs.
 
-        The ``output_type`` is the *item* type
-        (``DjangoListObjectType._meta.baseType``) so that
-        ``DjangoObjectType.get_queryset`` is applied inside
-        ``queryset_factory`` before the optimizer runs.
+        The "output_type" is the item type
+        ("DjangoListObjectType._meta.baseType") so that
+        "DjangoObjectType.get_queryset" is applied inside
+        "queryset_factory" before the optimizer runs.
 
-        When ``Meta.queryset`` is set on the list type, that queryset is used
-        as the base (in place of ``_default_manager``) so user-supplied filters
-        such as ``.filter(is_active=True)`` are applied on every request.
+        When "Meta.queryset" is set on the list type, that queryset is used
+        as the base (in place of "_default_manager") so user-supplied filters
+        such as ".filter(is_active=True)" are applied on every request.
 
         Args:
             parent_resolver: the resolver supplied by the parent field.
@@ -685,7 +749,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
     ) -> None:
         """Store the "accessor" and build the field, filter only if declared.
 
-        Unlike "DjangoListObjectField", a ``filter`` argument is built only when
+        Unlike "DjangoListObjectField", a "filter" argument is built only when
         the list type declares filter config ("filter_fields"). Auto-generated
         nested list types without filters get no filter argument.
 
@@ -701,26 +765,29 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         declared_fields = fields if fields is not None else _type._meta.filter_fields
         self.fields = declared_fields
-        if declared_fields:
-            self.filter_type = self.filter_backend.build_input_type(
-                _type._meta.model, declared_fields, _type._meta.registry
-            )
-            if self.filter_type is not None:
-                kwargs.setdefault("args", {})
-                kwargs["args"]["filter"] = Argument(
-                    self.filter_type, description="Filtering options for the list"
-                )
+        # Propagate the node type's @filter_field custom filters EXACTLY like
+        # DjangoListObjectField does (via _resolve_custom_filters). Without this the
+        # nested filter input would drop them while the root/flat path keeps them,
+        # producing two DIFFERENT-shaped GraphQLInputObjectType instances sharing
+        # the name <Model>FilterInput -> graphql-core duplicate-name TypeError at
+        # schema assembly (#1571). It also makes nested `results(filter:{search:…})`
+        # consistent with the runtime list_resolver, which already reads
+        # self.custom_filters via apply_custom_filters.
+        self.custom_filters = _resolve_custom_filters(_type)
+        # The native schema compiler builds the ``<Model>FilterInput`` and mounts
+        # the ``filter`` arg from ``self.fields`` / ``self.filter_backend`` when it
+        # compiles this field, so no GraphQL input type is constructed here.
 
         if not kwargs.get("description", None):
             kwargs["description"] = f"{_type._meta.model.__name__} list"
 
         # Skip DjangoListObjectField.__init__ (it would always build the arg).
-        Field.__init__(self, _type, **kwargs)
+        NativeMountedField.__init__(self, _type, **kwargs)
 
     def build_prefetch(
         self, lookup: str, filter_value: Any, info: ResolveInfo
     ) -> Prefetch:
-        """Build a "Prefetch" of the related set, filtered by ``filter_value``.
+        """Build a "Prefetch" of the related set, filtered by "filter_value".
 
         Only the filter is applied here: ordering and pagination happen in memory
         downstream (on the "results" field), so the queryset is order-agnostic.
@@ -755,35 +822,38 @@ class DjangoNestedListObjectField(DjangoListObjectField):
     ) -> Prefetch | None:
         """Build a window-function Prefetch that DB-side slices the nested list.
 
-        Returns a ``Prefetch`` with a queryset annotated with ``_gqx_rn``
-        (ROW_NUMBER) and ``_gqx_total`` (COUNT(*)) window functions, filtered to
+        Returns a "Prefetch" with a queryset annotated with "_gqx_rn"
+        (ROW_NUMBER) and "_gqx_total" (COUNT(*)) window functions, filtered to
         the page window, so only the requested page rows are fetched per parent.
 
-        Returns ``None`` when any applicability pre-check fails, signalling the
-        caller to fall back to ``build_prefetch``.
+        Returns None when any applicability pre-check fails, signalling the
+        caller to fall back to "build_prefetch".
 
-        Wired into the live walker in C3.  Results land in
-        ``root._gqx_win_<accessor>`` via ``to_attr`` so ``list_resolver`` can
+        Wired into the live walker in C3. Results land in
+        "root._gqx_win_<accessor>" via "to_attr" so "list_resolver" can
         distinguish an offset-beyond-end empty page from a genuine zero-child
         parent.
 
         Args:
-            lookup: the ORM prefetch lookup path (e.g. ``"posts"``).
-            filter_value: the user-supplied filter input, or ``None``.
-            slice_tuple: ``(offset, limit, ordering)`` from
-                ``paginator.prefetch_window_slice()``, or ``None``.
+            lookup: the ORM prefetch lookup path (e.g. "posts").
+            filter_value: the user-supplied filter input, or None.
+            slice_tuple: the "(offset, limit, ordering)" tuple from
+                "paginator.prefetch_window_slice()", or None.
             related_field: the Django relation field for the reverse FK.
-            sub_selection: the GraphQL ``SelectionSetNode`` for the child
-                selection, or ``None`` (triggers full-load fallback).
+            sub_selection: the GraphQL "SelectionSetNode" for the child
+                selection, or None (triggers full-load fallback).
             fragments: fragment definitions from the GraphQL resolve info.
-            child_gql_type: The inner (row) ``GraphQLObjectType`` for the child
-                selection — NOT the ``DjangoListObjectType`` wrapper.  Required
-                for ``AnnotatedField`` self-collection (phase-d §7).
-            child_graphene_type: The graphene type corresponding to
-                ``child_gql_type``.
+            child_gql_type: the inner (row) "GraphQLObjectType" for the child
+                selection -- NOT the "DjangoListObjectType" wrapper. Required
+                for "AnnotatedField" self-collection (phase-d 7).
+            child_graphene_type: the graphene type corresponding to
+                "child_gql_type".
+            hook: an optional "optimize_<field>" queryset hook applied to the
+                filtered base queryset before the window expressions.
+            info: the GraphQL resolve info, or None.
 
         Returns:
-            A ``Prefetch`` with a window-annotated queryset, or ``None``.
+            A "Prefetch" with a window-annotated queryset, or None.
         """
         # --- Pre-check 1: OPTIMIZE_NESTED_PAGINATION setting --------------------
         # Access via module reference so override_settings reload is respected.
@@ -811,14 +881,16 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # --- Pre-check 5: all ordering terms must be concrete attnames ----------
         child = self.type._meta.model
         concrete_attnames = {f.attname for f in child._meta.concrete_fields}
-        # order may be a comma-separated string ("id,-title") or an iterable of strings.
-        # Normalize to a list of individual terms.
+        # order may be a comma-separated string ("id,-title") or an iterable of
+        # strings. Normalize to a list of individual terms, converting any
+        # camelCase spelling to its snake_case attname (``authorId`` ->
+        # ``author_id``) via the SAME canonical helper the paginators use, so
+        # the window optimization does NOT decline for a camelCase term and the
+        # window ORDER BY built below emits real column expressions.
         if not order:
             order_terms: list[str] = [child._meta.pk.attname]
-        elif isinstance(order, str):
-            order_terms = [t for t in order.replace(" ", "").split(",") if t]
         else:
-            order_terms = [t for t in order if t]
+            order_terms = _split_ordering(order)
         for term in order_terms:
             col = term.lstrip("-+").split(LOOKUP_SEP)[0]
             if col not in concrete_attnames:
@@ -940,20 +1012,20 @@ class DjangoNestedListObjectField(DjangoListObjectField):
     ) -> DjangoListObjectBase:
         """Resolve the nested list, preferring the parent's prefetch cache.
 
-        ``output_type`` is accepted for signature compatibility with the parent
+        "output_type" is accepted for signature compatibility with the parent
         class but is intentionally unused here: nested-relation fields resolve
         rows from the parent's prefetch cache or relation accessor, not from a
-        fresh top-level queryset, so the item type's ``get_queryset`` hook is
+        fresh top-level queryset, so the item type's "get_queryset" hook is
         not applicable.
 
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
             output_type: unused; present for signature compatibility with
-                ``DjangoListObjectField.list_resolver``.
+                "DjangoListObjectField.list_resolver".
             root: the parent instance owning the related set.
             info: the GraphQL resolve info.
-            **kwargs: query arguments, including the ``filter`` value.
+            **kwargs: query arguments, including the "filter" value.
 
         Returns:
             A list object holding the count and resolved results.
@@ -1021,8 +1093,10 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         if filter_value:
             qs = filter_backend.apply(related_manager.all(), filter_value)
+            # LAZY totalCount: defer the COUNT to first .count access (only when
+            # totalCount is selected). count() clones qs, safe post-iteration.
             return DjangoListObjectBase(
-                count=qs.count(),
+                count=lambda qs=qs: qs.count(),
                 results=maybe_queryset(qs),
                 results_field_name=results_field_name,
             )
@@ -1038,24 +1112,24 @@ class DjangoNestedListObjectField(DjangoListObjectField):
     def wrap_resolve(self, parent_resolver: Callable) -> Callable:
         """Bind (manager, filter_backend, output_type=None) to the nested resolver.
 
-        Overrides the parent ``DjangoListObjectField.wrap_resolve`` because
+        Overrides the parent "DjangoListObjectField.wrap_resolve" because
         nested-relation fields obtain their rows from the parent's prefetch
-        cache or relation accessor — not from a fresh top-level queryset — so
-        the item type's ``get_queryset`` hook must NOT be applied here.
-        ``output_type`` is bound as ``None``; ``list_resolver`` accepts it for
+        cache or relation accessor -- not from a fresh top-level queryset -- so
+        the item type's "get_queryset" hook must NOT be applied here.
+        "output_type" is bound as None; "list_resolver" accepts it for
         signature compatibility but ignores it.
 
-        Wiring ``get_queryset`` on nested relations would require rebuilding
+        Wiring "get_queryset" on nested relations would require rebuilding
         the prefetch queryset inside the resolver, which conflicts with the
-        window-pagination and prefetch optimizations.  The documented boundary
-        for per-relation row scoping is a ``resolve_<rel>`` override on the
+        window-pagination and prefetch optimizations. The documented boundary
+        for per-relation row scoping is a "resolve_<rel>" override on the
         parent type.
 
         Args:
             parent_resolver: the resolver supplied by the parent field.
 
         Returns:
-            A partial that binds the manager, filter backend, and a ``None``
+            A partial that binds the manager, filter backend, and a None
             output type placeholder.
         """
         resolver = self.resolver or self.list_resolver
@@ -1072,27 +1146,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 # ---------------------------------------------------------------------------
 
 
-class AnnotatedField(Field):
+class AnnotatedField(NativeMountedField):
     """A GraphQL field backed by a Django ORM annotation injected only when selected.
 
     The annotation is injected into the queryset as
-    ``qs.alias(**aliases).annotate(**{annotation_name: expression})`` — but ONLY
-    when the field appears in the client's selection set.  A default resolver reads
-    ``getattr(root, annotation_name, None)`` so no explicit ``resolve_<field>`` is
+    "qs.alias(**aliases).annotate(**{annotation_name: expression})" -- but ONLY
+    when the field appears in the client's selection set. A default resolver reads
+    "getattr(root, annotation_name, None)" so no explicit "resolve_<field>" is
     needed.
-
-    Args:
-        type_: The graphene output type (e.g. ``graphene.Int``).
-        expression: A Django ``Expression`` instance OR a zero-argument callable
-            that returns one.  Called lazily at injection time so the Expression
-            is freshly constructed per request (no Django Expression reuse issues).
-        aliases: Optional ``dict[str, Expression|callable]`` applied via
-            ``.alias()`` BEFORE ``.annotate()``.  Useful when the main expression
-            references an intermediate computed column.
-        annotation_name: Override the auto-derived ``_gqx_ann_<field_name>`` key.
-            Use this when the default name would collide with a concrete model
-            field attname.
-        **kwargs: Forwarded to ``graphene.Field``.
     """
 
     def __init__(
@@ -1105,7 +1166,20 @@ class AnnotatedField(Field):
     ) -> None:
         """Initialize the field with its Expression and optional aliases.
 
-        See the class docstring for the full parameter reference.
+        Args:
+            type_: the field output type (a graphql-core scalar, e.g.
+                "graphql.GraphQLInt").
+            expression: a Django "Expression" instance OR a zero-argument
+                callable that returns one. Called lazily at injection time so
+                the Expression is freshly constructed per request (no Django
+                Expression reuse issues).
+            aliases: an optional mapping applied via ".alias()" BEFORE
+                ".annotate()". Useful when the main expression references an
+                intermediate computed column.
+            annotation_name: overrides the auto-derived "_gqx_ann_<field_name>"
+                key. Use this when the default name would collide with a
+                concrete model field attname.
+            **kwargs: forwarded to the native field base ("NativeMountedField").
         """
         self.expression = expression
         self.aliases = aliases or {}
@@ -1120,8 +1194,8 @@ class AnnotatedField(Field):
             field_name: The GraphQL/Python field name (camelCase or snake_case).
 
         Returns:
-            ``self._explicit_annotation_name`` when set, else
-            ``_gqx_ann_<snake_field_name>``.
+            "self._explicit_annotation_name" when set, else
+            "_gqx_ann_<snake_field_name>".
         """
         return self._explicit_annotation_name or (
             _GQX_ANN_ATTR_PREFIX + to_snake_case(field_name)
@@ -1140,19 +1214,19 @@ class AnnotatedField(Field):
         return expr() if callable(expr) else expr
 
     def _default_resolver(self, root: Any, info: Any, **kwargs: Any) -> Any:
-        """Read the annotation value from ``root``.
+        """Read the annotation value from "root".
 
-        Derives the attribute name at resolve time from ``info.field_name`` so
+        Derives the attribute name at resolve time from "info.field_name" so
         the same instance can be shared across types without a closure-binding
         bug.
 
         Args:
-            root: The model instance returned by the queryset.
-            info: The GraphQL resolve info.
-            **kwargs: Unused resolver arguments.
+            root: the model instance returned by the queryset.
+            info: the GraphQL resolve info.
+            **kwargs: unused resolver arguments.
 
         Returns:
-            The annotation value, or ``None`` when absent (field not selected /
+            The annotation value, or None when absent (field not selected /
             annotation not injected).
         """
         ann = self._explicit_annotation_name or (

@@ -4,25 +4,23 @@
 RED phase: these tests MUST FAIL before the fix is applied, then pass after.
 
 Defect A — Enum registry key collision for same-class-name models across apps:
-  Two models sharing the same object_name (``Item``) but with *different* choices
-  on a same-named field (``status``) must produce two DISTINCT enum types, not
+  Two models sharing the same object_name ("Item") but with *different* choices
+  on a same-named field ("status") must produce two DISTINCT enum types, not
   collide into one.
 
 Defect B — Genuine self-referential OneToOneField silently dropped:
-  A model with ``spouse = OneToOneField('self', ...)`` must have that field present
+  A model with "spouse = OneToOneField('self', ...)" must have that field present
   in both the output GraphQL type and the create/update input types.
 """
 
 from __future__ import annotations
 
-import graphene
-
-from django_graphex import DjangoObjectType
 from django_graphex.converter import (
-    convert_django_field_with_choices,
+    build_choices_enum_type,
     convert_field_to_djangomodel,
 )
 from django_graphex.registry import Registry
+from django_graphex.types import DjangoObjectType
 
 from .models import EnumCollisionItemA, EnumCollisionItemB, PersonWithSpouse
 
@@ -32,11 +30,19 @@ from .models import EnumCollisionItemA, EnumCollisionItemB, PersonWithSpouse
 
 
 class TestEnumKeyCollision:
-    """Two models sharing object_name but different choices must not collide."""
+    """Two models sharing object_name but different choices must not collide.
 
-    def test_same_object_name_different_app_produces_distinct_enums(self):
-        """Simulate the cross-app collision: two models both called 'Item' but
-        with divergent status choices should produce two distinct enums."""
+    Covers both the model-instance-patched simulation and the direct
+    distinct-model-class case.
+    """
+
+    def test_same_object_name_different_app_produces_distinct_enums(self) -> None:
+        """Two models sharing object_name "Item" with divergent choices must
+        produce two distinct enums.
+
+        Simulates the cross-app collision: two models both called "Item" but
+        with divergent status choices must not collide into a single enum.
+        """
         local_registry = Registry()
 
         # Build two fields that share object_name="Item" and field name "status"
@@ -64,8 +70,13 @@ class TestEnumKeyCollision:
             field_a.model = ModelA
             field_b.model = ModelB
 
-            enum_a = convert_django_field_with_choices(field_a, local_registry)
-            enum_b = convert_django_field_with_choices(field_b, local_registry)
+            # S-input-5: both the OUTPUT and the INPUT converter paths now return
+            # the dead-scalar sentinel (graphene-free). The choices enum is built +
+            # KEYED by the native canonical builder ``build_choices_enum_type``
+            # (keyed by ``(app_label, object_name, field_name)`` like the converter
+            # was), so the cross-app collision contract is asserted on it.
+            enum_a = build_choices_enum_type(field_a, local_registry)
+            enum_b = build_choices_enum_type(field_b, local_registry)
         finally:
             field_a.model = original_a
             field_b.model = original_b
@@ -77,32 +88,42 @@ class TestEnumKeyCollision:
         )
 
         # Each enum must carry its own members.
-        members_a = set(enum_a._meta.enum.__members__)
-        members_b = set(enum_b._meta.enum.__members__)
+        members_a = set(enum_a.values.keys())
+        members_b = set(enum_b.values.keys())
 
         assert members_a == {"A", "B"}, f"ItemA enum members wrong: {members_a}"
         assert members_b == {"X", "Y", "Z"}, f"ItemB enum members wrong: {members_b}"
 
-    def test_distinct_model_classes_produce_independent_enums(self):
-        """Using distinct model classes, each field produces its own enum."""
+    def test_distinct_model_classes_produce_independent_enums(self) -> None:
+        """Using distinct model classes, each field must produce its own enum.
+
+        S-input-5: both the OUTPUT and INPUT converter paths return the dead-scalar
+        sentinel (graphene-free); the native "build_choices_enum_type" builds +
+        keys the enum from "model._meta".
+        """
         local_registry = Registry()
 
         field_a = EnumCollisionItemA._meta.get_field("status")
         field_b = EnumCollisionItemB._meta.get_field("status")
 
-        enum_a = convert_django_field_with_choices(field_a, local_registry)
-        enum_b = convert_django_field_with_choices(field_b, local_registry)
+        enum_a = build_choices_enum_type(field_a, local_registry)
+        enum_b = build_choices_enum_type(field_b, local_registry)
 
         assert enum_a is not enum_b
 
-        members_a = set(enum_a._meta.enum.__members__)
-        members_b = set(enum_b._meta.enum.__members__)
+        members_a = set(enum_a.values.keys())
+        members_b = set(enum_b.values.keys())
 
         assert members_a == {"A", "B"}
         assert members_b == {"X", "Y", "Z"}
 
-    def test_input_flag_enums_keyed_independently_per_model_class(self):
-        """The same fix must apply to input-flagged enums (create/update)."""
+    def test_input_flag_enums_keyed_independently_per_model_class(self) -> None:
+        """The same fix must apply to the native enums per model class.
+
+        S-input-5: the INPUT choices surface now uses the SHARED native enum (the
+        same "build_choices_enum_type" slot the OUTPUT path uses), so the
+        per-model-class keying contract is asserted on that builder.
+        """
         local_registry = Registry()
 
         field_a = EnumCollisionItemA._meta.get_field("status")
@@ -126,18 +147,14 @@ class TestEnumKeyCollision:
             field_a.model = ModelA
             field_b.model = ModelB
 
-            enum_a_create = convert_django_field_with_choices(
-                field_a, local_registry, input_flag="create"
-            )
-            enum_b_create = convert_django_field_with_choices(
-                field_b, local_registry, input_flag="create"
-            )
+            enum_a_create = build_choices_enum_type(field_a, local_registry)
+            enum_b_create = build_choices_enum_type(field_b, local_registry)
         finally:
             field_a.model = original_a
             field_b.model = original_b
 
         assert enum_a_create is not enum_b_create, (
-            "Input-flag enums for same-named fields on same-object_name models "
+            "Native enums for same-named fields on same-object_name models "
             "must not collide."
         )
 
@@ -148,13 +165,22 @@ class TestEnumKeyCollision:
 
 
 class TestSelfReferentialO2O:
-    """PersonWithSpouse.spouse must appear in output and input GraphQL types."""
+    """PersonWithSpouse.spouse must appear in output and input GraphQL types.
 
-    def test_self_ref_o2o_output_field_present(self):
-        """The 'spouse' field must be present in the DjangoObjectType."""
+    Also covers the MTI parent_link guard that must not misfire on it.
+    """
+
+    def test_self_ref_o2o_output_field_present(self) -> None:
+        """The "spouse" field must be present in the DjangoObjectType.
+
+        If this breaks, a genuine self-referential OneToOneField would be
+        silently dropped from the generated GraphQL output type.
+        """
         local_registry = Registry()
 
         class PersonType(DjangoObjectType):
+            """Local DjangoObjectType wrapping PersonWithSpouse for the assertion."""
+
             class Meta:
                 model = PersonWithSpouse
                 registry = local_registry
@@ -165,30 +191,46 @@ class TestSelfReferentialO2O:
             f"Got: {field_names}"
         )
 
-    def test_self_ref_o2o_dynamic_resolver_does_not_return_none(self):
-        """The Dynamic field for spouse must not return None when resolved."""
+    def test_self_ref_o2o_output_converter_does_not_drop(self) -> None:
+        """The self-ref O2O OUTPUT converter must never silently drop the field.
+
+        S-rel-2 retired graphene on the to-ONE relation OUTPUT path: a genuine
+        self-referential OneToOne now converts to a graphene-free
+        "NativeRelationField" presence/ordering marker (the issue #52 trap is
+        the MTI parent_link guard incorrectly firing on a genuine self-ref O2O,
+        which would drop the field).
+        """
+        from django_graphex.converter import _DEAD_SCALAR
+        from django_graphex.core.descriptors import NativeRelationField
+
         local_registry = Registry()
         field = PersonWithSpouse._meta.get_field("spouse")
 
-        dynamic = convert_field_to_djangomodel(
-            field, registry=local_registry, input_flag=None, nested_field=False
-        )
-
-        # Register a PersonType so the registry lookup succeeds.
+        # Register a PersonType so the registry lookup can succeed.
         class PersonType(DjangoObjectType):
             class Meta:
                 model = PersonWithSpouse
                 registry = local_registry
 
-        # The Dynamic's inner function must return a non-None graphene Field.
-        resolved = dynamic.type()
-        assert resolved is not None, (
-            "Dynamic resolver for a genuine self-referential O2O must not return "
-            "None. The MTI parent_link guard incorrectly fired."
+        converted = convert_field_to_djangomodel(
+            field, registry=local_registry, input_flag=None, nested_field=False
         )
 
-    def test_self_ref_o2o_present_in_create_input_type(self):
-        """The spouse field (as an ID) must be present in the create input type."""
+        assert isinstance(converted, NativeRelationField), (
+            "self-ref O2O OUTPUT must return a graphene-free "
+            f"NativeRelationField marker (S-rel-2); got {converted!r}"
+        )
+        assert converted is not None and converted is not _DEAD_SCALAR, (
+            "the self-ref O2O marker must NEVER be None / dead-scalar — that "
+            "is the issue #52 silent-drop trap (parent_link guard firing)."
+        )
+
+    def test_self_ref_o2o_present_in_create_input_type(self) -> None:
+        """The spouse field (as an ID) must be present in the create input type.
+
+        If this breaks, a genuine self-referential OneToOneField would be
+        silently dropped from the generated create-input GraphQL type.
+        """
         from django_graphex.types import DjangoInputObjectType
 
         local_registry = Registry()
@@ -206,8 +248,12 @@ class TestSelfReferentialO2O:
             f"fields as an ID. Got: {input_field_names}"
         )
 
-    def test_mti_parent_link_flag_identifies_real_mti_fields(self):
-        """parent_link=True correctly identifies MTI auto-generated fields."""
+    def test_mti_parent_link_flag_identifies_real_mti_fields(self) -> None:
+        """ "parent_link=True" must correctly identify MTI auto-generated fields.
+
+        If this breaks, the MTI parent_link guard could misclassify a genuine
+        self-referential O2O as an MTI-generated field and drop it.
+        """
         field = PersonWithSpouse._meta.get_field("spouse")
         # A genuine self-ref O2O must NOT have parent_link=True.
         assert not getattr(field.remote_field, "parent_link", False), (
@@ -215,31 +261,11 @@ class TestSelfReferentialO2O:
             "so the MTI guard does NOT skip it."
         )
 
-    def test_filter_enum_for_self_ref_model_uses_model_class_key(self):
-        """The filtering/_choices_enum function must also use model-class keying."""
-        from django_graphex.filtering.schema import _choices_enum
-
-        local_registry = Registry()
-
-        field_a = EnumCollisionItemA._meta.get_field("status")
-        field_b = EnumCollisionItemB._meta.get_field("status")
-
-        # First, populate the registry via the main converter so _choices_enum
-        # can retrieve the enums.
-        convert_django_field_with_choices(field_a, local_registry)
-        convert_django_field_with_choices(field_b, local_registry)
-
-        enum_for_a = _choices_enum(field_a, local_registry)
-        enum_for_b = _choices_enum(field_b, local_registry)
-
-        # Both must resolve to their respective enums (not graphene.String fallback).
-        assert enum_for_a is not graphene.String, (
-            "filter _choices_enum must find the enum for EnumCollisionItemA"
-        )
-        assert enum_for_b is not graphene.String, (
-            "filter _choices_enum must find the enum for EnumCollisionItemB"
-        )
-        # And they must be distinct.
-        assert enum_for_a is not enum_for_b, (
-            "filter _choices_enum must return distinct enums for different model classes"
-        )
+    # S7 (graphene-removal): the graphene filter-input builder
+    # (``filtering/schema.py``) and its ``_choices_enum`` helper were deleted. The
+    # model-class enum-keying behavior it tested is the SAME registry keying
+    # exercised by the converter tests above (``convert_django_field_with_choices``
+    # populates distinct enums per model class); the native filter-input builder
+    # (``filtering/native_schema.py``) reuses those registry-keyed enums. The
+    # graphene-only ``_choices_enum`` unit test is therefore pruned (its module no
+    # longer exists), not ported — the underlying behavior remains covered.

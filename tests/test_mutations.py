@@ -1,52 +1,109 @@
-# -*- coding: utf-8 -*-
 """Tests for django_graphex.mutation module."""
 
-import graphene
+from __future__ import annotations
+
 from django.contrib.auth.models import User
+from django.http import HttpRequest
 from django.test import RequestFactory, TestCase
+from graphql import (
+    ExecutionResult,
+    GraphQLField,
+    GraphQLResolveInfo,
+    GraphQLString,
+    graphql_sync,
+)
 
-from django_graphex import DjangoModelMutation
+from django_graphex.core import ObjectType, field
+from django_graphex.mutation import DjangoModelMutation
+from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
 
+from ._schema_isolation import isolated_pair
 from .models import Author, Post
+
+_RMUT = Registry()
 
 
 class PostMutation(DjangoModelMutation):
-    """Mutation exercising partial updates against a required FK."""
+    """Mutation exercising partial updates against a required FK.
+
+    Used by "test_partial_update_keeps_required_fk".
+    """
 
     class Meta:
+        """Bind the mutation to "Post" under the isolated registry "_RMUT".
+
+        No other options are needed for this mutation.
+        """
+
         model = Post
+        registry = _RMUT
 
 
 class UserMutation(DjangoModelMutation):
-    """Test mutation for User model."""
+    """Test mutation for User model.
+
+    Used by the bulk of the CRUD tests below.
+    """
 
     class Meta:
+        """Bind the mutation to "User" with a description, under "_RMUT".
+
+        The description is asserted directly in "test_mutation_meta_attributes".
+        """
+
         model = User
         description = "User mutation"
+        registry = _RMUT
 
 
 class UserMutationWithCustomName(DjangoModelMutation):
-    """Test mutation with custom model name."""
+    """Test mutation with custom model name.
+
+    Used by the custom-lookup-field and limited-operations tests.
+    """
 
     class Meta:
+        """Bind the mutation to "User" with a custom lookup field and limited operations.
+
+        Only "create" and "update" are enabled; "delete" is intentionally
+        excluded.
+        """
+
         model = User
         model_operations = ("create", "update")
         lookup_field = "username"
+        registry = _RMUT
 
 
-class TestQuery(graphene.ObjectType):
-    """Test query for mutations."""
+class TestQuery(ObjectType):
+    """Test query for mutations.
+
+    Provides the minimal root query field required alongside the mutation
+    root.
+    """
 
     __test__ = False  # GraphQL schema fixture, not a pytest test class
 
-    hello = graphene.String(default_value="Hello World!")
+    hello = field(GraphQLString)
 
-    def resolve_hello(self, info):
+    def resolve_hello(self, info: GraphQLResolveInfo) -> str:
+        """Resolve the "hello" field to a fixed greeting.
+
+        Args:
+            info: The GraphQL resolve info for the current field.
+
+        Returns:
+            The literal greeting string "Hello World!".
+        """
         return "Hello World!"
 
 
-class TestMutations(graphene.ObjectType):
-    """Test mutations."""
+class TestMutations(ObjectType):
+    """Test mutations.
+
+    Root mutation exposing every field kind under test in this module.
+    """
 
     __test__ = False  # GraphQL schema fixture, not a pytest test class
 
@@ -60,14 +117,37 @@ class TestMutations(graphene.ObjectType):
     post_update = PostMutation.UpdateField()
 
 
-test_schema = graphene.Schema(query=TestQuery, mutation=TestMutations)
+test_schema = DjangoGraphQLSchema(
+    query=TestQuery, mutation=TestMutations, registries=isolated_pair(_RMUT)
+)
+
+
+def _execute(mutation: str, context_value: HttpRequest) -> ExecutionResult:
+    """Run a mutation against the native schema (drop-in for "schema.execute").
+
+    Args:
+        mutation: The GraphQL mutation document to execute.
+        context_value: The Django request passed through as GraphQL context.
+
+    Returns:
+        The graphql-core execution result.
+    """
+    return graphql_sync(
+        test_schema.graphql_schema, mutation, context_value=context_value
+    )
 
 
 class DjangoModelMutationTest(TestCase):
-    """Test cases for DjangoModelMutation."""
+    """Test cases for DjangoModelMutation.
 
-    def setUp(self):
-        """Set up test data."""
+    Covers create/update/delete, validation errors, and Meta wiring.
+    """
+
+    def setUp(self) -> None:
+        """Set up a request factory and one persisted "testuser".
+
+        Shared as fixture data by every test in this class.
+        """
         self.factory = RequestFactory()
         self.user = User.objects.create_user(
             username="testuser",
@@ -76,8 +156,12 @@ class DjangoModelMutationTest(TestCase):
             last_name="User",
         )
 
-    def test_create_mutation(self):
-        """Test create mutation."""
+    def test_create_mutation(self) -> None:
+        """ "userCreate" persists a new user and returns it with no errors.
+
+        This test breaks if the generated create mutation stops persisting
+        the user or stops returning the created fields.
+        """
         mutation = """
             mutation {
                 userCreate(newUser: {
@@ -104,7 +188,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userCreate"]
@@ -115,8 +199,12 @@ class DjangoModelMutationTest(TestCase):
         errors = data.get("errors") or []
         self.assertEqual(len(errors), 0)
 
-    def test_update_mutation(self):
-        """Test update mutation."""
+    def test_update_mutation(self) -> None:
+        """ "userUpdate" persists changes to an existing user's editable fields.
+
+        This test breaks if the generated update mutation stops applying
+        changes to "firstName"/"lastName".
+        """
         mutation = f"""
             mutation {{
                 userUpdate(newUser: {{
@@ -140,7 +228,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userUpdate"]
@@ -148,12 +236,16 @@ class DjangoModelMutationTest(TestCase):
         self.assertEqual(data["user"]["firstName"], "Updated")
         self.assertEqual(data["user"]["lastName"], "Name")
 
-    def test_partial_update_keeps_required_fk(self):
+    def test_partial_update_keeps_required_fk(self) -> None:
         """A partial update must not require (or clear) an untouched FK.
 
-        Regression: omitted relational inputs arrive as an explicit ``null``
-        (the update input gives them a ``None`` default), which previously made
-        a required FK fail validation with "This field may not be null".
+        An OMITTED relational input is ABSENT from the coerced payload (the
+        coercion layer delivers only client-sent keys; omitted != null), so a
+        required FK the client did not touch is neither re-validated nor
+        cleared. (An EXPLICIT "null" on a required field WOULD fail
+        validation with a clean ErrorType — see
+        "tests.test_explicit_null_and_json_input".) This test breaks if that
+        omitted-vs-null distinction regresses.
         """
         author = Author.objects.create(name="Original")
         post = Post.objects.create(title="Original", body="b", author=author)
@@ -169,7 +261,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["postUpdate"]
@@ -179,8 +271,12 @@ class DjangoModelMutationTest(TestCase):
         post.refresh_from_db()
         self.assertEqual(post.author_id, author.id)
 
-    def test_delete_mutation(self):
-        """Test delete mutation."""
+    def test_delete_mutation(self) -> None:
+        """ "userDelete" removes the target user and returns ok with no errors.
+
+        This test breaks if the generated delete mutation stops removing
+        the row or stops reporting success.
+        """
         mutation = f"""
             mutation {{
                 userDelete(id: {self.user.id}) {{
@@ -194,7 +290,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userDelete"]
@@ -206,8 +302,12 @@ class DjangoModelMutationTest(TestCase):
         # Verify user was deleted
         self.assertFalse(User.objects.filter(id=self.user.id).exists())
 
-    def test_create_mutation_with_validation_errors(self):
-        """Test create mutation with validation errors."""
+    def test_create_mutation_with_validation_errors(self) -> None:
+        """ "userCreate" with a duplicate username fails and reports validation errors.
+
+        This test breaks if the uniqueness check on "username" stops firing
+        during create.
+        """
         # Create user with same username first
         User.objects.create_user(username="duplicate", email="dup@example.com")
 
@@ -231,7 +331,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userCreate"]
@@ -241,8 +341,12 @@ class DjangoModelMutationTest(TestCase):
         errors = data.get("errors") or []
         self.assertGreater(len(errors), 0)
 
-    def test_update_nonexistent_user(self):
-        """Test updating a non-existent user."""
+    def test_update_nonexistent_user(self) -> None:
+        """ "userUpdate" against a non-existent id fails gracefully with errors.
+
+        This test breaks if updating a missing user stops returning a
+        not-ok result and instead raises or silently no-ops.
+        """
         mutation = """
             mutation {
                 userUpdate(newUser: {
@@ -262,7 +366,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userUpdate"]
@@ -272,8 +376,12 @@ class DjangoModelMutationTest(TestCase):
         errors = data.get("errors") or []
         self.assertGreater(len(errors), 0)
 
-    def test_delete_nonexistent_user(self):
-        """Test deleting a non-existent user."""
+    def test_delete_nonexistent_user(self) -> None:
+        """ "userDelete" against a non-existent id fails gracefully with errors.
+
+        This test breaks if deleting a missing user stops returning a
+        not-ok result and instead raises.
+        """
         mutation = """
             mutation {
                 userDelete(id: 99999) {
@@ -287,7 +395,7 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userDelete"]
@@ -296,8 +404,12 @@ class DjangoModelMutationTest(TestCase):
         errors = data.get("errors") or []
         self.assertGreater(len(errors), 0)
 
-    def test_custom_lookup_field_mutation(self):
-        """Test mutation with custom lookup field."""
+    def test_custom_lookup_field_mutation(self) -> None:
+        """A mutation configured with "lookup_field='username'" updates by that field.
+
+        This test breaks if the custom lookup field stops being honored when
+        resolving the target row to update.
+        """
         mutation = f"""
             mutation {{
                 userCustomUpdate(newUser: {{
@@ -319,15 +431,20 @@ class DjangoModelMutationTest(TestCase):
         """
 
         request = self.factory.post("/graphql/", content_type="application/json")
-        result = test_schema.execute(mutation, context_value=request)
+        result = _execute(mutation, context_value=request)
 
         self.assertIsNone(result.errors)
         data = result.data["userCustomUpdate"]
         self.assertTrue(data["ok"])
         self.assertEqual(data["user"]["firstName"], "CustomUpdated")
 
-    def test_mutation_meta_attributes(self):
-        """Test mutation meta attributes."""
+    def test_mutation_meta_attributes(self) -> None:
+        """ "UserMutation._meta" carries the declared description and model, and builds every field kind.
+
+        This test breaks if "Meta.description"/"Meta.model" stop being
+        read onto "_meta", or if any of create/update/delete stop building
+        a "GraphQLField".
+        """
         self.assertEqual(UserMutation._meta.description, "User mutation")
         self.assertEqual(UserMutation._meta.model, User)
 
@@ -336,18 +453,23 @@ class DjangoModelMutationTest(TestCase):
         update_field = UserMutation.UpdateField()
         delete_field = UserMutation.DeleteField()
 
-        self.assertIsInstance(create_field, graphene.Field)
-        self.assertIsInstance(update_field, graphene.Field)
-        self.assertIsInstance(delete_field, graphene.Field)
+        self.assertIsInstance(create_field, GraphQLField)
+        self.assertIsInstance(update_field, GraphQLField)
+        self.assertIsInstance(delete_field, GraphQLField)
 
-    def test_mutation_with_limited_operations(self):
-        """Test mutation with limited model operations."""
+    def test_mutation_with_limited_operations(self) -> None:
+        """A mutation with "model_operations = ('create', 'update')" builds only those two fields.
+
+        This test breaks if a disabled operation ("delete" here) stops
+        raising when its field builder is invoked, or if "MutationFields"
+        stops yielding exactly the enabled operations.
+        """
         # model_operations = ("create", "update") -> only those two are built.
         create_field = UserMutationWithCustomName.CreateField()
         update_field = UserMutationWithCustomName.UpdateField()
 
-        self.assertIsInstance(create_field, graphene.Field)
-        self.assertIsInstance(update_field, graphene.Field)
+        self.assertIsInstance(create_field, GraphQLField)
+        self.assertIsInstance(update_field, GraphQLField)
 
         # delete was excluded from model_operations, so building the field
         # raises rather than silently exposing an unsupported operation.
@@ -358,13 +480,22 @@ class DjangoModelMutationTest(TestCase):
         fields = UserMutationWithCustomName.MutationFields()
         self.assertEqual(len(fields), 2)
 
-    def test_unknown_model_operation_is_rejected(self):
-        """An invalid model_operations entry fails fast at class creation."""
+    def test_unknown_model_operation_is_rejected(self) -> None:
+        """An invalid "model_operations" entry fails fast at class creation.
+
+        This test breaks if declaring an unsupported operation name (here
+        "frobnicate") stops raising "ImproperlyConfigured" immediately at
+        class-definition time.
+        """
         from django.core.exceptions import ImproperlyConfigured
 
         with self.assertRaises(ImproperlyConfigured):
 
             class BadMutation(DjangoModelMutation):
+                """Throwaway mutation declaring an invalid operation name."""
+
                 class Meta:
+                    """Bind the mutation to "User" with an invalid operation in the tuple."""
+
                     model = User
                     model_operations = ("create", "frobnicate")

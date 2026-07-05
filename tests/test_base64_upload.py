@@ -21,19 +21,26 @@ from __future__ import annotations
 import base64
 import json
 import tempfile
+from typing import Any
 
-import graphene
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.http import HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
-from graphql import GraphQLError
+from graphql import GraphQLError, GraphQLString
+
+from django_graphex.core import ObjectType, field
+from django_graphex.schema import DjangoGraphQLSchema
 
 # ---------------------------------------------------------------------------
-# We import from the package — at RED phase these will ImportError; pytest
-# will then mark them as collection errors (expected before implementation).
+# We import from the package. ``Base64FileInput`` itself is now a native
+# ``InputType`` (Pydantic) — its native behavior is covered in
+# ``tests/core/test_s_roots_g_base64_native.py``; this legacy file keeps the
+# ``decode_base64_file`` helper + view-guard coverage (the retired graphene
+# container assertions are skipped above).
 # ---------------------------------------------------------------------------
-from django_graphex.uploads import Base64FileInput, decode_base64_file
+from django_graphex.uploads import decode_base64_file
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,10 +63,18 @@ _TINY_PNG_B64 = base64.b64encode(_TINY_PNG).decode()
 
 
 class TestDecodeBase64File:
-    """decode_base64_file helper."""
+    """Tests for the "decode_base64_file" module-level helper.
 
-    def test_decode_returns_simple_uploaded_file(self):
-        """Happy path: valid base64 → SimpleUploadedFile with correct attributes."""
+    Covers happy-path decoding, content-type defaulting, malformed-input
+    rejection, and the per-call/global size-limit interaction.
+    """
+
+    def test_decode_returns_simple_uploaded_file(self) -> None:
+        """Valid base64 input must decode to a correctly populated SimpleUploadedFile.
+
+        Checks the filename, decoded content, and content_type attributes
+        all round-trip through the helper unchanged.
+        """
         result = decode_base64_file(
             {"filename": "hello.txt", "content_type": "text/plain", "data": _HELLO_B64},
             max_size=1024,
@@ -69,43 +84,66 @@ class TestDecodeBase64File:
         assert result.read() == _HELLO_BYTES
         assert result.content_type == "text/plain"
 
-    def test_default_content_type(self):
-        """When content_type is absent/None, defaults to application/octet-stream."""
+    def test_default_content_type(self) -> None:
+        """An omitted content_type must default to application/octet-stream.
+
+        Guards against the helper leaving content_type as None or empty
+        when the caller does not supply one.
+        """
         result = decode_base64_file(
             {"filename": "blob.bin", "data": _HELLO_B64}, max_size=1024
         )
         assert result.content_type == "application/octet-stream"
 
-    def test_invalid_base64_raises_graphql_error(self):
-        """Non-base64 data → GraphQLError (never a 500 / binascii.Error)."""
+    def test_invalid_base64_raises_graphql_error(self) -> None:
+        """Non-base64 data must raise GraphQLError, never a raw 500.
+
+        If this breaks, a malformed upload would surface as an unhandled
+        binascii.Error instead of a clean GraphQL error.
+        """
         with pytest.raises(GraphQLError):
             decode_base64_file(
                 {"filename": "bad.txt", "data": "!!!NOT_BASE64!!!"}, max_size=1024
             )
 
-    def test_wrong_padding_raises_graphql_error(self):
-        """Incorrectly padded base64 → GraphQLError."""
+    def test_wrong_padding_raises_graphql_error(self) -> None:
+        """Incorrectly padded base64 must raise GraphQLError.
+
+        Guards against a padding-only malformation slipping past validation.
+        """
         with pytest.raises(GraphQLError):
             decode_base64_file(
                 {"filename": "bad.txt", "data": "YWJj=="},
                 max_size=1024,  # extra pad
             )
 
-    def test_over_limit_raises_graphql_error(self):
-        """Payload bigger than max_size → GraphQLError (pre-check before decode)."""
+    def test_over_limit_raises_graphql_error(self) -> None:
+        """A payload bigger than max_size must raise GraphQLError before decoding.
+
+        The pre-check must fire on the encoded size, avoiding a full decode
+        of an oversized payload.
+        """
         data = base64.b64encode(b"x" * 200).decode()
         with pytest.raises(GraphQLError, match="exceeds"):
             decode_base64_file({"filename": "big.bin", "data": data}, max_size=100)
 
-    def test_under_limit_succeeds(self):
-        """Payload under max_size → decoded normally."""
+    def test_under_limit_succeeds(self) -> None:
+        """A payload under max_size must decode normally.
+
+        Regression guard for the over-limit pre-check rejecting valid
+        uploads.
+        """
         result = decode_base64_file(
             {"filename": "ok.bin", "data": _HELLO_B64}, max_size=100
         )
         assert result.read() == _HELLO_BYTES
 
-    def test_global_max_upload_size_enforced(self):
-        """Without per-call max_size the global MAX_UPLOAD_SIZE cap is used."""
+    def test_global_max_upload_size_enforced(self) -> None:
+        """Without a per-call max_size, the global MAX_UPLOAD_SIZE cap must apply.
+
+        If this breaks, callers that omit "max_size" could upload files of
+        unbounded size.
+        """
         data = base64.b64encode(b"x" * 200).decode()
         with override_settings(DJANGO_GRAPHEX={"MAX_UPLOAD_SIZE": 50}):
             from django_graphex import settings as _s
@@ -117,8 +155,12 @@ class TestDecodeBase64File:
             finally:
                 _s.graphql_api_settings.reload()
 
-    def test_per_call_max_overrides_global(self):
-        """Per-call max_size overrides the global MAX_UPLOAD_SIZE."""
+    def test_per_call_max_overrides_global(self) -> None:
+        """A per-call max_size must override the global MAX_UPLOAD_SIZE.
+
+        A caller passing a larger explicit "max_size" must be able to
+        upload beyond the global cap.
+        """
         small_data = base64.b64encode(b"x" * 20).decode()
         with override_settings(DJANGO_GRAPHEX={"MAX_UPLOAD_SIZE": 10}):
             from django_graphex import settings as _s
@@ -139,88 +181,37 @@ class TestDecodeBase64File:
 # ---------------------------------------------------------------------------
 
 
-def _make_container(filename, data, content_type=None):
-    """Build a Base64FileInput container (the dict-like object that arrives in resolvers).
-
-    graphene auto-generates a container class that is stored in
-    ``Base64FileInput._meta.container`` and inherits from both
-    ``InputObjectTypeContainer`` and ``Base64FileInput``. Use that class to
-    create instances for unit tests.
-    """
-    container_cls = Base64FileInput._meta.container
-    kwargs = {"filename": filename, "data": data}
-    if content_type is not None:
-        kwargs["content_type"] = content_type
-    return container_cls(**kwargs)
-
-
+# ---------------------------------------------------------------------------
+# RETIRED (S-ROOTS-g / S7): graphene-only Base64FileInput container assertions.
+#
+# Base64FileInput was ported to a native ``InputType`` (a Pydantic model) in
+# S-ROOTS-g. The graphene container surface it relied on
+# (``_meta.container`` / ``issubclass(graphene.InputObjectType)`` /
+# ``graphene.Schema`` execution of the input) no longer exists. The graphene-free
+# behavior — a VALIDATED Base64FileInput instance decoding to a
+# ``SimpleUploadedFile`` end-to-end — is asserted in the native replacement
+# suite ``tests/core/test_s_roots_g_base64_native.py``. This whole class is
+# pruned in S7 alongside the rest of the graphene-suite retirement.
+# ---------------------------------------------------------------------------
+@pytest.mark.skip(
+    reason="S-ROOTS-g: Base64FileInput is now a native InputType (Pydantic). "
+    "Graphene container assertions retired; native behavior covered by "
+    "tests/core/test_s_roots_g_base64_native.py. Pruned in S7."
+)
 class TestBase64FileInput:
-    """Base64FileInput graphene.InputObjectType."""
+    """RETIRED graphene-container assertions.
 
-    def test_is_input_object_type(self):
-        """Base64FileInput must be a graphene.InputObjectType subclass."""
-        assert issubclass(Base64FileInput, graphene.InputObjectType)
+    See the module note above: the graphene container surface these tests
+    exercised no longer exists after the S-ROOTS-g native port.
+    """
 
-    def test_fields_present(self):
-        """Must expose filename, data, and optional content_type fields."""
-        fields = Base64FileInput._meta.fields
-        assert "filename" in fields
-        assert "data" in fields
-        assert "content_type" in fields
+    def test_retired_graphene_container_surface(self) -> None:
+        """Placeholder marking the retired graphene container contract.
 
-    def test_to_uploaded_file(self):
-        """Container.to_uploaded_file() → SimpleUploadedFile (as seen in a resolver)."""
-        container = _make_container("photo.png", _TINY_PNG_B64, "image/png")
-        result = container.to_uploaded_file(max_size=1024)
-        assert isinstance(result, SimpleUploadedFile)
-        assert result.name == "photo.png"
-        assert result.content_type == "image/png"
-        assert result.read() == _TINY_PNG
-
-    def test_to_uploaded_file_default_content_type(self):
-        """When content_type is absent, defaults to application/octet-stream."""
-        container = _make_container("blob.bin", _HELLO_B64)
-        result = container.to_uploaded_file(max_size=1024)
-        assert result.content_type == "application/octet-stream"
-
-    def test_to_uploaded_file_with_max_size(self):
-        """to_uploaded_file(max_size=N) enforces a per-file cap."""
-        large_data = base64.b64encode(b"x" * 200).decode()
-        container = _make_container("big.bin", large_data)
-        with pytest.raises(GraphQLError, match="exceeds"):
-            container.to_uploaded_file(max_size=50)
-
-    def test_container_inherits_from_base64_file_input(self):
-        """Auto-generated container inherits from Base64FileInput (methods available)."""
-        container_cls = Base64FileInput._meta.container
-        assert issubclass(container_cls, Base64FileInput)
-
-    def test_to_uploaded_file_available_in_schema_execution(self):
-        """to_uploaded_file is callable on the value that arrives in a real resolver."""
-        resolved_file = None
-
-        class Mutation(graphene.ObjectType):
-            upload = graphene.Field(
-                graphene.String,
-                file=Base64FileInput(required=True),
-            )
-
-            def resolve_upload(root, info, file):
-                nonlocal resolved_file
-                resolved_file = file.to_uploaded_file(max_size=1024)
-                return resolved_file.name
-
-        schema = graphene.Schema(query=Mutation)
-        b64 = _HELLO_B64
-        query = (
-            '{ upload(file: {filename: "test.txt", '
-            f'data: "{b64}", contentType: "text/plain"'
-            "}) }"
-        )
-        result = schema.execute(query)
-        assert result.errors is None
-        assert resolved_file is not None
-        assert resolved_file.read() == _HELLO_BYTES
+        The graphene container contract this test used to assert is gone
+        in 2.0; native behavior is covered by
+        "tests/core/test_s_roots_g_base64_native.py".
+        """
 
 
 # ---------------------------------------------------------------------------
@@ -229,11 +220,19 @@ class TestBase64FileInput:
 
 
 class TestImproperlyConfiguredWhenNoMaxUploadSize(TestCase):
-    """ImproperlyConfigured when MAX_UPLOAD_SIZE is not set and Base64FileInput is used."""
+    """ImproperlyConfigured must be raised when MAX_UPLOAD_SIZE is unset.
+
+    Covers the case where Base64FileInput decoding is attempted without a
+    configured upload-size cap.
+    """
 
     @override_settings(DJANGO_GRAPHEX={})
-    def test_raises_improperly_configured_without_max_upload_size(self):
-        """decode_base64_file without MAX_UPLOAD_SIZE → ImproperlyConfigured."""
+    def test_raises_improperly_configured_without_max_upload_size(self) -> None:
+        """decode_base64_file without MAX_UPLOAD_SIZE must raise ImproperlyConfigured.
+
+        Prevents silently allowing unbounded uploads when the required
+        setting was never configured.
+        """
         from django_graphex import settings as _s
 
         _s.graphql_api_settings.reload()
@@ -250,32 +249,68 @@ class TestImproperlyConfiguredWhenNoMaxUploadSize(TestCase):
 
 
 class TestMaxRequestBodySizeGuard(TestCase):
-    """MAX_REQUEST_BODY_SIZE guard rejects oversized HTTP bodies BEFORE JSON parsing."""
+    """MAX_REQUEST_BODY_SIZE guard rejects oversized HTTP bodies before JSON parsing.
 
-    def _make_schema(self):
-        class Query(graphene.ObjectType):
-            hello = graphene.String()
+    Covers Content-Length spoofing, missing/garbage headers, and the batch
+    view path, all of which must fall back to the authoritative
+    len(request.body) check.
+    """
+
+    def _make_schema(self) -> DjangoGraphQLSchema:
+        """Build a minimal schema with a single "hello" query field.
+
+        Returns:
+            schema: A schema exposing "{ hello }" resolving to "world".
+        """
+
+        class Query(ObjectType):
+            hello = field(GraphQLString)
 
             def resolve_hello(self, info):
                 return "world"
 
-        return graphene.Schema(query=Query)
+        return DjangoGraphQLSchema(query=Query)
 
-    def _make_view(self, schema=None):
+    def _make_view(self, schema: DjangoGraphQLSchema | None = None) -> Any:
+        """Build a "BaseGraphQLView" bound to a schema.
+
+        Args:
+            schema: The schema to bind; when None, a fresh minimal schema is
+                built via "_make_schema".
+
+        Returns:
+            view: The view callable returned by Django's "as_view".
+        """
         from django_graphex.views import BaseGraphQLView
 
         if schema is None:
             schema = self._make_schema()
         return BaseGraphQLView.as_view(schema=schema)
 
-    def _post_body(self, view, body: bytes, content_type: str = "application/json"):
+    def _post_body(
+        self, view: Any, body: bytes, content_type: str = "application/json"
+    ) -> HttpResponse:
+        """POST a raw body to a view and return its response.
+
+        Args:
+            view: The view callable to invoke.
+            body: The raw request body bytes.
+            content_type: The Content-Type header value for the request.
+
+        Returns:
+            response: The HttpResponse produced by the view.
+        """
         rf = RequestFactory()
         request = rf.post("/graphql/", data=body, content_type=content_type)
         return view(request)
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
-    def test_body_over_limit_returns_413_or_400(self):
-        """A request body over MAX_REQUEST_BODY_SIZE is rejected before parsing."""
+    def test_body_over_limit_returns_413_or_400(self) -> None:
+        """A request body over MAX_REQUEST_BODY_SIZE must be rejected before parsing.
+
+        If this breaks, an oversized body could reach JSON parsing and
+        resolver execution instead of being fast-rejected.
+        """
         from django_graphex import settings as _s
 
         _s.graphql_api_settings.reload()
@@ -288,8 +323,11 @@ class TestMaxRequestBodySizeGuard(TestCase):
             _s.graphql_api_settings.reload()
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 5000})
-    def test_body_under_limit_passes_through(self):
-        """A body under MAX_REQUEST_BODY_SIZE is processed normally."""
+    def test_body_under_limit_passes_through(self) -> None:
+        """A body under MAX_REQUEST_BODY_SIZE must be processed normally.
+
+        Regression guard for the size guard rejecting valid requests.
+        """
         from django_graphex import settings as _s
 
         _s.graphql_api_settings.reload()
@@ -304,8 +342,12 @@ class TestMaxRequestBodySizeGuard(TestCase):
             _s.graphql_api_settings.reload()
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": None})
-    def test_no_limit_when_setting_is_none(self):
-        """When MAX_REQUEST_BODY_SIZE is None, no body-size check is performed."""
+    def test_no_limit_when_setting_is_none(self) -> None:
+        """With MAX_REQUEST_BODY_SIZE set to None, no body-size check must run.
+
+        Confirms the guard is opt-in and does not fire when explicitly
+        disabled.
+        """
         from django_graphex import settings as _s
 
         _s.graphql_api_settings.reload()
@@ -318,11 +360,11 @@ class TestMaxRequestBodySizeGuard(TestCase):
             _s.graphql_api_settings.reload()
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
-    def test_spoofed_low_content_length_still_rejected(self):
-        """DECISIVE: spoofed-low Content-Length must NOT bypass the guard.
+    def test_spoofed_low_content_length_still_rejected(self) -> None:
+        """A spoofed-low Content-Length must NOT bypass the size guard.
 
         A client that sends CONTENT_LENGTH: 10 but a real body larger than
-        MAX_REQUEST_BODY_SIZE must receive 413.  The old code trusted the
+        MAX_REQUEST_BODY_SIZE must receive 413. The old code trusted the
         header and skipped the body-length check, letting the request through.
         """
         from django_graphex import settings as _s
@@ -349,8 +391,12 @@ class TestMaxRequestBodySizeGuard(TestCase):
             _s.graphql_api_settings.reload()
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
-    def test_honest_large_body_fast_reject_413(self):
-        """Honest large body with accurate CL → fast-reject via CL check (413)."""
+    def test_honest_large_body_fast_reject_413(self) -> None:
+        """An honest large body with an accurate Content-Length must fast-reject.
+
+        When Content-Length is accurate and over the cap, the guard should
+        reject via the cheap header check (413) without reading the body.
+        """
         from django_graphex import settings as _s
 
         _s.graphql_api_settings.reload()
@@ -369,8 +415,12 @@ class TestMaxRequestBodySizeGuard(TestCase):
             _s.graphql_api_settings.reload()
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
-    def test_absent_content_length_over_cap_rejected(self):
-        """No Content-Length header + body over cap → authoritative check rejects (413)."""
+    def test_absent_content_length_over_cap_rejected(self) -> None:
+        """A body over the cap with no Content-Length header must still be rejected.
+
+        The authoritative len(request.body) check must catch the oversized
+        request even without a header to fast-reject on.
+        """
         from django_graphex import settings as _s
 
         _s.graphql_api_settings.reload()
@@ -389,8 +439,12 @@ class TestMaxRequestBodySizeGuard(TestCase):
             _s.graphql_api_settings.reload()
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
-    def test_garbage_content_length_over_cap_rejected(self):
-        """Garbage Content-Length + body over cap → authoritative check rejects (413)."""
+    def test_garbage_content_length_over_cap_rejected(self) -> None:
+        """A body over the cap with an unparsable Content-Length must still be rejected.
+
+        The authoritative len(request.body) check must catch the oversized
+        request even when the header value cannot be parsed as an integer.
+        """
         from django_graphex import settings as _s
 
         _s.graphql_api_settings.reload()
@@ -409,8 +463,12 @@ class TestMaxRequestBodySizeGuard(TestCase):
             _s.graphql_api_settings.reload()
 
     @override_settings(DJANGO_GRAPHEX={"MAX_REQUEST_BODY_SIZE": 50})
-    def test_batch_over_limit_returns_413_or_400(self):
-        """A batch request body over the limit is rejected before parsing."""
+    def test_batch_over_limit_returns_413_or_400(self) -> None:
+        """A batch request body over the limit must be rejected before parsing.
+
+        Confirms the same body-size guard applies to the batch view path,
+        not just the single-operation path.
+        """
         from django_graphex import settings as _s
 
         _s.graphql_api_settings.reload()
@@ -436,19 +494,37 @@ class TestMaxRequestBodySizeGuard(TestCase):
 
 
 class TestFileFieldRoundTrip(TestCase):
-    """Save a SimpleUploadedFile from decode_base64_file to a real FileField."""
+    """Save a SimpleUploadedFile from decode_base64_file to a real FileField.
 
-    def setUp(self):
+    Uses a temporary directory as MEDIA_ROOT so the round-trip exercises
+    real filesystem storage instead of an in-memory stand-in.
+    """
+
+    def setUp(self) -> None:
+        """Create a temporary directory.
+
+        Acts as this test's MEDIA_ROOT so saved files do not touch the
+        real project media directory.
+        """
         self.tmp_dir = tempfile.mkdtemp()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
+        """Remove the temporary MEDIA_ROOT directory.
+
+        Cleans up the directory created in "setUp" regardless of test
+        outcome.
+        """
         import shutil
 
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     @override_settings(MEDIA_ROOT=None)
-    def test_round_trip(self):
-        """File is saved to disk and readable back with correct content."""
+    def test_round_trip(self) -> None:
+        """A decoded file must be saved to disk and readable back unchanged.
+
+        Exercises the full path from base64 decoding through FileSystemStorage
+        save and re-read, confirming content survives the round-trip.
+        """
         from django.core.files.storage import FileSystemStorage
 
         storage = FileSystemStorage(location=self.tmp_dir)

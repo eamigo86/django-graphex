@@ -1,11 +1,28 @@
+"""Top-level pytest configuration: Django settings bootstrap and shared fixtures.
+
+Configures Django once for the whole suite (in "pytest_configure"), adds the
+distribution-smoke CLI options ("--no-pkgroot", "--staticfiles"), and defines
+the autouse fixture that clears the view-layer document caches between tests.
+"""
+
 import os
 import sys
+from typing import TYPE_CHECKING, Iterator
 
 import django
+import pytest as _pytest
 from django.core import management
 
+if TYPE_CHECKING:
+    import pytest
 
-def pytest_addoption(parser):
+
+def pytest_addoption(parser: "pytest.Parser") -> None:
+    """Register the distribution-smoke CLI options for this suite.
+
+    Args:
+        parser: The pytest option parser to add options to.
+    """
     parser.addoption(
         "--no-pkgroot",
         action="store_true",
@@ -31,7 +48,16 @@ except ImportError:
     HAS_CHANNELS = False
 
 
-def pytest_configure(config):
+def pytest_configure(config: "pytest.Config") -> None:
+    """Configure Django settings for the suite and apply distribution-smoke options.
+
+    Builds the full "settings.configure(...)" call (installed apps, database,
+    templates, middleware, DJANGO_GRAPHEX schema/middleware), then honors
+    "--no-pkgroot" and "--staticfiles" before calling "django.setup()".
+
+    Args:
+        config: The pytest configuration, used to read the registered options.
+    """
     from django.conf import settings
 
     # Subscriptions are an optional extra: only wire channels when it is present
@@ -77,12 +103,21 @@ def pytest_configure(config):
             "django.contrib.sites",
             "django.contrib.staticfiles",
             *channels_apps,
+            # django_graphex installs as a regular Django app: listing it here
+            # exercises the real app registry every suite run, so the whole suite
+            # is itself a strong, always-on installability proof (the package
+            # import chain must never touch the model registry at module load).
+            "django_graphex",
             "tests",
         ),
         PASSWORD_HASHERS=("django.contrib.auth.hashers.MD5PasswordHasher",),
-        GRAPHENE={
+        # S2 (2.0 breaking change): settings are read from the SINGLE
+        # DJANGO_GRAPHEX namespace; the legacy GRAPHENE fallback has been
+        # removed. The harness uses DJANGO_GRAPHEX so the global SCHEMA/MIDDLEWARE
+        # resolve through graphql_api_settings (the one and only reader).
+        DJANGO_GRAPHEX={
             "SCHEMA": "tests.schema.schema",
-            "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
+            "MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"],
         },
         AUTHENTICATION_BACKENDS=(
             "django.contrib.auth.backends.ModelBackend",
@@ -151,3 +186,33 @@ def pytest_configure(config):
 # Follow-up: add pytest-randomly to CI to validate shuffle-order independence
 # as a separate issue.  Do NOT add it as part of #73.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Document-cache isolation (P3 perf batch).
+#
+# django_graphex.views keeps process-global parse/validation caches
+# (_PARSE_CACHE / _VALIDATE_CACHE).  Left uncleared, a document parsed by one
+# test is served from cache in the next, breaking any test that counts
+# parse()/validate() calls (e.g. test_http_hardening's single-parse guard) and
+# making the suite order-dependent.  Clearing per test keeps every test's
+# cache observations self-contained; tests that exercise the cache itself
+# build their state within the test body.
+# ---------------------------------------------------------------------------
+
+
+@_pytest.fixture(autouse=True)
+def _clear_document_caches() -> Iterator[None]:
+    """Clear the view-layer parse/validation caches before each test.
+
+    Runs automatically for every test in the suite so a document parsed by
+    one test is never served from cache in the next, keeping cache-observing
+    tests (e.g. the "test_http_hardening" single-parse guard) order-independent.
+
+    Yields:
+        None. Control returns to the test after clearing the caches.
+    """
+    from django_graphex.views import clear_document_caches
+
+    clear_document_caches()
+    yield

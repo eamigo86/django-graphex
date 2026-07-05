@@ -1,4 +1,4 @@
-"""ASGI entrypoint: HTTP via Django, WebSocket via the subscription consumer."""
+"""ASGI entrypoint: HTTP via Django, WebSocket via the native subscription consumer."""
 
 import os
 
@@ -11,24 +11,19 @@ from django.core.asgi import get_asgi_application  # noqa: E402
 # DEBUG is True -- daphne does not serve them on its own like `runserver` does.
 django_asgi_app = ASGIStaticFilesHandler(get_asgi_application())
 
-from blog.consumers import AppDemultiplexer  # noqa: E402
+from blog.consumers import AppWSConsumer  # noqa: E402
 from channels.auth import AuthMiddlewareStack  # noqa: E402
 from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
 from channels.sessions import SessionMiddlewareStack  # noqa: E402
 from django.urls import path  # noqa: E402
 
-# SessionMiddlewareStack populates scope["session"] so the channel ownership
-# guard can compare the WebSocket session key against the HTTP session key.
-# Without it scope["session"] is None, the registry stores owner="" for every
-# connection, and the private noteSubscription flow (which has a real session
-# key on the HTTP side) is always rejected.
-#
-# AuthMiddlewareStack additionally populates scope["user"] from the session,
-# which allows any consumer code that checks request.user to work correctly
-# (not strictly required by the current playground, but is the standard
-# Channels pattern and costs nothing extra when sessions are already enabled).
+# SessionMiddlewareStack populates scope["session"] and AuthMiddlewareStack
+# populates scope["user"] from the session. v2.0 authenticates at the WebSocket
+# connection scope (connection_init is the auth boundary), so the subscription's
+# authorize/scope hooks can read scope["user"] -- this is the standard Channels
+# pattern and is what the private noteSubscription flow relies on.
 _ws_app = SessionMiddlewareStack(
-    AuthMiddlewareStack(URLRouter([path("ws/graphql/", AppDemultiplexer.as_asgi())]))
+    AuthMiddlewareStack(URLRouter([path("ws/graphql/", AppWSConsumer.as_asgi())]))
 )
 
 application = ProtocolTypeRouter(

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Remaining branch coverage for ``cost.py`` (the ``_CostAnalyzer`` multiplier
-and fragment paths) and ``CostLimitValidationRule``.
+"""Remaining branch coverage for "cost.py" (the "_CostAnalyzer" multiplier
+and fragment paths) and "CostLimitValidationRule".
 """
 
 from django.test import override_settings
@@ -20,7 +20,14 @@ from graphql import (
 from django_graphex.cost import CostLimitValidationRule, analyze_cost
 
 
-def _schema():
+def _schema() -> GraphQLSchema:
+    """Build a schema exercising the cost-analyzer's list and arg branches.
+
+    Returns:
+        schema: A schema with an "items" list field carrying both a
+            pagination arg ("limit") and a non-pagination arg ("q"), an
+            "nnItems" NonNull(List(...)) field, and a free "scalar" field.
+    """
     item = GraphQLObjectType("Item", {"name": GraphQLField(GraphQLString)})
     query = GraphQLObjectType(
         "Query",
@@ -42,7 +49,13 @@ def _schema():
     return GraphQLSchema(query=query, types=[item])
 
 
-def _sub_schema():
+def _sub_schema() -> GraphQLSchema:
+    """Build a schema with a query type but no subscription type.
+
+    Returns:
+        schema: A minimal schema used to exercise the operation-cost branch
+            where the requested operation's root type cannot be resolved.
+    """
     item = GraphQLObjectType("Item", {"name": GraphQLField(GraphQLString)})
     query = GraphQLObjectType("Query", {"scalar": GraphQLField(GraphQLString)})
     # A schema with a query type but no subscription type.
@@ -52,9 +65,12 @@ def _sub_schema():
 # --------------------------------------------------------------------------- #
 # operation root type missing                                                   #
 # --------------------------------------------------------------------------- #
-def test_subscription_without_subscription_type_costs_zero():
-    # No subscription type -> root_type is None -> operation_cost returns 0
-    # (line 114).
+def test_subscription_without_subscription_type_costs_zero() -> None:
+    """A subscription operation on a schema with no subscription type costs 0.
+
+    Exercises the branch where the operation's root type cannot be resolved,
+    so "operation_cost" must return 0 rather than raising.
+    """
     doc = parse("subscription { scalar }")
     assert analyze_cost(_sub_schema(), doc).total == 0
 
@@ -63,8 +79,12 @@ def test_subscription_without_subscription_type_costs_zero():
 # inline fragment WITH a resolvable type condition                              #
 # --------------------------------------------------------------------------- #
 @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
-def test_inline_fragment_with_type_condition_is_costed():
-    # `... on Item { name }` resolves the Item type and costs its leaves (151).
+def test_inline_fragment_with_type_condition_is_costed() -> None:
+    """An inline fragment with a type condition must resolve and cost its leaves.
+
+    "... on Item { name }" must resolve the Item type so its selected leaves
+    are costed instead of being skipped as unresolvable.
+    """
     doc = parse("{ items(limit: 2) { ... on Item { name } } }")
     assert analyze_cost(_schema(), doc).total == 1  # list own cost; leaf is free
 
@@ -73,9 +93,12 @@ def test_inline_fragment_with_type_condition_is_costed():
 # cyclic + non-pagination arg                                                   #
 # --------------------------------------------------------------------------- #
 @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
-def test_non_pagination_argument_is_ignored_for_multiplier():
-    # `q` is present but isn't a pagination arg, so the multiplier still comes
-    # from `limit` (line 206-207 skip).
+def test_non_pagination_argument_is_ignored_for_multiplier() -> None:
+    """A non-pagination argument must not affect the page-size multiplier.
+
+    "q" is present alongside "limit" but is not a pagination argument, so the
+    multiplier must still come solely from "limit".
+    """
     with_q = analyze_cost(
         _schema(), parse('{ items(limit: 3, q: "x") { name } }')
     ).total
@@ -84,8 +107,12 @@ def test_non_pagination_argument_is_ignored_for_multiplier():
 
 
 @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
-def test_cyclic_fragment_spread_costed_once():
-    # F spreads itself; the second encounter is short-circuited (line 161-162).
+def test_cyclic_fragment_spread_costed_once() -> None:
+    """A fragment that spreads itself must be costed once, not recursed forever.
+
+    Fragment "F" spreads itself; the second encounter must be short-circuited
+    so the analyzer terminates instead of recursing infinitely.
+    """
     doc = parse("{ items(limit: 2) { ...F } } fragment F on Item { name ...F }")
     # name is free; the self-spread is guarded -> just the list own cost.
     assert analyze_cost(_schema(), doc).total == 1
@@ -95,8 +122,12 @@ def test_cyclic_fragment_spread_costed_once():
 # DEFAULT_PAGE_SIZE multiplier (MAX_PAGE_SIZE unset)                             #
 # --------------------------------------------------------------------------- #
 @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": None, "DEFAULT_PAGE_SIZE": 7})
-def test_list_without_page_size_uses_default_page_size():
-    # No page-size arg, MAX_PAGE_SIZE unset -> DEFAULT_PAGE_SIZE multiplier (199).
+def test_list_without_page_size_uses_default_page_size() -> None:
+    """A list field with no page-size argument must use DEFAULT_PAGE_SIZE.
+
+    With MAX_PAGE_SIZE unset, the multiplier must fall back to
+    DEFAULT_PAGE_SIZE rather than 1 or an unbounded value.
+    """
     item = GraphQLObjectType(
         "It",
         {
@@ -116,8 +147,13 @@ def test_list_without_page_size_uses_default_page_size():
 # NonNull(List(...)) detection                                                  #
 # --------------------------------------------------------------------------- #
 @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 5})
-def test_nonnull_list_field_is_treated_as_list():
-    # nnItems: NonNull(List(Item)) -> the of_type loop reaches the list (228-230).
+def test_nonnull_list_field_is_treated_as_list() -> None:
+    """A NonNull(List(...)) field must still be recognized as a list field.
+
+    "nnItems" is NonNull(List(Item)); the of_type unwrap loop must see
+    through the NonNull wrapper and reach the list, so is_list_field runs
+    without error.
+    """
     doc = parse("{ nnItems { name } }")
     # own(nnItems)=1, children cost 0 (scalar). Multiplier doesn't change the
     # total when children are free, but is_list_field must run without error.
@@ -128,9 +164,13 @@ def test_nonnull_list_field_is_treated_as_list():
 # variable page-size with a non-IntValue default                                #
 # --------------------------------------------------------------------------- #
 @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
-def test_variable_page_size_non_int_default_falls_through():
-    # The variable has a String default (not IntValue) and is unbound -> the
-    # page size resolves to None (line 218-221 fall-through).
+def test_variable_page_size_non_int_default_falls_through() -> None:
+    """An unbound variable page-size arg with a non-int default must fall through.
+
+    The "$n" variable has a String default (not an IntValue) and is left
+    unbound, so the page size must resolve to None instead of raising or
+    coercing the string.
+    """
     doc = parse('query($n: String = "big") { items(limit: $n) { name } }')
     # `limit` value is a variable with no usable int -> falls back to is_list +
     # MAX_PAGE_SIZE cap; children are free so total is the list own cost.
@@ -141,8 +181,12 @@ def test_variable_page_size_non_int_default_falls_through():
 # CostLimitValidationRule enforcement                                           #
 # --------------------------------------------------------------------------- #
 @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 1, "MAX_PAGE_SIZE": 1000})
-def test_cost_rule_rejects_over_budget_query():
-    # A list of objects-with-children over the tiny budget is rejected.
+def test_cost_rule_rejects_over_budget_query() -> None:
+    """A query costed above MAX_QUERY_COST must be rejected by the validation rule.
+
+    If this breaks, "CostLimitValidationRule" would silently allow queries
+    that exceed the configured cost budget.
+    """
     inner = GraphQLObjectType("Inner", {"x": GraphQLField(GraphQLString)})
     item = GraphQLObjectType("Item", {"inner": GraphQLField(inner)})
     query = GraphQLObjectType(
@@ -162,8 +206,12 @@ def test_cost_rule_rejects_over_budget_query():
     assert any("exceeds the maximum" in e.message for e in errors)
 
 
-def test_cost_rule_noop_without_budget():
-    # No MAX_QUERY_COST -> the rule does nothing.
+def test_cost_rule_noop_without_budget() -> None:
+    """With no MAX_QUERY_COST configured, the validation rule must be a no-op.
+
+    Guards against the rule rejecting queries when no cost budget was ever
+    configured.
+    """
     schema = _schema()
     errors = validate(
         schema, parse("{ items(limit: 99) { name } }"), [CostLimitValidationRule]

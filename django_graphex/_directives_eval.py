@@ -1,32 +1,31 @@
 """Shared helper for evaluating @skip / @include directives.
 
-This module provides a single public function, ``is_selection_skipped``, used
-by the cost analyser (``cost.py``), the depth-limit rule (``validation.py``) and
-the query-optimizer walkers (``utils.py``) to decide whether a selection should
+This module provides a single public function, "is_selection_skipped", used
+by the cost analyser ("cost.py"), the depth-limit rule ("validation.py") and
+the query-optimizer walkers ("utils.py") to decide whether a selection should
 be excluded from counting or fetch planning.
 
-Conservative policy
--------------------
-``@skip`` and ``@include`` accept a Boolean argument ``if`` that may be either a
-literal (``true``/``false``) or a variable reference (``$flag``).
+Conservative policy:
+    "@skip" and "@include" accept a Boolean argument "if" that may be either a
+    literal ("true"/"false") or a variable reference ("$flag").
 
-* **Literal** – the result is exact.
-* **Variable with a bound value** – the result is exact (the caller must pass
-  the current ``variable_values`` mapping).
-* **Variable with no bound value** – the selection is treated as *included*
-  (``is_selection_skipped`` returns ``False``).  This is the conservative,
-  never-under-count policy used by validation rules that run before variable
-  binding; it avoids false-negative rejections (a query that might be cheap when
-  ``$flag=true`` is not wrongly allowed through when the variable is unknown).
+    - Literal: the result is exact.
+    - Variable with a bound value: the result is exact (the caller must pass
+      the current "variable_values" mapping).
+    - Variable with no bound value: the selection is treated as included
+      ("is_selection_skipped" returns False). This is the conservative,
+      never-under-count policy used by validation rules that run before
+      variable binding; it avoids false-negative rejections (a query that
+      might be cheap when "$flag=true" is not wrongly allowed through when the
+      variable is unknown).
 
-Note on output-formatting directives
--------------------------------------
-Custom application-level directives such as ``@date`` and ``@number`` are
-*output-formatting* directives: they transform the value of a field that is
-already being fetched.  They have **no effect on whether a field is fetched**,
-and therefore do **not** affect query cost, depth, or the optimizer's
-select/prefetch/only planning.  Only the built-in ``@skip`` and ``@include``
-directives control selection inclusion.
+Note on output-formatting directives:
+    Custom application-level directives such as "@date" and "@number" are
+    output-formatting directives: they transform the value of a field that is
+    already being fetched. They have no effect on whether a field is fetched,
+    and therefore do not affect query cost, depth, or the optimizer's
+    select/prefetch/only planning. Only the built-in "@skip" and "@include"
+    directives control selection inclusion.
 """
 
 from __future__ import annotations
@@ -54,21 +53,22 @@ def _safe_get_directive_values(
     node: Any,
     variable_values: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Wrap ``get_directive_values`` with conservative error handling.
+    """Wrap "get_directive_values" with conservative error handling.
 
     When a directive argument is a variable that has no bound value,
-    ``get_directive_values`` raises ``GraphQLError`` (required argument not
-    provided).  We catch that and return ``None`` so the caller treats the
-    directive as absent → conservative policy (never skip on uncertainty).
+    "get_directive_values" raises "GraphQLError" (required argument not
+    provided). We catch that and return None so the caller treats the
+    directive as absent, applying the conservative policy (never skip on
+    uncertainty).
 
     Args:
-        directive_def: The ``GraphQLDirective`` to look for.
+        directive_def: The "GraphQLDirective" to look for.
         node: The AST node to inspect.
         variable_values: The currently bound variable values.
 
     Returns:
-        The resolved argument dict when the directive is present and all
-        arguments are resolvable, or ``None`` otherwise.
+        result: The resolved argument dict when the directive is present and
+            all arguments are resolvable, or None otherwise.
     """
     try:
         return get_directive_values(
@@ -85,22 +85,35 @@ def is_selection_skipped(
     node: _SelectionNode,
     variable_values: dict[str, Any],
 ) -> bool:
-    """Return ``True`` when the selection should be excluded from processing.
+    """Return True when the selection should be excluded from processing.
 
-    Evaluates the ``@skip`` and ``@include`` directives on *node* using
-    *variable_values* (which may be empty for validation-time calls).
+    Evaluates the "@skip" and "@include" directives on "node" using
+    "variable_values" (which may be empty for validation-time calls).
+
+    Per-selection semantics (GraphQL spec):
+        "@skip" / "@include" are evaluated PER SELECTION: this function
+        inspects ONLY the directives on "node" itself and never looks at the
+        node's parent or children. Per the GraphQL spec, a "@skip(if: true)"
+        on a parent field does NOT cascade into its children's own evaluation;
+        each child selection is judged independently. In practice cascading
+        still "happens" because a skipped parent's subtree is never walked at
+        all (the caller stops descending once a selection is skipped), so a
+        child is excluded transitively WITHOUT its own directives ever being
+        consulted. The distinction matters for any caller that evaluates a
+        child node directly: "is_selection_skipped(child)" reflects only the
+        child's own directives, regardless of what its parent declared.
 
     Args:
-        node: A ``FieldNode``, ``InlineFragmentNode``, or ``FragmentSpreadNode``
+        node: A "FieldNode", "InlineFragmentNode", or "FragmentSpreadNode"
             whose directives should be evaluated.
-        variable_values: The currently bound variable values.  Pass ``{}`` when
+        variable_values: The currently bound variable values. Pass "{}" when
             variables are not available (e.g. inside a validation rule); the
             function falls back to the conservative policy (never skip).
 
     Returns:
-        ``True`` if the selection is provably skipped and should be excluded.
-        ``False`` in all other cases, including when the outcome is uncertain
-        due to an unresolved variable (conservative policy).
+        skipped: True if the selection is provably skipped and should be
+            excluded. False in all other cases, including when the outcome is
+            uncertain due to an unresolved variable (conservative policy).
     """
     if not node.directives:
         return False

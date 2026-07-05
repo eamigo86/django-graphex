@@ -1,7 +1,8 @@
 # Query Examples
 
-These examples build on the schema from
-[Sample Application](blog-schema.md). They cover single objects, filtered lists,
+These examples build on the illustrative blog schema defined in
+[Sample Application](blog-schema.md) — see `examples/playground/` in the repo for a
+complete runnable project. They cover single objects, filtered lists,
 pagination and complex filtering.
 
 ### Basic Object Queries
@@ -67,7 +68,7 @@ pagination and complex filtering.
           "title": "Getting Started with GraphQL and Django",
           "slug": "getting-started-graphql-django",
           "content": "GraphQL is a powerful query language...",
-          "status": "published",
+          "status": "PUBLISHED",
           "viewCount": 1245,
           "createdAt": "2023-12-01T10:30:00",
           "author": {
@@ -123,7 +124,7 @@ pagination and complex filtering.
     ```graphql
     query GetTechPosts {
       posts(filter: {
-        status: { exact: "published" }
+        status: { exact: PUBLISHED }
         category: { name: { exact: "Technology" } }
         createdAt: { gte: "2023-01-01" }
       }) {
@@ -143,7 +144,7 @@ pagination and complex filtering.
 
     ```graphql
     query SearchPosts {
-      allPosts(filter: { status: { exact: "published" } }) {
+      allPosts(filter: { status: { exact: PUBLISHED } }) {
         results(limit: 10, ordering: "-view_count") {
           id
           title
@@ -167,7 +168,7 @@ pagination and complex filtering.
     query GetPostsByTags {
       allPosts(filter: {
         tags: { in: [1, 3, 5] }   # GraphQL, React, Python (by tag pk)
-        status: { exact: "published" }
+        status: { exact: PUBLISHED }
       }) {
         results(limit: 20) {
           id
@@ -188,7 +189,7 @@ pagination and complex filtering.
 
     ```graphql
     query GetPostsPaginated($limit: Int!, $offset: Int!) {
-      allPosts(filter: { status: { exact: "published" } }) {
+      allPosts(filter: { status: { exact: PUBLISHED } }) {
         results(
           limit: $limit,
           offset: $offset,
@@ -252,7 +253,7 @@ pagination and complex filtering.
         author: { username: { icontains: $authorName } }
         viewCount: { gte: $minViews }
         publishedAt: { range: [$publishedAfter, $publishedBefore] }
-        status: { exact: "published" }
+        status: { exact: PUBLISHED }
       }) {
         results(limit: 20, ordering: "-published_at") {
           id

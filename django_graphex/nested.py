@@ -1,20 +1,20 @@
 """Shared nested-object create/update handling for serializer-backed types.
 
-`DjangoModelType` and `DjangoModelMutation` accept
-``Meta.nested_fields = {field_name: Model}`` to write related objects
+"DjangoModelType" and "DjangoModelMutation" accept
+"Meta.nested_fields = {field_name: Model}" to write related objects
 in the same create/update call. This mixin centralizes that logic (the two hosts
 previously carried duplicate, buggy copies) and makes it:
 
-* **atomic** -- the whole operation runs in ``transaction.atomic()``; a nested or
+* atomic -- the whole operation runs in "transaction.atomic()"; a nested or
   parent validation failure rolls everything back (no orphan rows),
-* **relation-aware** -- forward FK/O2O children are saved *before* the parent and
-  their pk injected; reverse FK/O2O and M2M children are saved *after* the parent
+* relation-aware -- forward FK/O2O children are saved before the parent and
+  their pk injected; reverse FK/O2O and M2M children are saved after the parent
   and linked to it, all decided by Django's relation introspection,
-* **upsert-capable** -- a child payload carrying its pk updates that row (partial),
+* upsert-capable -- a child payload carrying its pk updates that row (partial),
   otherwise a new row is created (the nested input only exposes the pk on the
-  parent's *update*, so creates stay create-only),
-* **safe by default** -- additive M2M/reverse semantics (existing links are never
-  removed) and empty ``[]`` / ``{}`` payloads are a no-op.
+  parent's update, so creates stay create-only),
+* safe by default -- additive M2M/reverse semantics (existing links are never
+  removed) and empty "[]" / "{}" payloads are a no-op.
 
 One level of nesting is supported (parent -> direct children).
 """
@@ -22,6 +22,7 @@ One level of nesting is supported (parent -> direct children).
 from __future__ import annotations
 
 import enum
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
@@ -38,23 +39,35 @@ __all__ = ("NestedFieldsMixin",)
 
 
 class _NestedError(Exception):
-    """Carry a list of ``ErrorType`` entries out of the atomic block."""
+    """Carry a list of "ErrorType" entries out of the atomic block.
+
+    Raised internally by the nested-save helpers to unwind the transaction and
+    is always caught by "NestedFieldsMixin.save_with_nested"; it never escapes
+    the mixin.
+    """
 
     def __init__(self, errors: list[ErrorType]) -> None:
         """Store the formatted error list.
 
         Args:
-            errors: The ``ErrorType`` entries describing the failure.
+            errors: The "ErrorType" entries describing the failure.
         """
         self.errors = errors
         super().__init__("nested validation failed")
 
 
 class NestedFieldsMixin:
-    """Atomic, relation-aware nested create/update for model types."""
+    """Atomic, relation-aware nested create/update for model types.
+
+    Mixed into the model-backed mutation and type hosts to write a parent and
+    its declared "Meta.nested_fields" children in a single create/update call.
+    Forward relations are written before the parent, reverse/M2M relations
+    after, and the whole operation is wrapped in a transaction so a partial
+    failure leaves no orphan rows.
+    """
 
     @classmethod
-    def save_with_nested(
+    def save_with_nested(  # noqa: DOC005
         cls,
         root: Any,
         info: GraphQLResolveInfo,
@@ -65,19 +78,23 @@ class NestedFieldsMixin:
         """Validate and persist the parent plus its nested children atomically.
 
         Forward relations (the parent holds the key) are written first and their
-        pk injected into ``data``; the parent is then saved via the backend (so
+        pk injected into "data"; the parent is then saved via the backend (so
         its validation/error handling is used); reverse and M2M children
         are written last and linked to the saved parent. Any failure rolls the
-        whole transaction back — no orphan rows are left behind.
+        whole transaction back -- no orphan rows are left behind.
 
-        **Subscription broadcasts and commit-time delivery**: model saves inside
-        the ``transaction.atomic()`` block trigger ``post_save`` / ``post_delete``
-        signals, which are connected to ``SubscriptionBinding`` receivers.
-        Those receivers now defer their broadcast via ``transaction.on_commit``,
+        Subscription broadcasts and commit-time delivery: model saves inside
+        the "transaction.atomic()" block trigger "post_save" / "post_delete"
+        signals, which are connected to "SubscriptionBinding" receivers.
+        Those receivers defer their broadcast via "transaction.on_commit",
         so subscribers only receive notifications for rows that were actually
-        persisted.  A subsequent failure within the same atomic block causes a
+        persisted. A subsequent failure within the same atomic block causes a
         rollback and suppresses all pending broadcast callbacks, eliminating
         phantom notifications for non-existent rows.
+
+        Every internal validation failure is raised as a private "_NestedError"
+        and caught here, so this method never propagates it; it always returns a
+        result tuple instead.
 
         Args:
             root: Root value passed to the resolver.
@@ -93,8 +110,30 @@ class NestedFieldsMixin:
         nested = cls._meta.nested_fields
         nested = nested if isinstance(nested, dict) else {}
 
+        # Savepoint-only-when-needed invariant: the outer ``transaction.atomic()``
+        # exists solely to make a MULTI-object write (parent + nested children)
+        # all-or-nothing. When this call writes ONLY the parent, no outer
+        # boundary is required — ``PydanticBackend.save_object`` already opens
+        # its own recovery boundary when it needs one (see backend.py), so an
+        # extra SAVEPOINT/RELEASE here would be pure overhead.
+        #
+        # Nested work exists when at least one declared nested field is present
+        # in ``data`` with a non-no-op payload (``None`` / ``[]`` / ``{}`` are
+        # no-ops that leave the relation untouched — see the loop below). Only
+        # then do we open the atomic block.
+        #
+        # on_commit note: subscription broadcasts defer via
+        # ``transaction.on_commit``. With no outer atomic AND an autocommit
+        # (or backend-savepoint-free) parent save, the callback fires at the
+        # parent's own commit boundary — exactly once — preserving delivery
+        # semantics in both modes.
+        has_nested_work = any(
+            field in data and data[field] not in (None, [], {}) for field in nested
+        )
+        boundary = transaction.atomic() if has_nested_work else nullcontext()
+
         try:
-            with transaction.atomic():
+            with boundary:
                 deferred: list[tuple[str, Any, str, Any, Any]] = []
                 for field, child_model in nested.items():
                     if field not in data:
@@ -163,7 +202,8 @@ class NestedFieldsMixin:
 
         Returns:
             A pair of a relation-kind tag ("forward", "reverse_one",
-            "reverse_many", "m2m", or None) and the Django field/relation object.
+            "reverse_many", "m2m", or None) and the Django field/relation
+            object.
         """
         try:
             relation = cls._meta.model._meta.get_field(field_name)
@@ -322,9 +362,9 @@ class NestedFieldsMixin:
     def _unwrap_enums(item: dict[str, Any]) -> dict[str, Any]:
         """Replace graphene Enum members in a payload with their raw values.
 
-        Scalar Enum members are replaced with their ``.value``.  List and
+        Scalar Enum members are replaced with their "value". List and
         tuple values are recursed into so that multi-valued choice fields
-        (e.g. a ``MultiSelectField`` / ``DjangoListField(enum)``) also arrive
+        (e.g. a "MultiSelectField" / "DjangoListField(enum)") also arrive
         at the backend with plain Python values rather than wrapped Enum
         members.
 
@@ -343,11 +383,11 @@ class NestedFieldsMixin:
 
     @staticmethod
     def _prefix_errors(field: str, errors: list[ErrorType]) -> list[ErrorType]:
-        """Prefix a child's ``ErrorType`` list with the nested field name.
+        """Prefix a child's "ErrorType" list with the nested field name.
 
         Args:
             field: The nested field name used as the prefix.
-            errors: The child's ``ErrorType`` entries (flat field names).
+            errors: The child's "ErrorType" entries (flat field names).
 
         Returns:
             New entries with fields like "addresses.zip_code" (object-level

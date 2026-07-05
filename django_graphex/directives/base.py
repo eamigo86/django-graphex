@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from graphene.utils.str_converters import to_snake_case
 from graphql import DirectiveLocation, GraphQLDirective
+
+from django_graphex._strconv import to_snake_case
 
 from ..registry import get_global_registry
 
@@ -14,10 +15,21 @@ if TYPE_CHECKING:
 
 
 class BaseExtraGraphQLDirective(GraphQLDirective):
-    """Base class for custom GraphQL directives."""
+    """Base class for the library's custom GraphQL directives.
+
+    Subclasses declare their arguments through "get_args" and their runtime
+    behaviour through a "resolve" static method. The name is derived from the
+    class name (minus the "GraphQLDirective" suffix) and snake_cased.
+    """
 
     def __init__(self) -> None:
-        """Initialize the directive with registry and configuration."""
+        """Build the directive and register it on the global registry.
+
+        The directive is placed on "FIELD", "FRAGMENT_SPREAD" and
+        "INLINE_FRAGMENT" locations, uses the class docstring as its GraphQL
+        description, and registers itself under its snake_cased name so the
+        execution layer can look it up.
+        """
         registry = get_global_registry()
         super().__init__(
             name=self.get_name(),

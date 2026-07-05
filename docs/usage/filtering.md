@@ -27,7 +27,7 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
 === "List form (default lookups)"
 
     ```python
-    from django_graphex import DjangoListObjectType
+    from django_graphex.types import DjangoListObjectType
 
     class UserListType(DjangoListObjectType):
         class Meta:
@@ -50,9 +50,9 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
             }
     ```
 
-!!! warning "Dict form: `None` values are rejected (v1.3.0+)"
+!!! warning "Dict form: `None` values are rejected"
 
-    Before v1.3.0, `filter_fields = {"field": None}` was accepted as a way to
+    `filter_fields = {"field": None}` was previously accepted as a way to
     apply the default lookup set from the dict form. This was silently
     un-Pythonic and has been **removed**: it now raises `ImproperlyConfigured`
     with a message pointing to `@filter_field`.
@@ -61,7 +61,7 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
     lookups for others:
 
     ```python
-    # Before (crashed silently in ≤1.2, now raises):
+    # This now raises ImproperlyConfigured:
     # filter_fields = {"username": None, "email": ("exact",)}
 
     # After — mix list and dict forms via two declarations, or:
@@ -72,14 +72,74 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
     For **custom per-field logic** (previously the only reason to use `None`),
     use the new `@filter_field` decorator instead — see the section below.
 
-The **default lookup set** (used by the list form) is configurable with the
-`COMMON_FILTER_LOOKUPS` setting and is type-aware:
+Which lookups the **list form** actually gives you — and which ones it does
+**not** — is covered next.
 
-| Field kind | Default lookups |
+## Lookup catalog — defaults vs. the full set
+
+There are **two different lookup sets**, and mixing them up is the most common
+surprise on this page:
+
+1. The **default set** — what the list form applies automatically.
+2. The **full catalog** — everything the engine supports; the extra lookups
+   are available **only when you ask for them explicitly** (dict form, or
+   globally via the `COMMON_FILTER_LOOKUPS` setting).
+
+### Defaults — what the list form applies
+
+`filter_fields = ["username", ...]` gives each field a curated, type-aware
+default set — **not** the full catalog:
+
+| Field kind | Default lookups (list form) |
 |---|---|
-| any | `exact`, `in`, `isnull` |
-| text | + `icontains`, `istartswith` |
-| number / date / datetime | + `gt`, `gte`, `lt`, `lte`, `range` |
+| every field | `exact`, `in`, `isnull` |
+| text (`CharField`, `TextField`, `EmailField`, `URLField`, `SlugField`, …) | + `icontains`, `istartswith` |
+| ordered (integer / float / decimal, `DateField`, `DateTimeField`, `TimeField`, `DurationField`) | + `gt`, `gte`, `lt`, `lte`, `range` |
+
+The common base (`exact`, `in`, `isnull`) comes from the
+[`COMMON_FILTER_LOOKUPS` setting](settings.md); the text / ordered add-ons are
+always appended on top of whatever base you configure.
+
+### Full catalog — what you can declare explicitly
+
+Beyond the defaults, the catalog also supports these lookups. They **never**
+appear via the list form — declare them per field with the **dict form**:
+
+| Group | Lookups | Typical fields |
+|---|---|---|
+| case-sensitive / position (text) | `iexact`, `contains`, `startswith`, `endswith`, `iendswith` | text fields |
+| date parts | `year`, `month`, `day`, `week_day` | date / datetime fields |
+| time parts | `hour`, `minute`, `second` | time / datetime fields |
+
+```python
+from django_graphex.types import DjangoListObjectType
+
+class ArticleListType(DjangoListObjectType):
+    class Meta:
+        model = Article
+        filter_fields = {
+            # dict form: any catalog lookup, not just the defaults
+            "title": ("iexact", "contains", "endswith"),
+            "published_at": ("gte", "lte", "year", "month"),
+        }
+```
+
+To change the **global base set** that every list-form field receives, use the
+setting:
+
+```python
+DJANGO_GRAPHEX = {
+    # every list-form field now also gets iexact (plus the type add-ons):
+    "COMMON_FILTER_LOOKUPS": ("exact", "iexact", "in", "isnull"),
+}
+```
+
+!!! warning "Declared with the list form ≠ everything is available"
+
+    `filter_fields = ["title"]` does **not** expose `iexact`, `contains`,
+    `startswith`, `endswith` or the date/time part lookups — only the
+    defaults table above. If a lookup you expect is missing from the schema,
+    switch that field to the **dict form** and name it explicitly.
 
 ## Querying with `filter:`
 
@@ -112,6 +172,9 @@ Multiple keys in the same object are **AND-ed** together.
 | `isnull` | `{ isnull: true }` | IS (NOT) NULL |
 
 Only the lookups you declared in `filter_fields` are exposed on each field.
+The table shows the default-set shapes; the extra catalog lookups (`iexact`,
+`contains`, date/time parts, …) follow the same pattern — see the
+[lookup catalog](#lookup-catalog-defaults-vs-the-full-set).
 
 ## Logical operators: `and` / `or` / `not`
 
@@ -216,16 +279,15 @@ GraphQL **Enum** as the output type:
 
 ## Custom per-field filters — `@filter_field`
 
-*Added in v1.3.0.*
-
 Use the `@filter_field` decorator to declare a **custom GraphQL filter argument**
 directly on a `DjangoObjectType` or `DjangoModelType`. The method name becomes
 the GraphQL argument name; the method body returns a queryset.
 
 ```python
-import graphene
+from graphql import GraphQLString
 from django.db.models import Q
-from django_graphex import DjangoObjectType, filter_field
+from django_graphex.filtering import filter_field
+from django_graphex.types import DjangoObjectType
 
 class PostType(DjangoObjectType):
     class Meta:
@@ -233,7 +295,7 @@ class PostType(DjangoObjectType):
         # filter_fields only for REAL model fields:
         filter_fields = {"title": ("exact", "icontains")}
 
-    @filter_field(graphene.String, description="Full-text search over title and body")
+    @filter_field(GraphQLString, description="Full-text search over title and body")
     def search(cls, queryset, info, value):
         return queryset.filter(
             Q(title__icontains=value) | Q(body__icontains=value)
@@ -244,7 +306,7 @@ class PostType(DjangoObjectType):
 query {
   posts(filter: {
     title: { icontains: "django" }   # standard lookup
-    search: "graphene"               # custom filter
+    search: "tutorial"               # custom filter
   }) {
     results { id title }
   }
@@ -254,14 +316,16 @@ query {
 ### Decorator signature
 
 ```python
-@filter_field(graphene_type=graphene.String, *, description=None)
+def filter_field(graphql_type=GraphQLString, *, description=None): ...
+
+@filter_field(GraphQLString, description="...")
 def <name>(cls, queryset, info, value):
     ...
 ```
 
 | Parameter | Default | Description |
 |---|---|---|
-| `graphene_type` | `graphene.String` | Graphene scalar or type for the GraphQL argument. |
+| `graphql_type` | `GraphQLString` | The graphql-core scalar or type for the GraphQL argument (`GraphQLInt`, `GraphQLString`, or a `GraphQLList` / `GraphQLNonNull` wrapper). A leftover graphene scalar raises `TypeError`. This parameter was renamed in v2.0 (see the changelog). |
 | `description` | `None` | Optional GraphQL description string for the argument. |
 
 - **`cls`** — the type class (classmethod semantics handled internally; do NOT stack `@classmethod`).
@@ -272,18 +336,129 @@ def <name>(cls, queryset, info, value):
 ### Type override
 
 ```python
-@filter_field(graphene.Int, description="Minimum view count")
+from graphql import GraphQLInt
+
+@filter_field(GraphQLInt, description="Minimum view count")
 def min_views(cls, queryset, info, value):
     return queryset.filter(views__gte=value)
 ```
 
 ### Composition order
 
-At query time, filters are applied in this order:
+At query time, the list resolvers compose the queryset in this order:
 
-1. **Standard `filter_fields` lookups** (ORM `Q` objects) — resolved first.
-2. **Custom `@filter_field` methods** — in declaration order.
-3. **`filter_queryset`** override — always last.
+1. **`get_queryset` / `filter_queryset`** — the **base** queryset is scoped
+   first (`Meta.queryset` or the default manager, then your `filter_queryset`
+   override).
+2. **Standard `filter_fields` lookups** — the whole nested `filter:` tree
+   (fields, relations, `and` / `or` / `not`) is collapsed into **one `Q`
+   object** and applied as a **single** `.filter(...)` call — one SQL `WHERE` —
+   with `.distinct()` applied at most **once** (when a to-many relation was
+   traversed).
+3. **Custom `@filter_field` methods** — chained one by one, in declaration
+   order.
+
+**Why this order?** Server-forced scoping goes first so no client-supplied
+filter can ever widen the visible rows. The standard lookups are
+*declarative*, so the engine can merge them into a single `WHERE` clause and
+decide `.distinct()` exactly once — that is why they run together as one
+stage. Custom `@filter_field` methods are *opaque* Python (they may add
+joins, annotations, or their own `.distinct()`), so they chain last, each
+receiving the queryset the previous stage produced.
+
+#### Worked example: all three stages in one query
+
+```python
+from django.db.models import Q
+from django_graphex.filtering import filter_field
+from django_graphex.types import DjangoListObjectType, DjangoObjectType
+
+
+class PostType(DjangoObjectType):
+    class Meta:
+        model = Post
+        # stage 2: standard filter_fields lookups
+        filter_fields = {"title": ("icontains", "exact"), "views": ("gte", "lte")}
+
+    @classmethod
+    def get_queryset(cls, queryset, info):
+        # stage 1: server-forced scoping — never client-visible as an argument
+        return queryset.exclude(is_draft=True)
+
+    @filter_field(description="Full-text search over title")
+    def search(cls, queryset, info, value):
+        # stage 3: custom, opaque Python — chained last
+        return queryset.filter(Q(title__icontains=value))
+
+
+class PostListType(DjangoListObjectType):
+    class Meta:
+        model = Post
+```
+
+```graphql
+query {
+  posts(filter: { title: { icontains: "world" }, search: "world" }) {
+    results { id title views }
+    totalCount
+  }
+}
+```
+
+What runs, in order:
+
+1. `get_queryset` scopes the base queryset to `queryset.exclude(is_draft=True)`
+   — draft posts are invisible no matter what `filter:` the client sends. A
+   `"World draft"` post with `is_draft=True` never reaches later stages, even
+   though its title matches both `icontains: "world"` and `search: "world"`.
+2. The standard lookup, `title: { icontains: "world" }`, is collapsed into a
+   single `Q` and applied as **one** `.filter(...)` call.
+3. The custom `search` argument runs last, chaining its own
+   `.filter(Q(title__icontains="world"))` on the queryset stage 2 produced.
+
+A live repro against this exact declaration confirms the composition: the
+draft post is excluded regardless of `filter:`, and Django folds the chained
+`.filter()` calls from stages 2 and 3 into a single SQL `WHERE` (both
+conditions test the same column here only because the example reuses
+`icontains` for `search`; in general the custom stage can add joins,
+annotations, or its own `.distinct()` that stage 2 knows nothing about):
+
+```sql
+SELECT "post"."id", "post"."title", "post"."views" FROM "post"
+WHERE (NOT ("post"."is_draft")
+   AND "post"."title" LIKE '%world%' ESCAPE '\'
+   AND "post"."title" LIKE '%world%' ESCAPE '\')
+```
+
+`NOT ("post"."is_draft")` is stage 1's `get_queryset` scoping; the two
+`title LIKE` fragments are stages 2 and 3 respectively (they look identical
+here only because the example's custom filter reuses `icontains` under the
+hood — a `search` implementation doing a JOIN or annotation would show up as
+its own fragment instead).
+
+#### How the `filter:` value is split between stages
+
+Stages 2 and 3 read the **same** `filter:` input value, partitioned by
+**model introspection**: a top-level key that is a real model field or
+relation (or a combinator) goes to the standard-lookup stage; any other key
+is assumed to be a custom `@filter_field` argument and is left for stage 3.
+
+Two consequences:
+
+- **Never name a `@filter_field` after a real model field.** The partition
+  looks at the *model*, not at what you declared — a custom filter named like
+  a model column (e.g. `def title(...)` on a model with a `title` field) gets
+  routed to the standard-lookup translator, which expects a
+  `{lookup: value}` object and crashes on the scalar value. Pick a name that
+  is not a model field (`search`, `title_matches`, …).
+- **Custom arguments only work at the top level of `filter:`.** The
+  `and` / `or` / `not` combinators translate to a single `Q`, and custom
+  methods are never applied inside them — so a custom argument used inside a
+  combinator raises a clear `GraphQLError` ("Unknown filter field 'search'
+  inside the 'and' combinator …") instead of silently matching nothing.
+
+Keys that are not part of the generated `<Model>FilterInput` at all never
+reach the resolver — GraphQL validation rejects the query before execution.
 
 ### Reserved argument names
 
@@ -295,7 +470,7 @@ class definition:
 
 ```python
 # This raises ImproperlyConfigured immediately at class definition:
-@filter_field(graphene.String)
+@filter_field(GraphQLString)
 def limit(cls, queryset, info, value):   # ← name conflict!
     ...
 ```
@@ -307,7 +482,7 @@ as a GraphQL argument), override `filter_queryset` on a `DjangoModelType`:
 
 ```python
 from django.db.models import Q
-from django_graphex import DjangoModelType
+from django_graphex.types import DjangoModelType
 
 class UserType(DjangoModelType):
     class Meta:
@@ -340,20 +515,81 @@ Filtering composes with the list field's pagination/ordering, which live on the
 
 ## Field-level filtering
 
-`DjangoFilterListField` / `DjangoFilterPaginateListField` expose the same `filter:`
-argument; declare the filterable fields on the underlying type (or pass `fields=`):
+Everything above configures filtering **on the type**: you declare
+`Meta.filter_fields` once, mount the type with `DjangoListObjectField`, and
+every query using it gets the same wrapped result (`results` / `totalCount`)
+with the same filter surface.
+
+Field-level filtering is the alternative for two situations:
+
+- You want a **flat list** — the objects themselves (`[User!]`), with **no**
+  `results` / `totalCount` wrapper.
+- You want to decide which fields are filterable **per query field**, not
+  once per type.
+
+That is what `DjangoFilterListField` and `DjangoFilterPaginateListField` do.
+Mounted directly on `Query`, they expose the same `filter:` argument (and, for
+the paginate variant, the pagination arguments **on the field itself**). The
+optional `fields=` parameter declares the filterable fields for **that one
+field** — that per-field override is what makes it "field-level":
 
 ```python
-import graphene
-from django_graphex import DjangoFilterListField, DjangoFilterPaginateListField
-from django_graphex.paginations import PageGraphqlPagination
+from django.contrib.auth.models import User
 
-class Query(graphene.ObjectType):
-    users = DjangoFilterListField(UserType)
+from django_graphex.core import ObjectType
+from django_graphex.fields import DjangoFilterListField, DjangoFilterPaginateListField
+from django_graphex.paginations import LimitOffsetGraphqlPagination
+from django_graphex.types import DjangoObjectType
+
+
+class UserType(DjangoObjectType):
+    class Meta:
+        model = User
+
+
+class Query(ObjectType):
+    # Flat [User] list — THIS field is filterable by username only:
+    users = DjangoFilterListField(UserType, fields=["username"])
+
+    # Flat [User!] list — filter + limit/offset args live on the field itself:
     paged_users = DjangoFilterPaginateListField(
-        UserType, pagination=PageGraphqlPagination(page_size=20)
+        UserType,
+        pagination=LimitOffsetGraphqlPagination(default_limit=20),
+        fields=["username"],
     )
 ```
+
+```graphql
+query {
+  users(filter: { username: { icontains: "jo" } }) {
+    id
+    username
+  }
+  pagedUsers(filter: { username: { icontains: "jo" } }, limit: 10, offset: 0) {
+    id
+    username
+  }
+}
+```
+
+Note the difference from the type-level queries earlier on this page: there is
+no `results { … }` wrapper and no `totalCount` — the field returns the list
+directly.
+
+Omit `fields=` and the field falls back to the type's own
+`Meta.filter_fields` declaration (no filtering at all if the type declares
+none).
+
+!!! note "One canonical filter input per model"
+
+    All filter inputs for the same model converge on a **single**
+    `<Model>FilterInput` type. If the type *also* declares
+    `Meta.filter_fields` covering the paths you pass in `fields=`, the type's
+    (wider) declaration wins — a per-field `fields=` cannot **narrow** it; it
+    can only add paths (which then appear for every field filtering that
+    model). The per-field override shines when the type itself declares no
+    `filter_fields` (as above), giving each query field its own filter
+    surface.
 
 ## Best practices
 

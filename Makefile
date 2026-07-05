@@ -1,4 +1,4 @@
-.PHONY: help install test test-all quality security build docs clean format lint type-check
+.PHONY: help install test test-all quality security release-audit build docs clean format lint type-check
 .DEFAULT_GOAL := help
 
 help: ## Show this help message
@@ -20,14 +20,17 @@ quality: ## Run code quality checks (black, isort, flake8, mypy)
 security: ## Run security checks (bandit, pip-audit)
 	uv run tox -e security
 
+release-audit: ## Audit the BUILT wheel's transitive deps (not the editable install)
+	uv run tox -e release-audit
+
 build: ## Build the package (uv + hatchling)
 	uv build
 
 docs: ## Build documentation with Zensical
 	uv run tox -e docs
 
-docs-serve: ## Build and serve documentation locally
-	uv run zensical serve -f zensical.yml
+docs-serve: ## Build and serve documentation locally (http://127.0.0.1:8888)
+	uv run zensical serve -f zensical.yml -a 127.0.0.1:8888
 
 docs-build: ## Build documentation for production
 	uv run zensical build --clean -f zensical.yml

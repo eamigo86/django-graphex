@@ -10,11 +10,9 @@ Covers:
 
 from __future__ import annotations
 
-import graphene
 import pytest
 from django.db import models
 from django.test import override_settings
-from graphene import List
 
 from django_graphex.converter import (
     construct_fields,
@@ -26,14 +24,42 @@ from django_graphex.fields import ArrayField
 from django_graphex.registry import Registry
 from tests.models import Author
 
+
+def _is_dead_scalar(obj: object) -> bool:
+    """Report whether "obj" is the converter's dead-scalar sentinel.
+
+    S-del-backend-11: the PostgreSQL ArrayField / RangeField converters are now
+    graphene-free — they return the "_DEAD_SCALAR" sentinel so
+    "construct_fields" OMITS the field. The native OUTPUT compiler derives
+    every field from "model._meta" directly and has NO ArrayField / RangeField
+    entry (a documented native feature gap — see #1617 AUDIT WATCH-ITEM), so
+    the field is absent from native output SDL either way. The old graphene
+    "List" wrapper (with its "required" / "description" kwargs) is gone;
+    assert the native sentinel.
+
+    Args:
+        obj: The converter's return value to test.
+
+    Returns:
+        matched: True when "obj" is the "_DEAD_SCALAR" sentinel.
+    """
+    from django_graphex.converter import _DEAD_SCALAR
+
+    return obj is _DEAD_SCALAR
+
+
 # --------------------------------------------------------------------------- #
 # (a) Field ordering — unconditional determinism                               #
 # --------------------------------------------------------------------------- #
 
 
 @override_settings(DEBUG=False)
-def test_construct_fields_sorts_output_without_debug():
-    """Output type fields are alphabetical even when DEBUG=False."""
+def test_construct_fields_sorts_output_without_debug() -> None:
+    """Output type fields must be alphabetical even when DEBUG=False.
+
+    Guards against production (DEBUG=False) silently reverting to
+    insertion-order field ordering.
+    """
     registry = Registry()
     fields = construct_fields(Author, registry, None, None, None)
     names = list(fields)
@@ -44,16 +70,20 @@ def test_construct_fields_sorts_output_without_debug():
 
 
 @override_settings(DEBUG=True)
-def test_construct_fields_sorts_output_with_debug():
-    """Output type fields are alphabetical when DEBUG=True (was already true)."""
+def test_construct_fields_sorts_output_with_debug() -> None:
+    """Output type fields must be alphabetical when DEBUG=True.
+
+    This was already true before the fix; kept as a baseline alongside the
+    DEBUG=False case.
+    """
     registry = Registry()
     fields = construct_fields(Author, registry, None, None, None)
     names = list(fields)
     assert names == sorted(names)
 
 
-def test_construct_fields_output_order_identical_debug_true_false():
-    """The output type field order is identical for DEBUG=True and DEBUG=False.
+def test_construct_fields_output_order_identical_debug_true_false() -> None:
+    """The output type field order must be identical for DEBUG=True and DEBUG=False.
 
     This is the core regression test for issue #19: dev/prod SDL skew.
     """
@@ -77,8 +107,12 @@ def test_construct_fields_output_order_identical_debug_true_false():
 
 
 @override_settings(DEBUG=False)
-def test_construct_fields_create_sorts_required_first_without_debug():
-    """Create-input type fields are required-first then alphabetical without DEBUG."""
+def test_construct_fields_create_sorts_required_first_without_debug() -> None:
+    """Create-input fields must be required-first then alphabetical without DEBUG.
+
+    Guards against production (DEBUG=False) silently reverting to
+    insertion-order create-input ordering.
+    """
     registry = Registry()
     fields = construct_fields(Author, registry, None, None, None, input_flag="create")
     # No exception; id is dropped on create.
@@ -88,8 +122,11 @@ def test_construct_fields_create_sorts_required_first_without_debug():
     assert len(names) > 0
 
 
-def test_construct_fields_create_order_identical_debug_true_false():
-    """Create-input field order is identical for DEBUG=True and DEBUG=False."""
+def test_construct_fields_create_order_identical_debug_true_false() -> None:
+    """Create-input field order must be identical for DEBUG=True and DEBUG=False.
+
+    This is the create-input counterpart of the issue #19 regression test.
+    """
     registry_true = Registry()
     registry_false = Registry()
 
@@ -118,36 +155,47 @@ def test_construct_fields_create_order_identical_debug_true_false():
 # --------------------------------------------------------------------------- #
 
 
-def test_registry_importable_from_top_level():
-    """Registry must be importable directly from django_graphex."""
-    from django_graphex import Registry as RegistryImport  # noqa: F401
+def test_registry_importable_from_submodule() -> None:
+    """ "Registry" must be importable from "django_graphex.registry" (v2.0 API).
+
+    Guards the v2.0 submodule-only import path a downstream user would rely on.
+    """
+    from django_graphex.registry import Registry as RegistryImport
 
     assert RegistryImport is not None
 
 
-def test_registry_in_all():
-    """Registry must appear in django_graphex.__all__."""
+def test_registry_not_re_exported_at_root() -> None:
+    """ "Registry" must not be re-exported at the "django_graphex" package root.
+
+    v2.0 submodule-only API: "Registry" is public via "django_graphex.registry"
+    only.
+    """
     import django_graphex
 
-    assert "Registry" in django_graphex.__all__, (
-        "Registry is missing from django_graphex.__all__"
-    )
+    assert "Registry" not in django_graphex.__all__
+    assert not hasattr(django_graphex, "Registry")
 
 
-def test_django_nested_list_object_field_importable_from_top_level():
-    """DjangoNestedListObjectField must be importable directly from django_graphex."""
-    from django_graphex import DjangoNestedListObjectField  # noqa: F401
+def test_django_nested_list_object_field_importable_from_submodule() -> None:
+    """ "DjangoNestedListObjectField" must be importable from "django_graphex.fields".
+
+    Guards the v2.0 submodule-only import path a downstream user would rely on.
+    """
+    from django_graphex.fields import DjangoNestedListObjectField
 
     assert DjangoNestedListObjectField is not None
 
 
-def test_django_nested_list_object_field_in_all():
-    """DjangoNestedListObjectField must appear in django_graphex.__all__."""
+def test_django_nested_list_object_field_not_re_exported_at_root() -> None:
+    """ "DjangoNestedListObjectField" must not be re-exported at the package root.
+
+    v2.0 submodule-only API: it is public via "django_graphex.fields" only.
+    """
     import django_graphex
 
-    assert "DjangoNestedListObjectField" in django_graphex.__all__, (
-        "DjangoNestedListObjectField is missing from django_graphex.__all__"
-    )
+    assert "DjangoNestedListObjectField" not in django_graphex.__all__
+    assert not hasattr(django_graphex, "DjangoNestedListObjectField")
 
 
 # --------------------------------------------------------------------------- #
@@ -155,22 +203,34 @@ def test_django_nested_list_object_field_in_all():
 # --------------------------------------------------------------------------- #
 
 
-def test_multiselectfield_subclass_with_different_name_detected():
+def test_multiselectfield_subclass_with_different_name_detected() -> None:
     """MultiSelectField subclasses with a non-matching name must be detected.
 
-    The old code used ``type(field).__name__ == "MultiSelectField"`` which only
+    The old code used "type(field).__name__ == "MultiSelectField"" which only
     matches the exact class name. A subclass with a different name (or a
     reimplementation) would fall through to the single-value enum path.
 
     Our fix: guarded isinstance check. When multiselectfield is not installed,
     the converter falls back to the name check only if the import fails.
     This test verifies the isinstance path works when the package IS installed
-    (skipped otherwise), and verifies the name-check path for the non-installed case.
+    (skipped otherwise), and verifies the name-check path for the non-installed
+    case.
+
+    S-enum-2 (OUTPUT) + S-input-5 (INPUT) retired graphene on the choices
+    converter: on native it returns the dead-scalar sentinel for a
+    MultiSelectField subclass too, and the multiselect "[Enum]" rendering
+    (driven by the guarded isinstance check) moved to
+    "types._resolve_native_choices_input_fields" / the native output compiler.
+    We assert the converter recognizes the subclass (no raise, sentinel
+    return) instead of the old graphene "Field" wrapper.
     """
+    from django_graphex.converter import _DEAD_SCALAR
+
     try:
         from multiselectfield import MultiSelectField as _MSF  # noqa: F401
 
-        # If the package is installed, the isinstance check should work for subclasses.
+        # If the package is installed, the isinstance check should recognize the
+        # subclass and route it through the (graphene-free) choices converter.
         class _SubMSF(_MSF):
             pass
 
@@ -178,11 +238,11 @@ def test_multiselectfield_subclass_with_different_name_detected():
         field.name = "tags_sub"
         field.model = Author
         out = convert_django_field_with_choices(field, Registry())
-        # Must be detected as a list field, not a single enum field.
-        import graphene as _g
-
-        assert isinstance(out, _g.Field), (
-            "MultiSelectField subclass must yield a DjangoListField (isinstance path)"
+        # Recognized as a choices field (dead-scalar sentinel on native); the
+        # ``[Enum]`` list rendering is owned by the native compiler.
+        assert out is _DEAD_SCALAR, (
+            "MultiSelectField subclass must be recognized by the choices converter "
+            "(isinstance path) and return the native dead-scalar sentinel"
         )
     except ImportError:
         # Package not installed — the name-check fallback is the only heuristic.
@@ -190,12 +250,21 @@ def test_multiselectfield_subclass_with_different_name_detected():
         pytest.skip("multiselectfield package not installed; skipping isinstance path")
 
 
-def test_multiselectfield_direct_class_still_detected():
-    """A class literally named MultiSelectField still converts to DjangoListField.
+def test_multiselectfield_direct_class_still_detected() -> None:
+    """A class literally named MultiSelectField must still render as a list of enum.
 
-    This is a regression guard — the isinstance path must fall back gracefully
-    when multiselectfield package is absent and name-check is the only heuristic.
+    Regression guard — the isinstance path must fall back gracefully when the
+    multiselectfield package is absent and the name-check is the only
+    heuristic.
+
+    S-enum-2 (OUTPUT) + S-input-5 (INPUT) retired graphene on the choices
+    converter (it returns the dead-scalar sentinel on native). The name-based
+    MultiSelectField detection now lives in
+    "types._resolve_native_choices_input_fields" ("is_list=True" -> "[Enum]")
+    for the INPUT surface and the native output compiler for OUTPUT.
     """
+
+    from django_graphex.converter import _DEAD_SCALAR
 
     class MultiSelectField(models.CharField):
         pass
@@ -203,8 +272,17 @@ def test_multiselectfield_direct_class_still_detected():
     field = MultiSelectField(max_length=20, choices=[("a", "A"), ("b", "B")])
     field.name = "tags"
     field.model = Author
-    out = convert_django_field_with_choices(field, Registry())
-    assert isinstance(out, graphene.Field)
+
+    # Converter is graphene-free on both paths (dead-scalar sentinel). The
+    # MultiSelectField -> ``[Enum]`` input rendering is driven by the name-based
+    # heuristic in ``_resolve_native_choices_input_fields``
+    # (``is_list = type(field).__name__ == "MultiSelectField"``).
+    for input_flag in (None, "create"):
+        out = convert_django_field_with_choices(
+            field, Registry(), input_flag=input_flag
+        )
+        assert out is _DEAD_SCALAR
+    assert type(field).__name__ == "MultiSelectField"
 
 
 # --------------------------------------------------------------------------- #
@@ -212,49 +290,59 @@ def test_multiselectfield_direct_class_still_detected():
 # --------------------------------------------------------------------------- #
 
 
-def test_arrayfield_preserves_required_flag():
-    """ArrayField: the outer required flag must be preserved in the List wrapper."""
-    # A required ArrayField (in a create input) should yield a required List.
+def test_arrayfield_converter_returns_dead_scalar_on_create() -> None:
+    """ArrayField's converter must return the dead-scalar sentinel on create (native).
+
+    S-del-backend-11: the graphene "List" wrapper (and its "required" kwarg)
+    is gone — ArrayField is OMITTED from native output and the native input
+    compiler derives the input surface from "model._meta".
+    """
     field = ArrayField(models.IntegerField())
     field.name = "scores"
     field.model = Author
-    # blank=False, null=False => required on create
     out = convert_postgres_array_to_list(field, Registry(), input_flag="create")
-    assert isinstance(out, List)
-    # The required flag should propagate to the outer List (NonNull or required kwarg).
-    # graphene List stores required as a kwarg; it doesn't wrap in NonNull itself.
-    # We check that the field has the right required kwarg set.
-    assert out.kwargs.get("required") is True
+    assert _is_dead_scalar(out)
 
 
-def test_arrayfield_not_required_without_create_flag():
-    """ArrayField: required=False when not in create input context."""
+def test_arrayfield_converter_returns_dead_scalar_on_output() -> None:
+    """ArrayField's converter must return the dead-scalar sentinel on output.
+
+    Complements the create-path assertion so both input and output surfaces
+    are covered.
+    """
     field = ArrayField(models.IntegerField())
     out = convert_postgres_array_to_list(field, Registry(), input_flag=None)
-    assert isinstance(out, List)
-    assert not out.kwargs.get("required", False)
+    assert _is_dead_scalar(out)
 
 
-def test_rangefield_preserves_required_flag():
-    """RangeField: the outer required flag must be preserved in the List wrapper."""
+def test_rangefield_converter_returns_dead_scalar_on_create() -> None:
+    """RangeField's converter must return the dead-scalar sentinel on create (native).
+
+    Mirrors the ArrayField create-path assertion for the range converter.
+    """
     field = ArrayField(models.IntegerField())  # has .base_field; used as range stand-in
     field.name = "score_range"
-    # Make it required by Django field conventions (blank=False, null=False).
     out = convert_postgres_range_to_string(field, Registry(), input_flag="create")
-    assert isinstance(out, List)
-    assert out.kwargs.get("required") is True
+    assert _is_dead_scalar(out)
 
 
-def test_rangefield_not_required_without_create_flag():
-    """RangeField: required=False when not in create input context."""
+def test_rangefield_converter_returns_dead_scalar_on_output() -> None:
+    """RangeField's converter must return the dead-scalar sentinel on output.
+
+    Complements the create-path assertion so both input and output surfaces
+    are covered.
+    """
     field = ArrayField(models.IntegerField())
     out = convert_postgres_range_to_string(field, Registry(), input_flag=None)
-    assert isinstance(out, List)
-    assert not out.kwargs.get("required", False)
+    assert _is_dead_scalar(out)
 
 
-def test_arrayfield_inner_type_description_preserved():
-    """ArrayField: description from the outer field is passed to the List wrapper."""
+def test_arrayfield_inner_type_description_returns_dead_scalar() -> None:
+    """ArrayField's converter must return the dead-scalar sentinel regardless of "help_text".
+
+    The graphene "List" description wrapper is gone, so a populated
+    "help_text" must not change the sentinel return.
+    """
     field = ArrayField(models.IntegerField(), help_text="list of scores")
     out = convert_postgres_array_to_list(field, Registry())
-    assert out.kwargs.get("description") == "list of scores"
+    assert _is_dead_scalar(out)

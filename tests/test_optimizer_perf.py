@@ -11,43 +11,110 @@ Covers:
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
-import graphene
 import pytest
 from django.db import connection
+from django.db.models import QuerySet
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from graphene import Schema
-from graphql import parse
+from graphql import ExecutionResult, GraphQLResolveInfo, graphql_sync, parse
 from graphql.language.ast import (
+    FieldNode,
     FragmentDefinitionNode,
     OperationDefinitionNode,
 )
 
-from django_graphex import DjangoModelType, DjangoObjectField, DjangoObjectType
+from django_graphex.core import ObjectType
+from django_graphex.fields import DjangoObjectField
 from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoModelType, DjangoObjectType
 from django_graphex.utils import (
     _concrete_field_map,
     _relation_field_map,
 )
 
-from .models import Author, Category, Post
+from ._schema_isolation import isolated_pair
+from .models import (
+    Author,
+    OptimizerPerfAuthor,
+    OptimizerPerfCategory,
+    OptimizerPerfPost,
+    Post,
+)
+
+
+def _execute(schema: DjangoGraphQLSchema, query: str) -> ExecutionResult:
+    """Execute "query" against a native "DjangoGraphQLSchema" (graphene-free).
+
+    Drop-in for the retired "schema.execute(query)": returns the graphql-core
+    "ExecutionResult" (same ".data" / ".errors" shape graphene returned).
+
+    Args:
+        schema: The native schema wrapper to execute the query against.
+        query: The GraphQL query document to execute.
+
+    Returns:
+        The graphql-core execution result.
+    """
+    return graphql_sync(schema.graphql_schema, query)
+
+
+def _gtype(name: str, bases: tuple[type, ...], ns: dict[str, Any]) -> type:
+    """Build a dynamic native type via "type()" with pydantic-safe namespace.
+
+    Native "ObjectType" / "DjangoObjectType" are pydantic "BaseModel"
+    subclasses; building them with "type(name, bases, ns)" requires
+    "ns['__module__']" and a nested "Meta" whose "__qualname__" is
+    "<Outer>.Meta" (the value a "class" body produces). This supplies both so
+    the dynamic form behaves exactly like the equivalent "class" statement.
+
+    Args:
+        name: The class name to build.
+        bases: The base classes for the new type.
+        ns: The class namespace (attributes and nested classes).
+
+    Returns:
+        The dynamically constructed class.
+    """
+    ns = dict(ns)
+    ns.setdefault("__module__", __name__)
+    ns["__qualname__"] = name
+    for attr_name, attr_val in list(ns.items()):
+        if isinstance(attr_val, type):
+            try:
+                attr_val.__qualname__ = f"{name}.{attr_name}"
+            except (AttributeError, TypeError):  # pragma: no cover - defensive
+                pass
+    return type(name, bases, ns)
+
 
 # ---------------------------------------------------------------------------
 # AST helpers for building fake field_nodes
 # ---------------------------------------------------------------------------
 
 
-def _parse_mutation_field_node(gql: str, mutation_field: str):
-    """Parse a GraphQL mutation string and return the FieldNode for
-    ``mutation_field`` (e.g. ``postCreate``).
+def _parse_mutation_field_node(
+    gql: str, mutation_field: str
+) -> tuple[FieldNode, dict[str, FragmentDefinitionNode]]:
+    """Parse a GraphQL mutation string and return the FieldNode for "mutation_field".
 
     Example:
         _parse_mutation_field_node(
             "mutation { postCreate { ok post { title author { name } } } }",
             "postCreate",
         )
+
+    Args:
+        gql: The GraphQL mutation document text to parse.
+        mutation_field: The top-level mutation field name to locate (e.g.
+            "postCreate").
+
+    Returns:
+        A tuple of the matching field node and the document's fragment
+        definitions keyed by name.
     """
     document = parse(gql)
     fragments = {
@@ -64,8 +131,20 @@ def _parse_mutation_field_node(gql: str, mutation_field: str):
     return field, fragments
 
 
-def _fake_info(field_node, fragments=None):
-    """Build a minimal ResolveInfo-like namespace with field_nodes + fragments."""
+def _fake_info(
+    field_node: FieldNode,
+    fragments: dict[str, FragmentDefinitionNode] | None = None,
+) -> SimpleNamespace:
+    """Build a minimal ResolveInfo-like namespace with field_nodes + fragments.
+
+    Args:
+        field_node: The single field node to expose as "field_nodes".
+        fragments: Optional fragment definitions keyed by name.
+
+    Returns:
+        A namespace shaped enough like "GraphQLResolveInfo" for the
+        optimizer helpers under test.
+    """
     return SimpleNamespace(
         field_nodes=[field_node],
         fragments=fragments or {},
@@ -90,20 +169,32 @@ class FieldMapMemoizationTest(TestCase):
     asserting get_fields was called at most once for the root model per run.
     """
 
-    def test_relation_field_map_returns_consistent_result(self):
-        """_relation_field_map returns the same dict content on repeated calls."""
+    def test_relation_field_map_returns_consistent_result(self) -> None:
+        """ "_relation_field_map" returns the same dict content on repeated calls.
+
+        This test breaks if repeated calls without a shared cache stop
+        agreeing on the set of mapped relation names.
+        """
         result1 = _relation_field_map(Post)
         result2 = _relation_field_map(Post)
         self.assertEqual(set(result1.keys()), set(result2.keys()))
 
-    def test_concrete_field_map_returns_consistent_result(self):
-        """_concrete_field_map returns the same dict content on repeated calls."""
+    def test_concrete_field_map_returns_consistent_result(self) -> None:
+        """ "_concrete_field_map" returns the same dict content on repeated calls.
+
+        This test breaks if repeated calls without a shared cache stop
+        agreeing on the set of mapped concrete field names.
+        """
         result1 = _concrete_field_map(Post)
         result2 = _concrete_field_map(Post)
         self.assertEqual(set(result1.keys()), set(result2.keys()))
 
-    def test_relation_field_map_returns_same_object_with_cache(self):
-        """With _cache={}, the SAME dict object is returned on the second call."""
+    def test_relation_field_map_returns_same_object_with_cache(self) -> None:
+        """With a shared "_cache" dict, the SAME object is returned on the second call.
+
+        This test breaks if the request-scoped memoization stops returning
+        the identical cached dict object on a repeated call.
+        """
         cache: dict = {}
         result1 = _relation_field_map(Post, _cache=cache)
         result2 = _relation_field_map(Post, _cache=cache)
@@ -112,8 +203,12 @@ class FieldMapMemoizationTest(TestCase):
         )
         self.assertEqual(set(result1.keys()), set(result2.keys()))
 
-    def test_concrete_field_map_returns_same_object_with_cache(self):
-        """With _cache={}, the SAME dict object is returned on the second call."""
+    def test_concrete_field_map_returns_same_object_with_cache(self) -> None:
+        """With a shared "_cache" dict, the SAME object is returned on the second call.
+
+        This test breaks if the request-scoped memoization stops returning
+        the identical cached dict object on a repeated call.
+        """
         cache: dict = {}
         result1 = _concrete_field_map(Post, _cache=cache)
         result2 = _concrete_field_map(Post, _cache=cache)
@@ -123,30 +218,41 @@ class FieldMapMemoizationTest(TestCase):
         self.assertEqual(set(result1.keys()), set(result2.keys()))
 
     @pytest.mark.django_db
-    def test_get_fields_called_once_per_model_per_optimizer_run(self):
-        """Within one queryset_factory call, get_fields is called at most once
-        per model, not once per call-site.
+    def test_get_fields_called_once_per_model_per_optimizer_run(self) -> None:
+        """Within one queryset_factory call, "get_fields" is called at most once per model.
 
-        We count calls via a wrapping spy on Post._meta.get_fields.
-        A correctly memoized run calls it at most once for Post across all
-        internal walkers that inspect Post's field map.
+        Not once per call-site. We count calls via a wrapping spy on
+        "Post._meta.get_fields". A correctly memoized run calls it at most
+        once for Post across all internal walkers that inspect Post's field
+        map. This test breaks if that memoization regresses, causing
+        "get_fields" to be called once per walker call-site instead.
         """
         _R2 = Registry()
 
         class _QPostType(DjangoObjectType):
+            """ "Post" object type registered on the isolated memoization "Registry"."""
+
             class Meta:
+                """Bind the type to "Post" under the isolated registry "_R2"."""
+
                 model = Post
                 registry = _R2
 
         class _QAuthorType(DjangoObjectType):
+            """ "Author" object type registered on the isolated memoization "Registry"."""
+
             class Meta:
+                """Bind the type to "Author" under the isolated registry "_R2"."""
+
                 model = Author
                 registry = _R2
 
-        class _QQuery(graphene.ObjectType):
+        class _QQuery(ObjectType):
+            """Root query exposing the single "post" field used by this test."""
+
             post = DjangoObjectField(_QPostType)
 
-        schema = Schema(query=_QQuery)
+        schema = DjangoGraphQLSchema(query=_QQuery, registries=isolated_pair(_R2))
 
         author = Author.objects.create(name="Memo")
         post = Post.objects.create(title="M1", author=author)
@@ -154,13 +260,22 @@ class FieldMapMemoizationTest(TestCase):
         call_counts: dict[str, int] = {}
         original_get_fields = Post._meta.get_fields
 
-        def counting_get_fields(*args, **kwargs):
+        def counting_get_fields(*args: Any, **kwargs: Any) -> Any:
+            """Wrap "Post._meta.get_fields" to count invocations.
+
+            Args:
+                *args: Positional arguments forwarded to the original method.
+                **kwargs: Keyword arguments forwarded to the original method.
+
+            Returns:
+                Whatever the original "get_fields" returns.
+            """
             call_counts["post"] = call_counts.get("post", 0) + 1
             return original_get_fields(*args, **kwargs)
 
         with patch.object(Post._meta, "get_fields", counting_get_fields):
-            result = schema.execute(
-                "{ post(id: %d) { title author { name } } }" % post.pk
+            result = _execute(
+                schema, "{ post(id: %d) { title author { name } } }" % post.pk
             )
 
         assert result.errors is None, result.errors
@@ -183,21 +298,68 @@ class FieldMapMemoizationTest(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# NOTE: PostMutType / PostMutTypeFiltered below are DjangoModelType subclasses
+# and therefore ALWAYS self-register on the GLOBAL registry (they reject both
+# Meta.registry and Meta.skip_registry). Wrapping the shared "Post" model here
+# would auto-derive globally-named companion output types that collide with
+# same-named companions other test modules build over the same shared model,
+# so they are built over the dedicated OptimizerPerfPost/-Author/-Category
+# models instead (see tests/models.py). Every OTHER type in this file is a
+# function-local DjangoObjectType with its own isolated Registry and is
+# unaffected by this collision, so it keeps using the shared Author/Post
+# models.
+
+
 class PostMutType(DjangoModelType):
-    """DjangoModelType for Post used by the re-read optimization tests."""
+    """DjangoModelType for OptimizerPerfPost used by the re-read optimization tests.
+
+    Used by "MutationReReadOptimizationTest".
+    """
 
     class Meta:
-        model = Post
+        """Bind the type to "OptimizerPerfPost" with an explicit "output_field_name".
+
+        "output_field_name" defaults to the model name ("optimizerperfpost"),
+        but "perform_mutate" locates its re-read sub-selection by matching
+        this name against the mutation's GraphQL selection set (e.g.
+        "{ ok post { ... } }" below), so it is pinned to "post" to match the
+        fixed GraphQL literal these tests parse.
+        """
+
+        model = OptimizerPerfPost
+        output_field_name = "post"
 
 
 class PostMutTypeFiltered(DjangoModelType):
-    """DjangoModelType for Post where filter_queryset returns .none()."""
+    """DjangoModelType for OptimizerPerfPost where filter_queryset returns .none().
+
+    Used to exercise the re-read fallback when the row is filtered away.
+    """
 
     class Meta:
-        model = Post
+        """Bind the type to "OptimizerPerfPost" with an explicit "output_field_name".
+
+        See "PostMutType.Meta" for why "output_field_name" is pinned to
+        "post" instead of the model-derived default.
+        """
+
+        model = OptimizerPerfPost
+        output_field_name = "post"
 
     @classmethod
-    def filter_queryset(cls, qs, info, **kwargs):
+    def filter_queryset(
+        cls, qs: QuerySet, info: GraphQLResolveInfo, **kwargs: Any
+    ) -> QuerySet:
+        """Scope every queryset to empty, to exercise the re-read-returns-nothing branch.
+
+        Args:
+            qs: The queryset to scope.
+            info: The GraphQL resolve info for the current request.
+            **kwargs: Extra arguments available for scoping (unused here).
+
+        Returns:
+            An always-empty queryset ("qs.none()").
+        """
         return qs.none()
 
 
@@ -214,18 +376,32 @@ class MutationReReadOptimizationTest(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
-        cls.category = Category.objects.create(title="Tech")
-        cls.author = Author.objects.create(name="Ada")
-        cls.post = Post.objects.create(
+    def setUpTestData(cls) -> None:
+        """Create one category, one author, and one post referencing both.
+
+        Shared as class-level fixture data by every test in this class. Uses
+        the dedicated OptimizerPerfPost/-Author/-Category models (not the
+        shared Post/Author/Category) so PostMutType's global registration
+        stays collision-free — see the module-level NOTE above PostMutType.
+        """
+        cls.category = OptimizerPerfCategory.objects.create(title="Tech")
+        cls.author = OptimizerPerfAuthor.objects.create(name="Ada")
+        cls.post = OptimizerPerfPost.objects.create(
             title="P1", author=cls.author, category=cls.category
         )
 
-    def _perform_mutate_with_selection(self, selection_gql: str) -> tuple:
-        """Call PostMutType.perform_mutate with a fake info derived from
-        ``selection_gql`` (a mutation body: ``{ ok post { ... } }``).
+    def _perform_mutate_with_selection(
+        self, selection_gql: str
+    ) -> tuple[DjangoModelType, list[dict[str, Any]]]:
+        """Call "PostMutType.perform_mutate" with a fake info built from a selection body.
 
-        Returns (result, list_of_captured_queries).
+        Args:
+            selection_gql: The mutation selection body, e.g.
+                "{ ok post { title } }".
+
+        Returns:
+            A tuple of the mutation result and the list of queries captured
+            during the "perform_mutate" call.
         """
         gql = "mutation { postCreate %s }" % selection_gql
         field_node, fragments = _parse_mutation_field_node(gql, "postCreate")
@@ -236,13 +412,13 @@ class MutationReReadOptimizationTest(TestCase):
 
         return result, ctx.captured_queries
 
-    def test_perform_mutate_with_to_one_selection_prefetches_relations(self):
-        """Requesting author+category in the selection set must result in the
-        re-read queryset using select_related so that accessing those relations
-        does NOT trigger extra queries.
+    def test_perform_mutate_with_to_one_selection_prefetches_relations(self) -> None:
+        """Requesting author+category in the selection set makes the re-read use select_related.
 
-        This is the N+1 guard: accessing output_obj.author and output_obj.category
-        after perform_mutate should require 0 additional SELECTs.
+        This is the N+1 guard: accessing "output_obj.author" and
+        "output_obj.category" after "perform_mutate" should require 0
+        additional SELECTs. This test breaks if the re-read queryset stops
+        pre-joining those relations.
         """
         result, queries_for_reread = self._perform_mutate_with_selection(
             "{ ok post { title author { name } category { title } } }"
@@ -268,8 +444,12 @@ class MutationReReadOptimizationTest(TestCase):
             + "\n".join(q["sql"] for q in ctx.captured_queries),
         )
 
-    def test_perform_mutate_scalar_only_no_regression(self):
-        """Requesting only scalar fields (no relations) still works correctly."""
+    def test_perform_mutate_scalar_only_no_regression(self) -> None:
+        """Requesting only scalar fields (no relations) still works correctly.
+
+        This test breaks if the optimized re-read path stops handling a
+        selection with no relation fields.
+        """
         result, queries = self._perform_mutate_with_selection("{ ok post { title } }")
 
         self.assertTrue(result.ok)
@@ -277,8 +457,12 @@ class MutationReReadOptimizationTest(TestCase):
         self.assertIsNotNone(output_obj)
         self.assertEqual(output_obj.title, "P1")
 
-    def test_perform_mutate_data_matches_expected(self):
-        """The returned object's fields match what was saved — behavior parity."""
+    def test_perform_mutate_data_matches_expected(self) -> None:
+        """The returned object's fields match what was saved, preserving behavior parity.
+
+        This test breaks if the optimized re-read path stops returning data
+        consistent with what was actually persisted.
+        """
         result, _ = self._perform_mutate_with_selection(
             "{ ok post { title author { name } } }"
         )
@@ -290,9 +474,12 @@ class MutationReReadOptimizationTest(TestCase):
         with self.assertNumQueries(0):
             self.assertEqual(output_obj.author.name, "Ada")
 
-    def test_perform_mutate_falls_back_when_filter_excludes_row(self):
-        """When filter_queryset returns .none(), perform_mutate uses the in-memory
-        obj so the mutation never returns null — existing behavior preserved.
+    def test_perform_mutate_falls_back_when_filter_excludes_row(self) -> None:
+        """When "filter_queryset" returns "none()", "perform_mutate" falls back to the in-memory object.
+
+        This preserves existing behavior: the mutation never returns null
+        just because the re-read queryset was filtered away. This test
+        breaks if that fallback regresses.
         """
         gql = "mutation { filteredPostCreate { ok post { title } } }"
         field_node, fragments = _parse_mutation_field_node(gql, "filteredPostCreate")
@@ -335,24 +522,26 @@ class NestedListDescentFmapCacheTest(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with three posts.
+
+        Shared as fixture data for the nested-list-descent memoization test.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="FmapCacheAuthor")
         for i in range(3):
             Post.objects.create(title=f"FmapPost{i}", author=cls.author)
 
-    def test_nested_list_descent_memoizes_get_fields(self):
-        """#57: _meta.get_fields called at most 2 times for Post in a nested-list query.
+    def test_nested_list_descent_memoizes_get_fields(self) -> None:
+        """#57: "_meta.get_fields" is called at most 2 times for Post in a nested-list query.
 
-        A query that traverses authors → posts (nested list) → {id, title} must
-        memoize Post's field map.  Before the fix, the nested-list descent bypasses
-        the cache and calls get_fields on every recursive call.
+        A query that traverses authors -> posts (nested list) -> {id, title}
+        must memoize Post's field map. Before the fix, the nested-list
+        descent bypasses the cache and calls get_fields on every recursive
+        call. This test breaks if that memoization regresses.
         """
         from unittest.mock import patch
-
-        import graphene
-        from graphene import Schema
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -389,12 +578,13 @@ class NestedListDescentFmapCacheTest(TestCase):
                 model = Author
                 registry = _REG
 
-        schema = Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_FmapQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_FAuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
 
         call_counts: dict[str, int] = {}
@@ -405,8 +595,9 @@ class NestedListDescentFmapCacheTest(TestCase):
             return original_get_fields(*args, **kwargs)
 
         with patch.object(Post._meta, "get_fields", counting_get_fields):
-            result = schema.execute(
-                "{ authors { results { posts { results(limit: 5, offset: 0) { id title } totalCount } } } }"
+            result = _execute(
+                schema,
+                "{ authors { results { posts { results(limit: 5, offset: 0) { id title } totalCount } } } }",
             )
 
         assert result.errors is None, result.errors
@@ -450,26 +641,29 @@ class OnlyNarrowingFmapCacheTest(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with three posts.
+
+        Shared as fixture data for the only-narrowing memoization test.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="NarrowCacheAuthor")
         for i in range(3):
             Post.objects.create(title=f"NarrowPost{i}", author=cls.author)
 
-    def test_only_narrowing_memoizes_get_fields(self):
-        """#66(b): _meta.get_fields called fewer times for Post in a narrowing query.
+    def test_only_narrowing_memoizes_get_fields(self) -> None:
+        """#66(b): "_meta.get_fields" is called fewer times for Post in a narrowing query.
 
         A query with OPTIMIZE_ONLY_FIELDS=True that prefetches posts must not
-        call Post._meta.get_fields repeatedly from the narrowing pass.  After
-        threading _fmap_cache through _collect_prefetch_only_sets and friends,
-        the call count is reduced from the pre-fix baseline.
+        call "Post._meta.get_fields" repeatedly from the narrowing pass.
+        After threading "_fmap_cache" through "_collect_prefetch_only_sets"
+        and friends, the call count is reduced from the pre-fix baseline.
+        This test breaks if that memoization regresses.
         """
         from unittest.mock import patch
 
-        import graphene
         from django.test import override_settings
-        from graphene import Schema
 
         from django_graphex.registry import Registry
         from django_graphex.types import (
@@ -496,12 +690,13 @@ class OnlyNarrowingFmapCacheTest(TestCase):
                 model = Author
                 registry = _REG
 
-        schema = Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_NarrowQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_NAuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
 
         call_counts_with: dict[str, int] = {}
@@ -521,7 +716,7 @@ class OnlyNarrowingFmapCacheTest(TestCase):
         # Run with OPTIMIZE_ONLY_FIELDS=True (default) — triggers narrowing pass.
         with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
             with patch.object(Post._meta, "get_fields", counting_with):
-                result = schema.execute(gql)
+                result = _execute(schema, gql)
 
         assert result.errors is None, result.errors
 
@@ -536,7 +731,7 @@ class OnlyNarrowingFmapCacheTest(TestCase):
         # We assert the fix reduces the count vs an uncached run as a regression guard.
         with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": False}):
             with patch.object(Post._meta, "get_fields", counting_without):
-                result_off = schema.execute(gql)
+                result_off = _execute(schema, gql)
 
         assert result_off.errors is None, result_off.errors
         calls_without = call_counts_without.get("post", 0)
@@ -552,11 +747,14 @@ class OnlyNarrowingFmapCacheTest(TestCase):
             f"The narrowing pass must not add redundant get_fields calls after the fix.",
         )
 
-    def test_only_narrowing_data_parity(self):
-        """#66(b) non-regression: query results identical with/without _fmap_cache in narrowing."""
-        import graphene
+    def test_only_narrowing_data_parity(self) -> None:
+        """#66(b) non-regression: query results are identical with/without "_fmap_cache" in narrowing.
+
+        This test breaks if threading the request-scoped cache through the
+        narrowing pass changes the observable query results.
+        """
+
         from django.test import override_settings
-        from graphene import Schema
 
         from django_graphex.registry import Registry
         from django_graphex.types import (
@@ -583,20 +781,21 @@ class OnlyNarrowingFmapCacheTest(TestCase):
                 model = Author
                 registry = _REG
 
-        schema = Schema(
-            query=type(
+        schema = DjangoGraphQLSchema(
+            query=_gtype(
                 "_NarrowParityQuery",
-                (graphene.ObjectType,),
+                (ObjectType,),
                 {"authors": DjangoListObjectField(_NPAuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
 
         gql = "{ authors { results { posts { results { id title } } } } }"
 
         with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
-            result_on = schema.execute(gql)
+            result_on = _execute(schema, gql)
         with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": False}):
-            result_off = schema.execute(gql)
+            result_off = _execute(schema, gql)
 
         assert result_on.errors is None, result_on.errors
         assert result_off.errors is None, result_off.errors

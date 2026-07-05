@@ -17,54 +17,104 @@ Usage in a test module::
     _schema = minimal_cache_schema  # local alias for readability
 
 NOTE: this module is imported AFTER Django has been configured by
-conftest.pytest_configure, so top-level Django/graphene imports are safe here.
+conftest.pytest_configure, so top-level Django imports are safe here.
+
+This schema is built on the NATIVE backend (graphene-free): the public 2.0 API
+"django_graphex.ObjectType" + "field()" for the query root, the native
+"Mutation" base for the version-bump mutation, and "DjangoGraphQLSchema" for
+assembly — a drop-in for the retired "graphene.Schema(query=..., mutation=...)".
+The query/mutation/context dispatch behavior its consumers rely on ("{ hello }"
+-> "world", "{ me }" -> auth-aware username/"anon" read from
+"info.context.user", "mutation { doThing { ok } }" -> "ok == True" to bump
+the cache version) is preserved byte-for-byte.
 """
 
 import json
+from typing import TYPE_CHECKING, Any
 
-import graphene
 from django.contrib.auth.models import AnonymousUser
+from graphql import GraphQLBoolean, GraphQLResolveInfo, GraphQLString
+
+from django_graphex.core import Mutation, ObjectType, field
+from django_graphex.schema import DjangoGraphQLSchema
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
+    from django.http import HttpRequest
+    from django.test import RequestFactory
 
 # ---------------------------------------------------------------------------
-# Shared minimal cache schema
+# Shared minimal cache schema (native backend)
 # ---------------------------------------------------------------------------
 
 
-class _MinimalQ(graphene.ObjectType):
+class _MinimalQ(ObjectType):
     """Query root for the shared minimal cache test schema."""
 
-    hello = graphene.String()
-    me = graphene.String()
+    hello = field(GraphQLString)
+    me = field(GraphQLString)
 
-    def resolve_hello(root, info):  # noqa: N805
+    def resolve_hello(root: Any, info: GraphQLResolveInfo) -> str:  # noqa: N805
+        """Resolve the "hello" field to a constant greeting.
+
+        Args:
+            root: The unused parent resolver value.
+            info: The GraphQL execution info for the current field.
+
+        Returns:
+            The literal string "world".
+        """
         return "world"
 
-    def resolve_me(root, info):  # noqa: N805
+    def resolve_me(root: Any, info: GraphQLResolveInfo) -> str:  # noqa: N805
+        """Resolve the "me" field to the requesting user's username.
+
+        Args:
+            root: The unused parent resolver value.
+            info: The GraphQL execution info, used to read "info.context.user".
+
+        Returns:
+            The authenticated user's username, or "anon" when unauthenticated.
+        """
         user = info.context.user
         if getattr(user, "is_authenticated", False):
             return user.username
         return "anon"
 
 
-class _MinimalMut(graphene.Mutation):
+class _MinimalMut(Mutation):
     """A no-op mutation used to exercise the cache version-bump path."""
 
     class Arguments:
-        pass
+        """No arguments are accepted by this mutation."""
 
-    ok = graphene.Boolean()
+    ok = field(GraphQLBoolean)
 
-    def mutate(root, info):  # noqa: N805
-        return _MinimalMut(ok=True)
+    @classmethod
+    def mutate(cls, root: Any, info: GraphQLResolveInfo) -> "_MinimalMut":
+        """Run the no-op mutation, always reporting success.
+
+        Args:
+            root: The unused parent resolver value.
+            info: The GraphQL execution info for the current field.
+
+        Returns:
+            A new instance with "ok" set to True.
+        """
+        return cls(ok=True)
 
 
-class _MinimalMutationRoot(graphene.ObjectType):
+class _MinimalMutationRoot(ObjectType):
+    """Mutation root exposing the shared cache-version-bump mutation."""
+
     do_thing = _MinimalMut.Field()
 
 
 #: Shared minimal schema for cache tests.  Import this in any test module that
 #: needs a lightweight query+mutation schema without model dependencies.
-minimal_cache_schema = graphene.Schema(query=_MinimalQ, mutation=_MinimalMutationRoot)
+minimal_cache_schema = DjangoGraphQLSchema(
+    query=_MinimalQ, mutation=_MinimalMutationRoot
+)
 
 # ---------------------------------------------------------------------------
 # Common settings helpers
@@ -82,17 +132,19 @@ CACHE_ON_LONG_TIMEOUT = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT
 # ---------------------------------------------------------------------------
 
 
-def graphql_post(factory, query, user=None):
-    """Build a JSON-POST GraphQL request via *factory*.
+def graphql_post(
+    factory: "RequestFactory", query: str, user: "User | AnonymousUser | None" = None
+) -> "HttpRequest":
+    """Build a JSON-POST GraphQL request via "factory".
 
     Args:
-        factory: A :class:`django.test.RequestFactory` instance.
-        query: GraphQL query string (str).
-        user: Optional Django user; defaults to
-            :class:`~django.contrib.auth.models.AnonymousUser`.
+        factory: The request factory used to build the POST request.
+        query: The GraphQL query string to embed in the JSON body.
+        user: The Django user to attach to the request; defaults to an
+            "AnonymousUser" when not given.
 
     Returns:
-        A :class:`django.http.HttpRequest` ready to be dispatched to a view.
+        A request ready to be dispatched to a view.
     """
     body = json.dumps({"query": query})
     req = factory.post("/graphql/", body, content_type="application/json")

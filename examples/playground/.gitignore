@@ -5,3 +5,5 @@ __pycache__/
 blog/migrations/0*.py
 uv.lock
 staticfiles/
+# Runtime upload storage (test/dev artifacts)
+media/

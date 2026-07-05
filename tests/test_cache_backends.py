@@ -17,7 +17,7 @@ LocMemCache
     No external dependencies; values stored as Python objects in a dict.
 DatabaseCache
     Uses a SQLite table (the test suite already uses SQLite :memory:) created
-    with ``createcachetable`` in the fixture.  Catches pickle-roundtrip
+    with "createcachetable" in the fixture. Catches pickle-roundtrip
     regressions and cross-process-visible state.
 
 NOTE: Redis parity would require a running Redis service in CI (no Redis
@@ -26,6 +26,7 @@ as a follow-up requiring a CI service addition.
 """
 
 import json
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -36,6 +37,9 @@ from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
 from tests.cache_helpers import graphql_post, minimal_cache_schema
+
+if TYPE_CHECKING:
+    from pytest_django.plugin import DjangoDbBlocker
 
 # ---------------------------------------------------------------------------
 # Backend parametrization
@@ -81,14 +85,24 @@ _BACKEND_PARAMS = [
 
 
 @pytest.fixture(scope="module", autouse=True)
-def ensure_db_cache_table(django_db_setup, django_db_blocker):
+def ensure_db_cache_table(
+    django_db_setup: None, django_db_blocker: "DjangoDbBlocker"
+) -> None:
     """Create the DatabaseCache table once per test module.
 
-    ``django_db_setup`` and ``django_db_blocker`` are pytest-django fixtures
-    that ensure the test database exists before we attempt DDL.
+    "django_db_setup" and "django_db_blocker" are pytest-django fixtures that
+    ensure the test database exists before this fixture attempts DDL.
 
-    The table name ``test_graphql_cache`` matches ``_DB_CACHES["default"]["LOCATION"]``
-    above.  createcachetable is idempotent so re-running is safe.
+    Args:
+        django_db_setup: The pytest-django fixture that provisions the test
+            database; depended on only for ordering, its yielded value is
+            unused.
+        django_db_blocker: The pytest-django blocker used to unblock database
+            access outside of a test body.
+
+    The table name "test_graphql_cache" matches
+    "_DB_CACHES["default"]["LOCATION"]" above. createcachetable is idempotent
+    so re-running is safe.
     """
     with django_db_blocker.unblock():
         call_command("createcachetable", "test_graphql_cache", verbosity=0)
@@ -99,8 +113,17 @@ def ensure_db_cache_table(django_db_setup, django_db_blocker):
 # ---------------------------------------------------------------------------
 
 
-def _get_cache(caches_setting):
-    """Return the 'default' cache from the given CACHES override dict."""
+def _get_cache(caches_setting: dict[str, Any]) -> Any:
+    """Return the "default" cache backend instance.
+
+    Args:
+        caches_setting: A CACHES override dict; unused, the cache is always
+            fetched from Django's active "caches" registry by the "default"
+            key.
+
+    Returns:
+        cache: The "default" cache backend currently configured in Django.
+    """
     return caches["default"]
 
 
@@ -117,15 +140,24 @@ def _get_cache(caches_setting):
 class _CacheBackendBehaviourBase:
     """Mixin with parametrized backend behaviours.
 
-    Subclasses provide ``caches_setting`` (a CACHES dict) so the same
+    Subclasses provide "caches_setting" (a CACHES dict) so the same
     behaviour assertions run against LocMemCache and DatabaseCache.
     """
 
     #: Subclasses must override this with a CACHES override dict.
     caches_setting: dict = {}
 
-    def _settings(self, **extra_graphex):
-        """Return a combined settings dict for override_settings."""
+    def _settings(self, **extra_graphex: Any) -> dict[str, Any]:
+        """Build the override_settings dict for this test's backend.
+
+        Args:
+            extra_graphex: Extra DJANGO_GRAPHEX settings that override the
+                CACHE_ACTIVE/CACHE_TIMEOUT defaults.
+
+        Returns:
+            settings: A dict with "CACHES" set to this instance's
+                caches_setting and "DJANGO_GRAPHEX" merged with the extras.
+        """
         graphex = {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}
         graphex.update(extra_graphex)
         return {"CACHES": self.caches_setting, "DJANGO_GRAPHEX": graphex}
@@ -134,8 +166,12 @@ class _CacheBackendBehaviourBase:
     # 1. Per-identity isolation: user A's cache entry not served to user B
     # ------------------------------------------------------------------
 
-    def test_per_identity_isolation(self):
-        """User A's cached entry MUST NOT be served to user B."""
+    def test_per_identity_isolation(self) -> None:
+        """User A's cached entry MUST NOT be served to user B.
+
+        If this breaks, the cache key namespace is not identity-scoped and
+        one user's response can leak to another user on the same backend.
+        """
         settings = self._settings()
         factory = RequestFactory()
         user_a = User(pk=10, username="alice_backend")
@@ -162,7 +198,7 @@ class _CacheBackendBehaviourBase:
     # 2. Mutation on_commit version bump — cache invalidated after mutation
     # ------------------------------------------------------------------
 
-    def test_mutation_invalidates_own_namespace(self):
+    def test_mutation_invalidates_own_namespace(self) -> None:
         """After a mutation, a subsequent query from the SAME user MUST hit the backend again.
 
         The mutation advances the identity's version counter so the old cached
@@ -207,7 +243,7 @@ class _CacheBackendBehaviourBase:
     # 3. Cookie-bearing response not cached (CSRF skip)
     # ------------------------------------------------------------------
 
-    def test_cookie_bearing_response_not_cached(self):
+    def test_cookie_bearing_response_not_cached(self) -> None:
         """A response that carries Set-Cookie MUST NOT be stored and replayed.
 
         The view stores only (body, status, content_type) so the cache hit
@@ -254,7 +290,7 @@ class _CacheBackendBehaviourBase:
     # 4. Cache-hit reconstruction: body and status round-trip correctly
     # ------------------------------------------------------------------
 
-    def test_cache_hit_reconstructs_response_correctly(self):
+    def test_cache_hit_reconstructs_response_correctly(self) -> None:
         """A cache hit MUST return the same body and status as the original response.
 
         This validates the (body, status, content_type) tuple survives the
@@ -297,7 +333,11 @@ class _CacheBackendBehaviourBase:
 
 @pytest.mark.django_db(transaction=True)
 class TestCacheBackendLocMem(TestCase, _CacheBackendBehaviourBase):
-    """Runs all cache behaviour assertions against LocMemCache."""
+    """Runs all cache behaviour assertions against LocMemCache.
+
+    LocMemCache stores values as Python objects in-process, so it never
+    exercises the pickle round-trip that DatabaseCache goes through.
+    """
 
     caches_setting = _LOCMEM_CACHES
 
@@ -306,8 +346,8 @@ class TestCacheBackendLocMem(TestCase, _CacheBackendBehaviourBase):
 class TestCacheBackendDB(TestCase, _CacheBackendBehaviourBase):
     """Runs all cache behaviour assertions against DatabaseCache.
 
-    DatabaseCache uses a SQLite table created by the ``ensure_db_cache_table``
-    fixture.  This backend surfaces pickle round-trip regressions and
+    DatabaseCache uses a SQLite table created by the "ensure_db_cache_table"
+    fixture. This backend surfaces pickle round-trip regressions and
     cross-process-visible state that LocMemCache hides.
 
     Note: Redis parity would require a running Redis service in CI.

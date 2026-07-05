@@ -36,7 +36,7 @@ from .string import (
     UppercaseGraphQLDirective,
 )
 
-# Tuple of the 24 custom directive CLASSES.  Kept as a private name so that
+# Tuple of the 25 custom directive CLASSES.  Kept as a private name so that
 # ``all_directives`` (below) only ever holds the runtime list of INSTANCES,
 # giving mypy a single consistent type for the exported name.
 _DIRECTIVE_CLASSES: tuple[type, ...] = (
@@ -71,7 +71,9 @@ _DIRECTIVE_CLASSES: tuple[type, ...] = (
     SlugifyGraphQLDirective,
 )
 
-# List of 30 directive *instances*: 24 custom + 6 default GraphQL directives.
-# Typed as ``list`` so callers that do ``all_directives + [custom()]`` or
-# ``schema = Schema(..., directives=all_directives)`` get correct inference.
+# List of 30 directive *instances*: 25 custom + 5 spec GraphQL directives
+# (graphql-core's ``specified_directives`` bundle: skip, include, deprecated,
+# specifiedBy, oneOf). Typed as ``list`` so callers that do
+# ``all_directives + [custom()]`` or ``schema = Schema(..., directives=all_directives)``
+# get correct inference.
 all_directives: list = [d() for d in _DIRECTIVE_CLASSES] + [*default_directives]

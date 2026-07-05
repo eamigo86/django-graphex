@@ -65,8 +65,8 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination)
 
 ```python
 LimitOffsetGraphqlPagination(
-    default_limit=20,
-    max_limit=None,
+    default_limit=None,   # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
+    max_limit=None,       # from DJANGO_GRAPHEX["MAX_PAGE_SIZE"]
     ordering="",
     limit_query_param="limit",
     offset_query_param="offset",
@@ -138,12 +138,18 @@ Paginate queryset using limit and offset parameters.
 
 **Returns:** Sliced `QuerySet`
 
+**Raises:**
+- `GraphQLError` — negative `offset` (`"Invalid offset: {offset}. Offset must be a non-negative integer."`).
+- `GraphQLError` — zero or negative `limit` (`"Invalid limit: {limit}. Limit must be a positive integer."`).
+  A `limit` above `max_limit` is not an error — it is silently clamped (see
+  [Configuration Examples](#the-maximum-is-an-effective-ceiling)).
+
 ### Example Usage
 
 === "Basic Configuration"
 
     ```python
-    from django_graphex import LimitOffsetGraphqlPagination
+    from django_graphex.paginations import LimitOffsetGraphqlPagination
 
     pagination = LimitOffsetGraphqlPagination(
         default_limit=20,
@@ -220,9 +226,9 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination)
 
 ```python
 PageGraphqlPagination(
-    page_size=20,
+    page_size=None,            # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
     page_size_query_param=None,
-    max_page_size=None,
+    max_page_size=None,        # from DJANGO_GRAPHEX["MAX_PAGE_SIZE"]
     ordering="",
     ordering_param="ordering"
 )
@@ -291,12 +297,17 @@ Paginate queryset using page number and page size parameters.
 
 **Returns:** Paginated `QuerySet`
 
+**Raises:**
+- `GraphQLError("Page value for PageGraphqlPagination must be a non-zero value")` — `page=0`.
+- `GraphQLError` — zero or negative `pageSize` (`"Invalid page size: {value}. Page size must be a positive integer."`).
+  A `pageSize` above `max_page_size` is silently clamped, not an error.
+
 ### Example Usage
 
 === "Basic Configuration"
 
     ```python
-    from django_graphex import PageGraphqlPagination
+    from django_graphex.paginations import PageGraphqlPagination
 
     pagination = PageGraphqlPagination(
         page_size=25,
@@ -370,14 +381,49 @@ Paginate queryset using page number and page size parameters.
 }
 ```
 
+### Backward Pagination
+
+A negative `page` navigates from the end of the list in true list order:
+
+| `page` | Rows returned |
+|---|---|
+| `-1` | The **last** `page_size` rows (equivalent to Python's `list[-page_size:]`) |
+| `-2` | The `page_size`-row window immediately before the last page |
+| Large negative (overshoot past the start) | Clamps to the **first** `page_size` rows |
+| `0` | `GraphQLError` — invalid for both forward and backward navigation |
+
+```graphql
+{ users { results(page: -1) { id } } }  # last page_size rows, natural order
+```
+
+Cost: a negative `page` issues one `COUNT` query (needed to compute
+`offset = total + page_size * page`) and opts out of the window-prefetch
+optimization, since that optimization requires the offset up front. Positive
+pages never issue a `COUNT` — see [COUNT Query Behaviour](../usage/pagination.md#count-query-behaviour).
+
+`LimitOffsetGraphqlPagination` has no backward mode (a negative `offset`
+raises `GraphQLError`) and `CursorGraphqlPagination` is forward-only; inverting
+its `ordering` returns the same rows reversed, not a windowed "last page".
+
 ---
 
 ## CursorGraphqlPagination
 
 Forward **keyset** (cursor) pagination over a single ordering field. An opaque
-`cursor` encodes the ordering-field value of a boundary row, and `first` controls
-the page size. The list type also gains a `pageInfo` field (see below) so the
-client reads `endCursor` from the response instead of building it by hand.
+`cursor` encodes a **composite** boundary — the ordering-field value AND the
+primary key of the boundary row, with the pk used as an `ORDER BY` tiebreak so
+rows sharing the same ordering value are never skipped or duplicated across
+pages. `first` controls the page size. The list type also gains a `pageInfo`
+field (see below) so the client reads `endCursor` from the response instead of
+building it by hand.
+
+!!! warning "Cursors are opaque — never construct one client-side"
+
+    Treat a cursor as an implementation detail returned by the server. A
+    tampered or malformed cursor (corrupted base64, wrong internal prefix, or a
+    value that cannot be coerced to the ordering field's type) is caught
+    internally and raised as `GraphQLError("Invalid cursor")` rather than
+    propagating a raw `ValueError` or Django `ValidationError`.
 
 ```python
 class CursorGraphqlPagination(BaseDjangoGraphqlPagination)
@@ -399,11 +445,24 @@ CursorGraphqlPagination(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `ordering` | `str` | `"-created"` | Single keyset field; a leading `-` selects descending order |
+| `ordering` | `str` | `"-created"` | Single keyset field; a leading `-` selects descending order. `""` falls back to `"id"`; a comma-separated value silently uses only its **first** term |
 | `cursor_query_param` | `str` | `"cursor"` | GraphQL argument name for the (after-)cursor |
 | `first_query_param` | `str` | `"first"` | GraphQL argument name for the page size |
 | `page_size` | `int` | `DEFAULT_PAGE_SIZE` | Fallback page size when `first` is not provided |
-| `max_page_size` | `int` | `MAX_PAGE_SIZE` | Ceiling on `first`; clamps any larger request |
+| `max_page_size` | `int` | `MAX_PAGE_SIZE` | Ceiling on `first`; silently clamps any larger request |
+
+!!! info "Page-size fallback chain — never unbounded"
+
+    The effective page size resolves as `first` (client) → `page_size` →
+    `max_page_size`, clamped at `max_page_size`. When all three are unset, the
+    module constant `DEFAULT_CURSOR_PAGE_SIZE` (= `20`) applies — cursor
+    pagination **never** returns an unbounded result set.
+
+!!! note "No `ordering` argument"
+
+    Unlike `LimitOffsetGraphqlPagination` and `PageGraphqlPagination`, cursor
+    pagination adds **no client `ordering` argument** to the schema — the keyset
+    field is configured server-side only, via the constructor.
 
 ### GraphQL arguments
 
@@ -412,24 +471,40 @@ CursorGraphqlPagination(
 | `first` | `Int` | Number of results to return per page |
 | `cursor` | `String` | Opaque cursor; returns the rows that come after it |
 
+`first` and `cursor` are the forward keyset parameters: `first` controls the
+page size, `cursor` carries the opaque boundary token. `first` can be renamed
+per list via `CursorGraphqlPagination(first_query_param="limit")`, which
+exposes `results(limit: Int, cursor: String)` instead.
+
 ### Methods
 
-#### `encode_cursor(value)` / `decode_cursor(cursor)`
+#### `encode_cursor(value, pk=None)` / `decode_cursor(cursor)`
 
-Static helpers that turn an ordering-field value into an opaque cursor token and
-back. To page forward, take the ordering field of the last row in `results` and
-build the next cursor with `encode_cursor`.
+Static helpers that turn an ordering-field value (and, for the composite form,
+the boundary row's primary key) into an opaque cursor token and back.
+`decode_cursor` returns only the ordering value; use `decode_cursor_parts` to
+recover both the value and the pk. To page forward, take the ordering field
+and pk of the last row in `results` and build the next cursor with
+`encode_cursor`.
 
 #### `paginate_queryset(qs, **kwargs)`
 
-Orders the queryset by `ordering`, applies the `__gt` / `__lt` keyset filter from
-the decoded cursor and returns the next `first` rows. Invalid cursors raise a
-`ValueError` (surfaced as a GraphQL error).
+Orders the queryset by `ordering` with the primary key appended as a
+deterministic tiebreak, applies the compound `(field, pk) > (value, pk)` /
+`(field, pk) < (value, pk)` keyset filter from the decoded cursor, and returns
+the next `first` rows. Invalid or tampered cursors (malformed base64, bad
+prefix, or type-coercion failure) are caught internally and raised as a
+`GraphQLError("Invalid cursor")` — the raw exception never propagates.
+
+**Raises:**
+- `GraphQLError("Invalid cursor")` — malformed/tampered `cursor`.
+- `GraphQLError` — zero or negative `first` (`"Invalid first: {value}. First must be a positive integer."`).
+  A `first` above `max_page_size` is silently clamped, not an error.
 
 ### Example Usage
 
 ```python
-from django_graphex import CursorGraphqlPagination
+from django_graphex.paginations import CursorGraphqlPagination
 
 class EventListType(DjangoListObjectType):
     class Meta:
@@ -486,7 +561,13 @@ query Events($first: Int!, $cursor: String) {
     Because the canonical design puts pagination arguments on the `results`
     subfield, `pageInfo` takes the same `first`/`cursor` arguments and must be
     given the same values so both describe the same page. Backward pagination
-    (`last`/`before`) is intentionally out of scope.
+    (`last`/`before`) is intentionally out of scope: each page is a single
+    compound `(field, pk)` boundary filter, and true backward/multi-field
+    paging requires additional lexicographic `WHERE` chains — see the
+    [design rationale](../usage/pagination.md#cursorgraphqlpagination) (planned
+    for a future release). `PageGraphqlPagination` supports backward navigation
+    today — see its
+    [Backward pagination](../usage/pagination.md#backward-pagination) section.
 
 ---
 
@@ -565,6 +646,10 @@ So a list can never exceed its maximum, even unpaginated. With **no** default an
 queryset is returned. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` /
 `max_page_size`) to bound it.
 
+Clamping is **silent**: a request above the maximum does not raise an error —
+the effective size is `min(requested, max)`, matching the convention of Django
+REST Framework's paginators.
+
 ### Custom Pagination Classes
 
 === "Custom Limit/Offset"
@@ -606,7 +691,9 @@ queryset is returned. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` /
 ### Multiple Pagination Strategies
 
 ```python
-class Query(graphene.ObjectType):
+from django_graphex.core import ObjectType
+
+class Query(ObjectType):
     # Limit/Offset pagination
     posts_limit_offset = DjangoFilterPaginateListField(
         PostType,

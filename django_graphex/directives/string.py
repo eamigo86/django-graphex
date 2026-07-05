@@ -7,7 +7,6 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from django.utils.text import slugify
-from graphene.utils.str_converters import to_camel_case, to_snake_case
 from graphql import (
     GraphQLArgument,
     GraphQLBoolean,
@@ -16,6 +15,8 @@ from graphql import (
     GraphQLNonNull,
     GraphQLString,
 )
+
+from django_graphex._strconv import to_camel_case, to_snake_case
 
 from ..utils import to_kebab_case
 from .base import BaseExtraGraphQLDirective
@@ -128,7 +129,12 @@ def _as_str(value: Any) -> str:
 
 
 class DefaultGraphQLDirective(BaseExtraGraphQLDirective):
-    """Default to given value if None or empty string."""
+    """Substitute a fallback value when the field is None or empty.
+
+    The required "to" argument supplies the replacement, returned whenever the
+    field value is falsy (None or an empty string); otherwise the original value
+    is passed through.
+    """
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
@@ -150,7 +156,7 @@ class DefaultGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the default directive value.
 
@@ -170,7 +176,11 @@ class DefaultGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class Base64GraphQLDirective(BaseExtraGraphQLDirective):
-    """Base64 encode or decode string values."""
+    """Base64-encode or decode a string field value.
+
+    The optional "op" argument selects "encode" (default) or "decode"; both use
+    the URL-safe alphabet. An empty field value yields None.
+    """
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
@@ -192,7 +202,7 @@ class Base64GraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str | None:
         """Resolve the base64 directive.
 
@@ -205,6 +215,10 @@ class Base64GraphQLDirective(BaseExtraGraphQLDirective):
 
         Returns:
             The base64 encoded or decoded string, or None when empty.
+
+        Raises:
+            GraphQLError: When "op" is "decode" and the value is not valid
+                base64 or does not decode to a UTF-8 string.
         """
         if not value:
             return None
@@ -223,7 +237,13 @@ class Base64GraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class NumberGraphQLDirective(BaseExtraGraphQLDirective):
-    """String formatting like a specified Python number formatting."""
+    """Format a numeric field value with a Python format spec.
+
+    The required "as" argument is a Python format-mini-language spec (for example
+    ".2f"). The value is coerced to float first, then formatted. The spec's
+    width and precision are bounded to guard against memory exhaustion from
+    hostile client-supplied specs.
+    """
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
@@ -246,7 +266,7 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the number formatting directive.
 
@@ -262,8 +282,10 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
 
         Raises:
             GraphQLError: When the format spec's width or precision exceeds
-                ``_NUMBER_FORMAT_MAX_WIDTH`` (prevents memory DoS via
-                client-supplied specs like ``"1000000.5f"``).
+                "_NUMBER_FORMAT_MAX_WIDTH" (this bounds output length and
+                prevents memory exhaustion from client-supplied specs like
+                "1000000.5f"), when the value cannot be coerced to a number, or
+                when the format spec itself is invalid.
         """
         spec = args.get("as") or ""
         width, precision = _extract_width_precision(spec)
@@ -287,7 +309,11 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
-    """Format numeric values as currency."""
+    """Format a numeric field value as a currency string.
+
+    The value is rendered with thousands separators and two decimal places,
+    prefixed by the optional "symbol" argument (defaulting to "$").
+    """
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
@@ -309,7 +335,7 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the currency formatting directive.
 
@@ -322,6 +348,9 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
 
         Returns:
             The value formatted as currency prefixed with the symbol.
+
+        Raises:
+            GraphQLError: When the value cannot be interpreted as a number.
         """
         symbol = args.get("symbol") or "$"
         try:
@@ -333,7 +362,10 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class LowercaseGraphQLDirective(BaseExtraGraphQLDirective):
-    """Convert string to lowercase."""
+    """Lowercase every character of the field value.
+
+    Non-string values are stringified before conversion.
+    """
 
     @staticmethod
     def resolve(
@@ -342,7 +374,7 @@ class LowercaseGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the lowercase directive.
 
@@ -360,7 +392,10 @@ class LowercaseGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class UppercaseGraphQLDirective(BaseExtraGraphQLDirective):
-    """Convert string to uppercase."""
+    """Uppercase every character of the field value.
+
+    Non-string values are stringified before conversion.
+    """
 
     @staticmethod
     def resolve(
@@ -369,7 +404,7 @@ class UppercaseGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the uppercase directive.
 
@@ -387,7 +422,11 @@ class UppercaseGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class CapitalizeGraphQLDirective(BaseExtraGraphQLDirective):
-    """Capitalize the first character and lowercase the rest of the string."""
+    """Capitalize the field value.
+
+    The first character is uppercased and the rest are lowercased. Non-string
+    values are stringified before conversion.
+    """
 
     @staticmethod
     def resolve(
@@ -396,7 +435,7 @@ class CapitalizeGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the capitalize directive.
 
@@ -414,7 +453,10 @@ class CapitalizeGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class CamelCaseGraphQLDirective(BaseExtraGraphQLDirective):
-    """Convert string to camelCase."""
+    """Convert the field value to camelCase.
+
+    Non-string values are stringified before conversion.
+    """
 
     @staticmethod
     def resolve(
@@ -423,7 +465,7 @@ class CamelCaseGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the camelCase directive.
 
@@ -441,7 +483,10 @@ class CamelCaseGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
-    """Convert string to snake_case."""
+    """Convert the field value to snake_case.
+
+    Non-string values are stringified before conversion.
+    """
 
     @staticmethod
     def resolve(
@@ -450,7 +495,7 @@ class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the snake_case directive.
 
@@ -468,7 +513,10 @@ class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
-    """Convert string to kebab-case."""
+    """Convert the field value to kebab-case.
+
+    Non-string values are stringified before conversion.
+    """
 
     @staticmethod
     def resolve(
@@ -477,7 +525,7 @@ class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the kebab-case directive.
 
@@ -507,7 +555,7 @@ class SwapCaseGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the swapcase directive.
 
@@ -552,7 +600,7 @@ class StripGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the strip directive.
 
@@ -583,7 +631,7 @@ class TitleCaseGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the title case directive.
 
@@ -630,7 +678,7 @@ class CenterGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """Resolve the center directive.
 
@@ -643,6 +691,11 @@ class CenterGraphQLDirective(BaseExtraGraphQLDirective):
 
         Returns:
             The centered string padded to the requested width.
+
+        Raises:
+            GraphQLError: When the requested width exceeds "_CENTER_MAX_WIDTH"
+                (this cap prevents a single field from allocating a huge string),
+                or when "fillchar" is not exactly one character.
         """
         value = _as_str(value)
         width = args.get("width")
@@ -674,7 +727,11 @@ class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
-        """Get arguments for the replace directive."""
+        """Get arguments for the replace directive.
+
+        Returns:
+            A mapping of argument names to their definitions.
+        """
         return {
             "old": GraphQLArgument(
                 GraphQLNonNull(GraphQLString),
@@ -696,9 +753,21 @@ class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
-        """Resolve the replace directive."""
+        """Resolve the replace directive.
+
+        Args:
+            value: The resolved field value.
+            args: The coerced directive arguments.
+            directive: The directive AST node.
+            root: The root value passed to the resolver.
+            info: The GraphQL resolve info for the field.
+
+        Returns:
+            The string with occurrences of "old" replaced by "new". When
+            "count" is given only the first "count" occurrences are replaced.
+        """
         count = args.get("count")
         count = -1 if count is None else int(count)
         return _as_str(value).replace(args.get("old"), args.get("new"), count)
@@ -712,7 +781,11 @@ class TruncateGraphQLDirective(BaseExtraGraphQLDirective):
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
-        """Get arguments for the truncate directive."""
+        """Get arguments for the truncate directive.
+
+        Returns:
+            A mapping of argument names to their definitions.
+        """
         return {
             "length": GraphQLArgument(
                 GraphQLNonNull(GraphQLInt),
@@ -735,9 +808,22 @@ class TruncateGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
-        """Resolve the truncate directive."""
+        """Resolve the truncate directive.
+
+        Args:
+            value: The resolved field value.
+            args: The coerced directive arguments.
+            directive: The directive AST node.
+            root: The root value passed to the resolver.
+            info: The GraphQL resolve info for the field.
+
+        Returns:
+            The string shortened to "length" characters with "end" appended, or
+            the original text when it already fits. Unless "killwords" is true,
+            the cut falls on a word boundary.
+        """
         text = _as_str(value)
         length = args.get("length")
         if length is None or len(text) <= length:
@@ -753,7 +839,10 @@ class TruncateGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class SlugifyGraphQLDirective(BaseExtraGraphQLDirective):
-    """Convert a string into a URL-safe slug (Django "slugify")."""
+    """Convert the field value into a URL-safe slug.
+
+    Delegates to Django's "slugify"; non-string values are stringified first.
+    """
 
     @staticmethod
     def resolve(
@@ -762,7 +851,18 @@ class SlugifyGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
-        """Resolve the slugify directive."""
+        """Resolve the slugify directive.
+
+        Args:
+            value: The resolved field value.
+            args: The coerced directive arguments.
+            directive: The directive AST node.
+            root: The root value passed to the resolver.
+            info: The GraphQL resolve info for the field.
+
+        Returns:
+            The URL-safe slug produced by Django's "slugify".
+        """
         return slugify(_as_str(value))

@@ -1,50 +1,23 @@
-"""django-graphex - A toolkit for building GraphQL APIs with Django and graphene."""
+"""django-graphex - A toolkit for building GraphQL APIs with Django.
+
+Public API surface (v2.0+): the package root intentionally exposes ONLY
+"__version__". Every class, function and middleware is imported from its
+own submodule, mirroring Django REST Framework's layout:
+
+    from django_graphex.views import AuthenticatedGraphQLView, GraphQLView
+    from django_graphex.permissions import IsAdmin, IsAuthenticated
+    from django_graphex.types import DjangoObjectType
+    from django_graphex.fields import DjangoListObjectField
+    from django_graphex.core import ObjectType, field, Mutation
+    from django_graphex.schema import DjangoGraphQLSchema
+
+This keeps the root namespace lean and makes every import's provenance
+explicit. Settings-string references to the bundled middleware use the same
+submodule paths, e.g. "django_graphex.middleware.GraphQLDirectiveMiddleware"
+and "django_graphex.security.DisableIntrospectionMiddleware".
+"""
 
 from importlib.metadata import PackageNotFoundError, version
-
-from .cost import CostLimitValidationRule, CostReport, analyze_cost
-from .directives import all_directives
-from .fields import (
-    AnnotatedField,
-    DjangoFilterListField,
-    DjangoFilterPaginateListField,
-    DjangoListObjectField,
-    DjangoNestedListObjectField,
-    DjangoObjectField,
-)
-from .filtering.filter_field import filter_field
-from .middleware import GraphQLDirectiveMiddleware
-from .mutation import DjangoModelMutation
-from .paginations import (
-    CursorGraphqlPagination,
-    LimitOffsetGraphqlPagination,
-    PageGraphqlPagination,
-)
-from .permissions import (
-    AllowAny,
-    BasePermission,
-    IsAdmin,
-    IsAdminOrReadOnly,
-    IsAuthenticated,
-    IsAuthenticatedOrReadOnly,
-)
-from .registry import Registry
-from .schema import DenyAllRegistry, DjangoGraphQLSchema, collect_field_names
-from .security import (
-    AuthenticatedFieldsMiddleware,
-    DisableIntrospectionMiddleware,
-)
-from .types import (
-    DjangoInputObjectType,
-    DjangoInterfaceType,
-    DjangoListObjectType,
-    DjangoModelType,
-    DjangoObjectType,
-    DjangoUnionType,
-)
-from .uploads import Base64FileInput, decode_base64_file
-from .validation import DepthLimitValidationRule
-from .views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
 
 
 def _version_from_pyproject() -> str:
@@ -73,57 +46,7 @@ except PackageNotFoundError:  # pragma: no cover - source checkout, not installe
     except Exception:  # noqa: BLE001 - last-resort dev fallback
         __version__ = "0.0.0"
 
-__all__ = (
-    "__version__",
-    # FIELDS
-    "AnnotatedField",
-    "DjangoFilterListField",
-    "DjangoFilterPaginateListField",
-    "DjangoListObjectField",
-    "DjangoNestedListObjectField",
-    "DjangoObjectField",
-    # MUTATIONS
-    "DjangoModelMutation",
-    # FILE UPLOADS (opt-in — also importable from django_graphex.uploads)
-    "Base64FileInput",
-    "decode_base64_file",
-    # PAGINATION
-    "LimitOffsetGraphqlPagination",
-    "PageGraphqlPagination",
-    "CursorGraphqlPagination",
-    # TYPES
-    "DjangoObjectType",
-    "DjangoListObjectType",
-    "DjangoInputObjectType",
-    "DjangoModelType",
-    "DjangoUnionType",
-    "DjangoInterfaceType",
-    # PERMISSIONS
-    "BasePermission",
-    "AllowAny",
-    "IsAuthenticated",
-    "IsAdmin",
-    "IsAuthenticatedOrReadOnly",
-    "IsAdminOrReadOnly",
-    # SECURITY
-    "DisableIntrospectionMiddleware",
-    "AuthenticatedFieldsMiddleware",
-    "DepthLimitValidationRule",
-    "CostLimitValidationRule",
-    "analyze_cost",
-    "CostReport",
-    "DjangoGraphQLSchema",
-    "collect_field_names",
-    "DenyAllRegistry",
-    # FILTERING
-    "filter_field",
-    # REGISTRY
-    "Registry",
-    # DIRECTIVES
-    "all_directives",
-    "GraphQLDirectiveMiddleware",
-    # VIEWS
-    "BaseGraphQLView",
-    "GraphQLView",
-    "AuthenticatedGraphQLView",
-)
+# The package root deliberately exports ONLY ``__version__``. Everything else
+# lives in its submodule (see the module docstring). Do NOT re-add re-exports
+# here — that is the v2.0 public-API contract.
+__all__ = ("__version__",)

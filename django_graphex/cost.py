@@ -1,20 +1,20 @@
 """Query cost analysis via a graphql-core validation rule.
 
-Cost analysis estimates how much work a query asks for *before* execution and
-rejects queries over a budget. Unlike depth limiting it captures *width × depth ×
-page size* in a single number:
+Cost analysis estimates how much work a query asks for before execution and
+rejects queries over a budget. Unlike depth limiting it captures width times
+depth times page size in a single number:
 
     cost(field) = own_cost + multiplier * sum(cost(child) for child in children)
 
-* ``own_cost`` -- ``0`` for scalar leaves, ``1`` for object/list fields, or a
-  type's ``Meta.complexity`` when declared.
-* ``multiplier`` -- a list field's page size (the ``limit`` / ``page_size`` /
-  ``first`` / ``last`` argument), capped at ``MAX_PAGE_SIZE``; ``1`` otherwise.
+- "own_cost": 0 for scalar leaves, 1 for object/list fields, or a type's
+  "Meta.complexity" when declared.
+- "multiplier": a list field's page size (the "limit" / "page_size" / "first" /
+  "last" argument), capped at "MAX_PAGE_SIZE"; 1 otherwise.
 
-The estimate seeds enforcement (``MAX_QUERY_COST`` via
-:class:`CostLimitValidationRule`) and optional reporting (``EXPOSE_QUERY_COST``
-adds ``extensions.cost`` to responses, wired in ``GraphQLView``). The walk
-resolves field types from the schema and follows inline + named fragments
+The estimate seeds enforcement ("MAX_QUERY_COST" via
+"CostLimitValidationRule") and optional reporting ("EXPOSE_QUERY_COST" adds
+"extensions.cost" to responses, wired in "GraphQLView"). The walk resolves
+field types from the schema and follows inline + named fragments
 (cycle-guarded), so fragments cannot be used to under-count.
 """
 
@@ -35,6 +35,7 @@ from graphql.validation import ValidationRule
 
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
+from .core.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
     from graphql import (
@@ -53,7 +54,13 @@ _unbounded_warned = False
 
 
 class CostReport(NamedTuple):
-    """The estimated cost of an operation and the configured budget."""
+    """The estimated cost of an operation and the configured budget.
+
+    Attributes:
+        total: The estimated cost of the operation.
+        max_cost: The configured budget ("MAX_QUERY_COST"), or None when no
+            budget is set.
+    """
 
     total: int
     max_cost: int | None
@@ -65,8 +72,15 @@ def _settings_value(name: str) -> Any:
 
 
 def _type_complexity(named_type: GraphQLNamedType) -> int | None:
-    """Return a type's declared ``Meta.complexity``, or ``None``."""
-    meta = getattr(getattr(named_type, "graphene_type", None), "_meta", None)
+    """Return a type's declared "Meta.complexity", or None.
+
+    Uses the "_gdx_meta" shim which tries "graphene_type._meta" first
+    (graphene path) and falls back to "extensions['gdx']._meta" (native path).
+    """
+    try:
+        meta = _native_gdx_meta(named_type)
+    except AttributeError:
+        return None
     value = getattr(meta, "complexity", None)
     if value is None:
         return None
@@ -270,7 +284,7 @@ def analyze_cost(
     operation_name: str | None = None,
     variable_values: dict[str, Any] | None = None,
 ) -> CostReport:
-    """Estimate the cost of an operation in ``document``.
+    """Estimate the cost of an operation in "document".
 
     Args:
         schema: The graphql-core schema.
@@ -280,7 +294,8 @@ def analyze_cost(
         variable_values: Bound variables, so variabled page sizes are exact.
 
     Returns:
-        A :class:`CostReport` with the estimated total and the configured budget.
+        report: A "CostReport" with the estimated total and the configured
+            budget.
     """
     from graphql.language import FragmentDefinitionNode, OperationDefinitionNode
 
@@ -314,11 +329,11 @@ def analyze_cost(
 
 
 class CostLimitValidationRule(ValidationRule):
-    """Reject queries whose estimated cost exceeds ``MAX_QUERY_COST``.
+    """Reject queries whose estimated cost exceeds "MAX_QUERY_COST".
 
-    A no-op unless ``MAX_QUERY_COST`` is set. Added to ``GraphQLView`` by
-    default. Variables aren't bound during validation, so page sizes fall back to
-    variable defaults and the ``MAX_PAGE_SIZE`` cap (a conservative estimate).
+    A no-op unless "MAX_QUERY_COST" is set. Added to "GraphQLView" by default.
+    Variables aren't bound during validation, so page sizes fall back to
+    variable defaults and the "MAX_PAGE_SIZE" cap (a conservative estimate).
     """
 
     def enter_operation_definition(

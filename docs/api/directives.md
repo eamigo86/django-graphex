@@ -56,6 +56,95 @@ Process the field value with the directive.
 
 ---
 
+## Standard GraphQL Directives (spec built-ins)
+
+`all_directives` bundles the GraphQL **specification's** own directives
+alongside the library's own: `@skip`, `@include`, and `@deprecated`. They are
+*not* django-graphex directives: `@skip` / `@include` are evaluated by the
+graphql-core **executor** (no `GraphQLDirectiveMiddleware` required), while
+`@deprecated` is a **type-system (SDL) directive** that annotates the schema —
+it never appears in queries.
+
+### @skip
+
+Excludes a field, fragment spread, or inline fragment when `if` is `true`.
+Use a **variable** for the condition:
+
+```graphql
+query Posts($skipAuthor: Boolean!) {
+  posts {
+    results {
+      title
+      author @skip(if: $skipAuthor) { name }
+    }
+  }
+}
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `if` | `Boolean!` | Yes | Skip the selection when `true` |
+
+### @include
+
+The mirror image of `@skip`: includes the selection only when `if` is `true`:
+
+```graphql
+query Posts($withComments: Boolean!) {
+  posts {
+    results {
+      title
+      comments @include(if: $withComments) {
+        results { body }
+      }
+    }
+  }
+}
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `if` | `Boolean!` | Yes | Include the selection when `true` |
+
+### @deprecated
+
+Marks a field, argument, input field, or enum value as deprecated in the
+**schema (SDL)**. Clients discover it through introspection. You don't
+hand-write this directive: pass `deprecation_reason=` in Python and the
+compiler emits it for you — on descriptor fields (`Field` / the typed
+shortcuts), on Django-mounted fields (`DjangoObjectField`,
+`DjangoListObjectField`, `DjangoFilterListField`,
+`DjangoFilterPaginateListField`, `RetrieveField`, `QueryFields`), and on
+mutation builders (`CreateField`, `UpdateField`, `DeleteField`,
+`MutationFields`). See [Fields](../usage/fields.md#the-unified-field) and
+[Mutations](../usage/mutations.md) for the full kwarg reference.
+
+```python
+from django_graphex.core import ObjectType, CharField
+
+class UserType(ObjectType):
+    username = CharField()
+    email = CharField(deprecation_reason="Use contactEmail instead.")
+```
+
+```graphql
+type UserType {
+  username: String
+  email: String @deprecated(reason: "Use contactEmail instead.")
+}
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `reason` | `String` | No | Why it is deprecated (default: `"No longer supported"`) |
+
+!!! note "Introspection hides deprecated fields by default"
+
+    `__type { fields { name } }` omits a deprecated field unless the client
+    requests `fields(includeDeprecated: true)`.
+
+---
+
 ## String Directives
 
 ### DefaultGraphQLDirective
@@ -190,12 +279,16 @@ Convert string to kebab-case.
 
 #### Example
 
+Each directive expects a specific input shape: `@camel_case` converts a
+**snake_case** string, while `@snake_case` and `@kebab_case` convert a
+**space-separated Title Case** string.
+
 ```graphql
 query {
   field {
-    displayName @camel_case  # "myDisplayName"
-    apiName @snake_case      # "my_api_name"
-    urlSlug @kebab_case      # "my-url-slug"
+    displayName @camel_case  # "user_profile" → "userProfile"
+    apiName @snake_case      # "Api Name" → "api_name"
+    urlSlug @kebab_case      # "Blog Post Title" → "blog-post-title"
   }
 }
 ```
@@ -562,10 +655,10 @@ class GraphQLDirectiveMiddleware:
 #### Django Settings
 
 ```python
-GRAPHENE = {
+DJANGO_GRAPHEX = {
     'SCHEMA': 'myapp.schema.schema',
     'MIDDLEWARE': [
-        'django_graphex.GraphQLDirectiveMiddleware',
+        'django_graphex.middleware.GraphQLDirectiveMiddleware',
     ],
 }
 ```
@@ -615,8 +708,8 @@ class MaskGraphQLDirective(BaseExtraGraphQLDirective):
 ### Registering Custom Directives
 
 ```python
-import graphene
-from django_graphex import all_directives
+from django_graphex.directives import all_directives
+from django_graphex.schema import DjangoGraphQLSchema
 
 # Add custom directive to the list (all_directives already includes the
 # built-in @skip / @include / @deprecated directives).
@@ -625,7 +718,7 @@ custom_directives = [
     MaskGraphQLDirective()
 ]
 
-schema = graphene.Schema(
+schema = DjangoGraphQLSchema(
     query=Query,
     directives=custom_directives
 )
@@ -773,14 +866,15 @@ class SecureDirective(BaseExtraGraphQLDirective):
 
 ```python
 import pytest
-from graphene.test import Client
+from graphql import graphql_sync
+from django_graphex.directives import all_directives
+from django_graphex.schema import DjangoGraphQLSchema
 
 def test_uppercase_directive():
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         directives=all_directives
     )
-    client = Client(schema)
 
     query = '''
         query {
@@ -790,8 +884,8 @@ def test_uppercase_directive():
         }
     '''
 
-    result = client.execute(query)
-    assert result['data']['user']['name'] == 'JOHN DOE'
+    result = graphql_sync(schema.graphql_schema, query)
+    assert result.data['user']['name'] == 'JOHN DOE'
 ```
 
 This comprehensive API reference covers all directive classes and utilities in `django-graphex`, providing developers with the knowledge needed to use and create custom GraphQL directives for their applications.

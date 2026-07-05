@@ -1,5 +1,10 @@
 # Migration Guide
 
+> **Audience: `graphene-django-extras` users.** This guide moves you from the old
+> `graphene-django-extras` (or plain `graphene-django`) library to
+> `django-graphex`. **Already on `django-graphex` 1.x?** That's a different
+> migration — see the [2.0 Upgrade Guide](UPGRADE-2.0.md) instead.
+
 `django-graphex` is a near-complete rewrite and the successor to
 `graphene-django-extras`. This guide walks you, step by step, from the old library
 to the new one.
@@ -30,9 +35,10 @@ to the new one.
 !!! warning "Runtime Requirements"
     django-graphex requires **Python 3.12+** (3.12, 3.13, 3.14) and **Django 5.2 (LTS) or 6.0**.
     Django 4.2, 5.0 and 5.1 are EOL and no longer supported as of v1.3.0.
-    It depends on **graphene >=3.3,<4** directly (the
-    `graphene-django` dependency was dropped) and **pydantic >=2,<3**.
-    Each Django version is tested on the Python versions it officially supports.
+    As of **v2.0** it is built directly on **graphql-core >=3.2.11,<3.3** and
+    **pydantic >=2,<3** — `graphene` and `graphene-django` are no longer
+    dependencies. Each Django version is tested on the Python versions it
+    officially supports.
 
 #### 2. Django REST Framework removed — use `Meta.model`
 
@@ -65,7 +71,7 @@ class UserType(DjangoSerializerType):
         serializer_class = UserSerializer
 
 # After (django-graphex): native (Pydantic) backend
-from django_graphex import DjangoModelType
+from django_graphex.types import DjangoModelType
 
 class UserType(DjangoModelType):
     class Meta:
@@ -98,7 +104,7 @@ from graphene_django_extras.views import ExtraGraphQLView
 path("graphql", ExtraGraphQLView.as_view(graphiql=True))
 
 # After
-from django_graphex import GraphQLView   # also top-level now
+from django_graphex.views import GraphQLView
 path("graphql", GraphQLView.as_view(graphiql=True))
 ```
 
@@ -132,15 +138,18 @@ pip install "django-graphex[subscriptions]"
 ```
 
 The migration shims for the **old standalone package's API are not carried over**
-(this is a fresh implementation, not a compatibility layer):
+(this is a fresh implementation, not a compatibility layer). In v2.0 the legacy
+bespoke transport was replaced by native SSE + `graphql-transport-ws`:
 
-- `depromise_subscription` middleware → removed; serve subscriptions with
-  `SubscriptionGraphQLView`.
-- the demultiplexer's `consumers = {stream: ...}` form → use
-  `subscriptions = {stream: Subscription}`.
+- `depromise_subscription` middleware → removed; serve subscriptions with the
+  native transports (`subscription_sse_view` / `subscription_ws_consumer`).
+- the demultiplexer consumer + HTTP `channelId` handshake → removed; route the
+  native WebSocket consumer and/or mount the SSE view instead.
 - `SubscriptionBinding.consumer` alias → use `.subscription_cls`.
 
-See the [Subscriptions guide](usage/subscriptions.md).
+Subscriptions are **native-only** in v2.0 — there is nothing to configure (the
+old `GDX_BACKEND` toggle is gone with graphene). See the
+[Subscriptions guide](usage/subscriptions.md).
 
 #### 6. Filtering: a single nested `filter:` argument (django-filter removed)
 
@@ -208,8 +217,8 @@ so its filter, `limit`, `offset` and `ordering` all stay on the field (no
 
 ### Migration Steps
 
-1. **Update your environment** to Python 3.12+ and Django 4.2+ (graphene
-   `>=3.3,<4`, pydantic `>=2,<3`).
+1. **Update your environment** to Python 3.12+ and Django 5.2+ (graphql-core
+   `>=3.2.11,<3.3`, pydantic `>=2,<3`).
 2. **Swap the dependency** — uninstall the old package, install the new one:
 
    ```bash
@@ -234,11 +243,11 @@ so its filter, `limit`, `offset` and `ordering` all stay on the field (no
    must become `django_graphex`:
 
     - `from graphene_django_extras import DjangoSerializerType` →
-      `from django_graphex import DjangoModelType`
+      `from django_graphex.types import DjangoModelType`
     - `from graphene_django_extras import DjangoSerializerMutation` →
-      `from django_graphex import DjangoModelMutation`
+      `from django_graphex.mutation import DjangoModelMutation`
     - `from graphene_django_extras.views import ExtraGraphQLView` →
-      `from django_graphex import GraphQLView`
+      `from django_graphex.views import GraphQLView`
     - Settings: `GRAPHENE_DJANGO_EXTRAS = {…}` → `DJANGO_GRAPHEX = {…}`
 
 4. **Drop DRF from your types/mutations.** Replace `Meta.serializer_class` with

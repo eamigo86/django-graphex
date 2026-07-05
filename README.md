@@ -8,9 +8,9 @@
 ![Downloads](https://img.shields.io/pepy/dt/django-graphex)
 ![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)
 
-**GraphQL for Django, powered by [graphene](https://graphene-python.org/) and
-[Pydantic](https://docs.pydantic.dev/).** Define your GraphQL API straight from your
-Django models — no DRF, no `graphene-django`, no `django-filter`.
+**GraphQL for Django, powered by [graphql-core](https://github.com/graphql-python/graphql-core)
+and [Pydantic](https://docs.pydantic.dev/).** Define your GraphQL API straight from
+your Django models — no DRF, no graphene, no `django-filter`.
 
 - **Model-first types & mutations** — `DjangoModelType` / `DjangoModelMutation`
   give you query, list and create/update/delete from a single `Meta.model`,
@@ -29,12 +29,16 @@ Django models — no DRF, no `graphene-django`, no `django-filter`.
 > **Coming from `graphene-django` or `graphene-django-extras`?** See the
 > [Migration Guide](https://eamigo86.github.io/django-graphex/migration/) for a
 > step-by-step upgrade with before/after examples.
+>
+> **Upgrading from `django-graphex` 1.x?** 2.0 removed the graphene backend
+> entirely — see the [Upgrade Guide](https://eamigo86.github.io/django-graphex/UPGRADE-2.0/)
+> and the `scripts/migrate_2_0.py` codemod.
 
 ## Requirements
 
 - **Python:** 3.12+ (3.13, 3.14 supported)
 - **Django:** 5.2+ (5.2 LTS, 6.0 supported) — each Django version tested on the Python versions it officially supports
-- **graphene:** >=3.3,<4
+- **graphql-core:** >=3.2.11,<3.3
 - **pydantic:** >=2,<3
 
 ## Installation
@@ -57,12 +61,13 @@ The base install never imports `channels`; only the `subscriptions` extra does.
 ## Quick start
 
 ```python
-import graphene
 from django.contrib.auth.models import User
-from django_graphex import (
-    DjangoListObjectType, DjangoListObjectField, DjangoObjectField, DjangoModelMutation,
-)
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.mutation import DjangoModelMutation
+from django_graphex.core import ObjectType
 from django_graphex.paginations import LimitOffsetGraphqlPagination
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoListObjectType
 
 
 class UserListType(DjangoListObjectType):
@@ -77,17 +82,17 @@ class UserMutation(DjangoModelMutation):      # define once -> create/update/del
         model = User
 
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListObjectField(UserListType)
 
 
-class Mutation(graphene.ObjectType):
+class Mutation(ObjectType):
     user_create = UserMutation.CreateField()
     user_update = UserMutation.UpdateField()
     user_delete = UserMutation.DeleteField()
 
 
-schema = graphene.Schema(query=Query, mutation=Mutation)
+schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
 ```
 
 Query it with the nested `filter:` argument (`and` / `or` / `not`):
@@ -122,10 +127,11 @@ DJANGO_GRAPHEX = {
 To use directives, add the middleware and pass `all_directives` to the schema:
 
 ```python
-GRAPHENE = {"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]}
+DJANGO_GRAPHEX = {"MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"]}
 
-from django_graphex import all_directives
-schema = graphene.Schema(query=Query, mutation=Mutation, directives=all_directives)
+from django_graphex.directives import all_directives
+from django_graphex.schema import DjangoGraphQLSchema
+schema = DjangoGraphQLSchema(query=Query, mutation=Mutation, directives=all_directives)
 ```
 
 ## Playground

@@ -1,16 +1,122 @@
 # Fields
 
-django-graphex provides several field types for building GraphQL schemas with enhanced functionality.
+django-graphex provides several field types for building GraphQL schemas with
+enhanced functionality. Start with the typed scalar descriptors for simple
+custom fields and arguments, then move to the Django mounting field classes
+below for Django-model-backed queries.
+
+## Typed scalar descriptors
+
+For a plain scalar field or argument, the capitalized shortcuts are the
+quickest idiom — one shortcut per scalar, usable in **both** an `ObjectType`
+body (output) and a `class Arguments` body (input):
+
+```python
+from django_graphex.core import ObjectType, CharField, IntField, JSONField
+
+class Query(ObjectType):
+    greeting = CharField(description="a greeting")
+
+    class Arguments:
+        name = CharField(default="world")
+        loud = IntField(default=0)
+
+    def resolve_greeting(self, info, **kwargs):
+        return f"hello {kwargs['name']}" + ("!" if kwargs["loud"] else "")
+```
+
+| Shortcut | GraphQL type |
+|----------|--------------|
+| `CharField` | `String` |
+| `IntField` | `Int` |
+| `FloatField` | `Float` |
+| `BooleanField` | `Boolean` |
+| `IDField` | `ID` |
+| `DateField` | `CustomDate` |
+| `DateTimeField` | `CustomDateTime` |
+| `TimeField` | `CustomTime` |
+| `DecimalField` | `Decimal` |
+| `UUIDField` | `UUID` |
+| `JSONField` | `JSON` (or `JSONString` with `as_str=True`) |
+
+Each shortcut accepts `source=`, `required=`, `default=`, `description=`,
+`name=`, `resolver=` and `deprecation_reason=` — the same kwargs the unified
+`Field` below accepts, minus `args=` (only `Field` itself takes `args=`).
+`default=` only makes sense in an argument position; setting it on an output
+field raises a `TypeError` at schema-build time.
+
+See the [full descriptor API reference](../api/fields.md#field-descriptors)
+for every signature, including `JSONField(as_str=True)`.
+
+## The unified `Field`
+
+`Field` is the one descriptor behind every shortcut above. Reach for it
+directly when you need a type the shortcuts don't cover (a `DjangoObjectType`
+reference, an enum, a `GraphQLList` / `GraphQLNonNull` wrapper) or when you
+need `args=`, `resolver=`, or `source=`:
+
+```python
+from django_graphex.core import ObjectType, Field, CharField, IntField
+from graphql import GraphQLString
+
+class Query(ObjectType):
+    # source=: resolves by reading `user_email` off the root
+    email = Field(GraphQLString, source="user_email")
+
+    # args=: an explicit {name: arg} mapping, each value itself a descriptor
+    greet = Field(
+        GraphQLString,
+        description="Greet someone by name",
+        args={"name": CharField(required=True), "count": IntField(default=1)},
+    )
+
+    def resolve_greet(self, info, **kwargs):
+        return kwargs["name"] * kwargs["count"]
+```
+
+```graphql
+{ greet(name: "hi", count: 2) }
+```
+
+`Field` works in both positions, and the parameters that make sense differ by
+position:
+
+| Parameter | Position | Meaning |
+|-----------|----------|---------|
+| `type` | both | The field's type — a graphql-core type, a `DjangoObjectType` reference (output), or an `InputType` reference (input). |
+| `required` | both | Wraps the type in non-null (`T!`). |
+| `description` | both | Field / argument description. |
+| `name` | both | Explicit wire name (skips camelCase on output; drives `out_name` on input). |
+| `deprecation_reason` | both | Marks the field / argument `@deprecated(reason: ...)`. |
+| `source` | output only | Resolve by reading an attribute off the root. |
+| `resolver` | output only | Field-level resolver (wins over the parent resolver). |
+| `args` | output only | Explicit `{name: arg}` mapping for the field's arguments. |
+| `default` | input only | The GraphQL default value; omit to leave the argument with no default. |
+
+Setting an output-only parameter (`resolver=`, `source=`, `args=`) on a
+`Field` used inside a `class Arguments` body raises a `TypeError` naming the
+offending kwarg. Setting `default=` on a `Field` used in an `ObjectType` body
+raises a `TypeError` at output compile time. There is no separate
+`InputField` — the same `Field` (and the same typed shortcuts) work on both
+sides.
+
+## Django mounting fields
+
+The field classes below wire a `DjangoObjectType` / `DjangoListObjectType`
+into a `Query`, from simplest to most capable: `DjangoObjectField` for a
+single object, then list fields with progressively more built-in filtering
+and pagination.
 
 ## DjangoObjectField
 
 Used for single object queries with automatic ID filtering.
 
 ```python
-from django_graphex import DjangoObjectField
+from django_graphex.fields import DjangoObjectField
+from django_graphex.core import ObjectType
 from .types import UserType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     user = DjangoObjectField(UserType, description='Single User query')
 ```
 
@@ -30,15 +136,33 @@ class Query(graphene.ObjectType):
 }
 ```
 
+Every mounting field class below accepts `deprecation_reason=`, which renders
+as `@deprecated(reason: ...)` on the compiled field:
+
+```python
+class Query(ObjectType):
+    user = DjangoObjectField(
+        UserType,
+        deprecation_reason="Use `activeUser` instead.",
+    )
+```
+
+```graphql
+type Query {
+  user(id: ID!): UserType @deprecated(reason: "Use `activeUser` instead.")
+}
+```
+
 ## DjangoFilterListField
 
 Provides filtering capabilities for list queries without pagination.
 
 ```python
-from django_graphex import DjangoFilterListField
+from django_graphex.fields import DjangoFilterListField
+from django_graphex.core import ObjectType
 from .types import UserType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterListField(UserType)
 ```
 
@@ -64,11 +188,12 @@ class Query(graphene.ObjectType):
 Combines filtering and pagination for list queries.
 
 ```python
-from django_graphex import DjangoFilterPaginateListField
+from django_graphex.fields import DjangoFilterPaginateListField
+from django_graphex.core import ObjectType
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 from .types import UserType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterPaginateListField(
         UserType,
         pagination=LimitOffsetGraphqlPagination(default_limit=20)
@@ -103,10 +228,11 @@ class Query(graphene.ObjectType):
     This is the most flexible approach for list queries with built-in support for filtering and pagination.
 
 ```python
-from django_graphex import DjangoListObjectField
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
 from .types import UserListType
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListObjectField(UserListType, description='All Users query')
 ```
 
@@ -144,7 +270,7 @@ bespoke rules (e.g. a free-text search across several columns), override
 
 ```python
 from django.db.models import Q
-from django_graphex import DjangoModelType
+from django_graphex.types import DjangoModelType
 from django.contrib.auth.models import User
 
 class UserType(DjangoModelType):
@@ -166,7 +292,7 @@ See [Permissions & hooks](permissions.md) and the [Filtering guide](filtering.md
 
 ## AnnotatedField
 
-A `graphene.Field` backed by a Django ORM annotation that is injected into the
+A field backed by a Django ORM annotation that is injected into the
 queryset **only when the field is selected** in the GraphQL query. A built-in
 default resolver reads the annotated value off the row, so no `resolve_<field>`
 is needed — and when the field is not selected, no annotation (and no extra SQL)
@@ -175,7 +301,7 @@ is added at all.
 `AnnotatedField` is public — import it directly:
 
 ```python
-from django_graphex import AnnotatedField
+from django_graphex.fields import AnnotatedField
 ```
 
 **Signature:**
@@ -187,13 +313,14 @@ AnnotatedField(type_, expression, aliases=None, annotation_name=None, **kwargs)
 **Example** — a per-author post count, computed in the database:
 
 ```python
-import graphene
+from graphql import GraphQLInt
 from django.db.models import Count
-from django_graphex import AnnotatedField, DjangoObjectType
+from django_graphex.fields import AnnotatedField
+from django_graphex.types import DjangoObjectType
 
 class AuthorType(DjangoObjectType):
     # Backed by a DB annotation, injected ONLY when `postCount` is selected.
-    post_count = AnnotatedField(graphene.Int, Count("posts"))
+    post_count = AnnotatedField(GraphQLInt, Count("posts"))
 
     class Meta:
         model = Author
@@ -221,14 +348,14 @@ injected and the query is unchanged.
 
 | Argument | Meaning |
 |----------|---------|
-| `type_` | The graphene output type (e.g. `graphene.Int`). |
+| `type_` | The graphql-core output type (e.g. `GraphQLInt`). |
 | `expression` | A Django `Expression` instance **or** a zero-arg callable returning one. The callable is invoked lazily at injection time, per request — useful for constructing a fresh expression on each resolve. |
 | `aliases` | Optional `dict[str, Expression \| callable]` applied via `.alias()` **before** `.annotate()` (for intermediate expressions the annotation depends on). |
 | `annotation_name` | Overrides the auto-derived annotation key. Defaults to `_gqx_ann_<snake_field>`. Set it when the auto key would collide with a model attname. |
 
 ```python
 # expression may also be a zero-arg callable for fresh construction per request:
-post_count = AnnotatedField(graphene.Int, lambda: Count("posts"))
+post_count = AnnotatedField(GraphQLInt, lambda: Count("posts"))
 ```
 
 !!! note "Selection-driven and gated by a setting"
@@ -292,7 +419,7 @@ accessor, filter, or pagination behavior.
 `DjangoNestedListObjectField` is part of the public API — import it directly:
 
 ```python
-from django_graphex import DjangoNestedListObjectField
+from django_graphex.fields import DjangoNestedListObjectField
 ```
 
 **Signature:**
@@ -311,13 +438,9 @@ DjangoNestedListObjectField(list_type, accessor=None, fields=None, **kwargs)
 **Example** — expose a per-author paginated list of posts:
 
 ```python
-import graphene
-from django_graphex import (
-    DjangoObjectType,
-    DjangoListObjectType,
-    DjangoNestedListObjectField,
-    LimitOffsetGraphqlPagination,
-)
+from django_graphex.fields import DjangoNestedListObjectField
+from django_graphex.paginations import LimitOffsetGraphqlPagination
+from django_graphex.types import DjangoObjectType, DjangoListObjectType
 from .models import Author, Post
 
 class PostType(DjangoObjectType):
@@ -371,12 +494,14 @@ resolver. `DjangoFilterPaginateListField` returns a flat list with no wrapper
 shape, which limits client-side pagination controls.
 
 ```python
+from django_graphex.core import ObjectType
+
 # ✅ Recommended
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListObjectField(UserListType, description='All users')
 
 # ❌ Less flexible — no totalCount, no results wrapper
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoFilterPaginateListField(UserType)
 ```
 
@@ -404,7 +529,9 @@ separate API docs. Include intent in the name (`active_users` > `users`) and
 always add a `description=`.
 
 ```python
-class Query(graphene.ObjectType):
+from django_graphex.core import ObjectType
+
+class Query(ObjectType):
     # ✅ Clear and descriptive
     active_users = DjangoListObjectField(
         UserListType,
@@ -430,7 +557,8 @@ the base queryset; `filter_backend.apply(qs, kwargs.get("filter"))` applies the
 nested `filter:` argument:
 
 ```python
-from django_graphex import DjangoListObjectField
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
 from django_graphex.base_types import DjangoListObjectBase
 from graphql import GraphQLError
 
@@ -441,6 +569,6 @@ def staff_only_users(manager, filter_backend, root, info, **kwargs):
     qs = filter_backend.apply(qs, kwargs.get("filter"))
     return DjangoListObjectBase(count=qs.count(), results=qs)
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     users = DjangoListObjectField(UserListType, resolver=staff_only_users)
 ```

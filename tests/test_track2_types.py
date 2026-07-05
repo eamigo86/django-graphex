@@ -2,29 +2,35 @@
 """Track 2 — Union / Interface MVP, BLOCK A (T-01..T-07).
 
 Covers the type-system FOUNDATION only ("inert-but-correct"): the registry
-parallel stores + dispatch, the ``gfk_unions`` Meta surface, the
-``DjangoUnionType`` / ``DjangoInterfaceType`` bases with their MANDATORY
-``resolve_type`` contract, the public exports, and the GFK→Union converter
+parallel stores + dispatch, the "unions" Meta surface, the
+"DjangoUnionType" / "DjangoInterfaceType" bases with their MANDATORY
+"resolve_type" contract, the public exports, and the GFK→Union converter
 branch (with GenericForeignKeyType fallback). The optimizer routing
-(GenericPrefetch / ``_resolve_fragment_target``) is BLOCK B — out of scope here.
+(GenericPrefetch / "_resolve_fragment_target") is BLOCK B — out of scope here.
 
 Every test states the mutation that breaks it (its "teeth").
 """
 
 from __future__ import annotations
 
-import warnings
-
-import graphene
 import pytest
 from django.contrib.contenttypes.fields import GenericForeignKey
-from graphene import Dynamic, Field
-from graphql import GraphQLUnionType
+from django.core.exceptions import ImproperlyConfigured
 
-from django_graphex import DjangoInterfaceType, DjangoObjectType, DjangoUnionType
-from django_graphex.base_types import GenericForeignKeyType
+# S-del-backend-11: the graphene backend is deleted. The GFK→Union converter
+# branch is now native — "convert_generic_foreign_key_to_object" returns a
+# graphene-free "NativeRelationField" marker for EVERY GFK (flat and
+# union-declared), and the typed union is produced by the native union injector
+# "types._compile_gfk_union_output_fields" (asserted via the compiled SDL). The
+# T-07 tests below assert the native marker + the native union via SDL (the
+# graphene "Dynamic"/"Field" assertions were dropped with the backend).
+from graphql import GraphQLString, GraphQLUnionType
+
 from django_graphex.converter import convert_django_field
+from django_graphex.core import ObjectType, field
 from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoInterfaceType, DjangoObjectType, DjangoUnionType
 
 from .models import (
     Track2Account,
@@ -38,8 +44,18 @@ from .models import (
 # --------------------------------------------------------------------------- #
 # Helpers — build a fresh, isolated registry with the member ObjectTypes.      #
 # --------------------------------------------------------------------------- #
-def _make_member_types(reg):
-    """Register AccountType / InvoiceType in ``reg`` and return them."""
+def _make_member_types(
+    reg: Registry,
+) -> tuple[type[DjangoObjectType], type[DjangoObjectType]]:
+    """Register AccountType / InvoiceType in "reg" and return them.
+
+    Args:
+        reg: The registry the member types are declared against.
+
+    Returns:
+        A tuple of (AccountType, InvoiceType), the two registered
+        DjangoObjectType classes.
+    """
 
     class AccountType(DjangoObjectType):
         class Meta:
@@ -54,10 +70,22 @@ def _make_member_types(reg):
     return AccountType, InvoiceType
 
 
-def _make_union(reg, members):
+def _make_union(
+    reg: Registry, members: tuple[type[DjangoObjectType], ...]
+) -> type[DjangoUnionType]:
+    """Build a DjangoUnionType over the given member types.
+
+    Args:
+        reg: The registry the union is declared against.
+        members: The DjangoObjectType classes the union accepts as members.
+
+    Returns:
+        The constructed PaymentUnion class.
+    """
+
     class PaymentUnion(DjangoUnionType):
         class Meta:
-            gfk_types = members
+            types = members
             registry = reg
 
     return PaymentUnion
@@ -66,11 +94,11 @@ def _make_union(reg, members):
 # =========================================================================== #
 # T-01 / T-02 — Registry parallel stores + register_polymorphic + dispatch     #
 # =========================================================================== #
-def test_register_polymorphic_stores_union_and_leaves_types_untouched():
-    """register_polymorphic routes a union to ``_union_types`` only.
+def test_register_polymorphic_stores_union_and_leaves_types_untouched() -> None:
+    """register_polymorphic routes a union to "_union_types" only.
 
-    TEETH: if register_polymorphic wrote to ``_types`` (or the dispatch in
-    register() fell through to the (model, for_input) write), ``_types`` would
+    TEETH: if register_polymorphic wrote to "_types" (or the dispatch in
+    register() fell through to the (model, for_input) write), "_types" would
     grow and this assertion on its emptiness-of-union would fail.
     """
     reg = Registry()
@@ -84,7 +112,7 @@ def test_register_polymorphic_stores_union_and_leaves_types_untouched():
     assert reg._types == types_snapshot
 
 
-def test_register_polymorphic_is_idempotent():
+def test_register_polymorphic_is_idempotent() -> None:
     """Registering the same union twice overwrites harmlessly (no raise).
 
     TEETH: if register_polymorphic raised on a duplicate name, the second call
@@ -99,11 +127,11 @@ def test_register_polymorphic_is_idempotent():
     assert reg._union_types[union._meta.name] is union
 
 
-def test_register_union_then_register_objecttype_both_work():
+def test_register_union_then_register_objecttype_both_work() -> None:
     """register(union) is a no-op on _types; a later register(ObjectType) works.
 
     TEETH: if the dispatch did not early-return, register(union) would attempt
-    the ``(cls._meta.model, for_input)`` write — a union has no single model, so
+    the "(cls._meta.model, for_input)" write — a union has no single model, so
     it would corrupt _types or crash; and the subsequent ObjectType register
     would be the only way to prove _types still accepts normal types.
     """
@@ -122,10 +150,10 @@ def test_register_union_then_register_objecttype_both_work():
     assert reg._union_types[union._meta.name] is union
 
 
-def test_get_model_for_type_name_resolves_via_types_only():
+def test_get_model_for_type_name_resolves_via_types_only() -> None:
     """get_model_for_type_name maps a GraphQL name back to its model.
 
-    TEETH: if it scanned ``_union_types`` (or matched input entries), it could
+    TEETH: if it scanned "_union_types" (or matched input entries), it could
     return the wrong model; here AccountType -> Track2Account must hold and an unknown
     name must be None.
     """
@@ -136,7 +164,7 @@ def test_get_model_for_type_name_resolves_via_types_only():
     assert reg.get_model_for_type_name("NoSuchType") is None
 
 
-def test_get_member_models_union_is_ordered():
+def test_get_member_models_union_is_ordered() -> None:
     """get_member_models(union) returns the explicit member models, in order.
 
     TEETH: if it derived members from ContentType rows or a set, order/identity
@@ -149,18 +177,18 @@ def test_get_member_models_union_is_ordered():
     assert reg.get_member_models(union) == [Track2Account, Track2Invoice]
 
 
-def test_register_polymorphic_rejects_cross_registry_union():
+def test_register_polymorphic_rejects_cross_registry_union() -> None:
     """A union built in registry A cannot be registered into registry B.
 
-    REG-INV-01: ``register_polymorphic`` must mirror the object-type
-    ``register()`` guard (``"Registry for a Model must match."``). Without the
-    guard, ``regB.register(union_from_A)`` would write ``regB._union_types`` while
-    the union's ``_dgx_registry`` still points to A, so its ``resolve_type``
-    consults A's ``_types`` — a silent stale-registry resolve.
+    REG-INV-01: "register_polymorphic" must mirror the object-type
+    "register()" guard ('Registry for a Model must match.'). Without the
+    guard, "regB.register(union_from_A)" would write "regB._union_types" while
+    the union's "_dgx_registry" still points to A, so its "resolve_type"
+    consults A's "_types" — a silent stale-registry resolve.
 
-    TEETH: drop the ``_dgx_registry is not self`` guard and the cross-registry
-    register() succeeds silently, so this ``pytest.raises`` fails AND
-    ``reg_b._union_types`` is polluted with a foreign-bound union.
+    TEETH: drop the "_dgx_registry is not self" guard and the cross-registry
+    register() succeeds silently, so this "pytest.raises" fails AND
+    "reg_b._union_types" is polluted with a foreign-bound union.
     """
     reg_a = Registry()
     members_a = _make_member_types(reg_a)
@@ -176,19 +204,19 @@ def test_register_polymorphic_rejects_cross_registry_union():
     assert union._dgx_registry is reg_a
 
 
-def test_register_polymorphic_rejects_cross_registry_interface():
+def test_register_polymorphic_rejects_cross_registry_interface() -> None:
     """An interface built in registry A cannot be registered into registry B.
 
     REG-INV-01: same cross-registry guard, exercised through the interface path
-    of ``register_polymorphic``.
+    of "register_polymorphic".
 
-    TEETH: without the bound-registry guard, ``reg_b.register(interface)`` writes
-    ``reg_b._interface_types`` for a foreign-bound interface.
+    TEETH: without the bound-registry guard, "reg_b.register(interface)" writes
+    "reg_b._interface_types" for a foreign-bound interface.
     """
     reg_a = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg_a
@@ -201,15 +229,15 @@ def test_register_polymorphic_rejects_cross_registry_interface():
     assert ProductInterface._dgx_registry is reg_a
 
 
-def test_register_polymorphic_same_registry_still_works():
+def test_register_polymorphic_same_registry_still_works() -> None:
     """The cross-registry guard does NOT block a same-registry re-registration.
 
-    REG-INV-01 regression net: the bound-registry check must be ``is not self``,
-    not ``is not None`` — a union re-registered into its OWN registry must still
+    REG-INV-01 regression net: the bound-registry check must be "is not self",
+    not "is not None" — a union re-registered into its OWN registry must still
     pass (idempotent overwrite), otherwise the guard would break the auto-register
-    + manual-register double path documented for ``register_polymorphic``.
+    + manual-register double path documented for "register_polymorphic".
 
-    TEETH: if the guard mistakenly raised whenever ``_dgx_registry`` is set, this
+    TEETH: if the guard mistakenly raised whenever "_dgx_registry" is set, this
     same-registry register() would raise and the test would fail.
     """
     reg = Registry()
@@ -220,31 +248,31 @@ def test_register_polymorphic_same_registry_still_works():
     assert reg._union_types[union._meta.name] is union
 
 
-def test_register_polymorphic_rejects_non_polymorphic_class():
+def test_register_polymorphic_rejects_non_polymorphic_class() -> None:
     """Direct misuse with a non-polymorphic class fails loud (TypeError).
 
-    REG-INV-02: ``register_polymorphic`` branches union/interface with no ``else``
+    REG-INV-02: "register_polymorphic" branches union/interface with no "else"
     in the original; a class that is neither would fall through, storing nothing
     and raising nothing — silently dropped from BOTH the polymorphic stores and
-    ``_types``. The trailing ``else: raise TypeError`` makes direct misuse loud.
+    "_types". The trailing "else: raise TypeError" makes direct misuse loud.
 
-    TEETH: remove the trailing ``else`` and this call returns None silently, so
-    the ``pytest.raises(TypeError)`` fails.
+    TEETH: remove the trailing "else" and this call returns None silently, so
+    the "pytest.raises(TypeError)" fails.
     """
     reg = Registry()
     account_type, _ = _make_member_types(reg)
 
-    # A plain DjangoObjectType has a ``_meta.name`` but is neither a union nor an
+    # A plain DjangoObjectType has a "_meta.name" but is neither a union nor an
     # interface — the realistic "wrong class" for direct misuse of the method.
     with pytest.raises(TypeError, match="DjangoUnionType or DjangoInterfaceType"):
         reg.register_polymorphic(account_type)
 
 
 # =========================================================================== #
-# T-03 — DjangoObjectOptions.gfk_unions Meta round-trip + get_gfk_union         #
+# T-03 — DjangoObjectOptions.unions Meta round-trip + get_gfk_union             #
 # =========================================================================== #
-def test_gfk_unions_meta_round_trips_and_registry_lookup():
-    """Meta.gfk_unions is stored on _meta and resolvable via the registry.
+def test_unions_meta_round_trips_and_registry_lookup() -> None:
+    """Meta.unions is stored on _meta and resolvable via the registry.
 
     TEETH: if the kwarg were dropped (not stored on _meta) or get_gfk_union
     looked at the wrong store, the union would not round-trip for ("target").
@@ -257,16 +285,16 @@ def test_gfk_unions_meta_round_trips_and_registry_lookup():
         class Meta:
             model = Track2GfkComment
             registry = reg
-            gfk_unions = {"target": union}
+            unions = {"target": union}
 
-    assert GfkCommentType._meta.gfk_unions["target"] is union
+    assert GfkCommentType._meta.unions["target"] is union
     assert reg.get_gfk_union(Track2GfkComment, "target") is union
     # Absent FK name -> None, never a crash.
     assert reg.get_gfk_union(Track2GfkComment, "absent") is None
 
 
-def test_gfk_unions_defaults_to_none_when_absent():
-    """A DjangoObjectType without Meta.gfk_unions has _meta.gfk_unions falsy.
+def test_unions_defaults_to_none_when_absent() -> None:
+    """A DjangoObjectType without Meta.unions has _meta.unions falsy.
 
     TEETH: if the default leaked a shared mutable dict or a truthy sentinel,
     get_gfk_union would mis-report a union for a plain type.
@@ -278,14 +306,95 @@ def test_gfk_unions_defaults_to_none_when_absent():
             model = Track2Account
             registry = reg
 
-    assert not PlainType._meta.gfk_unions
+    assert not PlainType._meta.unions
     assert reg.get_gfk_union(Track2Account, "anything") is None
+
+
+# =========================================================================== #
+# ITEM 3 — Meta option rename "gfk_unions" -> "unions" (mirrors the earlier #
+# "gfk_types" -> "types" rename). The NEW key compiles the union field      #
+# identically; declaring the OLD key raises ImproperlyConfigured pointing to     #
+# the new name.                                                                  #
+# =========================================================================== #
+def test_unions_new_name_meta_round_trips_and_registry_lookup() -> None:
+    """ "Meta.unions" is stored on _meta and resolvable via the registry.
+
+    This is the "test_gfk_unions_meta_round_trips_and_registry_lookup" port to
+    the NEW key: after the rename, "Meta.unions" must round-trip on "_meta"
+    (the store may be exposed as "_meta.unions") and resolve for ("target").
+    """
+    reg = Registry()
+    members = _make_member_types(reg)
+    union = _make_union(reg, members)
+
+    class GfkCommentType(DjangoObjectType):
+        class Meta:
+            model = Track2GfkComment
+            registry = reg
+            unions = {"target": union}
+
+    # New public store name on _meta.
+    assert GfkCommentType._meta.unions["target"] is union
+    assert reg.get_gfk_union(Track2GfkComment, "target") is union
+    # Absent FK name -> None, never a crash.
+    assert reg.get_gfk_union(Track2GfkComment, "absent") is None
+
+
+def test_unions_new_name_compiles_typed_union_field_in_sdl() -> None:
+    """A "Meta.unions"-declared GFK compiles to the typed union field in SDL.
+
+    Mirrors the strongest converter/SDL guarantee: declaring the union via the
+    new "unions" key must emit the typed "GraphQLUnion" field on the owner's
+    output type (not the flat "GenericForeignKeyType").
+    """
+    from graphql import print_schema
+
+    reg = Registry()
+    members = _make_member_types(reg)
+    union = _make_union(reg, members)
+
+    class GfkCommentType(DjangoObjectType):
+        class Meta:
+            model = Track2GfkComment
+            registry = reg
+            unions = {"target": union}
+
+    class _Query(ObjectType):
+        comment = field(GfkCommentType)
+
+    schema = DjangoGraphQLSchema(query=_Query)
+    sdl = print_schema(schema.graphql_schema)
+    # The union type is present in the compiled schema (typed GFK output).
+    assert "union PaymentUnion" in sdl
+
+
+def test_old_gfk_unions_name_raises_improperly_configured() -> None:
+    """Declaring the OLD "Meta.gfk_unions" key raises ImproperlyConfigured.
+
+    The error must name the NEW key ("unions"), mirroring the "gfk_types" ->
+    "types" HARD rename guard (fail loud instead of silently dropping the key).
+    """
+    reg = Registry()
+    members = _make_member_types(reg)
+    union = _make_union(reg, members)
+
+    with pytest.raises(ImproperlyConfigured) as exc_info:
+
+        class GfkCommentType(DjangoObjectType):
+            class Meta:
+                model = Track2GfkComment
+                registry = reg
+                gfk_unions = {"target": union}
+
+    message = str(exc_info.value)
+    assert "gfk_unions" in message
+    assert "unions" in message
 
 
 # =========================================================================== #
 # T-04 — DjangoUnionType base: resolve_type contract + no possible_types        #
 # =========================================================================== #
-def test_union_resolve_type_returns_registered_objecttype():
+def test_union_resolve_type_returns_registered_objecttype() -> None:
     """resolve_type(instance) -> the registered DjangoObjectType for its model.
 
     TEETH: if resolve_type returned None or fell through to graphene's default
@@ -300,7 +409,7 @@ def test_union_resolve_type_returns_registered_objecttype():
     assert union.resolve_type(instance, None) is account_type
 
 
-def test_union_resolve_type_raises_on_unregistered_instance():
+def test_union_resolve_type_raises_on_unregistered_instance() -> None:
     """resolve_type raises (descriptive) for an instance with no registered type.
 
     TEETH: if resolve_type silently returned None for an unknown model, this
@@ -310,12 +419,12 @@ def test_union_resolve_type_raises_on_unregistered_instance():
     members = _make_member_types(reg)
     union = _make_union(reg, members)
 
-    # Track2Magazine has NO DjangoObjectType registered in ``reg``.
+    # Track2Magazine has NO DjangoObjectType registered in "reg".
     with pytest.raises(TypeError):
         union.resolve_type(Track2Magazine(name="x"), None)
 
 
-def test_union_does_not_set_possible_types():
+def test_union_does_not_set_possible_types() -> None:
     """The union base/subclass never sets Meta.possible_types.
 
     TEETH: if possible_types were set, it would collide with is_type_of and
@@ -328,7 +437,7 @@ def test_union_does_not_set_possible_types():
     assert getattr(union._meta, "possible_types", None) in (None, ())
 
 
-def test_union_self_registers_during_construction():
+def test_union_self_registers_during_construction() -> None:
     """Constructing a DjangoUnionType registers it in _union_types (auto).
 
     TEETH: if register_polymorphic were not called from
@@ -342,23 +451,39 @@ def test_union_self_registers_during_construction():
     assert reg._union_types.get(union._meta.name) is union
 
 
-def test_union_requires_nonempty_gfk_types():
+def test_union_requires_nonempty_types() -> None:
     """A union with no members is rejected at declaration time.
 
-    TEETH: if the assert were removed, graphene's own "Must provide types"
-    assertion would still fire, but the descriptive gfk_types message is the
-    contract; either way an empty union must not silently construct.
+    TEETH: the descriptive "Meta.types" message is the contract; an empty
+    union must not silently construct.
     """
     reg = Registry()
     with pytest.raises(AssertionError):
 
         class EmptyUnion(DjangoUnionType):
             class Meta:
+                types = ()
+                registry = reg
+
+
+def test_union_gfk_types_kwarg_raises_helpful_error() -> None:
+    """Passing the old "Meta.gfk_types" name raises a helpful rename error.
+
+    The kwarg was renamed to "types" in v2.0; a subclass still declaring
+    "gfk_types" must fail loudly (not silently swallow the members).
+    """
+    reg = Registry()
+    with pytest.raises(
+        (TypeError, ImproperlyConfigured), match="gfk_types was renamed to types"
+    ):
+
+        class LegacyUnion(DjangoUnionType):
+            class Meta:
                 gfk_types = ()
                 registry = reg
 
 
-def test_union_schema_builds_without_assertionerror():
+def test_union_schema_builds_without_assertionerror() -> None:
     """A schema exposing a union field builds with no possible_types collision.
 
     TEETH: if possible_types leaked, schema construction would raise
@@ -368,10 +493,10 @@ def test_union_schema_builds_without_assertionerror():
     account_type, invoice_type = _make_member_types(reg)
     union = _make_union(reg, (account_type, invoice_type))
 
-    class Query(graphene.ObjectType):
-        payment = Field(union)
+    class Query(ObjectType):
+        payment = field(union)
 
-    schema = graphene.Schema(query=Query, types=[account_type, invoice_type])
+    schema = DjangoGraphQLSchema(query=Query, types=[account_type, invoice_type])
     # The union is present in the built schema as a GraphQLUnionType.
     gql_union = schema.graphql_schema.get_type(union._meta.name)
     assert isinstance(gql_union, GraphQLUnionType)
@@ -380,16 +505,16 @@ def test_union_schema_builds_without_assertionerror():
 # =========================================================================== #
 # T-05 — DjangoInterfaceType base: shared fields + resolve_type + members       #
 # =========================================================================== #
-def test_interface_shared_field_resolves_on_implementors():
+def test_interface_shared_field_resolves_on_implementors() -> None:
     """An interface's shared field is exposed on each implementor.
 
     TEETH: if Meta.interfaces wiring were broken, the implementor type would
-    not declare the interface field and the schema field set would miss ``name``.
+    not declare the interface field and the schema field set would miss "name".
     """
     reg = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -406,19 +531,19 @@ def test_interface_shared_field_resolves_on_implementors():
             registry = reg
             interfaces = (ProductInterface,)
 
-    schema = graphene.Schema(
-        query=type(
-            "Q",
-            (graphene.ObjectType,),
-            {"book": Field(BookType), "magazine": Field(MagazineType)},
-        ),
+    class Q(ObjectType):
+        book = field(BookType)
+        magazine = field(MagazineType)
+
+    schema = DjangoGraphQLSchema(
+        query=Q,
         types=[BookType, MagazineType],
     )
     book_gql = schema.graphql_schema.get_type("BookType")
     assert "name" in book_gql.fields
 
 
-def test_interface_resolve_type_maps_concrete_instance():
+def test_interface_resolve_type_maps_concrete_instance() -> None:
     """interface.resolve_type(magazine) -> MagazineType, not BookType/None.
 
     TEETH: if resolve_type were not overridden (or returned the first
@@ -428,7 +553,7 @@ def test_interface_resolve_type_maps_concrete_instance():
     reg = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -449,7 +574,7 @@ def test_interface_resolve_type_maps_concrete_instance():
     assert ProductInterface.resolve_type(Track2Book(name="b"), None) is BookType
 
 
-def test_interface_does_not_set_possible_types():
+def test_interface_does_not_set_possible_types() -> None:
     """The interface base/subclass never sets Meta.possible_types.
 
     TEETH: possible_types on an interface would collide with is_type_of the
@@ -458,7 +583,7 @@ def test_interface_does_not_set_possible_types():
     reg = Registry()
 
     class NodeInterface(DjangoInterfaceType):
-        created_at = graphene.String()
+        created_at = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -466,7 +591,7 @@ def test_interface_does_not_set_possible_types():
     assert getattr(NodeInterface._meta, "possible_types", None) in (None, ())
 
 
-def test_interface_self_registers_and_get_member_models():
+def test_interface_self_registers_and_get_member_models() -> None:
     """Interface self-registers; get_member_models returns its implementors.
 
     TEETH: get_member_models(interface) scans output _types whose
@@ -476,7 +601,7 @@ def test_interface_self_registers_and_get_member_models():
     reg = Registry()
 
     class ProductInterface(DjangoInterfaceType):
-        name = graphene.String()
+        name = field(GraphQLString)
 
         class Meta:
             registry = reg
@@ -501,24 +626,37 @@ def test_interface_self_registers_and_get_member_models():
 # =========================================================================== #
 # T-06 — Public exports                                                         #
 # =========================================================================== #
-def test_public_exports_present():
-    """Both bases are importable from the package root and in __all__.
+def test_public_exports_present() -> None:
+    """Both bases are public via django_graphex.types (v2.0 submodule-only API).
 
-    TEETH: if the import block / __all__ TYPES section were not updated, the
-    public import would ImportError or __all__ would omit the names.
+    TEETH: the names must import from the types submodule (done at module top)
+    and the package root must NOT re-export them.
     """
     import django_graphex
+    from django_graphex.types import (
+        DjangoInterfaceType as _InterfaceFromTypes,
+    )
+    from django_graphex.types import (
+        DjangoUnionType as _UnionFromTypes,
+    )
 
-    assert "DjangoUnionType" in django_graphex.__all__
-    assert "DjangoInterfaceType" in django_graphex.__all__
-    assert django_graphex.DjangoUnionType is DjangoUnionType
-    assert django_graphex.DjangoInterfaceType is DjangoInterfaceType
+    assert _UnionFromTypes is DjangoUnionType
+    assert _InterfaceFromTypes is DjangoInterfaceType
+    assert "DjangoUnionType" not in django_graphex.__all__
+    assert "DjangoInterfaceType" not in django_graphex.__all__
+    assert not hasattr(django_graphex, "DjangoUnionType")
+    assert not hasattr(django_graphex, "DjangoInterfaceType")
 
 
 # =========================================================================== #
 # T-07 — Converter GFK→Union branch (+ GenericForeignKeyType fallback/warning)  #
 # =========================================================================== #
-def _gfk_field():
+def _gfk_field() -> GenericForeignKey:
+    """Look up the GenericForeignKey field declared on Track2GfkComment.
+
+    Returns:
+        The GenericForeignKey field instance found on the model.
+    """
     return next(
         f
         for f in Track2GfkComment._meta.get_fields()
@@ -526,17 +664,37 @@ def _gfk_field():
     )
 
 
-def _resolve_dynamic(converted):
-    if isinstance(converted, Dynamic):
-        return converted.get_type()
-    return converted
+def test_converter_returns_native_marker_when_gfk_unions_declared() -> None:
+    """When the owner declares Meta.unions for the FK, the converter returns a
+    graphene-free "NativeRelationField" marker.
+
+    S-del-backend-11: ALL native GFKs (flat AND union-declared) convert to the
+    native marker; the typed union is produced by the native union injector
+    (asserted via the compiled SDL in
+    "test_converter_emits_union_in_compiled_sdl"). The graphene "Dynamic"/
+    "Field" union descriptor the converter used to emit is gone.
+    """
+    from django_graphex.core.descriptors import NativeRelationField
+
+    reg = Registry()
+    members = _make_member_types(reg)
+    union = _make_union(reg, members)
+
+    class GfkCommentType(DjangoObjectType):
+        class Meta:
+            model = Track2GfkComment
+            registry = reg
+            unions = {"target": union}
+
+    converted = convert_django_field(_gfk_field(), registry=reg)
+    assert isinstance(converted, NativeRelationField)
 
 
-def test_converter_emits_union_when_gfk_unions_declared():
-    """When the owner declares Meta.gfk_unions for the FK, emit a Union field.
-
-    TEETH: if the converter ignored gfk_unions, the field type would be the flat
-    GenericForeignKeyType, not the union — this asserts the union is emitted.
+@pytest.mark.django_db
+def test_converter_emits_union_in_compiled_sdl() -> None:
+    """A union-declared GFK renders a typed union OUTPUT field in the compiled
+    native SDL (the native union injector reads "model._meta" +
+    "registry.get_gfk_union" directly — independent of the converter descriptor).
     """
     reg = Registry()
     members = _make_member_types(reg)
@@ -546,19 +704,27 @@ def test_converter_emits_union_when_gfk_unions_declared():
         class Meta:
             model = Track2GfkComment
             registry = reg
-            gfk_unions = {"target": union}
+            unions = {"target": union}
 
-    field = _resolve_dynamic(convert_django_field(_gfk_field(), registry=reg))
-    assert isinstance(field, Field)
-    assert field.type is union
+    compiled = GfkCommentType._meta.graphql_output_type
+    target = compiled.fields["target"]
+    assert isinstance(target.type, GraphQLUnionType), (
+        f"the union-declared GFK must render a GraphQLUnionType output; got {target.type!r}"
+    )
+    assert target.type.name == union._meta.name
 
 
-def test_converter_falls_back_to_generic_type_when_no_union():
-    """No companion union declared -> GenericForeignKeyType (no regression).
+def test_converter_falls_back_to_generic_type_when_no_union() -> None:
+    """No companion union declared -> the converter returns the native marker.
 
-    TEETH: if the new branch hijacked every GFK, a plain GFK owner would lose
-    GenericForeignKeyType; this asserts the fallback is intact.
+    S-del-backend-11: a plain GFK (no declared union) converts to a graphene-free
+    "NativeRelationField" marker; the native output compiler renders the flat
+    "GenericForeignKeyType" from "model._meta" (the union path is exercised by
+    "test_converter_returns_native_marker_when_gfk_unions_declared" +
+    "test_converter_emits_union_in_compiled_sdl").
     """
+    from django_graphex.core.descriptors import NativeRelationField
+
     reg = Registry()
     _make_member_types(reg)
 
@@ -566,20 +732,19 @@ def test_converter_falls_back_to_generic_type_when_no_union():
         class Meta:
             model = Track2GfkComment
             registry = reg
-            # No gfk_unions declared.
+            # No unions declared.
 
-    field = _resolve_dynamic(convert_django_field(_gfk_field(), registry=reg))
-    assert isinstance(field, Field)
-    assert field.type is GenericForeignKeyType
+    converted = convert_django_field(_gfk_field(), registry=reg)
+    assert isinstance(converted, NativeRelationField)
 
 
 @pytest.mark.django_db
-def test_converter_no_content_type_query_for_member_discovery():
-    """Building the union field issues NO query against django_content_type.
+def test_converter_no_content_type_query_for_member_discovery() -> None:
+    """Compiling the union OUTPUT field issues NO query against django_content_type.
 
-    TEETH: if members were discovered from ContentType rows, resolving the
-    Dynamic would hit the DB; this asserts no SQL touches django_content_type
-    during conversion.
+    TEETH: if members were discovered from ContentType rows, compiling the typed
+    union would hit the DB; this asserts no SQL touches django_content_type during
+    the native union compile.
     """
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
@@ -592,29 +757,33 @@ def test_converter_no_content_type_query_for_member_discovery():
         class Meta:
             model = Track2GfkComment
             registry = reg
-            gfk_unions = {"target": union}
+            unions = {"target": union}
 
     with CaptureQueriesContext(connection) as ctx:
-        field = _resolve_dynamic(convert_django_field(_gfk_field(), registry=reg))
+        compiled = GfkCommentType._meta.graphql_output_type
+        target_type = compiled.fields["target"].type
+        # Force the union thunk + member resolution.
+        _ = getattr(target_type, "types", None)
 
-    assert field.type is union
+    assert isinstance(target_type, GraphQLUnionType)
     assert not any("django_content_type" in q["sql"] for q in ctx.captured_queries)
 
 
-def test_converter_warns_and_falls_back_on_misordered_declaration():
-    """gfk_unions declared but union missing from registry -> WARNING + fallback.
+def test_converter_misordered_declaration_degrades_to_flat_native() -> None:
+    """unions declared but union missing from registry -> the converter returns
+    the native marker; the schema-level injector skips the unregistered union and
+    leaves the flat "GenericForeignKeyType" field.
 
-    TEETH: if a mis-ordered declaration crashed (or silently fell back with no
-    signal), this would either raise or see no warning. The contract is: warn
-    AND degrade to GenericForeignKeyType.
+    S-del-backend-11: the converter-level mis-order WARNING lived inside the dead
+    graphene flat-GFK closure (now deleted). The DEGRADE semantics are preserved at
+    the SCHEMA level by the native union injector
+    ("types._compile_gfk_union_output_fields"), verified by the S-rel-4
+    schema-level GFK-union tests. This asserts the converter returns the native
+    marker for a mis-ordered (unregistered) union.
     """
-    reg = Registry()
-    _make_member_types(reg)
+    from django_graphex.core.descriptors import NativeRelationField
 
-    # Build a sentinel union object that is NOT registered in ``reg`` to simulate
-    # a mis-ordered declaration where get_gfk_union cannot find a registered
-    # companion union. We declare gfk_unions pointing at a name the registry has
-    # never seen by stripping it from the store after construction.
+    reg = Registry()
     members = _make_member_types(reg)
     union = _make_union(reg, members)
 
@@ -622,18 +791,11 @@ def test_converter_warns_and_falls_back_on_misordered_declaration():
         class Meta:
             model = Track2GfkComment
             registry = reg
-            gfk_unions = {"target": union}
+            unions = {"target": union}
 
-    # Simulate mis-order: the union is not yet in the registry when the Dynamic
-    # resolves (owner Meta declared before the union was registered).
+    # Simulate mis-order: the union is not in the registry when the field is
+    # converted (owner Meta declared before the union was registered).
     reg._union_types.pop(union._meta.name, None)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        field = _resolve_dynamic(convert_django_field(_gfk_field(), registry=reg))
-
-    assert field.type is GenericForeignKeyType
-    assert any(
-        "gfk_union" in str(w.message).lower() or "union" in str(w.message).lower()
-        for w in caught
-    )
+    converted = convert_django_field(_gfk_field(), registry=reg)
+    assert isinstance(converted, NativeRelationField)

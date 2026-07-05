@@ -74,8 +74,9 @@ class Post(models.Model):
 
 ```python
 # schema.py
-import graphene
-from django_graphex import DjangoListObjectField, DjangoListObjectType, DjangoObjectType
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
+from django_graphex.types import DjangoListObjectType, DjangoObjectType
 
 
 class AuthorType(DjangoObjectType):
@@ -94,7 +95,7 @@ class PostListType(DjangoListObjectType):
     class Meta:
         model = Post
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     all_posts = DjangoListObjectField(PostListType)
 ```
 
@@ -236,10 +237,10 @@ class Post(models.Model):
         ordering = ("-id",)
 
 # schema.py
-from django_graphex import (
-    DjangoListObjectField, DjangoListObjectType, DjangoObjectType,
-    LimitOffsetGraphqlPagination,
-)
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
+from django_graphex.paginations import LimitOffsetGraphqlPagination
+from django_graphex.types import DjangoListObjectType, DjangoObjectType
 
 class PostType(DjangoObjectType):
     class Meta:
@@ -259,7 +260,7 @@ class AuthorListType(DjangoListObjectType):
     class Meta:
         model = Author
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     authors = DjangoListObjectField(AuthorListType)
 ```
 
@@ -305,10 +306,10 @@ ordering, full-load sub-selection, `.distinct()`, `OPTIMIZE_QUERYSET=False`).
 
 To customize the child queryset for a **specific** nested list field — add a
 `select_related`, a custom annotation, a default ordering — declare an
-**`optimize_<snake_field>`** static method on the **parent** graphene type:
+**`optimize_<snake_field>`** static method on the **parent** type:
 
 ```python
-from django_graphex import DjangoNestedListObjectField
+from django_graphex.fields import DjangoNestedListObjectField
 
 class AuthorType(DjangoObjectType):
     posts = DjangoNestedListObjectField(PostListType, accessor="posts")
@@ -350,7 +351,7 @@ for the full rules, the safe-mode interaction and a complete example.
 ## Typed GenericForeignKey unions (per-content-type narrowing)
 
 A `GenericForeignKey` exposed as a [`DjangoUnionType`](types.md#djangouniontype-typed-genericforeignkey-targets)
-(member types in `Meta.gfk_types`, owner opting in via `Meta.gfk_unions`) lets
+(member types in `Meta.types`, owner opting in via `Meta.unions`) lets
 clients select per-member fields with **inline fragments**:
 
 ```graphql
@@ -405,16 +406,16 @@ Declare it on the type and let the selection drive it (`Author (1) ─→ (N) Po
 
 ```python
 # schema.py
-import graphene
+from graphql import GraphQLInt
 from django.db.models import Count
-from django_graphex import (
-    AnnotatedField, DjangoListObjectField, DjangoListObjectType, DjangoObjectType,
-)
+from django_graphex.fields import AnnotatedField, DjangoListObjectField
+from django_graphex.core import ObjectType
+from django_graphex.types import DjangoListObjectType, DjangoObjectType
 
 class AuthorType(DjangoObjectType):
     # Injected ONLY when `postCount` is selected; the built-in resolver reads it
     # off the row, so no resolve_post_count is needed.
-    post_count = AnnotatedField(graphene.Int, Count("posts"))
+    post_count = AnnotatedField(GraphQLInt, Count("posts"))
 
     class Meta:
         model = Author
@@ -423,7 +424,7 @@ class AuthorListType(DjangoListObjectType):
     class Meta:
         model = Author
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     authors = DjangoListObjectField(AuthorListType)
 ```
 
@@ -456,7 +457,7 @@ included in `.only()`**. This prevents over-fetching related rows that the clien
 will never use.
 
 ```graphql
-query GetPosts($loadAuthor: Boolean!) {
+query GetPosts($loadAuthor: Boolean!, $skipTags: Boolean!) {
   posts {
     results {
       title
@@ -464,8 +465,8 @@ query GetPosts($loadAuthor: Boolean!) {
       author @include(if: $loadAuthor) {
         name
       }
-      # tags are also skipped when @skip(if: true)
-      tags @skip(if: true) {
+      # When $skipTags is true the tags prefetch is skipped entirely
+      tags @skip(if: $skipTags) {
         label
       }
     }
@@ -473,10 +474,16 @@ query GetPosts($loadAuthor: Boolean!) {
 }
 ```
 
-In this query, when `$loadAuthor` is `false` the `author` FK is not added to
-`select_related` and `author_id` is not included in the `.only()` projection.
-When `tags` has `@skip(if: true)` the `tags` M2M is not added to
-`prefetch_related`.
+```json title="variables"
+{ "loadAuthor": false, "skipTags": true }
+```
+
+With these variables, the `author` FK is not added to `select_related` (and
+`author_id` is not included in the `.only()` projection), and the `tags` M2M is
+not added to `prefetch_related`. Passing the flag as a **variable** is how
+`@skip` / `@include` are used in practice: the client toggles sections of one
+static query per request (a detail panel open or closed, a mobile vs. desktop
+view) instead of maintaining and re-parsing different query strings.
 
 !!! note "Variable-driven directives"
 
@@ -501,15 +508,16 @@ anything other than a `QuerySet` are left untouched.
 **Example** — scope a list to the current user while keeping optimizer benefits:
 
 ```python
-import graphene
-from django_graphex import DjangoListObjectField, DjangoListObjectType
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
+from django_graphex.types import DjangoListObjectType
 
 class PostListType(DjangoListObjectType):
     class Meta:
         model = Post
         pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="-id")
 
-class Query(graphene.ObjectType):
+class Query(ObjectType):
     my_posts = DjangoListObjectField(PostListType, description="Posts by the current user")
 
     def resolve_my_posts(self, info, **kwargs):
@@ -557,7 +565,7 @@ preserved.
 
 !!! note "Depth limits apply to mutation selection sets too"
 
-    `MAX_QUERY_DEPTH` and `Meta.max_deep` are enforced on **all** GraphQL
+    `MAX_QUERY_DEPTH` and `Meta.max_depth` are enforced on **all** GraphQL
     operation types — including the mutation response selection set. A mutation
     that requests deeper nesting than the limit permits is rejected **before**
     any database write occurs. See [Query depth & cost limits](query-limits.md).

@@ -13,18 +13,19 @@ GraphQL directives in `django-graphex` allow you to transform field values at qu
     Add it to your settings before using any directive:
 
     ```python
-    GRAPHENE = {
+    DJANGO_GRAPHEX = {
         "SCHEMA": "myapp.schema.schema",
-        "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
+        "MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"],
     }
     ```
 
     And pass `all_directives` (or your combined directive list) to the schema:
 
     ```python
-    from django_graphex import all_directives
+    from django_graphex.directives import all_directives
+    from django_graphex.schema import DjangoGraphQLSchema
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         mutation=Mutation,
         directives=all_directives,
@@ -59,6 +60,118 @@ query {
 }
 ```
 
+## Standard GraphQL directives (spec built-ins)
+
+`all_directives` also bundles the GraphQL **specification's** own directives:
+`@skip`, `@include`, and `@deprecated`. These are **not** django-graphex
+directives — `@skip` / `@include` are evaluated by the graphql-core
+**executor** itself (they work without `GraphQLDirectiveMiddleware`), and
+`@deprecated` is a **type-system (SDL) directive** that annotates the schema
+rather than transforming values.
+
+=== "@skip / @include (queries)"
+
+    Conditionally exclude parts of a query. The condition is almost always a
+    **variable**, so the client toggles sections of one static query per
+    request. Both are honored by the
+    [query optimizer](usage/query-optimization.md#skip-and-include-directives)
+    and by the [cost / depth rules](usage/query-limits.md#skip-and-include-directives):
+
+    ```graphql
+    query Posts($withComments: Boolean!, $skipAuthor: Boolean!) {
+      posts {
+        results {
+          title
+          comments @include(if: $withComments) {
+            results { body }
+          }
+          author @skip(if: $skipAuthor) {
+            name
+          }
+        }
+      }
+    }
+    ```
+
+    ```json title="variables"
+    { "withComments": true, "skipAuthor": false }
+    ```
+
+=== "@deprecated (SDL)"
+
+    Marks a field, argument, input field, or enum value as deprecated in the
+    **schema**. It is not written in queries — clients discover it through
+    introspection, and GraphiQL-style IDEs strike the field through. You
+    don't hand-write `@deprecated` in SDL: pass `deprecation_reason=` in
+    Python and the compiler emits it for you.
+
+    A descriptor field:
+
+    ```python
+    from django_graphex.core import ObjectType, CharField
+
+    class UserType(ObjectType):
+        username = CharField()
+        email = CharField(deprecation_reason="Use contactEmail instead.")
+    ```
+
+    A Django-mounted field (e.g. `DjangoObjectField`):
+
+    ```python
+    from django_graphex.core import ObjectType
+    from django_graphex.fields import DjangoObjectField
+
+    class Query(ObjectType):
+        user = DjangoObjectField(UserType, deprecation_reason="Use `viewer` instead.")
+    ```
+
+    A mutation builder (`CreateField` / `UpdateField` / `DeleteField` /
+    `MutationFields`):
+
+    ```python
+    from django_graphex.core import ObjectType
+    from django_graphex.mutation import DjangoModelMutation
+    from django.contrib.auth.models import User
+
+    class UserMutation(DjangoModelMutation):
+        class Meta:
+            model = User
+
+    class Mutation(ObjectType):
+        user_create = UserMutation.CreateField(
+            deprecation_reason="Use userCreateV2 instead."
+        )
+    ```
+
+    All three compile to the same SDL shape:
+
+    ```graphql
+    type UserType {
+      username: String
+      email: String @deprecated(reason: "Use contactEmail instead.")
+    }
+
+    type Query {
+      user(id: ID!): UserType @deprecated(reason: "Use `viewer` instead.")
+    }
+
+    type Mutation {
+      userCreate(newUser: UserCreateGenericType!): UserMutation
+        @deprecated(reason: "Use userCreateV2 instead.")
+    }
+    ```
+
+    !!! note "Introspection hides deprecated fields by default"
+
+        A deprecated field is omitted from `__type { fields { name } }` unless
+        the client asks for it explicitly with `fields(includeDeprecated: true)`.
+        This is graphql-core's standard introspection behavior, not something
+        django-graphex adds — deprecation doesn't remove the field from the
+        schema, it just hides it from the default introspection listing.
+
+The rest of this page covers the library's own **value-transform** directives,
+which all require the [middleware](#middleware-requirement-required-for-all-directives).
+
 ## String Directives
 
 String directives provide various text transformation capabilities:
@@ -83,12 +196,18 @@ Transform text case with these directives:
 
 === "Code Style Conversion"
 
+    Each directive expects a specific input shape: `@camel_case` converts a
+    **snake_case** string, while `@snake_case` and `@kebab_case` convert a
+    **space-separated Title Case** string (they title-case the input before
+    splitting on words, so already-camelCase input will *not* round-trip back
+    to snake/kebab).
+
     ```graphql
     query GetData {
       post {
-        title @camel_case       # "My Blog Post" → "myBlogPost"
-        slug @snake_case        # "My Blog Post" → "my_blog_post"
-        url @kebab_case         # "My Blog Post" → "my-blog-post"
+        apiName @camel_case      # "api_name" → "apiName"
+        title @snake_case        # "My Blog Post" → "my_blog_post"
+        url @kebab_case          # "My Blog Post" → "my-blog-post"
       }
     }
     ```
@@ -173,7 +292,9 @@ Provide fallback values for empty or null fields:
 
 Handle base64 encoding and decoding. Supports any Unicode input — non-ASCII
 characters (accented letters, emoji, etc.) are encoded as UTF-8 before
-base64 encoding:
+base64 encoding. The implementation uses **URL-safe base64** (`-` and `_`
+instead of `+` and `/`), so strings encoded with standard base64 containing
+`+` or `/` will fail to decode:
 
 === "Base64 Operations"
 
@@ -502,22 +623,20 @@ already-resolved field `value` and the **coerced** `args` dict — read them wit
 ### 2. Register it on the schema
 
 Pass an **instance** alongside `all_directives` (which already bundles the
-built-ins plus the standard `@skip` / `@include` / `@deprecated`):
+built-ins plus the standard GraphQL directives: `@skip`, `@include`, and
+`@deprecated`):
 
 ```python
 # myapp/schema.py
-import graphene
-from django_graphex import all_directives
+from django_graphex.directives import all_directives
+from django_graphex.schema import DjangoGraphQLSchema
 from myapp.directives import MaskGraphQLDirective
 
-schema = graphene.Schema(
+schema = DjangoGraphQLSchema(
     query=Query,
     directives=[*all_directives, MaskGraphQLDirective()],
 )
 ```
-
-`django_graphex.DjangoGraphQLSchema` accepts the same `directives=`
-argument, so the snippet works with either schema class.
 
 ### 3. Enable the middleware
 
@@ -526,9 +645,9 @@ directive parses and validates but does nothing:
 
 ```python
 # settings.py
-GRAPHENE = {
+DJANGO_GRAPHEX = {
     "SCHEMA": "myapp.schema.schema",
-    "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
+    "MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"],
 }
 ```
 
@@ -568,14 +687,15 @@ Add directives to your GraphQL schema:
 === "Schema Setup"
 
     ```python
-    import graphene
-    from django_graphex import all_directives
+    from django_graphex.directives import all_directives
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
 
-    class Query(graphene.ObjectType):
+    class Query(ObjectType):
         # Your query fields here
         pass
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         directives=all_directives  # Include all built-in directives
     )
@@ -584,17 +704,18 @@ Add directives to your GraphQL schema:
 === "Custom Directives"
 
     ```python
-    from django_graphex import all_directives
+    from django_graphex.directives import all_directives
+    from django_graphex.schema import DjangoGraphQLSchema
     from .directives import MaskGraphQLDirective
 
-    # all_directives already includes the built-in @skip / @include /
-    # @deprecated directives, so just append your own.
+    # all_directives already includes the built-in GraphQL directives
+    # (@skip, @include, @deprecated), so just append your own.
     custom_directives = [
         *all_directives,
         MaskGraphQLDirective()
     ]
 
-    schema = graphene.Schema(
+    schema = DjangoGraphQLSchema(
         query=Query,
         directives=custom_directives
     )
@@ -607,10 +728,10 @@ Enable directive processing with middleware:
 === "Django Settings"
 
     ```python
-    GRAPHENE = {
+    DJANGO_GRAPHEX = {
         'SCHEMA': 'myapp.schema.schema',
         'MIDDLEWARE': [
-            'django_graphex.GraphQLDirectiveMiddleware',
+            'django_graphex.middleware.GraphQLDirectiveMiddleware',
         ],
     }
     ```

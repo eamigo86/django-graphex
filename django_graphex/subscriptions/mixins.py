@@ -9,9 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.core.serializers.json import DjangoJSONEncoder
 
-if TYPE_CHECKING:
-    from typing import Iterable
-
+if TYPE_CHECKING:  # pragma: no cover - typing only
     from django.db.models import Model
 
     from ..backends import SerializerBackend
@@ -41,45 +39,24 @@ def safe_group_name(name: str) -> str:
     return f"gde.{digest}"
 
 
-def project_fields(
-    data: dict[str, Any] | None,
-    fields: Iterable[str] | None,
-) -> dict[str, Any] | None:
-    """Filter a serialized "data" mapping down to "fields".
-
-    A "None" or empty "fields" collection means "return the full payload".
-
-    Args:
-        data: The serialized mapping to filter.
-        fields: The field names to keep, or "None" for all fields.
-
-    Returns:
-        The filtered mapping, or the original "data" when no fields are given.
-    """
-    if not fields:
-        return data
-    allowed = set(fields)
-    return {key: value for key, value in data.items() if key in allowed}
-
-
 def split_filters(
     data: dict[str, Any] | None,
     filters: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Decide notification filters in memory, returning what still needs the DB.
 
-    Plain-equality keys (no ``"__"`` lookup) whose field is present in the
-    serialized ``data`` are compared in memory (string-coerced, so ``7`` matches
-    ``"7"``). A mismatch short-circuits the whole notification.
+    Plain-equality keys (no "__" lookup) whose field is present in the serialized
+    "data" are compared in memory (string-coerced, so 7 matches "7"). A mismatch
+    short-circuits the whole notification.
 
     Args:
         data: The serialized instance mapping carried by the notification.
         filters: A mapping of Django ORM lookup to expected value.
 
     Returns:
-        ``None`` when an in-memory comparison already fails (drop the
+        "None" when an in-memory comparison already fails (drop the
         notification), otherwise the mapping of remaining filters that require a
-        single-row database check (possibly empty, meaning "fully matched").
+        single-row database check (possibly empty, meaning fully matched).
     """
     remaining: dict[str, Any] = {}
     for key, value in filters.items():

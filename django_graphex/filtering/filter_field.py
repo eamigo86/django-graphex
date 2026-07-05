@@ -1,40 +1,45 @@
-"""``@filter_field`` decorator for per-field custom GraphQL filter args.
+"""The "@filter_field" decorator for per-field custom GraphQL filter args.
 
-Provides the public ``filter_field`` decorator that allows a ``DjangoObjectType``
-(or ``DjangoModelType``) subclass to declare custom filter arguments directly
+Provides the public "filter_field" decorator that allows a "DjangoObjectType"
+(or "DjangoModelType") subclass to declare custom filter arguments directly
 on the type class, next to the logic that implements them.
 
 Usage::
 
-    from django_graphex import filter_field
-    import graphene
+    from django_graphex.filtering import filter_field
 
     class PostType(DjangoObjectType):
         class Meta:
             model = Post
             filter_fields = {"title": ("exact", "icontains")}
 
-        @filter_field(graphene.String, description="Full-text search")
+        @filter_field(description="Full-text search")  # defaults to String
         def search(cls, queryset, info, value):
             return queryset.filter(
                 Q(title__icontains=value) | Q(body__icontains=value)
             )
 
 Contract:
-- ``graphene_type``: the graphene scalar/type for the argument (default: ``graphene.String``).
-- ``description``: optional GraphQL description string.
-- The decorated method receives ``(cls, queryset, info, value) -> QuerySet``.
-  The decorator handles classmethod semantics — do NOT stack ``@classmethod``.
+- "graphql_type": the scalar/type for the argument (default: the native
+  graphql-core "String" scalar). It must be a graphql-core "GraphQLType"
+  ("graphql.GraphQLInt", "graphql.GraphQLString", or a "GraphQLList" /
+  "GraphQLNonNull" wrapper); a leftover graphene scalar/type raises
+  "TypeError". This is the v2.0 clean break (this parameter was renamed in
+  2.0). See UPGRADE-2.0 for the rename note.
+- "description": optional GraphQL description string.
+- The decorated method receives "(cls, queryset, info, value) -> QuerySet".
+  The decorator handles classmethod semantics — do NOT stack "@classmethod".
 - The GraphQL argument name equals the method name.
-- Composition order at query time: standard lookups → custom ``@filter_field``
-  methods in declaration order → ``filter_queryset`` (last).
+- Composition order at query time: "get_queryset" / "filter_queryset"
+  scope the base queryset first → standard lookups (collapsed into one "Q")
+  → custom "@filter_field" methods in declaration order.
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
-import graphene
+from graphql import GraphQLString
 
 __all__ = ("filter_field", "apply_custom_filters")
 
@@ -61,24 +66,27 @@ RESERVED_FILTER_ARGS: frozenset[str] = frozenset(
 
 
 def filter_field(
-    graphene_type: Any = graphene.String,
+    graphql_type: Any = GraphQLString,
     *,
     description: str | None = None,
 ) -> Callable:
     """Decorator that marks a method as a custom GraphQL filter argument.
 
     Args:
-        graphene_type: The graphene scalar or type for the argument.
-            Defaults to ``graphene.String``.
+        graphql_type: The scalar or type for the argument. Defaults to the
+            native graphql-core "String" scalar ("graphql.GraphQLString").
+            Must be a graphql-core "GraphQLType"; a leftover graphene
+            scalar/type raises "TypeError" (the v2.0 clean break — this
+            parameter was renamed in 2.0; see UPGRADE-2.0).
         description: Optional description string for the GraphQL argument.
 
     Returns:
-        A decorator that attaches ``_dgx_filter_field`` metadata to the method.
+        A decorator that attaches "_dgx_filter_field" metadata to the method.
     """
 
     def decorator(fn: Callable) -> Callable:
         fn._dgx_filter_field = {
-            "graphene_type": graphene_type,
+            "graphql_type": graphql_type,
             "description": description,
         }
         return fn
@@ -92,15 +100,15 @@ def apply_custom_filters(
     info: Any,
     filter_value: Any,
 ) -> Any:
-    """Apply custom ``@filter_field`` methods to a queryset in declaration order.
+    """Apply custom "@filter_field" methods to a queryset in declaration order.
 
     Args:
         queryset: The base queryset to filter.
-        custom_filters: List of ``(arg_name, method, metadata)`` triples collected
+        custom_filters: List of "(arg_name, method, metadata)" triples collected
             by the metaclass from the type class.
         info: The GraphQL resolve info.
-        filter_value: The filter input value (an ``InputObjectTypeContainer``),
-            or ``None`` / empty for a no-op.
+        filter_value: The filter input value (an "InputObjectTypeContainer"),
+            or "None" / empty for a no-op.
 
     Returns:
         The queryset after all applicable custom filters are applied.
@@ -109,7 +117,13 @@ def apply_custom_filters(
         return queryset
 
     for arg_name, method, _meta in custom_filters:
-        value = getattr(filter_value, arg_name, None)
+        # The native filter input is delivered as a plain DICT with snake out_name
+        # keys (graphql-core does not rehydrate an object). Fall back to attribute
+        # access for any object-shaped value so custom @filter_field args still fire.
+        if isinstance(filter_value, dict):
+            value = filter_value.get(arg_name, None)
+        else:
+            value = getattr(filter_value, arg_name, None)
         if value is None:
             continue
         queryset = method(queryset, info, value)
@@ -120,22 +134,22 @@ def apply_custom_filters(
 def collect_custom_filters(
     cls: type,
 ) -> list[tuple[str, Callable, dict[str, Any]]]:
-    """Collect ``@filter_field``-decorated methods from a class in MRO order.
+    """Collect "@filter_field"-decorated methods from a class in MRO order.
 
     Walks the MRO in reverse so that the most-derived class overrides bases.
     Declaration order within a class is preserved (Python 3.7+ dict ordering).
 
-    The stored callable is **bound to ``cls``**: calling it as
-    ``bound_fn(queryset, info, value)`` is equivalent to
-    ``fn(cls, queryset, info, value)``.  This implements the decorator's
+    The stored callable is **bound to "cls"**: calling it as
+    "bound_fn(queryset, info, value)" is equivalent to
+    "fn(cls, queryset, info, value)".  This implements the decorator's
     "classmethod semantics internally" contract.
 
     Args:
-        cls: The ``DjangoObjectType`` subclass being constructed.
+        cls: The "DjangoObjectType" subclass being constructed.
 
     Returns:
-        Ordered list of ``(arg_name, bound_classmethod_callable, metadata)``
-        triples, one per ``@filter_field``-decorated method found.
+        Ordered list of "(arg_name, bound_classmethod_callable, metadata)"
+        triples, one per "@filter_field"-decorated method found.
     """
     import functools
 

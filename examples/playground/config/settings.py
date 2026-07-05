@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # Third party
     "channels",
+    "django_graphex",
     # Local
     "blog",
 ]
@@ -65,27 +66,27 @@ CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
 # ---------------------------------------------------------------------------
 # django-graphex
 # ---------------------------------------------------------------------------
-GRAPHENE = {
+# 2.0 BREAKING CHANGE: every django-graphex setting is read from the SINGLE
+# ``DJANGO_GRAPHEX`` namespace (schema/middleware/subscription keys included);
+# the legacy ``GRAPHENE`` namespace is no longer consulted.
+DJANGO_GRAPHEX = {
     "SCHEMA": "blog.schema.schema",
     "MIDDLEWARE": [
-        # Block schema introspection unless allowed (see DJANGO_GRAPHEX).
-        "django_graphex.DisableIntrospectionMiddleware",
+        # Block schema introspection unless allowed (see ALLOW_INTROSPECTION).
+        "django_graphex.security.DisableIntrospectionMiddleware",
         # Require an authenticated user on the schema's private fields.
-        "django_graphex.AuthenticatedFieldsMiddleware",
+        "django_graphex.security.AuthenticatedFieldsMiddleware",
         # Process @directives.
-        "django_graphex.GraphQLDirectiveMiddleware",
+        "django_graphex.middleware.GraphQLDirectiveMiddleware",
     ],
-}
-
-DJANGO_GRAPHEX = {
     "DEFAULT_PAGE_SIZE": 10,
     "MAX_PAGE_SIZE": 100,
     # Keep introspection ON so GraphiQL works. Flip to False to see the
     # DisableIntrospectionMiddleware block it (superusers still bypass).
     "ALLOW_INTROSPECTION": True,
     # Subscriptions: serialize the full instance in notifications (the default is
-    # id-only). Per-subscription Meta.serialize_data can override this.
-    "SUBSCRIPTION_SERIALIZE_DATA": True,
+    # id-only). Per-subscription Meta.payload_mode can override this.
+    "SUBSCRIPTION_PAYLOAD_MODE": "full",
     # ---------------------------------------------------------------------------
     # Base64 file uploads (v1.3.0, opt-in via Base64FileInput).
     #
@@ -106,7 +107,7 @@ DJANGO_GRAPHEX = {
     # ---------------------------------------------------------------------------
     # Query depth limiting (DepthLimitValidationRule — wired in GraphQLView).
     # Reject queries that nest objects more than N levels deep.
-    # None = no global limit; per-type max_deep still applies on top.
+    # None = no global limit; per-type max_depth still applies on top.
     # Active here so the playground rejects an over-nested query out of the box:
     "MAX_QUERY_DEPTH": 6,
     # ---------------------------------------------------------------------------

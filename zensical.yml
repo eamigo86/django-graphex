@@ -1,5 +1,5 @@
 site_name: django-graphex
-site_description: GraphQL for Django powered by graphene and Pydantic — types, mutations, subscriptions, nested filtering, pagination and directives
+site_description: GraphQL for Django powered by graphql-core and Pydantic — types, mutations, subscriptions, nested filtering, pagination and directives
 site_author: Ernesto Perez Amigo
 site_url: https://eamigo86.github.io/django-graphex/
 
@@ -81,6 +81,7 @@ nav:
   - Getting Started:
     - Installation: installation.md
     - Quick Start: quickstart.md
+    - Why graphex?: why.md
     - Migration Guide: migration.md
   - User Guide:
     - Settings: usage/settings.md
@@ -92,6 +93,7 @@ nav:
     - Pagination: usage/pagination.md
     - Filtering: usage/filtering.md
     - Permissions: usage/permissions.md
+    - Permission-Scoped Access: usage/permission-scoped-schema.md
     - Query Optimization: usage/query-optimization.md
     - Nested Lists: usage/nested-lists.md
     - Directives: directives.md
@@ -100,6 +102,7 @@ nav:
     - Caching: usage/caching.md
     - Security: usage/security.md
   - Examples & Recipes:
+    - Playground Project: usage/examples/playground.md
     - Sample Application: usage/examples/blog-schema.md
     - Query Recipes: usage/examples/queries.md
     - Mutation Recipes: usage/examples/mutations.md

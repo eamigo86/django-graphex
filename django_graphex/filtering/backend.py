@@ -1,16 +1,15 @@
 """The filter backend seam: model -> filter input type, value -> queryset.
 
-Mirrors the ``SerializerBackend`` pattern (``backends.py``) so the filtering
+Mirrors the "SerializerBackend" pattern ("backends.py") so the filtering
 layer is swappable and isolated. The package ships a single
-:class:`NativeFilterBackend` built on Django's ORM lookups and ``Q`` objects;
-:func:`resolve_filter_backend` is the factory seam.
+"NativeFilterBackend" built on Django's ORM lookups and "Q" objects;
+"resolve_filter_backend" is the factory seam.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .schema import build_filter_input_type
 from .translate import to_q
 
 if TYPE_CHECKING:
@@ -22,7 +21,13 @@ __all__ = ("FilterBackend", "NativeFilterBackend", "resolve_filter_backend")
 
 
 class FilterBackend:
-    """Translate a model's filter declaration into schema + queryset effects."""
+    """Seam that maps a model's filter declaration to schema and queryset effects.
+
+    Concrete backends turn a "Meta.filter_fields" declaration into a GraphQL
+    input type ("build_input_type") and apply a submitted filter value to a
+    queryset ("apply"). Mirrors the "SerializerBackend" pattern so the filtering
+    layer stays swappable; the package ships "NativeFilterBackend".
+    """
 
     def build_input_type(
         self,
@@ -35,14 +40,14 @@ class FilterBackend:
 
         Args:
             model: The Django model to build a filter input for.
-            filter_fields: The ``Meta.filter_fields`` declaration.
+            filter_fields: The "Meta.filter_fields" declaration.
             registry: The registry providing related types and choices enums.
-            custom_filters: Optional list of ``(arg_name, method, metadata)``
-                triples from ``@filter_field``-decorated methods.
+            custom_filters: Optional list of "(arg_name, method, metadata)"
+                triples from "@filter_field"-decorated methods.
 
         Returns:
-            A graphene ``InputObjectType`` subclass, or ``None`` when no
-            filterable fields are declared.
+            A "GraphQLInputObjectType" (or "None" when no filterable fields
+            are declared).
         """
         raise NotImplementedError
 
@@ -51,8 +56,8 @@ class FilterBackend:
 
         Args:
             queryset: The base queryset to filter.
-            value: The filter input value (an ``InputObjectTypeContainer``), or
-                ``None`` / empty for a no-op.
+            value: The filter input value (an "InputObjectTypeContainer"), or
+                "None" / empty for a no-op.
 
         Returns:
             The filtered queryset.
@@ -61,7 +66,12 @@ class FilterBackend:
 
 
 class NativeFilterBackend(FilterBackend):
-    """Native ``Q``-based filtering over Django's ORM lookups."""
+    """Filter backend built on Django's ORM lookups and "Q" objects.
+
+    Builds the recursive "<Model>FilterInput" type from a declaration and
+    applies a submitted value by translating it to a "Q" via "to_q", adding
+    ".distinct()" when a to-many relation was traversed.
+    """
 
     def build_input_type(
         self,
@@ -70,32 +80,35 @@ class NativeFilterBackend(FilterBackend):
         registry: Registry | None = None,
         custom_filters: list | None = None,
     ) -> Any:
-        """Build the recursive ``<Model>FilterInput`` type (memoized).
+        """Build the recursive "<Model>FilterInput" type (memoized).
 
         Args:
             model: The Django model to build a filter input for.
-            filter_fields: The ``Meta.filter_fields`` declaration.
+            filter_fields: The "Meta.filter_fields" declaration.
             registry: The registry providing related types and choices enums.
-            custom_filters: Optional list of ``(arg_name, method, metadata)``
-                triples from ``@filter_field``-decorated methods.
+            custom_filters: Optional list of "(arg_name, method, metadata)"
+                triples from "@filter_field"-decorated methods.
 
         Returns:
-            A graphene ``InputObjectType`` subclass, or ``None`` when no
-            filterable fields are declared.
+            A "GraphQLInputObjectType" (or "None" when no filterable fields
+            are declared).
         """
+        # Native (graphql-core) ``<Model>FilterInput`` builder.
+        from .native_schema import build_filter_input_type
+
         return build_filter_input_type(
             model, filter_fields, registry, custom_filters=custom_filters
         )
 
     def apply(self, queryset: QuerySet, value: Any) -> QuerySet:
-        """Filter ``queryset`` with the ``Q`` translated from ``value``.
+        """Filter "queryset" with the "Q" translated from "value".
 
-        Applies ``.distinct()`` when a to-many relation was traversed (to
+        Applies ".distinct()" when a to-many relation was traversed (to
         de-duplicate join fan-out). An empty/absent value is a no-op.
 
         Args:
             queryset: The base queryset to filter.
-            value: The filter input value, or ``None`` / empty for a no-op.
+            value: The filter input value, or "None" / empty for a no-op.
 
         Returns:
             The filtered (and possibly de-duplicated) queryset.
@@ -115,6 +128,6 @@ def resolve_filter_backend() -> FilterBackend:
     """Return the configured filter backend (the seam factory).
 
     Returns:
-        A :class:`FilterBackend` instance (the native backend).
+        A "FilterBackend" instance (the native backend).
     """
     return NativeFilterBackend()

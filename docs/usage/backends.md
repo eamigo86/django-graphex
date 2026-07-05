@@ -25,7 +25,7 @@ Point `Meta.model` at a model and the library validates with **Pydantic v2** and
 persists with the ORM — no DRF required:
 
 ```python
-from django_graphex import DjangoModelType
+from django_graphex.types import DjangoModelType
 
 class UserType(DjangoModelType):
     class Meta:
@@ -143,14 +143,20 @@ class UserType(DjangoModelType):
 
 ### Exotic field types fall back to a permissive scalar
 
-File/image fields, Postgres-specific field types (`ArrayField`, `HStoreField`,
-range fields), GIS geometry fields, and `GenericForeignKey` are not natively
-modeled by the Pydantic schema the backend derives. They are accepted as-is
-(permissive scalar) without type or length validation.
+File/image fields, `HStoreField`, GIS geometry fields, and `GenericForeignKey`
+are not natively modeled by the Pydantic schema the backend derives. They are
+accepted as-is (permissive scalar) without type or length validation.
+
+`ArrayField` and range fields ARE natively modeled in v2.0 output:
+`ArrayField(CharField())` renders as `[String]` (nested arrays as `[[…]]`, a
+choices base as `[<Enum>]`), and a `*RangeField` renders as a `{ lower, upper }`
+composite typed by its bound scalar (e.g. `IntegerRangeField` → `{ lower: Int,
+upper: Int }`). See the field-type conversion reference in
+[Types](types.md).
 
 **In practice:** a file upload is handled by the multipart middleware, not
-Pydantic; other exotic fields pass through without constraint checks. If you need
-validation on these, use a `validate_<field>()` method.
+Pydantic; the remaining exotic fields above pass through without constraint
+checks. If you need validation on these, use a `validate_<field>()` method.
 
 ### Conditional and expression-based `UniqueConstraint` entries are DB-enforced only
 

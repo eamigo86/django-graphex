@@ -1,3 +1,5 @@
+"""Raw GraphQL query strings shared across the test suite's user-query tests."""
+
 ALL_USERS = """query {
   allUsers {
     results {

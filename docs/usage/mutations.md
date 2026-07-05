@@ -20,7 +20,7 @@ The `DjangoModelMutation` is the cornerstone of mutations in `django-graphex`. I
 
     ```python
     from django.contrib.auth.models import User
-    from django_graphex import DjangoModelMutation
+    from django_graphex.mutation import DjangoModelMutation
 
     class UserMutation(DjangoModelMutation):
         class Meta:
@@ -31,29 +31,43 @@ The `DjangoModelMutation` is the cornerstone of mutations in `django-graphex`. I
 === "Add to Schema"
 
     ```python
-    import graphene
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
     from .mutations import UserMutation
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         # Get all mutation fields (create, update, delete)
         user_create, user_delete, user_update = UserMutation.MutationFields()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 === "Alternative Schema Setup"
 
     ```python
-    import graphene
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
     from .mutations import UserMutation
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         # Individual mutation fields
         create_user = UserMutation.CreateField()
         update_user = UserMutation.UpdateField()
         delete_user = UserMutation.DeleteField()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
+    ```
+
+!!! tip "Deprecating a mutation field"
+    Every mutation-field builder (`CreateField`, `UpdateField`, `DeleteField`,
+    and `MutationFields`) accepts `deprecation_reason=`, wired straight into the
+    compiled field so the SDL renders `@deprecated(reason: ...)`:
+
+    ```python
+    class Mutation(ObjectType):
+        create_user = UserMutation.CreateField(
+            deprecation_reason="Use `createUserV2` instead; will be removed in 3.0."
+        )
     ```
 
 ### Configuration Options
@@ -105,23 +119,26 @@ class UserMutation(DjangoModelMutation):
             exclude_fields = ('password', 'is_staff', 'is_superuser')
     ```
 
-### Custom Arguments
+### Custom Arguments with `Field`
 
-You can add custom arguments to your mutations:
+You can add custom arguments to your mutations. Declare them in a nested
+`class Arguments` with the unified `Field` descriptor — the same descriptor
+used in output position — or one of the typed shortcuts (`BooleanField`,
+`CharField`, `IntField`, …) for a bare scalar:
 
 ```python
-import graphene
 from django.contrib.auth.models import User
-from django_graphex import DjangoModelMutation
+from django_graphex.core import BooleanField
+from django_graphex.mutation import DjangoModelMutation
 
 class UserMutation(DjangoModelMutation):
     class Meta:
         model = User
 
     class Arguments:
-        send_email = graphene.Boolean(
-            default_value=False,
-            description="Send welcome email after user creation"
+        send_email = BooleanField(
+            default=False,
+            description="Send welcome email after user creation",
         )
 
     @classmethod
@@ -152,7 +169,7 @@ class UserMutation(DjangoModelMutation):
     - For single objects: The created object's ID is assigned to the field
     - For lists: Objects are added to the many-to-many relationship
 
-### File Upload Support
+### Automatic multipart uploads
 
 The mutation automatically handles file uploads when the request content type is `multipart/form-data`:
 
@@ -200,6 +217,17 @@ Example error response:
 }
 ```
 
+!!! tip "FK existence check runs only on the failure path"
+    A valid mutation issues a single `INSERT`/`UPDATE` — the per-FK `SELECT 1`
+    existence pre-check is **not** run on the happy path. If the write raises an
+    `IntegrityError` (e.g. a bad FK pk), the same diagnostics that used to run
+    eagerly now run **after** the failure to attribute the exact field, so a bad
+    FK still returns the identical structured `errors[]` envelope. Nested writes
+    (`Meta.nested_fields`) similarly open a `transaction.atomic()` savepoint
+    **only when nested child work is actually present** — a plain, parent-only
+    create/update pays no savepoint overhead. Both changes are purely
+    performance-oriented: the observable response shape is unchanged.
+
 ### Custom Mutation Logic
 
 Override methods to add custom logic:
@@ -212,7 +240,7 @@ Override methods to add custom logic:
 
     ```python
     from django.contrib.auth.models import User
-    from django_graphex import DjangoModelMutation
+    from django_graphex.mutation import DjangoModelMutation
 
     class UserMutation(DjangoModelMutation):
         class Meta:
@@ -253,9 +281,9 @@ Here's a complete example showing all features:
 === "mutations.py"
 
     ```python
-    import graphene
     from django.contrib.auth.models import User
-    from django_graphex import DjangoModelMutation
+    from django_graphex.core import BooleanField
+    from django_graphex.mutation import DjangoModelMutation
     from .models import Address, Profile
 
     class UserMutation(DjangoModelMutation):
@@ -265,19 +293,20 @@ Here's a complete example showing all features:
             nested_fields = {'profile': Profile, 'addresses': Address}
 
         class Arguments:
-            send_welcome_email = graphene.Boolean(default_value=True)
+            send_welcome_email = BooleanField(default=True)
     ```
 
 === "schema.py"
 
     ```python
-    import graphene
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
     from .mutations import UserMutation
 
-    class Mutation(graphene.ObjectType):
+    class Mutation(ObjectType):
         create_user, delete_user, update_user = UserMutation.MutationFields()
 
-    schema = graphene.Schema(query=Query, mutation=Mutation)
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 === "GraphQL client"
@@ -449,44 +478,68 @@ related objects alongside the parent. The same engine backs both
 
 ### M2M write semantics: nested path vs. top-level path
 
-The two write paths use **different M2M semantics** — this is intentional in v1.2.x and will be
-unified in v1.3.0:
+The two write paths use **different M2M semantics** — this is intentional and the two paths
+are not yet unified:
 
 | Write path | M2M operation | Effect |
 |---|---|---|
-| **Nested** (`nested_fields`) | `.add(*children)` | **Additive** — existing links are kept; the submitted items are appended. Submitting an empty list is a no-op. |
-| **Top-level native backend** | `.set(pks)` | **Replace** — existing links are removed and replaced with exactly the submitted list. Submitting an empty list clears all links. |
+| **Nested** (`nested_fields`) | `.add(*children)` | **Additive** — existing links are kept; the submitted items are appended. Submitting an empty list (or `null`) is a **no-op**. |
+| **Top-level native backend** | `.set(pks)` | **Replace** — existing links are removed and replaced with exactly the submitted list. Submitting an empty list `[]` **or an explicit `null`** clears all links. Omitting the field entirely leaves the relation untouched. |
 
 **Practical implication:** to *remove* M2M links via the nested path you currently cannot — use the
-top-level mutation instead, or issue a separate mutation that clears and re-adds.
+top-level mutation instead (send `tags: []` or `tags: null` to clear), or issue a separate mutation
+that clears and re-adds.
 
-!!! note "Planned for v1.3.0"
+!!! note "Not yet implemented as of v2.0"
     A per-field `m2m_behavior = "set" | "add"` option will let you choose the semantics on the
     nested path and align the default to `.set` (matching top-level behavior).
 
-### Explicit-null limitation in update mutations
+### Explicit-null semantics in update mutations
 
-`update()` currently treats `None` values in the input as "not provided" and skips them. This
-means you **cannot clear a nullable field or empty an M2M** by sending `null` — the field will be
-left unchanged.
+`update()` follows the GraphQL specification: **an omitted field is not the same as an explicit
+`null`**. On a partial update:
+
+| Input | Effect |
+|---|---|
+| Field **omitted** from the input | Value is **left unchanged** (partial-update semantics). |
+| Field sent as **explicit `null`** (nullable field / FK) | Column is set to **`NULL`**. |
+| Field sent as **explicit `null`** (required field) | A clean **validation error** (`ok: false`, `errors[]`) — never a 500. |
+| M2M sent as `null` **or** `[]` (top-level path) | Relation is **cleared**. |
+| M2M **omitted** (top-level path) | Relation is **left unchanged**. |
 
 ```graphql
-# This does NOT clear the bio field in v1.2.x:
+# Clear the nullable ``bio`` field:
 mutation {
   updateUser(newUser: { id: 1, bio: null }) {
     ok
-    user { id bio }
+    user { id bio }        # -> bio is now null
+  }
+}
+
+# Leave ``bio`` untouched (it is simply omitted):
+mutation {
+  updateUser(newUser: { id: 1, firstName: "Ada" }) {
+    ok
+    user { id bio }        # -> bio unchanged
+  }
+}
+
+# Clear an M2M (``tags: null`` is equivalent to ``tags: []``):
+mutation {
+  updatePost(newPost: { id: 1, tags: null }) {
+    ok
+    post { id }
   }
 }
 ```
 
-**Workaround:** use a separate mutation that explicitly assigns an empty string or removes the
-M2M association via a dedicated resolver.
-
-!!! note "Planned for v1.3.0"
-    Explicit-null support requires distinguishing "omitted" from "explicitly null" at the input
-    level. The planned approach is an AST-presence check so the current partial-update behavior
-    is preserved for omitted fields while respecting intentional nulls.
+!!! warning "Nested inputs treat `null` as a no-op"
+    Explicit-null semantics apply to **scalar fields, foreign keys, and the top-level
+    (`ID`-list) M2M surface**. For **nested inputs** (`Meta.nested_fields`) a `null` / `[]` /
+    `{}` payload is a deliberate **no-op** — the related children are left untouched, never
+    deleted. Interpreting `null` as "delete every related child" would be dangerous and
+    irreversible, so nested writes never clear on `null`. To remove nested children, target the
+    child model directly.
 
 ### perform_mutate response shape
 
@@ -520,9 +573,9 @@ class MyMutation(DjangoModelMutation):
 
 ## Mutation response: depth limits and optimizer
 
-### `MAX_QUERY_DEPTH` and `Meta.max_deep` apply to mutations
+### `MAX_QUERY_DEPTH` and `Meta.max_depth` apply to mutations
 
-Query depth limiting (`MAX_QUERY_DEPTH` global setting and `Meta.max_deep` per-type)
+Query depth limiting (`MAX_QUERY_DEPTH` global setting and `Meta.max_depth` per-type)
 is enforced on **all** operation types — including mutation response selection sets.
 The selection set validation runs before execution, so a mutation that requests
 deeper nesting than the limit permits is rejected with a validation error before
@@ -534,14 +587,14 @@ DJANGO_GRAPHEX = {
 }
 ```
 
-The attribute name is `max_deep` (not `max_depth`) on both the global setting key
-and `Meta`:
+The per-type attribute is `Meta.max_depth`; the global setting key is
+`MAX_QUERY_DEPTH`:
 
 ```python
 class UserModelType(DjangoModelType):
     class Meta:
         model = User
-        max_deep = 3   # overrides the global MAX_QUERY_DEPTH for this type
+        max_depth = 3   # overrides the global MAX_QUERY_DEPTH for this type
 ```
 
 See [Query depth & cost limits](query-limits.md) for the full reference.
@@ -553,24 +606,25 @@ While `DjangoModelMutation` covers most use cases, you can still create traditio
 === "Traditional Mutation"
 
     ```python
-    import graphene
-    from django_graphex import DjangoObjectType
+    from django_graphex.core import BooleanField, CharField, Field, Mutation
+    from django_graphex.types import DjangoObjectType
     from django.contrib.auth.models import User
 
     class UserType(DjangoObjectType):
         class Meta:
             model = User
 
-    class CreateUser(graphene.Mutation):
+    class CreateUser(Mutation):
         class Arguments:
-            username = graphene.String(required=True)
-            email = graphene.String(required=True)
-            password = graphene.String(required=True)
+            username = CharField(required=True)
+            email = CharField(required=True)
+            password = CharField(required=True)
 
-        ok = graphene.Boolean()
-        user = graphene.Field(UserType)
+        ok = BooleanField()
+        user = Field(UserType)
 
-        def mutate(self, info, username, email, password):
+        @staticmethod
+        def mutate(root, info, username, email, password):
             user = User.objects.create_user(
                 username=username,
                 email=email,
@@ -582,19 +636,24 @@ While `DjangoModelMutation` covers most use cases, you can still create traditio
 === "With Error Handling"
 
     ```python
+    from django_graphex.core import BooleanField, CharField, Field, Mutation
     from django_graphex.errors import ErrorType
+    # ErrorType is a native ObjectType (a Python class), so wrap it in the
+    # lazy NativeList rather than graphql-core's GraphQLList.
+    from django_graphex.core.descriptors import NativeList
 
-    class CreateUser(graphene.Mutation):
+    class CreateUser(Mutation):
         class Arguments:
-            username = graphene.String(required=True)
-            email = graphene.String(required=True)
-            password = graphene.String(required=True)
+            username = CharField(required=True)
+            email = CharField(required=True)
+            password = CharField(required=True)
 
-        ok = graphene.Boolean()
-        user = graphene.Field(UserType)
-        errors = graphene.List(ErrorType)
+        ok = BooleanField()
+        user = Field(UserType)
+        errors = Field(NativeList(ErrorType))
 
-        def mutate(self, info, username, email, password):
+        @staticmethod
+        def mutate(root, info, username, email, password):
             # Validation
             errors = []
 
@@ -639,7 +698,7 @@ While `DjangoModelMutation` covers most use cases, you can still create traditio
 ```python
 from graphql import GraphQLError
 from django.contrib.auth.models import User
-from django_graphex import DjangoModelMutation
+from django_graphex.mutation import DjangoModelMutation
 
 class UserMutation(DjangoModelMutation):
     class Meta:
@@ -669,13 +728,11 @@ authoritative reference:
 
     ```python
     import pytest
-    from graphene.test import Client
-    from .schema import schema
+    from graphql import graphql_sync
+    from .schema import schema   # a DjangoGraphQLSchema
 
     @pytest.mark.django_db
     def test_create_user_mutation():
-        client = Client(schema)
-
         mutation = """
             mutation CreateUser($userData: UserInput!) {
                 createUser(newUser: $userData) {
@@ -701,18 +758,19 @@ authoritative reference:
             }
         }
 
-        result = client.execute(mutation, variables=variables)
-        assert result['data']['createUser']['ok'] is True
-        assert result['data']['createUser']['user']['username'] == 'testuser'
+        result = graphql_sync(schema.graphql_schema, mutation, variable_values=variables)
+        assert result.errors is None
+        assert result.data['createUser']['ok'] is True
+        assert result.data['createUser']['user']['username'] == 'testuser'
     ```
 
 === "Error Handling Test"
 
     ```python
+    from graphql import graphql_sync
+
     @pytest.mark.django_db
     def test_create_user_validation_error():
-        client = Client(schema)
-
         mutation = """
             mutation CreateUser($userData: UserInput!) {
                 createUser(newUser: $userData) {
@@ -733,9 +791,9 @@ authoritative reference:
             }
         }
 
-        result = client.execute(mutation, variables=variables)
-        assert result['data']['createUser']['ok'] is False
-        assert len(result['data']['createUser']['errors']) > 0
+        result = graphql_sync(schema.graphql_schema, mutation, variable_values=variables)
+        assert result.data['createUser']['ok'] is False
+        assert len(result.data['createUser']['errors']) > 0
     ```
 
 The mutation system in `django-graphex` provides a robust foundation for handling data modifications in your GraphQL API, with built-in validation, error handling, and support for complex operations.
@@ -749,7 +807,7 @@ The mutation system in `django-graphex` provides a robust foundation for handlin
 `django-graphex` ships an **opt-in** `Base64FileInput` for sending files through the GraphQL body as base64-encoded strings. Import it explicitly — it is not wired into `DjangoModelMutation` automatically.
 
 ```python
-from django_graphex import Base64FileInput           # or:
+from django_graphex.uploads import Base64FileInput
 from django_graphex.uploads import Base64FileInput, decode_base64_file
 ```
 
@@ -766,24 +824,42 @@ input Base64FileInput {
 #### Resolver usage
 
 ```python
-import graphene
-from django_graphex import Base64FileInput
+from django_graphex.core import BooleanField, Field, Mutation
+from django_graphex.uploads import Base64FileInput
 
-class UploadAvatarMutation(graphene.Mutation):
+class UploadAvatarMutation(Mutation):
     class Arguments:
-        avatar = Base64FileInput(required=True)
+        # Pass the input-object CLASS directly. Field resolves the compiled
+        # GraphQLInputObjectType LAZILY at schema-build time, so there is no thunk
+        # boilerplate and no `_meta.graphql_input_type` reference at class scope.
+        avatar = Field(Base64FileInput, required=True)
 
-    ok = graphene.Boolean()
+    ok = BooleanField()
 
-    def mutate(self, info, avatar):
-        # avatar.to_uploaded_file() → Django SimpleUploadedFile
+    @classmethod
+    def mutate(cls, root, info, **kwargs):
+        # The input object arrives as a dict (snake-cased keys); rehydrate it into a
+        # Base64FileInput so .to_uploaded_file() is available.
+        avatar = Base64FileInput(**kwargs["avatar"])
         # Pass max_size to override the global MAX_UPLOAD_SIZE for this field:
         uploaded = avatar.to_uploaded_file(max_size=512 * 1024)  # 512 KB cap
         profile.avatar.save(uploaded.name, uploaded, save=True)
-        return UploadAvatarMutation(ok=True)
+        return cls(ok=True)
 ```
 
-The value received by the resolver (the `avatar` argument) is a dict-like container with `.filename`, `.data`, `.content_type` attributes **and** a `.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
+The `avatar` argument arrives in the resolver as a plain `dict` of the input
+fields; rehydrate it with `Base64FileInput(**kwargs["avatar"])` to get a validated
+instance with `.filename`, `.data`, `.content_type` attributes **and** a
+`.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
+
+!!! note "How `Field` resolves the input type"
+    `Base64FileInput._meta.graphql_input_type` is compiled at schema-build time.
+    Listing `django_graphex` in `INSTALLED_APPS` triggers that compilation from
+    `AppConfig.ready()`, so `Field(Base64FileInput, ...)` resolves the class
+    to the real compiled input type when the schema mounts the field — lazily,
+    never reading the attribute (which would be `None`) at class-definition time.
+    The older `lambda: GraphQLArgument(GraphQLNonNull(...))` thunk still works as
+    the low-level substrate.
 
 You can also call the module-level helper directly if you hold the raw dict:
 
