@@ -27,6 +27,10 @@ from pathlib import Path
 
 import pytest
 
+# The playground settings mount daphne/channels; without the "subscriptions"
+# extra (base-install CI env) the spawned schema-build subprocess cannot boot.
+pytest.importorskip("daphne")
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _PLAYGROUND = _REPO_ROOT / "examples" / "playground"
 

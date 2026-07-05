@@ -19,6 +19,8 @@ Coverage:
 
 from __future__ import annotations
 
+import pytest
+
 from typing import Any
 
 from graphql import (
@@ -795,6 +797,9 @@ def test_real_compiled_schema_prunes_and_validates() -> None:
     fixtures above), producing an invalid schema for some combination of
     granted permissions.
     """
+    # Requires the "subscriptions" extra: the exercised runtime mounts
+    # channels; skip in the channels-free base-install CI env.
+    pytest.importorskip("channels")
     from django_graphex.core import ObjectType, field
     from django_graphex.core.registry_compiler import compile_all_outputs
     from django_graphex.mutation import DjangoModelMutation

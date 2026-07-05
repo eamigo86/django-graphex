@@ -13,6 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+# The module-level schema mounts a SubscriptionField, which imports the
+# subscriptions package; without the "subscriptions" extra (base-install CI
+# env) that import fails, so the whole module skips like its siblings.
+pytest.importorskip("channels")
+
 from graphql import GraphQLBoolean, GraphQLField, GraphQLSchema, GraphQLString
 
 from django_graphex.core import ObjectType, field

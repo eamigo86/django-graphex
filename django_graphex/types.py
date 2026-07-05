@@ -192,7 +192,7 @@ def _model_field_names(model: type) -> set[str]:
             try:
                 names.add(get_accessor())
             except Exception:  # pragma: no cover — defensive
-                pass
+                pass  # nosec B110 — accessor probing is best-effort
     return names
 
 
@@ -1494,7 +1494,7 @@ def _resolve_native_nested_input_fields(
         try:
             relation = model._meta.get_field(accessor)
         except Exception:  # noqa: BLE001 — unknown accessor: skip, never crash
-            continue
+            continue  # nosec B112 — deliberate skip of unknown accessors
 
         if relation.many_to_one:
             is_list = False

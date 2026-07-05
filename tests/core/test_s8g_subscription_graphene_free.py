@@ -28,6 +28,11 @@ stays graphene-free (asserted here + in
 import ast
 from pathlib import Path
 
+import pytest
+
+# Requires the "subscriptions" extra; skip in the channels-free CI env.
+pytest.importorskip("channels")
+
 import django_graphex.subscriptions.subscription as sub_mod
 
 _SUB_PATH = Path(sub_mod.__file__)

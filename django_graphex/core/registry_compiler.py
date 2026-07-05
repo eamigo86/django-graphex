@@ -313,7 +313,7 @@ def compile_all(registry: NativeOutputRegistry) -> None:
             try:
                 model_cls.model_rebuild()  # type: ignore[union-attr]
             except Exception:
-                pass  # Not all classes support model_rebuild
+                pass  # nosec B110 — not all classes support model_rebuild
 
     # Phase 2: compile each type
     for gql_name, model_cls, related_models, skip_gdx in entries:

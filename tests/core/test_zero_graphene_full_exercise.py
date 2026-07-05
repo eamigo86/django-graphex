@@ -40,6 +40,8 @@ Run:
 
 from __future__ import annotations
 
+import pytest
+
 import os
 import subprocess
 import sys
@@ -525,6 +527,9 @@ def test_zero_graphene_full_runtime_exercise() -> None:
     with graphene blocked at "sys.meta_path" — and "graphene" is absent from
     "sys.modules" before and after, with the block never firing.
     """
+    # Requires the "subscriptions" extra: the exercised runtime mounts
+    # channels; skip in the channels-free base-install CI env.
+    pytest.importorskip("channels")
     proc = _run_gate_subprocess()
     assert proc.returncode == 0, (
         "the zero-graphene full-runtime gate FAILED — a production runtime path "

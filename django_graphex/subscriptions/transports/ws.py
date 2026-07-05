@@ -525,7 +525,7 @@ def subscription_ws_consumer(
                     try:
                         await source.aclose()
                     except Exception:  # noqa: BLE001 - disconnect must not raise
-                        pass
+                        pass  # nosec B110 — best-effort source close on disconnect
 
         # -- protocol frame senders -----------------------------------------
         async def _send_next(self, op_id: str, result: ExecutionResult) -> None:
@@ -576,7 +576,7 @@ def subscription_ws_consumer(
                     try:
                         await source.aclose()
                     except Exception:  # noqa: BLE001 - close must not raise
-                        pass
+                        pass  # nosec B110 — best-effort source close before socket close
             await self.close(code=code)
 
         # -- test/introspection accessors -----------------------------------
