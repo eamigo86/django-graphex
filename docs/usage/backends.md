@@ -25,7 +25,7 @@ Point `Meta.model` at a model and the library validates with **Pydantic v2** and
 persists with the ORM — no DRF required:
 
 ```python
-from django_graphex import DjangoModelType
+from django_graphex.types import DjangoModelType
 
 class UserType(DjangoModelType):
     class Meta:

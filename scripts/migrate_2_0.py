@@ -18,14 +18,21 @@ operation per construct:
        * if a ``DJANGO_GRAPHEX`` dict already exists, the ``GRAPHENE`` keys are
          MERGED into it (DJANGO_GRAPHEX wins on the rare key collision) and the
          old ``GRAPHENE`` assignment is dropped.
+   - Bundled-middleware settings-strings are repointed from the removed flat
+     package-root path to their submodule path, e.g.
+     ``"django_graphex.GraphQLDirectiveMiddleware"`` ->
+     ``"django_graphex.middleware.GraphQLDirectiveMiddleware"`` and the security
+     middlewares -> ``"django_graphex.security.<Name>"`` (v2.0 dropped the root
+     re-exports, so the flat dotted path no longer resolves).
 
 2. REPORT-AND-FLAG (always; never auto-rewritten because the native shape is not
    a 1:1 token swap)
-   - ``graphene.Argument(...)`` inside a ``Mutation`` ``class args`` → native
-     ``graphql.GraphQLArgument(...)`` (v2.0 raises ``TypeError`` for non-native
-     args — CLEAN BREAK).
-   - ``graphene.ObjectType`` schema roots → ``from django_graphex import ObjectType``.
-   - ``graphene.Schema(...)`` → ``django_graphex.DjangoGraphQLSchema(...)``.
+   - ``graphene.Argument(...)`` inside a ``Mutation`` arguments container
+     (``class Arguments`` — the native v2.0 name — or the legacy repo ``class
+     args``) → native ``graphql.GraphQLArgument(...)`` (v2.0 raises ``TypeError``
+     for non-native args — CLEAN BREAK).
+   - ``graphene.ObjectType`` schema roots → ``from django_graphex.core import ObjectType``.
+   - ``graphene.Schema(...)`` → ``django_graphex.schema.DjangoGraphQLSchema(...)``.
    - graphene field descriptors (``graphene.String()`` / ``graphene.Field(...)``
      on a type body) → ``field(GraphQLString)`` / native ``field(...)``.
 
@@ -54,6 +61,7 @@ a plain rename when no target dict exists, or a key merge when it does. All othe
 formatting is preserved and the rewrite is idempotent (a module with no
 ``GRAPHENE`` dict is returned unchanged).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -78,6 +86,24 @@ _CANONICAL_SETTINGS_NAMESPACE = "DJANGO_GRAPHEX"
 # is a different identifier and never matches this anchored pattern).
 _SETTINGS_ASSIGN_RE = re.compile(
     r"^(?P<indent>\s*)" + _LEGACY_SETTINGS_NAMESPACE + r"(?P<rest>\s*=\s*)"
+)
+
+# v2.0 removed the flat package-root attribute access, so bundled middleware
+# referenced in settings as ``django_graphex.<Name>`` must be repointed to its
+# submodule path (the class itself is unchanged — only the import location moved).
+_MIDDLEWARE_PATH_REWRITES = (
+    (
+        "django_graphex.GraphQLDirectiveMiddleware",
+        "django_graphex.middleware.GraphQLDirectiveMiddleware",
+    ),
+    (
+        "django_graphex.DisableIntrospectionMiddleware",
+        "django_graphex.security.DisableIntrospectionMiddleware",
+    ),
+    (
+        "django_graphex.AuthenticatedFieldsMiddleware",
+        "django_graphex.security.AuthenticatedFieldsMiddleware",
+    ),
 )
 
 
@@ -109,31 +135,33 @@ class RunResult:
 # --------------------------------------------------------------------------- #
 _GUIDANCE = {
     "graphene-argument": (
-        "graphene.Argument(...) in a Mutation `class args` is no longer accepted "
-        "(CLEAN BREAK: v2.0 raises TypeError). Use the native graphql-core arg API:\n"
+        "graphene.Argument(...) in a Mutation `class Arguments` is no longer "
+        "accepted (CLEAN BREAK: v2.0 raises TypeError). Native v2.0 declares "
+        "mutation arguments in `class Arguments` (unified with DjangoModelMutation) "
+        "using the native graphql-core arg API:\n"
         "    from graphql import GraphQLArgument, GraphQLNonNull, GraphQLString\n"
-        "    class args:\n"
+        "    class Arguments:\n"
         "        name = GraphQLArgument(GraphQLNonNull(GraphQLString))\n"
         "(a bare graphql-core type is also accepted and auto-wrapped in a "
         "GraphQLArgument)."
     ),
     "graphene-objecttype": (
         "graphene.ObjectType schema roots are gone. Use the native root base:\n"
-        "    from django_graphex import ObjectType\n"
+        "    from django_graphex.core import ObjectType\n"
         "    class Query(ObjectType):\n"
         "        ..."
     ),
     "graphene-schema": (
         "graphene.Schema(...) is gone. Build the schema with "
-        "django_graphex.DjangoGraphQLSchema:\n"
-        "    from django_graphex import DjangoGraphQLSchema\n"
+        "django_graphex.schema.DjangoGraphQLSchema:\n"
+        "    from django_graphex.schema import DjangoGraphQLSchema\n"
         "    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)"
     ),
     "graphene-field-descriptor": (
         "graphene field descriptors (graphene.String() / graphene.Field(...)) on a "
         "type/root body are gone. Use the native field() helper with a graphql-core "
         "type:\n"
-        "    from django_graphex import field\n"
+        "    from django_graphex.core import field\n"
         "    from graphql import GraphQLString\n"
         "    server_time = field(GraphQLString, description='ISO timestamp')"
     ),
@@ -184,11 +212,7 @@ def _base_is_graphene(base: ast.AST, name: str, native_names: frozenset[str]) ->
     if _is_graphene_attr(base, name):
         return True
     # ``from graphene import ObjectType`` then ``class Query(ObjectType)``.
-    return (
-        isinstance(base, ast.Name)
-        and base.id == name
-        and name not in native_names
-    )
+    return isinstance(base, ast.Name) and base.id == name and name not in native_names
 
 
 def _module_imports_graphene(tree: ast.Module) -> bool:
@@ -257,11 +281,14 @@ def analyze_source(source: str, *, path: str = "<source>") -> list[Finding]:
         )
 
     # Track which classes are graphene.Mutation subclasses so we only flag
-    # graphene.Argument inside a real Mutation `class args` body.
+    # graphene.Argument inside a real Mutation arguments container (`class
+    # Arguments` — the native v2.0 name — or the legacy repo `class args`).
     for node in ast.walk(tree):
         # graphene.ObjectType root.
         if isinstance(node, ast.ClassDef):
-            if any(_base_is_graphene(b, "ObjectType", native_names) for b in node.bases):
+            if any(
+                _base_is_graphene(b, "ObjectType", native_names) for b in node.bases
+            ):
                 add("graphene-objecttype", node)
             is_mutation = any(
                 _base_is_graphene(b, "Mutation", native_names) for b in node.bases
@@ -275,9 +302,11 @@ def analyze_source(source: str, *, path: str = "<source>") -> list[Finding]:
 
     # graphene field descriptors anywhere at a class body's statement level
     # (e.g. ``ok = graphene.Boolean()`` / ``me = graphene.Field(UserType)``).
-    # Skip those nested inside a `class args` (already covered as args).
+    # Skip those nested inside a Mutation arguments container (`class Arguments`
+    # — the native v2.0 name — or the legacy repo `class args`); already covered
+    # as args.
     for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "args":
+        if isinstance(node, ast.ClassDef) and node.name in ("args", "Arguments"):
             continue
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if (
@@ -296,9 +325,14 @@ def analyze_source(source: str, *, path: str = "<source>") -> list[Finding]:
 
 
 def _flag_mutation_args(mutation: ast.ClassDef, add) -> None:
-    """Flag every ``graphene.Argument(...)`` declared in a Mutation `class args`."""
+    """Flag every ``graphene.Argument(...)`` in a Mutation arguments container.
+
+    The container is the inner class named either ``Arguments`` (the native v2.0
+    name, also graphene's canonical name) or ``args`` (the legacy repo shape), so
+    both graphene-canonical and legacy-repo mutations are flagged.
+    """
     for stmt in mutation.body:
-        if isinstance(stmt, ast.ClassDef) and stmt.name == "args":
+        if isinstance(stmt, ast.ClassDef) and stmt.name in ("args", "Arguments"):
             for arg_stmt in ast.walk(stmt):
                 if isinstance(arg_stmt, ast.Call) and _is_graphene_attr(
                     arg_stmt.func, "Argument"
@@ -309,7 +343,9 @@ def _flag_mutation_args(mutation: ast.ClassDef, add) -> None:
 # --------------------------------------------------------------------------- #
 # Mechanical rewrite — GRAPHENE settings namespace -> DJANGO_GRAPHEX.           #
 # --------------------------------------------------------------------------- #
-def _module_assignment(tree: ast.Module, name: str) -> ast.Assign | ast.AnnAssign | None:
+def _module_assignment(
+    tree: ast.Module, name: str
+) -> ast.Assign | ast.AnnAssign | None:
     """Return the LAST module-level assignment to ``name`` (a dict target), if any."""
     found: ast.Assign | ast.AnnAssign | None = None
     for node in tree.body:  # module level only
@@ -366,14 +402,16 @@ def _dict_entries(
             continue
         key_src = ast.get_source_segment(source, key) or ""
         value_src = ast.get_source_segment(source, value) or ""
-        key_literal = key.value if isinstance(key, ast.Constant) and isinstance(
-            key.value, str
-        ) else None
+        key_literal = (
+            key.value
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            else None
+        )
         entries.append((key_literal, key_src, value_src))
     return entries
 
 
-def rewrite_source(source: str) -> tuple[str, bool]:
+def _fold_settings_namespace(source: str) -> tuple[str, bool]:
     """Fold the legacy ``GRAPHENE = {...}`` settings dict into ``DJANGO_GRAPHEX``.
 
     Two cases (django-graphex unified its two settings namespaces in v2.0):
@@ -437,7 +475,7 @@ def rewrite_source(source: str) -> tuple[str, bool]:
     # Indentation of the target dict's entries (match the first entry, else 4 sp).
     if target_dict.values:
         first_val = target_dict.values[0]
-        entry_indent = " " * ((first_val.col_offset or 4))
+        entry_indent = " " * (first_val.col_offset or 4)
         # col_offset of the value is past the key; recover from the key instead.
         first_key = target_dict.keys[0]
         if first_key is not None:
@@ -446,7 +484,8 @@ def rewrite_source(source: str) -> tuple[str, bool]:
         entry_indent = "    "
 
     injected = "".join(
-        f"{entry_indent}{key_src}: {val_src},\n" if key_src and not key_src.startswith("**")
+        f"{entry_indent}{key_src}: {val_src},\n"
+        if key_src and not key_src.startswith("**")
         else f"{entry_indent}{key_src},\n"
         for key_src, val_src in new_entries
     )
@@ -472,6 +511,41 @@ def rewrite_source(source: str) -> tuple[str, bool]:
     return merged, True
 
 
+def _repoint_middleware_paths(source: str) -> tuple[str, bool]:
+    """Repoint bundled-middleware settings-strings to their v2.0 submodule path.
+
+    Rewrites the removed flat root path ``django_graphex.<Name>`` wherever it
+    appears (the schema ``MIDDLEWARE`` list, Django's ``MIDDLEWARE``, …). A pure
+    literal substitution; idempotent (an already-submodule path never contains
+    the flat substring).
+    """
+    changed = False
+    for flat, submodule in _MIDDLEWARE_PATH_REWRITES:
+        if flat in source:
+            source = source.replace(flat, submodule)
+            changed = True
+    return source, changed
+
+
+def rewrite_source(source: str) -> tuple[str, bool]:
+    """Apply every mechanical (safe, automated) v1.x -> v2.0 settings rewrite.
+
+    1. Fold the legacy ``GRAPHENE = {...}`` namespace into the single
+       ``DJANGO_GRAPHEX = {...}`` (rename when no target dict exists, key MERGE
+       when it does — :func:`_fold_settings_namespace`).
+    2. Repoint bundled-middleware settings-strings from the removed flat root
+       path to their submodule path — :func:`_repoint_middleware_paths` — so
+       ``"django_graphex.GraphQLDirectiveMiddleware"`` (which no longer resolves
+       in v2.0) becomes ``"django_graphex.middleware.GraphQLDirectiveMiddleware"``.
+
+    Returns ``(new_source, changed)``; a module needing neither rewrite is
+    returned unchanged. Idempotent.
+    """
+    source, folded = _fold_settings_namespace(source)
+    source, repointed = _repoint_middleware_paths(source)
+    return source, (folded or repointed)
+
+
 # --------------------------------------------------------------------------- #
 # Reporting                                                                    #
 # --------------------------------------------------------------------------- #
@@ -485,7 +559,7 @@ def format_report(findings: list[Finding]) -> str:
         by_kind.setdefault(f.kind, []).append(f)
 
     label = {
-        "graphene-argument": "graphene.Argument(...) in Mutation `class args`",
+        "graphene-argument": "graphene.Argument(...) in Mutation `class Arguments`",
         "graphene-objecttype": "graphene.ObjectType schema root",
         "graphene-schema": "graphene.Schema(...)",
         "graphene-field-descriptor": "graphene field descriptor",
@@ -580,11 +654,14 @@ def main(argv: list[str] | None = None) -> int:
 
     print(format_report(result.findings))
     if args.apply and result.rewritten_files:
-        print("Rewrote (GRAPHENE -> DJANGO_GRAPHEX settings namespace):")
+        print("Rewrote (GRAPHENE -> DJANGO_GRAPHEX namespace + middleware paths):")
         for path in result.rewritten_files:
             print(f"  {path}")
     elif not args.apply and result.would_rewrite_files:
-        print("Would rewrite (run with --apply): GRAPHENE -> DJANGO_GRAPHEX settings in:")
+        print(
+            "Would rewrite (run with --apply): GRAPHENE -> DJANGO_GRAPHEX "
+            "namespace + middleware paths in:"
+        )
         for path in result.would_rewrite_files:
             print(f"  {path}")
 

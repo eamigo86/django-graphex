@@ -17,8 +17,8 @@ introspection and protected fields, see [Security](security.md).
 
 ## Query depth limiting
 
-Deeply related models let a client ask for `company { properties { units {
-tenant { company { … } } } } }`, which can be expensive or abusive.
+Deeply related models let a client ask for `author { posts { comments {
+author { posts { … } } } } }`, which can be expensive or abusive.
 `DepthLimitValidationRule` rejects over-nested queries **during validation**, so
 no resolver runs. It counts **nested object levels** below a field; scalar leaves
 do not count, and it follows fragments (so they can't be used to bypass it).
@@ -28,24 +28,24 @@ Two sources combine — the **most restrictive** wins:
 | Source | Where | Measured from |
 |---|---|---|
 | Global default | `DJANGO_GRAPHEX['MAX_QUERY_DEPTH']` | the query root |
-| Per-type | `Meta.max_deep` on a `DjangoObjectType` / `DjangoListObjectType` / `DjangoModelType` | any field returning that type |
+| Per-type | `Meta.max_depth` on a `DjangoObjectType` / `DjangoListObjectType` / `DjangoModelType` | any field returning that type |
 
 ```python
-from django_graphex import DjangoModelType
-from myapp.models import RentalCompany
+from django_graphex.types import DjangoModelType
+from myapp.models import Category
 
-class RentalCompanyModelType(DjangoModelType):
+class CategoryModelType(DjangoModelType):
     class Meta:
-        model = RentalCompany
-        max_deep = 2     # from a rental company, allow 2 nested object levels
+        model = Category
+        max_depth = 2     # from a category, allow 2 nested object levels
 ```
 
 ```graphql
-rentalCompany {          # depth 0
-  name                   # scalar — free
-  properties {           # depth 1  ✅
-    units {              # depth 2  ✅
-      tenant { name }    # depth 3  ❌ -> "Query exceeds the maximum nesting depth of 2 ..."
+category {                 # depth 0
+  name                     # scalar — free
+  posts {                  # depth 1  ✅
+    comments {             # depth 2  ✅
+      author { username }  # depth 3  ❌ -> "Query exceeds the maximum nesting depth of 2 ..."
     }
   }
 }
@@ -54,7 +54,7 @@ rentalCompany {          # depth 0
 ### Enabling it
 
 The library's `GraphQLView` includes the rule by default — per-type
-`max_deep` works out of the box. To set a global cap:
+`max_depth` works out of the box. To set a global cap:
 
 ```python
 # settings.py
@@ -68,7 +68,8 @@ On a plain `BaseGraphQLView` (or your own view), add it alongside the standard r
 
 ```python
 from graphql.validation import specified_rules
-from django_graphex import BaseGraphQLView, DepthLimitValidationRule
+from django_graphex.validation import DepthLimitValidationRule
+from django_graphex.views import BaseGraphQLView
 
 class MyGraphQLView(BaseGraphQLView):
     validation_rules = (*specified_rules, DepthLimitValidationRule)
@@ -77,13 +78,13 @@ class MyGraphQLView(BaseGraphQLView):
 !!! note "What counts as a level"
 
     Only fields with a sub-selection (object/list-of-object fields) add depth;
-    scalars don't. `max_deep = 0` forbids selecting any nested object on that
+    scalars don't. `max_depth = 0` forbids selecting any nested object on that
     type. With nothing configured, the rule is a no-op.
 
 ## Query cost analysis
 
 Depth limiting doesn't catch a query that is shallow but *wide*:
-`rentalCompanies(limit: 100) { properties(limit: 100) { units(limit: 100) { … } } }`
+`categories(limit: 100) { posts(limit: 100) { comments(limit: 100) { … } } }`
 can materialize a million objects in three levels. Cost analysis estimates the
 work a query asks for **during validation** and rejects it over a budget — and
 can optionally report the cost back to clients. It captures *width × depth × page
@@ -109,6 +110,7 @@ DJANGO_GRAPHEX = {
     "EXPOSE_QUERY_COST": False,    # True = add extensions.cost to responses
     "DEFAULT_LIST_MULTIPLIER": 10, # used only when no page size / cap is known
     "MAX_PAGE_SIZE": 100,          # the realistic per-list ceiling (recommended)
+    "DEFAULT_PAGE_SIZE": None,     # fallback when MAX_PAGE_SIZE is unset but a default is configured
     # Argument names treated as a list's page size (default below):
     "COST_PAGINATION_ARGS": ("limit", "page_size", "first", "last"),
 }
@@ -118,18 +120,19 @@ DJANGO_GRAPHEX = {
 |---------|---------|--------|
 | `MAX_QUERY_COST` | `None` | Budget; queries over it are rejected. `None` never blocks. |
 | `EXPOSE_QUERY_COST` | `False` | When `True`, responses include `extensions.cost`. |
-| `DEFAULT_LIST_MULTIPLIER` | `10` | Multiplier for a list with no known page size / cap. |
 | `MAX_PAGE_SIZE` | `None` | Caps every list multiplier (also a pagination setting). |
+| `DEFAULT_PAGE_SIZE` | `None` | Fallback multiplier for an unbounded list when `MAX_PAGE_SIZE` is not set. |
+| `DEFAULT_LIST_MULTIPLIER` | `10` | Last-resort multiplier when neither `MAX_PAGE_SIZE` nor `DEFAULT_PAGE_SIZE` is set; triggers a `RuntimeWarning`. |
 | `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a field's page size. |
 
 Declare per-type weights with `Meta.complexity`, so expensive types eat more of
 the budget:
 
 ```python
-class RentalCompanyModelType(DjangoModelType):
+class CategoryModelType(DjangoModelType):
     class Meta:
-        model = RentalCompany
-        complexity = 5     # base weight to resolve one rental company
+        model = Category
+        complexity = 5     # base weight to resolve one category
 ```
 
 `Meta.complexity` is read on `DjangoObjectType`, `DjangoListObjectType`, and
@@ -139,9 +142,9 @@ the standard rules (and the depth rule, if you want both):
 
 ```python
 from graphql.validation import specified_rules
-from django_graphex import (
-    BaseGraphQLView, CostLimitValidationRule, DepthLimitValidationRule,
-)
+from django_graphex.cost import CostLimitValidationRule
+from django_graphex.validation import DepthLimitValidationRule
+from django_graphex.views import BaseGraphQLView
 
 class MyGraphQLView(BaseGraphQLView):
     validation_rules = (*specified_rules, DepthLimitValidationRule, CostLimitValidationRule)
@@ -193,14 +196,18 @@ your schema, using the exact same estimator the `CostLimitValidationRule` uses.
 ```python
 from graphql import parse
 
-from django_graphex import analyze_cost, CostReport
+from django_graphex.cost import analyze_cost, CostReport
 
 query = parse("""
     query {
-      rentalCompanies {
+      categories {
         results(limit: 50) {
           id
           name
+          posts {
+            id
+            title
+          }
         }
         totalCount
       }
@@ -208,9 +215,17 @@ query = parse("""
 """)
 
 report: CostReport = analyze_cost(schema.graphql_schema, query)
-print(report.total)     # estimated cost, e.g. 51
+print(report.total)     # estimated cost, e.g. 52
 print(report.max_cost)  # the configured MAX_QUERY_COST budget (or None)
 ```
+
+Note how the multiplier only bites once a list's children include a nested
+*object* field: without `posts`, `results(limit: 50) { id name }` alone would
+cost only `2` — `id` and `name` are scalar leaves (`own_cost = 0`), so the
+`50×` multiplier has nothing non-zero to multiply. Adding `posts { id title }`
+under `results` gives the multiplier an object field (`own_cost = 1`) to act
+on: `posts` costs `1`, so `results` costs `1 + 50×1 = 51`, and `categories`
+costs `1 + 1×(51 + 0) = 52`.
 
 `CostReport` is a `NamedTuple` with two fields:
 
@@ -255,8 +270,13 @@ machine-readable `extensions.code`:
 | `QUERY_TOO_COMPLEX` | `CostLimitValidationRule` |
 
 ```json
-{ "errors": [{ "message": "Query exceeds the maximum nesting depth of 2 for 'RentalCompany'.",
+{ "errors": [{ "message": "Query exceeds the maximum nesting depth of 2 for 'CategoryGenericType'.",
                "extensions": { "code": "QUERY_TOO_DEEP" } }] }
+```
+
+```json
+{ "errors": [{ "message": "Query cost 1411 exceeds the maximum of 1000.",
+               "extensions": { "code": "QUERY_TOO_COMPLEX" } }] }
 ```
 
 See [Security](security.md#error-codes) for the full table of execution-time
@@ -301,7 +321,7 @@ resolved exactly.
 
 ```python
 from graphql import parse
-from django_graphex import analyze_cost
+from django_graphex.cost import analyze_cost
 
 # With bound variables: exact evaluation
 report = analyze_cost(schema.graphql_schema, parse(query), variable_values={"flag": True})

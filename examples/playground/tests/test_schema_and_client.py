@@ -1,22 +1,22 @@
 """Schema build / permission smoke tests + the subscription-client served page.
 
-Three groups, all under the PLAYGROUND's own ``config.settings``:
+Three groups, all under the PLAYGROUND's own "config.settings":
 
-1. Schema smoke — the playground ``blog.schema`` builds into a live
+1. Schema smoke — the playground "blog.schema" builds into a live
    graphql-core schema with the expected query/mutation/subscription roots.
 
-2. Permission smoke — a protected field (``me``) served by ``GraphQLView`` (with
-   ``AuthenticatedFieldsMiddleware`` wired in ``DJANGO_GRAPHEX.MIDDLEWARE``) is denied
+2. Permission smoke — a protected field ("me") served by "GraphQLView" (with
+   "AuthenticatedFieldsMiddleware" wired in "DJANGO_GRAPHEX.MIDDLEWARE") is denied
    for an anonymous request, but a public field is served.
 
-3. Subscription client (RANK 19, LEAN) — ``SubscriptionClientView`` at
-   ``/graphql/client/`` serves the self-contained HTML client with BOTH
+3. Subscription client (RANK 19, LEAN) — "SubscriptionClientView" at
+   "/graphql/client/" serves the self-contained HTML client with BOTH
    transports wired (graphql-transport-ws + graphql-sse) and the playground's
    own WS/HTTP endpoints injected. This is the lightest meaningful coverage of
    the browser client WITHOUT adding a headless-browser dependency; the full
    live browser round-trip is deferred to 2.1 (per the v2.0 release audit).
 
-Run from this directory::
+Run from this directory:
 
     cd examples/playground
     DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q
@@ -25,16 +25,26 @@ Run from this directory::
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from django.contrib.auth.models import AbstractBaseUser
+    from django.test import Client
 
 # --------------------------------------------------------------------------- #
 # 1) Schema smoke                                                              #
 # --------------------------------------------------------------------------- #
 
 
-def test_playground_schema_builds():
-    """The playground schema compiles into a live graphql-core schema."""
+def test_playground_schema_builds() -> None:
+    """Assert the playground schema compiles into a live graphql-core schema.
+
+    Verifies the query, mutation and subscription root types exist and that the
+    expected public/private query roots, all three subscriptions and the Base64
+    upload mutation are mounted.
+    """
     from blog.schema import schema
 
     gs = schema.graphql_schema
@@ -61,13 +71,16 @@ def test_playground_schema_builds():
 
 
 @pytest.mark.django_db
-def test_protected_field_requires_auth(client):
-    """An anonymous request selecting the protected ``me`` field is denied.
+def test_protected_field_requires_auth(client: Client) -> None:
+    """Assert an anonymous request selecting the protected "me" field is denied.
 
-    ``me`` is a private root field; ``AuthenticatedFieldsMiddleware`` (wired in
-    ``DJANGO_GRAPHEX.MIDDLEWARE``) blocks it for an unauthenticated request. The public
-    ``serverTime`` field in the same request still resolves to prove the gate is
+    "me" is a private root field; "AuthenticatedFieldsMiddleware" (wired in
+    "DJANGO_GRAPHEX.MIDDLEWARE") blocks it for an unauthenticated request. The public
+    "serverTime" field in the same request still resolves to prove the gate is
     field-scoped, not request-scoped.
+
+    Args:
+        client: The Django test client issuing the unauthenticated POST.
     """
     resp = client.post(
         "/graphql/",
@@ -82,8 +95,15 @@ def test_protected_field_requires_auth(client):
 
 
 @pytest.mark.django_db
-def test_authenticated_request_can_read_protected_field(client, django_user_model):
-    """A logged-in session may read the protected ``me`` field."""
+def test_authenticated_request_can_read_protected_field(
+    client: Client, django_user_model: type[AbstractBaseUser]
+) -> None:
+    """Assert a logged-in session may read the protected "me" field.
+
+    Args:
+        client: The Django test client used to log in and issue the query.
+        django_user_model: The active user model, used to create the test user.
+    """
     user = django_user_model.objects.create_user(
         username="alice", password="pw12345678"
     )
@@ -102,8 +122,12 @@ def test_authenticated_request_can_read_protected_field(client, django_user_mode
 
 
 @pytest.mark.django_db
-def test_public_field_served_anonymously(client):
-    """A purely public query resolves for an anonymous request."""
+def test_public_field_served_anonymously(client: Client) -> None:
+    """Assert a purely public query resolves for an anonymous request.
+
+    Args:
+        client: The Django test client issuing the unauthenticated POST.
+    """
     resp = client.post(
         "/graphql/",
         data=json.dumps({"query": "{ serverTime }"}),
@@ -121,8 +145,8 @@ def test_public_field_served_anonymously(client):
 
 
 @pytest.mark.django_db
-def test_subscription_client_page_serves_both_transports(client):
-    """``/graphql/client/`` serves the HTML client with BOTH transports wired.
+def test_subscription_client_page_serves_both_transports(client: Client) -> None:
+    """Assert "/graphql/client/" serves the HTML client with BOTH transports wired.
 
     Asserts the served page is the real subscription client: it speaks
     graphql-transport-ws (the WS subprotocol + connection_init handshake) AND
@@ -130,6 +154,9 @@ def test_subscription_client_page_serves_both_transports(client):
     transport-selection toggle is present. This is the lightest meaningful
     coverage of the browser client; a full headless-browser round-trip is
     intentionally deferred to 2.1 (no Playwright/Selenium dependency added).
+
+    Args:
+        client: The Django test client fetching the served client page.
     """
     resp = client.get("/graphql/client/")
     assert resp.status_code == 200
@@ -152,13 +179,16 @@ def test_subscription_client_page_serves_both_transports(client):
 
 
 @pytest.mark.django_db
-def test_subscription_client_endpoints_match_playground_routes(client):
-    """The served client injects the playground's own WS + HTTP endpoints.
+def test_subscription_client_endpoints_match_playground_routes(client: Client) -> None:
+    """Assert the served client injects the playground's own WS + HTTP endpoints.
 
-    ``SubscriptionClientView`` replaces ``__WS_PATH__`` / ``__HTTP_PATH__`` in the
+    "SubscriptionClientView" replaces "__WS_PATH__" / "__HTTP_PATH__" in the
     template with its configured paths. The placeholders must be GONE (fully
     substituted) and the default playground routes (/ws/graphql/ and /graphql)
     must appear in the rendered JS so the client connects to the right endpoints.
+
+    Args:
+        client: The Django test client fetching the served client page.
     """
     resp = client.get("/graphql/client/")
     html = resp.content.decode("utf-8")

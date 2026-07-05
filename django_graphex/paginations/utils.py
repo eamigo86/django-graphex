@@ -14,7 +14,6 @@ from django.db import DatabaseError
 
 from ..base_types import DjangoListObjectBase
 
-
 # --------------------------------------------------------------------------- #
 # Native pagination machinery (S-del-backend-11 — graphene backend deleted)   #
 # --------------------------------------------------------------------------- #
@@ -62,17 +61,17 @@ def _paginate_list_base(
 class NativePaginationField:
     """Backend-neutral pagination field descriptor (B8 part 1).
 
-    A plain dataclass carrying ``(type, paginator)`` with the
-    ``list_resolver`` / ``wrap_resolve`` logic extracted from the graphene
-    ``GenericPaginationField``. The native compiler (WU6a) consumes this to wire
-    the paginator's args + slicing resolver directly onto the list container's
-    results field. Has ZERO graphene imports in its own logic — the slicing is
-    delegated to :func:`_paginate_list_base`.
+    A plain dataclass carrying "(type, paginator)" with the "list_resolver" /
+    "wrap_resolve" logic extracted from the graphene "GenericPaginationField".
+    The native compiler (WU6a) consumes this to wire the paginator's args +
+    slicing resolver directly onto the list container's results field. Has ZERO
+    graphene imports in its own logic — the slicing is delegated to
+    "_paginate_list_base".
 
     Attributes:
         type: The element (node) type the list paginates. Stored for callers
             that need the model/node back-reference; not used by the resolver.
-        paginator: The paginator instance providing ``paginate_queryset``.
+        paginator: The paginator instance providing "paginate_queryset".
     """
 
     type: Any
@@ -95,33 +94,33 @@ class NativePaginationField:
         info: Any,
         **kwargs: Any,
     ) -> Any:
-        """Resolve a paginated list page from a ``DjangoListObjectBase`` root.
+        """Resolve a paginated list page from a "DjangoListObjectBase" root.
 
         Args:
             manager: Accepted for signature parity with the graphene field's
-                bound resolver; unused (the page rows come from ``root``).
+                bound resolver; unused (the page rows come from "root").
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the current query.
             **kwargs: The pagination arguments from the query.
 
         Returns:
-            The paginated results, or ``None`` when ``root`` is not a list base.
+            The paginated results, or None when "root" is not a list base.
         """
         return _paginate_list_base(self.paginator, root, **kwargs)
 
     def wrap_resolve(self, parent_resolver: Any) -> Any:
-        """Return a resolver ``(root, info, **kwargs) -> page`` for graphql-core.
+        """Return a resolver "(root, info, **kwargs) -> page" for graphql-core.
 
-        graphql-core calls a field resolver as ``resolve(root, info, **kwargs)``
-        (no bound ``self``). The returned closure ignores the parent resolver
-        (the page rows come from the ``DjangoListObjectBase`` root produced by
-        the outer list field) and slices the page.
+        graphql-core calls a field resolver as "resolve(root, info, **kwargs)"
+        (no bound "self"). The returned closure ignores the parent resolver (the
+        page rows come from the "DjangoListObjectBase" root produced by the
+        outer list field) and slices the page.
 
         Args:
             parent_resolver: The default field resolver (unused).
 
         Returns:
-            A ``(root, info, **kwargs) -> page`` callable.
+            A "(root, info, **kwargs) -> page" callable.
         """
 
         def _resolve(root: Any, info: Any, **kwargs: Any) -> Any:
@@ -150,10 +149,13 @@ def _positive_int(
     Raises:
         ValueError: If the value is negative or zero while strict.
     """
-    if integer_string:
-        ret = int(integer_string)
-    else:
+    # Only ``None`` / empty-string are true passthroughs. The int ``0`` MUST fall
+    # through to the strict/negative check below — the old ``if integer_string:``
+    # guard treated ``0`` as falsy and early-returned it, so ``strict=True`` never
+    # rejected a zero page size (silent empty page / silent default fallback).
+    if integer_string is None or integer_string == "":
         return integer_string
+    ret = int(integer_string)
     if ret < 0 or (ret == 0 and strict):
         raise ValueError()
     if cutoff:

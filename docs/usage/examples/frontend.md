@@ -1,5 +1,7 @@
 # Frontend Integration Examples
 
+> **Illustrative tutorial** — the models here (`Post`, `Category`, `Tag`, `UserProfile`) are a self-contained example used throughout these docs. For a complete, runnable project see [`examples/playground/`](../../../../examples/playground/) in the repo.
+
 ### React with Apollo Client
 
 === "Posts List Component"
@@ -166,7 +168,7 @@
     import { gql, useMutation, useQuery } from '@apollo/client';
 
     const CREATE_POST = gql`
-      mutation CreatePost($postData: PostInput!) {
+      mutation CreatePost($postData: PostCreateGenericType!) {
         createPost(newPost: $postData) {
           ok
           post {

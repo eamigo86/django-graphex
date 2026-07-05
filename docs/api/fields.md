@@ -2,6 +2,66 @@
 
 This section provides detailed API documentation for GraphQL field classes in `django-graphex`.
 
+## Field descriptors
+
+The typed scalar shortcuts and the unified `Field` they route through. All
+are imported from `django_graphex.core`. See
+[Fields → Typed scalar descriptors](../usage/fields.md#typed-scalar-descriptors)
+for the usage guide.
+
+### `Field`
+
+```python
+Field(type, *, source=None, required=False, default=_UNSET, description=None,
+      name=None, resolver=None, args=None, deprecation_reason=None)
+```
+
+ONE descriptor, usable in **both** an OUTPUT position (an `ObjectType` /
+`Mutation` payload body) and an INPUT position (a `class Arguments` body or a
+`Field(args={...})` / `field(args={...})` mapping). Direction is never
+declared on the descriptor — it comes from the declaration site.
+
+| Keyword | Position | Effect |
+|---------|----------|--------|
+| `source="attr"` | output only | Resolve by reading `attr` off the root (or calling it if callable). Raises `TypeError` in an input position. |
+| `resolver` | output only | Field-level resolver (wins over the parent). Raises `TypeError` in an input position. |
+| `args` | output only | Explicit `{name: arg}` mapping (each value itself a `Field` / shortcut). Raises `TypeError` in an input position. |
+| `default` | input only | The GraphQL default value; omit to leave the argument with no default (an explicit `default=None` is a real `null` default). Raises `TypeError` at output compile time. |
+| `required=True` | both | Wrap the type in non-null (`T!`). |
+| `description` | both | Field / argument description. |
+| `name` | both | Explicit wire name (skips camelCase on output; drives `out_name` on input). |
+| `deprecation_reason` | both | Renders `@deprecated(reason: ...)` on the compiled field / argument. |
+
+### Typed scalar shortcuts
+
+Each shortcut returns a `Field` bound to one scalar, usable in both
+positions. Signature (identical for all 11):
+`(*, source=None, required=False, default=_UNSET, description=None, name=None, resolver=None, deprecation_reason=None)`.
+
+| Shortcut | GraphQL type | Shortcut | GraphQL type |
+|----------|--------------|----------|--------------|
+| `IDField` | `ID` | `DateField` | `CustomDate` |
+| `IntField` | `Int` | `DateTimeField` | `CustomDateTime` |
+| `FloatField` | `Float` | `TimeField` | `CustomTime` |
+| `BooleanField` | `Boolean` | `DecimalField` | `Decimal` |
+| `CharField` | `String` | `UUIDField` | `UUID` |
+
+`JSONField` is the one bespoke shortcut — it takes an extra `as_str` flag:
+
+```python
+JSONField(*, as_str=False, source=None, required=False, default=_UNSET,
+          description=None, name=None, resolver=None, deprecation_reason=None)
+```
+
+`as_str=False` (the default) binds the raw `JSON` scalar (structured
+objects/lists pass through on both output and input). `as_str=True` binds
+`JSONString`, the string-encoding escape hatch.
+
+!!! note "No `InputField`"
+    There is a single `Field` (and a single set of typed shortcuts) for both
+    positions. `InputField` and the per-scalar `*InputField` twins do not
+    exist in this API.
+
 ## DjangoObjectField
 
 A GraphQL field for querying a single Django model object by ID.
@@ -16,6 +76,7 @@ class DjangoObjectField(Field)
 |-----------|------|-------------|
 | `_type` | `DjangoObjectType` | The GraphQL type representing the Django model |
 | `*args` | `Any` | Additional positional arguments passed to base Field |
+| `deprecation_reason` | `str \| None` | Optional; renders `@deprecated(reason: ...)` on the compiled field |
 | `**kwargs` | `Any` | Additional keyword arguments passed to base Field |
 
 ### Attributes
@@ -26,12 +87,13 @@ class DjangoObjectField(Field)
 
 ### Methods
 
-#### `object_resolver(manager, root, info, **kwargs)`
+#### `object_resolver(manager, output_type, root, info, **kwargs)`
 
 Static method that resolves a single object by its ID.
 
 **Parameters:**
 - `manager` (`Manager`): Django model manager
+- `output_type` (`type`): The `DjangoObjectType` subclass for this field, forwarded to `queryset_factory` so its `get_queryset` hook is applied
 - `root` (`Any`): Parent object in GraphQL resolution
 - `info` (`ResolveInfo`): GraphQL resolve info
 - `**kwargs`: Query arguments including `id`
@@ -50,12 +112,10 @@ Wraps the resolver with the object resolver functionality.
 ### Example Usage
 
 ```python
-from django_graphex import (
-    DjangoGraphQLSchema,
-    DjangoObjectField,
-    DjangoObjectType,
-    ObjectType,
-)
+from django_graphex.fields import DjangoObjectField
+from django_graphex.core import ObjectType
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoObjectType
 from .models import User
 
 class UserType(DjangoObjectType):
@@ -108,7 +168,7 @@ class DjangoListField(NativeMountedField)
 ### Example Usage
 
 ```python
-from django_graphex import ObjectType
+from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListField
 
 class Query(ObjectType):
@@ -119,7 +179,7 @@ class Query(ObjectType):
     `DjangoListField` is a low-level building block; import it from
     `django_graphex.fields`. For list queries prefer
     `DjangoFilterListField`, `DjangoFilterPaginateListField` or
-    `DjangoListObjectField` (all exported from `django_graphex`).
+    `DjangoListObjectField` (all imported from `django_graphex.fields`).
 
 ---
 
@@ -137,8 +197,8 @@ class DjangoFilterListField(Field)
 |-----------|------|---------|-------------|
 | `_type` | `DjangoObjectType` | Required | The GraphQL type |
 | `fields` | `dict` | `None` | Filter field configuration |
-| `extra_filter_meta` | `dict` | `None` | Additional filter metadata |
 | `*args` | `Any` | - | Additional positional arguments |
+| `deprecation_reason` | `str \| None` | `None` | Renders `@deprecated(reason: ...)` on the compiled field |
 | `**kwargs` | `Any` | - | Additional keyword arguments |
 
 ### Attributes
@@ -152,13 +212,15 @@ class DjangoFilterListField(Field)
 
 ### Methods
 
-#### `list_resolver(manager, filter_backend, root, info, **kwargs)`
+#### `list_resolver(manager, filter_backend, custom_filters, output_type, root, info, **kwargs)`
 
 Static method that resolves a filtered list of objects.
 
 **Parameters:**
 - `manager` (`Manager`): Django model manager
 - `filter_backend` (`object`): native filter backend; apply with `filter_backend.apply(qs, kwargs.get("filter"))`
+- `custom_filters` (`list`): list of `(arg_name, method, metadata)` triples from `@filter_field`-decorated methods on the output type
+- `output_type` (`type`): the `DjangoObjectType` subclass for this field, forwarded to `queryset_factory` so its `get_queryset` hook is applied
 - `root` (`Any`): Parent object in GraphQL resolution
 - `info` (`ResolveInfo`): GraphQL resolve info
 - `**kwargs`: Query arguments including the `filter` value
@@ -168,7 +230,8 @@ Static method that resolves a filtered list of objects.
 ### Example Usage
 
 ```python
-from django_graphex import DjangoFilterListField, ObjectType
+from django_graphex.fields import DjangoFilterListField
+from django_graphex.core import ObjectType
 
 class Query(ObjectType):
     users = DjangoFilterListField(
@@ -207,8 +270,8 @@ class DjangoFilterPaginateListField(Field)
 | `_type` | `DjangoObjectType` | Required | The GraphQL type |
 | `pagination` | `BaseDjangoGraphqlPagination` | Default pagination | Pagination configuration |
 | `fields` | `dict` | `None` | Filter field configuration |
-| `extra_filter_meta` | `dict` | `None` | Additional filter metadata |
 | `*args` | `Any` | - | Additional positional arguments |
+| `deprecation_reason` | `str \| None` | `None` | Renders `@deprecated(reason: ...)` on the compiled field |
 | `**kwargs` | `Any` | - | Additional keyword arguments |
 
 ### Attributes
@@ -251,11 +314,9 @@ Resolve a filtered and paginated list of objects.
 ### Example Usage
 
 ```python
-from django_graphex import (
-    DjangoFilterPaginateListField,
-    LimitOffsetGraphqlPagination,
-    ObjectType,
-)
+from django_graphex.fields import DjangoFilterPaginateListField
+from django_graphex.core import ObjectType
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 
 class Query(ObjectType):
     users = DjangoFilterPaginateListField(
@@ -298,8 +359,8 @@ class DjangoListObjectField(Field)
 |-----------|------|---------|-------------|
 | `_type` | `DjangoListObjectType` | Required | The GraphQL list type |
 | `fields` | `dict` | `None` | Filter field configuration |
-| `extra_filter_meta` | `dict` | `None` | Additional filter metadata |
 | `*args` | `Any` | - | Additional positional arguments |
+| `deprecation_reason` | `str \| None` | `None` | Renders `@deprecated(reason: ...)` on the compiled field |
 | `**kwargs` | `Any` | - | Additional keyword arguments |
 
 ### Attributes
@@ -313,13 +374,14 @@ class DjangoListObjectField(Field)
 
 ### Methods
 
-#### `list_resolver(manager, filter_backend, root, info, **kwargs)`
+#### `list_resolver(manager, filter_backend, output_type, root, info, **kwargs)`
 
 Resolve a list object with count and results.
 
 **Parameters:**
 - `manager` (`Manager`): Django model manager
 - `filter_backend` (`object`): native filter backend; apply with `filter_backend.apply(qs, kwargs.get("filter"))`
+- `output_type` (`type`): the `DjangoObjectType` subclass for the list items (the `DjangoListObjectType._meta.baseType`), forwarded to `queryset_factory` so its `get_queryset` hook is applied
 - `root` (`Any`): Parent object
 - `info` (`ResolveInfo`): GraphQL resolve info
 - `**kwargs`: Query arguments including the `filter` value
@@ -329,7 +391,9 @@ Resolve a list object with count and results.
 ### Example Usage
 
 ```python
-from django_graphex import DjangoListObjectField, DjangoListObjectType, ObjectType
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
+from django_graphex.types import DjangoListObjectType
 
 class UserListType(DjangoListObjectType):
     class Meta:
@@ -389,13 +453,8 @@ while pagination and ordering arguments (`limit`, `offset`, `page`, `pageSize`,
 ### Basic Field Setup
 
 ```python
-from django_graphex import (
-    DjangoObjectField,
-    DjangoFilterListField,
-    DjangoFilterPaginateListField,
-    DjangoListObjectField,
-    ObjectType,
-)
+from django_graphex.fields import DjangoObjectField, DjangoFilterListField, DjangoFilterPaginateListField, DjangoListObjectField
+from django_graphex.core import ObjectType
 
 class Query(ObjectType):
     # Single object
@@ -414,7 +473,7 @@ class Query(ObjectType):
 ### Advanced Field Configuration
 
 ```python
-from django_graphex import ObjectType
+from django_graphex.core import ObjectType
 from .paginations import CustomPagination
 
 class Query(ObjectType):
@@ -443,7 +502,7 @@ class Query(ObjectType):
 ### Error Handling
 
 ```python
-from django_graphex import ObjectType
+from django_graphex.core import ObjectType
 
 class Query(ObjectType):
     user = DjangoObjectField(UserType)

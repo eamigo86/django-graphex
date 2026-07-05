@@ -19,6 +19,7 @@ import json
 
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
+from django.http import HttpRequest
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
@@ -42,13 +43,23 @@ class MultipartCacheBypassTest(TestCase):
     request.body → RawPostDataException → HTTP 500.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Build a fresh RequestFactory, clear the cache, and bind the view.
+
+        Ensures each test starts from a clean cache and an isolated view
+        instance so caching effects from a prior test cannot leak in.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_multipart_query_post_returns_200_not_500(self):
-        """A multipart/form-data query POST MUST return HTTP 200 (not 500)."""
+    def test_multipart_query_post_returns_200_not_500(self) -> None:
+        """A multipart/form-data query POST MUST return HTTP 200 (not 500).
+
+        If this breaks, the multipart bypass regressed and the cache layer
+        again reads request.body after request.POST already consumed the
+        stream, reintroducing the RawPostDataException 500.
+        """
         request = self.factory.post(
             "/graphql/",
             data={"query": "{ hello }"},
@@ -64,8 +75,12 @@ class MultipartCacheBypassTest(TestCase):
             f"(expected 200; likely RawPostDataException → 500)",
         )
 
-    def test_multipart_query_post_returns_valid_graphql_response(self):
-        """The multipart bypass MUST still execute and return the GraphQL result."""
+    def test_multipart_query_post_returns_valid_graphql_response(self) -> None:
+        """The multipart bypass MUST still execute and return the GraphQL result.
+
+        Guards against a bypass that merely avoids the 500 but stops short of
+        actually resolving the query.
+        """
         request = self.factory.post(
             "/graphql/",
             data={"query": "{ hello }"},
@@ -77,8 +92,12 @@ class MultipartCacheBypassTest(TestCase):
         self.assertIn("data", data)
         self.assertEqual(data["data"]["hello"], "world")
 
-    def test_json_post_still_caches(self):
-        """Normal JSON POST requests MUST still be served from cache on second call."""
+    def test_json_post_still_caches(self) -> None:
+        """Normal JSON POST requests MUST still be served from cache on second call.
+
+        Regression guard: the multipart bypass must not disable caching for
+        the ordinary application/json POST path.
+        """
         from unittest.mock import patch
 
         call_count = {"n": 0}
@@ -104,8 +123,12 @@ class MultipartCacheBypassTest(TestCase):
             "JSON POST caching broken — backend called twice for the same query",
         )
 
-    def test_multipart_query_is_not_cached(self):
-        """Multipart requests MUST NOT be cached (bypass falls through to super_call each time)."""
+    def test_multipart_query_is_not_cached(self) -> None:
+        """Multipart requests MUST NOT be cached.
+
+        The bypass falls through to "super_call" on every request, so the
+        backend must be reached again on the second identical request.
+        """
         from unittest.mock import patch
 
         call_count = {"n": 0}
@@ -149,18 +172,32 @@ class CsrfCookieReplayTest(TestCase):
     response goes through ensure_csrf_cookie and gets its own fresh token.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Build a fresh RequestFactory, clear the cache, and bind the view.
+
+        Ensures each test starts from a clean cache and an isolated view
+        instance so caching effects from a prior test cannot leak in.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def _json_post(self, query):
+    def _json_post(self, query: str) -> HttpRequest:
+        """Build an anonymous application/json POST request for a query.
+
+        Args:
+            query: The GraphQL query text to embed in the request body.
+
+        Returns:
+            request: A RequestFactory-built POST request with an anonymous
+                user attached and content_type set to application/json.
+        """
         body = json.dumps({"query": query})
         req = self.factory.post("/graphql/", body, content_type="application/json")
         req.user = AnonymousUser()
         return req
 
-    def test_two_anonymous_clients_get_distinct_csrf_tokens(self):
+    def test_two_anonymous_clients_get_distinct_csrf_tokens(self) -> None:
         """Two anonymous clients issuing the same query MUST NOT share a CSRF token.
 
         Regression guard: if the whole HttpResponse were cached and returned
@@ -212,7 +249,7 @@ class CsrfCookieReplayTest(TestCase):
             "resp2 cookies dict is non-empty — Set-Cookie was replayed from the cache.",
         )
 
-    def test_cached_response_has_no_set_cookie(self):
+    def test_cached_response_has_no_set_cookie(self) -> None:
         """A cached response MUST NOT carry a Set-Cookie header.
 
         The implementation stores only (body, status_code, content_type) and
@@ -268,7 +305,7 @@ class CsrfCookieReplayTest(TestCase):
         # We do not assert anything about resp1.cookies; that is not the SUT here.
         _ = resp1  # kept in scope for clarity
 
-    def test_cookie_free_response_is_still_cached(self):
+    def test_cookie_free_response_is_still_cached(self) -> None:
         """A response WITHOUT Set-Cookie MUST still be cached normally.
 
         Ensure the fix does not break the happy-path caching for responses that

@@ -8,7 +8,7 @@ counter *before* its DB transaction committed.  A concurrent query that ran in
 that window could cache pre-mutation data at the new version key, producing a
 stale serve that would persist until the next mutation.
 
-The fix wraps the bump in ``transaction.on_commit``, which guarantees the
+The fix wraps the bump in "transaction.on_commit", which guarantees the
 counter advances only after the write is durable.  The ordering invariant is:
 
     mutation_commit → on_commit(version_bump) → next query reads new version
@@ -68,10 +68,15 @@ class OnCommitOrderingTest(TestCase):
     TOCTOU race window described in issue #60a.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Clear the cache before each test.
+
+        Ensures version counters and cached responses from a prior test do
+        not leak into this test's assertions.
+        """
         cache.clear()
 
-    def test_bump_deferred_to_on_commit_not_immediate(self):
+    def test_bump_deferred_to_on_commit_not_immediate(self) -> None:
         """_bump_cache_version MUST register the incr with on_commit, not execute it inline.
 
         Rationale: if the bump fires before the surrounding transaction commits,
@@ -125,12 +130,16 @@ class OnCommitOrderingTest(TestCase):
             f"before={version_before!r}, after={version_after!r}"
         )
 
-    def test_rollback_does_not_advance_version(self):
+    def test_rollback_does_not_advance_version(self) -> None:
         """A rolled-back mutation MUST NOT advance the version counter.
 
         Django does not invoke on_commit callbacks when a transaction is rolled
         back.  This verifies that the version-bump is therefore not applied on
         rollback, which is the primary correctness guarantee of the on_commit fix.
+
+        Raises:
+            ValueError: Raised internally and immediately caught to force the
+                transaction to roll back; not propagated to the caller.
         """
         view_instance = GraphQLView(schema=minimal_cache_schema)
         identity = "race_rollback_user"
@@ -205,10 +214,15 @@ class BumpVsServeOrderingTest(TestCase):
     returns for an authenticated user with pk=50: "u50".
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Clear the cache before each test.
+
+        Ensures version counters and cached responses from a prior test do
+        not leak into this test's assertions.
+        """
         cache.clear()
 
-    def test_query_after_bump_gets_cache_miss(self):
+    def test_query_after_bump_gets_cache_miss(self) -> None:
         """After the version is bumped, a concurrent query MUST miss the cache.
 
         Enforced ordering via Barrier:

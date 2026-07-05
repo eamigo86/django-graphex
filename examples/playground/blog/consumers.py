@@ -1,6 +1,6 @@
 """WebSocket consumer for subscriptions (v2.0 native graphql-transport-ws).
 
-The legacy ``GraphqlAPIDemultiplexer`` (HTTP ``channelId`` handshake + per-stream
+The legacy "GraphqlAPIDemultiplexer" (HTTP "channelId" handshake + per-stream
 demultiplexing) was removed in v2.0. Subscriptions now run on the native engine
 behind two standards-based transports; this module builds the WebSocket one.
 """

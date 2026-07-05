@@ -1,13 +1,13 @@
 """Query depth limiting via a graphql-core validation rule.
 
-Depth limiting rejects abusively nested queries (e.g. ``a { b { c { d ... } } }``)
+Depth limiting rejects abusively nested queries (e.g. "a { b { c { d ... } } }")
 *before* execution. The limit is the number of **nested object levels** below a
 field; scalar leaves do not count. Two sources combine, most-restrictive wins:
 
-* a global default from the ``MAX_QUERY_DEPTH`` setting (measured from the query
+* a global default from the "MAX_QUERY_DEPTH" setting (measured from the query
   root), and
-* a per-type ``Meta.max_deep`` declared on a ``DjangoObjectType`` /
-  ``DjangoListObjectType`` / ``DjangoModelType`` (measured from any field
+* a per-type "Meta.max_depth" declared on a "DjangoObjectType" /
+  "DjangoListObjectType" / "DjangoModelType" (measured from any field
   returning that type).
 
 The rule resolves field types from the schema, so it follows inline and named
@@ -28,7 +28,7 @@ from graphql.validation import ValidationRule
 
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
-from .native.compat import _gdx_meta as _native_gdx_meta
+from .core.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
     from graphql import GraphQLNamedType, OperationDefinitionNode, SelectionSetNode
@@ -45,8 +45,8 @@ class _Constraint(NamedTuple):
     label: str
 
 
-def _type_max_deep(named_type: GraphQLNamedType) -> int | None:
-    """Return the ``max_deep`` declared on a type, or ``None``.
+def _type_max_depth(named_type: GraphQLNamedType) -> int | None:
+    """Return the ``max_depth`` declared on a type, or ``None``.
 
     Reads it via the ``_gdx_meta`` shim, which tries
     ``graphene_type._meta`` first (graphene path) and falls back to
@@ -63,7 +63,7 @@ def _type_max_deep(named_type: GraphQLNamedType) -> int | None:
         meta = _native_gdx_meta(named_type)
     except AttributeError:
         return None
-    value = getattr(meta, "max_deep", None)
+    value = getattr(meta, "max_depth", None)
     if value is None:
         return None
     try:
@@ -76,9 +76,9 @@ def _type_max_deep(named_type: GraphQLNamedType) -> int | None:
 class DepthLimitValidationRule(ValidationRule):
     """Reject queries that nest objects deeper than the configured limit(s).
 
-    Add it to a view's ``validation_rules`` (the library's ``GraphQLView``
+    Add it to a view's "validation_rules" (the library's "GraphQLView"
     includes it by default). With no global setting and no type declaring
-    ``max_deep`` it is a no-op.
+    "max_depth" it is a no-op.
     """
 
     def __init__(self, context: ValidationContext) -> None:
@@ -163,11 +163,11 @@ class DepthLimitValidationRule(ValidationRule):
                 if field_type is None:
                     continue
                 child_constraints = constraints
-                max_deep = _type_max_deep(field_type)
-                if max_deep is not None:
+                max_depth = _type_max_depth(field_type)
+                if max_depth is not None:
                     child_constraints = [
                         *constraints,
-                        _Constraint(max_deep, child_depth, field_type.name),
+                        _Constraint(max_depth, child_depth, field_type.name),
                     ]
                 self._walk(
                     selection.selection_set,

@@ -39,7 +39,7 @@ The most common pagination method, using `limit` and `offset` parameters to cont
 === "Use with DjangoListObjectType"
 
     ```python
-    from django_graphex import DjangoListObjectType
+    from django_graphex.types import DjangoListObjectType
     from .models import User
 
     class UserListType(DjangoListObjectType):
@@ -55,7 +55,8 @@ The most common pagination method, using `limit` and `offset` parameters to cont
 === "Use with Fields"
 
     ```python
-    from django_graphex import DjangoFilterPaginateListField, ObjectType
+    from django_graphex.fields import DjangoFilterPaginateListField
+    from django_graphex.core import ObjectType
     from .types import UserType
 
     class Query(ObjectType):
@@ -78,12 +79,41 @@ LimitOffsetGraphqlPagination(
 )
 ```
 
+!!! info "Requests above the maximum are silently clamped"
+
+    A `limit` larger than `max_limit` does **not** raise an error — the effective
+    limit is `min(requested, max_limit)`, the same convention Django REST
+    Framework uses for its paginators. When the client **omits** the argument,
+    the fallback chain is `default_limit` → `max_limit`: as long as a maximum is
+    configured, the list is **never unbounded**, even without a default.
+
+    | `default_limit` | `max_limit` | client sends | effective limit |
+    |---|---|---|---|
+    | `25` | `100` | `limit: 500` | `100` (silently clamped) |
+    | `25` | `100` | — | `25` (default) |
+    | – | `100` | — | `100` (max as last resort) |
+    | – | – | — | unbounded (no pagination configured) |
+
+    The same rule applies to `PageGraphqlPagination`: a `pageSize` above
+    `max_page_size` is silently clamped, and an omitted `pageSize` resolves as
+    `page_size` → `max_page_size`.
+
 ### Query Examples
 
 !!! note "Argument placement"
     Pagination and ordering arguments (`limit`, `offset`, `ordering`) live on the
     `results` subfield. Filter arguments live on the list field. `totalCount` is a
     sibling of `results`.
+
+!!! tip "`totalCount` is computed lazily"
+    The `COUNT` query backing `totalCount` is only issued when the client
+    actually **selects** `totalCount` in the query — a request that selects only
+    `results` skips the `COUNT` entirely. When the results were already
+    materialized in memory (e.g. an in-memory ordered/sliced page, or a
+    prefetch-cache hit), `totalCount` reuses that materialized list (`len()`)
+    instead of issuing a fresh query. This is a **performance-only** change: the
+    response shape is unchanged, but the number of `COUNT` queries issued for a
+    given request can differ from a naive eager count.
 
 === "Basic Query"
 
@@ -151,6 +181,15 @@ LimitOffsetGraphqlPagination(
     Django's native `pk` alias (which resolves to the primary key column).
     Leading `-`/`+` direction prefixes are stripped before comparison.
 
+    **camelCase is accepted (GraphQL-consistency).** Because every field *name* is
+    exposed in **camelCase** on the wire, ordering **values** accept camelCase too:
+    each term is normalized to its snake_case attname before validation and before
+    `qs.order_by()`. So `ordering: "createdAt"` behaves **exactly** like
+    `ordering: "created_at"` — on the DB path, the in-memory (prefetch-cache) path,
+    **and** the nested window-prefetch optimization. Both spellings work; snake_case
+    is unchanged. An invalid camelCase field (e.g. `nonexistentField`) still raises
+    the same `GraphQLError`, and relation-spanning terms are still rejected.
+
     **Rejected examples:**
 
     ```graphql
@@ -178,8 +217,14 @@ LimitOffsetGraphqlPagination(
     # Descending
     { users { results(ordering: "-date_joined") { id } } }
 
+    # camelCase (normalized to the snake_case attname) — same as "-date_joined"
+    { users { results(ordering: "-dateJoined") { id } } }
+
     # Multi-field comma list
     { users { results(ordering: "last_name,-date_joined") { id } } }
+
+    # Multi-field comma list, camelCase — same as "lastName,-dateJoined"
+    { users { results(ordering: "lastName,-dateJoined") { id } } }
     ```
 
     If you need to allow ordering by additional (non-default) fields, ensure those
@@ -221,6 +266,28 @@ supplies a **negative** `offset` value (e.g. `offset: -5`). The raw Django
 # Raises GraphQLError: "Invalid offset: -5. Offset must be a non-negative integer."
 { users { results(offset: -5, limit: 10) { id } } }
 ```
+
+### Limit Validation
+
+A `limit` of `0` or a **negative** `limit` both raise a clean `GraphQLError`
+instead of returning an empty page or a nonsensical negative-length slice.
+This is a separate guard from the [silent clamp](#configuration-options) that
+applies when `limit` is **above** `max_limit`; here the value is invalid
+outright, not just out of range.
+
+```graphql
+# Raises GraphQLError: "Invalid limit: 0. Limit must be a positive integer."
+{ users { results(limit: 0) { id } } }
+
+# Raises GraphQLError: "Invalid limit: -5. Limit must be a positive integer."
+{ users { results(limit: -5) { id } } }
+```
+
+The same guard applies to `PageGraphqlPagination`'s `pageSize` argument
+(`"Invalid page size: 0. Page size must be a positive integer."`) and to
+`CursorGraphqlPagination`'s `first` argument (`"Invalid first: 0. First must
+be a positive integer."`) — every paginator's page-size-like argument rejects
+zero and negative values the same way.
 
 ## PageGraphqlPagination
 
@@ -337,6 +404,48 @@ PageGraphqlPagination(
     }
     ```
 
+### Backward pagination
+
+`PageGraphqlPagination` accepts negative `page` values to navigate from the
+**end** of the list, in true list order (i.e. `page=-1` returns exactly what
+Python's `list[-page_size:]` would):
+
+| `page` | Rows returned |
+|---|---|
+| `-1` | The **last** `page_size` rows, in natural (ascending `ordering`) order |
+| `-2` | The `page_size`-row window immediately **before** the last page |
+| Large negative (overshoot past the start) | Clamps to the **first** `page_size` rows |
+| `0` | `GraphQLError` — page `0` is never valid, forward or backward |
+
+```graphql
+# 10-row table, page_size = 3
+{ users { results(page: -1) { id } } }   # rows 8, 9, 10 (the last 3, in order)
+{ users { results(page: -2) { id } } }   # rows 5, 6, 7  (the window before)
+{ users { results(page: -100) { id } } } # rows 1, 2, 3  (overshoot clamps to the start)
+```
+
+!!! warning "Cost: one extra `COUNT` query, and no window-prefetch"
+
+    A negative `page` needs the total row count to compute where the window
+    starts (`offset = count + page_size * page`), so it costs **one additional
+    `COUNT` query** beyond the normal `SELECT`. Positive pages never issue a
+    `COUNT` (see [COUNT Query Behaviour](#count-query-behaviour) below).
+    Negative pages also **opt out of the window-prefetch optimization** — the
+    prefetch pre-check needs the offset up front (before any query runs), which
+    a negative page cannot supply without first counting, so it falls back to
+    the standard (non-window) resolution path for that request.
+
+!!! note "`LimitOffsetGraphqlPagination` and `CursorGraphqlPagination` have no backward mode"
+
+    - `LimitOffsetGraphqlPagination` has **no** backward navigation: a negative
+      `offset` (e.g. `offset: -5`) always raises a clean `GraphQLError` — see
+      [Offset Validation](#offset-validation).
+    - `CursorGraphqlPagination` is **forward-only** by design (no `last`/`before`)
+      — see [Why is there no backward pagination](#cursorgraphqlpagination) above.
+      The closest idiom is inverting `ordering` (e.g. `"id"` → `"-id"`): this
+      returns the **same set of rows in reverse order**, not a "last page" —
+      there is no windowed "start from the end" behavior.
+
 ## CursorGraphqlPagination
 
 Forward **keyset** (cursor) pagination over a single ordering field. Instead of
@@ -351,15 +460,31 @@ page's last row — so it stays fast and stable. The list type also exposes a
 - :material-shield-check: Stable under inserts/deletes between pages.
 - :material-information: `pageInfo` with `endCursor` / `hasNextPage` / `hasPreviousPage` / `startCursor`.
 
+!!! info "The cursor is a composite `(ordering value, pk)` boundary"
+
+    Each opaque cursor encodes **both** the ordering field's value **and** the
+    primary key of the boundary row, with the primary key used as an `ORDER BY`
+    tiebreak. This means rows that share the same ordering value are never
+    skipped or duplicated across pages — a plain value-only cursor would let a
+    `field > value` filter jump over every other row tied at that same value.
+    Nullable ordering fields are supported with deterministic placement:
+    `NULL` values sort **last** when ascending and **first** when descending,
+    and pages cross a `NULL` boundary without dropping rows.
+
+    Cursors are **opaque**: treat them as an implementation detail returned by
+    the server (`pageInfo.startCursor` / `pageInfo.endCursor`) and never build
+    or edit one client-side. A tampered or malformed cursor — corrupted
+    base64, wrong internal prefix, or a value that cannot be coerced to the
+    ordering field's type — is caught internally and raised as a clean
+    `GraphQLError("Invalid cursor")`.
+
 ### Basic Usage
 
 ```python
-from django_graphex import (
-    DjangoListObjectType,
-    DjangoListObjectField,
-    CursorGraphqlPagination,
-    ObjectType,
-)
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
+from django_graphex.paginations import CursorGraphqlPagination
+from django_graphex.types import DjangoListObjectType
 from .models import Event
 
 
@@ -373,6 +498,49 @@ class EventListType(DjangoListObjectType):
 class Query(ObjectType):
     events = DjangoListObjectField(EventListType)
 ```
+
+### Configuration Options
+
+```python
+CursorGraphqlPagination(
+    ordering="-created",            # Server-side keyset field (single field; leading '-' = descending)
+    cursor_query_param="cursor",    # GraphQL argument name for the cursor
+    first_query_param="first",      # GraphQL argument name for the page size
+    page_size=25,                   # Default page size (DEFAULT_PAGE_SIZE when omitted)
+    max_page_size=100,              # Maximum `first` a client may request (MAX_PAGE_SIZE when omitted)
+)
+```
+
+!!! warning "`ordering` is server-configured — single field only"
+
+    - Unlike `LimitOffsetGraphqlPagination` and `PageGraphqlPagination`, cursor
+      pagination exposes **no client `ordering` argument** — the keyset field is
+      fixed by the server when the paginator is constructed.
+    - The default is `"-created"` (newest-first), which assumes your model has a
+      `created` field — pass your own `ordering` otherwise.
+    - A leading `-` selects descending order.
+    - An empty string falls back to `"id"`.
+    - A comma-separated value is **not** an error: only the **first** term is
+      used, the rest are silently ignored (keyset pagination is single-field).
+
+!!! info "Effective page size — never unbounded"
+
+    The page size resolves as `first` (client) → `page_size` → `max_page_size`,
+    always clamped at `max_page_size`. When **all three** are unset, the module
+    constant `DEFAULT_CURSOR_PAGE_SIZE = 20` applies — unlike the other
+    paginators, cursor pagination **never** returns an unbounded result set (the
+    keyset always needs a concrete page size).
+
+!!! note "`first` + `cursor` are the forward keyset parameters"
+
+    `first` controls the page size and `cursor` carries the opaque boundary
+    token from the previous page. If your API needs a different argument name,
+    rename `first` per list via the constructor:
+
+    ```python
+    pagination = CursorGraphqlPagination(first_query_param="limit")
+    # results(limit: Int, cursor: String) instead of results(first: Int, cursor: String)
+    ```
 
 ### Query Examples
 
@@ -456,11 +624,23 @@ query Events($first: Int!, $cursor: String) {
     - `hasPreviousPage` is exact (there really is a row before the current page),
       so it is `false` on the first page even if a stray cursor is supplied.
 
-!!! note "Scope"
-    Cursor pagination is **forward-only** (`first` + `cursor`); backward
-    pagination (`last`/`before`) is intentionally not provided. `ordering` must be
-    a single field (a leading `-` selects descending order) — order by a stable,
-    indexed field such as the primary key.
+!!! note "Why is there no backward pagination (`last`/`before`)?"
+    This paginator is a deliberately **forward-only keyset** design: each page
+    is a single compound `(field, pk) > (value, pk)` / `(field, pk) < (value,
+    pk)` filter relative to the previous page's boundary row. Supporting
+    `last`/`before` — and multi-field ordering — requires additional
+    lexicographic `WHERE` chains (the general `(a, b, ...) > (x, y, ...)`
+    row-comparison expansion for an arbitrary number of ordering fields), which
+    is substantially more machinery than the current single-field-plus-pk
+    boundary. That work is planned for a future release (it is on the 2.1
+    backlog). Until then, cursor pagination is `first` + `cursor` only, and
+    `ordering` must be a single field (a leading `-` selects descending order)
+    — order by a stable, indexed column such as the primary key.
+
+    **If you need backward navigation today:** `LimitOffsetGraphqlPagination`
+    has no backward mode either (a negative `offset` raises a clean
+    `GraphQLError`), but `PageGraphqlPagination` supports it natively — see
+    [Backward pagination](#backward-pagination) below.
 
 ## Advanced Pagination Usage
 
@@ -605,7 +785,8 @@ silently compute a negative offset. The validation is now an explicit raise so
 it always fires.
 
 - **`page=0`**: raises `GraphQLError("Page value for PageGraphqlPagination must be a non-zero value")`.
-- **`page < 0`**: valid — returns the last page (offset relative to the total count).
+- **`page < 0`**: valid — navigates backward from the end of the list; see
+  [Backward pagination](#backward-pagination) for the exact row semantics.
 - **`page > 0`**: valid — standard page navigation.
 
 ### Tampered or Malformed Cursors
@@ -639,7 +820,7 @@ error response (HTTP 200, `errors[]`) rather than an HTTP 500.
 | `page` value | COUNT issued? | Reason |
 |---|---|---|
 | `page > 0` | No | Offset is `page_size * (page - 1)` — no row count needed |
-| `page < 0` | Yes | Last-page navigation: offset = `total - page_size * abs(page)` |
+| `page < 0` | Yes | Backward navigation needs the total row count to compute the window: `offset = total + page_size * page` (see [Backward pagination](#backward-pagination)) |
 
 `totalCount` on the list wrapper is still resolved independently by
 `DjangoListObjectType` and always reflects the filtered queryset count. This

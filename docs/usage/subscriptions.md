@@ -75,7 +75,7 @@ class UserSubscription(Subscription):
         stream = "users"                      # required, a str
         queryset = None                        # optional
         description = "User Subscription"     # optional
-        serialize_data = None                  # optional, see "Notification payload"
+        payload_mode = None                    # optional, see "Notification payload"
 ```
 
 The notification payload is serialized through the native (Pydantic) backend.
@@ -93,7 +93,8 @@ subscription, not the legacy one-shot confirmation object. It exposes:
 ## 2. Mount it on the schema
 
 ```python
-from django_graphex import DjangoGraphQLSchema, ObjectType
+from django_graphex.core import ObjectType
+from django_graphex.schema import DjangoGraphQLSchema
 from myapp.subscriptions import UserSubscription
 
 
@@ -123,7 +124,7 @@ from django_graphex.subscriptions.transports.sse import subscription_sse_view
 from myapp.schema import schema
 
 urlpatterns = [
-    path("graphql/stream", subscription_sse_view(schema=schema)),
+    path("graphql/stream", subscription_sse_view(schema=schema.graphql_schema)),
 ]
 ```
 
@@ -151,7 +152,7 @@ application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
         "websocket": URLRouter(
-            [path("ws/graphql/", subscription_ws_consumer(schema=schema).as_asgi())]
+            [path("ws/graphql/", subscription_ws_consumer(schema=schema.graphql_schema).as_asgi())]
         ),
     }
 )
@@ -174,21 +175,92 @@ CHANNEL_LAYERS = {
 # }
 ```
 
+### Per-connection schema (permission-scoped subscriptions)
+
+Both transports accept an optional `schema_provider` in addition to the plain
+`schema=`. A `schema_provider` is a callable `provider(user) -> GraphQLSchema`
+resolved **per connection** with the connection's user (`request.user` for SSE,
+`scope["user"]` for WebSocket). When given, it **wins** over `schema=`.
+
+This lets a subscription connection use the **same pruned schema as HTTP**: wire
+the provider to the bundled `pruned_schema_for` helper so a subscription
+**action the user is not permitted to observe is absent from the connection's
+schema** and a `subscribe` naming it fails at **validation** (`Cannot query
+field`), exactly like the HTTP endpoint.
+
+The bundled `pruned_schema_for` helper is gated by
+[`PERMISSION_SCOPED_SCHEMA`](settings.md) — the **same one flag** that gates the
+HTTP `AuthenticatedGraphQLView` — read **per connection** (never at import):
+
+- **`PERMISSION_SCOPED_SCHEMA = False`** (the default): the helper returns the
+  **full** schema, so a provider wired to it is inert and every field validates.
+- **`PERMISSION_SCOPED_SCHEMA = True`**: the helper returns the schema **pruned**
+  to the connection user's permissions. An **active superuser** always receives
+  the full schema.
+
+```python
+from django_graphex.core.permission_signature_cache import pruned_schema_for
+from django_graphex.subscriptions.transports.sse import subscription_sse_view
+from django_graphex.subscriptions.transports.ws import subscription_ws_consumer
+from myapp.schema import schema
+
+_full = schema.graphql_schema
+
+# SSE: the provider is resolved with request.user.
+sse_view = subscription_sse_view(
+    schema_provider=lambda user: pruned_schema_for(user, _full),
+)
+
+# WebSocket: the provider is resolved once per socket with scope["user"].
+ws_consumer = subscription_ws_consumer(
+    schema_provider=lambda user: pruned_schema_for(user, _full),
+)
+```
+
+!!! note "Prerequisites for pruning"
+
+    Pruning via `pruned_schema_for` requires a **labeled** `DjangoGraphQLSchema`
+    (the schema carries a `gdx_label_set` and per-field `gdx_required_perms`, the
+    same labeling the HTTP endpoint uses). It also needs a real user on the
+    connection: SSE reads `request.user`, WebSocket reads `scope["user"]` — so the
+    WS routing MUST be wrapped in Channels' `AuthMiddlewareStack` (or an equivalent
+    that populates `scope["user"]`), otherwise the provider sees `AnonymousUser`.
+
+!!! note "Per-socket resolution and staleness"
+
+    For **WebSocket**, the provider is resolved **once per socket** (on the first
+    `subscribe`) and cached for the life of the connection, so every multiplexed
+    operation on that socket shares one schema. A permission change (or a
+    `PERMISSION_SCOPED_SCHEMA` toggle) therefore only takes effect on the **next**
+    connection, not mid-socket. For **SSE** (one request = one stream) the provider
+    is resolved per request, so each new stream picks up the current state.
+
+Passing a plain `schema=` (no `schema_provider`) is fully **backward
+compatible** — the transport behaves exactly as before, so existing wiring such
+as `subscription_ws_consumer(schema=schema.graphql_schema)` keeps working
+unchanged. You must pass at least one of `schema=` or `schema_provider=`.
+
+A **custom** `schema_provider` callable that does **not** route through
+`pruned_schema_for` is your own code and is **not** gated by the setting — the
+flag gates the bundled helper only, so whatever schema your callable returns is
+used as-is.
+
 ## From a `DjangoModelType` (one definition)
 
 If you already use a [`DjangoModelType`](types.md#djangomodeltype) for
 queries and mutations, you can get its subscription from the **same class** — no
-separate `Subscription` subclass. Add `stream` (and optionally `serialize_data`)
+separate `Subscription` subclass. Add `stream` (and optionally `payload_mode`)
 to its `Meta`:
 
 ```python
+from django_graphex.types import DjangoModelType
 from myapp.models import User
 
 class UserModelType(DjangoModelType):
     class Meta:
         model = User
         stream = "users"          # enables the subscription
-        serialize_data = True     # optional; defaults to the global setting
+        payload_mode = "full"     # optional; defaults to the global setting
 ```
 
 Mount it on the schema — then serve it through either transport (see
@@ -196,7 +268,8 @@ Mount it on the schema — then serve it through either transport (see
 
 ```python
 # schema.py
-from django_graphex import DjangoGraphQLSchema, ObjectType
+from django_graphex.core import ObjectType
+from django_graphex.schema import DjangoGraphQLSchema
 
 class Subscription(ObjectType):
     user_subscription = UserModelType.SubscriptionField()
@@ -220,6 +293,18 @@ The generated subscription honors the type's authorization and scoping:
   for the read-like `"subscribe"` action; a denial yields `ok: False` / `error`
   and no group is joined. `IsAuthenticatedOrReadOnly` therefore lets anyone
   subscribe to a public stream, while `IsAuthenticated` requires a login.
+- **Per-action check (defense in depth).** The requested subscription `action`
+  (`CREATE` / `UPDATE` / `DELETE` / `ALL_ACTIONS`) is forwarded to the permission
+  check, so a class can gate each action independently. Because a subscription
+  payload returns instance data, `DjangoModelPermissions` treats a subscribe
+  action as **composite**: it requires the model's `view` permission **plus** the
+  action's write verb (`ALL_ACTIONS` requires every write verb). A user permitted
+  only `CREATE` is therefore denied a `subscribe` for `UPDATE` at **runtime**,
+  even if the request reaches the full schema — this is the runtime half of the
+  same model that [`PERMISSION_SCOPED_SCHEMA`](settings.md) enforces at the schema
+  layer (the action's enum value is pruned away). Custom `permission_classes` read
+  the action via `has_subscribe_permission(info, model, **kwargs)` (the action
+  arrives under `kwargs["subscription_action"]`).
 - **`subscription_scope(info, **kwargs)`** returns a server-forced filter mapping
   (e.g. `{"owner": info.context.user.pk}`). It is evaluated at subscribe time and
   enforced **per event at delivery**, merged over the client `filters` with
@@ -228,6 +313,8 @@ The generated subscription honors the type's authorization and scoping:
   per-event query.
 
 ```python
+from django_graphex.permissions import IsAuthenticated
+from django_graphex.types import DjangoModelType
 from myapp.models import Note
 
 class NoteModelType(DjangoModelType):
@@ -236,7 +323,7 @@ class NoteModelType(DjangoModelType):
     class Meta:
         model = Note
         stream = "notes"
-        serialize_data = True
+        payload_mode = "full"
 
     @classmethod
     def subscription_scope(cls, info, **kwargs):
@@ -261,13 +348,14 @@ subscribers partitioned by a value (per owner, per tenant, per room), declare
 only the matching subscribers are woken:
 
 ```python
+from django_graphex.types import DjangoModelType
 from myapp.models import Message
 
 class MessageModelType(DjangoModelType):
     class Meta:
         model = Message
         stream = "messages"
-        serialize_data = True
+        payload_mode = "full"
         subscription_index_fields = ("tenant", "room")   # compound (AND) index
 
     @classmethod
@@ -288,7 +376,7 @@ Channels delivers only to that group -- no group enumeration is involved.
 - **Good index fields are high-cardinality** equality keys (FKs like `owner`,
   `tenant`, `room`). A low-cardinality boolean would only create two groups and
   buy nothing.
-- **Independent of `serialize_data`.** The index reads the live instance, not the
+- **Independent of `payload_mode`.** The index reads the live instance, not the
   payload, so it works in id-only mode too.
 - The full filter is still applied on delivery, so indexing is purely a routing
   optimization -- correctness never depends on it.
@@ -297,7 +385,11 @@ Channels delivers only to that group -- no group enumeration is involved.
 
 `SubscriptionClientView` serves a self-contained HTML page to try subscriptions
 live. It speaks the same standards as the transports: `graphql-transport-ws` over
-WebSocket and `graphql-sse` over an `EventSource`. Add it to your URLConf like the
+WebSocket and `graphql-sse` over a streamed `fetch()` POST — the browser
+`EventSource` API is not used to *start* the subscription, since `EventSource`
+cannot carry the operation (see [the SSE wire protocol](#sse-the-wire-protocol)).
+The response it reads back **is** a standard `text/event-stream`, though — see
+the tip below for watching it live in DevTools. Add it to your URLConf like the
 admin — because it is served from **your own origin**, there is no CORS to
 configure:
 
@@ -345,11 +437,134 @@ subscription {
 
 - `action: ALL_ACTIONS` subscribes to `CREATE`, `UPDATE` and `DELETE`.
 - Omit `id` to subscribe to **every** instance for that action.
-- Unsubscribing is the transport's own lifecycle: close the SSE `EventSource`, or
-  send a `graphql-transport-ws` `complete` for the operation id. There is no
-  `operation: UNSUBSCRIBE` argument anymore.
+- Unsubscribing is the transport's own lifecycle — see
+  [Unsubscribing](#unsubscribing). There is no `operation: UNSUBSCRIBE` argument
+  anymore.
 - Which fields are deliverable depends on the payload mode — in id-only mode only
   `id` is present (see [Notification payload](#notification-payload)).
+- Relations are delivered as **flat pks** (`post: ID`, `tags: [ID]`) — selecting
+  their subfields is a validation error (see
+  [Relations are flat IDs](#relations-are-flat-ids-no-nested-selections)).
+
+### SSE: the wire protocol
+
+The SSE transport implements the server side of
+[`graphql-sse`](https://github.com/enisdenjo/graphql-sse)'s **distinct
+connections mode**: one HTTP request carries **one** subscription. The operation
+travels in a **POST body** — a JSON object with `query`, `variables` and
+`operationName` — and the response is a `text/event-stream` that stays open:
+
+```bash
+curl -N -X POST http://localhost:8000/graphql/stream \
+  -H "Content-Type: application/json" \
+  -d '{"query": "subscription { userSubscription(action: UPDATE) { id username } }"}'
+```
+
+Each delivered event is a `next` frame carrying a standard GraphQL result; the
+terminal `complete` frame ends the stream (its empty `data:` line is part of the
+protocol — an `EventSource`-style listener never fires `complete` without it):
+
+```text
+event: next
+data: {"data": {"userSubscription": {"id": "5", "username": "neo"}}}
+
+event: complete
+data: 
+```
+
+!!! warning "The browser `EventSource` API cannot start a subscription"
+
+    The limitation is in the **`EventSource` JavaScript API**, not the wire
+    format: `EventSource` only issues **GET** requests and cannot send a body,
+    so it has no way to deliver the GraphQL document — the view answers such a
+    query-less request with **HTTP 400**. Subscribe with a streamed `fetch()`
+    POST instead (exactly what the bundled
+    [browser client view](#browser-client-view) does), or use the
+    [`graphql-sse`](https://github.com/enisdenjo/graphql-sse) client library,
+    which speaks this protocol out of the box. The response itself is a
+    standard `text/event-stream` either way — see the tip below to watch it in
+    DevTools.
+
+!!! tip "Watching the raw stream in DevTools"
+
+    Because the response really is `text/event-stream`, you can watch the
+    `next` / `complete` frames arrive live without any client library: open
+    your browser's DevTools → **Network** tab, find the streaming request, and
+    open its **EventStream** tab (Chrome/Edge) or **Response** tab (Firefox).
+    Each frame appears as it is flushed, even though the request itself was
+    sent as a POST (not via `EventSource`).
+
+!!! note "CSRF is exempt on this view"
+
+    `subscription_sse_view` ships `csrf_exempt`, mirroring `GraphQLView`: the
+    GraphQL document *is* the request payload and the engine's own
+    authorize/scope hooks gate the subscription, so session-cookie CSRF adds no
+    protection to a same-origin JSON POST. This means a plain `fetch()` POST or
+    a `curl` command (like the one above) reaches the view without needing a
+    CSRF token.
+
+Error surfacing splits at the moment the stream is committed:
+
+- **Pre-stream (HTTP 400)** — a missing `query`, a GraphQL **syntax** error, or
+  a non-subscription operation is rejected as a plain `400 Bad Request` before
+  any stream starts.
+- **In-stream** — everything after that (**validation errors** and
+  **authorize-denials**) is delivered inside the committed
+  `200 text/event-stream` response as a single `next` frame carrying
+  `{"errors": [...]}` followed by the `complete` frame — never an HTTP 4xx,
+  because a status code cannot change once the streaming response has begun.
+
+### WebSocket: the wire protocol
+
+The consumer speaks
+[`graphql-transport-ws`](https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md) —
+your client must request that subprotocol when opening the socket. One socket
+multiplexes any number of operations, each identified by a client-chosen `id`:
+
+| # | Direction | Message |
+|---|-----------|---------|
+| 1 | client → server | `{"type": "connection_init"}` — must be the first message (the auth boundary) |
+| 2 | server → client | `{"type": "connection_ack"}` |
+| 3 | client → server | `{"type": "subscribe", "id": "1", "payload": {"query": "subscription { … }"}}` |
+| 4 | server → client | `{"type": "next", "id": "1", "payload": {"data": {…}}}` — one frame per delivered event |
+| 5 | server → client | `{"type": "complete", "id": "1"}` — only when the stream itself ends |
+
+The `subscribe` payload carries the same `query` / `variables` /
+`operationName` keys as an HTTP POST. A subscribe-time failure (parse error,
+validation error, authorize-deny) is answered with
+`{"type": "error", "id": "1", "payload": [...]}` instead of `next` frames, and
+the server answers a client `{"type": "ping"}` with `{"type": "pong"}`. The
+[`graphql-ws`](https://github.com/enisdenjo/graphql-ws) JavaScript client
+speaks this protocol out of the box.
+
+Protocol violations close the socket with the spec's codes: `4400` malformed
+message, `4401` `subscribe` before the ack, `4408` no `connection_init` within
+the init timeout, `4409` duplicate operation `id`, `4429` a second
+`connection_init`.
+
+### Unsubscribing
+
+Both transports guarantee that a gone client is a gone subscriber — teardown
+discards every channel-layer group the operation had joined.
+
+**WebSocket** — send a `complete` frame for the operation id:
+
+```json
+{"type": "complete", "id": "1"}
+```
+
+This cancels **only** operation `"1"`: its task is cancelled and its groups are
+discarded, while the other operations multiplexed on the same socket keep
+streaming. Per the protocol the server does **not** echo a `complete` back for
+a client-initiated one — a server `complete` means "this stream ended on its
+own". Closing the socket cancels **all** operations and discards every joined
+group.
+
+**SSE** — one request is one stream, so unsubscribing means closing the HTTP
+connection: abort the `fetch()` (`AbortController.abort()`), dispose the
+`graphql-sse` client subscription, or `Ctrl-C` the `curl`. Django ≥ 5.2
+guarantees the disconnect cancels the streaming generator, and the transport's
+cleanup then leaves every joined group — no ghost subscribers.
 
 ### Filtering notifications
 
@@ -381,7 +596,7 @@ Filters are evaluated **per connection at delivery time**:
 
 !!! note "Delete + lookup filters"
     On a `delete` the row no longer exists, so only the in-memory (equality)
-    path applies. With `serialize_data = True` the payload still carries the
+    path applies. With `payload_mode = "full"` the payload still carries the
     field values, so equality filters work on deletes; with id-only payloads,
     non-pk filters cannot be evaluated on delete and the notification is dropped.
 
@@ -391,33 +606,27 @@ Filters are evaluated **per connection at delivery time**:
     subscription with `private_subscription` / your auth layer rather than
     relying on a client-provided filter.
 
-Each subscribed WebSocket receives notifications shaped like this in the default
-**id-only** mode:
+What the client receives is a normal GraphQL result — its own selection set
+projected from the event (wrapped in the transport's frame: an SSE `next`
+event or a WS `next{id, payload}` message). Subscribing with
+`{ id username email }` in the default **id-only** mode delivers:
 
 ```json
-{
-  "stream": "users",
-  "payload": {
-    "action": "update",
-    "model": "auth.user",
-    "data": {"id": 5}
-  }
-}
+{"data": {"userSubscription": {"id": "5", "username": null, "email": null}}}
 ```
 
-…or, in **full-payload mode**, with the serialized instance (optionally
-projected to the requested `data` fields):
+…and in **full-payload mode**, the serialized values:
 
 ```json
-{
-  "stream": "users",
-  "payload": {
-    "action": "update",
-    "model": "auth.user",
-    "data": {"username": "neo", "email": "neo@example.com"}
-  }
-}
+{"data": {"userSubscription": {"id": "5", "username": "neo", "email": "neo@example.com"}}}
 ```
+
+!!! note "The broadcast envelope is internal"
+
+    The `{"stream": ..., "payload": {"action": ..., "model": ..., "data": ...}}`
+    message you may see in channel-layer captures is the **internal** broadcast
+    between the signal binding and the subscriber processes — it never reaches
+    the client. Clients only see the transport frames above.
 
 ## Notification payload
 
@@ -431,13 +640,13 @@ Two controls, in order of precedence:
 
 | Control | Values | Effect |
 |---------|--------|--------|
-| `Meta.serialize_data` | `None` (default), `True`, `False` | Per-subscription. `None` inherits the global setting; `True` = full; `False` = id-only. |
-| `DJANGO_GRAPHEX["SUBSCRIPTION_SERIALIZE_DATA"]` | `False` (default), `True` | Global default for subscriptions that don't override it. |
+| `Meta.payload_mode` | `None` (default), `"full"`, `"id_only"` | Per-subscription. `None` inherits the global setting; `"full"` = full; `"id_only"` = id-only. |
+| `DJANGO_GRAPHEX["SUBSCRIPTION_PAYLOAD_MODE"]` | `"id_only"` (default), `"full"` | Global default for subscriptions that don't override it. |
 
 ```python
 # settings.py — make every subscription serialize the full instance by default
 DJANGO_GRAPHEX = {
-    "SUBSCRIPTION_SERIALIZE_DATA": True,
+    "SUBSCRIPTION_PAYLOAD_MODE": "full",
 }
 ```
 
@@ -447,7 +656,7 @@ class UserSubscription(Subscription):
     class Meta:
         model = User
         stream = "users"
-        serialize_data = True   # full payload for this one; True/False/None
+        payload_mode = "full"   # full payload for this one; "full"/"id_only"/None
 ```
 
 !!! warning "id-only is the default"
@@ -456,8 +665,68 @@ class UserSubscription(Subscription):
     django-graphex defaults to id-only for performance. In id-only mode the
     payload carries only `{"id": <pk>}`, so a subscription selection set can
     deliver only `id` — to receive other fields, opt into full mode via
-    `Meta.serialize_data = True` / the global setting. The payload mode is fixed
+    `Meta.payload_mode = "full"` / the global setting. The payload mode is fixed
     when the subscription class is defined.
+
+## Relations are flat IDs (no nested selections)
+
+The generated event type — `<Model>SubscriptionEvent` — renders every relation
+**flat**: a `ForeignKey` / `OneToOneField` field is the related object's pk
+scalar (`ID` for the usual auto pk, otherwise the pk field's own scalar), and a
+`ManyToManyField` is a **list** of pks (`[ID]`). This is the serialize-once
+design working as intended: a change is serialized **once** (`FK → pk`,
+`M2M → [pk]`) and that single flat payload feeds every subscriber with **zero
+per-subscriber database queries** — resolving a nested object per subscriber
+would reintroduce exactly the per-event N+1 the engine exists to avoid.
+
+Select relations as scalars:
+
+```graphql
+subscription {
+  commentSubscription(action: CREATE) {
+    id
+    text
+    post      # ID — the related post's pk, not an object
+    tags      # [ID] — the related pks
+  }
+}
+```
+
+Selecting **subfields** on a relation fails GraphQL **validation** — before any
+event is delivered:
+
+```graphql
+subscription {
+  commentSubscription(action: CREATE) {
+    post { id title }
+  }
+}
+```
+
+```text
+Field 'post' must not have a selection since type 'ID' has no subfields.
+```
+
+(On SSE the error arrives in-stream; on WebSocket as an `error` frame — see
+[the wire protocols](#sse-the-wire-protocol).)
+
+The payload mode does **not** change this schema — `payload_mode` only decides
+which keys the broadcast payload carries, and the flat resolvers simply read
+their key from it:
+
+| Client selects… | `payload_mode = "id_only"` (default) | `payload_mode = "full"` |
+|---|---|---|
+| `id` | the pk | the pk |
+| a concrete scalar (`text`, `username`, …) | `null` — no error | the serialized value |
+| a FK / O2O (`post`) | `null` — no error | the related pk (`ID`) |
+| a M2M (`tags`) | `null` — no error | the related pks (`[ID]`) |
+| nested subfields (`post { id }`) | validation error | validation error |
+
+In id-only mode the payload is just `{"id": <pk>}`, so any selected non-`id`
+field resolves `null` — the selection still validates against the same schema,
+and nothing errors at delivery. In full mode the broadcast carries **all**
+concrete fields plus the M2M pk lists, and each subscriber's selection projects
+from that single dict.
 
 ## Per-connection field selection
 
@@ -506,10 +775,9 @@ filters that cannot be widened or removed by the client.
 ### Percent-encoded index group names
 
 Subscription index fields (see `subscription_index_fields`) use `=` and `&`
-as delimiters in the group name suffix.  Starting with v1.2.1, field **values**
-are percent-encoded (`urllib.parse.quote`) before the suffix is assembled, so
-a value like `"a=b"` no longer produces a name that is ambiguous with two
-separate key-value pairs.
+as delimiters in the group name suffix.  Field **values** are percent-encoded
+(`urllib.parse.quote`) before the suffix is assembled, so a value like `"a=b"`
+no longer produces a name that is ambiguous with two separate key-value pairs.
 
 ### Asserts replaced with explicit raises
 
@@ -531,7 +799,7 @@ without blocking the loop thread, and a done-callback logs any delivery failure
 via the module logger.  On the **WSGI / sync path** (no running loop),
 `async_to_sync` is used and errors propagate synchronously as before.
 
-### Commit-time broadcast delivery (v1.2.2)
+### Commit-time broadcast delivery
 
 Subscription broadcasts (`_on_save`, `_on_delete`) are now deferred via
 `django.db.transaction.on_commit`.  This means:
@@ -586,10 +854,11 @@ favor of native SSE and `graphql-transport-ws`. To migrate:
    [Serve subscriptions](#3-serve-subscriptions-over-sse-or-websocket)).
 4. Update clients: drop the `channelId` / `operation` arguments and the
    `{ok, error, stream, operation, action}` confirmation selection — select the
-   model's fields instead, and rely on the transport for unsubscribe (close the
-   `EventSource` or send a `graphql-transport-ws` `complete`).
+   model's fields instead, and rely on the transport for unsubscribe (abort the
+   SSE request or send a `graphql-transport-ws` `complete` — see
+   [Unsubscribing](#unsubscribing)).
 5. Notifications are **id-only by default**. If your clients relied on the full
-   serialized payload, set `Meta.serialize_data = True` on those subscriptions or
-   `DJANGO_GRAPHEX["SUBSCRIPTION_SERIALIZE_DATA"] = True` globally. See
+   serialized payload, set `Meta.payload_mode = "full"` on those subscriptions or
+   `DJANGO_GRAPHEX["SUBSCRIPTION_PAYLOAD_MODE"] = "full"` globally. See
    [Notification payload](#notification-payload).
 6. Configure a Redis channel layer for multi-process deployments.

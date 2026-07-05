@@ -53,23 +53,22 @@ def _group_send_done(task: asyncio.Task) -> None:  # type: ignore[type-arg]
 def _safe_group_send(
     channel_layer: Any, group_name: str, message: dict[str, Any]
 ) -> None:
-    """Send *message* to *group_name* from a synchronous Django signal context.
+    """Send "message" to "group_name" from a synchronous Django signal context.
 
     Django post_save / post_delete signals fire in the ORM's synchronous call
-    stack.  Two execution environments must be handled:
+    stack. Two execution environments must be handled:
 
-    * **No running loop on the current thread** (plain WSGI, Celery, management
-      commands): ``async_to_sync(channel_layer.group_send)(...)`` is safe and
-      is used directly.
-    * **A loop IS running on the current thread** (ASGI server — Daphne,
-      Uvicorn): calling ``async_to_sync`` would create a nested-loop deadlock.
-      Instead, the coroutine is scheduled on the running loop via
-      ``loop.create_task`` and this function returns **immediately** (fire-and-
-      forget).  The loop processes the task on its next turn without any thread
-      blocking.  The old executor + ``run_coroutine_threadsafe(...).result()``
-      pattern blocked the loop thread waiting for a future that could never
-      resolve — causing a 5-second stall and a spurious "message may be dropped"
-      warning.
+    - No running loop on the current thread (plain WSGI, Celery, management
+      commands): "async_to_sync(channel_layer.group_send)(...)" is safe and is
+      used directly.
+    - A loop IS running on the current thread (ASGI server — Daphne, Uvicorn):
+      calling "async_to_sync" would create a nested-loop deadlock. Instead, the
+      coroutine is scheduled on the running loop via "loop.create_task" and this
+      function returns immediately (fire-and-forget). The loop processes the task
+      on its next turn without any thread blocking. The old executor +
+      "run_coroutine_threadsafe(...).result()" pattern blocked the loop thread
+      waiting for a future that could never resolve — causing a 5-second stall
+      and a spurious "message may be dropped" warning.
 
     Args:
         channel_layer: The Channels channel layer to send through.
@@ -130,7 +129,11 @@ class SubscriptionBinding:
         return f"gde-subscription-{self.model_label}-{self.stream}"
 
     def register(self) -> None:
-        """Idempotently connect the "post_save"/"post_delete" receivers."""
+        """Idempotently connect the "post_save"/"post_delete" receivers.
+
+        Uses a stable "dispatch_uid" per model/stream so connecting the same
+        binding twice never registers a second receiver (no double-fire).
+        """
         post_save.connect(
             self._on_save,
             sender=self.model,
@@ -145,7 +148,11 @@ class SubscriptionBinding:
         )
 
     def unregister(self) -> None:
-        """Disconnect the receivers (mainly useful for tests)."""
+        """Disconnect the "post_save"/"post_delete" receivers.
+
+        Mainly useful for tests that need to tear down the signal wiring the
+        binding installed via "register".
+        """
         post_save.disconnect(
             sender=self.model, dispatch_uid=f"{self._dispatch_uid}-save"
         )
@@ -188,7 +195,7 @@ class SubscriptionBinding:
         # transaction; the callback runs only after the transaction commits, so
         # subscribers never receive phantom notifications for rolled-back deletes.
         pk_snapshot = instance.pk
-        if self.subscription_cls._should_serialize_data():
+        if self.subscription_cls._payload_is_full():
             data_snapshot: dict[str, Any] | None = serialize_instance(
                 self.backend, instance
             )
@@ -208,18 +215,18 @@ class SubscriptionBinding:
     ) -> None:
         """Broadcast a delete notification using a pre-captured pk and payload.
 
-        Called from the on_commit callback registered by ``_on_delete``.  All
-        pk-dependent values are derived from *pk_snapshot* (captured at signal
-        time) rather than from ``instance.pk``, which Django sets to ``None``
-        during ``Model.delete()`` before the callback fires.
+        Called from the on_commit callback registered by "_on_delete". All
+        pk-dependent values are derived from "pk_snapshot" (captured at signal
+        time) rather than from "instance.pk", which Django sets to "None"
+        during "Model.delete()" before the callback fires.
 
         Args:
             instance: The (now pk-less) model instance — used only for index
-                field extraction via ``_instance_index``, which reads non-pk
+                field extraction via "_instance_index", which reads non-pk
                 fields and is therefore safe to call with a pk-less instance.
             pk_snapshot: The primary key captured at post_delete signal time.
             data_snapshot: Pre-serialized payload (non-None when
-                ``serialize_data=True``), or ``None`` for id-only mode.
+                "payload_mode='full'"), or "None" for id-only mode.
         """
         channel_layer = get_channel_layer()
         if channel_layer is None:  # pragma: no cover - misconfiguration guard
@@ -266,7 +273,7 @@ class SubscriptionBinding:
         """Serialize once and fan out to the action and per-pk groups.
 
         Used for "create" and "update" actions.  For "delete", use
-        ``_broadcast_delete`` which accepts a pre-captured pk snapshot.
+        "_broadcast_delete" which accepts a pre-captured pk snapshot.
 
         Args:
             action: The change action, one of "create" or "update".
@@ -283,7 +290,7 @@ class SubscriptionBinding:
 
         # id-only (default) skips serialization entirely; full mode serializes
         # the instance once via the subscription's backend.
-        if self.subscription_cls._should_serialize_data():
+        if self.subscription_cls._payload_is_full():
             data = serialize_instance(self.backend, instance)
         else:
             data = {"id": instance.pk}

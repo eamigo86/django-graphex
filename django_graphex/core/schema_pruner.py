@@ -1,0 +1,409 @@
+"""Permission-scoped schema prune transform (P1).
+
+"prune_schema(full, granted)" rebuilds the reachable-from-roots closure of a
+LABELED graphql-core schema, OMITTING any field whose
+"extensions[gdx_required_perms]" (stamped by P0) are not all held by the
+caller's "granted" permission set. The result is a SEPARATE, distinct
+"GraphQLSchema" — the transform is PURE and never mutates or shares type
+identity with the source (the FULL schema is a process singleton).
+
+Design (SDD "permission-scoped-schema" D2):
+
+- A field survives iff its "gdx_required_perms" (a "frozenset") is a subset of
+  "granted". An UNTAGGED field (no extension) is PUBLIC and always survives.
+- A subscription field carries a per-action "dict{action: frozenset}" instead.
+  Its "action" enum is rebuilt per signature: an action-value survives iff its
+  perms are held; "ALL_ACTIONS" survives only when every write verb is held.
+  If NO action survives, the whole subscription field is removed.
+- Removal is TRANSITIVE: a type reachable only via omitted fields disappears, and
+  a type left with ZERO fields is dropped, cascading to a fixpoint (its
+  referencing fields / union members are removed too, which can empty and drop
+  further types — including a root type, which becomes "None").
+- Interfaces, unions and their membership are recomputed against the survivors.
+- The pruned schema passes graphql-core "validate_schema" (no dangling refs),
+  except when a ROOT type is fully pruned; that empty-root case is the caller's
+  (the view's) 403 responsibility, not a dangling reference.
+
+The algorithm is two-phase over the type graph (O(V+E) plus a bounded cascade
+fixpoint):
+
+1. Survivor fixpoint — starting from the root object types, decide which named
+   types survive. An object / interface survives iff it retains at least one
+   field after per-field perm filtering AND after dropping fields whose (named)
+   output type did not survive. A union survives iff at least one member
+   survives. Iterate until the survivor set is stable.
+2. Clone-on-write rebuild — clone each surviving type via "to_kwargs()",
+   remapping every referenced type to its cloned survivor and dropping fields /
+   members / interfaces that reference a non-survivor. Scalars and named enums
+   are threaded through unchanged; the per-signature subscription action enum is
+   rebuilt inline on its field argument.
+
+"GraphQLSchema" recomputes its "type_map" from the rebuilt roots, so unreachable
+types fall away automatically.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from graphql import (
+    GraphQLEnumType,
+    GraphQLField,
+    GraphQLInterfaceType,
+    GraphQLList,
+    GraphQLNonNull,
+    GraphQLObjectType,
+    GraphQLSchema,
+    GraphQLUnionType,
+    get_named_type,
+    is_enum_type,
+    is_input_object_type,
+    is_interface_type,
+    is_object_type,
+    is_union_type,
+)
+
+__all__ = ("prune_schema",)
+
+# The subscribe action-value whose perms span every write verb. ``all_actions``
+# is retained only when every per-action value also survives.
+_ALL_ACTIONS_KEY = "all_actions"
+
+# Suffix of the per-model subscription action enum (``{Model}SubscriptionAction``)
+# whose values are pruned per signature.
+_ACTION_ENUM_SUFFIX = "SubscriptionAction"
+
+
+def prune_schema(full: GraphQLSchema, granted: frozenset[str]) -> GraphQLSchema:
+    """Return a permission-scoped clone of the schema for the granted perm set.
+
+    Args:
+        full: The labeled FULL "GraphQLSchema" (P0 stamped
+            "extensions[gdx_required_perms]" on generated fields).
+        granted: The permission codenames the caller holds. Extra perms outside
+            the schema label-set are harmless.
+
+    Returns:
+        A distinct "GraphQLSchema" whose reachable closure omits every field the
+        caller may not see. The source "full" schema is never mutated.
+    """
+    return _Pruner(full, granted).run()
+
+
+class _Pruner:
+    """Stateful single-shot pruner (one instance per built variant)."""
+
+    def __init__(self, full: GraphQLSchema, granted: frozenset[str]) -> None:
+        self._full = full
+        self._granted = granted
+        # Named object / interface type -> its field map AFTER per-field perm
+        # filtering (before the survivor fixpoint drops dangling-type fields).
+        self._filtered_fields: dict[str, dict[str, GraphQLField]] = {}
+        # Named types that survive the fixpoint.
+        self._survivors: set[str] = set()
+        # Memoized clones, keyed by type name, so shared references stay shared
+        # within the pruned universe (and self-references resolve).
+        self._clones: dict[str, Any] = {}
+
+    # -- entry point -------------------------------------------------------- #
+    def run(self) -> GraphQLSchema:
+        """Build and return the pruned schema.
+
+        ``GraphQLSchema`` keeps only root-reachable types plus whatever is
+        forwarded via ``types=``. A surviving object type that implements a
+        surviving interface but is never returned DIRECTLY by any field (only
+        via the interface) would otherwise fall out of the pruned ``type_map``,
+        leaving ``possible_types`` empty and breaking inline-fragment queries.
+        We forward the CLONES (not the source instances — identity must stay
+        within the pruned universe) of those implementers via ``types=``, so the
+        interface keeps its implementers exactly like the FULL schema does.
+        """
+        self._compute_filtered_fields()
+        self._compute_survivors()
+        query = self._clone_root(self._full.query_type)
+        mutation = self._clone_root(self._full.mutation_type)
+        subscription = self._clone_root(self._full.subscription_type)
+        # Roots are cloned first so ``_clones`` reflects everything reachable
+        # through fields; the implementer forward then only needs to add the
+        # interface-only-reachable object clones.
+        implementer_types = self._forwarded_implementer_clones()
+        return GraphQLSchema(
+            query=query,
+            mutation=mutation,
+            subscription=subscription,
+            types=implementer_types or None,
+            directives=self._full.directives,
+            extensions=dict(self._full.extensions or {}),
+        )
+
+    def _forwarded_implementer_clones(self) -> list[GraphQLObjectType]:
+        """Return the surviving object-type clones to force into the schema.
+
+        Mirrors ``DjangoGraphQLSchema._native_types_for_forwarding``: an object
+        type that implements a SURVIVING interface must stay in the type map
+        even when no surviving field returns it directly. Only SURVIVORS are
+        forwarded (the survivor set is the source of truth) — a type the
+        fixpoint dropped is never resurrected. Cloning is idempotent and
+        memoized, so a type already cloned via a field ride-through is returned
+        as the SAME instance (no duplicate-name).
+        """
+        # Single-level-interface assumption: this only checks the DIRECT
+        # interfaces of an object type (gtype.interfaces), not any interfaces
+        # THOSE interfaces might themselves implement. This library only
+        # generates "object type implements interface" — it never generates
+        # interface-implementing-interface hierarchies — so there is no deeper
+        # level to walk here. If that ever changes, this forwarding check would
+        # need to walk the interface chain transitively.
+        forwarded: list[GraphQLObjectType] = []
+        for name in self._survivors:
+            gtype = self._full.type_map[name]
+            if not is_object_type(gtype):
+                continue
+            if any(iface.name in self._survivors for iface in gtype.interfaces):
+                forwarded.append(self._clone_named(gtype))
+        return forwarded
+
+    # -- phase 1a: per-field perm filtering --------------------------------- #
+    def _compute_filtered_fields(self) -> None:
+        """Compute, per object / interface type, the fields clearing the perms."""
+        for name, gtype in self._full.type_map.items():
+            if name.startswith("__"):
+                continue
+            if is_object_type(gtype) or is_interface_type(gtype):
+                self._filtered_fields[name] = {
+                    field_name: gql_field
+                    for field_name, gql_field in gtype.fields.items()
+                    if self._field_permitted(gql_field)
+                }
+
+    def _field_permitted(self, gql_field: GraphQLField) -> bool:
+        """Return whether *gql_field* clears the caller's permissions.
+
+        Untagged (no ``gdx_required_perms``) means public, so permitted. A plain
+        ``frozenset`` must be a subset of *granted*. A subscription per-action
+        ``dict`` is permitted iff at least one action-value survives.
+        """
+        perms = (gql_field.extensions or {}).get("gdx_required_perms")
+        if perms is None:
+            return True
+        if isinstance(perms, dict):
+            return bool(self._surviving_actions(perms))
+        return frozenset(perms) <= self._granted
+
+    def _surviving_actions(self, perms: dict[str, Any]) -> set[str]:
+        """Return the subscribe action-values whose perms the caller holds.
+
+        ``all_actions`` survives only when every single action-value survives.
+        """
+        singles = {
+            action
+            for action, action_perms in perms.items()
+            if action != _ALL_ACTIONS_KEY and frozenset(action_perms) <= self._granted
+        }
+        all_singles = {a for a in perms if a != _ALL_ACTIONS_KEY}
+        surviving = set(singles)
+        if (
+            _ALL_ACTIONS_KEY in perms
+            and all_singles
+            and singles == all_singles
+            and frozenset(perms[_ALL_ACTIONS_KEY]) <= self._granted
+        ):
+            surviving.add(_ALL_ACTIONS_KEY)
+        return surviving
+
+    # -- phase 1b: survivor fixpoint ---------------------------------------- #
+    def _compute_survivors(self) -> None:
+        """Fixpoint the survivor set until no type is left empty.
+
+        A named object / interface survives iff it retains at least one field
+        once fields referencing non-survivors are dropped; a union survives iff
+        at least one member survives.
+        """
+        candidates = {name for name in self._full.type_map if not name.startswith("__")}
+        changed = True
+        while changed:
+            changed = False
+            for name in list(candidates):
+                if self._is_empty(name, candidates):
+                    candidates.discard(name)
+                    changed = True
+        self._survivors = candidates
+
+    def _is_empty(self, name: str, candidates: set[str]) -> bool:
+        """Return whether the named type is empty relative to *candidates*."""
+        gtype = self._full.type_map[name]
+        if is_object_type(gtype) or is_interface_type(gtype):
+            return not any(
+                self._output_survives(gql_field.type, candidates)
+                for gql_field in self._filtered_fields[name].values()
+            )
+        if is_union_type(gtype):
+            return not any(m.name in candidates for m in gtype.types)
+        return False
+
+    def _output_survives(self, gtype: Any, candidates: set[str]) -> bool:
+        """Return whether a field's unwrapped output type is still a candidate.
+
+        Leaf types (scalars / enums / input objects) are always live — only
+        composite object / interface / union types can be pruned to empty. A
+        field's output type is always a named (possibly wrapped) type, so
+        ``get_named_type`` never yields ``None`` here.
+        """
+        named = get_named_type(gtype)
+        if is_object_type(named) or is_interface_type(named) or is_union_type(named):
+            return named.name in candidates
+        return True
+
+    # -- phase 2: clone-on-write rebuild ------------------------------------ #
+    def _clone_root(self, root: Any) -> GraphQLObjectType | None:
+        """Clone a root type, or return ``None`` when it did not survive."""
+        if root is None or root.name not in self._survivors:
+            return None
+        return self._clone_named(root)
+
+    def _clone_named(self, gtype: Any) -> Any:
+        """Return the pruned clone of a named type, memoized by name."""
+        name = gtype.name
+        cached = self._clones.get(name)
+        if cached is not None:
+            return cached
+        if is_object_type(gtype):
+            clone: Any = self._clone_composite(gtype, GraphQLObjectType)
+        elif is_interface_type(gtype):
+            clone = self._clone_composite(gtype, GraphQLInterfaceType)
+        elif is_union_type(gtype):
+            clone = self._clone_union(gtype)
+        elif is_enum_type(gtype):
+            clone = GraphQLEnumType(**gtype.to_kwargs())
+        elif is_input_object_type(gtype):
+            clone = self._clone_input(gtype)
+        else:
+            # Scalars (and any other leaf) carry no perm-gated members and can be
+            # shared identity-safe across the pruned universe.
+            clone = gtype
+        self._clones[name] = clone
+        return clone
+
+    def _clone_composite(self, gtype: Any, cls: type) -> Any:
+        """Clone an object / interface, thunking its field / interface maps.
+
+        Thunks defer resolution until after the clone is memoized so
+        self-references and cycles resolve against the pruned universe.
+        """
+        kwargs = gtype.to_kwargs()
+        kwargs["fields"] = lambda g=gtype: self._rebuild_fields(g.name)
+        kwargs["interfaces"] = lambda g=gtype: self._rebuild_interfaces(g)
+        return cls(**kwargs)
+
+    def _clone_union(self, gtype: GraphQLUnionType) -> GraphQLUnionType:
+        """Clone a union, keeping only its surviving member types."""
+        # graphql-core accepts a thunk for ``types`` at runtime; cast to a plain
+        # dict so the assignment does not clash with the narrower TypedDict.
+        kwargs: dict[str, Any] = dict(gtype.to_kwargs())
+        kwargs["types"] = lambda g=gtype: [
+            self._clone_named(m) for m in g.types if m.name in self._survivors
+        ]
+        return GraphQLUnionType(**kwargs)
+
+    def _clone_input(self, gtype: Any) -> Any:
+        """Clone an input object type verbatim, remapping its field types.
+
+        Input types (mutation payloads) carry no ``gdx_required_perms`` and are
+        retained for any surviving mutation field that references them.
+        """
+        kwargs = gtype.to_kwargs()
+        kwargs["fields"] = lambda g=gtype: {
+            fname: self._clone_input_field(ifield) for fname, ifield in g.fields.items()
+        }
+        return type(gtype)(**kwargs)
+
+    def _clone_input_field(self, ifield: Any) -> Any:
+        """Clone a single input field, remapping its type."""
+        kwargs = ifield.to_kwargs()
+        kwargs["type_"] = self._remap_type(ifield.type)
+        return type(ifield)(**kwargs)
+
+    def _rebuild_fields(self, type_name: str) -> dict[str, GraphQLField]:
+        """Return the surviving, type-remapped field map for a cloned type."""
+        return {
+            fname: self._rebuild_field(gql_field)
+            for fname, gql_field in self._filtered_fields[type_name].items()
+            if self._output_survives(gql_field.type, self._survivors)
+        }
+
+    def _rebuild_field(self, gql_field: GraphQLField) -> GraphQLField:
+        """Clone a field, remapping its output type and pruning its action enum.
+
+        ``resolve`` / ``subscribe`` / ``deprecation_reason`` / ``description`` /
+        ``extensions`` ride through ``to_kwargs()`` verbatim.
+        """
+        kwargs = gql_field.to_kwargs()
+        kwargs["type_"] = self._remap_type(gql_field.type)
+        args = kwargs.get("args")
+        if args:
+            perms = (gql_field.extensions or {}).get("gdx_required_perms")
+            surviving = (
+                self._surviving_actions(perms) if isinstance(perms, dict) else None
+            )
+            kwargs["args"] = {
+                aname: self._rebuild_arg(aname, arg, surviving)
+                for aname, arg in args.items()
+            }
+        return GraphQLField(**kwargs)
+
+    def _rebuild_arg(
+        self, name: str, arg: Any, surviving_actions: set[str] | None
+    ) -> Any:
+        """Clone an argument, remapping its type and pruning the action enum.
+
+        The subscription ``action`` argument's enum is rebuilt to keep only the
+        surviving action-values; every other argument type is remapped verbatim.
+        """
+        kwargs = arg.to_kwargs()
+        if (
+            surviving_actions is not None
+            and name == "action"
+            and _is_action_enum(arg.type)
+        ):
+            kwargs["type_"] = self._prune_action_enum(arg.type, surviving_actions)
+        else:
+            kwargs["type_"] = self._remap_type(arg.type)
+        return type(arg)(**kwargs)
+
+    def _prune_action_enum(self, gtype: Any, surviving_actions: set[str]) -> Any:
+        """Rebuild the action enum keeping only surviving values (wrap preserved)."""
+        wrap_nonnull = isinstance(gtype, GraphQLNonNull)
+        enum = get_named_type(gtype)
+        enum_kwargs = enum.to_kwargs()
+        enum_kwargs["values"] = {
+            key: value
+            for key, value in enum.values.items()
+            if value.value in surviving_actions
+        }
+        pruned_enum = GraphQLEnumType(**enum_kwargs)
+        return GraphQLNonNull(pruned_enum) if wrap_nonnull else pruned_enum
+
+    def _rebuild_interfaces(self, gtype: Any) -> list[GraphQLInterfaceType]:
+        """Return the surviving interfaces a cloned type implements."""
+        return [
+            self._clone_named(iface)
+            for iface in gtype.interfaces
+            if iface.name in self._survivors
+        ]
+
+    def _remap_type(self, gtype: Any) -> Any:
+        """Return *gtype* with its named type replaced by its pruned clone.
+
+        List / NonNull wrappers are preserved around the remapped named type.
+        """
+        if isinstance(gtype, GraphQLNonNull):
+            return GraphQLNonNull(self._remap_type(gtype.of_type))
+        if isinstance(gtype, GraphQLList):
+            return GraphQLList(self._remap_type(gtype.of_type))
+        return self._clone_named(gtype)
+
+
+def _is_action_enum(gtype: Any) -> bool:
+    """Return whether *gtype* (possibly wrapped) is a subscription action enum."""
+    named = get_named_type(gtype)
+    return is_enum_type(named) and named.name.endswith(_ACTION_ENUM_SUFFIX)

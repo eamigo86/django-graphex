@@ -1,33 +1,36 @@
 # -*- coding: utf-8 -*-
 """WARNING-1 close-out (verify #1522) — SSE transport branch coverage top-up.
 
-Phase 6 verify flagged ``transports/sse.py`` at 86.92% combined branch. The
-conformance suite (``test_transport_sse.py``) covers next/complete framing,
+Phase 6 verify flagged "transports/sse.py" at 86.92% combined branch. The
+conformance suite ("test_transport_sse.py") covers next/complete framing,
 in-stream validation errors, auth deny, and serialize-once; the misses are the
 PRE-200 client-error 4xx paths, the request-body parsing fallbacks, the
-``TransportContext`` session branch, and the no-source complete-only stream.
+"TransportContext" session branch, and the no-source complete-only stream.
 
 Targeted sse.py branches:
-  * 122-124   — ``TransportContext`` adds ``session`` to scope when present.
-  * 138-143   — ``_read_request_body`` JSON-decode error → {} AND the form-POST arm.
-  * 222-224   — no query → ``HttpResponseBadRequest`` (PRE-200 4xx).
-  * 228-229   — a syntax error → ``HttpResponseBadRequest`` (PRE-200 4xx).
-  * 232-234   — a non-subscription operation → ``HttpResponseBadRequest``.
-  * 278->280  — the no-source stream with NO pre-stream result → complete-only.
-  * 281       — the ``return`` after the complete frame on the no-source path.
+  * 122-124   — "TransportContext" adds "session" to scope when present.
+  * 138-143   — "_read_request_body" JSON-decode error -> {} AND the form-POST arm.
+  * 222-224   — no query -> HttpResponseBadRequest (PRE-200 4xx).
+  * 228-229   — a syntax error -> HttpResponseBadRequest (PRE-200 4xx).
+  * 232-234   — a non-subscription operation -> HttpResponseBadRequest.
+  * 278->280  — the no-source stream with NO pre-stream result -> complete-only.
+  * 281       — the "return" after the complete frame on the no-source path.
 
 Each test asserts a real HTTP status / frame / context value. Native-gated.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 import pytest
 
 pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
+from graphql import GraphQLSchema  # noqa: E402
 
 from django_graphex.types import DjangoObjectType as _DOT
 from tests.models import Post  # noqa: E402
@@ -37,32 +40,40 @@ class _TagT(_DOT):
     class Meta:
         model = __import__("tests.models", fromlist=["Tag"]).Tag
 
+
 class _CategoryT(_DOT):
     class Meta:
         model = __import__("tests.models", fromlist=["Category"]).Category
 
+
 class _AuthorT(_DOT):
     class Meta:
         model = __import__("tests.models", fromlist=["Author"]).Author
+
 
 class _PostT(_DOT):
     class Meta:
         model = Post
 
 
-def _build_native_schema():
-    """Assemble a native subscription schema (PostModelType.SubscriptionField)."""
+def _build_native_schema() -> GraphQLSchema:
+    """Assemble a native subscription schema (PostModelType.SubscriptionField).
+
+    Returns:
+        schema: The assembled GraphQLSchema with a "post" subscription field.
+    """
     from graphql import GraphQLBoolean
 
-    from django_graphex import DjangoModelType, ObjectType, field
-    from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.core import ObjectType, field
+    from django_graphex.core.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
+    from django_graphex.types import DjangoModelType
 
     class PostModelType(DjangoModelType):
         class Meta:
             model = Post
             stream = "posts"
-            serialize_data = True
+            payload_mode = "full"
 
     class Query(ObjectType):
         ok = field(GraphQLBoolean)
@@ -76,15 +87,39 @@ def _build_native_schema():
 
 
 class _User:
-    def __init__(self, *, authenticated: bool = True):
+    """A minimal user stand-in exposing authentication flags and a pk."""
+
+    def __init__(self, *, authenticated: bool = True) -> None:
+        """Store the authentication flag and derive a matching pk.
+
+        Args:
+            authenticated: Whether this stand-in reports itself as
+                authenticated; an unauthenticated user gets pk=None.
+        """
         self.is_authenticated = authenticated
         self.pk = 1 if authenticated else None
 
 
-def _json_request(query, *, variables=None, operation_name=None):
+def _json_request(
+    query: str,
+    *,
+    variables: dict[str, Any] | None = None,
+    operation_name: str | None = None,
+) -> Any:
+    """Build a JSON POST request carrying a subscription document.
+
+    Args:
+        query: The GraphQL subscription document to send as the request body.
+        variables: Optional GraphQL variables to include in the body.
+        operation_name: Optional operationName to include in the body.
+
+    Returns:
+        request: The constructed Django test request, with a fake user
+            already attached.
+    """
     from django.test import RequestFactory
 
-    body = {"query": query}
+    body: dict[str, Any] = {"query": query}
     if variables is not None:
         body["variables"] = variables
     if operation_name is not None:
@@ -103,10 +138,14 @@ def _json_request(query, *, variables=None, operation_name=None):
 # ---------------------------------------------------------------------------
 
 
-def test_transport_context_includes_session_when_present():
-    """``TransportContext`` exposes ``.user`` and threads ``session`` into scope.
+def test_transport_context_includes_session_when_present() -> None:
+    """ "TransportContext" must expose ".user" and thread "session" into scope.
 
-    Covers sse.py:122-124 — the ``session is not None`` arm. A request WITH a
+    Contract: this test ships broken if a request carrying a session does
+    not get it copied into scope, or if scope carries a stale session key
+    for a request that has none.
+
+    Covers sse.py:122-124 — the "session is not None" arm. A request WITH a
     session puts it in scope; a request WITHOUT one leaves scope session-free.
     """
     from django.test import RequestFactory
@@ -138,11 +177,14 @@ def test_transport_context_includes_session_when_present():
 # ---------------------------------------------------------------------------
 
 
-def test_read_request_body_malformed_json_yields_empty_fields():
-    """Malformed JSON in an application/json body → all fields ``None``.
+def test_read_request_body_malformed_json_yields_empty_fields() -> None:
+    """Malformed JSON in an application/json body must yield all-None fields.
 
-    Covers sse.py:138-141 — the ``except (ValueError, UnicodeDecodeError)`` arm
-    sets ``body = {}`` so query/variables/operationName all read ``None``.
+    Contract: this test ships broken if a malformed JSON body raises instead
+    of degrading to query/variables/operationName all reading None.
+
+    Covers sse.py:138-141 — the "except (ValueError, UnicodeDecodeError)" arm
+    sets body = {} so query/variables/operationName all read None.
     """
     from django.test import RequestFactory
 
@@ -155,10 +197,13 @@ def test_read_request_body_malformed_json_yields_empty_fields():
     assert parsed == {"query": None, "variables": None, "operationName": None}
 
 
-def test_read_request_body_form_encoded_reads_post():
-    """A form-encoded body reads ``query`` from ``request.POST``.
+def test_read_request_body_form_encoded_reads_post() -> None:
+    """A form-encoded body must read "query" from request.POST.
 
-    Covers sse.py:142-143 — the non-JSON ``else: body = request.POST`` arm.
+    Contract: this test ships broken if a non-JSON form-encoded body stops
+    falling back to reading fields from request.POST.
+
+    Covers sse.py:142-143 — the non-JSON "else: body = request.POST" arm.
     """
     from django.test import RequestFactory
 
@@ -179,10 +224,16 @@ def test_read_request_body_form_encoded_reads_post():
 # ---------------------------------------------------------------------------
 
 
-async def test_no_query_is_pre_200_bad_request(monkeypatch):
-    """A request with NO query → HTTP 400 (PRE-200, never a stream).
+async def test_no_query_is_pre_200_bad_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A request with no query must produce a PRE-200 HTTP 400, never a stream.
 
-    Covers sse.py:222-224 — the ``if not query`` arm.
+    Contract: this test ships broken if a query-less request starts a
+    stream instead of failing fast with a 400.
+
+    Covers sse.py:222-224 — the "if not query" arm.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from django.http import HttpResponseBadRequest
 
@@ -203,10 +254,18 @@ async def test_no_query_is_pre_200_bad_request(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_syntax_error_is_pre_200_bad_request(monkeypatch):
-    """A query with a syntax error → HTTP 400 (PRE-200, never a stream).
+async def test_syntax_error_is_pre_200_bad_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A query with a syntax error must produce a PRE-200 HTTP 400, never a stream.
 
-    Covers sse.py:226-229 — the ``parse`` exception arm.
+    Contract: this test ships broken if a syntactically invalid document
+    starts a stream instead of failing fast with a 400.
+
+    Covers sse.py:226-229 — the "parse" exception arm.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from django.http import HttpResponseBadRequest
 
@@ -227,11 +286,19 @@ async def test_syntax_error_is_pre_200_bad_request(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_non_subscription_operation_is_pre_200_bad_request(monkeypatch):
-    """A ``query`` operation over the SSE transport → HTTP 400 (PRE-200).
+async def test_non_subscription_operation_is_pre_200_bad_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A "query" operation over the SSE transport must produce a PRE-200 HTTP 400.
 
-    Covers sse.py:231-234 — the ``operation != SUBSCRIPTION`` arm. Also covers the
-    ``operation_ast is None`` short-circuit when no operation matches the name.
+    Contract: this test ships broken if a non-subscription operation is
+    allowed to start a stream over the subscription-only SSE transport.
+
+    Covers sse.py:231-234 — the "operation != SUBSCRIPTION" arm. Also covers the
+    "operation_ast is None" short-circuit when no operation matches the name.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from django.http import HttpResponseBadRequest
 
@@ -247,10 +314,18 @@ async def test_non_subscription_operation_is_pre_200_bad_request(monkeypatch):
     assert b"only serves subscription" in response.content
 
 
-async def test_unknown_operation_name_is_pre_200_bad_request(monkeypatch):
-    """An ``operationName`` matching no operation → HTTP 400 (operation_ast None).
+async def test_unknown_operation_name_is_pre_200_bad_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operationName matching no operation must produce a PRE-200 HTTP 400.
 
-    Covers sse.py:232 — the ``operation_ast is None`` arm of the guard.
+    Contract: this test ships broken if an unmatched operationName is not
+    caught by the "operation_ast is None" guard before streaming starts.
+
+    Covers sse.py:232 — the "operation_ast is None" arm of the guard.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from django.http import HttpResponseBadRequest
 
@@ -275,20 +350,29 @@ async def test_unknown_operation_name_is_pre_200_bad_request(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_no_source_no_pre_result_streams_complete_only(monkeypatch):
-    """When neither a source NOR a pre-stream result exists → a complete-only stream.
+async def test_no_source_no_pre_result_streams_complete_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With neither a source nor a pre-stream result, the stream must be complete-only.
 
-    Covers sse.py:277-281 — the ``started_source is None`` branch with
-    ``pre_stream_result is None`` (the inner ``if`` False arm) → the stream emits
-    ONLY the terminal ``complete`` frame and returns. We force this by stubbing
-    ``create_source_event_stream`` to return ``None`` (no source, no result).
+    Contract: this test ships broken if the no-source, no-pre-result path
+    emits anything beyond the terminal complete frame.
+
+    Covers sse.py:277-281 — the "started_source is None" branch with
+    "pre_stream_result is None" (the inner "if" False arm) -> the stream emits
+    ONLY the terminal complete frame and returns. We force this by stubbing
+    "create_source_event_stream" to return None (no source, no result).
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer and
+            create_source_event_stream.
     """
     from django_graphex.subscriptions.transports import sse
 
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    async def _none_source(*args, **kwargs):
+    async def _none_source(*args: Any, **kwargs: Any) -> None:
         return None  # neither an ExecutionResult nor a source
 
     monkeypatch.setattr(sse, "create_source_event_stream", _none_source)
@@ -315,12 +399,17 @@ async def test_no_source_no_pre_result_streams_complete_only(monkeypatch):
     assert frames == ["event: complete\ndata: \n\n"]
 
 
-async def test_no_source_with_pre_result_streams_next_then_complete(monkeypatch):
-    """A pre-stream result (no source) → a single ``next`` then ``complete``.
+async def test_no_source_with_pre_result_streams_next_then_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-stream result with no source must stream a single next then complete.
 
-    Pairs with the complete-only test to pin the ``pre_stream_result is not None``
-    True arm (sse.py:278-279). A validation error yields an in-stream ``next``
-    frame then ``complete`` — confirming both arms of the no-source path.
+    Contract: pairs with the complete-only test to pin the "pre_stream_result
+    is not None" True arm (sse.py:278-279) — ships broken if a validation
+    error stops yielding an in-stream next frame before complete.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from django_graphex.subscriptions.transports import sse
 

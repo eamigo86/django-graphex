@@ -1,24 +1,24 @@
-"""``graphql_schema`` management command: export the GraphQL schema.
+"""The "graphql_schema" management command: export the GraphQL schema.
 
-Mirrors graphene-django's ``graphql_schema`` command (same name, so it is a
+Mirrors graphene-django's "graphql_schema" command (same name, so it is a
 drop-in for projects migrating off graphene-django) but is built entirely on
 graphql-core — there is NO graphene import here.
 
 Behavior
 --------
-* ``python manage.py graphql_schema`` writes the **introspection JSON** of the
-  schema to ``DJANGO_GRAPHEX["SCHEMA_OUTPUT"]`` (default ``"schema.json"``),
-  indented with ``DJANGO_GRAPHEX["SCHEMA_INDENT"]`` (default ``2``).
-* An output path ending in ``.graphql`` / ``.gql`` writes **SDL** instead
-  (graphql-core ``print_schema``).
-* ``--out`` / ``-o <path>`` overrides ``SCHEMA_OUTPUT``; ``--out -`` writes to
-  **stdout**.
-* ``--indent`` / ``-i <int>`` overrides ``SCHEMA_INDENT``.
-* ``--schema <dotted.path>`` resolves that schema (a ``DjangoGraphQLSchema`` or
-  the dotted path to one) instead of ``DJANGO_GRAPHEX["SCHEMA"]``. When neither
-  is set, the command raises ``CommandError`` with an actionable message.
+* "python manage.py graphql_schema" writes the introspection JSON of the
+  schema to DJANGO_GRAPHEX["SCHEMA_OUTPUT"] (default "schema.json"),
+  indented with DJANGO_GRAPHEX["SCHEMA_INDENT"] (default 2).
+* An output path ending in ".graphql" / ".gql" writes SDL instead
+  (graphql-core "print_schema").
+* "--out" / "-o <path>" overrides "SCHEMA_OUTPUT"; "--out -" writes to
+  stdout.
+* "--indent" / "-i <int>" overrides "SCHEMA_INDENT".
+* "--schema <dotted.path>" resolves that schema (a "DjangoGraphQLSchema" or
+  the dotted path to one) instead of DJANGO_GRAPHEX["SCHEMA"]. When neither
+  is set, the command raises "CommandError" with an actionable message.
 
-The introspection JSON is wrapped as ``{"data": <introspection>}`` to match
+The introspection JSON is wrapped as {"data": <introspection>} to match
 graphene-django's output shape, so existing client codegen tooling keeps
 working after migrating.
 """
@@ -39,7 +39,12 @@ SDL_EXTENSIONS = (".graphql", ".gql")
 
 
 class Command(BaseCommand):
-    """Export the django-graphex schema as introspection JSON or SDL."""
+    """Export the django-graphex schema as introspection JSON or SDL.
+
+    A drop-in replacement for graphene-django's "graphql_schema" command:
+    writes introspection JSON by default, or SDL when the output path ends in
+    ".graphql" / ".gql". See the module docstring for the full option list.
+    """
 
     help = (
         "Export the GraphQL schema as introspection JSON (default) or as SDL "
@@ -90,11 +95,11 @@ class Command(BaseCommand):
 
         Args:
             *args: Unused positional arguments.
-            **options: Parsed command options (``out``, ``indent``, ``schema``).
+            **options: Parsed command options ("out", "indent", "schema").
 
         Raises:
-            CommandError: When no schema can be resolved from ``--schema`` or
-                ``DJANGO_GRAPHEX['SCHEMA']``.
+            CommandError: When no schema can be resolved from "--schema" or
+                "DJANGO_GRAPHEX['SCHEMA']".
         """
         schema = self._resolve_schema(options.get("schema"))
         graphql_schema = self._underlying_schema(schema)
@@ -122,17 +127,17 @@ class Command(BaseCommand):
             )
 
     def _resolve_schema(self, schema_path: str | None) -> Any:
-        """Resolve the schema from ``--schema`` or the settings namespace.
+        """Resolve the schema from "--schema" or the settings namespace.
 
         Args:
-            schema_path: The dotted path passed via ``--schema`` (or ``None``).
+            schema_path: The dotted path passed via "--schema" (or "None").
 
         Returns:
-            The resolved schema object (a ``DjangoGraphQLSchema``).
+            The resolved schema object (a "DjangoGraphQLSchema").
 
         Raises:
-            CommandError: When neither ``--schema`` nor
-                ``DJANGO_GRAPHEX['SCHEMA']`` provides a schema.
+            CommandError: When neither "--schema" nor
+                "DJANGO_GRAPHEX['SCHEMA']" provides a schema.
         """
         if schema_path:
             try:
@@ -153,16 +158,16 @@ class Command(BaseCommand):
 
     @staticmethod
     def _underlying_schema(schema: Any) -> Any:
-        """Return the underlying graphql-core ``GraphQLSchema``.
+        """Return the underlying graphql-core "GraphQLSchema".
 
-        A ``DjangoGraphQLSchema`` exposes the graphql-core schema on its
-        ``graphql_schema`` attribute; a raw graphql-core schema is used as-is.
+        A "DjangoGraphQLSchema" exposes the graphql-core schema on its
+        "graphql_schema" attribute; a raw graphql-core schema is used as-is.
 
         Args:
             schema: The resolved schema object.
 
         Returns:
-            The graphql-core ``GraphQLSchema`` instance.
+            The graphql-core "GraphQLSchema" instance.
         """
         return getattr(schema, "graphql_schema", schema)
 
@@ -171,11 +176,11 @@ class Command(BaseCommand):
         """Render the schema introspection as graphene-django-shaped JSON.
 
         Args:
-            graphql_schema: The graphql-core ``GraphQLSchema``.
+            graphql_schema: The graphql-core "GraphQLSchema".
             indent: The JSON indentation level.
 
         Returns:
-            A JSON string wrapped as ``{"data": <introspection>}``.
+            A JSON string wrapped as {"data": <introspection>}.
         """
         from graphql.utilities import introspection_from_schema
 
@@ -185,10 +190,10 @@ class Command(BaseCommand):
 
     @staticmethod
     def _render_sdl(graphql_schema: Any) -> str:
-        """Render the schema as SDL via graphql-core ``print_schema``.
+        """Render the schema as SDL via graphql-core "print_schema".
 
         Args:
-            graphql_schema: The graphql-core ``GraphQLSchema``.
+            graphql_schema: The graphql-core "GraphQLSchema".
 
         Returns:
             The schema definition language (SDL) string.

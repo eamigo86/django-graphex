@@ -76,7 +76,12 @@ def _coerce(number: Any, info: GraphQLResolveInfo) -> Any:
 
 
 class FloorGraphQLDirective(BaseExtraGraphQLDirective):
-    """Floor value for both String and Float fields."""
+    """Round a field value down to the nearest integer.
+
+    Works on both "String" and "Float" fields; the result is coerced back to a
+    string when the field's return type is "String". A None value passes through
+    unchanged.
+    """
 
     @staticmethod
     def resolve(
@@ -85,7 +90,7 @@ class FloorGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the floor directive.
 
@@ -105,7 +110,12 @@ class FloorGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class CeilGraphQLDirective(BaseExtraGraphQLDirective):
-    """Ceil value for both String and Float fields."""
+    """Round a field value up to the nearest integer.
+
+    Works on both "String" and "Float" fields; the result is coerced back to a
+    string when the field's return type is "String". A None value passes through
+    unchanged.
+    """
 
     @staticmethod
     def resolve(
@@ -114,7 +124,7 @@ class CeilGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the ceil directive.
 
@@ -134,7 +144,13 @@ class CeilGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class RoundGraphQLDirective(BaseExtraGraphQLDirective):
-    """Round a number to "precision" decimal places (default 0)."""
+    """Round a number to a chosen number of decimal places.
+
+    The "precision" argument selects the number of decimal places (default 0).
+    A precision of 0 or below yields an integer. Works on both "String" and
+    "Float" fields; the result is coerced back to a string when the field's
+    return type is "String". A None value passes through unchanged.
+    """
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
@@ -156,7 +172,7 @@ class RoundGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the round directive.
 
@@ -180,7 +196,12 @@ class RoundGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class AbsGraphQLDirective(BaseExtraGraphQLDirective):
-    """Absolute value for both String and Float fields."""
+    """Take the absolute value of a field.
+
+    Works on both "String" and "Float" fields; the result is coerced back to a
+    string when the field's return type is "String". A None value passes through
+    unchanged.
+    """
 
     @staticmethod
     def resolve(
@@ -189,7 +210,7 @@ class AbsGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the abs directive.
 

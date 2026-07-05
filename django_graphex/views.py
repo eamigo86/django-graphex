@@ -1,17 +1,17 @@
 """GraphQL views: a vendored base view plus the enhanced and authenticated views.
 
-- ``BaseGraphQLView`` — a self-contained fork of graphene-django's ``GraphQLView``
+- "BaseGraphQLView" — a self-contained fork of graphene-django's "GraphQLView"
   (GET/POST, batch, variable parsing, schema/document validation, atomic
-  mutations) so the package does not depend on the unmaintained ``graphene-django``.
+  mutations) so the package does not depend on the unmaintained "graphene-django".
   GraphiQL is served from a self-contained CDN page by default, overridable with a
-  custom Django template via ``graphiql_template`` (for offline / strict-CSP setups).
-- ``GraphQLView`` — adds response caching, query depth/cost validation rules and the
-  ``extensions.cost`` payload.
-- ``AuthenticatedGraphQLView`` — gates the whole endpoint behind the library's own
+  custom Django template via "graphiql_template" (for offline / strict-CSP setups).
+- "GraphQLView" — adds response caching, query depth/cost validation rules and the
+  "extensions.cost" payload.
+- "AuthenticatedGraphQLView" — gates the whole endpoint behind the library's own
   permission classes (no DRF).
 
-Reads the project's ``DJANGO_GRAPHEX`` Django setting (``SCHEMA``, ``MIDDLEWARE``,
-``SUBSCRIPTION_PATH``, ``MAX_VALIDATION_ERRORS``, ``ATOMIC_MUTATIONS``) directly.
+Reads the project's "DJANGO_GRAPHEX" Django setting ("SCHEMA", "MIDDLEWARE",
+"SUBSCRIPTION_PATH", "MAX_VALIDATION_ERRORS", "ATOMIC_MUTATIONS") directly.
 """
 
 from __future__ import annotations
@@ -20,13 +20,16 @@ import hashlib
 import inspect
 import json
 import re
+import threading
+import weakref
+from collections import OrderedDict
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from django.core.cache import caches
 from django.db import connection, transaction
 from django.http import HttpResponse, HttpResponseNotAllowed
-from django.http.response import HttpResponseBadRequest
+from django.http.response import HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
@@ -34,7 +37,6 @@ from django.views.generic import View
 from graphql import (
     ExecutionResult,
     OperationType,
-    Source,
     execute,
     get_operation_ast,
     parse,
@@ -45,6 +47,7 @@ from graphql.execution.middleware import MiddlewareManager
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
+from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
 from .settings import graphql_api_settings
@@ -114,7 +117,12 @@ GRAPHIQL_HTML = """<!DOCTYPE html>
 
 
 class HttpError(Exception):
-    """Wrap an HTTP error response raised during request handling."""
+    """Wrap an HTTP error response raised during request handling.
+
+    Carries the Django response to return along with an optional message, so a
+    handler can catch it and serialize the response into the GraphQL error
+    envelope.
+    """
 
     def __init__(
         self,
@@ -128,8 +136,8 @@ class HttpError(Exception):
         Args:
             response: The Django response to return.
             message: An optional explicit message; defaults to the response body.
-            *args: Forwarded to ``Exception``.
-            **kwargs: Forwarded to ``Exception``.
+            *args: Forwarded to "Exception".
+            **kwargs: Forwarded to "Exception".
         """
         self.response = response
         self.message = message = message or response.content.decode()
@@ -137,7 +145,17 @@ class HttpError(Exception):
 
 
 def get_accepted_content_types(request: Any) -> list[str]:
-    """Return the request's accepted content types, most-preferred first."""
+    """Return the request's accepted content types, most-preferred first.
+
+    Parses the "Accept" header, honoring each entry's optional "q=" quality
+    value, and orders the media types from highest to lowest preference.
+
+    Args:
+        request: The incoming HTTP request whose "Accept" header is read.
+
+    Returns:
+        The accepted media types, most-preferred first.
+    """
 
     def qualify(value: str) -> tuple[str, float]:
         parts = value.split(";", 1)
@@ -153,7 +171,17 @@ def get_accepted_content_types(request: Any) -> list[str]:
 
 
 def instantiate_middleware(middlewares: Any) -> Any:
-    """Yield middleware instances, instantiating any classes."""
+    """Yield middleware instances, instantiating any classes.
+
+    Class entries are instantiated with no arguments; already-instantiated
+    entries are yielded unchanged.
+
+    Args:
+        middlewares: An iterable of middleware classes or instances.
+
+    Returns:
+        A generator yielding one middleware instance per input entry.
+    """
     for middleware in middlewares:
         if inspect.isclass(middleware):
             yield middleware()
@@ -162,14 +190,231 @@ def instantiate_middleware(middlewares: Any) -> Any:
 
 
 def set_rollback() -> None:
-    """Roll back the current request transaction when atomic requests are on."""
+    """Roll back the current request transaction when atomic requests are on.
+
+    A no-op unless the connection has "ATOMIC_REQUESTS" enabled and is inside an
+    atomic block; otherwise the request's transaction is marked for rollback.
+    """
     atomic_requests = connection.settings_dict.get("ATOMIC_REQUESTS", False)
     if atomic_requests and connection.in_atomic_block:
         transaction.set_rollback(True)
 
 
+# ---------------------------------------------------------------------------
+# P3: bounded parse + validate document cache.
+#
+# graphql-core re-parses (~0.06-0.13 ms) and re-validates (~0.34-0.62 ms) the
+# IDENTICAL document on EVERY request. Real APIs replay a small document set, so
+# both are memoizable. Two independent bounded LRUs, both sized by the
+# DOCUMENT_CACHE_MAXSIZE setting (0 disables BOTH):
+#
+#   * PARSE cache — global, keyed on the raw query string. The AST is immutable
+#     and schema-independent, so a single DocumentNode is safe to share across
+#     every request and every schema.
+#   * VALIDATION cache — per-schema. Keyed by the schema OBJECT via a
+#     WeakKeyDictionary so distinct (permission-pruned) GraphQLSchema objects
+#     NEVER share a verdict: a query invalid on a pruned schema must never read a
+#     full schema's cached "valid". Weakref keying also avoids the id() reuse
+#     hazard (a GC'd schema drops its sub-cache instead of aliasing a new object
+#     that happens to land on the same address). Each per-schema sub-cache is an
+#     inner LRU bounded by the same maxsize; the pruned schemas are themselves
+#     LRU-capped (PERMISSION_SCHEMA_CACHE_MAXSIZE ≤ 64), so total memory is
+#     bounded by maxsize * (schemas ≤ 64).
+#
+# Thread-safety: an OrderedDict is not safe under concurrent mutation, so every
+# read/write path takes a lock. The critical sections only touch the dict (no
+# I/O), so contention is negligible.
+# ---------------------------------------------------------------------------
+
+#: Lock guarding the parse LRU.
+_PARSE_CACHE_LOCK = threading.Lock()
+
+#: Global parse LRU: query string -> DocumentNode (bounded by the setting).
+_PARSE_CACHE: OrderedDict[str, Any] = OrderedDict()
+
+#: Lock guarding the per-schema validation sub-caches (both the WeakKeyDictionary
+#: and the inner OrderedDicts).
+_VALIDATE_CACHE_LOCK = threading.Lock()
+
+#: schema OBJECT -> inner LRU keyed by (query, rules token, max_errors) ->
+#: tuple[GraphQLError, ...]. WeakKeyDictionary so a GC'd schema drops its verdicts.
+_VALIDATE_CACHE: "weakref.WeakKeyDictionary[Any, OrderedDict[tuple, tuple]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _document_cache_maxsize() -> int:
+    """Return the configured document-cache bound (0 disables both caches).
+
+    Read per call (never memoized at import) so ``override_settings`` in tests —
+    and a live settings reload — take effect immediately.
+    """
+    return int(graphql_api_settings.DOCUMENT_CACHE_MAXSIZE)
+
+
+def _dynamic_limits_key() -> tuple:
+    """Return the runtime limit inputs folded into the validation cache key.
+
+    "GraphQLView"'s default validation rules include "DepthLimitValidationRule"
+    and "CostLimitValidationRule", both of which read their limits from
+    "graphql_api_settings" DYNAMICALLY at validation time rather than from the
+    rules collection. If those values were not part of the cache key, a verdict
+    computed under one limit would be served after the limit changes, silently
+    bypassing the depth/cost guard until eviction or restart.
+
+    Every setting that can flip a verdict is included:
+
+    * "MAX_QUERY_DEPTH" — the depth budget.
+    * "MAX_QUERY_COST" — the cost budget.
+    * "MAX_PAGE_SIZE", "DEFAULT_PAGE_SIZE", "DEFAULT_LIST_MULTIPLIER",
+      "COST_PAGINATION_ARGS" — inputs to the cost estimate itself (variables are
+      unbound during validation, so page sizes come from these), which changes
+      the "total" compared against "MAX_QUERY_COST".
+
+    The key stays cheap: plain ints, "None", and a small tuple of argument names.
+
+    Returns:
+        A hashable tuple of the runtime limit inputs, in a stable order.
+    """
+    return (
+        graphql_api_settings.MAX_QUERY_DEPTH,
+        graphql_api_settings.MAX_QUERY_COST,
+        graphql_api_settings.MAX_PAGE_SIZE,
+        graphql_api_settings.DEFAULT_PAGE_SIZE,
+        graphql_api_settings.DEFAULT_LIST_MULTIPLIER,
+        tuple(graphql_api_settings.COST_PAGINATION_ARGS or ()),
+    )
+
+
+def cached_parse(query: str) -> Any:
+    """Return the parsed "DocumentNode" for the query, memoized in a bounded LRU.
+
+    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) this is a plain
+    "parse(query)". A parse error propagates to the caller exactly as an
+    uncached "parse" would — failures are NOT cached.
+
+    The returned AST is immutable and shared across callers/schemas; it must not
+    be mutated.
+
+    Args:
+        query: The raw GraphQL query string.
+
+    Returns:
+        The parsed "DocumentNode".
+    """
+    maxsize = _document_cache_maxsize()
+    if maxsize <= 0:
+        return parse(query)
+
+    with _PARSE_CACHE_LOCK:
+        cached = _PARSE_CACHE.get(query)
+        if cached is not None:
+            _PARSE_CACHE.move_to_end(query)
+            return cached
+
+    # Parse OUTSIDE the lock (tokenizing can be relatively expensive); a benign
+    # duplicate parse under concurrency just overwrites with an equivalent AST.
+    document = parse(query)
+
+    with _PARSE_CACHE_LOCK:
+        _PARSE_CACHE[query] = document
+        _PARSE_CACHE.move_to_end(query)
+        while len(_PARSE_CACHE) > maxsize:
+            _PARSE_CACHE.popitem(last=False)
+    return document
+
+
+def cached_validate(
+    schema: Any,
+    query: str,
+    document: Any,
+    rules: Any,
+    max_errors: Any,
+) -> tuple:
+    """Return the validation errors for the document against the schema, memoized.
+
+    The verdict is keyed by the schema OBJECT (a per-schema sub-cache), the query
+    string, a stable token of the rules, the max-errors cap, and the runtime
+    depth/cost limits the bundled rules read dynamically (see
+    "_dynamic_limits_key") — every input that can change the verdict. An empty
+    tuple means "valid". The SAME "GraphQLError" objects are reused across cache
+    hits, so "error.formatted" serializes identically to a fresh run.
+
+    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) this is a plain
+    "validate(...)" returning a fresh tuple.
+
+    Args:
+        schema: The "GraphQLSchema" validated against (identity of the verdict).
+        query: The raw query string (part of the sub-cache key).
+        document: The parsed "DocumentNode" to validate.
+        rules: The validation-rules collection passed to "validate".
+        max_errors: The "MAX_VALIDATION_ERRORS" cap passed to "validate".
+
+    Returns:
+        A tuple of "GraphQLError" (empty tuple when the document is valid).
+    """
+    maxsize = _document_cache_maxsize()
+    if maxsize <= 0:
+        return tuple(validate(schema, document, rules, max_errors))
+
+    # Rules identity: the rules collection is a stable class attribute per view
+    # (specified_rules + depth/cost), request-invariant. id() is a safe token for
+    # its lifetime because the view class holds a strong reference to it; folding
+    # max_errors in keeps two different caps from sharing a truncated verdict.
+    #
+    # The depth/cost rules read their limits from graphql_api_settings DYNAMICALLY
+    # at validation time (not from `rules`), so those runtime values must be part
+    # of the key too — otherwise a "valid" verdict computed under a permissive
+    # limit would survive a limit tightening and silently bypass the guard until
+    # eviction/restart. `_dynamic_limits_key` folds in every setting that can flip
+    # a verdict (kept cheap: plain ints/None and a small tuple).
+    key = (query, id(rules), max_errors, _dynamic_limits_key())
+
+    with _VALIDATE_CACHE_LOCK:
+        sub = _VALIDATE_CACHE.get(schema)
+        if sub is not None:
+            cached = sub.get(key)
+            if cached is not None:
+                sub.move_to_end(key)
+                return cached
+
+    # Validate OUTSIDE the lock; store the result as a tuple.
+    errors = tuple(validate(schema, document, rules, max_errors))
+
+    with _VALIDATE_CACHE_LOCK:
+        sub = _VALIDATE_CACHE.get(schema)
+        if sub is None:
+            sub = OrderedDict()
+            _VALIDATE_CACHE[schema] = sub
+        sub[key] = errors
+        sub.move_to_end(key)
+        while len(sub) > maxsize:
+            sub.popitem(last=False)
+    return errors
+
+
+def clear_document_caches() -> None:
+    """Empty both document caches (parse + validation).
+
+    Clears the global parse LRU and every per-schema validation sub-cache under
+    their respective locks. Used by tests and by a live settings reload so a
+    stale cached AST or verdict never survives a schema change.
+    """
+    with _PARSE_CACHE_LOCK:
+        _PARSE_CACHE.clear()
+    with _VALIDATE_CACHE_LOCK:
+        _VALIDATE_CACHE.clear()
+
+
 class BaseGraphQLView(View):
-    """Django view that executes GraphQL queries (forked, graphene-django-free)."""
+    """Django view that executes GraphQL queries (forked, graphene-django-free).
+
+    A self-contained fork of graphene-django's "GraphQLView" covering GET/POST,
+    batch requests, variable parsing, schema/document validation and atomic
+    mutations, with GraphiQL served from a built-in CDN page. Reads its defaults
+    from the "DJANGO_GRAPHEX" setting. Subclasses layer on caching, cost rules
+    and endpoint-level authorization.
+    """
 
     graphiql = False
     #: Optional Django template name to render instead of the built-in CDN page
@@ -197,9 +442,32 @@ class BaseGraphQLView(View):
         execution_context_class: Any = None,
         validation_rules: Any = None,
     ) -> None:
-        """Configure the view, reading defaults from the ``DJANGO_GRAPHEX`` setting.
+        """Configure the view, reading defaults from the "DJANGO_GRAPHEX" setting.
 
-        Args mirror the classic ``GraphQLView`` signature (plus ``graphiql_template``).
+        The arguments mirror the classic "GraphQLView" signature (plus
+        "graphiql_template"). Any argument left at its default is filled from the
+        setting or the class attribute.
+
+        Args:
+            schema: The schema to serve; falls back to the "SCHEMA" setting or
+                the class attribute. Must expose a "graphql_schema".
+            middleware: The GraphQL execution middleware (classes or instances,
+                or a "MiddlewareManager"); falls back to the "MIDDLEWARE" setting.
+            root_value: The root value passed to execution.
+            graphiql: Whether to serve the GraphiQL interface.
+            graphiql_template: An optional Django template name rendered instead
+                of the built-in CDN page (for offline / strict-CSP setups).
+            pretty: Whether to pretty-print JSON responses.
+            batch: Whether to accept batched request lists.
+            subscription_path: The advertised subscription endpoint path; falls
+                back to the "SUBSCRIPTION_PATH" setting.
+            execution_context_class: An optional custom execution context class.
+            validation_rules: The validation-rules collection passed to
+                "validate".
+
+        Raises:
+            AssertionError: When the schema does not expose "graphql_schema", or
+                when both "graphiql" and "batch" are requested together.
         """
         if not schema:
             schema = graphql_api_settings.SCHEMA
@@ -238,40 +506,72 @@ class BaseGraphQLView(View):
         self.validation_rules = validation_rules or self.validation_rules
 
     def get_root_value(self, request: Any) -> Any:
-        """Return the root value passed to execution."""
+        """Return the root value passed to execution.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            The configured root value.
+        """
         return self.root_value
 
     def get_middleware(self, request: Any) -> Any:
-        """Return the middleware applied during execution."""
+        """Return the middleware applied during execution.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            The configured execution middleware.
+        """
         return self.middleware
 
     def get_context(self, request: Any) -> Any:
-        """Return the GraphQL context (the request)."""
+        """Return the GraphQL context (the request).
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            The context value passed to execution (the request itself).
+        """
         return request
 
     @method_decorator(ensure_csrf_cookie)
     def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
         """Handle a GraphQL GET/POST request (and GraphiQL/batch).
 
-        Body-size guard
-        ---------------
-        When ``MAX_REQUEST_BODY_SIZE`` is configured (not ``None``) and the
-        request body length exceeds the limit, the request is rejected with
-        HTTP 413 (Content Too Large) **before** the JSON body is parsed.
-        This is the primary memory-safety cap for base64 file uploads: the
-        entire base64 payload sits in the JSON body, so rejecting before
-        ``parse_body`` prevents it from ever being allocated.  The per-field
-        decoded-size pre-check in ``decode_base64_file`` is a secondary guard.
+        Body-size guard: when "MAX_REQUEST_BODY_SIZE" is configured (not None)
+        and the request body length exceeds the limit, the request is rejected
+        with HTTP 413 (Content Too Large) BEFORE the JSON body is parsed. This is
+        the primary memory-safety cap for base64 file uploads: the entire base64
+        payload sits in the JSON body, so rejecting before "parse_body" prevents
+        it from ever being allocated. The per-field decoded-size pre-check in
+        "decode_base64_file" is a secondary guard.
 
         The guard uses a two-stage strategy:
 
-        1. **Fast-reject** (O(1)): if ``Content-Length`` is present AND already
-           exceeds ``MAX_REQUEST_BODY_SIZE``, reject immediately without reading
-           the body — avoids buffering an honest large upload.
-        2. **Authoritative check**: always verify ``len(request.body) <=
-           max_body`` regardless of the ``Content-Length`` header.  This
-           prevents a client from spoofing a low ``Content-Length`` to bypass
-           the guard.
+        1. Fast-reject (O(1)): if "Content-Length" is present AND already exceeds
+           "MAX_REQUEST_BODY_SIZE", reject immediately without reading the body —
+           avoids buffering an honest large upload.
+        2. Authoritative check: always verify "len(request.body) <= max_body"
+           regardless of the "Content-Length" header. This prevents a client from
+           spoofing a low "Content-Length" to bypass the guard.
+
+        Args:
+            request: The incoming HTTP request.
+            *args: Extra positional arguments forwarded from the URL resolver.
+            **kwargs: Extra keyword arguments forwarded from the URL resolver.
+
+        Returns:
+            The HTTP response (JSON payload, GraphiQL page, or an error
+            response).
+
+        Raises:
+            HttpError: When the method is unsupported or the body exceeds
+                "MAX_REQUEST_BODY_SIZE"; caught internally and serialized into the
+                GraphQL error envelope before the response is returned.
         """
         try:
             if request.method.lower() not in ("get", "post"):
@@ -383,7 +683,17 @@ class BaseGraphQLView(View):
     def get_response(
         self, request: Any, data: Any, show_graphiql: bool = False
     ) -> tuple[Any, int]:
-        """Execute a single request and return the encoded body and status."""
+        """Execute a single request and return the encoded body and status.
+
+        Args:
+            request: The incoming HTTP request.
+            data: The parsed request body.
+            show_graphiql: Whether the GraphiQL interface is being rendered.
+
+        Returns:
+            A pair of the encoded response body (or None) and the HTTP status
+            code.
+        """
         query, variables, operation_name, id = self.get_graphql_params(request, data)
 
         execution_result = self.execute_graphql_request(
@@ -420,7 +730,15 @@ class BaseGraphQLView(View):
         return result, status_code
 
     def render_graphiql(self, request: Any, **data: Any) -> HttpResponse:
-        """Return the GraphiQL page (the CDN page, or a custom template if set)."""
+        """Return the GraphiQL page (the CDN page, or a custom template if set).
+
+        Args:
+            request: The incoming HTTP request.
+            **data: Extra template context (unused by the built-in CDN page).
+
+        Returns:
+            The rendered GraphiQL HTTP response.
+        """
         if self.graphiql_template:
             return render(
                 request,
@@ -433,13 +751,42 @@ class BaseGraphQLView(View):
         return HttpResponse(content=GRAPHIQL_HTML, content_type="text/html")
 
     def json_encode(self, request: Any, d: Any, pretty: bool = False) -> str:
-        """Encode a response dict to JSON (compact unless pretty)."""
+        """Encode a response dict to JSON (compact unless pretty).
+
+        Pretty output (sorted keys, two-space indent) is used when the view is
+        pretty, the caller passes "pretty=True", or the request carries a
+        "pretty" query parameter; otherwise the output is compact.
+
+        Args:
+            request: The incoming HTTP request (its "pretty" GET param is read).
+            d: The response mapping to encode.
+            pretty: Whether to force pretty-printed output.
+
+        Returns:
+            The JSON-encoded string.
+        """
         if not (self.pretty or pretty) and not request.GET.get("pretty"):
             return json.dumps(d, separators=(",", ":"))
         return json.dumps(d, sort_keys=True, indent=2, separators=(",", ": "))
 
     def parse_body(self, request: Any) -> Any:
-        """Parse the request body into a query data mapping."""
+        """Parse the request body into a query data mapping.
+
+        Dispatches on the content type: "application/graphql" yields a
+        "{'query': ...}" dict, "application/json" is decoded and (for batch
+        views) required to be a non-empty list, form-encoded/multipart bodies
+        return "request.POST", and any other type yields an empty dict.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            The parsed request data (a mapping, or a list for batch requests).
+
+        Raises:
+            HttpError: When the body is not valid JSON, or when a batch view
+                receives a non-list or empty-list body.
+        """
         content_type = self.get_content_type(request)
 
         if content_type == "application/graphql":
@@ -482,6 +829,39 @@ class BaseGraphQLView(View):
             return request.POST
         return {}
 
+    def _graphql_schema_for(self, request: Any) -> Any:
+        """Return the graphql-core schema this request validates/executes against.
+
+        The base view always serves the FULL configured schema. Subclasses may
+        override this single choke point to select a per-request schema (both
+        ``validate`` and ``execute`` read the value it returns).
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            The ``GraphQLSchema`` to validate and execute against.
+        """
+        return self.schema.graphql_schema
+
+    def _cache_key_signature(self, request: Any) -> str:
+        """Return the per-request segment folded into the response-cache key.
+
+        The base view returns the empty string, so its cache key is unchanged
+        (identity + version + body hash). Subclasses that serve a per-request
+        schema (see :meth:`_graphql_schema_for`) override this to return a token
+        that varies with the served schema — otherwise two callers who share an
+        identity partition but see DIFFERENT schemas could read each other's
+        cached response bodies. An empty return keeps the key byte-identical.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            A cache-key segment (empty on the base view).
+        """
+        return ""
+
     def execute_graphql_request(
         self,
         request: Any,
@@ -501,17 +881,24 @@ class BaseGraphQLView(View):
             variables: The bound variable values.
             operation_name: The selected operation name, if any.
             show_graphiql: Whether the GraphiQL interface is being rendered.
-            document: An already-parsed ``DocumentNode``.  When provided,
-                ``parse()`` is not called again (avoids a double-parse per
-                request).  Pass ``None`` (the default) to parse ``query``
-                internally.
+            document: An already-parsed "DocumentNode". When provided, "parse()"
+                is not called again (avoids a double-parse per request). Pass
+                None (the default) to parse the query internally.
+
+        Returns:
+            The "ExecutionResult", or None when there is no query and GraphiQL is
+            being rendered.
+
+        Raises:
+            HttpError: When no query is provided (and GraphiQL is not shown), or
+                when a non-query operation is attempted over GET.
         """
         if not query:
             if show_graphiql:
                 return None
             raise HttpError(HttpResponseBadRequest("Must provide query string."))
 
-        schema = self.schema.graphql_schema
+        schema = self._graphql_schema_for(request)
 
         schema_validation_errors = validate_schema(schema)
         if schema_validation_errors:
@@ -519,7 +906,7 @@ class BaseGraphQLView(View):
 
         if document is None:
             try:
-                document = parse(query)
+                document = cached_parse(query)
             except Exception as e:
                 return ExecutionResult(errors=[e])
 
@@ -541,14 +928,15 @@ class BaseGraphQLView(View):
                 )
             )
 
-        validation_errors = validate(
+        validation_errors = cached_validate(
             schema,
+            query,
             document,
             self.validation_rules,
             graphql_api_settings.MAX_VALIDATION_ERRORS,
         )
         if validation_errors:
-            return ExecutionResult(data=None, errors=validation_errors)
+            return ExecutionResult(data=None, errors=list(validation_errors))
 
         try:
             execute_options = {
@@ -583,13 +971,34 @@ class BaseGraphQLView(View):
 
     @classmethod
     def can_display_graphiql(cls, request: Any, data: Any) -> bool:
-        """Whether GraphiQL should be shown for this request."""
+        """Return whether GraphiQL should be shown for this request.
+
+        GraphiQL is shown only when the request does not opt out with a "raw"
+        flag and the client prefers HTML over JSON.
+
+        Args:
+            request: The incoming HTTP request.
+            data: The parsed request body.
+
+        Returns:
+            True when the GraphiQL interface should be rendered.
+        """
         raw = "raw" in request.GET or "raw" in data
         return not raw and cls.request_wants_html(request)
 
     @classmethod
     def request_wants_html(cls, request: Any) -> bool:
-        """Whether the client prefers an HTML response."""
+        """Return whether the client prefers an HTML response.
+
+        Compares the "Accept" header preference of "text/html" against
+        "application/json".
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            True when HTML is preferred over JSON.
+        """
         accepted = get_accepted_content_types(request)
         length = len(accepted)
         html = length - accepted.index("text/html") if "text/html" in accepted else 0
@@ -602,7 +1011,23 @@ class BaseGraphQLView(View):
 
     @staticmethod
     def get_graphql_params(request: Any, data: Any) -> tuple[Any, Any, Any, Any]:
-        """Extract query, variables, operation name and id from a request."""
+        """Extract query, variables, operation name and id from a request.
+
+        Values come from the query string when present, otherwise from the
+        parsed body. A string "variables" value is JSON-decoded, and a literal
+        "null" operation name is normalized to None.
+
+        Args:
+            request: The incoming HTTP request.
+            data: The parsed request body.
+
+        Returns:
+            A "(query, variables, operation_name, id)" tuple.
+
+        Raises:
+            HttpError: When the "variables" value is a string that is not valid
+                JSON.
+        """
         query = request.GET.get("query") or data.get("query")
         variables = request.GET.get("variables") or data.get("variables")
         id = request.GET.get("id") or data.get("id")
@@ -620,24 +1045,50 @@ class BaseGraphQLView(View):
 
     @staticmethod
     def format_error(error: Any) -> dict:
-        """Format an error for the response ``errors`` list."""
+        """Format an error for the response "errors" list.
+
+        A "GraphQLError" is serialized via its "formatted" mapping; any other
+        exception is wrapped as a "{'message': str(error)}" entry.
+
+        Args:
+            error: The error (or exception) to format.
+
+        Returns:
+            The error mapping suitable for the response "errors" list.
+        """
         if isinstance(error, GraphQLError):
             return error.formatted
         return {"message": str(error)}
 
     @staticmethod
     def get_content_type(request: Any) -> str:
-        """Return the request content type without parameters."""
+        """Return the request content type without parameters.
+
+        Reads "CONTENT_TYPE" (falling back to "HTTP_CONTENT_TYPE"), strips any
+        trailing parameters (e.g. "; charset=utf-8") and lower-cases the result.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            The bare, lower-cased content type (empty string when absent).
+        """
         meta = request.META
         content_type = meta.get("CONTENT_TYPE", meta.get("HTTP_CONTENT_TYPE", ""))
         return content_type.split(";", 1)[0].lower()
 
 
 class GraphQLView(BaseGraphQLView):
-    """Enhanced GraphQL view: response caching + depth/cost rules + cost payload."""
+    """Enhanced GraphQL view: response caching + depth/cost rules + cost payload.
 
-    #: Standard validation plus query-depth limiting (`Meta.max_deep` /
-    #: `MAX_QUERY_DEPTH`) and cost analysis (`Meta.complexity` / `MAX_QUERY_COST`).
+    Extends the base view with per-request response caching (partitioned by
+    caller identity), the depth-limit and cost-limit validation rules, and an
+    optional "extensions.cost" payload. Each addition is inert until its
+    corresponding "DJANGO_GRAPHEX" setting is configured.
+    """
+
+    #: Standard validation plus query-depth limiting ("Meta.max_depth" /
+    #: "MAX_QUERY_DEPTH") and cost analysis ("Meta.complexity" / "MAX_QUERY_COST").
     #: Both are no-ops until configured.
     validation_rules = (
         *specified_rules,
@@ -648,9 +1099,9 @@ class GraphQLView(BaseGraphQLView):
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.
 
-        Returns ``None`` when there is no query or when the query is
-        syntactically invalid (a malformed document must not raise here;
-        ``dispatch`` falls through to ``super_call`` which returns a 400).
+        Returns None when there is no query or when the query is syntactically
+        invalid (a malformed document must not raise here; "dispatch" falls
+        through to "super_call" which returns a 400).
 
         Args:
             request: The incoming HTTP request.
@@ -665,10 +1116,13 @@ class GraphQLView(BaseGraphQLView):
         if not query:
             return None
 
-        source = Source(query, name="GraphQL request")
-
         try:
-            document_ast = parse(source)
+            # Reuse the shared parse cache (keyed on the query string) so the
+            # CACHE_ACTIVE path does not double-parse: get_response and
+            # execute_graphql_request read the same cached DocumentNode. The
+            # immutable AST is identical to parsing a Source(query); only error
+            # location labels would differ, and a syntax error is swallowed here.
+            document_ast = cached_parse(query)
         except GraphQLSyntaxError:
             return None
 
@@ -680,19 +1134,26 @@ class GraphQLView(BaseGraphQLView):
     def fetch_cache_key(request: HttpRequest) -> str:
         """Return a hashed cache key built from the request body and GET params.
 
-        For POST requests the GraphQL payload lives in ``request.body``, which
-        is hashed directly.  For GET requests ``request.body`` is always
-        ``b''``, so the query, variables, and operationName query-string
-        parameters are incorporated into the hash instead.  Without this,
-        every distinct GET query for the same identity would produce
-        sha256(b'') and share a single cache slot — causing a different
-        query's cached response to be returned.
+        For POST requests the GraphQL payload lives in "request.body", which is
+        hashed directly. For GET requests "request.body" is always empty, so the
+        query, variables, and operationName query-string parameters are
+        incorporated into the hash instead. Without this, every distinct GET
+        query for the same identity would produce the empty-body hash and share a
+        single cache slot — causing a different query's cached response to be
+        returned.
 
         Subclasses may override this staticmethod to derive the body hash
         differently (e.g. normalising whitespace or extracting the operation
         name). The returned value is composed into the full cache key by
-        ``dispatch`` together with the identity prefix, so overrides do not
-        need to incorporate user identity — that is handled automatically.
+        "dispatch" together with the identity prefix, so overrides do not need to
+        incorporate user identity — that is handled automatically.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            The hex-encoded SHA-256 digest used as the body segment of the cache
+            key.
         """
         m = hashlib.sha256()
         m.update(request.body)
@@ -712,12 +1173,12 @@ class GraphQLView(BaseGraphQLView):
     def cache_key_prefix(request: HttpRequest) -> str:
         """Return a stable per-identity token used to namespace cache keys.
 
-        Authenticated requests are partitioned by ``request.user.pk``.
-        Anonymous requests that carry an ``Authorization`` header are
-        partitioned by a hash of that header so token-auth clients without a
-        resolved ``request.user`` are still isolated from each other.
-        Fully anonymous, credential-free requests share a single ``"anon"``
-        partition (their responses contain no private data).
+        Authenticated requests are partitioned by "request.user.pk".
+        Anonymous requests that carry an "Authorization" header are partitioned
+        by a hash of that header so token-auth clients without a resolved
+        "request.user" are still isolated from each other. Fully anonymous,
+        credential-free requests share a single "anon" partition (their responses
+        contain no private data).
 
         Subclasses may override this staticmethod to use a different identity
         source (e.g. a session key or a tenant identifier).
@@ -860,7 +1321,16 @@ class GraphQLView(BaseGraphQLView):
         transaction.on_commit(_do_bump)
 
     def super_call(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
-        """Call the parent dispatch method."""
+        """Call the parent dispatch method.
+
+        Args:
+            request: The incoming HTTP request.
+            *args: Extra positional arguments forwarded to the parent.
+            **kwargs: Extra keyword arguments forwarded to the parent.
+
+        Returns:
+            The response produced by the base view's "dispatch".
+        """
         response = super().dispatch(request, *args, **kwargs)
 
         return response
@@ -868,34 +1338,40 @@ class GraphQLView(BaseGraphQLView):
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Fetch queried data from GraphQL and return the cached response.
 
-        When ``CACHE_ACTIVE`` is ``True``:
+        When "CACHE_ACTIVE" is True:
 
-        * Cache keys are partitioned by user identity (see
-          ``cache_key_prefix``) so one user's cached response is never served
-          to another user.
-        * Mutations advance a global namespace version counter instead of
-          calling ``cache.clear()``, which would flush unrelated cache entries
-          shared by other users or other cache clients.
-        * A sentinel object detects cache misses so a legitimately cached
-          falsy or empty body is not re-executed on every request.
-        * A malformed GraphQL document (``GraphQLSyntaxError`` during
-          ``get_operation_ast``) falls through to ``super_call``, which
-          returns the appropriate HTTP 400 response.
+        * Cache keys are partitioned by user identity (see "cache_key_prefix") so
+          one user's cached response is never served to another user.
+        * Mutations advance a global namespace version counter instead of calling
+          "cache.clear()", which would flush unrelated cache entries shared by
+          other users or other cache clients.
+        * A sentinel object detects cache misses so a legitimately cached falsy or
+          empty body is not re-executed on every request.
+        * A malformed GraphQL document ("GraphQLSyntaxError" during
+          "get_operation_ast") falls through to "super_call", which returns the
+          appropriate HTTP 400 response.
         * Multipart/form-data requests bypass the cache entirely because
-          ``parse_body`` for that content type consumes the WSGI input stream
-          via ``request.POST``, making ``request.body`` (needed to compute the
-          cache key in ``fetch_cache_key``) unavailable.  Bypassing is safe:
-          multipart GraphQL is used almost exclusively for file uploads, which
-          are never idempotent queries worth caching (issue #53a).
-        * Only ``(body, status_code, content_type)`` is stored — never the
-          live ``HttpResponse`` object.  The base ``dispatch`` is decorated
-          with ``@ensure_csrf_cookie``, which attaches a per-request CSRF
-          secret as a ``Set-Cookie`` header.  By storing a bare tuple and
-          reconstructing a fresh ``HttpResponse`` on cache hits, the CSRF
-          cookie is stripped from all cached responses (it only appears on the
-          original cache-miss response).  Subsequent clients in the same
-          identity namespace therefore never receive another client's CSRF
-          token (issue #53b).
+          "parse_body" for that content type consumes the WSGI input stream via
+          "request.POST", making "request.body" (needed to compute the cache key
+          in "fetch_cache_key") unavailable. Bypassing is safe: multipart GraphQL
+          is used almost exclusively for file uploads, which are never idempotent
+          queries worth caching (issue #53a).
+        * Only "(body, status_code, content_type)" is stored — never the live
+          "HttpResponse" object. The base "dispatch" is decorated with
+          "@ensure_csrf_cookie", which attaches a per-request CSRF secret as a
+          "Set-Cookie" header. By storing a bare tuple and reconstructing a fresh
+          "HttpResponse" on cache hits, the CSRF cookie is stripped from all
+          cached responses (it only appears on the original cache-miss response).
+          Subsequent clients in the same identity namespace therefore never
+          receive another client's CSRF token (issue #53b).
+
+        Args:
+            request: The incoming HTTP request.
+            *args: Extra positional arguments forwarded to the base view.
+            **kwargs: Extra keyword arguments forwarded to the base view.
+
+        Returns:
+            The (possibly cached) HTTP response.
         """
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
@@ -927,7 +1403,18 @@ class GraphQLView(BaseGraphQLView):
             return self.super_call(request, *args, **kwargs)
 
         version = self._get_cache_version(_cache, identity)
-        cache_key = f"_graphql_{identity}_{version}_{self.fetch_cache_key(request)}"
+        # ``_cache_key_signature`` is empty on the base view (byte-identical to
+        # today) and, on ``AuthenticatedGraphQLView`` with ``PERMISSION_SCOPED_
+        # SCHEMA`` active, the caller's permission signature. Folding it in keeps
+        # a low-permission caller from ever reading a high-permission caller's
+        # cached body for the same query (their pruned schemas — and therefore
+        # their responses — differ).
+        signature = self._cache_key_signature(request)
+        cache_key = (
+            f"_graphql_{identity}_{version}_{signature}_{self.fetch_cache_key(request)}"
+            if signature
+            else f"_graphql_{identity}_{version}_{self.fetch_cache_key(request)}"
+        )
         response = _cache.get(cache_key, self._CACHE_MISS)
 
         if response is self._CACHE_MISS:
@@ -964,27 +1451,38 @@ class GraphQLView(BaseGraphQLView):
 
     @classmethod
     def as_view(cls, *args: Any, **kwargs: Any) -> Any:
-        """Create the view with CSRF exemption."""
+        """Create the view with CSRF exemption.
+
+        The GraphQL endpoint is CSRF-exempt because it authenticates each request
+        explicitly rather than relying on session-cookie CSRF protection.
+
+        Args:
+            *args: Positional arguments forwarded to Django's "View.as_view".
+            **kwargs: Keyword arguments forwarded to Django's "View.as_view".
+
+        Returns:
+            The CSRF-exempt view callable.
+        """
         view = super().as_view(*args, **kwargs)
         view = csrf_exempt(view)
         return view
 
     @staticmethod
     def _is_introspection_document(document: Any) -> bool:
-        """Return True when *document* is an introspection query.
+        """Return True when the document is an introspection query.
 
-        Detects introspection by inspecting the AST rather than matching the
-        raw query string. A document is treated as introspection when ALL of
-        its top-level selections are ``__schema`` or ``__type`` fields (the
-        two standard introspection entry-points). This correctly handles any
-        formatting, named or anonymous operations, and mixed inline fragments.
+        Detects introspection by inspecting the AST rather than matching the raw
+        query string. A document is treated as introspection when ALL of its
+        top-level selections are "__schema" or "__type" fields (the two standard
+        introspection entry-points). This correctly handles any formatting, named
+        or anonymous operations, and mixed inline fragments.
 
         Args:
-            document: A parsed graphql-core ``DocumentNode``.
+            document: A parsed graphql-core "DocumentNode".
 
         Returns:
-            ``True`` when every top-level selection is a meta-field
-            (``__schema`` / ``__type``), ``False`` otherwise.
+            True when every top-level selection is a meta-field ("__schema" /
+            "__type"), False otherwise.
         """
         if document is None:
             return False
@@ -1031,7 +1529,7 @@ class GraphQLView(BaseGraphQLView):
         parsed_document: Any = None
         if query:
             try:
-                parsed_document = parse(query)
+                parsed_document = cached_parse(query)
             except Exception:  # nosec B110
                 # Malformed query: pass document=None so execute_graphql_request
                 # re-attempts and returns the proper error response.
@@ -1100,20 +1598,20 @@ class GraphQLView(BaseGraphQLView):
         operation_name: str | None,
         document: Any = None,
     ) -> dict[str, Any] | None:
-        """Estimate the query's cost for the ``extensions.cost`` payload.
+        """Estimate the query's cost for the "extensions.cost" payload.
 
         Args:
-            query: The raw GraphQL query string (used as fallback when
-                *document* is ``None``).
+            query: The raw GraphQL query string (used as fallback when the
+                document is None).
             variables: The bound variable values (for exact page sizes).
             operation_name: The selected operation name, if any.
-            document: An already-parsed ``DocumentNode``.  When provided,
-                ``parse()`` is not called again (avoids a double-parse per
-                request when ``EXPOSE_QUERY_COST`` is ``True``).
+            document: An already-parsed "DocumentNode". When provided, "parse()"
+                is not called again (avoids a double-parse per request when
+                "EXPOSE_QUERY_COST" is True).
 
         Returns:
-            A ``{"requestedCost": int, "maxCost": int | None}`` mapping, or
-            ``None`` when the query can't be parsed/analyzed.
+            A "{'requestedCost': int, 'maxCost': int | None}" mapping, or None
+            when the query can't be parsed/analyzed.
         """
         try:
             doc = document if document is not None else parse(query)
@@ -1130,7 +1628,19 @@ class GraphQLView(BaseGraphQLView):
     def response_json_encode(
         self, request: HttpRequest, response: Any, pretty: bool
     ) -> str:
-        """Encode the response to JSON."""
+        """Encode the response to JSON.
+
+        A thin seam over "json_encode" so subclasses can customize the enhanced
+        view's response serialization independently of the base encoder.
+
+        Args:
+            request: The incoming HTTP request.
+            response: The response mapping to encode.
+            pretty: Whether to force pretty-printed output.
+
+        Returns:
+            The JSON-encoded response string.
+        """
         return self.json_encode(request, response, pretty)
 
 
@@ -1138,41 +1648,156 @@ class AuthenticatedGraphQLView(GraphQLView):
     """Gate the whole endpoint behind the library's own permission classes (no DRF).
 
     A coarse, endpoint-level guard: every request must satisfy each permission in
-    ``permission_classes`` (the same :class:`~django_graphex.permissions.
-    BasePermission` subclasses used at the resolver level), evaluated against the
-    request's user. For finer, per-field control use ``AuthenticatedFieldsMiddleware``
-    / ``DjangoGraphQLSchema`` or a type's ``permission_classes`` instead.
+    "permission_classes" (the same "BasePermission" subclasses used at the
+    resolver level), evaluated against the request's user. For finer, per-field
+    control use "AuthenticatedFieldsMiddleware" / "DjangoGraphQLSchema" or a
+    type's "permission_classes" instead.
     """
 
     #: Permission classes every request must satisfy (default: must be logged in).
     permission_classes = (IsAuthenticated,)
 
+    #: The generic message returned for ANY permission failure on this endpoint
+    #: (the "permission_classes" loop, the "API_ACCESS_GROUP" gate, and the
+    #: empty-pruned-root case all reuse it verbatim so none of them leaks WHY).
+    _FORBIDDEN_MESSAGE = "You do not have permission to access this endpoint."
+
     def __init__(
         self, *args: Any, permission_classes: Any = None, **kwargs: Any
     ) -> None:
-        """Accept ``permission_classes`` via ``as_view``/subclass, then configure."""
+        """Accept "permission_classes" via "as_view"/subclass, then configure.
+
+        Args:
+            *args: Positional arguments forwarded to "GraphQLView.__init__".
+            permission_classes: The permission classes every request must
+                satisfy; None keeps the class default.
+            **kwargs: Keyword arguments forwarded to "GraphQLView.__init__".
+        """
         super().__init__(*args, **kwargs)
         if permission_classes is not None:
             self.permission_classes = permission_classes
 
+    def _graphql_schema_for(self, request: HttpRequest) -> Any:
+        """Select the per-request schema, pruned to the caller's permissions.
+
+        When ``PERMISSION_SCOPED_SCHEMA`` is False (default, read per-request) the
+        FULL schema is served unchanged — byte-identical to the base view. When
+        True, an ACTIVE superuser still gets the FULL schema (no signature); every
+        other user gets the LRU-cached schema pruned to their permission
+        signature. If that pruned schema has an EMPTY Query root (every root field
+        was pruned) the request is denied with the endpoint's generic 403 —
+        raised HERE, before ``validate``/``execute``, so no field existence leaks.
+
+        Args:
+            request: The incoming HTTP request (its ``user`` drives pruning).
+
+        Returns:
+            The full or per-request-pruned ``GraphQLSchema``.
+
+        Raises:
+            HttpError: A generic 403 when the caller's pruned Query root is empty.
+        """
+        full = self.schema.graphql_schema
+        if not graphql_api_settings.PERMISSION_SCOPED_SCHEMA:
+            return full
+        user = getattr(request, "user", None)
+        if user is None:
+            return full
+        pruned = pruned_schema_for(user, full)
+        if pruned is not full and pruned.query_type is None:
+            raise HttpError(HttpResponseForbidden(), message=self._FORBIDDEN_MESSAGE)
+        return pruned
+
+    def _cache_key_signature(self, request: HttpRequest) -> str:
+        """Return the caller's permission signature for the response-cache key.
+
+        This mirrors :meth:`_graphql_schema_for`'s selection so the cache key
+        varies with the schema the caller actually validates/executes against:
+
+        - ``PERMISSION_SCOPED_SCHEMA`` False (default): returns ``""`` — the key
+          is byte-identical to the base view (feature inert).
+        - An ACTIVE superuser: returns ``""`` — they always get the FULL schema
+          (no signature computed), so their key needs no signature segment.
+        - Any other caller: returns the SHA-256 permission signature (the same
+          projection the LRU keys on: ``perms ∩ schema label-set``), so two
+          callers who share a cache identity but hold DIFFERENT relevant perms
+          never collide on one cached response body.
+
+        Args:
+            request: The incoming HTTP request (its ``user`` drives the signature).
+
+        Returns:
+            The permission signature, or ``""`` when no signature applies.
+        """
+        if not graphql_api_settings.PERMISSION_SCOPED_SCHEMA:
+            return ""
+        user = getattr(request, "user", None)
+        if user is None:
+            return ""
+        if getattr(user, "is_active", False) and getattr(user, "is_superuser", False):
+            return ""
+        full = self.schema.graphql_schema
+        label_set = frozenset((full.extensions or {}).get("gdx_label_set") or ())
+        granted = frozenset(user.get_all_permissions())
+        return permission_signature(granted, label_set)
+
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
-        """Enforce ``permission_classes`` before handling the request."""
+        """Enforce "permission_classes" and the access-group gate, then dispatch.
+
+        Every permission in "permission_classes" must pass, and (when
+        "API_ACCESS_GROUP" is set) the caller must be a member of that group or
+        an active superuser; any failure returns the endpoint's generic 403.
+        Both gates are read per-request so an "as_view" override still applies.
+
+        Args:
+            request: The incoming HTTP request.
+            *args: Extra positional arguments forwarded to the parent dispatch.
+            **kwargs: Extra keyword arguments forwarded to the parent dispatch.
+
+        Returns:
+            The generic 403 response when a gate fails, otherwise the response
+            produced by the parent view's dispatch.
+        """
         info = SimpleNamespace(context=request)
         for permission in self.permission_classes:
             if not permission().has_permission(info, "view", None):
-                return HttpResponse(
-                    self.json_encode(
-                        request,
-                        {
-                            "errors": [
-                                {
-                                    "message": "You do not have permission to "
-                                    "access this endpoint."
-                                }
-                            ]
-                        },
-                    ),
-                    status=403,
-                    content_type="application/json",
-                )
+                return self._forbidden_response(request)
+        # Settings-driven access-group gate (read per-request, never at import).
+        # Non-empty API_ACCESS_GROUP restricts the endpoint to members of that
+        # Django auth Group; an active superuser always bypasses it. Fail-closed:
+        # a missing/anonymous user is denied. Runs on top of permission_classes so
+        # it holds even when a caller overrides them via as_view(). The 403 reuses
+        # the generic message above so the group requirement never leaks.
+        group_name = graphql_api_settings.API_ACCESS_GROUP
+        if group_name and not self._passes_access_group(request, group_name):
+            return self._forbidden_response(request)
         return super().dispatch(request, *args, **kwargs)
+
+    def _forbidden_response(self, request: HttpRequest) -> HttpResponse:
+        """Return the endpoint's generic 403 (single source of the message).
+
+        Every endpoint-level denial (``permission_classes``, ``API_ACCESS_GROUP``,
+        empty pruned root) shares this exact body so none of them leaks its cause.
+        """
+        return HttpResponse(
+            self.json_encode(
+                request, {"errors": [{"message": self._FORBIDDEN_MESSAGE}]}
+            ),
+            status=403,
+            content_type="application/json",
+        )
+
+    @staticmethod
+    def _passes_access_group(request: HttpRequest, group_name: str) -> bool:
+        """Return whether ``request.user`` may access the group-gated endpoint.
+
+        An active superuser always passes (hardcoded invariant). Otherwise the
+        user must be authenticated and belong to ``group_name``. A missing or
+        anonymous user is denied (fail-closed).
+        """
+        user = getattr(request, "user", None)
+        if user is None or not user.is_authenticated:
+            return False
+        if user.is_active and user.is_superuser:
+            return True
+        return user.groups.filter(name=group_name).exists()

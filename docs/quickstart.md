@@ -20,9 +20,14 @@ DJANGO_GRAPHEX = {
 
 ### Basic Type
 
+A `DjangoObjectType` maps one Django model to one GraphQL object type — the
+model's fields are converted automatically (`choices` become enums, relations
+become nested lists). `filter_fields` declares which ORM lookups are exposed
+when this type is used as a (nested) list:
+
 ```python title="types.py"
 from django.contrib.auth.models import User
-from django_graphex import DjangoObjectType
+from django_graphex.types import DjangoObjectType
 
 class UserType(DjangoObjectType):
     class Meta:
@@ -40,8 +45,12 @@ class UserType(DjangoObjectType):
 
 ### List Type with Pagination
 
+A `DjangoListObjectType` wraps the node type in the uniform list shape —
+`results` (paginated, ordered) plus `totalCount` — with pagination configured
+in `Meta`:
+
 ```python title="types.py"
-from django_graphex import DjangoListObjectType
+from django_graphex.types import DjangoListObjectType
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 
 class UserListType(DjangoListObjectType):
@@ -56,9 +65,16 @@ class UserListType(DjangoListObjectType):
 
 ### Model Type
 
+A `DjangoModelType` is the all-in-one option: from a single declaration it
+auto-generates the output type, the retrieve/list queries **and** the full set
+of CRUD mutations (create / update / delete, with validation and integrity
+checks). You mount them on your roots with `QueryFields()` /
+`MutationFields()` — shown in [Schema Definition](#schema-definition) below:
+
 ```python title="types.py"
 from django.contrib.auth.models import User
-from django_graphex import DjangoModelType
+from django_graphex.types import DjangoModelType
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 
 class UserModelType(DjangoModelType):
     """With this type definition, mutations are auto-generated"""
@@ -91,7 +107,7 @@ class UserModelType(DjangoModelType):
 Define input types for mutations:
 
 ```python title="inputs.py"
-from django_graphex import DjangoInputObjectType
+from django_graphex.types import DjangoInputObjectType
 from django.contrib.auth.models import User
 
 class UserInput(DjangoInputObjectType):
@@ -109,7 +125,7 @@ class UserInput(DjangoInputObjectType):
 
 ```python title="mutations.py"
 from django.contrib.auth.models import User
-from django_graphex import DjangoModelMutation
+from django_graphex.mutation import DjangoModelMutation
 
 class UserModelMutation(DjangoModelMutation):
     class Meta:
@@ -119,26 +135,26 @@ class UserModelMutation(DjangoModelMutation):
 
 ### Traditional Mutations
 
-A hand-written mutation subclasses `django_graphex.Mutation`. Declare its output
-payload with `field()` (graphql-core scalars/types), its inputs in a nested
-`class args` using `GraphQLArgument`, and implement a `mutate(root, info, ...)`
+A hand-written mutation subclasses `django_graphex.core.Mutation`. Declare its
+output payload with the typed descriptors (`BooleanField`, `CharField`, or the
+general `Field`), its inputs in a nested `class Arguments` using the SAME
+`CharField` / `Field` descriptors — `Field` is unified and works in both
+output and input position — and implement a `mutate(root, info, ...)`
 classmethod that returns an instance of the mutation:
 
 ```python title="mutations.py"
-from graphql import GraphQLArgument, GraphQLBoolean, GraphQLNonNull, GraphQLString
-
-from django_graphex import Mutation, field
+from django_graphex.core import BooleanField, CharField, Mutation
 
 
 class CreateUser(Mutation):
     """Traditional mutation - implement the mutate function yourself."""
 
-    ok = field(GraphQLBoolean)
-    username = field(GraphQLString)
+    ok = BooleanField()
+    username = CharField()
 
-    class args:
-        username = GraphQLArgument(GraphQLNonNull(GraphQLString))
-        password = GraphQLArgument(GraphQLNonNull(GraphQLString))
+    class Arguments:
+        username = CharField(required=True)
+        password = CharField(required=True)
 
     @staticmethod
     def mutate(root, info, username, password):
@@ -150,53 +166,82 @@ class CreateUser(Mutation):
 
 ## Schema Definition
 
-```python title="schema.py"
-from django_graphex import (
-    DjangoObjectField,
-    DjangoListObjectField,
-    DjangoFilterPaginateListField,
-    DjangoFilterListField,
-    DjangoGraphQLSchema,
-    LimitOffsetGraphqlPagination,
-    ObjectType,
-)
-from .types import UserType, UserListType, UserModelType
-from .mutations import CreateUser, UserModelMutation
+The schema wires everything together: a `Query` root mounts the types through
+field classes (each offering a different mix of filtering / pagination /
+single-object lookup), a `Mutation` root mounts the mutations, and
+`DjangoGraphQLSchema` compiles both into the executable GraphQL schema.
 
-class Query(ObjectType):
-    # Different ways to define user list queries
-    users = DjangoListObjectField(UserListType, description='All Users query')
-    users_paginated = DjangoFilterPaginateListField(
-        UserType,
-        pagination=LimitOffsetGraphqlPagination()
-    )
-    users_filtered = DjangoFilterListField(UserType)
+`UserListType` (a hand-declared `DjangoListObjectType`) and `UserModelType`
+(a `DjangoModelType`) both generate a GraphQL type for the **same** model —
+mounting both in one schema raises a duplicate-type error at schema-build
+time, since a `DjangoModelType` already auto-generates its own
+`<Model>ListType` internally. Pick **one** approach per model; the tabs below
+show each as a self-contained alternative:
 
-    # Single user queries
-    user = DjangoObjectField(UserType, description='Single User query')
-    user_detail = UserListType.RetrieveField(description='User detail')
+=== "Manual types (UserType / UserListType)"
 
-    # Using DjangoModelType
-    user_retrieve, user_list = UserModelType.QueryFields(
-        description='User queries with model type'
-    )
+    ```python title="schema.py"
+    from django_graphex.fields import DjangoObjectField, DjangoListObjectField, DjangoFilterPaginateListField, DjangoFilterListField
+    from django_graphex.core import ObjectType
+    from django_graphex.paginations import LimitOffsetGraphqlPagination
+    from django_graphex.schema import DjangoGraphQLSchema
+    from .types import UserType, UserListType
+    from .mutations import CreateUser, UserModelMutation
 
-class Mutation(ObjectType):
-    # Model-based mutations
-    user_create = UserModelMutation.CreateField()
-    user_delete = UserModelMutation.DeleteField()
-    user_update = UserModelMutation.UpdateField()
+    class Query(ObjectType):
+        # Different ways to define user list queries
+        users = DjangoListObjectField(UserListType, description='All Users query')
+        users_paginated = DjangoFilterPaginateListField(
+            UserType,
+            pagination=LimitOffsetGraphqlPagination()
+        )
+        users_filtered = DjangoFilterListField(UserType)
 
-    # Using DjangoModelType
-    user_create_alt, user_delete_alt, user_update_alt = UserModelType.MutationFields()
+        # Single user queries
+        user = DjangoObjectField(UserType, description='Single User query')
+        user_detail = UserListType.RetrieveField(description='User detail')
 
-    # Traditional mutation
-    create_user = CreateUser.Field()
+    class Mutation(ObjectType):
+        # Model-based mutations
+        user_create = UserModelMutation.CreateField()
+        user_delete = UserModelMutation.DeleteField()
+        user_update = UserModelMutation.UpdateField()
 
-schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
-```
+        # Traditional mutation
+        create_user = CreateUser.Field()
+
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
+    ```
+
+=== "DjangoModelType (all-in-one)"
+
+    ```python title="schema.py"
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
+    from .types import UserModelType
+    from .mutations import CreateUser
+
+    class Query(ObjectType):
+        # QueryFields() returns (retrieve, list) — the list type
+        # (UserModelType's own <Model>ListType) is generated automatically.
+        user_retrieve, user_list = UserModelType.QueryFields(
+            description='User queries with model type'
+        )
+
+    class Mutation(ObjectType):
+        # MutationFields() returns (create, delete, update)
+        user_create, user_delete, user_update = UserModelType.MutationFields()
+
+        # Traditional mutation
+        create_user = CreateUser.Field()
+
+    schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
+    ```
 
 ## Example Queries
+
+With the schema above you can already query lists (pagination and ordering
+arguments live on `results`, filters on the field itself) and single objects:
 
 === "List Query"
 
@@ -245,6 +290,10 @@ schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
 ## Example Mutations
+
+The model-based mutations take their input under a single `newUser` argument
+(delete takes just the `id`) and return a payload with the mutated object,
+`ok`, and an `errors` list of `{ field, messages }` on validation failure:
 
 === "Create User"
 

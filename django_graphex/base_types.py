@@ -1,47 +1,47 @@
 """Base types and utilities for django-graphex.
 
-S8d (graphene removal): ``base_types.py`` is now TOP-LEVEL graphene-free. The
-two graphene imports that lived here (``import graphene`` and ``from
-graphene.types.datetime import Date, DateTime, Time``) blocked the graphene
+S8d (graphene removal): "base_types.py" is now TOP-LEVEL graphene-free. The
+two graphene imports that lived here ("import graphene" and "from
+graphene.types.datetime import Date, DateTime, Time") blocked the graphene
 uninstall (S8i), so they are gone. The constructs that USED them are now
 graphene-free:
 
-* ``Binary`` / ``CustomDate`` / ``CustomDateTime`` / ``CustomTime`` are SCALAR
+* "Binary" / "CustomDate" / "CustomDateTime" / "CustomTime" are SCALAR
   descriptors that the converter no longer builds (every scalar converter
   returns the dead-scalar sentinel).
-  The native output compiler derives the scalar from ``model._meta`` directly
-  (BinaryField -> GraphQLString, DateField -> GdxDate, …; see #1552 /
+  The native output compiler derives the scalar from "model._meta" directly
+  (BinaryField -> GraphQLString, DateField -> GdxDate, ...; see #1552 /
   S-ROOTS-d), so the graphene Scalar / Date / Time bases were DEAD on native.
-  They now subclass the graphene-free ``_NativeScalarDescriptor`` base below,
-  which mirrors graphene ``Scalar.__init__`` (``description`` / ``required`` /
-  ``name`` / ``**extra``) so the still-graphene converter build
-  (``Binary(description=…, required=…)``) keeps constructing. Their
-  ``serialize`` static methods are unchanged (directly unit-tested by
-  ``tests/test_base_types_internals.py``); ``parse_value`` / ``parse_literal``
-  delegate to the canonical native coercers (``native/scalars.py``).
+  They now subclass the graphene-free "_NativeScalarDescriptor" base below,
+  which mirrors graphene "Scalar.__init__" ("description" / "required" /
+  "name" / "**extra") so the still-graphene converter build
+  ("Binary(description=..., required=...)") keeps constructing. Their
+  "serialize" static methods are unchanged (directly unit-tested by
+  "tests/test_base_types_internals.py"); "parse_value" / "parse_literal"
+  delegate to the canonical native coercers ("core/scalars.py").
 
-* ``GenericForeignKeyType`` / ``GenericForeignKeyInputType`` are CONSUMED by the
-  still-graphene converter (S8e): it wraps ``GenericForeignKeyType`` in a
-  graphene ``Field(...)`` (``test_track2_types`` asserts ``field.type is
-  GenericForeignKeyType``) and instantiates ``GenericForeignKeyInputType(...)``.
-  graphene ``Field.type`` returns a plain class verbatim (``get_type`` passes a
+* "GenericForeignKeyType" / "GenericForeignKeyInputType" are CONSUMED by the
+  still-graphene converter (S8e): it wraps "GenericForeignKeyType" in a
+  graphene "Field(...)" ("test_track2_types" asserts "field.type is
+  GenericForeignKeyType") and instantiates "GenericForeignKeyInputType(...)".
+  graphene "Field.type" returns a plain class verbatim ("get_type" passes a
   non-str / non-callable through), so these are re-parented to plain classes
   that preserve the field/Meta shape + identity WITHOUT a graphene base. The
-  native GFK OUTPUT type (SDL ``GenericForeignKeyType``) is built independently
-  by ``output_compiler._make_generic_foreign_key_type`` and is unaffected. Full
+  native GFK OUTPUT type (SDL "GenericForeignKeyType") is built independently
+  by "output_compiler._make_generic_foreign_key_type" and is unaffected. Full
   native conversion of the converter wrappers is S8e.
 
-``CustomDateFormat`` (re-exported from ``native/scalars.py``) is the pre-formatted
-date/time bypass wrapper returned by the ``@date`` directive
-(``directives/date.py``). There must be EXACTLY ONE ``CustomDateFormat`` class
+"CustomDateFormat" (re-exported from "core/scalars.py") is the pre-formatted
+date/time bypass wrapper returned by the "@date" directive
+("directives/date.py"). There must be EXACTLY ONE "CustomDateFormat" class
 shared by BOTH backends; the native scalars own the canonical, graphene-free
 definition and this module re-exports that single class so the directive (which
-imports it from here) and the ``CustomDate`` / ``CustomDateTime`` / ``CustomTime``
-scalars below all recognise the same identity. ``native/scalars.py`` has no
-``django`` / ``graphene`` imports and is not in any import cycle with this module,
-so depending ON it here is safe. The ``_*_parse_*`` coercers are the canonical
+imports it from here) and the "CustomDate" / "CustomDateTime" / "CustomTime"
+scalars below all recognise the same identity. "core/scalars.py" has no
+"django" / "graphene" imports and is not in any import cycle with this module,
+so depending ON it here is safe. The "_*_parse_*" coercers are the canonical
 native parse helpers the now graphene-free date/time scalars reuse for
-``parse_value`` / ``parse_literal`` (their graphene ``Date`` / ``Time`` bases
+"parse_value" / "parse_literal" (their graphene "Date" / "Time" bases
 previously supplied these).
 """
 
@@ -49,12 +49,12 @@ from __future__ import annotations
 
 import binascii
 import datetime
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 from graphql.language import ast
 
 from ._strconv import to_camel_case
-from .native.scalars import (
+from .core.scalars import (
     CustomDateFormat,
     _date_parse_literal,
     _date_parse_value,
@@ -93,7 +93,7 @@ def factory_type(operation: str, _type: Any, *args: Any, **kwargs: Any) -> Any:
             filter_fields = kwargs.get("filter_fields")
             registry = kwargs.get("registry")
             skip_registry = kwargs.get("skip_registry")
-            max_deep = kwargs.get("max_deep")
+            max_depth = kwargs.get("max_depth")
             complexity = kwargs.get("complexity")
             description = "Auto generated Type for {} model".format(
                 kwargs.get("model").__name__
@@ -167,7 +167,7 @@ def factory_type(operation: str, _type: Any, *args: Any, **kwargs: Any) -> Any:
                 pagination = kwargs.get("pagination")
                 queryset = kwargs.get("queryset")
                 registry = kwargs.get("registry")
-                max_deep = kwargs.get("max_deep")
+                max_depth = kwargs.get("max_depth")
                 complexity = kwargs.get("complexity")
                 description = "Auto generated list Type for {} model".format(
                     kwargs.get("model").__name__
@@ -179,12 +179,17 @@ def factory_type(operation: str, _type: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 class DjangoListObjectBase:
-    """Base class for Django list objects."""
+    """Container for a paginated list result and its total count.
+
+    Wraps the result list, its total count and the results field name into a
+    single object the pagination machinery returns. The count may be a deferred
+    supplier so the COUNT query is issued only when "totalCount" is selected.
+    """
 
     def __init__(
         self,
         results: Any,
-        count: int,
+        count: int | Callable[[], int],
         results_field_name: str = "results",
         already_paginated: bool = False,
     ) -> None:
@@ -192,16 +197,43 @@ class DjangoListObjectBase:
 
         Args:
             results: the list of result objects.
-            count: total number of results.
+            count: the total number of results, either as a concrete "int" or
+                as a zero-argument SUPPLIER callable. The supplier defers an
+                expensive "qs.count()" COUNT query until "totalCount" is
+                actually resolved: the flat list path passes
+                "lambda qs=qs: qs.count()" so no COUNT SQL is issued when the
+                client never selects "totalCount". In-memory paths ("len()"
+                over a materialized list, a window-function total) pass a
+                concrete "int" -- those are cheap, so they stay eager.
             results_field_name: name of the field holding the results.
             already_paginated: when True, the results list has already been
                 DB-sliced by the window-prefetch path and must not be
                 re-sliced by GenericPaginationField.
         """
         self.results = results
-        self.count = count
+        self._count = count
         self.results_field_name = results_field_name
         self.already_paginated = already_paginated
+
+    @property
+    def count(self) -> int:
+        """Return the total result count, computing a deferred supplier once.
+
+        When "count" was supplied as a callable, it is invoked on the FIRST
+        access and the result is memoized in place of the callable, so a
+        "totalCount" selected twice (or aliased) triggers exactly one COUNT
+        query. A concrete "int" is returned directly. "QuerySet.count()"
+        clones the queryset, so the deferred call is correct even after the
+        results were iterated.
+
+        Returns:
+            The total number of results.
+        """
+        count = self._count
+        if callable(count):
+            count = count()
+            self._count = count
+        return count
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the object to a dictionary.
@@ -238,13 +270,13 @@ def resolver(attr_name: str, root: Any, instance: Any, info: Any) -> Any:
 
 
 class _GFKMeta:
-    """Graphene-free stand-in for the GFK types' nested ``Meta`` block.
+    """Graphene-free stand-in for the GFK types' nested "Meta" block.
 
     The graphene ObjectType / InputObjectType metaclass used to consume the
-    nested ``class Meta`` into ``_meta`` (and dropped the ``Meta`` attribute).
-    Now that the GFK types are plain classes, ``Meta`` survives verbatim, which
-    is what the converter / unit tests read (``Meta.description``,
-    ``Meta.default_resolver``).
+    nested "class Meta" into "_meta" (and dropped the "Meta" attribute).
+    Now that the GFK types are plain classes, "Meta" survives verbatim, which
+    is what the converter / unit tests read ("Meta.description",
+    "Meta.default_resolver").
     """
 
 
@@ -252,11 +284,11 @@ class GenericForeignKeyType:
     """GraphQL type for Django GenericForeignKey fields (graphene-free).
 
     Kept as a plain class so the still-graphene converter (S8e) can wrap it in a
-    graphene ``Field(...)``: graphene ``Field.type`` returns a plain class
-    verbatim (``get_type`` passes a non-str / non-callable through), so
-    ``field.type is GenericForeignKeyType`` is preserved. The native OUTPUT type
-    (SDL ``GenericForeignKeyType``) is built separately by
-    ``output_compiler._make_generic_foreign_key_type`` and does not read this
+    graphene "Field(...)": graphene "Field.type" returns a plain class
+    verbatim ("get_type" passes a non-str / non-callable through), so
+    "field.type is GenericForeignKeyType" is preserved. The native OUTPUT type
+    (SDL "GenericForeignKeyType") is built separately by
+    "output_compiler._make_generic_foreign_key_type" and does not read this
     class.
     """
 
@@ -266,7 +298,11 @@ class GenericForeignKeyType:
     model_name: ClassVar[str] = "model_name"
 
     class Meta(_GFKMeta):
-        """Meta configuration for GenericForeignKeyType."""
+        """Meta configuration for GenericForeignKeyType.
+
+        Carries the description and default resolver the converter reads when it
+        wraps this plain class in a graphene field.
+        """
 
         description = " Auto generated Type for a model's GenericForeignKey field "
         default_resolver = resolver
@@ -275,24 +311,28 @@ class GenericForeignKeyType:
 class GenericForeignKeyInputType:
     """GraphQL input type for Django GenericForeignKey fields (graphene-free).
 
-    The converter instantiates this with ``description=`` / ``required=`` on the
-    graphene input path; the tolerant ``__init__`` keeps that call constructible
-    without a graphene ``InputObjectType`` base. The native input path never
-    reads this descriptor (native uses ``compile_input_type`` from the Pydantic
-    model — see #1561).
+    The converter instantiates this with "description=" / "required=" on the
+    graphene input path; the tolerant "__init__" keeps that call constructible
+    without a graphene "InputObjectType" base. The native input path never
+    reads this descriptor (native uses "compile_input_type" from the Pydantic
+    model -- see #1561).
     """
 
     class Meta(_GFKMeta):
-        """Meta configuration for GenericForeignKeyInputType."""
+        """Meta configuration for GenericForeignKeyInputType.
+
+        Holds the description the graphene-path converter reads for this plain
+        input descriptor class.
+        """
 
         description = " Auto generated InputType for a model's GenericForeignKey field "
 
     def __init__(self, **kwargs: Any) -> None:
-        """Capture the converter's descriptor kwargs (description / required / …).
+        """Capture the converter's descriptor kwargs (description / required / ...).
 
         Args:
-            **kwargs: descriptor configuration (``description``, ``required``,
-                ``name``, …) the graphene-path converter passes; stored so the
+            **kwargs: descriptor configuration ("description", "required",
+                "name", ...) the graphene-path converter passes; stored so the
                 instance round-trips without a graphene base.
         """
         self.kwargs = kwargs
@@ -304,10 +344,10 @@ class GenericForeignKeyInputType:
 class _NativeScalarDescriptor:
     """Graphene-free base for the custom scalar descriptors (Binary / Custom*).
 
-    Provides a tolerant ``__init__`` that accepts and stores ``description`` /
-    ``required`` / ``name`` / extra kwargs. The converter never builds these
-    descriptors (every scalar converter returns the dead sentinel — see #1552).
-    ``serialize`` / ``parse_value`` / ``parse_literal`` are supplied by each
+    Provides a tolerant "__init__" that accepts and stores "description" /
+    "required" / "name" / extra kwargs. The converter never builds these
+    descriptors (every scalar converter returns the dead sentinel -- see #1552).
+    "serialize" / "parse_value" / "parse_literal" are supplied by each
     subclass.
     """
 
@@ -336,7 +376,11 @@ class _NativeScalarDescriptor:
 
 
 class Binary(_NativeScalarDescriptor):
-    """Binary is used to convert a Django BinaryField to the string form."""
+    """Scalar descriptor converting a Django BinaryField to string form.
+
+    Serializes and parses binary values as their hex-encoded string
+    representation on the GraphQL wire.
+    """
 
     @staticmethod
     def binary_to_string(value: bytes) -> str:
@@ -369,7 +413,11 @@ class Binary(_NativeScalarDescriptor):
 
 
 class CustomTime(_NativeScalarDescriptor):
-    """Custom time scalar type with support for custom date formats."""
+    """Custom time scalar type with support for custom date formats.
+
+    Serializes time values to ISO strings and passes a "CustomDateFormat"
+    wrapper (produced by the "@date" directive) through verbatim.
+    """
 
     @staticmethod
     def serialize(time: Any) -> str:
@@ -401,7 +449,11 @@ class CustomTime(_NativeScalarDescriptor):
 
 
 class CustomDate(_NativeScalarDescriptor):
-    """Custom date scalar type with support for custom date formats."""
+    """Custom date scalar type with support for custom date formats.
+
+    Serializes date values to ISO strings and passes a "CustomDateFormat"
+    wrapper (produced by the "@date" directive) through verbatim.
+    """
 
     @staticmethod
     def serialize(date: Any) -> str:
@@ -432,7 +484,11 @@ class CustomDate(_NativeScalarDescriptor):
 
 
 class CustomDateTime(_NativeScalarDescriptor):
-    """Custom datetime scalar type with support for custom date formats."""
+    """Custom datetime scalar type with support for custom date formats.
+
+    Serializes datetime values to ISO strings and passes a "CustomDateFormat"
+    wrapper (produced by the "@date" directive) through verbatim.
+    """
 
     @staticmethod
     def serialize(dt: Any) -> str:

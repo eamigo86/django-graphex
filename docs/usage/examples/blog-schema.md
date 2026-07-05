@@ -1,5 +1,17 @@
 # Sample Application Setup
 
+!!! note "Illustrative tutorial"
+    This is a **standalone tutorial** that uses its own hypothetical blog models
+    (`UserProfile`, `excerpt`, `slug`, `view_count`, `QueryFields`, `UserMutation`, …).
+    The models exist only to show framework concepts — they are **not** derived from
+    any real project file in this repository.
+
+    For a complete, runnable project you can clone and run immediately, see
+    [`examples/playground/`](https://github.com/eamigo86/django-graphex/tree/main/examples/playground)
+    in the repo.  The playground uses different (simpler) models but exercises the
+    same features shown here, so it is a good companion reference when the
+    tutorial examples need context.
+
 Let's start with a blog application to demonstrate the features:
 
 === "models.py"
@@ -81,9 +93,7 @@ Let's start with a blog application to demonstrate the features:
 === "types.py"
 
     ```python
-    from django_graphex import (
-        DjangoObjectType, DjangoListObjectType, DjangoModelType
-    )
+    from django_graphex.types import DjangoObjectType, DjangoListObjectType, DjangoModelType
     from django_graphex.paginations import (
         LimitOffsetGraphqlPagination, PageGraphqlPagination
     )
@@ -216,7 +226,7 @@ Let's start with a blog application to demonstrate the features:
 === "mutations.py"
 
     ```python
-    from django_graphex import DjangoModelMutation
+    from django_graphex.mutation import DjangoModelMutation
     from django.contrib.auth.models import User
     from .models import Category, Tag, Post, Comment, UserProfile
 
@@ -261,7 +271,7 @@ Let's start with a blog application to demonstrate the features:
 
     ```python
     from django.db.models import Q
-    from django_graphex import DjangoModelType
+    from django_graphex.types import DjangoModelType
     from .models import Post
 
     class PostSearchType(DjangoModelType):
@@ -289,16 +299,26 @@ Let's start with a blog application to demonstrate the features:
 
 === "schema.py"
 
-    ```python
-    from django_graphex import (
-        DjangoGraphQLSchema, DjangoObjectField, DjangoFilterListField,
-        DjangoFilterPaginateListField, DjangoListObjectField,
-        LimitOffsetGraphqlPagination, ObjectType, all_directives
-    )
+    !!! warning "Don't mix `<Model>ListType` with `DjangoModelType.QueryFields()` for the same model"
+        A `DjangoModelType` auto-generates its own `<Model>ListType` internally
+        (e.g. `PostModelType` generates a `PostListType`, `UserModelType`
+        generates a `UserListType`). Mounting a **hand-declared** `PostListType`
+        / `UserListType` (from the `types.py` tab above) *alongside*
+        `PostModelType.QueryFields()` / `UserModelType.QueryFields()` in the same
+        schema raises `TypeError: Schema must contain uniquely named types but
+        contains multiple types named 'PostListType'` (or `'UserListType'`) at
+        schema-build time — pick **one** approach per model. The two variants
+        below show each as a self-contained schema.
+
+    ```python title="Variant A — manual types (UserListType / PostListType)"
+    from django_graphex.directives import all_directives
+    from django_graphex.fields import DjangoObjectField, DjangoFilterListField, DjangoFilterPaginateListField, DjangoListObjectField
+    from django_graphex.core import ObjectType
+    from django_graphex.paginations import LimitOffsetGraphqlPagination
+    from django_graphex.schema import DjangoGraphQLSchema
     from .types import (
         UserType, CategoryType, TagType, PostType, CommentType,
         UserListType, PostListType, CommentListType,
-        UserModelType, PostModelType
     )
     from .mutations import (
         UserMutation, CategoryMutation, TagMutation,
@@ -331,10 +351,6 @@ Let's start with a blog application to demonstrate the features:
             description="Posts with filtering and pagination"
         )
 
-        # DjangoModelType-driven queries
-        user_model, users_model = UserModelType.QueryFields()
-        post_model, posts_model = PostModelType.QueryFields()
-
     class Mutation(ObjectType):
         # User mutations
         create_user, delete_user, update_user = UserMutation.MutationFields()
@@ -350,6 +366,50 @@ Let's start with a blog application to demonstrate the features:
 
         # Comment mutations
         create_comment, delete_comment, update_comment = CommentMutation.MutationFields()
+
+    schema = DjangoGraphQLSchema(
+        query=Query,
+        mutation=Mutation,
+        directives=all_directives
+    )
+    ```
+
+    ```python title="Variant B — DjangoModelType (all-in-one)"
+    from django_graphex.directives import all_directives
+    from django_graphex.fields import DjangoObjectField, DjangoFilterListField, DjangoListObjectField
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
+    from .types import (
+        CategoryType, TagType, CommentType, CommentListType,
+        UserModelType, PostModelType
+    )
+    from .mutations import CategoryMutation, TagMutation, CommentMutation
+
+    class Query(ObjectType):
+        # Single object queries for types without a DjangoModelType
+        category = DjangoObjectField(CategoryType, description="Get a single category")
+        tag = DjangoObjectField(TagType, description="Get a single tag")
+        comment = DjangoObjectField(CommentType, description="Get a single comment")
+
+        # Filter-only / filtered-paginated lists for the remaining types
+        categories = DjangoFilterListField(CategoryType, description="All categories")
+        tags = DjangoFilterListField(TagType, description="All tags")
+        all_comments = DjangoListObjectField(CommentListType, description="All comments with pagination")
+
+        # DjangoModelType-driven queries — retrieve + list generated together
+        # (each call also generates that model's own <Model>ListType internally)
+        user_retrieve, user_list = UserModelType.QueryFields()
+        post_retrieve, post_list = PostModelType.QueryFields()
+
+    class Mutation(ObjectType):
+        # Category / tag / comment mutations (no DjangoModelType for these)
+        create_category, delete_category, update_category = CategoryMutation.MutationFields()
+        create_tag, delete_tag, update_tag = TagMutation.MutationFields()
+        create_comment, delete_comment, update_comment = CommentMutation.MutationFields()
+
+        # DjangoModelType-driven mutations
+        user_create, user_delete, user_update = UserModelType.MutationFields()
+        post_create, post_delete, post_update = PostModelType.MutationFields()
 
     schema = DjangoGraphQLSchema(
         query=Query,

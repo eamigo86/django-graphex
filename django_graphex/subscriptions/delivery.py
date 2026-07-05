@@ -1,7 +1,7 @@
 """COND-A lightweight async delivery iterator for subscriptions.
 
-graphql-core's stock ``subscribe()`` wraps the source event stream in a
-delivery class whose ``__anext__`` does, PER YIELDED VALUE (while open):
+graphql-core's stock "subscribe()" wraps the source event stream in a delivery
+class whose "__anext__" does, PER YIELDED VALUE (while open):
 
     aclose = ensure_future(self._close_event.wait())   # 1x ensure_future
     anext  = ensure_future(self.iterator.__anext__())   # 1x ensure_future
@@ -9,33 +9,34 @@ delivery class whose ``__anext__`` does, PER YIELDED VALUE (while open):
     for task in pending: task.cancel()                  # 1x Task.cancel
 
 The GO-gate spike (engram #1516) measured ~47 us/value for that stock path vs
-~0.19 us/value for a plain ``async for`` wrapper on Python 3.12 — a ~250x
-swing. This module OWNS the delivery layer (the COND-A decision, design §4):
-a lightweight wrapper that iterates an underlying async source, applies an
-async (or plain) map function per value, and supports OUT-OF-BAND CLOSE so a
-caller (``complete{id}`` / disconnect) can stop iteration IMMEDIATELY.
+~0.19 us/value for a plain "async for" wrapper on Python 3.12 — a ~250x swing.
+This module OWNS the delivery layer (the COND-A decision, design §4): a
+lightweight wrapper that iterates an underlying async source, applies an async
+(or plain) map function per value, and supports OUT-OF-BAND CLOSE so a caller
+("complete{id}" / disconnect) can stop iteration IMMEDIATELY.
 
 Two close mechanisms are provided, both out-of-band:
 
-  * ``aclose()`` — a coroutine that sets the close flag AND closes the
-    underlying source. Closing the source is what unblocks a consumer that is
-    parked in ``receive()`` waiting for the next broadcast, so the close is
-    prompt even while ``__anext__`` is pending.
-  * the ``_close_event`` (an :class:`asyncio.Event`, surfaced read-only via
-    :attr:`DeliveryIterator.is_closed`) — checked at the top of every
-    ``__anext__`` so a flag set between values stops iteration on the next
-    pull without any per-value ``asyncio.wait`` machinery.
+  * "aclose()" — a coroutine that sets the close flag AND closes the underlying
+    source. Closing the source is what unblocks a consumer that is parked in
+    "receive()" waiting for the next broadcast, so the close is prompt even
+    while "__anext__" is pending.
+  * the "_close_event" (an "asyncio.Event", surfaced read-only via
+    "DeliveryIterator.is_closed") — checked at the top of every "__anext__" so
+    a flag set between values stops iteration on the next pull without any
+    per-value "asyncio.wait" machinery.
 
-The hot path stays a single ``await source.__anext__()`` with no per-value
-``ensure_future`` / ``asyncio.wait`` — that is the whole point of COND-A.
+The hot path stays a single "await source.__anext__()" with no per-value
+"ensure_future" / "asyncio.wait" — that is the whole point of COND-A.
 
 Transport-agnostic: this module imports neither channels, Django, nor
 graphene. It is pure asyncio and may be imported safely in any async context.
 
 This delivery class is deliberately NOT graphql-core's stock mapping iterator;
-the structural guard in ``tests/subscriptions/test_delivery_iterator.py``
+the structural guard in "tests/subscriptions/test_delivery_iterator.py"
 enforces that no such type ever appears on the subscription delivery path.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -48,25 +49,19 @@ __all__ = ["DeliveryIterator", "make_delivery_iterator"]
 class DeliveryIterator:
     """Lightweight async-for wrapper over an async source with out-of-band close.
 
-    Parameters
-    ----------
-    source:
-        The underlying async iterable/iterator (e.g. a Channels group consumer
-        or an async generator). Iterated via ``source.__aiter__()``.
-    map_fn:
-        A per-value mapping callable ``map_fn(value) -> result``. In the
-        subscription engine (WU5) this becomes the ``execute(...)`` call that
-        runs the GraphQL document over the flat source dict. The result is
-        awaited only when it is awaitable, so both coroutine functions and
-        plain callables are supported.
+    Wraps an underlying async iterable/iterator (e.g. a Channels group consumer
+    or an async generator, iterated via "source.__aiter__()") and applies a
+    per-value mapping callable "map_fn(value) -> result" to each delivered
+    value. In the subscription engine (WU5) that map becomes the "execute(...)"
+    call that runs the GraphQL document over the flat source dict; the result is
+    awaited only when it is awaitable, so both coroutine functions and plain
+    callables are supported.
 
-    Notes:
-        The hot path (:meth:`__anext__`) is a single ``await source.__anext__()``
-        with no per-value ``ensure_future`` / ``asyncio.wait`` — this is the
-        COND-A performance win over graphql-core's stock delivery class.
-        Out-of-band close is handled by (a) an :class:`asyncio.Event` checked at
-        the top of every pull and (b) :meth:`aclose` closing the underlying
-        source so a blocked ``receive()`` is released promptly.
+    The hot path ("__anext__") is a single "await source.__anext__()" with no
+    per-value "ensure_future" / "asyncio.wait" — this is the COND-A performance
+    win over graphql-core's stock delivery class. Out-of-band close is handled
+    by (a) an "asyncio.Event" checked at the top of every pull and (b) "aclose"
+    closing the underlying source so a blocked "receive()" is released promptly.
     """
 
     __slots__ = ("_source", "_map", "_close_event")
@@ -76,7 +71,13 @@ class DeliveryIterator:
         source: AsyncIterator[Any],
         map_fn: Callable[[Any], Any],
     ) -> None:
-        """Wrap *source* and apply *map_fn* per delivered value."""
+        """Wrap "source" and apply "map_fn" per delivered value.
+
+        Args:
+            source: The underlying async iterable/iterator to wrap.
+            map_fn: The per-value mapping callable applied to each delivered
+                value; awaited when it returns an awaitable.
+        """
         self._source = source.__aiter__()
         self._map = map_fn
         self._close_event = asyncio.Event()
@@ -106,8 +107,8 @@ class DeliveryIterator:
         """Out-of-band close: flag the iterator and close the underlying source.
 
         Idempotent. Setting the close flag first guarantees that any pending or
-        subsequent :meth:`__anext__` stops; closing the underlying source
-        releases a consumer blocked in ``receive()`` so the stop is prompt.
+        subsequent "__anext__" stops; closing the underlying source releases a
+        consumer blocked in "receive()" so the stop is prompt.
         """
         if self._close_event.is_set():
             return
@@ -123,7 +124,11 @@ class DeliveryIterator:
 
     @property
     def is_closed(self) -> bool:
-        """Whether the iterator has been closed out-of-band."""
+        """Return whether the iterator has been closed out-of-band.
+
+        Returns:
+            "True" once "aclose" has run, else "False".
+        """
         return self._close_event.is_set()
 
 
@@ -131,10 +136,17 @@ def make_delivery_iterator(
     source: AsyncIterator[Any],
     map_fn: Callable[[Any], Any],
 ) -> DeliveryIterator:
-    """Return a :class:`DeliveryIterator` wrapping *source* with *map_fn*.
+    """Return a "DeliveryIterator" wrapping "source" with "map_fn".
 
-    Factory mirroring ``make_snake_resolver`` (resolvers.py): callers depend on
+    Factory mirroring "make_snake_resolver" (resolvers.py): callers depend on
     the factory, not the concrete class, so the delivery implementation can
-    evolve without touching the engine call sites (WU5 ``drive_subscription``).
+    evolve without touching the engine call sites (WU5 "drive_subscription").
+
+    Args:
+        source: The underlying async iterable/iterator to wrap.
+        map_fn: The per-value mapping callable applied to each delivered value.
+
+    Returns:
+        A "DeliveryIterator" wrapping "source" and applying "map_fn".
     """
     return DeliveryIterator(source, map_fn)

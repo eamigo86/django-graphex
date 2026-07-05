@@ -1,23 +1,25 @@
 """Seed the playground with sample data (idempotent-ish: clears first).
 
-The dataset is intentionally large enough to exercise *multi-page* nested
-queries. With the default ``DEFAULT_PAGE_SIZE`` / ``default_limit`` of 10, a
+The dataset is intentionally large enough to exercise multi-page nested
+queries. With the default "DEFAULT_PAGE_SIZE" / "default_limit" of 10, a
 nested list that holds <= 10 rows always fits in a single page, so the DB-side
-``ROW_NUMBER() OVER (PARTITION BY ...)`` window-pagination path and multi-page
+"ROW_NUMBER() OVER (PARTITION BY ...)" window-pagination path and multi-page
 nested filtering are never reached. The defaults below (15 authors x 12 posts
-each) push every author's ``posts`` list past one page, so a query asking for
-``results(offset: 10, ...)`` on a nested list returns a genuine *second page*.
+each) push every author's "posts" list past one page, so a query asking for
+"results(offset: 10, ...)" on a nested list returns a genuine second page.
 
 Counts are configurable so the demo can be scaled up or down without editing
-the file::
+the file:
 
     python manage.py seed                       # defaults: 15 authors x 12 posts
     python manage.py seed --authors 25 --posts 15
     python manage.py seed --scale 2             # doubles authors + posts
 """
 
+from typing import Any
+
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandParser
 
 from blog.models import (
     Account,
@@ -43,9 +45,22 @@ DEFAULT_NOTES = 12
 
 
 class Command(BaseCommand):
+    """Management command that populates the playground database with demo data.
+
+    Clears the blog tables and recreates authors, posts, comments, notes and the
+    typed-GFK account/invoice/attachment fixtures, sized so nested "posts" lists
+    span multiple pages at the default page size (exercising window pagination).
+    """
+
     help = "Populate the database with demo authors, posts, comments and notes."
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: CommandParser) -> None:
+        """Register the command-line options that scale the generated dataset.
+
+        Args:
+            parser: The argument parser to which the "--authors", "--posts",
+                "--comments", "--notes" and "--scale" options are added.
+        """
         parser.add_argument(
             "--authors",
             type=int,
@@ -84,7 +99,19 @@ class Command(BaseCommand):
             ),
         )
 
-    def handle(self, *args, **options):
+    def handle(self, *args: Any, **options: Any) -> None:
+        """Rebuild the demo dataset from the resolved option counts.
+
+        Deletes existing blog rows, creates a demo superuser, then bulk-creates
+        authors, posts, tags, comments, notes and the typed-GFK fixtures before
+        writing a summary line to stdout.
+
+        Args:
+            args: Positional arguments forwarded by Django's command runner
+                (unused).
+            options: Parsed option values, including "authors", "posts",
+                "comments", "notes" and "scale".
+        """
         n_authors = max(1, options["authors"] * options["scale"])
         n_posts = max(1, options["posts"] * options["scale"])
         n_comments = max(0, options["comments"])

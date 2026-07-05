@@ -19,19 +19,15 @@ import re
 import sys
 import timeit
 from functools import lru_cache
-from types import SimpleNamespace
-from typing import AsyncIterator, AsyncGenerator
+from typing import Any, AsyncGenerator, AsyncIterator, Callable
 
-import pytest
 from graphql import (
     GraphQLField,
-    GraphQLList,
     GraphQLObjectType,
     GraphQLSchema,
     GraphQLString,
     graphql_sync,
 )
-from graphql.pyutils import SimplePubSub
 
 # Sanity-check: MUST be Python >=3.12
 assert sys.version_info >= (3, 12), (
@@ -48,18 +44,41 @@ _ENUM_RE = re.compile(r"\bEnum\b")
 
 
 def to_snake_uncached(name: str) -> str:
-    """Convert camelCase to snake_case without caching."""
+    """Convert camelCase to snake_case without caching.
+
+    Args:
+        name: The camelCase field name to convert.
+
+    Returns:
+        snake_name: The converted snake_case name.
+    """
     return _CAMEL_RE.sub(r"_\1", name).lower()
 
 
 @lru_cache(maxsize=512)
 def to_snake_cached(name: str) -> str:
-    """Convert camelCase to snake_case with LRU cache."""
+    """Convert camelCase to snake_case with LRU cache.
+
+    Args:
+        name: The camelCase field name to convert.
+
+    Returns:
+        snake_name: The converted snake_case name.
+    """
     return _CAMEL_RE.sub(r"_\1", name).lower()
 
 
 def unwrap_enum_uncached(value: object) -> object:
-    """Simulate enum unwrap without caching."""
+    """Simulate an enum unwrap without caching.
+
+    Args:
+        value: The candidate value to unwrap; may or may not carry the
+            enum-like .value/.name attribute pair.
+
+    Returns:
+        unwrapped: value.value when both .value and .name are present,
+            otherwise value unchanged.
+    """
     # Approximate cost: check isinstance + access .value
     if hasattr(value, "value") and hasattr(value, "name"):
         return value.value  # type: ignore[union-attr]
@@ -77,8 +96,16 @@ def _enum_check_cached(type_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 SAMPLE_FIELDS = [
-    "firstName", "lastName", "createdAt", "updatedAt", "isActive",
-    "postCount", "categoryId", "authorName", "bodyText", "viewCount",
+    "firstName",
+    "lastName",
+    "createdAt",
+    "updatedAt",
+    "isActive",
+    "postCount",
+    "categoryId",
+    "authorName",
+    "bodyText",
+    "viewCount",
 ]
 
 WARMUP_COUNT = 1000
@@ -86,10 +113,18 @@ BENCH_COUNT = 50_000
 
 
 class TestG8BenchmarkToSnakeAndEnumUnwrap:
-    """(a) to_snake + enum-unwrap: LRU cache must give >5x speedup."""
+    """(a) to_snake + enum-unwrap: LRU cache must give >5x speedup.
 
-    def test_cached_speedup_exceeds_5x(self):
-        """LRU-cached to_snake must be >5x faster than uncached."""
+    Gates the Phase 3 caching decision: if the LRU cache does not clear a
+    5x speedup, caching to_snake is not the must-have it was assumed to be.
+    """
+
+    def test_cached_speedup_exceeds_5x(self) -> None:
+        """LRU-cached to_snake must be more than 5x faster than uncached.
+
+        Contract: the Phase 3 caching decision ships unjustified if the LRU
+        cache does not clear the 5x speedup threshold measured here.
+        """
         # Warm up both
         for name in SAMPLE_FIELDS:
             to_snake_uncached(name)
@@ -111,8 +146,8 @@ class TestG8BenchmarkToSnakeAndEnumUnwrap:
         speedup = t_uncached / t_cached
 
         print(
-            f"\n  to_snake: uncached={t_uncached*1000:.2f}ms, "
-            f"cached={t_cached*1000:.2f}ms, speedup={speedup:.1f}x"
+            f"\n  to_snake: uncached={t_uncached * 1000:.2f}ms, "
+            f"cached={t_cached * 1000:.2f}ms, speedup={speedup:.1f}x"
         )
 
         assert speedup > 5.0, (
@@ -124,6 +159,7 @@ class TestG8BenchmarkToSnakeAndEnumUnwrap:
 # ---------------------------------------------------------------------------
 # (b) MapAsyncIterator per-value cost vs lightweight async-for wrapper
 # ---------------------------------------------------------------------------
+
 
 async def _source_generator(n: int) -> AsyncGenerator[dict, None]:
     """Yield n integer events without any asyncio overhead."""
@@ -138,15 +174,39 @@ class LightweightWrapper:
     per value, just use async for directly.
     """
 
-    def __init__(self, source: AsyncIterator, transform=None):
+    def __init__(
+        self, source: AsyncIterator, transform: "Callable[[Any], Any] | None" = None
+    ) -> None:
+        """Wrap an async source with an optional transform and a closed flag.
+
+        Args:
+            source: The async iterator producing raw values to deliver.
+            transform: An optional function applied to each yielded value;
+                defaults to the identity function when omitted.
+        """
         self._source = source
         self._transform = transform or (lambda x: x)
         self._closed = False
 
-    def __aiter__(self):
+    def __aiter__(self) -> "LightweightWrapper":
+        """Return self, satisfying the async iterator protocol.
+
+        Returns:
+            self: This wrapper instance.
+        """
         return self
 
-    async def __anext__(self):
+    async def __anext__(self) -> Any:
+        """Return the next transformed value, or stop iteration if closed.
+
+        Returns:
+            value: The result of applying the transform to the next source
+                value.
+
+        Raises:
+            StopAsyncIteration: When the wrapper has been closed via close(),
+                or when the underlying source is exhausted.
+        """
         if self._closed:
             raise StopAsyncIteration
         try:
@@ -155,8 +215,12 @@ class LightweightWrapper:
         except StopAsyncIteration:
             raise
 
-    def close(self):
-        """Out-of-band close — no asyncio cancellation overhead."""
+    def close(self) -> None:
+        """Close this wrapper out-of-band.
+
+        Unlike MapAsyncIterator, this incurs no asyncio cancellation
+        overhead — it is a plain flag flip.
+        """
         self._closed = True
 
 
@@ -184,7 +248,6 @@ async def _bench_wrapper_async(n: int) -> float:
 async def _bench_map_async_iterator(n: int) -> float:
     """Benchmark: simulate MapAsyncIterator overhead with ensure_future + wait."""
     import time
-    from graphql.pyutils import is_awaitable
 
     # MapAsyncIterator does: ensure_future(pusher.push(value)) per value
     # We simulate its core cost: ensure_future overhead per item
@@ -207,10 +270,18 @@ N_EVENTS = 500  # Reduced for reasonable test time
 
 
 class TestG8BenchmarkDeliveryIterator:
-    """(b) Lightweight async-for wrapper must match complexity class vs MapAsyncIterator."""
+    """(b) Lightweight async-for wrapper must match complexity class vs MapAsyncIterator.
 
-    def test_wrapper_same_complexity_class_as_direct_async_for(self):
-        """LightweightWrapper per-value cost is within 3x of direct async-for baseline."""
+    Gates the COND-A decision: the wrapper must stay close to a direct
+    async-for baseline while being materially cheaper than MapAsyncIterator.
+    """
+
+    def test_wrapper_same_complexity_class_as_direct_async_for(self) -> None:
+        """LightweightWrapper's per-value cost must stay within 3x of direct async-for.
+
+        Contract: the COND-A same-complexity-class claim ships broken if the
+        wrapper's overhead ratio against a bare async-for baseline exceeds 3x.
+        """
         t_direct = asyncio.run(_bench_source_async(N_EVENTS))
         t_wrapper = asyncio.run(_bench_wrapper_async(N_EVENTS))
 
@@ -233,8 +304,13 @@ class TestG8BenchmarkDeliveryIterator:
             f"Wrapper: {per_value_wrapper_us:.3f}µs/value"
         )
 
-    def test_wrapper_much_cheaper_than_map_async_iterator(self):
-        """LightweightWrapper must be significantly cheaper than ensure_future path."""
+    def test_wrapper_much_cheaper_than_map_async_iterator(self) -> None:
+        """LightweightWrapper must be significantly cheaper than the ensure_future path.
+
+        Contract: the COND-A own-the-iterator justification ships broken if
+        the wrapper's speedup over the simulated MapAsyncIterator cost falls
+        below the 5x threshold.
+        """
         t_wrapper = asyncio.run(_bench_wrapper_async(N_EVENTS))
         t_map_async = asyncio.run(_bench_map_async_iterator(N_EVENTS))
 
@@ -261,20 +337,23 @@ class TestG8BenchmarkDeliveryIterator:
 # (c) execute()-over-flat-dict with snake-closure resolvers
 # ---------------------------------------------------------------------------
 
+
 def _build_flat_dict_schema(fields: list[str]) -> GraphQLSchema:
     """Build a schema with snake-closure resolvers for flat-dict roots."""
 
     def _make_resolver(snake_name: str):
         """Compiler-style snake-closure resolver — binds snake_name via default arg."""
+
         def _resolve(root, info, *, _name=snake_name):
             if isinstance(root, dict):
                 return root.get(_name)
             return getattr(root, _name, None)
+
         return _resolve
 
     gql_fields = {}
     for snake_name in fields:
-        camel_name = to_snake_cached(snake_name)  # already snake in this test
+        to_snake_cached(snake_name)  # already snake in this test
         gql_fields[snake_name] = GraphQLField(
             GraphQLString,
             resolve=_make_resolver(snake_name),
@@ -304,10 +383,19 @@ def _bespoke_project_fields(flat_dict: dict, fields: list[str]) -> dict:
 
 
 class TestG8BenchmarkFlatDictExecution:
-    """(c) execute()-over-flat-dict confirms in-memory-projection parity."""
+    """(c) execute()-over-flat-dict confirms in-memory-projection parity.
 
-    def test_execute_over_flat_dict_same_complexity_class_as_bespoke(self):
-        """execute() over flat dict with snake resolvers matches O(N) bespoke projection."""
+    Confirms graphql_sync's execution phase over a flat dict scales the same
+    O(N fields) as a raw bespoke dict-comprehension projection.
+    """
+
+    def test_execute_over_flat_dict_same_complexity_class_as_bespoke(self) -> None:
+        """execute() over a flat dict with snake resolvers must match O(N) bespoke projection.
+
+        Contract: the in-memory-projection parity claim ships broken if the
+        per-op execution cost exceeds the 10ms regression ceiling recorded
+        here as the Phase 6 budget.
+        """
         schema = _build_flat_dict_schema(SAMPLE_SNAKE_FIELDS)
         flat_dict = {f: f"value_{f}" for f in SAMPLE_SNAKE_FIELDS}
 
@@ -382,6 +470,7 @@ class TestG8BenchmarkFlatDictExecution:
 if __name__ == "__main__":
     # Can also run as a standalone script
     import unittest
+
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     for cls in [

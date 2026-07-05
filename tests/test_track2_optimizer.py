@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Track 2 — Union / Interface MVP, BLOCK B (T-08..T-12).
 
-Covers the OPTIMIZER ROUTING for a GFK exposed as a ``DjangoUnionType``:
+Covers the OPTIMIZER ROUTING for a GFK exposed as a "DjangoUnionType":
 
-  T-08  ``GraphQLUnionType`` import + ``PrefetchPlan.generic_buckets`` field.
-  T-09  ``_resolve_fragment_target`` — the FILTER→RESOLVE second stage.
-  T-10  ``schema=None`` threading through ``_collect_prefetch_only_sets``.
+  T-08  "GraphQLUnionType" import + "PrefetchPlan.generic_buckets" field.
+  T-09  "_resolve_fragment_target" — the FILTER->RESOLVE second stage.
+  T-10  "schema=None" threading through "_collect_prefetch_only_sets".
   T-11  GFK GenericPrefetch per-content-type buckets (Django 5.0+) with a
         graceful <5.0 degrade and an unresolvable-bucket full-load fallback.
 
@@ -24,16 +24,11 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from graphql import graphql_sync
 
-from django_graphex import (
-    DjangoListObjectField,
-    DjangoListObjectType,
-    DjangoObjectType,
-    ObjectType,
-)
-from django_graphex.fields import DjangoObjectField
+from django_graphex.core import ObjectType
+from django_graphex.fields import DjangoListObjectField, DjangoObjectField
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
-from django_graphex.types import DjangoUnionType
+from django_graphex.types import DjangoListObjectType, DjangoObjectType, DjangoUnionType
 
 from .models import (
     Track2Account,
@@ -53,11 +48,11 @@ requires_generic_prefetch = pytest.mark.skipif(
 # --------------------------------------------------------------------------- #
 # T-08 — utils imports + PrefetchPlan.generic_buckets                          #
 # --------------------------------------------------------------------------- #
-def test_graphql_union_type_imported_in_utils():
-    """utils imports ``GraphQLUnionType`` (needed to detect union-typed GFKs).
+def test_graphql_union_type_imported_in_utils() -> None:
+    """utils imports "GraphQLUnionType" (needed to detect union-typed GFKs).
 
-    TEETH: if the import were dropped, the GFK-union branch (T-11) cannot
-    ``isinstance(sub_gql, GraphQLUnionType)`` and ``utils.GraphQLUnionType``
+    TEETH: if this import breaks, the GFK-union branch (T-11) can no longer
+    "isinstance(sub_gql, GraphQLUnionType)" and "utils.GraphQLUnionType"
     would not resolve.
     """
     from graphql import GraphQLUnionType as RealUnionType
@@ -67,10 +62,10 @@ def test_graphql_union_type_imported_in_utils():
     assert utils.GraphQLUnionType is RealUnionType
 
 
-def test_prefetch_plan_has_generic_buckets_default_empty():
-    """``PrefetchPlan.generic_buckets`` exists and defaults to an empty dict.
+def test_prefetch_plan_has_generic_buckets_default_empty() -> None:
+    """ "PrefetchPlan.generic_buckets" exists and defaults to an empty dict.
 
-    TEETH: if the field were missing, this attribute access raises; if its
+    TEETH: if this attribute is broken, this attribute access raises; if its
     default were shared/mutable across instances, two plans would alias the
     same dict — both checked here.
     """
@@ -88,11 +83,15 @@ def test_prefetch_plan_has_generic_buckets_default_empty():
 # --------------------------------------------------------------------------- #
 # T-09 — _resolve_fragment_target: FILTER→RESOLVE second stage                 #
 # --------------------------------------------------------------------------- #
-def _build_union_schema():
-    """Build a schema exposing a GFK-union field; return (schema, registry, types).
+def _build_union_schema() -> tuple[object, Registry, dict[str, type]]:
+    """Build a schema exposing a GFK-union field.
 
-    The owner ``Track2GfkComment`` has a GFK ``target`` declared as a union of
-    ``AccountType | InvoiceType``; the union is exposed as the ``target`` field.
+    The owner "Track2GfkComment" has a GFK "target" declared as a union of
+    "AccountType | InvoiceType"; the union is exposed as the "target" field.
+
+    Returns:
+        A tuple of (compiled GraphQL schema, registry, mapping of type name to
+        the Graphene type class) for the built schema.
     """
     reg = Registry()
 
@@ -108,14 +107,14 @@ def _build_union_schema():
 
     class CommentTargetUnion(DjangoUnionType):
         class Meta:
-            gfk_types = (AccountType, InvoiceType)
+            types = (AccountType, InvoiceType)
             registry = reg
 
     class GfkCommentType(DjangoObjectType):
         class Meta:
             model = Track2GfkComment
             registry = reg
-            gfk_unions = {"target": CommentTargetUnion}
+            unions = {"target": CommentTargetUnion}
 
     class Query(ObjectType):
         comment = DjangoObjectField(GfkCommentType)
@@ -135,8 +134,16 @@ def _build_union_schema():
     )
 
 
-def _inline_fragment_node(type_name: str | None):
-    """Build a minimal InlineFragmentNode carrying ``... on type_name``."""
+def _inline_fragment_node(type_name: str | None) -> object:
+    """Build a minimal InlineFragmentNode carrying "... on type_name".
+
+    Args:
+        type_name: The named type the fragment condition targets, or None to
+            build a bare inline fragment with no type condition.
+
+    Returns:
+        The constructed InlineFragmentNode with an empty selection set.
+    """
     from graphql.language.ast import (
         InlineFragmentNode,
         NamedTypeNode,
@@ -153,8 +160,8 @@ def _inline_fragment_node(type_name: str | None):
     return node
 
 
-def test_resolve_fragment_target_returns_member_triple_for_known_type():
-    """``... on AccountType`` resolves to (Track2Account, gql, AccountType).
+def test_resolve_fragment_target_returns_member_triple_for_known_type() -> None:
+    """ "... on AccountType" resolves to (Track2Account, gql, AccountType).
 
     TEETH: if the resolver returned the parent/owner model (Track2GfkComment) or
     None for a valid member, the member_model identity assertion fails — exactly
@@ -177,8 +184,8 @@ def test_resolve_fragment_target_returns_member_triple_for_known_type():
     assert member_model is not Track2GfkComment
 
 
-def test_resolve_fragment_target_none_for_unknown_type():
-    """``... on UnknownType`` -> None (no crash, no parent fallback).
+def test_resolve_fragment_target_none_for_unknown_type() -> None:
+    """ "... on UnknownType" -> None (no crash, no parent fallback).
 
     TEETH: if a missing type fell through to the current/parent model, narrowing
     would mis-attribute -> FieldError under OPTIMIZE_ONLY_FIELDS. This pins None.
@@ -192,10 +199,10 @@ def test_resolve_fragment_target_none_for_unknown_type():
     assert _resolve_fragment_target(node, union_gql, gql_schema) is None
 
 
-def test_resolve_fragment_target_none_when_schema_is_none():
+def test_resolve_fragment_target_none_when_schema_is_none() -> None:
     """schema is None -> None (the degrade path; never dereference a None schema).
 
-    TEETH: if the resolver tried ``schema.get_type`` on a None schema it would
+    TEETH: if the resolver tried "schema.get_type" on a None schema it would
     raise AttributeError instead of degrading.
     """
     from django_graphex.utils import _resolve_fragment_target
@@ -204,7 +211,7 @@ def test_resolve_fragment_target_none_when_schema_is_none():
     assert _resolve_fragment_target(node, None, None) is None
 
 
-def test_resolve_fragment_target_none_for_bare_inline_fragment():
+def test_resolve_fragment_target_none_for_bare_inline_fragment() -> None:
     """A bare inline fragment (no type_condition) -> None.
 
     TEETH: a bare fragment has no concrete member to route to; resolving it to
@@ -219,15 +226,15 @@ def test_resolve_fragment_target_none_for_bare_inline_fragment():
     assert _resolve_fragment_target(node, union_gql, gql_schema) is None
 
 
-def test_resolve_fragment_target_none_for_foreign_object_type():
-    """``... on GfkCommentType`` (the OWNER, a real type but not a member) -> still
+def test_resolve_fragment_target_none_for_foreign_object_type() -> None:
+    """ "... on GfkCommentType" (the OWNER, a real type but not a member) -> still
     resolves to ITS model, never silently the wrong one.
 
     This guards the SAFETY contract: the resolver maps strictly by the named
-    type's own ``_meta.model``; it never substitutes the union/owner. Here the
+    type's own "_meta.model"; it never substitutes the union/owner. Here the
     owner type DOES have a model, so the resolver returns the owner's model — and
     the caller's per-member bucket logic (T-11) is what restricts routing to true
-    union members via ``_inline_fragment_applies``. The point proven here: the
+    union members via "_inline_fragment_applies". The point proven here: the
     returned model is ALWAYS the named type's own model, never a fabricated one.
 
     TEETH: if the resolver hard-coded the union's first member (or the parent),
@@ -249,11 +256,11 @@ def test_resolve_fragment_target_none_for_foreign_object_type():
 # --------------------------------------------------------------------------- #
 # T-10 — schema=None threading through _collect_prefetch_only_sets             #
 # --------------------------------------------------------------------------- #
-def test_collect_prefetch_only_sets_accepts_schema_param_default_none():
-    """``_collect_prefetch_only_sets`` exposes a ``schema`` param defaulting None.
+def test_collect_prefetch_only_sets_accepts_schema_param_default_none() -> None:
+    """ "_collect_prefetch_only_sets" exposes a "schema" param defaulting None.
 
-    TEETH: if the param were not added, ``inspect.signature`` would not list
-    ``schema`` and every existing call site (which omits it) relies on the
+    TEETH: if the param were not added, "inspect.signature" would not list
+    "schema" and every existing call site (which omits it) relies on the
     default — a non-None default would change non-GFK behaviour.
     """
     import inspect
@@ -265,11 +272,11 @@ def test_collect_prefetch_only_sets_accepts_schema_param_default_none():
     assert params["schema"].default is None
 
 
-def test_collect_prefetch_only_sets_schema_none_smoke_scalar():
-    """Smoke check: a scalar-only ``{ name }`` selection yields an empty plan both
-    with ``schema`` omitted and ``schema=None``.
+def test_collect_prefetch_only_sets_schema_none_smoke_scalar() -> None:
+    """Smoke check: a scalar-only "{ name }" selection yields an empty plan both
+    with "schema" omitted and "schema=None".
 
-    This is intentionally NOT load-bearing (both sides are ``{}`` because no
+    This is intentionally NOT load-bearing (both sides are "{}" because no
     relation is walked); it only documents the trivial base case. The real
     byte-identical net is the relational test below.
     """
@@ -292,21 +299,21 @@ def test_collect_prefetch_only_sets_schema_none_smoke_scalar():
     assert plan_omitted == plan_explicit_none == {}
 
 
-def test_collect_prefetch_only_sets_schema_none_keeps_non_gfk_plan_identical():
-    """With ``schema=None`` (and omitted), a RELATIONAL non-GFK selection yields the
+def test_collect_prefetch_only_sets_schema_none_keeps_non_gfk_plan_identical() -> None:
+    """With "schema=None" (and omitted), a RELATIONAL non-GFK selection yields the
     SAME, NON-EMPTY plan — the load-bearing ADR-4d byte-identical net.
 
-    ``Author`` has a reverse-FK ``posts`` relation. Selecting ``posts { title }``
-    forces ``_collect_prefetch_only_sets`` to recurse into the relational descent
-    (the very self-calls that thread ``schema``) and produce a non-empty
-    ``{lookup: PrefetchPlan}`` dict. We compare the plan produced with ``schema``
-    omitted vs. ``schema=None``; they MUST be equal.
+    "Author" has a reverse-FK "posts" relation. Selecting "posts { title }"
+    forces "_collect_prefetch_only_sets" to recurse into the relational descent
+    (the very self-calls that thread "schema") and produce a non-empty
+    "{lookup: PrefetchPlan}" dict. We compare the plan produced with "schema"
+    omitted vs. "schema=None"; they MUST be equal.
 
-    TEETH: if any recursive self-call DROPPED ``schema`` on the relational descent
+    TEETH: if any recursive self-call DROPPED "schema" on the relational descent
     (so a deeper GFK branch would no longer see it), the relational path is now
     actually exercised here — a divergence on that path would surface as unequal
     plans. The plan must also be non-empty, proving we exercised a real descent
-    (not the vacuous ``{} == {}`` of the scalar smoke case).
+    (not the vacuous "{} == {}" of the scalar smoke case).
     """
     from graphql import parse
 
@@ -347,11 +354,20 @@ _GFK_QUERY = """
 """
 
 
-def _build_gfk_union_schema(registry=None):
-    """Build a list schema over the GFK owner with a union ``target`` field.
+def _build_gfk_union_schema(
+    registry: Registry | None = None,
+) -> tuple[object, Registry]:
+    """Build a list schema over the GFK owner with a union "target" field.
 
-    ``allComments`` returns a paginated list of ``Track2GfkComment``; each
-    comment's ``target`` GFK is exposed as ``CommentTargetUnion``.
+    "allComments" returns a paginated list of "Track2GfkComment"; each
+    comment's "target" GFK is exposed as "CommentTargetUnion".
+
+    Args:
+        registry: The registry to build the schema's types under; a fresh
+            Registry is created when omitted.
+
+    Returns:
+        A tuple of (compiled GraphQL schema, registry) for the built schema.
     """
     reg = registry or Registry()
 
@@ -367,14 +383,14 @@ def _build_gfk_union_schema(registry=None):
 
     class CommentTargetUnion(DjangoUnionType):
         class Meta:
-            gfk_types = (AccountType, InvoiceType)
+            types = (AccountType, InvoiceType)
             registry = reg
 
     class GfkCommentType(DjangoObjectType):
         class Meta:
             model = Track2GfkComment
             registry = reg
-            gfk_unions = {"target": CommentTargetUnion}
+            unions = {"target": CommentTargetUnion}
 
     class GfkCommentListType(DjangoListObjectType):
         class Meta:
@@ -390,7 +406,7 @@ def _build_gfk_union_schema(registry=None):
     return schema, reg
 
 
-def _seed_gfk_rows():
+def _seed_gfk_rows() -> None:
     """Create several comments, some targeting Accounts, some Invoices."""
     from django.contrib.contenttypes.models import ContentType
 
@@ -410,12 +426,12 @@ def _seed_gfk_rows():
 
 @requires_generic_prefetch
 @pytest.mark.django_db
-def test_gfk_union_builds_per_content_type_generic_prefetch_buckets():
+def test_gfk_union_builds_per_content_type_generic_prefetch_buckets() -> None:
     """OBSERVABLE: a union GFK on Django>=5.0 yields per-CT GenericPrefetch buckets,
     each narrowed to its member's selected columns, with NO N+1 across parents.
 
     TEETH (multi-pronged):
-      * ``assertNumQueries`` pins NO per-parent N+1 — a regression that skipped
+      * "assertNumQueries" pins NO per-parent N+1 — a regression that skipped
         the GenericPrefetch (bare full-load) would still pass count, so we ALSO
         assert each bucket's SELECT carries exactly its member's narrowed columns
         (balance for Account, amount for Invoice). Mis-routing the buckets (the
@@ -479,12 +495,13 @@ def test_gfk_union_builds_per_content_type_generic_prefetch_buckets():
 
 
 @pytest.mark.django_db
-def test_gfk_union_no_n_plus_one_across_parents():
+def test_gfk_union_no_n_plus_one_across_parents() -> None:
     """OBSERVABLE: the union GFK is batched — query count is independent of N parents.
 
     With 4 parents over 2 content types, a correct GenericPrefetch issues a FIXED
-    number of queries (list+count, plus one prefetch per distinct content type),
-    NOT one per parent.
+    number of queries (list, plus one prefetch per distinct content type),
+    NOT one per parent. totalCount is selected after results, so its lazy count
+    reuses the materialized cache (no separate COUNT query).
 
     TEETH: a regression to per-row GFK resolution (no batched prefetch) would add
     one query per comment row and blow assertNumQueries.
@@ -498,18 +515,20 @@ def test_gfk_union_no_n_plus_one_across_parents():
 
     case = _DjTestCase()
     with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
-        # COUNT + comments list + one narrowed prefetch per distinct content type
-        # (Account, Invoice) = 4 queries.  This is INDEPENDENT of the 4 parent
-        # rows: the GenericPrefetch batches each content type into ONE query.  A
-        # regression to per-row GFK resolution would add one query per comment.
-        with case.assertNumQueries(4):
+        # comments list + one narrowed prefetch per distinct content type
+        # (Account, Invoice) = 3 queries.  totalCount is selected after results,
+        # so the lazy count reuses the materialized cache (no separate COUNT).
+        # This is INDEPENDENT of the 4 parent rows: the GenericPrefetch batches
+        # each content type into ONE query.  A regression to per-row GFK
+        # resolution would add one query per comment.
+        with case.assertNumQueries(3):
             result = graphql_sync(schema.graphql_schema, _GFK_QUERY)
 
     assert result.errors is None, result.errors
 
 
 @pytest.mark.django_db
-def test_gfk_union_unresolvable_bucket_degrades_without_fielderror():
+def test_gfk_union_unresolvable_bucket_degrades_without_fielderror() -> None:
     """SAFETY: a fragment whose type cannot be resolved (or resolves to a non-member)
     falls back to full-load with NO FieldError under OPTIMIZE_ONLY_FIELDS.
 
@@ -541,19 +560,19 @@ def test_gfk_union_unresolvable_bucket_degrades_without_fielderror():
 
 @requires_generic_prefetch
 @pytest.mark.django_db
-def test_build_generic_prefetch_dedupes_by_content_type():
+def test_build_generic_prefetch_dedupes_by_content_type() -> None:
     """SAFETY (critique #1): two member buckets over the SAME content type collapse
     to ONE queryset — never two — so Django's duplicate-CT ValueError cannot fire.
 
-    We force a content-type collision by mocking ``get_for_model`` to return a
+    We force a content-type collision by mocking "get_for_model" to return a
     single shared ContentType for both member models, then assert the assembled
-    ``GenericPrefetch`` carries exactly one queryset whose ``.only()`` is the
+    "GenericPrefetch" carries exactly one queryset whose ".only()" is the
     MERGED column union of both buckets.
 
     TEETH: if the emission keyed buckets by model (not content type) it would emit
     two querysets for one content type -> Django raises ValueError at prefetch
     time; here we assert a single, merged queryset instead.  We ALSO assert the
-    de-dup calls ``get_for_model`` with the GFK's actual ``for_concrete_model``
+    de-dup calls "get_for_model" with the GFK's actual "for_concrete_model"
     (default True) — flipping it to False would let proxy members escape collapse
     (GPM-1); this pins the argument value Django matches on.
     """
@@ -593,17 +612,17 @@ def test_build_generic_prefetch_dedupes_by_content_type():
 
 @requires_generic_prefetch
 @pytest.mark.django_db
-def test_build_generic_prefetch_uses_gfk_for_concrete_model_flag():
-    """GPM-1: the de-dup mirrors the GFK's ``for_concrete_model`` flag exactly.
+def test_build_generic_prefetch_uses_gfk_for_concrete_model_flag() -> None:
+    """GPM-1: the de-dup mirrors the GFK's "for_concrete_model" flag exactly.
 
-    Django's ``GenericForeignKey.get_prefetch_querysets`` keys each queryset by
-    ``get_content_type(model=qs.query.model,
-    for_concrete_model=self.for_concrete_model)``.  The de-dup MUST key on the SAME
-    flag.  Here we pass a fake GFK with ``for_concrete_model=False`` and assert the
-    de-dup forwards that exact value to ``get_for_model``.
+    Django's "GenericForeignKey.get_prefetch_querysets" keys each queryset by
+    "get_content_type(model=qs.query.model,
+    for_concrete_model=self.for_concrete_model)".  The de-dup MUST key on the SAME
+    flag.  Here we pass a fake GFK with "for_concrete_model=False" and assert the
+    de-dup forwards that exact value to "get_for_model".
 
-    TEETH: the prior code hard-coded ``for_concrete_model=False``; if it were
-    hard-coded to ``True`` (or anything not derived from the GFK) this assertion
+    TEETH: the prior code hard-coded "for_concrete_model=False"; if it were
+    hard-coded to "True" (or anything not derived from the GFK) this assertion
     fails.  Combined with the proxy integration test below, this pins the keying
     to Django's own.
     """
@@ -636,20 +655,20 @@ def test_build_generic_prefetch_uses_gfk_for_concrete_model_flag():
 
 @requires_generic_prefetch
 @pytest.mark.django_db
-def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror():
+def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror() -> None:
     """GPM-1/GPM-2 integration: two union members over the SAME concrete table
     (a model and its PROXY) must NOT raise Django's duplicate-content-type
     ValueError, and must collapse to a SINGLE batched query for that content type.
 
-    ``Track2AccountProxy`` shares ``Track2Account``'s table.  Under the GFK's
-    default ``for_concrete_model=True`` they map to the SAME ContentType — which is
-    exactly what Django matches on.  A de-dup keyed by ``for_concrete_model=False``
+    "Track2AccountProxy" shares "Track2Account"'s table.  Under the GFK's
+    default "for_concrete_model=True" they map to the SAME ContentType — which is
+    exactly what Django matches on.  A de-dup keyed by "for_concrete_model=False"
     would see them as DISTINCT, emit two querysets for one content type, and
-    Django would raise ``ValueError('Only one queryset is allowed for each content
-    type')`` at prefetch evaluation.
+    Django would raise "ValueError('Only one queryset is allowed for each content
+    type')" at prefetch evaluation.
 
     TEETH: this executes a REAL prefetch end to end.  Reverting the GPM-1 fix
-    (keying the de-dup by ``for_concrete_model=False``) makes Django raise the
+    (keying the de-dup by "for_concrete_model=False") makes Django raise the
     ValueError here; keying by the GFK's flag (True) collapses both members to one
     batched query and the query succeeds with no error.
     """
@@ -669,14 +688,14 @@ def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror():
     class CommentTargetUnion(DjangoUnionType):
         class Meta:
             # Two members over ONE concrete table (proxy + base) -> one CT.
-            gfk_types = (AccountType, AccountProxyType)
+            types = (AccountType, AccountProxyType)
             registry = reg
 
     class GfkCommentType(DjangoObjectType):
         class Meta:
             model = Track2GfkComment
             registry = reg
-            gfk_unions = {"target": CommentTargetUnion}
+            unions = {"target": CommentTargetUnion}
 
     class GfkCommentListType(DjangoListObjectType):
         class Meta:

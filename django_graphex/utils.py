@@ -22,7 +22,6 @@ from django.db.models import (
 )
 from django.db.models.base import ModelBase
 from django.db.models.constants import LOOKUP_SEP
-from ._strconv import to_snake_case
 from graphql import (
     GraphQLList,
     GraphQLNonNull,
@@ -35,6 +34,7 @@ from graphql.language.ast import FragmentSpreadNode, InlineFragmentNode
 from text_unidecode import unidecode
 
 from ._directives_eval import is_selection_skipped
+from ._strconv import to_snake_case
 from .errors import ErrorType
 from .settings import graphql_api_settings
 
@@ -101,23 +101,23 @@ class PrefetchPlan:
     """Column narrowing plan for a single direct prefetch branch.
 
     Attributes:
-        only_cols: The list of attname/dotted paths to pass to ``.only()``.
+        only_cols: The list of attname/dotted paths to pass to ".only()".
         child_select: The list of forward-FK heads to pass to
-            ``.select_related()`` on the child queryset (closes GAP-1 N+1).
-        child_annotations: Annotation expressions to inject via ``.annotate()``
+            ".select_related()" on the child queryset (closes GAP-1 N+1).
+        child_annotations: Annotation expressions to inject via ".annotate()"
             on the child queryset (phase-d AnnotatedField support).
-        child_aliases: Alias expressions to inject via ``.alias()`` BEFORE
-            ``.annotate()`` on the child queryset.
-        generic_buckets: For a GFK exposed as a ``DjangoUnionType`` (Track-2),
-            a ``{member_model: narrowed_queryset}`` map describing one
+        child_aliases: Alias expressions to inject via ".alias()" BEFORE
+            ".annotate()" on the child queryset.
+        generic_buckets: For a GFK exposed as a "DjangoUnionType" (Track-2), a
+            "{member_model: narrowed_queryset}" map describing one
             per-content-type narrowing for the GenericPrefetch emission.
             Empty for every non-GFK-union plan, so existing call sites are
             byte-identical.
-        gfk_field: The owning ``GenericForeignKey`` field for a Track-2
-            GFK-union plan.  Carried through to emission so the content-type
-            de-duplication can mirror Django's own keying
-            (``get_for_model(model, for_concrete_model=gfk_field.for_concrete_model)``).
-            ``None`` for every non-GFK-union plan.
+        gfk_field: The owning "GenericForeignKey" field for a Track-2
+            GFK-union plan. Carried through to emission so the content-type
+            de-duplication can mirror Django's own keying (calling
+            "get_for_model" with "for_concrete_model=gfk_field.for_concrete_model").
+            None for every non-GFK-union plan.
     """
 
     only_cols: list[str]
@@ -129,13 +129,13 @@ class PrefetchPlan:
 
 
 def is_valid_django_model(model: Any) -> bool:
-    """Return whether ``model`` is a Django model class.
+    """Return whether "model" is a Django model class.
 
     Args:
         model: The object to test.
 
     Returns:
-        True if ``model`` is a subclass of ``django.db.models.Model``.
+        valid: True if "model" is a subclass of "django.db.models.Model".
     """
     return inspect.isclass(model) and issubclass(model, Model)
 
@@ -147,7 +147,8 @@ def maybe_queryset(value: Any) -> Any:
         value: A model manager or any other value.
 
     Returns:
-        ``value.get_queryset()`` when ``value`` is a ``Manager``, else ``value``.
+        result: "value.get_queryset()" when "value" is a "Manager", else
+            "value" unchanged.
     """
     if isinstance(value, Manager):
         value = value.get_queryset()
@@ -167,7 +168,7 @@ def to_const(string: str) -> str:
 
 
 def not_found_error(model: type[Model], pk: Any) -> list:
-    """Return a one-entry ``ErrorType`` list for a missing object.
+    """Return a one-entry "ErrorType" list for a missing object.
 
     Centralizes the "object not found" mutation error so its wording stays
     consistent across types and mutations.
@@ -469,7 +470,7 @@ def _get_custom_resolver(info: GraphQLResolveInfo) -> Any | None:
     Returns:
         The custom resolver callable, or None if none is defined.
     """
-    from django_graphex.native.compat import _gdx_graphene_type
+    from django_graphex.core.compat import _gdx_graphene_type
 
     parent = info.parent_type
     # The source class is recovered from
@@ -509,7 +510,7 @@ def _get_field_optimize_hook(gql_type: Any, graphql_field_name: str) -> Any | No
     # Reading the raw attribute returns None for nested types (they have no
     # direct ``graphene_type``) so ``_gdx_graphene_type`` is required — otherwise
     # every nested ``optimize_<field>`` hook is silently inert.
-    from django_graphex.native.compat import _gdx_graphene_type
+    from django_graphex.core.compat import _gdx_graphene_type
 
     parent = _gdx_graphene_type(gql_type)
     if parent is None:
@@ -878,7 +879,7 @@ def _resolve_fragment_target(
     # DjangoObjectType at native compile time). ``_gdx_graphene_type`` returns it
     # so the member model resolves — without this the GFK-union bucket would
     # silently degrade to full-load (N+1).
-    from django_graphex.native.compat import _gdx_graphene_type
+    from django_graphex.core.compat import _gdx_graphene_type
 
     graphene_type = _gdx_graphene_type(gql) if gql is not None else None
     model = getattr(getattr(graphene_type, "_meta", None), "model", None)
@@ -1063,18 +1064,18 @@ def recursive_params(
             place.
         _prefix: The dotted ORM path prefix for the current model.
         current_type_name: GraphQL type name of the type being walked, if known
-            (GAP-5 inline-fragment guard).  ``None`` preserves transparent
+            (GAP-5 inline-fragment guard). "None" preserves transparent
             descent.
         current_model: Django model being walked, if known (GAP-5 best-effort
             inline-fragment guard by model class name).
-        variable_values: Bound GraphQL variable values (``info.variable_values``
-            at execution time, ``{}`` or ``None`` during validation/static
-            analysis).  Used to evaluate ``@skip`` / ``@include`` directives.
-            When ``None`` an empty dict is used (conservative: never skip).
+        variable_values: Bound GraphQL variable values ("info.variable_values"
+            at execution time, an empty dict or None during validation/static
+            analysis). Used to evaluate the @skip and @include directives.
+            When None an empty dict is used (conservative: never skip).
         _fmap_cache: Optional request-scoped memoization dict created by
-            ``_apply_optimizations`` and threaded through all walker calls so
-            each ``(model, map-kind)`` is computed at most once per optimizer
-            run.  ``None`` disables caching (backwards-compatible default).
+            "_apply_optimizations" and threaded through all walker calls so
+            each (model, map-kind) pair is computed at most once per optimizer
+            run. None disables caching (backwards-compatible default).
 
     Returns:
         The mutated "(select_related, prefetch_related)" pair.
@@ -1198,6 +1199,12 @@ def _collect_only_fields(
     is loaded in full (not narrowed) so properties keep working. Prefetched
     branches are not narrowed.
 
+    INVARIANT: this walker and "_collect_only_fields_is_full_load" MUST make
+    identical @skip / @include decisions — change them together. Both accept
+    the same "variable_values" parameter and thread it through every recursive
+    call (fragment spread, inline fragment, wrapper field) so a directive
+    bound to the same variables is honored identically by both walkers.
+
     Args:
         model: The Django model class at the current span position.
         selection_set: The GraphQL selection set to walk.
@@ -1210,6 +1217,9 @@ def _collect_only_fields(
         current_type_name: GraphQL type name of the type being walked, if known
             (GAP-5 inline-fragment guard).  ``None`` falls back to model-name
             matching and otherwise preserves transparent descent.
+        variable_values: The currently bound GraphQL variables, used to resolve
+            ``@skip`` / ``@include`` on each selection. ``None`` falls back to
+            the conservative "never skip" policy (same as passing ``{}``).
 
     Returns:
         A sorted list of dotted "only" paths.
@@ -1236,6 +1246,9 @@ def _collect_only_fields(
     for field in selection_set.selections:
         # Honor @skip / @include — exclude the field from the .only() projection
         # when the directive resolves to "not selected".
+        # INVARIANT: this MUST match the same check in
+        # _collect_only_fields_is_full_load — these two walkers MUST make
+        # identical skip decisions; change them together.
         if is_selection_skipped(field, _vars):
             continue
 
@@ -1366,6 +1379,7 @@ def _collect_only_fields_is_full_load(
     fragments: dict[str, Any],
     annotated_names: set[str] | None = None,
     current_type_name: str | None = None,
+    variable_values: dict[str, Any] | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> bool:
     """Return True when ``_collect_only_fields`` would trigger the full-load path.
@@ -1376,6 +1390,13 @@ def _collect_only_fields_is_full_load(
     branch without needing to compare result sets.
 
     This is a private helper and MUST NOT be used outside this module.
+
+    INVARIANT: this walker and ``_collect_only_fields`` MUST make identical
+    @skip / @include decisions — change them together. Both accept the same
+    ``variable_values`` parameter and thread it through every recursive call
+    (fragment spread, inline fragment, wrapper field) so a directive bound to
+    the same variables is honored identically by both walkers; otherwise they
+    could disagree on whether an unknown leaf is even in scope.
 
     Args:
         model: The Django model class at the current span position.
@@ -1389,6 +1410,10 @@ def _collect_only_fields_is_full_load(
             this full-load detector and ``_collect_only_fields`` agree on whether
             a foreign fragment is in scope; otherwise the two walkers disagree
             and a foreign fragment could silently veto ``.only()`` narrowing.
+        variable_values: The currently bound GraphQL variables, used to resolve
+            ``@skip`` / ``@include`` on each selection exactly like the sibling
+            ``_collect_only_fields`` walker. ``None`` falls back to the
+            conservative "never skip" policy (same as passing ``{}``).
         _fmap_cache: Optional request-scoped memoization dict (see
             ``_relation_field_map``).
 
@@ -1397,8 +1422,14 @@ def _collect_only_fields_is_full_load(
     """
     rel_map = _relation_field_map(model, _fmap_cache)
     concrete_map = _concrete_field_map(model, _fmap_cache)
+    _vars: dict[str, Any] = variable_values or {}
 
     for field in selection_set.selections:
+        # Honor @skip / @include — mirrors _collect_only_fields exactly so the
+        # two walkers never disagree on which selections are in scope.
+        if is_selection_skipped(field, _vars):
+            continue
+
         if isinstance(field, FragmentSpreadNode):
             fragment = fragments.get(field.name.value) if fragments else None
             if fragment is not None:
@@ -1408,6 +1439,7 @@ def _collect_only_fields_is_full_load(
                     fragments,
                     annotated_names=annotated_names,
                     current_type_name=current_type_name,
+                    variable_values=variable_values,
                     _fmap_cache=_fmap_cache,
                 ):
                     return True
@@ -1430,6 +1462,7 @@ def _collect_only_fields_is_full_load(
                 fragments,
                 annotated_names=annotated_names,
                 current_type_name=current_type_name,
+                variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
             ):
                 return True
@@ -1457,6 +1490,7 @@ def _collect_only_fields_is_full_load(
                 fragments,
                 annotated_names=annotated_names,
                 current_type_name=current_type_name,
+                variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
             ):
                 return True
@@ -1899,7 +1933,7 @@ def _collect_prefetch_only_sets(
     # ``child_gql.extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type``
     # reads it; without this the select->prefetch promotion + child-annotation
     # injection never fires for nested types.
-    from django_graphex.native.compat import _gdx_graphene_type
+    from django_graphex.core.compat import _gdx_graphene_type
 
     rel_map = _relation_field_map(model, fmap_cache)
 
@@ -2554,7 +2588,7 @@ def _walk_filtered_prefetches(
                             # AnnotatedField self-collection and GAP-5
                             # .only()-narrowing identity work on the window path
                             # (graceful None when absent).
-                            from django_graphex.native.compat import (
+                            from django_graphex.core.compat import (
                                 _gdx_graphene_type,
                             )
 
@@ -2796,11 +2830,9 @@ def _walk_annotated_fields(
         # Use ``_gdx_graphene_type`` so wrapper descent (e.g.
         # DjangoListObjectType ``results`` -> inner row type) recovers the inner
         # row's source class from ``extensions['gdx']._meta.graphene_type``.
-        from django_graphex.native.compat import _gdx_graphene_type
+        from django_graphex.core.compat import _gdx_graphene_type
 
-        sub_graphene = (
-            _gdx_graphene_type(sub_gql) if sub_gql is not None else None
-        )
+        sub_graphene = _gdx_graphene_type(sub_gql) if sub_gql is not None else None
         if (
             sub_gql is not None
             and sub_graphene is not None
@@ -2846,7 +2878,7 @@ def _collect_annotated_fields(
     # ``return_type.extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type``
     # reads it — the raw attribute is None for nested types, so without this
     # helper no AnnotatedField annotations would ever be collected.
-    from django_graphex.native.compat import _gdx_graphene_type
+    from django_graphex.core.compat import _gdx_graphene_type
 
     graphene_type = _gdx_graphene_type(return_type)
     if graphene_type is None or getattr(graphene_type, "_meta", None) is None:
@@ -2879,20 +2911,19 @@ def build_filtered_prefetches(
     walks the GraphQL return type and the selection AST together to map each
     filtered nested list to its dotted ORM lookup.
 
-    Also collects a ``hook_map`` of ``{orm_lookup -> (graphene_type, hook)}``
-    for unfiltered nested lists that declare an ``optimize_<field>`` hook
+    Also collects a "hook_map" of "{orm_lookup -> (graphene_type, hook)}" for
+    unfiltered nested lists that declare an "optimize_<field>" hook
     (Phase E AC2b).
 
     Args:
         info: The GraphQL resolve info for the current field.
         _fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).
+            "_relation_field_map").
 
     Returns:
-        A 2-tuple of:
-        - The list of filtered Prefetch objects, one per uniquely filtered
-          nested list lookup.
-        - The ``hook_map`` for unfiltered nested lists with optimize hooks.
+        result: A 2-tuple of the list of filtered Prefetch objects (one per
+            uniquely filtered nested list lookup) and the "hook_map" for
+            unfiltered nested lists with optimize hooks.
     """
     return_type = get_named_type(info.return_type)
     field_nodes = info.field_nodes
@@ -2906,7 +2937,7 @@ def build_filtered_prefetches(
     # ``_gdx_meta`` reads it, so the root model is recovered — without it ``model``
     # is None and the walker never finds nested list fields (window-prefetch never
     # fires).
-    from django_graphex.native.compat import _gdx_meta
+    from django_graphex.core.compat import _gdx_meta
 
     try:
         model = getattr(_gdx_meta(return_type), "model", None)
@@ -3093,7 +3124,7 @@ def _apply_optimizations(
     # ``extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type`` reads it
     # so the GAP-5 root identity and the AnnotatedField select->prefetch
     # promotion detection both fire.
-    from django_graphex.native.compat import _gdx_graphene_type
+    from django_graphex.core.compat import _gdx_graphene_type
 
     relation_map = _relation_field_map(model, _fmap_cache)
     select_related: list[str] = []
@@ -3496,26 +3527,26 @@ def queryset_factory(
     "resolve_<field>" that returns a QuerySet. Behavior is controlled by the
     "OPTIMIZE_QUERYSET" and "OPTIMIZE_ONLY_FIELDS" settings.
 
-    When ``output_type`` is a ``DjangoObjectType`` subclass (detected via the
-    ``_dgx_has_object_type_get_queryset`` sentinel), its
-    ``get_queryset(queryset, info)`` override is called **after** the base
-    queryset is built and **before** the optimizer runs, so
-    ``select_related``/``prefetch_related`` are applied on top of the
-    already-narrowed queryset.  ``DjangoModelType`` does NOT have this sentinel
-    and is therefore unaffected (its own ``get_queryset`` / ``filter_queryset``
-    path is invoked earlier, at the CRUD-method level in ``types.py``).
+    When "output_type" is a "DjangoObjectType" subclass (detected via the
+    "_dgx_has_object_type_get_queryset" sentinel), its
+    "get_queryset(queryset, info)" override is called AFTER the base queryset
+    is built and BEFORE the optimizer runs, so
+    "select_related"/"prefetch_related" are applied on top of the
+    already-narrowed queryset. "DjangoModelType" does NOT have this sentinel
+    and is therefore unaffected (its own "get_queryset" / "filter_queryset"
+    path is invoked earlier, at the CRUD-method level in "types.py").
 
     Args:
         manager: A Django model, manager, or queryset to start from.
         root: The root value passed to the resolver.
         info: The GraphQL resolve info for the current field.
-        output_type: Optional ``DjangoObjectType`` subclass whose
-            ``get_queryset`` hook should be applied before the optimizer.
-            Pass ``None`` (the default) to skip the hook.
+        output_type: Optional "DjangoObjectType" subclass whose "get_queryset"
+            hook should be applied before the optimizer. Pass None (the
+            default) to skip the hook.
         **kwargs: The resolver arguments, used to seed relation joins.
 
     Returns:
-        The optimized queryset.
+        queryset: The optimized queryset.
     """
     base = _get_queryset(manager)
     model = base.model

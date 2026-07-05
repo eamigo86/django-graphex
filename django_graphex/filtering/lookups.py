@@ -1,9 +1,9 @@
 """Lookup catalogs and per-type default lookup sets for native filtering.
 
 These constants drive both schema generation (which input fields a
-``<Field>Lookups`` input exposes) and translation (the ORM lookup suffix used
-when building a ``Q`` object). They absorb the lookup
-constants that previously lived in the removed ``filters`` package.
+"<Field>Lookups" input exposes) and translation (the ORM lookup suffix used
+when building a "Q" object). They absorb the lookup
+constants that previously lived in the removed "filters" package.
 """
 
 from __future__ import annotations
@@ -115,12 +115,12 @@ _ORDERED_TYPES = frozenset(
 def default_lookups_for(internal_type: str) -> tuple[str, ...]:
     """Return the default lookup set for a field's Django internal type.
 
-    The base set comes from the ``COMMON_FILTER_LOOKUPS`` setting (defaulting
-    to :data:`DEFAULT_LOOKUPS`); text fields additionally get
-    :data:`TEXT_LOOKUPS` and ordered fields :data:`ORDERED_LOOKUPS`.
+    The base set comes from the "COMMON_FILTER_LOOKUPS" setting (defaulting
+    to "DEFAULT_LOOKUPS"); text fields additionally get
+    "TEXT_LOOKUPS" and ordered fields "ORDERED_LOOKUPS".
 
     Args:
-        internal_type: The field's ``get_internal_type()`` string.
+        internal_type: The field's "get_internal_type()" string.
 
     Returns:
         An ordered, de-duplicated tuple of lookup names.

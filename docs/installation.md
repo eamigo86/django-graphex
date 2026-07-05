@@ -68,8 +68,9 @@ Adding `django_graphex` is **optional for basic use** — importing the types,
 fields and `GraphQLView` works without it — but it is **required to use the
 [`graphql_schema`](usage/settings.md#exporting-the-schema) management command**
 (Django only auto-discovers commands from installed apps), and it is
-**recommended** in general: the app's `AppConfig.ready()` eagerly compiles the
-schema at startup instead of lazily on the first request.
+**recommended** in general: the app's `AppConfig.ready()` eagerly pre-compiles
+all registered `InputType` and `OutputType` subclasses at startup (instead of
+lazily on first request), so type-compilation errors surface immediately.
 
 ## Requirements
 
@@ -79,7 +80,7 @@ schema at startup instead of lazily on the first request.
 - **pydantic**: >=2,<3
 
 !!! warning "Django 4.x / 5.0 / 5.1 users"
-    **django-graphex 1.3.0+ requires Django >= 5.2.**
+    **django-graphex 2.0+ requires Django >= 5.2.**
     If your project is still on **Django 4.2, 5.0, or 5.1**, use
     **django-graphex 1.2.3** — the last release that supports those versions:
 

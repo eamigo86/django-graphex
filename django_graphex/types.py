@@ -14,18 +14,18 @@ from graphql import GraphQLBoolean, GraphQLError
 from .backends import resolve_backend
 from .base_types import DjangoListObjectBase, factory_type
 from .converter import construct_fields
+from .core.base import InputType as NativeInputType
+from .core.base import NativeObjectTypeOptions, _props
+from .core.base import ObjectType as NativeObjectType
+from .core.descriptors import NativeField, NativeList, NativeMountedField
+from .core.descriptors import field as native_field
+from .core.validators import build_validator_model
 from .errors import ErrorType
 from .fields import DjangoListObjectField, DjangoObjectField
 from .filtering.filter_field import (
     RESERVED_FILTER_ARGS,
     collect_custom_filters,
 )
-from .native.base import InputType as NativeInputType
-from .native.base import NativeObjectTypeOptions, _props
-from .native.base import ObjectType as NativeObjectType
-from .native.descriptors import NativeField, NativeList, NativeMountedField
-from .native.descriptors import field as native_field
-from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .paginations.pagination import BaseDjangoGraphqlPagination
 from .registry import Registry, get_global_registry
@@ -53,9 +53,7 @@ __all__ = (
 )
 
 
-def _yank_fields(
-    attrs: dict[str, Any], _as: Any, sort: bool = True
-) -> dict[str, Any]:
+def _yank_fields(attrs: dict[str, Any], _as: Any, sort: bool = True) -> dict[str, Any]:
     """Graphene-free re-implementation of ``graphene.utils.yank_fields_from_attrs``.
 
     Walks an attribute mapping (the ``construct_fields`` output or a class
@@ -158,9 +156,8 @@ def _compile_declared_list_fields(
         (empty when the class declares none).
     """
     from ._strconv import to_camel_case
-
+    from .core.schema_compiler import _build_list_object_field
     from .fields import DjangoListObjectField
-    from .native.schema_compiler import _build_list_object_field
 
     meta_fields = getattr(getattr(src_cls, "_meta", None), "fields", None) or {}
     out: dict[str, Any] = {}
@@ -246,13 +243,12 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
         (empty when the class declares none).
     """
     from ._strconv import to_camel_case
-
+    from .core.schema_compiler import _build_filter_list_field, compile_declared_field
     from .fields import (
         DjangoFilterListField,
         DjangoFilterPaginateListField,
         DjangoListObjectField,
     )
-    from .native.schema_compiler import _build_filter_list_field, compile_declared_field
 
     meta = getattr(src_cls, "_meta", None)
     meta_fields = getattr(meta, "fields", None) or {}
@@ -299,11 +295,11 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
 def _compile_gfk_union_output_fields(
     src_cls: type, registries: Any = None
 ) -> dict[str, Any]:
-    """Compile typed GFK-union OUTPUT fields declared via ``Meta.gfk_unions`` (#8).
+    """Compile typed GFK-union OUTPUT fields declared via ``Meta.unions`` (#8).
 
     ``compile_output_fields`` renders a model's ``GenericForeignKey`` as the flat
     ``GenericForeignKeyType`` (DEFECT-B basic path). When the owning type declares
-    ``Meta.gfk_unions = {"<gfk_name>": SomeDjangoUnionType}`` (Track 2), graphene
+    ``Meta.unions = {"<gfk_name>": SomeDjangoUnionType}`` (Track 2), graphene
     instead emitted a typed ``GraphQLUnion`` for that GFK
     (``converter.convert_generic_foreign_key_to_object``). Native must MATCH:
     override the flat field with a field whose type is the compiled
@@ -320,29 +316,28 @@ def _compile_gfk_union_output_fields(
 
     Returns:
         A ``{camelCase_name: GraphQLField}`` dict of typed GFK-union fields
-        (empty when the class declares no ``gfk_unions``).
+        (empty when the class declares no ``unions``).
     """
     from django.contrib.contenttypes.fields import GenericForeignKey
-    from ._strconv import to_camel_case
     from graphql import GraphQLField
 
+    from ._strconv import to_camel_case
+
     meta = getattr(src_cls, "_meta", None)
-    gfk_unions = getattr(meta, "gfk_unions", None) or {}
+    unions = getattr(meta, "unions", None) or {}
     model = getattr(meta, "model", None)
     registry = getattr(meta, "registry", None)
-    if not gfk_unions or model is None or registry is None:
+    if not unions or model is None or registry is None:
         return {}
 
-    from .native.polymorphic_compiler import compile_union_type
+    from .core.polymorphic_compiler import compile_union_type
 
     gfk_names = {
-        f.name
-        for f in model._meta.get_fields()
-        if isinstance(f, GenericForeignKey)
+        f.name for f in model._meta.get_fields() if isinstance(f, GenericForeignKey)
     }
 
     out: dict[str, Any] = {}
-    for fk_name in gfk_unions:
+    for fk_name in unions:
         if fk_name not in gfk_names:
             continue
         # Only emit when the companion union is actually registered (mirrors
@@ -411,10 +406,9 @@ def _compile_relation_list_fields(
         (empty when the model has none / they are all projected out).
     """
     from ._strconv import to_camel_case
-
     from .converter import _nested_list_object_field
-    from .native.output_compiler import _get_related_model, _is_many_relation
-    from .native.schema_compiler import _build_list_object_field
+    from .core.output_compiler import _get_related_model, _is_many_relation
+    from .core.schema_compiler import _build_list_object_field
 
     only_set = set(only_fields) if only_fields else None
     exclude_set = set(exclude_fields) if exclude_fields else None
@@ -446,9 +440,15 @@ def _compile_relation_list_fields(
         # Projection: also gate on field.name (forward M2M projects by name;
         # reverse relations are typically named by their accessor).
         field_name = getattr(field, "name", accessor)
-        if only_set is not None and accessor not in only_set and field_name not in only_set:
+        if (
+            only_set is not None
+            and accessor not in only_set
+            and field_name not in only_set
+        ):
             continue
-        if exclude_set is not None and (accessor in exclude_set or field_name in exclude_set):
+        if exclude_set is not None and (
+            accessor in exclude_set or field_name in exclude_set
+        ):
             continue
 
         nested = _nested_list_object_field(
@@ -509,8 +509,9 @@ def _compile_reverse_o2o_fields(
     """
     from django.core.exceptions import ObjectDoesNotExist
     from django.db.models import OneToOneRel
-    from ._strconv import to_camel_case
     from graphql import GraphQLField
+
+    from ._strconv import to_camel_case
 
     only_set = set(only_fields) if only_fields else None
     exclude_set = set(exclude_fields) if exclude_fields else None
@@ -543,9 +544,15 @@ def _compile_reverse_o2o_fields(
             continue
 
         field_name = getattr(field, "name", accessor)
-        if only_set is not None and accessor not in only_set and field_name not in only_set:
+        if (
+            only_set is not None
+            and accessor not in only_set
+            and field_name not in only_set
+        ):
             continue
-        if exclude_set is not None and (accessor in exclude_set or field_name in exclude_set):
+        if exclude_set is not None and (
+            accessor in exclude_set or field_name in exclude_set
+        ):
             continue
 
         # graphene parity: resolve the target type via the PER-TYPE registry and
@@ -557,7 +564,7 @@ def _compile_reverse_o2o_fields(
         # item-b (B5): resolve to THIS schema's FORKED target instance when a
         # non-default pair is in play; default pair -> the class-def instance ->
         # byte-identical.
-        from .native.base import resolved_output_type
+        from .core.base import resolved_output_type
 
         compiled = resolved_output_type(target_type, registries)
         if compiled is None:
@@ -622,7 +629,7 @@ def _make_output_thunk_for(
     Returns:
         A zero-arg thunk that returns the ``{camelCase: GraphQLField}`` dict.
     """
-    from .native.output_compiler import compile_output_fields
+    from .core.output_compiler import compile_output_fields
 
     def _thunk(
         _model: type = model,
@@ -745,7 +752,7 @@ def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
 
     After all recognised django-graphex options are consumed from **options,
     only keys that graphene's own base classes accept should remain.  Any other
-    key is almost certainly a typo (e.g. ``max_dep`` instead of ``max_deep``)
+    key is almost certainly a typo (e.g. ``max_dep`` instead of ``max_depth``)
     that would otherwise be silently swallowed.
 
     Private names (those starting with an underscore) are ignored: they may
@@ -768,7 +775,7 @@ def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
     if unknown:
         raise ImproperlyConfigured(
             "{cls}: unknown Meta option(s) {opts!r}. "
-            "Check for typos — e.g. 'max_dep' instead of 'max_deep'.".format(
+            "Check for typos — e.g. 'max_dep' instead of 'max_depth'.".format(
                 cls=cls_name,
                 opts=unknown,
             )
@@ -786,11 +793,11 @@ def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
 class DjangoObjectType(NativeObjectType):
     """A Django model GraphQL type with enhanced features.
 
-    Subclasses may override ``get_queryset(cls, queryset, info)`` to scope
-    the base queryset per-request (e.g. to the current user's rows).  The
-    override is called by ``DjangoObjectField``, ``DjangoFilterListField``,
-    and ``DjangoFilterPaginateListField`` **before** the query optimizer runs,
-    so ``select_related``/``prefetch_related`` are applied on top of the
+    Subclasses may override "get_queryset(cls, queryset, info)" to scope
+    the base queryset per-request (e.g. to the current user's rows). The
+    override is called by "DjangoObjectField", "DjangoFilterListField",
+    and "DjangoFilterPaginateListField" BEFORE the query optimizer runs,
+    so "select_related"/"prefetch_related" are applied on top of the
     already-narrowed queryset.
     """
 
@@ -812,9 +819,9 @@ class DjangoObjectType(NativeObjectType):
         include_fields: tuple[str, ...] = (),
         filter_fields: Any = None,
         interfaces: tuple[Any, ...] = (),
-        max_deep: int | None = None,
+        max_depth: int | None = None,
         complexity: int | None = None,
-        gfk_unions: dict | None = None,
+        unions: dict | None = None,
         **options,
     ) -> None:
         """Initialize the subclass with meta options for a Django object type.
@@ -829,16 +836,30 @@ class DjangoObjectType(NativeObjectType):
             include_fields: Extra model field names to include.
             filter_fields: Field names usable for filtering.
             interfaces: GraphQL interfaces this type implements.
-            max_deep: Max nested-object depth allowed below this type, enforced
+            max_depth: Max nested-object depth allowed below this type, enforced
                 by "DepthLimitValidationRule"; "None" means no per-type limit.
             complexity: Cost weight of a field returning this type, used by
                 "CostLimitValidationRule"; "None" means the default weight (1).
-            gfk_unions: Optional mapping of GenericForeignKey field name to a
+            unions: Optional mapping of GenericForeignKey field name to a
                 companion "DjangoUnionType" (Track 2). When set, the GFK
                 converter emits a typed Union field for that FK instead of the
                 flat "GenericForeignKeyType".
             **options: Extra options forwarded to the parent implementation.
+
+        Raises:
+            ImproperlyConfigured: If the legacy "Meta.gfk_unions" key is declared
+                (renamed to "unions" in v2.0).
         """
+        # HARD rename guard (v2.0): ``Meta.gfk_unions`` -> ``Meta.unions`` (mirrors
+        # the ``gfk_types`` -> ``types`` rename). A subclass still declaring the old
+        # name lands it in **options; fail loudly with the new spelling BEFORE the
+        # generic unknown-option check swallows it into a vague "unknown option".
+        if "gfk_unions" in options:
+            raise ImproperlyConfigured(
+                f"{cls.__name__}: gfk_unions was renamed to unions in v2.0. "
+                f"Declare the typed GFK unions via Meta.unions = {{...}}."
+            )
+
         _check_unknown_options(cls.__name__, options)
 
         assert is_valid_django_model(model), (
@@ -880,9 +901,9 @@ class DjangoObjectType(NativeObjectType):
         _meta.registry = registry
         _meta.filter_fields = filter_fields
         _meta.fields = django_fields
-        _meta.max_deep = max_deep
+        _meta.max_depth = max_depth
         _meta.complexity = complexity
-        _meta.gfk_unions = dict(gfk_unions) if gfk_unions else None
+        _meta.unions = dict(unions) if unions else None
 
         super().__init_subclass_with_meta__(
             _meta=_meta, interfaces=interfaces, **options
@@ -895,7 +916,7 @@ class DjangoObjectType(NativeObjectType):
         # NATIVE PATH: create EXACTLY ONE GraphQLObjectType per DjangoObjectType,
         # ONCE, here at class definition — identity-stable.  Its relation fields
         # are LAZY THUNKS that resolve against the SHARED GLOBAL output registry
-        # (django_graphex.native.base.get_shared_output_registry()), NEVER a
+        # (django_graphex.core.base.get_shared_output_registry()), NEVER a
         # per-class local registry.
         #
         # Why a single instance + shared-registry thunks: relations CANNOT be
@@ -920,14 +941,13 @@ class DjangoObjectType(NativeObjectType):
         if model is not None:
             from graphql import GraphQLObjectType
 
-            from django_graphex.native.base import (
+            from django_graphex.core.base import (
                 _gdx_output_registry,
                 _GdxOutputEntry,
-                get_shared_output_registry,
                 is_forking,
             )
-            from django_graphex.native.bridge import GdxPayload
-            from django_graphex.native.ir import GdxMeta
+            from django_graphex.core.bridge import GdxPayload
+            from django_graphex.core.ir import GdxMeta
 
             # Resolve the GraphQL type NAME the SAME way graphene does: an
             # explicit ``Meta.name`` (forwarded via **options) wins, otherwise the
@@ -953,20 +973,30 @@ class DjangoObjectType(NativeObjectType):
                 model=model,
                 only_fields=list(only_fields) if only_fields else None,
                 exclude_fields=list(exclude_fields) if exclude_fields else None,
-                max_deep=max_deep,
+                max_depth=max_depth,
                 complexity=complexity,
                 include_fields=list(include_fields) if include_fields else None,
             )
             if not _forking:
                 _gdx_output_registry.append(_entry)
 
-            # SHARED registry: the single source of truth for relation thunks.
-            # Keyed by MODEL with last-registration-wins semantics, mirroring the
-            # graphene Registry (registry.get_type_for_model(model)).  Relation
-            # thunks of OTHER types resolve a FK/M2M to whatever instance is the
-            # canonical (last-registered) type for the related model — exactly
-            # what mutation.py pins and the query root uses for that model.
-            _shared_registry = get_shared_output_registry()
+            # OUTPUT registry: the source of truth for this type's relation
+            # thunks. Keyed by MODEL with last-registration-wins semantics,
+            # mirroring the graphene Registry (registry.get_type_for_model(model)).
+            # Relation thunks of OTHER types resolve a FK/M2M to whatever instance
+            # is the canonical (last-registered) type for the related model.
+            #
+            # Registry-scoped: use the class's OWN registry companion, NOT the
+            # process-global shared registry directly. For the GLOBAL registry
+            # (``Meta.registry`` unset -> ``get_global_registry()``) the companion
+            # IS ``get_shared_output_registry()``, so the default/production/
+            # playground path is BYTE-IDENTICAL. A LOCAL ``Meta.registry`` gets
+            # its OWN companion, so a sibling relation resolves within that
+            # registry group WITHOUT leaking the node into the global namespace
+            # (the cross-schema duplicate-name leak). ``is_forking()`` still means
+            # the shared/global registry must not be touched — a forked build
+            # binds the PAIR's ``output`` registry via ``compile_outputs_into``.
+            _shared_registry = registry.output_registry()
 
             # EXACTLY ONE instance PER CLASS, created ONCE here.  Distinct
             # classes wrapping the same model (e.g. different only_fields /
@@ -975,7 +1005,7 @@ class DjangoObjectType(NativeObjectType):
             _gdx_meta_obj = GdxMeta(
                 name=_gql_name,
                 model=model,
-                max_deep=max_deep,
+                max_depth=max_depth,
                 complexity=complexity,
                 # DEFECT A: carry the source DjangoObjectType subclass so the
                 # optimizer can recover AnnotatedField annotations
@@ -1027,7 +1057,7 @@ class DjangoObjectType(NativeObjectType):
             ) -> list[Any]:
                 if not _ifaces:
                     return []
-                from django_graphex.native.polymorphic_compiler import (
+                from django_graphex.core.polymorphic_compiler import (
                     compile_interface_type,
                     is_interface_type,
                 )
@@ -1059,6 +1089,19 @@ class DjangoObjectType(NativeObjectType):
             # ``compile_outputs_into`` / ``fork_output_class`` instead. Outside a
             # fork this is byte-identical (the global last-wins write a custom- or
             # global-registry type relies on for default-pair relation resolution).
+            #
+            # Registry-scoped stamping: ``_shared_registry`` is the class's OWN
+            # registry companion (``registry.output_registry()``). For the GLOBAL
+            # registry it IS the process-wide shared singleton, so this stamps the
+            # global slot exactly as before (byte-identical). For a LOCAL
+            # ``Meta.registry`` it stamps that registry's OWN companion, so a
+            # sibling relation resolves within the group WITHOUT depositing the
+            # node into the GLOBAL namespace — the fix for the cross-schema leak
+            # where a later DEFAULT-pair schema resolved a relation (e.g. an FK) to
+            # a leaked local-registry node and, transitively, to its leaked
+            # ``<Model>ListType`` container ("multiple types named '<Model>ListType'"
+            # at assembly). ``_forking`` still skips the write entirely (a forked
+            # build binds the PAIR's ``output`` registry via ``compile_outputs_into``).
             if not skip_registry and not _forking:
                 _shared_registry.set_compiled(model, _graphql_output_type)
 
@@ -1224,52 +1267,69 @@ def _resolve_polymorphic_type(cls: Any, instance: Any, info: ResolveInfo) -> Any
 class DjangoUnionType(NativeObjectType):
     """A GraphQL Union over explicitly enumerated DjangoObjectType members.
 
-    Members are declared via ``Meta.gfk_types`` (a sequence of DjangoObjectType
+    Members are declared via "Meta.types" (a sequence of DjangoObjectType
     subclasses); they are NEVER discovered from the ContentType table.
-    ``resolve_type`` maps a resolved Django row to its registered
-    DjangoObjectType. ``Meta.possible_types`` is intentionally NOT set (it would
-    collide with the DjangoObjectType ``is_type_of`` discrimination).
+    "resolve_type" maps a resolved Django row to its registered
+    DjangoObjectType. "Meta.possible_types" is intentionally NOT set (it would
+    collide with the DjangoObjectType "is_type_of" discrimination).
 
-    S6d re-parents this off graphene ``Union`` onto the native graphene-free
-    ``ObjectType`` base. The union is REGISTRY-ONLY: there is NO compiled native
-    Union ``GraphQLUnionType`` today (the native compiler consumes the union via
-    the registry + ``resolve_type``, reading ``_meta.types`` / the member-model
+    S6d re-parents this off graphene "Union" onto the native graphene-free
+    "ObjectType" base. The union is REGISTRY-ONLY: there is NO compiled native
+    Union "GraphQLUnionType" today (the native compiler consumes the union via
+    the registry + "resolve_type", reading "_meta.types" / the member-model
     tuple). The native ObjectType base supplies exactly what this metadata
-    carrier needs: ``type(cls) is pydantic.ModelMetaclass`` (#1452), a
-    graphene-free MUTABLE ``_meta`` (``NativeObjectTypeOptions`` — which carries
-    ``name`` and the ``types`` slot the union sets below), and the
-    ``__init_subclass_with_meta__`` dispatch that sets ``_meta.name``. Reusing
-    ``ObjectType`` is sound precisely because nothing compiles this class as a
-    graphene Union — it is a name + member-list registry record.
+    carrier needs: "type(cls) is pydantic.ModelMetaclass" (#1452), a
+    graphene-free MUTABLE "_meta" ("NativeObjectTypeOptions" -- which carries
+    "name" and the "types" slot the union sets below), and the
+    "__init_subclass_with_meta__" dispatch that sets "_meta.name". Reusing
+    "ObjectType" is sound precisely because nothing compiles this class as a
+    graphene Union -- it is a name + member-list registry record.
     """
 
     class Meta:
-        """Meta configuration for DjangoUnionType."""
+        """Meta configuration for DjangoUnionType.
+
+        Marks the base class as abstract so it is never itself registered or
+        compiled; only concrete union subclasses are.
+        """
 
         abstract = True
 
     @classmethod
     def __init_subclass_with_meta__(
         cls,
-        gfk_types: tuple[Any, ...] = (),
+        types: tuple[Any, ...] = (),
         registry: Registry | None = None,
         _meta: Any = None,
         **options,
     ) -> None:
         """Initialize the union with its explicit member types.
 
+        "types" MUST be an explicit named parameter: the native ObjectType
+        terminal would otherwise swallow an unconsumed "types" kwarg into its
+        "**_kwargs" and silently drop it (see the "_meta.types" note below).
+
         Args:
-            gfk_types: the DjangoObjectType members of this union (>= 1).
+            types: the DjangoObjectType members of this union (>= 1).
             registry: registry to self-register in; defaults to the global one.
             _meta: optional pre-built meta options object.
             **options: extra options forwarded to the native base.
         """
+        # v2.0 rename: ``Meta.gfk_types`` -> ``Meta.types``. A subclass still
+        # declaring the old name lands it in **options; fail loudly instead of
+        # silently building an empty union.
+        if "gfk_types" in options:
+            raise ImproperlyConfigured(
+                f"{cls.__name__}: gfk_types was renamed to types in v2.0. "
+                f"Declare the union members via Meta.types = (...)."
+            )
+
         if not registry:
             registry = get_global_registry()
 
-        member_types = tuple(gfk_types)
+        member_types = tuple(types)
         assert member_types, (
-            "{} must declare Meta.gfk_types with at least one "
+            "{} must declare Meta.types with at least one "
             "DjangoObjectType member.".format(cls.__name__)
         )
 
@@ -1314,24 +1374,29 @@ class DjangoInterfaceType(NativeObjectType):
     """A GraphQL Interface enabling shared field declarations across types.
 
     Concrete "DjangoObjectType" subclasses declare membership via the existing
-    ``Meta.interfaces`` kwarg. Field sharing is structural (schema-level) only;
+    "Meta.interfaces" kwarg. Field sharing is structural (schema-level) only;
     this MVP introduces no new queryset fetch path for interfaces.
-    ``resolve_type`` follows the same model→registry→DjangoObjectType contract
-    as "DjangoUnionType". ``Meta.possible_types`` is intentionally NOT set.
+    "resolve_type" follows the same model -> registry -> DjangoObjectType
+    contract as "DjangoUnionType". "Meta.possible_types" is intentionally NOT
+    set.
 
-    S6d re-parents this off graphene ``Interface`` onto the native graphene-free
-    ``ObjectType`` base. Like ``DjangoUnionType`` it is REGISTRY-ONLY: there is
-    NO compiled native ``GraphQLInterfaceType`` today — concrete object types
-    name it via ``Meta.interfaces`` and the interface itself is a name +
-    ``resolve_type`` registry record. The native ObjectType base supplies the
-    ModelMetaclass identity (#1452), the graphene-free MUTABLE ``_meta`` (with
-    the ``name`` the terminal sets), and the field-descriptor collection so
-    declared interface fields (e.g. ``name = graphene.String()``) still land in
-    ``_meta.fields`` without Pydantic mis-parsing them.
+    S6d re-parents this off graphene "Interface" onto the native graphene-free
+    "ObjectType" base. Like "DjangoUnionType" it is REGISTRY-ONLY: there is
+    NO compiled native "GraphQLInterfaceType" today -- concrete object types
+    name it via "Meta.interfaces" and the interface itself is a name +
+    "resolve_type" registry record. The native ObjectType base supplies the
+    ModelMetaclass identity (#1452), the graphene-free MUTABLE "_meta" (with
+    the "name" the terminal sets), and the field-descriptor collection so
+    declared interface fields (e.g. "name = graphene.String()") still land in
+    "_meta.fields" without Pydantic mis-parsing them.
     """
 
     class Meta:
-        """Meta configuration for DjangoInterfaceType."""
+        """Meta configuration for DjangoInterfaceType.
+
+        Marks the base class as abstract so it is never itself registered or
+        compiled; only concrete interface subclasses are.
+        """
 
         abstract = True
 
@@ -1413,9 +1478,9 @@ def _resolve_native_nested_input_fields(
         A tuple of ``NestedInputField`` specs (empty when there is nothing to
         inject).
     """
-    from ._strconv import to_camel_case
+    from django_graphex.core.input_compiler import NestedInputField
 
-    from django_graphex.native.input_compiler import NestedInputField
+    from ._strconv import to_camel_case
 
     nested_map = nested_fields if isinstance(nested_fields, dict) else {}
     if not nested_map:
@@ -1444,9 +1509,7 @@ def _resolve_native_nested_input_fields(
 
         def _child_thunk(_child_model: type[Model] = child_model) -> Any:
             """Resolve the child's compiled input type lazily (self-ref safe)."""
-            child_type = registry.get_type_for_model(
-                _child_model, for_input=input_for
-            )
+            child_type = registry.get_type_for_model(_child_model, for_input=input_for)
             if child_type is None:
                 return None
             return child_type._meta.graphql_input_type
@@ -1498,9 +1561,10 @@ def _resolve_native_relation_input_fields(
         introspectable relations).
     """
     from django.db import models as _dj_models
-    from ._strconv import to_camel_case
 
-    from django_graphex.native.input_compiler import RelationInputField
+    from django_graphex.core.input_compiler import RelationInputField
+
+    from ._strconv import to_camel_case
 
     is_create = input_for == "create"
     specs: list[Any] = []
@@ -1612,11 +1676,11 @@ def _resolve_native_choices_input_fields(
         A tuple of ``ChoicesInputField`` specs (empty when the model has no
         choices fields).
     """
+    from django_graphex.core.input_compiler import ChoicesInputField
+
     from ._strconv import to_camel_case
     from .converter import build_choices_enum_type
     from .utils import is_required
-
-    from django_graphex.native.input_compiler import ChoicesInputField
 
     is_create = input_for == "create"
     specs: list[Any] = []
@@ -1644,7 +1708,13 @@ def _resolve_native_choices_input_fields(
 
 
 class DjangoInputObjectType(NativeInputType):
-    """A Django model GraphQL input type."""
+    """A Django model GraphQL input type.
+
+    Compiles its "graphql_input_type" from a Pydantic model generated from the
+    declared Django model ("build_model_schema(model)") instead of from
+    annotation-driven fields, so it is model-driven rather than
+    annotation-driven like a plain native "InputType".
+    """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Run the graphene-free ObjectType driver WITHOUT InputType registration.
@@ -1756,8 +1826,8 @@ class DjangoInputObjectType(NativeInputType):
         # ----------------------------------------------------------------
         graphql_input_type = None
         if input_for != "delete":
-            from django_graphex.native.fields import build_model_schema
-            from django_graphex.native.input_compiler import compile_input_type
+            from django_graphex.core.fields import build_model_schema
+            from django_graphex.core.input_compiler import compile_input_type
 
             pydantic_model = build_model_schema(
                 model,
@@ -1853,10 +1923,19 @@ class DjangoInputObjectType(NativeInputType):
 
 
 class DjangoListObjectType(NativeObjectType):
-    """A GraphQL type for paginated Django model lists."""
+    """A GraphQL type for paginated Django model lists.
+
+    Wraps a node "DjangoObjectType" as its "_meta.baseType" and exposes a
+    "results" list (its name configurable via "results_field_name") plus a
+    "totalCount", optionally applying pagination and filter configuration.
+    """
 
     class Meta:
-        """Meta configuration for DjangoListObjectType."""
+        """Meta configuration for DjangoListObjectType.
+
+        Marks the base class as abstract so it is never itself registered or
+        compiled; only concrete list subclasses are.
+        """
 
         abstract = True
 
@@ -1872,7 +1951,7 @@ class DjangoListObjectType(NativeObjectType):
         include_fields: tuple[str, ...] = (),
         filter_fields: Any = None,
         queryset: QuerySet | None = None,
-        max_deep: int | None = None,
+        max_depth: int | None = None,
         complexity: int | None = None,
         **options,
     ) -> None:
@@ -1891,7 +1970,7 @@ class DjangoListObjectType(NativeObjectType):
                 of only_fields / exclude_fields filters.
             filter_fields: Field names usable for filtering.
             queryset: Base queryset used to build the list type.
-            max_deep: Max nested-object depth allowed below this list type,
+            max_depth: Max nested-object depth allowed below this list type,
                 enforced by "DepthLimitValidationRule"; "None" means no limit.
             complexity: Cost weight of a field returning this list type, used by
                 "CostLimitValidationRule"; "None" means the default weight (1).
@@ -1974,7 +2053,7 @@ class DjangoListObjectType(NativeObjectType):
         # container's renamed results field (e.g. ``items``) would then fall to
         # the default attribute resolver and return ``None``.
         _meta.paginator = paginator
-        _meta.max_deep = max_deep
+        _meta.max_depth = max_depth
         _meta.complexity = complexity
 
         # The pagination container is NATIVE-ONLY. ``_meta.fields`` is unused by
@@ -2011,16 +2090,22 @@ class DjangoListObjectType(NativeObjectType):
         if model is not None:
             from graphql import GraphQLObjectType
 
-            from django_graphex.native.base import (
+            from django_graphex.core.base import (
                 _gdx_output_registry,
                 _GdxOutputEntry,
-                get_shared_output_registry,
                 is_forking,
             )
-            from django_graphex.native.bridge import GdxPayload
-            from django_graphex.native.ir import GdxMeta
+            from django_graphex.core.bridge import GdxPayload
+            from django_graphex.core.ir import GdxMeta
 
-            _shared_registry = get_shared_output_registry()
+            # Registry-scoped output registry: the container's ``results`` element
+            # type resolves the NODE from the class's OWN registry companion. For
+            # the GLOBAL registry this IS ``get_shared_output_registry()`` (the
+            # container's element node lives in the shared singleton -> byte-
+            # identical). For a LOCAL ``Meta.registry`` the node lives in that
+            # registry's own companion, so the list's ``results`` resolves the
+            # sibling node WITHOUT reaching into the global namespace.
+            _shared_registry = registry.output_registry()
 
             # Resolve the GraphQL list-type NAME the SAME way graphene does:
             # ``Meta.name`` (forwarded via **options) wins, else the class name.
@@ -2047,7 +2132,7 @@ class DjangoListObjectType(NativeObjectType):
                 name=_list_gql_name,
                 model=model,
                 results_field_name=results_field_name,
-                max_deep=max_deep,
+                max_depth=max_depth,
                 complexity=complexity,
                 # DEFECT A: carry the source DjangoListObjectType subclass so the
                 # optimizer's bridge (_gdx_graphene_type) resolves the wrapper's
@@ -2074,7 +2159,7 @@ class DjangoListObjectType(NativeObjectType):
                 model=model,
                 only_fields=None,
                 exclude_fields=None,
-                max_deep=max_deep,
+                max_depth=max_depth,
                 complexity=complexity,
             )
             if not is_forking():
@@ -2086,7 +2171,7 @@ class DjangoListObjectType(NativeObjectType):
             _meta.graphql_output_type = _list_gql_type
 
     @classmethod
-    def RetrieveField(cls, *args, **kwargs) -> DjangoObjectField:
+    def RetrieveField(cls, *args: Any, **kwargs: Any) -> DjangoObjectField:
         """Create a field for retrieving a single object.
 
         Args:
@@ -2157,7 +2242,15 @@ def get_or_create_list_object_type(
 
 
 class DjangoModelType(NestedFieldsMixin, NativeObjectType):
-    """DjangoModelType definition."""
+    """A batteries-included CRUD, list, and subscription type for a Django model.
+
+    Bundles the query fields ("RetrieveField"/"ListField"), mutation fields
+    ("CreateField"/"UpdateField"/"DeleteField"), and an optional subscription in
+    a single declaration. Each operation runs through the permission and
+    "get_queryset"/"filter_queryset" hooks before touching the database, and
+    mutation results are returned as this type with its "ok" / "errors" payload
+    fields.
+    """
 
     # S-ROOTS-c: ``ok`` / ``errors`` are NATIVE ``field()`` descriptors (not
     # graphene ``Boolean()`` / ``List(ErrorType)``). The SDL is byte-identical
@@ -2182,7 +2275,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
     permission_classes: ClassVar[tuple[Any, ...]] = ()
 
     class Meta:
-        """Meta configuration for DjangoModelType."""
+        """Meta configuration for DjangoModelType.
+
+        Marks the base class as abstract so it is never itself registered or
+        compiled; only concrete model subclasses are.
+        """
 
         abstract = True
 
@@ -2203,9 +2300,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         filter_fields: Any = None,
         description: str = "",
         stream: str | None = None,
-        serialize_data: bool | None = None,
+        payload_mode: str | None = None,
         subscription_index_fields: tuple[str, ...] | list[str] | None = None,
-        max_deep: int | None = None,
+        max_depth: int | None = None,
         complexity: int | None = None,
         **options,
     ) -> None:
@@ -2224,12 +2321,12 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             filter_fields: Field names usable for filtering.
             description: GraphQL description for this type.
             stream: Subscription stream name; required to expose a subscription.
-            serialize_data: Force full or id-only subscription payloads, or
+            payload_mode: Force "full" or "id_only" subscription payloads, or
                 "None" to inherit the global setting.
             subscription_index_fields: Optional model field names routing
                 notifications to value-scoped groups (only matching subscribers
                 are woken). Must be a subset of what "subscription_scope" returns.
-            max_deep: Max nested-object depth allowed below this type's output
+            max_depth: Max nested-object depth allowed below this type's output
                 type, enforced by "DepthLimitValidationRule"; "None" = no limit.
             complexity: Cost weight of a field returning this type's output type,
                 used by "CostLimitValidationRule"; "None" = default weight (1).
@@ -2239,6 +2336,19 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             ImproperlyConfigured: If "Meta.model" is not provided, or if any
                 unknown Meta option is supplied.
         """
+        # HARD rename guard (v2.0): the legacy ``Meta.serialize_data`` key is
+        # caught in ``**options`` — fail loudly with the new spelling before the
+        # generic unknown-option check.
+        if "serialize_data" in options:
+            raise ImproperlyConfigured(
+                "{}.Meta.serialize_data was renamed to payload_mode in v2.0 "
+                '(use "full" or "id_only").'.format(cls.__name__)
+            )
+        if payload_mode not in (None, "full", "id_only"):
+            raise ImproperlyConfigured(
+                '{}.Meta.payload_mode must be "full", "id_only" or None, '
+                'received "{}".'.format(cls.__name__, payload_mode)
+            )
         _check_unknown_options(cls.__name__, options)
 
         # Collect @filter_field-decorated methods and validate reserved names.
@@ -2327,7 +2437,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             "results_field_name": results_field_name,
             "extra_fields": extra_fields,
             "extra_resolvers": extra_resolvers,
-            "max_deep": max_deep,
+            "max_depth": max_depth,
             "complexity": complexity,
         }
 
@@ -2446,9 +2556,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         _meta.output_field_name = output_field_name
         _meta.nested_fields = nested_fields
         _meta.stream = stream
-        _meta.serialize_data = serialize_data
+        _meta.payload_mode = payload_mode
         _meta.subscription_index_fields = tuple(subscription_index_fields or ())
-        _meta.max_deep = max_deep
+        _meta.max_depth = max_depth
         _meta.complexity = complexity
 
         super().__init_subclass_with_meta__(
@@ -2573,7 +2683,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
     @classmethod
     def get_queryset(
-        cls, manager: Manager | QuerySet, info: ResolveInfo, **kwargs
+        cls, manager: Manager | QuerySet, info: ResolveInfo, **kwargs: Any
     ) -> QuerySet:
         """Return the base queryset for retrieve, list and mutation responses.
 
@@ -2596,7 +2706,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         return cls.filter_queryset(qs, info, **kwargs)
 
     @classmethod
-    def filter_queryset(cls, qs: QuerySet, info: ResolveInfo, **kwargs) -> QuerySet:
+    def filter_queryset(
+        cls, qs: QuerySet, info: ResolveInfo, **kwargs: Any
+    ) -> QuerySet:
         """Scope the queryset per request.
 
         This is a hook meant to be overridden. The default returns "qs"
@@ -2613,25 +2725,25 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         return qs
 
     @classmethod
-    def subscription_scope(cls, info: ResolveInfo, **kwargs) -> dict | None:
+    def subscription_scope(cls, info: ResolveInfo, **kwargs: Any) -> dict | None:
         """Return server-forced notification filters for a subscriber.
 
         Hook meant to be overridden when the subscription must be row-scoped
-        (e.g. ``{"owner": info.context.user.pk}``). It is evaluated at subscribe
+        (e.g. '{"owner": info.context.user.pk}'). It is evaluated at subscribe
         time (the user is available) and enforced per event at delivery, in
         memory when possible, so the client can neither widen nor drop it.
 
-        Unlike ``filter_queryset`` (an opaque queryset transform used by the
+        Unlike "filter_queryset" (an opaque queryset transform used by the
         query/list resolvers), this returns a plain filter mapping so it can be
         applied to a single changed instance without a per-event query. The
-        default returns ``None`` (no scoping).
+        default returns None (no scoping).
 
         Args:
             info: GraphQL resolve info for the subscribe request.
             **kwargs: The subscription arguments.
 
         Returns:
-            The forced filter mapping, or ``None``.
+            The forced filter mapping, or None.
         """
         return None
 
@@ -2646,7 +2758,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         return [permission() for permission in cls.permission_classes]
 
     @classmethod
-    def check_permissions(cls, info: ResolveInfo, action: str, **kwargs) -> None:
+    def check_permissions(cls, info: ResolveInfo, action: str, **kwargs: Any) -> None:
         """Raise "GraphQLError" if any permission denies the action.
 
         Args:
@@ -2668,7 +2780,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                 )
 
     @classmethod
-    def authorize(cls, info: ResolveInfo, action: str, **kwargs) -> None:
+    def authorize(cls, info: ResolveInfo, action: str, **kwargs: Any) -> None:
         """Authorize an action before it runs via permission checks.
 
         Called by every CRUD method; override to customize (e.g. skip checks
@@ -2685,7 +2797,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         cls.check_permissions(info, action, **kwargs)
 
     @classmethod
-    def create(cls, root: Any, info: ResolveInfo, **kwargs) -> DjangoModelType:
+    def create(cls, root: Any, info: ResolveInfo, **kwargs: Any) -> DjangoModelType:
         """Create a new object using the serializer.
 
         Nested children declared in "Meta.nested_fields" are written atomically
@@ -2711,7 +2823,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         return cls.perform_mutate(obj, info)
 
     @classmethod
-    def delete(cls, root: Any, info: ResolveInfo, **kwargs) -> DjangoModelType:
+    def delete(cls, root: Any, info: ResolveInfo, **kwargs: Any) -> DjangoModelType:
         """Delete an object by its primary key.
 
         Args:
@@ -2735,7 +2847,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             return cls.get_errors(not_found_error(cls._meta.model, pk))
 
     @classmethod
-    def update(cls, root: Any, info: ResolveInfo, **kwargs) -> DjangoModelType:
+    def update(cls, root: Any, info: ResolveInfo, **kwargs: Any) -> DjangoModelType:
         """Update an existing object using the serializer.
 
         Args:
@@ -2774,7 +2886,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
     @classmethod
     def retrieve(
-        cls, manager: Manager | QuerySet, root: Any, info: ResolveInfo, **kwargs
+        cls, manager: Manager | QuerySet, root: Any, info: ResolveInfo, **kwargs: Any
     ) -> Model | None:
         """Retrieve a single object by primary key, optimized for selection.
 
@@ -2804,20 +2916,21 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         filter_backend: Any,
         root: Any,
         info: ResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> DjangoListObjectBase:
         """List objects with filtering and pagination support.
 
-        Composition order: standard ORM lookups (via filter_backend) →
-        custom ``@filter_field`` methods (in declaration order) →
-        ``filter_queryset`` (called via get_queryset, last).
+        Composition order: "get_queryset" (which applies "filter_queryset")
+        scopes the base queryset first -> standard ORM lookups (via
+        filter_backend, collapsed into one "Q") -> custom "@filter_field"
+        methods (in declaration order).
 
         Args:
             manager: Default manager or queryset to list from.
             filter_backend: The native filter backend applied to the queryset.
             root: Root value passed to the resolver.
             info: GraphQL resolve info for the current request.
-            **kwargs: Resolver arguments including the ``filter`` value.
+            **kwargs: Resolver arguments including the "filter" value.
 
         Returns:
             A list result container with the count and matching objects.
@@ -2844,7 +2957,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         )
 
     @classmethod
-    def RetrieveField(cls, *args, **kwargs) -> DjangoObjectField:
+    def RetrieveField(cls, *args: Any, **kwargs: Any) -> DjangoObjectField:
         """Create a field for retrieving a single object.
 
         Args:
@@ -2857,7 +2970,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         return DjangoObjectField(cls._meta.output_type, resolver=cls.retrieve, **kwargs)
 
     @classmethod
-    def ListField(cls, *args, **kwargs) -> DjangoListObjectField:
+    def ListField(cls, *args: Any, **kwargs: Any) -> DjangoListObjectField:
         """Create a field for listing objects.
 
         Args:
@@ -2908,17 +3021,18 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             wire names, and whose ``.resolve`` is the corresponding classmethod
             (adapted via ``_adapt_self``).
         """
-        from ._strconv import to_camel_case as _to_camel
         from graphql import GraphQLField as _GQLField
 
+        from django_graphex.core._compat import _adapt_self
+        from django_graphex.core.schema_compiler import (
+            _compile_plain_object_type,
+        )
         from django_graphex.mutation import (
             _NATIVE_FIELD_IDENTITIES,
             _NATIVE_FIELD_REGISTRY,
         )
-        from django_graphex.native._compat import _adapt_self
-        from django_graphex.native.schema_compiler import (
-            _compile_plain_object_type,
-        )
+
+        from ._strconv import to_camel_case as _to_camel
 
         model = cls._meta.model
         _reg_key = (model, operation, "native")
@@ -2953,10 +3067,21 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         _gql_output_type = _compile_plain_object_type(cls)
 
         # camelCase the wire arg keys; each GraphQLArgument keeps out_name=snake.
-        _args = {
-            _to_camel(_arg_name): _arg
-            for _arg_name, _arg in cls._meta.arguments[operation].items()
-        }
+        # Non-GraphQLArgument values (unified ``Field`` descriptors used in an INPUT
+        # position, typed scalar shortcuts, bare graphql-core types) are normalized
+        # through ``to_graphql_argument`` — the same currency conversion the
+        # DjangoModelMutation builder applies to its ``Arguments`` members.
+        from graphql import GraphQLArgument as _GQLArg
+
+        from django_graphex.core._args import to_graphql_argument as _arg_conv
+
+        _args = {}
+        for _arg_name, _arg in cls._meta.arguments[operation].items():
+            _wire = _to_camel(_arg_name)
+            if isinstance(_arg, _GQLArg):
+                _args[_wire] = _arg
+            else:
+                _args[_wire] = _arg_conv(_arg, name=_arg_name)
 
         _gql_field = _GQLField(
             _gql_output_type,
@@ -2965,58 +3090,123 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             description=getattr(cls._meta, "description", None)
             or f"Native {operation} mutation for {model.__name__}",
         )
+        # P0: stamp composite permissions for the pruner. An explicit
+        # ``required_perms`` class attr (opt-in) wins; else the composite table
+        # maps the write op to write+view.
+        from django_graphex.core.perm_labels import required_perms_for
+
+        _override = getattr(cls, "required_perms", None)
+        _perms = (
+            frozenset(_override)
+            if _override is not None
+            else required_perms_for(model, operation)
+        )
+        _gql_field.extensions = {
+            **(_gql_field.extensions or {}),
+            "gdx_required_perms": _perms,
+        }
         _cache[operation] = _gql_field
         _NATIVE_FIELD_REGISTRY[_reg_key] = _gql_field
         _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
         return _gql_field
 
+    @staticmethod
+    def _with_deprecation(field: Any, deprecation_reason: str | None) -> Any:
+        """Return *field* deprecated by *deprecation_reason* (a copy when set).
+
+        The native mutation field is built ONCE and cached per class + operation
+        (identity-stable so the mounted field is the registered one). A caller-
+        supplied ``deprecation_reason`` must therefore NOT mutate the shared cached
+        field — return a shallow ``GraphQLField`` copy carrying the reason instead,
+        preserving every other attribute (type / args / resolver / description /
+        extensions). ``None`` returns the field unchanged.
+
+        Args:
+            field: The compiled graphql-core ``GraphQLField``.
+            deprecation_reason: The deprecation reason, or ``None`` for no change.
+
+        Returns:
+            The field unchanged (``None`` reason) or a deprecated copy.
+        """
+        if deprecation_reason is None:
+            return field
+        from graphql import GraphQLField as _GQLField
+
+        return _GQLField(
+            field.type,
+            args=field.args,
+            resolve=field.resolve,
+            subscribe=field.subscribe,
+            description=field.description,
+            deprecation_reason=deprecation_reason,
+            extensions=field.extensions,
+        )
+
     @classmethod
-    def CreateField(cls, *args, **kwargs) -> Any:
+    def CreateField(
+        cls, *args: Any, deprecation_reason: str | None = None, **kwargs: Any
+    ) -> Any:
         """Create a field for creating objects.
 
-        Returns a graphql-core ``GraphQLField`` wired to the ``create`` resolver.
+        Returns a graphql-core "GraphQLField" wired to the "create" resolver.
 
         Args:
             *args: Positional arguments (currently unused).
+            deprecation_reason: Optional reason wired onto the compiled field so the
+                SDL renders "@deprecated(reason: ...)".
             **kwargs: Keyword arguments (currently unused).
 
         Returns:
             A mutation field wired to the "create" resolver.
         """
-        return cls._build_native_mutation_field("create")
+        return cls._with_deprecation(
+            cls._build_native_mutation_field("create"), deprecation_reason
+        )
 
     @classmethod
-    def DeleteField(cls, *args, **kwargs) -> Any:
+    def DeleteField(
+        cls, *args: Any, deprecation_reason: str | None = None, **kwargs: Any
+    ) -> Any:
         """Create a field for deleting objects.
 
-        Returns a graphql-core ``GraphQLField`` wired to the ``delete`` resolver.
+        Returns a graphql-core "GraphQLField" wired to the "delete" resolver.
 
         Args:
             *args: Positional arguments (currently unused).
+            deprecation_reason: Optional reason wired onto the compiled field so the
+                SDL renders "@deprecated(reason: ...)".
             **kwargs: Keyword arguments (currently unused).
 
         Returns:
             A mutation field wired to the "delete" resolver.
         """
-        return cls._build_native_mutation_field("delete")
+        return cls._with_deprecation(
+            cls._build_native_mutation_field("delete"), deprecation_reason
+        )
 
     @classmethod
-    def UpdateField(cls, *args, **kwargs) -> Any:
+    def UpdateField(
+        cls, *args: Any, deprecation_reason: str | None = None, **kwargs: Any
+    ) -> Any:
         """Create a field for updating objects.
 
-        Returns a graphql-core ``GraphQLField`` wired to the ``update`` resolver.
+        Returns a graphql-core "GraphQLField" wired to the "update" resolver.
 
         Args:
             *args: Positional arguments (currently unused).
+            deprecation_reason: Optional reason wired onto the compiled field so the
+                SDL renders "@deprecated(reason: ...)".
             **kwargs: Keyword arguments (currently unused).
 
         Returns:
             A mutation field wired to the "update" resolver.
         """
-        return cls._build_native_mutation_field("update")
+        return cls._with_deprecation(
+            cls._build_native_mutation_field("update"), deprecation_reason
+        )
 
     @classmethod
-    def QueryFields(cls, *args, **kwargs) -> tuple[Any, Any]:
+    def QueryFields(cls, *args: Any, **kwargs: Any) -> tuple[Any, Any]:
         """Return retrieve and list fields for GraphQL queries.
 
         Args:
@@ -3032,7 +3222,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         return retrieve_field, list_field
 
     @classmethod
-    def MutationFields(cls, *args, **kwargs) -> tuple[Any, Any, Any]:
+    def MutationFields(cls, *args: Any, **kwargs: Any) -> tuple[Any, Any, Any]:
         """Return create, delete and update fields for GraphQL mutations.
 
         Args:
@@ -3053,7 +3243,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         """Return the cached "Subscription" subclass for this model type.
 
         Built lazily from "Meta.model" / "Meta.stream" /
-        "Meta.serialize_data" so that the base install never imports the
+        "Meta.payload_mode" so that the base install never imports the
         optional "[subscriptions]" extra (Channels) until subscriptions are
         actually used. Mount it on the subscription root via "SubscriptionField"
         and serve it over the native SSE/WS transports.
@@ -3079,9 +3269,18 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
             def _authorize_subscription(_sub_cls, info, **kwargs):
                 # Honor the type's permission_classes / authorize at subscribe.
-                # (No kwargs forwarded: the subscription's own ``action`` arg
-                # would collide with ``authorize(info, action, ...)``.)
-                return parent.authorize(info, "subscribe")
+                # Forward the requested subscription action (create/update/delete/
+                # all_actions) so per-action permission classes can enforce it at
+                # RUNTIME — defense in depth alongside the pruned action enum.
+                # ``authorize`` takes the CRUD ``action`` positionally ("subscribe")
+                # so the subscription's own action value is threaded under the
+                # distinct ``subscription_action`` kwarg to avoid the positional
+                # collision; ``has_subscribe_permission`` reads it back.
+                return parent.authorize(
+                    info,
+                    "subscribe",
+                    subscription_action=kwargs.get("action"),
+                )
 
             def _subscription_scope(_sub_cls, info, **kwargs):
                 # Honor the type's row-scoping as server-forced notify filters.
@@ -3091,7 +3290,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                 "model": cls._meta.model,
                 "pydantic_model": getattr(cls._meta.backend, "pydantic_model", None),
                 "stream": cls._meta.stream,
-                "serialize_data": cls._meta.serialize_data,
+                "payload_mode": cls._meta.payload_mode,
                 "subscription_index_fields": cls._meta.subscription_index_fields,
             }
 
@@ -3126,7 +3325,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         return sub
 
     @classmethod
-    def SubscriptionField(cls, *args, **kwargs) -> Any:
+    def SubscriptionField(cls, *args: Any, **kwargs: Any) -> Any:
         """Mount this type's subscription on a root subscription "ObjectType".
 
         Args:

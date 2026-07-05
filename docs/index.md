@@ -52,11 +52,9 @@ django-graphex builds on graphql-core and Pydantic to make Django GraphQL APIs e
 ## Quick Example
 
 ```python title="Basic Usage"
-from django_graphex import (
-    DjangoListObjectType,
-    DjangoModelMutation,
-    LimitOffsetGraphqlPagination
-)
+from django_graphex.mutation import DjangoModelMutation
+from django_graphex.paginations import LimitOffsetGraphqlPagination
+from django_graphex.types import DjangoListObjectType
 
 class UserListType(DjangoListObjectType):
     class Meta:
@@ -77,3 +75,10 @@ Ready to dive in? Check out our [Installation Guide](installation.md) to get sta
 - **GitHub Issues**: [Report a bug or request a feature](https://github.com/eamigo86/django-graphex/issues/new/choose)
 - **PyPI Package**: [Install from PyPI](https://pypi.org/project/django-graphex/)
 - **Source Code**: [View on GitHub](https://github.com/eamigo86/django-graphex)
+
+## License
+
+`django-graphex` is open source under the
+[MIT License](https://github.com/eamigo86/django-graphex/blob/main/LICENSE) —
+free to use, modify and distribute, provided the original copyright notice
+(© Ernesto Pérez Amigo) is preserved in all copies.

@@ -45,18 +45,18 @@ def split_filters(
 ) -> dict[str, Any] | None:
     """Decide notification filters in memory, returning what still needs the DB.
 
-    Plain-equality keys (no ``"__"`` lookup) whose field is present in the
-    serialized ``data`` are compared in memory (string-coerced, so ``7`` matches
-    ``"7"``). A mismatch short-circuits the whole notification.
+    Plain-equality keys (no "__" lookup) whose field is present in the serialized
+    "data" are compared in memory (string-coerced, so 7 matches "7"). A mismatch
+    short-circuits the whole notification.
 
     Args:
         data: The serialized instance mapping carried by the notification.
         filters: A mapping of Django ORM lookup to expected value.
 
     Returns:
-        ``None`` when an in-memory comparison already fails (drop the
+        "None" when an in-memory comparison already fails (drop the
         notification), otherwise the mapping of remaining filters that require a
-        single-row database check (possibly empty, meaning "fully matched").
+        single-row database check (possibly empty, meaning fully matched).
     """
     remaining: dict[str, Any] = {}
     for key, value in filters.items():

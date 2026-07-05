@@ -1,20 +1,20 @@
 """Gap #5 — defensive inline-fragment guard for the query-optimizer walkers.
 
 PROVEN BUG (inert today, latent): the optimizer walkers descend through
-``InlineFragmentNode`` TRANSPARENTLY, ignoring ``field.type_condition``.
-``find_field`` matches by NAME only, so a query like::
+"InlineFragmentNode" TRANSPARENTLY, ignoring "field.type_condition".
+"find_field" matches by NAME only, so a query like::
 
     { a { name ... on SomethingElse { posts { id } } } }
 
-while walking the ``Author`` model resolves ``posts`` against Author's relation
-map (``prefetch_related=['posts']``) DESPITE the inline fragment targeting a
-DIFFERENT concrete type (``SomethingElse``).  When a polymorphic
+while walking the "Author" model resolves "posts" against Author's relation
+map ("prefetch_related=['posts']") DESPITE the inline fragment targeting a
+DIFFERENT concrete type ("SomethingElse").  When a polymorphic
 (union/interface/abstract) output type is eventually exposed this becomes a
 real wrong-model bug.
 
 This module is the DEFENSIVE GUARD: a subset of the future Track-2
 union/interface support.  The walkers must NOT descend into an inline fragment
-whose ``type_condition`` names a DIFFERENT concrete type than the one currently
+whose "type_condition" names a DIFFERENT concrete type than the one currently
 being walked.
 
 STRICT TDD: these tests are RED first (they fail against the unguarded
@@ -26,12 +26,13 @@ TEST DISCIPLINE: every test states the mutation that makes it RED.
 from __future__ import annotations
 
 from django.test import TestCase
-from graphql import GraphQLList, parse
+from graphql import parse
 
-from django_graphex import DjangoObjectType, ObjectType, field
-from django_graphex.native.descriptors import NativeList
+from django_graphex.core import ObjectType, field
+from django_graphex.core.descriptors import NativeList
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoObjectType
 from django_graphex.utils import (
     _collect_only_fields,
     _collect_only_fields_is_full_load,
@@ -48,19 +49,19 @@ from ._schema_isolation import isolated_pair
 
 
 def _execute(schema, query):
-    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free)."""
+    """Execute *query* against a native "DjangoGraphQLSchema" (graphene-free)."""
     from graphql import graphql_sync
 
     return graphql_sync(schema.graphql_schema, query)
 
 
 def _gtype(name, bases, ns):
-    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+    """Build a dynamic native type via "type()" with pydantic-safe namespace.
 
-    Native ``ObjectType`` / ``DjangoObjectType`` / ``DjangoListObjectType`` are
-    pydantic ``BaseModel`` subclasses; building them with ``type(name, bases, ns)``
-    requires ``ns['__module__']`` and a nested ``Meta`` whose ``__qualname__`` is
-    ``"<Outer>.Meta"`` (the value a ``class`` body produces).
+    Native "ObjectType" / "DjangoObjectType" / "DjangoListObjectType" are
+    pydantic "BaseModel" subclasses; building them with "type(name, bases, ns)"
+    requires "ns['__module__']" and a nested "Meta" whose "__qualname__" is
+    '"<Outer>.Meta"' (the value a "class" body produces).
     """
     ns = dict(ns)
     ns.setdefault("__module__", __name__)
@@ -73,9 +74,10 @@ def _gtype(name, bases, ns):
                 pass
     return type(name, bases, ns)
 
+
 # A graphene type whose GraphQL type name we can feed to the guard as the
-# "current type" identity.  Author has a reverse-FK ``posts`` relation, so the
-# unguarded walker happily attributes ``posts`` from ANY inline fragment.
+# "current type" identity.  Author has a reverse-FK "posts" relation, so the
+# unguarded walker happily attributes "posts" from ANY inline fragment.
 _R_GAP5 = Registry()
 
 
@@ -86,7 +88,7 @@ class _AuthorTypeGap5(DjangoObjectType):
 
 
 # A SECOND concrete type in the same registry/schema.  Its GraphQL type name is
-# used as the FOREIGN ``... on <PostTypeName>`` target while we walk Author, so
+# used as the FOREIGN "... on <PostTypeName>" target while we walk Author, so
 # the guard has a real, distinct GraphQL type name to reject.
 class _PostTypeGap5(DjangoObjectType):
     class Meta:
@@ -99,8 +101,8 @@ class _QueryGap5(ObjectType):
     p = field(_PostTypeGap5)
 
 
-# A built schema lets us resolve the real ``GraphQLObjectType`` objects (with the
-# ``.name`` / ``.graphene_type`` identity the production walkers thread into the
+# A built schema lets us resolve the real "GraphQLObjectType" objects (with the
+# ".name" / ".graphene_type" identity the production walkers thread into the
 # guard).  Walking a helper against this gql_type mirrors the production path.
 _SCHEMA_GAP5 = DjangoGraphQLSchema(query=_QueryGap5, registries=isolated_pair(_R_GAP5))
 _AUTHOR_GQL_NAME = _AuthorTypeGap5._meta.name
@@ -109,7 +111,7 @@ _AUTHOR_GQL = _SCHEMA_GAP5.graphql_schema.get_type(_AUTHOR_GQL_NAME)
 
 
 def _selection_set(query_str):
-    """Return the selection set of the single root field ``a`` in *query_str*."""
+    """Return the selection set of the single root field "a" in *query_str*."""
     doc = parse(query_str)
     op = doc.definitions[0]
     # Root selection has exactly one field "a"; return its inner selection set.
@@ -123,7 +125,11 @@ def _selection_set(query_str):
 
 
 class TestInlineFragmentAppliesHelper(TestCase):
-    """The guard primitive routes inline fragments by type_condition."""
+    """The guard primitive routes inline fragments by type_condition.
+
+    Covers the no-condition, same-type, foreign-type, and unknown-current-type
+    cases.
+    """
 
     def _inline_node(self, query_str):
         sel = _selection_set(query_str)
@@ -141,10 +147,10 @@ class TestInlineFragmentAppliesHelper(TestCase):
                 return node
         raise AssertionError("no inline fragment found in query")
 
-    def test_no_type_condition_descends(self):
+    def test_no_type_condition_descends(self) -> None:
         """type_condition is None -> descend (True).
 
-        Mutation: returning False here would break bare ``... { }`` inline
+        Mutation: returning False here would break bare "... { }" inline
         fragments, regressing existing queries.
         """
         node = self._inline_node("{ a { ... { posts { id } } } }")
@@ -152,10 +158,10 @@ class TestInlineFragmentAppliesHelper(TestCase):
             _inline_fragment_applies(node, current_type_name="_AuthorTypeGap5")
         )
 
-    def test_same_type_name_descends(self):
+    def test_same_type_name_descends(self) -> None:
         """type_condition == current type name -> descend (True).
 
-        Mutation: returning False would skip ``... on <SameType>`` and lose
+        Mutation: returning False would skip "... on <SameType>" and lose
         legitimately-selected fields.
         """
         node = self._inline_node("{ a { ... on _AuthorTypeGap5 { posts { id } } } }")
@@ -163,7 +169,7 @@ class TestInlineFragmentAppliesHelper(TestCase):
             _inline_fragment_applies(node, current_type_name="_AuthorTypeGap5")
         )
 
-    def test_different_concrete_type_skipped(self):
+    def test_different_concrete_type_skipped(self) -> None:
         """type_condition names a DIFFERENT concrete type -> SKIP (False).
 
         Mutation: returning True here is exactly the GAP-5 bug.
@@ -173,7 +179,7 @@ class TestInlineFragmentAppliesHelper(TestCase):
             _inline_fragment_applies(node, current_type_name="_AuthorTypeGap5")
         )
 
-    def test_unknown_current_type_descends(self):
+    def test_unknown_current_type_descends(self) -> None:
         """current type cannot be determined -> descend (True), never worse.
 
         Mutation: returning False when we don't know the current type would
@@ -184,11 +190,11 @@ class TestInlineFragmentAppliesHelper(TestCase):
             _inline_fragment_applies(node, current_type_name=None, current_model=None)
         )
 
-    def test_matches_model_name_descends(self):
+    def test_matches_model_name_descends(self) -> None:
         """type_condition == current model class name -> descend (True).
 
         Best-effort model-name match for sites that carry only the Django model.
-        Mutation: returning False would skip ``... on Author`` while walking the
+        Mutation: returning False would skip "... on Author" while walking the
         Author model.
         """
         node = self._inline_node("{ a { ... on Author { posts { id } } } }")
@@ -201,15 +207,18 @@ class TestInlineFragmentAppliesHelper(TestCase):
 
 
 class TestRecursiveParamsInlineFragmentGuard(TestCase):
-    """recursive_params must not attribute fields from a foreign inline fragment."""
+    """ "recursive_params" must not attribute fields from a foreign inline fragment.
 
-    def test_mis_attribution_skipped(self):
-        """`... on SomethingElse { posts }` while walking Author -> posts NOT collected.
+    Covers the mis-attribution bug plus the no-regression companion cases.
+    """
 
-        TODAY (unguarded): ``posts`` IS collected into prefetch_related because
+    def test_mis_attribution_skipped(self) -> None:
+        """ "... on SomethingElse { posts }" while walking Author -> posts NOT collected.
+
+        TODAY (unguarded): "posts" IS collected into prefetch_related because
         the walker descends transparently and find_field matches by name.
         Mutation: removing the guard at the recursive_params inline-fragment
-        site makes ``posts`` reappear in prefetch_related -> RED.
+        site makes "posts" reappear in prefetch_related -> RED.
         """
         sel = _selection_set("{ a { name ... on SomethingElse { posts { id } } } }")
         select_related, prefetch_related = recursive_params(
@@ -228,11 +237,11 @@ class TestRecursiveParamsInlineFragmentGuard(TestCase):
         )
         self.assertEqual(select_related, [])
 
-    def test_same_type_still_descends(self):
-        """`... on _AuthorTypeGap5 { posts }` while walking Author -> posts COLLECTED.
+    def test_same_type_still_descends(self) -> None:
+        """ "... on _AuthorTypeGap5 { posts }" while walking Author -> posts COLLECTED.
 
         No regression: same-type inline fragments still descend.
-        Mutation: over-broad guard (skipping same-type) drops ``posts`` -> RED.
+        Mutation: over-broad guard (skipping same-type) drops "posts" -> RED.
         """
         sel = _selection_set("{ a { name ... on _AuthorTypeGap5 { posts { id } } } }")
         _select, prefetch_related = recursive_params(
@@ -249,10 +258,10 @@ class TestRecursiveParamsInlineFragmentGuard(TestCase):
             "posts MUST be prefetched for a same-type inline fragment.",
         )
 
-    def test_no_type_condition_descends(self):
+    def test_no_type_condition_descends(self) -> None:
         """Bare inline fragment (no type_condition) -> posts COLLECTED (unchanged).
 
-        Mutation: guard rejecting None type_condition drops ``posts`` -> RED.
+        Mutation: guard rejecting None type_condition drops "posts" -> RED.
         """
         sel = _selection_set("{ a { name ... { posts { id } } } }")
         _select, prefetch_related = recursive_params(
@@ -265,7 +274,7 @@ class TestRecursiveParamsInlineFragmentGuard(TestCase):
         )
         self.assertIn("posts", prefetch_related)
 
-    def test_unknown_current_type_preserves_today_behavior(self):
+    def test_unknown_current_type_preserves_today_behavior(self) -> None:
         """No current type identity -> descend (today's behavior preserved).
 
         Mutation: defaulting to skip when type is unknown would regress every
@@ -286,10 +295,10 @@ class TestRecursiveParamsInlineFragmentGuard(TestCase):
             "transparent-descent behavior (never make it worse).",
         )
 
-    def test_fragment_spread_unaffected(self):
+    def test_fragment_spread_unaffected(self) -> None:
         """Fragment spreads keep working exactly as today.
 
-        Mutation: touching FragmentSpread handling would drop ``posts`` -> RED.
+        Mutation: touching FragmentSpread handling would drop "posts" -> RED.
         """
         doc = parse(
             "{ a { name ...F } } fragment F on _AuthorTypeGap5 { posts { id } }"
@@ -314,16 +323,19 @@ class TestRecursiveParamsInlineFragmentGuard(TestCase):
 
 
 class TestCollectOnlyFieldsInlineFragmentGuard(TestCase):
-    """_collect_only_fields must not narrow .only() through a foreign fragment."""
+    """ "_collect_only_fields" must not narrow .only() through a foreign fragment.
 
-    def test_foreign_inline_fragment_relation_not_descended(self):
-        """`... on SomethingElse { posts { ... } }` must not pull Author.posts join key.
+    Analogous coverage to the recursive_params guard above.
+    """
+
+    def test_foreign_inline_fragment_relation_not_descended(self) -> None:
+        """ "... on SomethingElse { posts { ... } }" must not pull Author.posts join key.
 
         We assert the foreign-fragment relation does NOT contribute an
-        Author-side ``.only()`` column for ``posts`` descent.  Concretely:
+        Author-side ".only()" column for "posts" descent.  Concretely:
         the bio (a plain Author leaf selected outside the fragment) must be the
         only non-pk concrete narrowing, and walking the fragment must NOT add
-        any ``posts__`` prefixed column.
+        any "posts__" prefixed column.
 
         Mutation: removing the guard at the _collect_only_fields inline-fragment
         site descends into Author.posts (a prefetch relation, here selected
@@ -344,8 +356,8 @@ class TestCollectOnlyFieldsInlineFragmentGuard(TestCase):
         # pk always present.
         self.assertIn("id", only)
 
-    def test_same_type_inline_fragment_descends(self):
-        """`... on _AuthorTypeGap5 { bio }` -> bio IS narrowed in (no regression).
+    def test_same_type_inline_fragment_descends(self) -> None:
+        """ "... on _AuthorTypeGap5 { bio }" -> bio IS narrowed in (no regression).
 
         Mutation: over-broad guard skips the same-type fragment, bio missing
         from .only() -> RED.
@@ -362,18 +374,18 @@ class TestCollectOnlyFieldsInlineFragmentGuard(TestCase):
         self.assertIn("bio", only)
         self.assertIn("id", only)
 
-    def test_model_name_alone_does_not_skip(self):
+    def test_model_name_alone_does_not_skip(self) -> None:
         """Model name alone is NOT a reliable basis to SKIP -> descend.
 
-        GraphQL type names (``AuthorType``) normally differ from the Django
-        model class name (``Author``).  A model-name mismatch is therefore
-        inconclusive, so with ONLY ``current_model`` known the walker must
+        GraphQL type names ("AuthorType") normally differ from the Django
+        model class name ("Author").  A model-name mismatch is therefore
+        inconclusive, so with ONLY "current_model" known the walker must
         preserve transparent descent — bio IS collected.  (The real skip is
-        proven by ``test_foreign_inline_fragment_skipped_with_type_name`` below,
+        proven by "test_foreign_inline_fragment_skipped_with_type_name" below,
         which threads a reliable GraphQL type name.)
 
         Mutation: if the guard treated a model-name mismatch as a SKIP, every
-        legitimate ``... on <Model>Type`` fragment would be dropped — bio would
+        legitimate "... on <Model>Type" fragment would be dropped — bio would
         be missing -> RED.
         """
         doc = parse("{ a { id ... on SomethingElse { bio } } }")
@@ -383,11 +395,11 @@ class TestCollectOnlyFieldsInlineFragmentGuard(TestCase):
         self.assertIn("bio", only)
         self.assertIn("id", only)
 
-    def test_foreign_inline_fragment_skipped_with_type_name(self):
+    def test_foreign_inline_fragment_skipped_with_type_name(self) -> None:
         """With a reliable GraphQL type name, a foreign fragment IS skipped.
 
-        ``current_type_name='_AuthorTypeGap5'`` is the GraphQL type identity.
-        ``... on SomethingElse { bio }`` does not match it, so it is skipped and
+        "current_type_name='_AuthorTypeGap5'" is the GraphQL type identity.
+        "... on SomethingElse { bio }" does not match it, so it is skipped and
         bio is NOT narrowed.
 
         Mutation: removing the guard at the _collect_only_fields inline-fragment
@@ -402,7 +414,7 @@ class TestCollectOnlyFieldsInlineFragmentGuard(TestCase):
         self.assertNotIn("bio", only)
         self.assertIn("id", only)
 
-    def test_bare_inline_fragment_descends_without_type_name(self):
+    def test_bare_inline_fragment_descends_without_type_name(self) -> None:
         """Bare inline fragment (no type_condition) descends regardless.
 
         Mutation: guard rejecting None type_condition drops bio -> RED.
@@ -417,26 +429,29 @@ class TestCollectOnlyFieldsInlineFragmentGuard(TestCase):
 # ---------------------------------------------------------------------------
 # _collect_prefetch_only_sets (prefetch-only column-plan walker) — SC-1.
 #
-# This site had a guard threaded with ONLY ``current_model`` (no GraphQL
+# This site had a guard threaded with ONLY "current_model" (no GraphQL
 # type-name identity), making it INERT: a model name alone can never trigger a
 # SKIP, so a foreign-typed fragment whose body names a same-named relation was
 # still collected into the prefetch-only plan map.  The fix threads the full
-# GraphQL identity (type name + graphene type) from ``gql_type``.
+# GraphQL identity (type name + graphene type) from "gql_type".
 # ---------------------------------------------------------------------------
 
 
 class TestCollectPrefetchOnlySetsInlineFragmentGuard(TestCase):
-    """_collect_prefetch_only_sets must not plan a relation from a foreign fragment."""
+    """ "_collect_prefetch_only_sets" must not plan a relation from a foreign fragment.
 
-    def test_foreign_fragment_relation_not_collected(self):
-        """`... on <PostType> { posts }` while walking Author -> posts NOT planned.
+    Covers SC-1: the inert model-only guard used to miss this case.
+    """
 
-        Author has a reverse-FK ``posts``.  A foreign-typed inline fragment that
-        re-uses the name ``posts`` must be SKIPPED, so no PrefetchPlan is built
+    def test_foreign_fragment_relation_not_collected(self) -> None:
+        """ "... on <PostType> { posts }" while walking Author -> posts NOT planned.
+
+        Author has a reverse-FK "posts".  A foreign-typed inline fragment that
+        re-uses the name "posts" must be SKIPPED, so no PrefetchPlan is built
         for it.
 
-        Mutation: reverting the guard to ``current_model=model`` alone (its
-        inert form) makes the walker descend transparently -> ``posts`` reappears
+        Mutation: reverting the guard to "current_model=model" alone (its
+        inert form) makes the walker descend transparently -> "posts" reappears
         in the plan map -> RED.
         """
         query = "{ a { name ... on " + _POST_GQL_NAME + " { posts { id } } } }"
@@ -449,11 +464,11 @@ class TestCollectPrefetchOnlySetsInlineFragmentGuard(TestCase):
             "type, not the Author type being walked (GAP-5 SC-1).",
         )
 
-    def test_same_type_fragment_relation_still_collected(self):
-        """`... on <AuthorType> { posts }` -> posts IS planned (no regression).
+    def test_same_type_fragment_relation_still_collected(self) -> None:
+        """ "... on <AuthorType> { posts }" -> posts IS planned (no regression).
 
         Mutation: an over-broad guard that skips the same-type fragment drops
-        the legitimate ``posts`` plan -> RED.
+        the legitimate "posts" plan -> RED.
         """
         query = "{ a { name ... on " + _AUTHOR_GQL_NAME + " { posts { id } } } }"
         sel = _selection_set(query)
@@ -470,27 +485,30 @@ class TestCollectPrefetchOnlySetsInlineFragmentGuard(TestCase):
 #
 # This site's guard was INERT for the same reason (model only, and the helper
 # did not even accept a GraphQL type name).  It also created a SIBLING
-# DISAGREEMENT with ``_collect_only_fields``: a foreign fragment's unknown leaf
-# would flip the full-load detector to True (vetoing ``.only()`` narrowing)
+# DISAGREEMENT with "_collect_only_fields": a foreign fragment's unknown leaf
+# would flip the full-load detector to True (vetoing ".only()" narrowing)
 # while the column collector correctly skipped it.  The fix adds a
-# ``current_type_name`` parameter and threads it so both walkers agree.
+# "current_type_name" parameter and threads it so both walkers agree.
 # ---------------------------------------------------------------------------
 
 
 class TestCollectOnlyFieldsIsFullLoadInlineFragmentGuard(TestCase):
-    """A foreign fragment must not flip the child to full-load."""
+    """A foreign fragment must not flip the child to full-load.
 
-    def test_foreign_fragment_unknown_leaf_does_not_flip_full_load(self):
-        """`... on <PostType> { someProp }` while walking Author -> NOT full-load.
+    Covers SC-2: the sibling-disagreement fix between the two walkers.
+    """
 
-        ``someProp`` is an unknown/computed leaf.  If the foreign fragment were
+    def test_foreign_fragment_unknown_leaf_does_not_flip_full_load(self) -> None:
+        """ "... on <PostType> { someProp }" while walking Author -> NOT full-load.
+
+        "someProp" is an unknown/computed leaf.  If the foreign fragment were
         descended into, that unknown leaf would set full-load=True and silently
-        veto ``.only()`` narrowing for the Author branch.  With the GraphQL type
+        veto ".only()" narrowing for the Author branch.  With the GraphQL type
         name threaded, the foreign fragment is SKIPPED and full-load stays False.
 
-        Mutation: reverting to the inert ``current_model=model`` guard (or
-        dropping the ``current_type_name`` parameter) makes the detector descend
-        into the foreign fragment -> ``someProp`` flips full-load to True -> RED.
+        Mutation: reverting to the inert "current_model=model" guard (or
+        dropping the "current_type_name" parameter) makes the detector descend
+        into the foreign fragment -> "someProp" flips full-load to True -> RED.
         """
         doc = parse("{ a { id ... on " + _POST_GQL_NAME + " { someProp } } }")
         op = doc.definitions[0]
@@ -504,8 +522,8 @@ class TestCollectOnlyFieldsIsFullLoadInlineFragmentGuard(TestCase):
             "branch to full-load (GAP-5 SC-2).",
         )
 
-    def test_same_type_fragment_unknown_leaf_still_flips_full_load(self):
-        """`... on <AuthorType> { someProp }` -> full-load True (no regression).
+    def test_same_type_fragment_unknown_leaf_still_flips_full_load(self) -> None:
+        """ "... on <AuthorType> { someProp }" -> full-load True (no regression).
 
         A same-type fragment carrying a genuinely-unknown leaf must still flip
         full-load, exactly as today.
@@ -524,15 +542,15 @@ class TestCollectOnlyFieldsIsFullLoadInlineFragmentGuard(TestCase):
             "A same-type fragment's unknown leaf must still flip full-load.",
         )
 
-    def test_full_load_detector_agrees_with_collect_only_fields(self):
+    def test_full_load_detector_agrees_with_collect_only_fields(self) -> None:
         """The two sibling walkers must agree on foreign-fragment scope.
 
         For a foreign fragment carrying an unknown leaf, the full-load detector
-        must NOT flip (False) while ``_collect_only_fields`` must NOT narrow the
+        must NOT flip (False) while "_collect_only_fields" must NOT narrow the
         leaf in — both treat the foreign fragment as out of scope.
 
         Mutation: any threading mismatch between the two walkers re-opens the
-        sibling disagreement that silently vetoes ``.only()`` -> RED.
+        sibling disagreement that silently vetoes ".only()" -> RED.
         """
         doc = parse("{ a { id ... on " + _POST_GQL_NAME + " { someProp } } }")
         op = doc.definitions[0]
@@ -555,7 +573,11 @@ class TestCollectOnlyFieldsIsFullLoadInlineFragmentGuard(TestCase):
 
 
 class TestWalkFilteredPrefetchesInlineFragmentGuard(TestCase):
-    """_walk_filtered_prefetches must skip foreign-typed inline fragments."""
+    """ "_walk_filtered_prefetches" must skip foreign-typed inline fragments.
+
+    This site already threads the full identity; these tests pin that
+    behavior against future regression.
+    """
 
     def _info(self, fragments=None):
         import types as _t
@@ -564,15 +586,15 @@ class TestWalkFilteredPrefetchesInlineFragmentGuard(TestCase):
             fragments=fragments or {}, variable_values={}, schema=None
         )
 
-    def test_foreign_fragment_skipped(self):
-        """`... on <PostType> { posts { id } }` while walking Author -> no descent.
+    def test_foreign_fragment_skipped(self) -> None:
+        """ "... on <PostType> { posts { id } }" while walking Author -> no descent.
 
         We assert the walker does not raise and does not produce any Prefetch
         for a relation reached only through the foreign fragment.  The guard
         skips it before resolving fields on the Author gql_type.
 
         Mutation: dropping the GraphQL identity here makes the guard inert; the
-        walker descends into the foreign fragment and resolves ``posts`` against
+        walker descends into the foreign fragment and resolves "posts" against
         the Author gql_type -> a stray Prefetch/seen entry appears -> RED.
         """
         query = "{ a { name ... on " + _POST_GQL_NAME + " { posts { id } } } }"
@@ -587,11 +609,11 @@ class TestWalkFilteredPrefetchesInlineFragmentGuard(TestCase):
             "(GAP-5 filtered-prefetch walker).",
         )
 
-    def test_same_type_fragment_descends(self):
-        """`... on <AuthorType> { posts { id } }` -> walker descends (no regression).
+    def test_same_type_fragment_descends(self) -> None:
+        """ "... on <AuthorType> { posts { id } }" -> walker descends (no regression).
 
         Mutation: an over-broad guard skips the same-type fragment -> the inner
-        ``posts`` selection is never visited.  Here ``posts`` is unfiltered so it
+        "posts" selection is never visited.  Here "posts" is unfiltered so it
         produces no Prefetch object, but the descent itself must occur without
         error and the same-type fragment must not be rejected.
         """
@@ -612,19 +634,23 @@ class TestWalkFilteredPrefetchesInlineFragmentGuard(TestCase):
 
 
 class TestWalkAnnotatedFieldsInlineFragmentGuard(TestCase):
-    """_walk_annotated_fields must not collect annotations from a foreign fragment."""
+    """ "_walk_annotated_fields" must not collect annotations from a foreign fragment.
 
-    def test_foreign_fragment_annotation_not_collected(self):
-        """A foreign `... on <Other> { someAnnotated }` must not be collected.
+    This site already threads the type name and graphene type; these tests
+    pin that behavior against future regression.
+    """
+
+    def test_foreign_fragment_annotation_not_collected(self) -> None:
+        """A foreign "... on <Other> { someAnnotated }" must not be collected.
 
         Walking the Author gql_type, a foreign-typed inline fragment must be
         SKIPPED so any AnnotatedField named inside it is NOT pulled onto the
         Author annotations.  Author has no AnnotatedFields, so the collected
-        ``names`` set must stay empty regardless of the fragment body.
+        "names" set must stay empty regardless of the fragment body.
 
         Mutation: dropping the GraphQL identity makes the guard inert; the walker
         descends and any matching annotated leaf inside the foreign fragment is
-        collected onto Author -> ``names`` becomes non-empty -> RED.
+        collected onto Author -> "names" becomes non-empty -> RED.
         """
         import types as _t
 
@@ -654,47 +680,53 @@ class TestWalkAnnotatedFieldsInlineFragmentGuard(TestCase):
 # ---------------------------------------------------------------------------
 # End-to-end production-path test (through _apply_optimizations).
 #
-# NOTE: a TRULY-FOREIGN concrete type (`... on SomethingElse`) cannot appear in
+# NOTE: a TRULY-FOREIGN concrete type ("... on SomethingElse") cannot appear in
 # a VALIDATED query on a non-polymorphic field — graphql-core rejects it with
 # "Unknown type".  That is exactly why the GAP-5 bug is inert/latent today and
 # why the mis-attribution scenario is proven via direct walker calls above
 # (the same methodology as the gap-study).  The e2e test below instead proves
 # the threading does NOT over-skip: a list WRAPPER must not reject a legitimate
-# same-item-type inline fragment placed inside ``results`` (the wrapper name is
+# same-item-type inline fragment placed inside "results" (the wrapper name is
 # not the row identity).
 # ---------------------------------------------------------------------------
 
 
 class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
-    """Wrapper (DjangoListObjectType) must not wrongly skip same-item fragments."""
+    """Wrapper (DjangoListObjectType) must not wrongly skip same-item fragments.
+
+    Proves the guard does not over-skip by mistaking the list wrapper's
+    GraphQL type name for the row item's identity.
+    """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author and one linked post.
+
+        Shared as fixture data for the wrapper end-to-end test.
+        """
         from tests.models import Author as _A
         from tests.models import Post as _P
 
         a = _A.objects.create(name="WrapAuthor", bio="b")
         _P.objects.create(title="WrapPost", author=a)
 
-    def test_same_item_type_fragment_inside_results_not_skipped(self):
-        """`results { ... on <ItemType> { posts } }` must still prefetch posts.
+    def test_same_item_type_fragment_inside_results_not_skipped(self) -> None:
+        """ "results { ... on <ItemType> { posts } }" must still prefetch posts.
 
         The named return type is the LIST WRAPPER, whose name differs from the
         row item type.  The guard must NOT use the wrapper name to reject a
-        legitimate same-item-type fragment placed inside ``results``.
+        legitimate same-item-type fragment placed inside "results".
 
         Mutation: trusting the wrapper name as the row identity makes the guard
-        skip the legitimate `... on <ItemType>` fragment -> posts is not
+        skip the legitimate "... on <ItemType>" fragment -> posts is not
         prefetched -> RED.
         """
         from django.db import connection
         from django.test.utils import CaptureQueriesContext
 
-        from django_graphex import (
-            DjangoListObjectField,
-            DjangoListObjectType,
-        )
-        from django_graphex import DjangoObjectType as _DOT
+        from django_graphex.fields import DjangoListObjectField
+        from django_graphex.types import DjangoListObjectType
+        from django_graphex.types import DjangoObjectType as _DOT
 
         reg = Registry()
 
@@ -743,23 +775,23 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
             "row identity (which would wrongly skip the fragment).",
         )
 
-    def test_custom_results_field_name_wrapper_not_false_skipped(self):
-        """Custom ``results_field_name`` wrapper must not skip same-item fragments.
+    def test_custom_results_field_name_wrapper_not_false_skipped(self) -> None:
+        """Custom "results_field_name" wrapper must not skip same-item fragments.
 
         REG-1 / fwd-1: the root-type-name gate detected the list wrapper with a
-        HARDCODED ``"results" in fields`` literal.  A DjangoListObjectType with a
-        non-default ``Meta.results_field_name`` (e.g. ``"items"``) was NOT
+        HARDCODED '"results" in fields' literal.  A DjangoListObjectType with a
+        non-default "Meta.results_field_name" (e.g. '"items"') was NOT
         recognised as a wrapper, so the wrapper's GraphQL name was threaded into
-        the row selection and a legitimate same-item-type ``... on <ItemType>``
+        the row selection and a legitimate same-item-type "... on <ItemType>"
         fragment inside the renamed results field was WRONGLY SKIPPED -> the
         nested prefetch it contained was silently dropped (N+1 regression).
 
         With the fix (detect the wrapper by its CONFIGURED results field name),
-        ``root_type_name`` stays ``None`` for the custom-named wrapper, the guard
+        "root_type_name" stays "None" for the custom-named wrapper, the guard
         never skips inside the results field, and the prefetch is preserved.
 
-        Mutation: restoring the hardcoded ``"results"`` literal makes the custom
-        ``items`` wrapper look like a flat row type, threads the wrapper name,
+        Mutation: restoring the hardcoded '"results"' literal makes the custom
+        "items" wrapper look like a flat row type, threads the wrapper name,
         skips the same-item fragment, and drops the posts prefetch -> RED.
 
         Multiplicity makes the regression observable as N+1: with two authors,
@@ -769,11 +801,9 @@ class TestGap5EndToEndWrapperNotFalseSkipped(TestCase):
         from django.db import connection
         from django.test.utils import CaptureQueriesContext
 
-        from django_graphex import (
-            DjangoListObjectField,
-            DjangoListObjectType,
-        )
-        from django_graphex import DjangoObjectType as _DOT
+        from django_graphex.fields import DjangoListObjectField
+        from django_graphex.types import DjangoListObjectType
+        from django_graphex.types import DjangoObjectType as _DOT
         from tests.models import Author as _A
         from tests.models import Post as _P
 

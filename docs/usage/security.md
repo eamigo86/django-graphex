@@ -15,7 +15,7 @@ your resolvers.
 !!! tip "Looking for depth & cost limits?"
 
     Query-shape limiters (`DepthLimitValidationRule`, `CostLimitValidationRule`,
-    `Meta.max_deep`, `Meta.complexity`) now live on their own page —
+    `Meta.max_depth`, `Meta.complexity`) now live on their own page —
     [Query depth & cost limits](query-limits.md).
 
 Wire the middlewares through `DJANGO_GRAPHEX['MIDDLEWARE']`:
@@ -24,9 +24,9 @@ Wire the middlewares through `DJANGO_GRAPHEX['MIDDLEWARE']`:
 DJANGO_GRAPHEX = {
     "SCHEMA": "myapp.schema.schema",
     "MIDDLEWARE": [
-        "django_graphex.DisableIntrospectionMiddleware",
-        "django_graphex.AuthenticatedFieldsMiddleware",
-        "django_graphex.GraphQLDirectiveMiddleware",
+        "django_graphex.security.DisableIntrospectionMiddleware",
+        "django_graphex.security.AuthenticatedFieldsMiddleware",
+        "django_graphex.middleware.GraphQLDirectiveMiddleware",
     ],
 }
 ```
@@ -101,8 +101,10 @@ no settings, no naming conventions, always in sync with the schema.
 
 ```python
 from graphql import GraphQLString
-from django_graphex import DjangoGraphQLSchema, ObjectType, all_directives, field
-from django_graphex.native.descriptors import NativeList
+from django_graphex.directives import all_directives
+from django_graphex.core import ObjectType, field
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.core.descriptors import NativeList
 
 class PublicQueries(ObjectType):
     server_time = field(GraphQLString)
@@ -133,7 +135,7 @@ matched against `info.field_name` (camelCase under the default
     level aggregate them with multiple inheritance and pass the aggregates:
 
     ```python
-    from django_graphex import ObjectType
+    from django_graphex.core import ObjectType
 
     class RootSubscription(blog.PublicSubscriptions, shop.PublicSubscriptions,
                            ObjectType): pass
@@ -170,7 +172,8 @@ matched against `info.field_name` (camelCase under the default
 `AuthenticatedFieldsMiddleware` exposes two override points:
 
 ```python
-from django_graphex import AuthenticatedFieldsMiddleware, collect_field_names
+from django_graphex.schema import collect_field_names
+from django_graphex.security import AuthenticatedFieldsMiddleware
 
 class MyAuthMiddleware(AuthenticatedFieldsMiddleware):
     def get_protected_fields(self, info):
@@ -195,7 +198,7 @@ class MyAuthMiddleware(AuthenticatedFieldsMiddleware):
   silently exposing everything:
 
 ```python
-from django_graphex import DenyAllRegistry
+from django_graphex.schema import DenyAllRegistry
 
 try:
     PROTECTED = collect_field_names(PrivateQueries, PrivateMutations)
@@ -203,7 +206,7 @@ except Exception:
     PROTECTED = DenyAllRegistry()   # broken schema -> everything is private
 ```
 
-## HTTP view hardening (v1.2.1+)
+## HTTP view hardening
 
 ### Batch request size limit
 
@@ -212,6 +215,63 @@ except Exception:
 **HTTP 400** before any operation is executed.
 
 See [`MAX_BATCH_SIZE`](settings.md#http-view-hardening) in the settings reference.
+
+### Endpoint access group (`API_ACCESS_GROUP`)
+
+`AuthenticatedGraphQLView` can lock the **authenticated endpoint** to members of a
+single Django auth `Group`. Set [`API_ACCESS_GROUP`](settings.md#security) to the
+group name; non-members are rejected with a generic **HTTP 403** before any GraphQL
+parsing or execution, and the message never reveals the group requirement. An
+**active superuser always bypasses** the gate (hardcoded), and a missing/anonymous
+user is denied (fail-closed). `""` (default) disables it, and the public
+`GraphQLView` is **not** affected. See
+[Views → Restricting the endpoint to a group](views.md#restricting-the-endpoint-to-a-group-api_access_group).
+
+### Permission-scoped schema (`PERMISSION_SCOPED_SCHEMA`)
+
+With [`PERMISSION_SCOPED_SCHEMA`](settings.md#security) enabled,
+`AuthenticatedGraphQLView` serves **each authenticated request a schema pruned to
+the caller's permissions** — a field the caller lacks perms for is *absent* from
+their schema, not merely blocked at resolve time. This closes the **existence
+leak** that resolver-level authorization leaves open: a blocked resolver still
+reveals that the field exists (via an authorization error on a queryable field),
+whereas a pruned field reads as a native `Cannot query field` — a *not-found*
+indistinguishable from a typo.
+
+Security model:
+
+- **No existence leak** — pruned fields are gone from validation, so denials are
+  *not-found* errors, never authorization errors. Nothing in any error path
+  reveals a hidden field ever existed.
+- **No cross-permission cache leak** — the pruned schema, the in-process schema
+  cache, and the HTTP **response cache** are all keyed by the caller's
+  *permission signature* (`perms ∩ schema label-set`). Two callers with different
+  relevant perms never share a pruned schema or a cached response body for the
+  same query.
+- **Empty root ⇒ generic 403** — a caller whose entire `Query` root is pruned
+  away gets the endpoint's generic `403`, byte-identical to the
+  `permission_classes` / `API_ACCESS_GROUP` denials — an empty schema is
+  indistinguishable from any other refusal.
+- **Superuser & public-view invariants** — an active superuser always gets the
+  full schema (no signature computed); the public `GraphQLView` is never pruned.
+- **Revoke-safe** — the signature is recomputed from live permissions each
+  request (never keyed by user id, never persisted to an external cache), so a
+  revoked grant takes effect on the caller's next request.
+- **Untagged = public** — a field with no `gdx_required_perms` label survives
+  every signature, so an unlabeled schema is unaffected (byte-identical to today).
+
+Requires a labeled [`DjangoGraphQLSchema`](#declaring-private-fields-djangographqlschema).
+Default `False` is fully inert. See
+[Views → Permission-scoped schema](views.md#permission-scoped-schema-permission_scoped_schema)
+and, for subscriptions,
+[Subscriptions → Per-connection schema](subscriptions.md).
+
+!!! tip "End-to-end guide"
+
+    For a worked, role-by-role walkthrough of the whole permission stack —
+    pruned SDL per user, the exact denial responses, `DjangoModelPermissions`,
+    `API_ACCESS_GROUP` and per-action subscription pruning — see the
+    [Permission-scoped schema guide](permission-scoped-schema.md).
 
 ### GraphiQL CDN Subresource Integrity
 
@@ -247,21 +307,16 @@ When `CLEAN_RESPONSE=True` is set, `GraphQLView` passes the response data throug
 queries) are **exempt** — applying `clean_dict` to them would corrupt the payload
 because many introspection fields legitimately return `null`.
 
-Prior to v1.2.1 the exemption relied on matching the raw query string against the
-prefix `"\n  query IntrospectionQuery"`, which failed for:
-
-- compact inline queries: `{ __schema { types { name } } }`
-- differently-indented / re-formatted clients
-- `__type` queries
-
-Since v1.2.1 the check is AST-based: a response is treated as introspection when
-**all** top-level selections are `__schema` or `__type` fields, regardless of the
-query's textual format.
+The check is AST-based: a response is treated as introspection when **all**
+top-level selections are `__schema` or `__type` fields, regardless of the
+query's textual format. This correctly handles compact inline queries
+(`{ __schema { types { name } } }`), differently-indented or re-formatted
+clients, and `__type` queries.
 
 ## Query depth & cost limits
 
 Two **validation rules** protect your API from over-nested or over-wide queries
-(`Meta.max_deep`, `Meta.complexity`, `MAX_QUERY_DEPTH`, `MAX_QUERY_COST`,
+(`Meta.max_depth`, `Meta.complexity`, `MAX_QUERY_DEPTH`, `MAX_QUERY_COST`,
 `EXPOSE_QUERY_COST`). They are documented on their own page —
 [Query depth & cost limits](query-limits.md).
 
@@ -279,7 +334,7 @@ Errors the library raises during execution carry a machine-readable
 | `QUERY_TOO_COMPLEX` | `CostLimitValidationRule` | — (validation) |
 
 ```json
-{ "errors": [{ "message": "Query exceeds the maximum nesting depth of 2 for 'RentalCompany'.",
+{ "errors": [{ "message": "Query exceeds the maximum nesting depth of 2 for 'CategoryGenericType'.",
                "extensions": { "code": "QUERY_TOO_DEEP" } }] }
 ```
 

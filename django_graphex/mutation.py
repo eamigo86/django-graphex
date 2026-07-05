@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import warnings
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 from django.core.exceptions import ImproperlyConfigured
 from graphql import GraphQLBoolean
@@ -13,12 +13,12 @@ from graphql import GraphQLBoolean
 from ._strconv import to_camel_case
 from .backends import resolve_backend
 from .base_types import factory_type
+from .core.base import NativeObjectTypeOptions, _props
+from .core.base import ObjectType as NativeObjectType
+from .core.descriptors import NativeList, NativeMountedField
+from .core.descriptors import field as native_field
+from .core.validators import build_validator_model
 from .errors import ErrorType
-from .native.base import NativeObjectTypeOptions, _props
-from .native.base import ObjectType as NativeObjectType
-from .native.descriptors import NativeList, NativeMountedField
-from .native.descriptors import field as native_field
-from .native.validators import build_validator_model
 from .nested import NestedFieldsMixin
 from .registry import get_global_registry
 from .types import DjangoInputObjectType, DjangoObjectType
@@ -56,15 +56,15 @@ def _projection_signature(
 ) -> tuple[tuple[str, ...] | None, ...]:
     """Normalize the parent field projection into a hashable signature.
 
-    Each component is a sorted tuple of field names, or ``None`` when empty, so
+    Each component is a sorted tuple of field names, or None when empty, so
     two builds with equivalent projections share an identical signature and two
-    builds with different projections differ. Used by ``_nested_input_name`` to
+    builds with different projections differ. Used by "_nested_input_name" to
     derive a collision-free name suffix.
 
     Args:
-        only_fields: ``Meta.only_fields`` (any iterable, possibly empty).
-        exclude_fields: ``Meta.exclude_fields``.
-        include_fields: ``Meta.include_fields``.
+        only_fields: "Meta.only_fields" (any iterable, possibly empty).
+        exclude_fields: "Meta.exclude_fields".
+        include_fields: "Meta.include_fields".
 
     Returns:
         A 3-tuple of normalized projection components.
@@ -76,10 +76,10 @@ def _projection_signature(
 
 
 def _short_hash(payload: str) -> str:
-    """Return a short, stable, NON-cryptographic 6-hex digest of ``payload``.
+    """Return a short, stable, NON-cryptographic 6-hex digest of "payload".
 
     Used only to disambiguate a generated GraphQL type NAME; never for
-    security. ``usedforsecurity=False`` documents that intent (and avoids the
+    security. "usedforsecurity=False" documents that intent (and avoids the
     bandit B324 finding on hashlib).
 
     Args:
@@ -94,24 +94,24 @@ def _short_hash(payload: str) -> str:
 def _nested_keys_are_ambiguous(sorted_keys: list[str]) -> bool:
     """Whether camelCasing the joined nested keys would lose field boundaries.
 
-    ``_nested_input_name`` joins the sorted nested field names with ``"_"`` and
-    runs the result through ``to_camel_case``, which STRIPS every underscore.
+    "_nested_input_name" joins the sorted nested field names with "_" and
+    runs the result through "to_camel_case", which STRIPS every underscore.
     That collapse makes the multi-field JOIN delimiter indistinguishable from a
-    field-internal snake_case underscore: ``{"blog_comments"}`` and
-    ``{"blog", "comments"}`` both camelCase to ``...BlogComments...`` and would
+    field-internal snake_case underscore: "{'blog_comments'}" and
+    "{'blog', 'comments'}" both camelCase to "...BlogComments..." and would
     silently share one GraphQL type name (graphene de-duplicates by name and
     drops the shadowed type's fields with NO error).
 
     A name is unambiguous ONLY when there is exactly one key AND that key has no
     internal underscore -- then no boundary information can be lost. In every
-    other case (two or more keys, or any key containing ``_``) the camelCased
+    other case (two or more keys, or any key containing "_") the camelCased
     join is potentially ambiguous and the name MUST carry a keys-derived suffix.
 
     Args:
         sorted_keys: The nested field names, already sorted.
 
     Returns:
-        ``True`` when a disambiguating suffix is required.
+        True when a disambiguating suffix is required.
     """
     return len(sorted_keys) > 1 or any("_" in key for key in sorted_keys)
 
@@ -127,23 +127,23 @@ def _nested_input_name(
     """Build a deterministic, collision-free name for a nested input type.
 
     The base name encodes the model, operation and the sorted set of nested
-    field names (e.g. ``PostCreateNestedCommentsType``).
+    field names (e.g. "PostCreateNestedCommentsType").
 
     Two independent disambiguation suffixes may be appended (each as a literal
-    underscore segment AFTER ``to_camel_case`` so it survives camelCasing):
+    underscore segment AFTER "to_camel_case" so it survives camelCasing):
 
-    * ``_n<6hex>`` -- a hash of the sorted nested-key TUPLE, appended whenever
+    * "_n<6hex>" -- a hash of the sorted nested-key TUPLE, appended whenever
       the keys are ambiguous (more than one key, or any key with an internal
-      underscore). Because ``to_camel_case`` strips underscores, the join of
-      ``{"blog_comments"}`` and of ``{"blog", "comments"}`` would otherwise
+      underscore). Because "to_camel_case" strips underscores, the join of
+      "{'blog_comments'}" and of "{'blog', 'comments'}" would otherwise
       collapse to the SAME name; the keys-hash keeps structurally different
       nested sets on DIFFERENT names. A single key with no underscore is
       provably unambiguous, so the common human-readable name
-      (``PostCreateNestedCommentsType``) is kept suffix-free.
-    * ``_p<6hex>`` -- a hash of the parent field projection
-      (``only``/``exclude``/``include``), appended when that projection is
+      ("PostCreateNestedCommentsType") is kept suffix-free.
+    * "_p<6hex>" -- a hash of the parent field projection
+      (only/exclude/include), appended when that projection is
       non-empty, so two mutations on the same model with the same
-      ``nested_fields`` but different projections never collide.
+      "nested_fields" but different projections never collide.
 
     Both suffixes are deterministic, so identical builds produce identical
     names (idempotent), while structurally distinct builds never share a name.
@@ -151,10 +151,10 @@ def _nested_input_name(
     Args:
         model: The Django model the input is built for.
         op: The mutation operation ("create" or "update").
-        nested_fields: The ``{field: Model}`` nested mapping (non-empty).
-        only_fields: ``Meta.only_fields``.
-        exclude_fields: ``Meta.exclude_fields``.
-        include_fields: ``Meta.include_fields``.
+        nested_fields: The "{field: Model}" nested mapping (non-empty).
+        only_fields: "Meta.only_fields".
+        exclude_fields: "Meta.exclude_fields".
+        include_fields: "Meta.include_fields".
 
     Returns:
         The GraphQL type name for the nested input.
@@ -176,27 +176,27 @@ def _nested_input_name(
 def _ensure_child_generic_input(
     child_model: Any, op: str, registry: Any, parent_model: Any = None
 ) -> None:
-    """Ensure the GENERIC ``(child_model, op)`` input type exists.
+    """Ensure the GENERIC "(child_model, op)" input type exists.
 
     The converter resolves each nested child lazily via
-    ``registry.get_type_for_model(child_model, for_input=op)``; when no explicit
-    child mutation/type was declared that lookup would return ``None`` and the
+    "registry.get_type_for_model(child_model, for_input=op)"; when no explicit
+    child mutation/type was declared that lookup would return None and the
     converter would silently drop the field. Building the child's GENERIC input
-    on demand (with EMPTY ``nested_fields`` and ``skip_registry=False`` so it
-    self-registers at ``(child_model, op)``) makes that lookup succeed.
+    on demand (with EMPTY "nested_fields" and "skip_registry=False" so it
+    self-registers at "(child_model, op)") makes that lookup succeed.
 
-    The empty ``nested_fields`` guarantees termination: a self-referential model
-    produces a generic child whose own nested relation is ``[ID!]`` -- no
+    The empty "nested_fields" guarantees termination: a self-referential model
+    produces a generic child whose own nested relation is "[ID!]" -- no
     recursion. Already-registered children are a no-op.
 
-    ``parent_model`` (the nesting host) makes the child's back-reference FK
+    "parent_model" (the nesting host) makes the child's back-reference FK
     OPTIONAL on the INPUT surface: a reverse-FK / M2M child is linked to the
-    parent AFTER it saves (``NestedFieldsMixin._attach_children`` injects the FK
-    via ``save_kwargs``, and ``save_object`` excludes those keys from
-    validation), so the client must NOT be forced to supply the parent id inline.
-    The child's pydantic VALIDATION model still requires the FK, so a STANDALONE
-    child create that genuinely omits it still fails cleanly — only the inline
-    nested path is relaxed.
+    parent AFTER it saves ("NestedFieldsMixin._attach_children" injects the FK
+    via "save_kwargs", and "save_object" excludes those keys from
+    validation), so the client must NOT be forced to supply the parent id
+    inline. The child's pydantic VALIDATION model still requires the FK, so a
+    STANDALONE child create that genuinely omits it still fails cleanly -- only
+    the inline nested path is relaxed.
 
     Args:
         child_model: The related Django model to build the input for.
@@ -204,7 +204,7 @@ def _ensure_child_generic_input(
             built for the same operation.
         registry: The active type registry.
         parent_model: The nesting parent model; its back-reference FK on the
-            child is rendered optional on the input surface (or ``None`` for a
+            child is rendered optional on the input surface (or None for a
             plain ensure with no relaxation).
     """
     if registry.get_type_for_model(child_model, for_input=op) is not None:
@@ -222,7 +222,21 @@ def _ensure_child_generic_input(
 
 
 class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
-    """Django model mutation type definition."""
+    """Django model mutation type definition.
+
+    Abstract base for generating create/update/delete GraphQL mutations from a
+    Django model. Subclasses configure the model and behaviour through an inner
+    "Meta" class; "__init_subclass_with_meta__" builds the mutation payload,
+    input types (including nested inputs) and the per-operation GraphQL fields
+    that "CreateField" / "UpdateField" / "DeleteField" expose.
+    """
+
+    #: Opt-in override (P0) for the permissions this mutation's field requires.
+    #: When set (a sequence of codenames), it REPLACES the composite-table
+    #: default and is stamped onto the built field's
+    #: ``extensions["gdx_required_perms"]``. Declared ``ClassVar`` so a subclass
+    #: may assign it without tripping the Pydantic field-annotation check.
+    required_perms: ClassVar[Optional[Sequence[str]]] = None
 
     # S-ROOTS-c: ``ok`` / ``errors`` are NATIVE ``field()`` descriptors (not
     # graphene ``Boolean()`` / ``List(ErrorType)``). The SDL is byte-identical
@@ -238,7 +252,12 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
     )
 
     class Meta:
-        """Meta configuration for DjangoModelMutation."""
+        """Meta configuration for DjangoModelMutation.
+
+        Marks the base class as abstract so it is never itself compiled into a
+        schema; concrete subclasses declare their own "Meta" with the target
+        model and options.
+        """
 
         abstract = True
 
@@ -269,13 +288,13 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             description: Description for the generated mutation.
             nested_fields: Nested serializer fields configuration.
             model_operations: The mutation operations to generate; any subset of
-                ``("create", "update", "delete")``. Operations left out are not
-                built and their ``*Field()`` builders raise.
-            registry: The graphene ``Registry`` the mutation's output node /
+                ("create", "update", "delete"). Operations left out are not
+                built and their "*Field()" builders raise.
+            registry: The graphene "Registry" the mutation's output node /
                 input type resolve against. Defaults to the process-global
                 registry (byte-identical). A CUSTOM registry scopes the whole
                 mutation subgraph to a schema's own pair (item-b B6), so a forked
-                ``DjangoGraphQLSchema`` re-forks the payload's output node into
+                "DjangoGraphQLSchema" re-forks the payload's output node into
                 its own namespace instead of reaching the global last-wins node.
             **options: Additional options forwarded to the base class.
 
@@ -459,13 +478,13 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         # handles it; its inner fields are lazy thunks, so the node's
         # ``graphql_output_type`` is resolved at schema-build time (after
         # compile_all_outputs), not here.
-        from django_graphex.native.schema_compiler import (
+        from django_graphex.core.schema_compiler import (
             _compile_plain_object_type,
         )
 
         _gql_output_type = _compile_plain_object_type(cls)
 
-        from django_graphex.native._compat import _adapt_self
+        from django_graphex.core._compat import _adapt_self
 
         op_to_resolver = {
             "create": cls.create,
@@ -499,7 +518,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             # built above) pass through unchanged.
             from graphql import GraphQLArgument as _GQLArg
 
-            from django_graphex.native._args import (
+            from django_graphex.core._args import (
                 to_graphql_argument as _arg_conv,
             )
 
@@ -519,7 +538,8 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                 _gql_output_type,
                 args=_args,
                 resolve=_resolver,
-                description=description or f"Native {_op} mutation for {model.__name__}",
+                description=description
+                or f"Native {_op} mutation for {model.__name__}",
             )
             # item-b (B6): record the mutation SOURCE class on the field's
             # extensions so a FORKED schema can RE-COMPILE the payload against its
@@ -528,9 +548,21 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             # time); a forked schema must re-fork the payload so its output field
             # (e.g. ``post: PostGenericType``) resolves to the SCHEMA's forked node,
             # not the global last-wins one (else assert_schema_pair_isolation fires).
+            # P0: stamp the composite permissions this mutation field requires.
+            # An explicit ``Mutation.required_perms`` class attr (opt-in) wins;
+            # else the composite table maps the write op to write+view.
+            from django_graphex.core.perm_labels import required_perms_for
+
+            _override = getattr(cls, "required_perms", None)
+            _perms = (
+                frozenset(_override)
+                if _override is not None
+                else required_perms_for(model, _op)
+            )
             _gql_field.extensions = {
                 **(_gql_field.extensions or {}),
                 "gdx_mutation_source": cls,
+                "gdx_required_perms": _perms,
             }
             cls._native_fields[_op] = _gql_field
             _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
@@ -645,13 +677,15 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         # means no object can be found, so old_obj will be None and the resolver
         # returns a clean "not found" error rather than a 500.
         pk = data.pop("id", None)
-        # Optional inputs the client omitted (relational fields especially)
-        # arrive as an explicit ``null`` because the generated update input
-        # gives them a ``None`` default. On a partial update treat ``null`` as
-        # "not provided" so an untouched value isn't wrongly cleared -- a
-        # required FK would otherwise fail validation with "This field may not
-        # be null". Send an explicit value to change a field.
-        data = {name: value for name, value in data.items() if value is not None}
+        # Explicit-null semantics (GraphQL-spec-correct: omitted != null). The
+        # coercion layer delivers ONLY the keys the client actually sent: an
+        # OMITTED field is absent from ``data`` (untouched on a partial update),
+        # while an EXPLICIT ``null`` arrives as a present ``None`` and MUST flow
+        # through so a nullable field/FK is set NULL and an M2M is cleared. A
+        # ``null`` on a REQUIRED field surfaces as a clean validation ErrorType
+        # (never a 500). NOTE: nested (``Meta.nested_fields``) inputs treat
+        # ``null``/``[]``/``{}`` as a NO-OP (see ``NestedMutationMixin`` in
+        # ``nested.py``); that asymmetry is deliberate and documented there.
         old_obj = get_Object_or_None(cls._meta.model, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(
@@ -668,34 +702,75 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
 
     @classmethod
     def _native_field_for(cls, operation: str) -> Any:
-        """Return THIS mutation class's field for ``operation``.
+        """Return THIS mutation class's field for "operation".
 
-        Prefers the per-class ``_native_fields`` map (built in
-        ``__init_subclass_with_meta__``) so two distinct mutations on the SAME
+        Prefers the per-class "_native_fields" map (built in
+        "__init_subclass_with_meta__") so two distinct mutations on the SAME
         model never hand back each other's field. Falls back to the model-keyed
-        ``_NATIVE_FIELD_REGISTRY`` only when the per-class map is absent (legacy
+        "_NATIVE_FIELD_REGISTRY" only when the per-class map is absent (legacy
         / defensive path).
 
         Args:
             operation: The mutation operation ("create", "delete", "update").
 
         Returns:
-            The graphql-core ``GraphQLField`` for this class + operation.
+            The graphql-core "GraphQLField" for this class + operation.
         """
         own = getattr(cls, "_native_fields", None)
         if own is not None and operation in own:
             return own[operation]
         return _NATIVE_FIELD_REGISTRY[(cls._meta.model, operation, "native")]
 
+    @staticmethod
+    def _with_deprecation(field: Any, deprecation_reason: str | None) -> Any:
+        """Return "field" deprecated by "deprecation_reason" (a copy when set).
+
+        The native mutation field is built ONCE in
+        "__init_subclass_with_meta__" and cached on the class (identity-tracked
+        in "_NATIVE_FIELD_IDENTITIES" so the root compiler recovers it). A
+        caller-supplied "deprecation_reason" must therefore NOT mutate the shared
+        cached field -- return a shallow "GraphQLField" copy carrying the reason,
+        preserving every attribute (type / args / resolver / description /
+        extensions, including "gdx_mutation_source" + "gdx_required_perms").
+        The copy's identity is registered in "_NATIVE_FIELD_IDENTITIES" so the
+        native root compiler recognises it via BOTH the "_meta.fields" verbatim
+        path AND "_collect_root_attrs". None returns the field unchanged.
+
+        Args:
+            field: The compiled graphql-core "GraphQLField".
+            deprecation_reason: The deprecation reason, or None for no change.
+
+        Returns:
+            The field unchanged (None reason) or a deprecated copy.
+        """
+        if deprecation_reason is None:
+            return field
+        from graphql import GraphQLField as _GraphQLField
+
+        copy = _GraphQLField(
+            field.type,
+            args=field.args,
+            resolve=field.resolve,
+            subscribe=field.subscribe,
+            description=field.description,
+            deprecation_reason=deprecation_reason,
+            extensions=field.extensions,
+        )
+        _NATIVE_FIELD_IDENTITIES.add(id(copy))
+        return copy
+
     @classmethod
-    def CreateField(cls, *args: Any, **kwargs: Any) -> Any:
+    def CreateField(
+        cls, *args: Any, deprecation_reason: str | None = None, **kwargs: Any
+    ) -> Any:
         """Build a GraphQL field for the create mutation.
 
-        Returns this class's ``create`` ``GraphQLField`` (see
-        ``_native_field_for``).
+        Returns this class's "create" "GraphQLField" (see "_native_field_for").
 
         Args:
             *args: Positional arguments (unused).
+            deprecation_reason: Optional reason wired onto the compiled field so
+                the SDL renders "@deprecated(reason: ...)".
             **kwargs: Extra keyword arguments (unused).
 
         Returns:
@@ -705,17 +780,22 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "create" is not in Meta.model_operations.
         """
         cls._assert_operation("create")
-        return cls._native_field_for("create")
+        return cls._with_deprecation(
+            cls._native_field_for("create"), deprecation_reason
+        )
 
     @classmethod
-    def DeleteField(cls, *args: Any, **kwargs: Any) -> Any:
+    def DeleteField(
+        cls, *args: Any, deprecation_reason: str | None = None, **kwargs: Any
+    ) -> Any:
         """Build a GraphQL field for the delete mutation.
 
-        Returns this class's ``delete`` ``GraphQLField`` (see
-        ``_native_field_for``).
+        Returns this class's "delete" "GraphQLField" (see "_native_field_for").
 
         Args:
             *args: Positional arguments (unused).
+            deprecation_reason: Optional reason wired onto the compiled field so
+                the SDL renders "@deprecated(reason: ...)".
             **kwargs: Extra keyword arguments (unused).
 
         Returns:
@@ -725,17 +805,22 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "delete" is not in Meta.model_operations.
         """
         cls._assert_operation("delete")
-        return cls._native_field_for("delete")
+        return cls._with_deprecation(
+            cls._native_field_for("delete"), deprecation_reason
+        )
 
     @classmethod
-    def UpdateField(cls, *args: Any, **kwargs: Any) -> Any:
+    def UpdateField(
+        cls, *args: Any, deprecation_reason: str | None = None, **kwargs: Any
+    ) -> Any:
         """Build a GraphQL field for the update mutation.
 
-        Returns this class's ``update`` ``GraphQLField`` (see
-        ``_native_field_for``).
+        Returns this class's "update" "GraphQLField" (see "_native_field_for").
 
         Args:
             *args: Positional arguments (unused).
+            deprecation_reason: Optional reason wired onto the compiled field so
+                the SDL renders "@deprecated(reason: ...)".
             **kwargs: Extra keyword arguments (unused).
 
         Returns:
@@ -745,7 +830,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             AttributeError: If "update" is not in Meta.model_operations.
         """
         cls._assert_operation("update")
-        return cls._native_field_for("update")
+        return cls._with_deprecation(
+            cls._native_field_for("update"), deprecation_reason
+        )
 
     @classmethod
     def _assert_operation(cls, operation: str) -> None:
@@ -775,7 +862,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             The create, delete and update graphql-core fields (in that order)
-            for every operation enabled in ``Meta.model_operations``.
+            for every operation enabled in "Meta.model_operations".
         """
         builders = (
             ("create", cls.CreateField),

@@ -317,7 +317,14 @@ def _format_dt(dt: Any, format: str = "default") -> str | None:
 
 
 class DateGraphQLDirective(BaseExtraGraphQLDirective):
-    """Format the date from resolving the field by dateutil module."""
+    """Format a resolved date/datetime value using a supplied format.
+
+    The optional "format" argument is either a named format ("default", "iso",
+    "js", "time ago", "time ago 2d") or a token string built from the keys of
+    "FORMATS_MAP" (dateutil-style tokens such as "YYYY-MM-DD"). String field
+    values yield a plain string; other values are wrapped in a
+    "CustomDateFormat" so the scalar can serialize them.
+    """
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
@@ -339,7 +346,7 @@ class DateGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the date formatting directive.
 

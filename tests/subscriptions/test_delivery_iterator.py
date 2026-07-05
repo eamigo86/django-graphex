@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """WU2 — COND-A lightweight delivery iterator.
 
-The Phase 6 COND-A decision (design §4, GO-gate #1516): instead of
-graphql-core's stock ``subscribe()`` -> ``MapAsyncIterator`` delivery (which
-does, per yielded value, 2x ``ensure_future`` + ``asyncio.wait`` + per-value
-``Task.cancel`` -> ~47 us/value), django-graphex OWNS a lightweight
-``async for v in source: yield await map(v)`` wrapper (~0.19 us/value, ~250x)
-that is structurally distinct from ``MapAsyncIterator`` AND supports
-OUT-OF-BAND CLOSE so a caller (``complete{id}`` / disconnect) can stop
-iteration IMMEDIATELY without waiting on ``asyncio.wait``.
+The Phase 6 COND-A decision (design paragraph 4, GO-gate #1516): instead of
+graphql-core's stock "subscribe()" -> "MapAsyncIterator" delivery (which
+does, per yielded value, 2x "ensure_future" + "asyncio.wait" + per-value
+"Task.cancel" -> ~47 us/value), django-graphex OWNS a lightweight
+"async for v in source: yield await map(v)" wrapper (~0.19 us/value, ~250x)
+that is structurally distinct from "MapAsyncIterator" AND supports
+OUT-OF-BAND CLOSE so a caller (complete{id} / disconnect) can stop
+iteration IMMEDIATELY without waiting on asyncio.wait.
 
-This module is transport-agnostic: ``delivery.py`` imports neither channels,
+This module is transport-agnostic: "delivery.py" imports neither channels,
 Django, nor graphene. It is pure asyncio.
 
 These tests are the WU2 gate:
@@ -25,6 +25,7 @@ These tests are the WU2 gate:
   - Map fn errors propagate (not swallowed)
   - assertNumQueries(0) across N values (dict source never touches the ORM)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -40,27 +41,33 @@ import pytest
 # graphql.MapAsyncIterator and defined at
 # graphql/execution/map_async_iterator.py.
 from graphql.execution.map_async_iterator import MapAsyncIterator
+from pytest_django.fixtures import DjangoAssertNumQueries
 
 # ---------------------------------------------------------------------------
 # Helpers: in-memory async sources (no DB, no channels, no execute() variance)
 # ---------------------------------------------------------------------------
 
 
-async def _list_source(values: list) -> AsyncGenerator[Any, None]:
-    """Yield each value from *values* in order. Records nothing extra."""
+async def _list_source(values: list[Any]) -> AsyncGenerator[Any, None]:
+    """Yield each value from "values" in order. Records nothing extra."""
     for value in values:
         yield value
 
 
 class _RecordingSource:
-    """An async generator-like source that records whether ``aclose`` ran.
+    """An async generator-like source that records whether "aclose" ran.
 
     Used to prove that closing the delivery iterator also closes the underlying
     source (the design's "aclose()s the underlying source if it has aclose"
     requirement).
     """
 
-    def __init__(self, values: list) -> None:
+    def __init__(self, values: list[Any]) -> None:
+        """Store a copy of the values to yield and reset the close flag.
+
+        Args:
+            values: The values this source will yield, in order.
+        """
         self._values = list(values)
         self._index = 0
         self.aclosed = False
@@ -68,9 +75,22 @@ class _RecordingSource:
         self._gate: asyncio.Event | None = None
 
     def __aiter__(self) -> "_RecordingSource":
+        """Return self, satisfying the async iterator protocol.
+
+        Returns:
+            self: This source instance.
+        """
         return self
 
     async def __anext__(self) -> Any:
+        """Return the next stored value, or stop iteration when exhausted.
+
+        Returns:
+            value: The next value in the stored sequence.
+
+        Raises:
+            StopAsyncIteration: When every stored value has been yielded.
+        """
         if self._index >= len(self._values):
             raise StopAsyncIteration
         value = self._values[self._index]
@@ -78,28 +98,49 @@ class _RecordingSource:
         return value
 
     async def aclose(self) -> None:
+        """Record that this source was closed."""
         self.aclosed = True
 
 
 class _BlockingSource:
     """A source whose next value never arrives until a producer sets the gate.
 
-    Models a real Channels group consumer blocked in ``receive()`` waiting for
+    Models a real Channels group consumer blocked in "receive()" waiting for
     the next broadcast. The out-of-band close test uses this to prove that
-    ``aclose()`` stops iteration PROMPTLY instead of hanging on the pending
-    ``__anext__``.
+    "aclose()" stops iteration PROMPTLY instead of hanging on the pending
+    "__anext__".
     """
 
-    def __init__(self, warmup: list) -> None:
+    def __init__(self, warmup: list[Any]) -> None:
+        """Store the warmup values and initialize the never-set close gate.
+
+        Args:
+            warmup: The values to yield before the source starts blocking.
+        """
         self._warmup = list(warmup)
         self._index = 0
         self.aclosed = False
         self._gate = asyncio.Event()  # never set in the close test
 
     def __aiter__(self) -> "_BlockingSource":
+        """Return self, satisfying the async iterator protocol.
+
+        Returns:
+            self: This source instance.
+        """
         return self
 
     async def __anext__(self) -> Any:
+        """Return the next warmup value, then block forever awaiting the gate.
+
+        Returns:
+            value: The next warmup value, while any remain.
+
+        Raises:
+            StopAsyncIteration: Only reached if the gate is ever set, which
+                the close test does not do (aclose() unblocks the wait via
+                cancellation instead).
+        """
         if self._index < len(self._warmup):
             value = self._warmup[self._index]
             self._index += 1
@@ -109,15 +150,18 @@ class _BlockingSource:
         raise StopAsyncIteration  # pragma: no cover - gate never set in tests
 
     async def aclose(self) -> None:
+        """Record the close and release any pending wait on the gate."""
         self.aclosed = True
         self._gate.set()  # unblock any pending wait so the task can finish
 
 
 async def _identity(value: Any) -> Any:
+    """Return the value unchanged."""
     return value
 
 
 async def _double(value: int) -> int:
+    """Return twice the given integer value."""
     return value * 2
 
 
@@ -126,8 +170,12 @@ async def _double(value: int) -> int:
 # ---------------------------------------------------------------------------
 
 
-async def test_values_delivered_in_order():
-    """N source values -> N mapped outputs, in order."""
+async def test_values_delivered_in_order() -> None:
+    """N source values must produce N mapped outputs in the same order.
+
+    Contract: this test ships broken if the delivery iterator reorders,
+    drops, or duplicates values from the source.
+    """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     delivery = make_delivery_iterator(_list_source([1, 2, 3, 4, 5]), _double)
@@ -135,8 +183,12 @@ async def test_values_delivered_in_order():
     assert out == [2, 4, 6, 8, 10]
 
 
-async def test_completion_propagated():
-    """An exhausted source -> the delivery iterator raises StopAsyncIteration."""
+async def test_completion_propagated() -> None:
+    """An exhausted source must make the delivery iterator raise StopAsyncIteration.
+
+    Contract: this test ships broken if the iterator hangs or raises a
+    different exception once the source is exhausted.
+    """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     delivery = make_delivery_iterator(_list_source([1]), _identity)
@@ -145,16 +197,25 @@ async def test_completion_propagated():
         await delivery.__anext__()
 
 
-async def test_aiter_returns_self():
-    """``__aiter__`` returns the iterator itself (async-for compatible)."""
+async def test_aiter_returns_self() -> None:
+    """ "__aiter__" must return the iterator itself (async-for compatible).
+
+    Contract: this test ships broken if the delivery iterator is not
+    directly usable in an "async for" loop.
+    """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     delivery = make_delivery_iterator(_list_source([1, 2]), _identity)
     assert delivery.__aiter__() is delivery
 
 
-async def test_map_fn_may_be_plain_callable():
-    """A non-coroutine map fn is also supported (result awaited only if awaitable)."""
+async def test_map_fn_may_be_plain_callable() -> None:
+    """A non-coroutine map fn must also be supported.
+
+    Contract: this test ships broken if the delivery iterator requires the
+    map function to be a coroutine, since the result is only awaited when
+    it is itself awaitable.
+    """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     delivery = make_delivery_iterator(_list_source([1, 2, 3]), lambda v: v + 100)
@@ -167,8 +228,11 @@ async def test_map_fn_may_be_plain_callable():
 # ---------------------------------------------------------------------------
 
 
-async def test_out_of_band_close_mid_stream_prompt():
-    """Mid-stream aclose() -> next __anext__ raises StopAsyncIteration PROMPTLY.
+async def test_out_of_band_close_mid_stream_prompt() -> None:
+    """Mid-stream aclose() must make the next __anext__ raise StopAsyncIteration promptly.
+
+    Contract: this test ships broken if closing mid-stream does not
+    immediately stop iteration, or if the underlying source is left open.
 
     The underlying source is also aclose()d. This is the COND-A requirement: a
     caller can stop iteration IMMEDIATELY without waiting on asyncio.wait or the
@@ -194,8 +258,11 @@ async def test_out_of_band_close_mid_stream_prompt():
     assert source.aclosed is True
 
 
-async def test_close_does_not_hang_on_blocked_source():
-    """aclose() on a source blocked in receive() returns PROMPTLY (no hang).
+async def test_close_does_not_hang_on_blocked_source() -> None:
+    """aclose() on a source blocked in receive() must return promptly, without hanging.
+
+    Contract: this test ships broken if closing while a receive is pending
+    hangs instead of resolving within a tight timeout.
 
     Models a real Channels consumer blocked waiting for the next broadcast.
     We start a pending __anext__ in a background task, then aclose() the
@@ -228,8 +295,12 @@ async def test_close_does_not_hang_on_blocked_source():
     assert source.aclosed is True
 
 
-async def test_aclose_idempotent():
-    """Calling aclose() twice is safe and does not raise."""
+async def test_aclose_idempotent() -> None:
+    """Calling aclose() twice must be safe and must not raise.
+
+    Contract: this test ships broken if a redundant second aclose() call
+    (e.g. from overlapping cleanup paths) raises instead of no-op'ing.
+    """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     source = _RecordingSource([1, 2, 3])
@@ -239,11 +310,14 @@ async def test_aclose_idempotent():
     assert source.aclosed is True
 
 
-async def test_close_event_handle_exposed():
-    """The delivery iterator exposes a close handle (asyncio.Event-like).
+async def test_close_event_handle_exposed() -> None:
+    """The delivery iterator must expose a close handle (asyncio.Event-like).
+
+    Contract: this test ships broken if callers lose the ability to signal
+    close out-of-band via either "aclose()" or a settable close handle.
 
     A caller (complete{id} / disconnect) can signal close out-of-band either via
-    ``aclose()`` (the coroutine) or by setting the close handle directly.
+    "aclose()" (the coroutine) or by setting the close handle directly.
     """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
@@ -259,12 +333,12 @@ async def test_close_event_handle_exposed():
 # ---------------------------------------------------------------------------
 
 
-async def test_delivery_is_not_map_async_iterator():
-    """Our delivery object MUST NOT be a graphql-core MapAsyncIterator.
+async def test_delivery_is_not_map_async_iterator() -> None:
+    """The delivery object must not be a graphql-core MapAsyncIterator.
 
-    This is the structural guard from design §4: the COND-A win depends on
-    NOT routing through MapAsyncIterator. If a refactor accidentally returned a
-    MapAsyncIterator, the ~47 us/value overhead would silently return.
+    Contract: this is the structural guard from design paragraph 4 — the
+    COND-A win ships broken if a refactor accidentally routes delivery
+    through MapAsyncIterator, silently reintroducing the ~47 us/value cost.
     """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
@@ -276,11 +350,12 @@ async def test_delivery_is_not_map_async_iterator():
     assert isinstance(stock, MapAsyncIterator) is True
 
 
-def test_delivery_module_has_no_map_async_iterator_import():
-    """Static guard: ``delivery.py`` must not import MapAsyncIterator.
+def test_delivery_module_has_no_map_async_iterator_import() -> None:
+    """Static guard: "delivery.py" must not import MapAsyncIterator.
 
-    Reading the source text catches an accidental re-introduction even if the
-    runtime structural assert above were somehow bypassed.
+    Contract: this test ships broken if the module gains a MapAsyncIterator
+    import, catching an accidental re-introduction even if the runtime
+    structural assert above were somehow bypassed.
     """
     from django_graphex.subscriptions import delivery
 
@@ -289,8 +364,12 @@ def test_delivery_module_has_no_map_async_iterator_import():
     assert "map_async_iterator" not in source
 
 
-def test_delivery_module_has_no_graphene_or_channels_import():
-    """Transport-agnostic: ``delivery.py`` imports neither graphene nor channels."""
+def test_delivery_module_has_no_graphene_or_channels_import() -> None:
+    """Transport-agnostic guard: "delivery.py" must import neither graphene nor channels.
+
+    Contract: this test ships broken if the module gains a graphene,
+    channels, or Django dependency, breaking its pure-asyncio contract.
+    """
     from django_graphex.subscriptions import delivery
 
     source = inspect.getsource(delivery)
@@ -302,8 +381,12 @@ def test_delivery_module_has_no_graphene_or_channels_import():
     assert "from django" not in source
 
 
-def test_delivery_module_dunder_all():
-    """``__all__`` must export the delivery factory and class."""
+def test_delivery_module_dunder_all() -> None:
+    """The "delivery" module's __all__ must export the factory and class.
+
+    Contract: this test ships broken if make_delivery_iterator or
+    DeliveryIterator stops being re-exported through __all__.
+    """
     from django_graphex.subscriptions import delivery
 
     assert hasattr(delivery, "__all__")
@@ -316,12 +399,16 @@ def test_delivery_module_dunder_all():
 # ---------------------------------------------------------------------------
 
 
-async def test_map_fn_error_propagates():
-    """An exception raised inside the map fn propagates to the consumer."""
+async def test_map_fn_error_propagates() -> None:  # noqa: DOC005
+    """An exception raised inside the map fn must propagate to the consumer.
+
+    Contract: this test ships broken if a map-function error is swallowed
+    instead of surfacing to the caller consuming the delivery iterator.
+    """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     class _Boom(Exception):
-        pass
+        """A sentinel exception raised by the failing map function under test."""
 
     async def _explode(_value: Any) -> Any:
         raise _Boom("map fn failed")
@@ -331,12 +418,16 @@ async def test_map_fn_error_propagates():
         await delivery.__anext__()
 
 
-async def test_source_error_propagates():
-    """An exception raised by the underlying source propagates."""
+async def test_source_error_propagates() -> None:  # noqa: DOC005
+    """An exception raised by the underlying source must propagate.
+
+    Contract: this test ships broken if a source-side error is swallowed
+    instead of surfacing to the delivery iterator's consumer.
+    """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     class _SourceBoom(Exception):
-        pass
+        """A sentinel exception raised by the failing source under test."""
 
     async def _bad_source() -> AsyncGenerator[Any, None]:
         yield 1
@@ -354,23 +445,30 @@ async def test_source_error_propagates():
 
 
 @pytest.mark.django_db
-def test_assertNumQueries_zero_per_value(django_assert_num_queries):
-    """Delivering N in-memory dict values hits ZERO DB queries total.
+def test_assertNumQueries_zero_per_value(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    """Delivering N in-memory dict values must hit zero DB queries total.
 
-    The serialize-once invariant: the flat dicts are pre-serialized, so delivery
-    must never re-instantiate models or hit the ORM.
+    Contract: the serialize-once invariant ships broken if delivery
+    re-instantiates models or hits the ORM instead of streaming the
+    pre-serialized flat dicts as-is.
 
-    This test is intentionally SYNC: ``django_assert_num_queries`` calls
-    ``ensure_connection()`` synchronously, which raises ``SynchronousOnlyOperation``
+    This test is intentionally SYNC: "django_assert_num_queries" calls
+    "ensure_connection()" synchronously, which raises SynchronousOnlyOperation
     if a loop is already running (the asyncio_mode="auto" case). We drive the
-    async delivery via ``asyncio.run`` INSIDE the sync assertion block so the
+    async delivery via "asyncio.run" INSIDE the sync assertion block so the
     query-count guard wraps the full async consumption.
+
+    Args:
+        django_assert_num_queries: The pytest-django fixture used as a
+            context manager asserting an exact DB query count.
     """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     payloads = [{"id": i, "is_active": True} for i in range(10)]
 
-    async def _drive() -> list:
+    async def _drive() -> list[dict[str, Any]]:
         delivery = make_delivery_iterator(_list_source(payloads), _identity)
         return [value async for value in delivery]
 
@@ -386,15 +484,35 @@ def test_assertNumQueries_zero_per_value(django_assert_num_queries):
 # ---------------------------------------------------------------------------
 
 
-async def _consume_all(delivery: AsyncIterator) -> int:
+async def _consume_all(delivery: AsyncIterator[Any]) -> int:
+    """Drain an async iterator fully and count how many values it yielded.
+
+    Args:
+        delivery: The async iterator to drain.
+
+    Returns:
+        count: The number of values yielded before exhaustion.
+    """
     count = 0
     async for _value in delivery:
         count += 1
     return count
 
 
-def _median_per_value_us(make: Callable[[], AsyncIterator], n: int, runs: int = 5) -> float:
-    """Median wall-clock per-value microseconds over *runs* timed loops."""
+def _median_per_value_us(
+    make: Callable[[], AsyncIterator[Any]], n: int, runs: int = 5
+) -> float:
+    """Compute the median wall-clock per-value microseconds over "runs" timed loops.
+
+    Args:
+        make: A factory building a fresh async iterator to benchmark.
+        n: The number of values the built iterator is expected to yield.
+        runs: The number of timed runs to take the median over, after two
+            discarded warmup runs.
+
+    Returns:
+        median_us: The median per-value time in microseconds.
+    """
 
     async def _one() -> float:
         delivery = make()
@@ -411,8 +529,12 @@ def _median_per_value_us(make: Callable[[], AsyncIterator], n: int, runs: int = 
     return statistics.median(times)
 
 
-def test_perf_lightweight_materially_below_stock():
-    """Sanity perf bound: lightweight per-value << stock MapAsyncIterator.
+def test_perf_lightweight_materially_below_stock() -> None:
+    """The lightweight per-value cost must stay materially below stock MapAsyncIterator.
+
+    Contract: this test ships broken if the lightweight wrapper's median
+    per-value time exceeds either the absolute 5 us/value ceiling or one
+    tenth of stock MapAsyncIterator's per-value time.
 
     Conservative, noise-robust bound: the lightweight wrapper's median per-value
     time must be BOTH (a) below an absolute 5 us/value ceiling AND (b) below
@@ -424,10 +546,10 @@ def test_perf_lightweight_materially_below_stock():
 
     n = 2000
 
-    def _make_light() -> AsyncIterator:
+    def _make_light() -> AsyncIterator[Any]:
         return make_delivery_iterator(_list_source(list(range(n))), lambda v: v)
 
-    def _make_stock() -> AsyncIterator:
+    def _make_stock() -> AsyncIterator[Any]:
         return MapAsyncIterator(_list_source(list(range(n))), lambda v: v)
 
     light_us = _median_per_value_us(_make_light, n)

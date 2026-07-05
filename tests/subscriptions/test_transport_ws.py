@@ -1,36 +1,38 @@
 # -*- coding: utf-8 -*-
 """WU9 — graphql-transport-ws WebSocket transport adapter (transports/ws.py).
 
-The WS transport is the SECOND (heavier) engine validator (design §7): a Channels
-``AsyncJsonWebsocketConsumer`` speaking the graphql-transport-ws protocol over a
-SINGLE socket that multiplexes N operations. Both transports drive the SAME
-serialize-once engine (``create_source_event_stream`` → ``ChannelLayerSource`` →
-WU5 ``drive_subscription`` over the flat snake-pk dict).
+The WS transport is the SECOND (heavier) engine validator (design paragraph
+7): a Channels AsyncJsonWebsocketConsumer speaking the graphql-transport-ws
+protocol over a SINGLE socket that multiplexes N operations. Both transports
+drive the SAME serialize-once engine (create_source_event_stream ->
+ChannelLayerSource -> WU5 drive_subscription over the flat snake-pk dict).
 
 Conformance scenarios covered (the WU9 gate):
 
-  1. handshake: ``connection_init`` → ``connection_ack``.
-  2. subscribe → ``next`` (a broadcast → ``next{id, payload}`` with serialize-once
-     flat-pk data per WU7) → ``complete``.
+  1. handshake: connection_init -> connection_ack.
+  2. subscribe -> next (a broadcast -> next{id, payload} with serialize-once
+     flat-pk data per WU7) -> complete.
   3. N operations multiplexed over ONE socket (two ids, independent streams).
-  4. ``complete{id}`` from the client cancels ONLY that id's task + ``group_discard``s
+  4. complete{id} from the client cancels ONLY that id's task + group_discards
      its groups (the other id keeps streaming).
-  5. disconnect cancels ALL tasks + ``group_discard``s all (no ghost subscriber).
-  6. ``ping`` → ``pong``.
-  7. 4408 ``connection_init`` timeout.
+  5. disconnect cancels ALL tasks + group_discards all (no ghost subscriber).
+  6. ping -> pong.
+  7. 4408 connection_init timeout.
   8. 4409 duplicate subscribe id.
   9. 4401 subscribe before ack (and/or unauthorized). Plus 4400 malformed message.
 
-Delivery-path invariants: ``assertNumQueries(0)`` (serialize-once snake closure),
-authorize-deny handled (error frame / close), ``add_done_callback`` per-task
+Delivery-path invariants: assertNumQueries(0) (serialize-once snake closure),
+authorize-deny handled (error frame / close), add_done_callback per-task
 cleanup fires on abnormal task end.
-
 """
+
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
+from graphql import GraphQLSchema
 
 pytest.importorskip("channels")
 
@@ -54,39 +56,47 @@ pytestmark = pytest.mark.django_db(transaction=True)
 # output registry).
 # ---------------------------------------------------------------------------
 
-from django_graphex.types import DjangoObjectType as _DOT
+from django_graphex.types import DjangoObjectType as _DOT  # noqa: E402
 
 
 class _TagT(_DOT):
     class Meta:
         model = __import__("tests.models", fromlist=["Tag"]).Tag
 
+
 class _CategoryT(_DOT):
     class Meta:
         model = __import__("tests.models", fromlist=["Category"]).Category
 
+
 class _AuthorT(_DOT):
     class Meta:
         model = __import__("tests.models", fromlist=["Author"]).Author
+
 
 class _PostT(_DOT):
     class Meta:
         model = Post
 
 
-def _build_native_schema():
-    """Assemble a native subscription schema (PostModelType.SubscriptionField)."""
+def _build_native_schema() -> GraphQLSchema:
+    """Assemble a native subscription schema (PostModelType.SubscriptionField).
+
+    Returns:
+        schema: The assembled GraphQLSchema with a "post" subscription field.
+    """
     from graphql import GraphQLBoolean
 
-    from django_graphex import DjangoModelType, ObjectType, field
-    from django_graphex.native.registry_compiler import compile_all_outputs
+    from django_graphex.core import ObjectType, field
+    from django_graphex.core.registry_compiler import compile_all_outputs
     from django_graphex.schema import DjangoGraphQLSchema
+    from django_graphex.types import DjangoModelType
 
     class PostModelType(DjangoModelType):
         class Meta:
             model = Post
             stream = "posts"
-            serialize_data = True
+            payload_mode = "full"
 
     class Query(ObjectType):
         ok = field(GraphQLBoolean)
@@ -99,8 +109,20 @@ def _build_native_schema():
     return schema.graphql_schema
 
 
-def _notify(group: str, data: dict, *, action: str = "create", pk=1) -> dict:
-    """Build a producer-shaped ``subscription.notify`` envelope (bindings.py)."""
+def _notify(
+    group: str, data: dict[str, Any], *, action: str = "create", pk: int = 1
+) -> dict[str, Any]:
+    """Build a producer-shaped "subscription.notify" envelope (bindings.py).
+
+    Args:
+        group: The channel-layer group name the message targets.
+        data: The serialized payload data to embed in the message.
+        action: The CRUD action name to embed in the payload.
+        pk: The primary key to embed in the envelope.
+
+    Returns:
+        message: The assembled notify message dict.
+    """
     return {
         "type": "subscription.notify",
         "stream": "posts",
@@ -113,7 +135,13 @@ def _notify(group: str, data: dict, *, action: str = "create", pk=1) -> dict:
 class _User:
     """A minimal authenticated/anonymous user stand-in."""
 
-    def __init__(self, *, authenticated: bool = True):
+    def __init__(self, *, authenticated: bool = True) -> None:
+        """Store the authentication flag and derive a matching pk.
+
+        Args:
+            authenticated: Whether this stand-in reports itself as
+                authenticated; an unauthenticated user gets pk=None.
+        """
         self.is_authenticated = authenticated
         self.pk = 1 if authenticated else None
 
@@ -132,12 +160,22 @@ _FLAT_POST = {
 _SUB_QUERY = "subscription { post(action: CREATE) { id title author tags } }"
 
 
-def _make_communicator(consumer_app, *, authenticated: bool = True, layer=None):
+def _make_communicator(
+    consumer_app: Any, *, authenticated: bool = True, layer: Any = None
+) -> WebsocketCommunicator:
     """Build a WebsocketCommunicator for the graphql-transport-ws subprotocol.
 
     Mirrors how a real client connects: the subprotocol header advertises
-    ``graphql-transport-ws`` and the scope carries the authenticated user (the
-    auth boundary the WS consumer reads from ``self.scope['user']``).
+    "graphql-transport-ws" and the scope carries the authenticated user (the
+    auth boundary the WS consumer reads from self.scope['user']).
+
+    Args:
+        consumer_app: The consumer class or ASGI app to communicate with.
+        authenticated: Whether the attached stand-in user is authenticated.
+        layer: An optional channel layer to attach to the scope.
+
+    Returns:
+        communicator: The configured WebsocketCommunicator, not yet connected.
     """
     application = (
         consumer_app.as_asgi() if hasattr(consumer_app, "as_asgi") else consumer_app
@@ -153,8 +191,17 @@ def _make_communicator(consumer_app, *, authenticated: bool = True, layer=None):
     return communicator
 
 
-async def _connect_and_ack(communicator):
-    """Open the socket and complete the connection_init → connection_ack handshake."""
+async def _connect_and_ack(
+    communicator: WebsocketCommunicator,
+) -> WebsocketCommunicator:
+    """Open the socket and complete the connection_init -> connection_ack handshake.
+
+    Args:
+        communicator: The communicator to connect and handshake.
+
+    Returns:
+        communicator: The same communicator, now connected and acknowledged.
+    """
     connected, _subprotocol = await communicator.connect()
     assert connected, "the WS handshake (accept) must succeed"
     await communicator.send_json_to({"type": "connection_init"})
@@ -163,24 +210,46 @@ async def _connect_and_ack(communicator):
     return communicator
 
 
-def _consumer_for(ws, communicator):
-    """Resolve the live consumer instance backing *communicator*.
+def _consumer_for(ws: Any, communicator: WebsocketCommunicator) -> Any:
+    """Resolve the live consumer instance backing "communicator".
 
     The WS module records each connected consumer in a registry keyed by the
-    scope object identity (each communicator owns a unique ``scope`` dict), so a
+    scope object identity (each communicator owns a unique scope dict), so a
     test can introspect the live per-id operation registry / started sources.
+
+    Args:
+        ws: The transports.ws module (carrying the live-consumer registry).
+        communicator: The communicator whose backing consumer is resolved.
+
+    Returns:
+        consumer: The live consumer instance for this communicator's scope.
     """
     consumer = ws.get_live_consumer(communicator.scope)
     assert consumer is not None, "no live consumer registered for this socket"
     return consumer
 
 
-async def _await_started_group(ws, communicator, op_id, *, timeout=2.0):
-    """Poll until operation *op_id*'s source has joined a group; return the group.
+async def _await_started_group(
+    ws: Any, communicator: WebsocketCommunicator, op_id: str, *, timeout: float = 2.0
+) -> str:
+    """Poll until operation "op_id"'s source has joined a group; return the group.
 
     The subscribe handler starts a task that runs the engine's subscribe entry
     (joining the Channels group); this polls the live consumer's registry until
     the source is started, then returns its first joined group name.
+
+    Args:
+        ws: The transports.ws module (carrying the live-consumer registry).
+        communicator: The communicator whose consumer is polled.
+        op_id: The operation id whose started source is awaited.
+        timeout: The maximum time in seconds to poll before failing.
+
+    Returns:
+        group: The first group name the operation's source joined.
+
+    Raises:
+        AssertionError: When the operation never starts a source within
+            "timeout".
     """
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
@@ -190,11 +259,26 @@ async def _await_started_group(ws, communicator, op_id, *, timeout=2.0):
             if source is not None and source.joined_groups:
                 return source.joined_groups[0]
         await asyncio.sleep(0.01)
-    raise AssertionError(f"operation {op_id!r} never started a source within {timeout}s")
+    raise AssertionError(
+        f"operation {op_id!r} never started a source within {timeout}s"
+    )
 
 
-async def _await_operation_gone(ws, communicator, op_id, *, timeout=2.0):
-    """Poll until operation *op_id* is no longer in the consumer's registry."""
+async def _await_operation_gone(
+    ws: Any, communicator: WebsocketCommunicator, op_id: str, *, timeout: float = 2.0
+) -> None:
+    """Poll until operation "op_id" is no longer in the consumer's registry.
+
+    Args:
+        ws: The transports.ws module (carrying the live-consumer registry).
+        communicator: The communicator whose consumer is polled.
+        op_id: The operation id expected to be removed from the registry.
+        timeout: The maximum time in seconds to poll before failing.
+
+    Raises:
+        AssertionError: When the operation is still registered after
+            "timeout".
+    """
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         consumer = ws.get_live_consumer(communicator.scope)
@@ -209,8 +293,15 @@ async def _await_operation_gone(ws, communicator, op_id, *, timeout=2.0):
 # ---------------------------------------------------------------------------
 
 
-async def test_handshake_connection_init_ack(monkeypatch):
-    """``connection_init`` is answered with ``connection_ack`` (the auth boundary)."""
+async def test_handshake_connection_init_ack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """connection_init must be answered with connection_ack (the auth boundary).
+
+    Contract: this test ships broken if the handshake fails to accept the
+    graphql-transport-ws subprotocol or to reply with connection_ack.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -235,8 +326,15 @@ async def test_handshake_connection_init_ack(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_subscribe_next_then_complete(monkeypatch):
-    """``subscribe`` → a broadcast → ``next{id, payload}`` (flat pk data) → ``complete``."""
+async def test_subscribe_next_then_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A subscribe plus broadcast must yield next{id, payload} then complete.
+
+    Contract: this test ships broken if the delivered next frame lacks the
+    serialize-once flat pk data or if the terminal complete frame is missing.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -280,8 +378,17 @@ async def test_subscribe_next_then_complete(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_multiplex_two_independent_operations(monkeypatch):
-    """Two ids over ONE socket → independent streams (each id gets only its own)."""
+async def test_multiplex_two_independent_operations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two ids over one socket must run independent streams.
+
+    Contract: this test ships broken if a single broadcast fails to reach
+    both multiplexed operation ids.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -320,15 +427,25 @@ async def test_multiplex_two_independent_operations(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_client_complete_cancels_only_that_id(monkeypatch):
-    """Client ``complete{id}`` cancels ONLY that id's task + discards ITS groups;
-    the other id keeps streaming."""
+async def test_client_complete_cancels_only_that_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client complete{id} must cancel only that id's task, leaving the other streaming.
+
+    Contract: this test ships broken if cancelling one operation id also
+    cancels or discards the group of the other still-live id.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     discards: list[tuple[str, str]] = []
 
     class _RecordingLayer(InMemoryChannelLayer):
-        async def group_discard(self, group, channel):
+        """An in-memory channel layer that records every group_discard call."""
+
+        async def group_discard(self, group: str, channel: str) -> None:
             discards.append((group, channel))
             return await super().group_discard(group, channel)
 
@@ -370,14 +487,25 @@ async def test_client_complete_cancels_only_that_id(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_disconnect_cancels_all_and_discards_all(monkeypatch):
-    """Disconnect cancels ALL operation tasks + ``group_discard``s every joined group."""
+async def test_disconnect_cancels_all_and_discards_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disconnect must cancel all operation tasks and group_discard every joined group.
+
+    Contract: this test ships broken if any operation's group survives a
+    disconnect, leaving a ghost subscriber.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     discards: list[tuple[str, str]] = []
 
     class _RecordingLayer(InMemoryChannelLayer):
-        async def group_discard(self, group, channel):
+        """An in-memory channel layer that records every group_discard call."""
+
+        async def group_discard(self, group: str, channel: str) -> None:
             discards.append((group, channel))
             return await super().group_discard(group, channel)
 
@@ -414,8 +542,12 @@ async def test_disconnect_cancels_all_and_discards_all(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_ping_pong(monkeypatch):
-    """A ``ping`` message is answered with ``pong``."""
+async def test_ping_pong(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ping message must be answered with pong.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -437,8 +569,12 @@ async def test_ping_pong(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_connection_init_timeout_4408(monkeypatch):
-    """No ``connection_init`` within the timeout → close code 4408."""
+async def test_connection_init_timeout_4408(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No connection_init within the timeout must close with code 4408.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -461,8 +597,12 @@ async def test_connection_init_timeout_4408(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_duplicate_subscribe_id_4409(monkeypatch):
-    """A second ``subscribe`` with an in-use id → close code 4409."""
+async def test_duplicate_subscribe_id_4409(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second subscribe with an in-use id must close with code 4409.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -490,8 +630,12 @@ async def test_duplicate_subscribe_id_4409(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_subscribe_before_ack_4401(monkeypatch):
-    """A ``subscribe`` BEFORE ``connection_ack`` → close code 4401 (Unauthorized)."""
+async def test_subscribe_before_ack_4401(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A subscribe before connection_ack must close with code 4401 (Unauthorized).
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -511,8 +655,12 @@ async def test_subscribe_before_ack_4401(monkeypatch):
     assert out["code"] == 4401
 
 
-async def test_too_many_init_requests_4429(monkeypatch):
-    """A second ``connection_init`` → close code 4429 (Too many init requests)."""
+async def test_too_many_init_requests_4429(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second connection_init must close with code 4429 (Too many init requests).
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -528,8 +676,12 @@ async def test_too_many_init_requests_4429(monkeypatch):
     assert out["code"] == 4429
 
 
-async def test_malformed_message_4400(monkeypatch):
-    """A malformed (unknown-type / non-dict) message → close code 4400."""
+async def test_malformed_message_4400(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed (unknown-type / non-dict) message must close with code 4400.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
     from django_graphex.subscriptions.transports import ws
 
     layer = InMemoryChannelLayer()
@@ -556,23 +708,42 @@ async def test_malformed_message_4400(monkeypatch):
 
 
 class _RecordingLayer(InMemoryChannelLayer):
-    """An ``InMemoryChannelLayer`` that records every ``group_discard`` call."""
+    """An InMemoryChannelLayer that records every "group_discard" call."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the underlying layer and the discard call log.
+
+        Args:
+            args: Positional arguments forwarded to InMemoryChannelLayer.
+            kwargs: Keyword arguments forwarded to InMemoryChannelLayer.
+        """
         super().__init__(*args, **kwargs)
         self.discards: list[tuple[str, str]] = []
 
-    async def group_discard(self, group, channel):
+    async def group_discard(self, group: str, channel: str) -> None:
+        """Record the discard, then delegate to the real implementation.
+
+        Args:
+            group: The group name being discarded.
+            channel: The channel name being removed from the group.
+        """
         self.discards.append((group, channel))
         return await super().group_discard(group, channel)
 
 
-async def test_server_close_4409_tears_down_live_op(monkeypatch):
-    """A 4409 dup-id close with a LIVE op cancels its task + discards ITS group.
+async def test_server_close_4409_tears_down_live_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 4409 dup-id close with a live op must cancel its task and discard its group.
 
-    The teardown happens BY THE CLOSE itself — no subsequent inbound
-    ``websocket.disconnect`` is delivered before the assertions. This FAILS if
-    ``_close`` only sends ``websocket.close`` (the op's group would dangle).
+    Contract: this test ships broken if the 4409 close path leaves the live
+    operation's task running or its group un-discarded until a later
+    disconnect, since the teardown must happen by the close itself — no
+    subsequent inbound websocket.disconnect is delivered before the
+    assertions.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from django_graphex.subscriptions.transports import ws
 
@@ -622,11 +793,16 @@ async def test_server_close_4409_tears_down_live_op(monkeypatch):
     )
 
 
-async def test_server_close_4429_tears_down_live_op(monkeypatch):
-    """A 4429 second-init close with a LIVE op cancels its task + discards its group.
+async def test_server_close_4429_tears_down_live_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 4429 second-init close with a live op must cancel its task and discard its group.
 
-    Teardown happens BY THE CLOSE (no subsequent inbound disconnect first). This
-    FAILS if ``_close`` only delegates to ``self.close()``.
+    Contract: this test ships broken if the 4429 close path defers teardown
+    to a later disconnect instead of tearing down by the close itself.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from django_graphex.subscriptions.transports import ws
 
@@ -667,11 +843,17 @@ async def test_server_close_4429_tears_down_live_op(monkeypatch):
     assert layer.discards == discards_before
 
 
-async def test_server_close_4400_midstream_tears_down_live_op(monkeypatch):
-    """A 4400 malformed-message close MID-STREAM tears down a live op's group.
+async def test_server_close_4400_midstream_tears_down_live_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 4400 malformed-message close mid-stream must tear down a live op's group.
 
-    A malformed frame arriving while an operation is live closes with 4400 and
-    MUST group_discard the live op's group BY THE CLOSE (not a later disconnect).
+    Contract: this test ships broken if a malformed frame arriving while an
+    operation is live closes with 4400 without discarding the live op's
+    group by the close itself.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from django_graphex.subscriptions.transports import ws
 
@@ -716,11 +898,16 @@ async def test_server_close_4400_midstream_tears_down_live_op(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_ws_delivery_path_is_zero_queries(monkeypatch):
-    """Delivering one event over the WS stream issues ZERO DB queries.
+async def test_ws_delivery_path_is_zero_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Delivering one event over the WS stream must issue zero DB queries.
 
-    The snake-closure projects the serialize-once flat pk dict in memory; the
-    transport never re-serializes nor instantiates a model.
+    Contract: this test ships broken if the WS delivery path re-serializes
+    or instantiates a model instead of projecting the pre-serialized dict.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
     """
     from asgiref.sync import sync_to_async
     from django.db import connection, reset_queries
@@ -765,8 +952,12 @@ async def test_ws_delivery_path_is_zero_queries(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_ws_module_does_not_import_graphene():
-    """``transports/ws.py`` must not import graphene (the no-graphene-import gate)."""
+def test_ws_module_does_not_import_graphene() -> None:
+    """ "transports/ws.py" must not import graphene (the no-graphene-import gate).
+
+    Contract: this test ships broken if the module gains a real graphene
+    import or an import of the legacy graphene_settings symbol.
+    """
     import ast
     import inspect
 

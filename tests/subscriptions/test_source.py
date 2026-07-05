@@ -1,34 +1,38 @@
 # -*- coding: utf-8 -*-
 """WU4 — ChannelLayerSource: the native engine's group consumer.
 
-Design §3 (serialize-once data path) + §1 (engine layering). ``ChannelLayerSource``
-is a GROUP consumer (NOT a WebsocketConsumer) that:
+Design paragraph 3 (serialize-once data path) + paragraph 1 (engine
+layering). "ChannelLayerSource" is a GROUP consumer (NOT a WebsocketConsumer)
+that:
 
-  - joins EXACTLY the action-selected groups (``('create','update','delete')`` for
-    all-actions, else ``(action,)`` — the #1420 single-action guard: a single-action
+  - joins EXACTLY the action-selected groups ("('create','update','delete')" for
+    all-actions, else "(action,)" — the #1420 single-action guard: a single-action
     source must NOT join the other two groups),
-  - runs an async receive loop over ``channel_layer.receive(channel)``,
-  - applies ``split_filters`` PRE-execute (in-memory equality drop) so a filtered
+  - runs an async receive loop over "channel_layer.receive(channel)",
+  - applies "split_filters" PRE-execute (in-memory equality drop) so a filtered
     event yields NOTHING (zero downstream execute),
-  - yields the already-serialized flat ``data`` dict (``payload['data']``) for a
+  - yields the already-serialized flat "data" dict ("payload['data']") for a
     matching event (NO re-serialize, NO model instantiation — the serialize-once
-    invariant: producer-side ``serialize_instance`` runs once, the consumer never
+    invariant: producer-side "serialize_instance" runs once, the consumer never
     re-serializes),
-  - on ``aclose()`` / ``__aexit__`` ``group_discard``s EVERY joined group (no ghost
-    subscribers) and releases a consumer blocked in ``receive()`` promptly so the
-    WU2 ``DeliveryIterator.aclose()`` is not gated on the next broadcast.
+  - on "aclose()" / "__aexit__" "group_discard"s EVERY joined group (no ghost
+    subscribers) and releases a consumer blocked in "receive()" promptly so the
+    WU2 "DeliveryIterator.aclose()" is not gated on the next broadcast.
 
-These tests are the WU4 gate and use ``InMemoryChannelLayer`` (channels 4.3.2).
+These tests are the WU4 gate and use "InMemoryChannelLayer" (channels 4.3.2).
 """
+
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
 pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
+from pytest_django.fixtures import DjangoAssertNumQueries  # noqa: E402
 
 from django_graphex.subscriptions.source import ChannelLayerSource  # noqa: E402
 
@@ -37,8 +41,20 @@ from django_graphex.subscriptions.source import ChannelLayerSource  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def _notify_message(group: str, data: dict, *, action: str = "create", pk=1) -> dict:
-    """Build a producer-shaped ``subscription.notify`` envelope (bindings.py)."""
+def _notify_message(
+    group: str, data: dict[str, Any], *, action: str = "create", pk: int = 1
+) -> dict[str, Any]:
+    """Build a producer-shaped "subscription.notify" envelope (bindings.py).
+
+    Args:
+        group: The channel-layer group name the message targets.
+        data: The serialized payload data to embed in the message.
+        action: The CRUD action name to embed in the payload.
+        pk: The primary key to embed in the envelope.
+
+    Returns:
+        message: The assembled notify message dict.
+    """
     return {
         "type": "subscription.notify",
         "stream": "demo",
@@ -48,8 +64,16 @@ def _notify_message(group: str, data: dict, *, action: str = "create", pk=1) -> 
     }
 
 
-async def _receive_one(source: ChannelLayerSource, *, timeout: float = 1.0):
-    """Pull the next yielded value from *source* with a wall-clock timeout."""
+async def _receive_one(source: ChannelLayerSource, *, timeout: float = 1.0) -> Any:
+    """Pull the next yielded value from "source" with a wall-clock timeout.
+
+    Args:
+        source: The source to pull the next value from.
+        timeout: The maximum time in seconds to wait for a value.
+
+    Returns:
+        value: The next value yielded by the source.
+    """
     return await asyncio.wait_for(source.__anext__(), timeout=timeout)
 
 
@@ -59,8 +83,12 @@ async def _receive_one(source: ChannelLayerSource, *, timeout: float = 1.0):
 
 
 @pytest.mark.asyncio
-async def test_all_actions_joins_exactly_three_groups():
-    """``all_actions`` joins exactly the create/update/delete groups."""
+async def test_all_actions_joins_exactly_three_groups() -> None:
+    """ "all_actions" must join exactly the create/update/delete groups.
+
+    Contract: this test ships broken if an all-actions source joins a
+    different group set than exactly create/update/delete.
+    """
     layer = InMemoryChannelLayer()
     groups = ["demo-create", "demo-update", "demo-delete"]
     source = ChannelLayerSource(groups=groups, channel_layer=layer)
@@ -77,11 +105,14 @@ async def test_all_actions_joins_exactly_three_groups():
 
 
 @pytest.mark.asyncio
-async def test_single_action_joins_exactly_one_group_1420_guard():
-    """#1420 guard: a single-action source joins ONLY its group, not the others.
+async def test_single_action_joins_exactly_one_group_1420_guard() -> None:
+    """#1420 guard: a single-action source must join only its group, not the others.
 
-    The bug was hardcoding ``('create','update','delete')`` regardless of the
-    requested action, so a ``create``-only subscriber also received update/delete
+    Contract: this test ships broken if a single-action source rejoins the
+    other two action groups (the #1420 regression).
+
+    The bug was hardcoding "('create','update','delete')" regardless of the
+    requested action, so a create-only subscriber also received update/delete
     events. The join set must mirror the caller-selected action.
     """
     layer = InMemoryChannelLayer()
@@ -99,8 +130,12 @@ async def test_single_action_joins_exactly_one_group_1420_guard():
 
 
 @pytest.mark.asyncio
-async def test_context_manager_start_joins_groups():
-    """``async with`` enters/starts and joins the selected groups."""
+async def test_context_manager_start_joins_groups() -> None:
+    """ "async with" must enter/start and join the selected groups.
+
+    Contract: this test ships broken if entering the context manager fails
+    to start the source and join its configured groups.
+    """
     layer = InMemoryChannelLayer()
     async with ChannelLayerSource(
         groups=["demo-create"], channel_layer=layer
@@ -115,8 +150,12 @@ async def test_context_manager_start_joins_groups():
 
 
 @pytest.mark.asyncio
-async def test_broadcast_to_joined_group_yields_flat_data_dict():
-    """A broadcast to a joined group yields the flat ``payload['data']`` dict."""
+async def test_broadcast_to_joined_group_yields_flat_data_dict() -> None:
+    """A broadcast to a joined group must yield the flat payload['data'] dict.
+
+    Contract: this test ships broken if the yielded value is re-serialized
+    or otherwise differs from the exact flat dict the producer sent.
+    """
     layer = InMemoryChannelLayer()
     flat = {"id": 1, "is_active": True, "date_joined": "2026-06-14"}
     async with ChannelLayerSource(
@@ -131,19 +170,30 @@ async def test_broadcast_to_joined_group_yields_flat_data_dict():
 
 
 @pytest.mark.asyncio
-async def test_serialize_instance_not_called_on_consumer_yield_path(monkeypatch):
-    """The consumer NEVER calls ``serialize_instance`` — serialize-once invariant.
+async def test_serialize_instance_not_called_on_consumer_yield_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consumer must never call serialize_instance — the serialize-once invariant.
+
+    Contract: this test ships broken if the consumer re-serializes an
+    instance instead of yielding the already-flat producer-serialized dict.
 
     The producer (binding) serializes ONCE before group_send. The source yields
-    the already-flat dict, so ``serialize_instance`` must not run again on the
+    the already-flat dict, so serialize_instance must not run again on the
     consumer side regardless of how many subscribers consume the same event.
+
+    Args:
+        monkeypatch: The pytest fixture used to wrap serialize_instance with
+            a call-counting spy.
     """
     from django_graphex.subscriptions import mixins
 
     calls = {"n": 0}
     real = mixins.serialize_instance
 
-    def _counting(*args, **kwargs):  # pragma: no cover - must never fire here
+    def _counting(
+        *args: Any, **kwargs: Any
+    ) -> Any:  # pragma: no cover - must never fire here
         calls["n"] += 1
         return real(*args, **kwargs)
 
@@ -162,25 +212,32 @@ async def test_serialize_instance_not_called_on_consumer_yield_path(monkeypatch)
 
 
 @pytest.mark.django_db
-def test_assertNumQueries_zero_on_consumer_yield_path(django_assert_num_queries):
-    """Yielding a flat dict for an in-memory-equality match hits ZERO DB queries.
+def test_assertNumQueries_zero_on_consumer_yield_path(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    """Yielding a flat dict for an in-memory-equality match must hit zero DB queries.
 
-    SYNC test driving the async receive via ``asyncio.run`` inside the assertion
-    block (``django_assert_num_queries`` calls ``ensure_connection()`` synchronously,
-    which raises ``SynchronousOnlyOperation`` under asyncio_mode="auto").
+    Contract: this test ships broken if an in-memory-resolvable equality
+    filter falls through to a DB query instead of resolving purely in memory.
+
+    SYNC test driving the async receive via asyncio.run inside the assertion
+    block (django_assert_num_queries calls ensure_connection() synchronously,
+    which raises SynchronousOnlyOperation under asyncio_mode="auto").
+
+    Args:
+        django_assert_num_queries: The pytest-django fixture used as a
+            context manager asserting an exact DB query count.
     """
     layer = InMemoryChannelLayer()
     flat = {"id": 1, "owner_id": 5}
 
-    async def _drive() -> dict:
+    async def _drive() -> dict[str, Any]:
         source = ChannelLayerSource(groups=["demo-create"], channel_layer=layer)
         await source.start()
         try:
             # Equality filter resolvable fully in memory (no "__" lookup).
             source.filters = {"owner_id": 5}
-            await layer.group_send(
-                "demo-create", _notify_message("demo-create", flat)
-            )
+            await layer.group_send("demo-create", _notify_message("demo-create", flat))
             return await asyncio.wait_for(source.__anext__(), timeout=1.0)
         finally:
             await source.aclose()
@@ -197,8 +254,11 @@ def test_assertNumQueries_zero_on_consumer_yield_path(django_assert_num_queries)
 
 
 @pytest.mark.asyncio
-async def test_non_matching_filter_event_dropped_pre_execute():
-    """An in-memory equality mismatch drops the event BEFORE any execute.
+async def test_non_matching_filter_event_dropped_pre_execute() -> None:
+    """An in-memory equality mismatch must drop the event before any execute.
+
+    Contract: this test ships broken if a non-matching event is still
+    yielded instead of being dropped pre-execute.
 
     Sending a non-matching event then a matching one must yield ONLY the matching
     payload — the rejected event produces zero downstream values.
@@ -222,8 +282,12 @@ async def test_non_matching_filter_event_dropped_pre_execute():
 
 
 @pytest.mark.asyncio
-async def test_no_filters_yields_every_event():
-    """With no filters configured every joined-group event is yielded as-is."""
+async def test_no_filters_yields_every_event() -> None:
+    """With no filters configured, every joined-group event must be yielded as-is.
+
+    Contract: this test ships broken if an event is dropped or reordered
+    when no filter is configured on the source.
+    """
     layer = InMemoryChannelLayer()
     async with ChannelLayerSource(
         groups=["demo-create"], channel_layer=layer
@@ -242,8 +306,12 @@ async def test_no_filters_yields_every_event():
 
 
 @pytest.mark.asyncio
-async def test_aclose_group_discards_every_joined_group():
-    """``aclose()`` ``group_discard``s EVERY joined group — no ghost subscriber."""
+async def test_aclose_group_discards_every_joined_group() -> None:
+    """aclose() must group_discard every joined group, leaving no ghost subscriber.
+
+    Contract: this test ships broken if any joined group is left un-discarded
+    after aclose().
+    """
     layer = InMemoryChannelLayer()
     groups = ["demo-create", "demo-update", "demo-delete"]
     source = ChannelLayerSource(groups=groups, channel_layer=layer)
@@ -262,8 +330,12 @@ async def test_aclose_group_discards_every_joined_group():
 
 
 @pytest.mark.asyncio
-async def test_aexit_group_discards_every_joined_group():
-    """``__aexit__`` discards every joined group on context exit."""
+async def test_aexit_group_discards_every_joined_group() -> None:
+    """__aexit__ must discard every joined group on context exit.
+
+    Contract: this test ships broken if exiting the "async with" block
+    leaves any joined group un-discarded.
+    """
     layer = InMemoryChannelLayer()
     groups = ["demo-create", "demo-update"]
     async with ChannelLayerSource(groups=groups, channel_layer=layer) as source:
@@ -276,15 +348,17 @@ async def test_aexit_group_discards_every_joined_group():
 
 
 @pytest.mark.asyncio
-async def test_aclose_releases_blocked_receive_promptly():
-    """``aclose()`` on a source blocked in ``receive()`` returns PROMPTLY.
+async def test_aclose_releases_blocked_receive_promptly() -> None:
+    """aclose() on a source blocked in receive() must return promptly.
 
-    A background ``__anext__`` parks in ``receive()`` (no event ever arrives).
-    ``aclose()`` must release it (raise StopAsyncIteration) ON ITS OWN — not by
-    relying on a downstream ``wait_for`` timeout cancelling the pull — so the WU2
-    ``DeliveryIterator.aclose()`` is never gated on the next broadcast. The
+    Contract: this test ships broken if aclose() relies on a downstream
+    timeout to release a blocked receive instead of cancelling it directly,
+    which would gate WU2's DeliveryIterator.aclose() on the next broadcast.
+
+    A background __anext__ parks in receive() (no event ever arrives).
+    aclose() must release it (raise StopAsyncIteration) ON ITS OWN. The
     promptness assertion (sub-500ms vs the 5s ceiling) proves the release is
-    driven by ``aclose()`` cancelling the parked receive, NOT by the ceiling.
+    driven by aclose() cancelling the parked receive, NOT by the ceiling.
     """
     import time
 
@@ -312,8 +386,12 @@ async def test_aclose_releases_blocked_receive_promptly():
 
 
 @pytest.mark.asyncio
-async def test_aclose_idempotent():
-    """Calling ``aclose()`` twice is safe and discards groups only once."""
+async def test_aclose_idempotent() -> None:
+    """Calling aclose() twice must be safe and must discard groups only once.
+
+    Contract: this test ships broken if a redundant second aclose() call
+    raises or re-attempts the discard sweep.
+    """
     layer = InMemoryChannelLayer()
     source = ChannelLayerSource(groups=["demo-create"], channel_layer=layer)
     await source.start()
@@ -326,10 +404,14 @@ async def test_aclose_idempotent():
 
 
 @pytest.mark.asyncio
-async def test_group_discard_runs_even_on_abnormal_teardown():
-    """try/finally: an exception during teardown still discards every group.
+async def test_group_discard_runs_even_on_abnormal_teardown() -> None:  # noqa: DOC005
+    """An exception during teardown must still discard every joined group.
 
-    Simulates an abnormal ``__aexit__`` (exception propagating through the
+    Contract: this test ships broken if an exception propagating through
+    the context body leaks a joined group instead of the try/finally
+    teardown discarding it regardless.
+
+    Simulates an abnormal __aexit__ (exception propagating through the
     context body); the group_discard cleanup must still run for every joined
     group so no ghost subscriber leaks.
     """
@@ -369,36 +451,71 @@ class _FakeChannelLayer:
     groups were actually discarded (none must leak past the failing one).
     """
 
-    def __init__(self, *, raise_on: set[str]):
+    def __init__(self, *, raise_on: set[str]) -> None:
+        """Store the set of groups whose discard should raise.
+
+        Args:
+            raise_on: The group names whose group_discard call raises
+                RuntimeError instead of succeeding.
+        """
         self._raise_on = set(raise_on)
         self.groups: dict[str, set[str]] = {}
         self.discard_attempts: list[str] = []
         self._counter = 0
 
     async def new_channel(self) -> str:
+        """Allocate and return a new, uniquely numbered fake channel name.
+
+        Returns:
+            channel: A name of the form "fake.channel!N" for incrementing N.
+        """
         self._counter += 1
         return f"fake.channel!{self._counter}"
 
     async def group_add(self, group: str, channel: str) -> None:
+        """Record a (group, channel) join.
+
+        Args:
+            group: The group name being joined.
+            channel: The channel name joining the group.
+        """
         self.groups.setdefault(group, set()).add(channel)
 
     async def group_discard(self, group: str, channel: str) -> None:
+        """Record the discard attempt, then either raise or actually discard.
+
+        Args:
+            group: The group name being left.
+            channel: The channel name leaving the group.
+
+        Raises:
+            RuntimeError: When "group" is one of the configured raise_on
+                groups, simulating a transient Redis failure.
+        """
         # Record EVERY attempt so the test proves the sweep never aborts early.
         self.discard_attempts.append(group)
         if group in self._raise_on:
             raise RuntimeError(f"transient redis failure discarding {group!r}")
         self.groups.get(group, set()).discard(channel)
 
-    async def receive(self, channel: str):  # pragma: no cover - not exercised
+    async def receive(self, channel: str) -> Any:  # pragma: no cover - not exercised
+        """Block forever, simulating a receive that never resolves.
+
+        Args:
+            channel: The channel name to receive on; unused.
+        """
         await asyncio.Event().wait()
 
 
 @pytest.mark.asyncio
-async def test_aclose_discard_sweep_is_exception_isolated():
-    """A raising ``group_discard`` must NOT abort the sweep (no ghost leak).
+async def test_aclose_discard_sweep_is_exception_isolated() -> None:
+    """A raising group_discard must not abort the sweep, avoiding a ghost leak.
+
+    Contract: this test ships broken if the sweep aborts on the first
+    group_discard failure instead of attempting every joined group.
 
     The docstring promises "every joined group is removed even if one discard
-    raises". A non-isolated ``try/finally`` (guarding only ``self._channel = None``)
+    raises". A non-isolated try/finally (guarding only "self._channel = None")
     aborts on the first raise and leaks the failing group AND every group after
     it. This test sends the raising group in the MIDDLE so a non-isolated sweep
     leaks the trailing group; an isolated sweep attempts all three and surfaces
@@ -444,14 +561,16 @@ async def test_aclose_discard_sweep_is_exception_isolated():
 
 
 @pytest.mark.asyncio
-async def test_external_cancellation_propagates():
-    """Cancelling the consuming task (NOT via aclose) must propagate CancelledError.
+async def test_external_cancellation_propagates() -> None:
+    """Cancelling the consuming task (not via aclose) must propagate CancelledError.
 
-    A consumer parked in ``receive()`` whose task is cancelled externally (e.g.
-    SSE/WS teardown cancelling the request task) must see ``CancelledError``
-    propagate — NOT be silently converted to ``StopAsyncIteration``. Swallowing
-    it breaks cooperative cancellation and leaks groups when the caller relies on
-    the cancellation propagating.
+    Contract: this test ships broken if an externally cancelled receive is
+    silently converted to StopAsyncIteration, breaking cooperative
+    cancellation for callers like SSE/WS teardown.
+
+    A consumer parked in receive() whose task is cancelled externally (e.g.
+    SSE/WS teardown cancelling the request task) must see CancelledError
+    propagate — NOT be silently converted to StopAsyncIteration.
     """
     layer = InMemoryChannelLayer()
     source = ChannelLayerSource(groups=["demo-create"], channel_layer=layer)
@@ -476,12 +595,15 @@ async def test_external_cancellation_propagates():
 
 
 @pytest.mark.asyncio
-async def test_aclose_initiated_cancel_still_stops_cleanly():
-    """Regression: aclose()-initiated cancel still yields StopAsyncIteration.
+async def test_aclose_initiated_cancel_still_stops_cleanly() -> None:
+    """Regression: an aclose()-initiated cancel must still yield StopAsyncIteration.
+
+    Contract: this test ships broken if the external-cancel propagation fix
+    regresses the aclose() path into raising CancelledError instead of
+    stopping cleanly.
 
     The external-cancel fix must NOT regress the aclose() path: when aclose()
-    cancels the parked receive, the consumer must stop CLEANLY (StopAsyncIteration),
-    not propagate CancelledError.
+    cancels the parked receive, the consumer must stop CLEANLY.
     """
     layer = InMemoryChannelLayer()
     source = ChannelLayerSource(groups=["demo-create"], channel_layer=layer)
@@ -508,14 +630,17 @@ async def test_aclose_initiated_cancel_still_stops_cleanly():
 
 
 @pytest.mark.asyncio
-async def test_lookup_filter_without_verifier_drops_conservatively():
-    """A remaining ``__lookup`` filter with NO db_verify hook DROPS the event.
+async def test_lookup_filter_without_verifier_drops_conservatively() -> None:
+    """A remaining "__lookup" filter with no db_verify hook must drop the event.
 
-    ``split_filters`` returns a non-empty remaining mapping for a ``__lookup``
+    Contract: this test ships broken if an unverified lookup-filtered event
+    is yielded instead of conservatively dropped (a cross-tenant data leak).
+
+    split_filters returns a non-empty remaining mapping for a __lookup
     filter. The in-memory equality gate cannot verify it, and no DB-verify hook
-    is wired, so the source must DROP CONSERVATIVELY — never yield unverified
-    (a cross-tenant data leak). A trailing fully-matched event proves the drop
-    is per-event (not a permanent stop).
+    is wired, so the source must DROP CONSERVATIVELY — never yield unverified.
+    A trailing fully-matched event proves the drop is per-event (not a
+    permanent stop).
     """
     layer = InMemoryChannelLayer()
     async with ChannelLayerSource(
@@ -553,19 +678,22 @@ async def test_lookup_filter_without_verifier_drops_conservatively():
 
 
 @pytest.mark.asyncio
-async def test_lookup_filter_with_verifier_true_yields_false_drops():
-    """A remaining ``__lookup`` filter is verified via the db_verify hook.
+async def test_lookup_filter_with_verifier_true_yields_false_drops() -> None:
+    """A remaining "__lookup" filter must be verified via the db_verify hook.
 
-    With a ``db_verify`` hook set, a remaining ``__lookup`` filter is verified by
-    awaiting ``db_verify(remaining, event)``: yield on True, drop on False. This
-    is the WU5 contract — the driver wires the single-row ``.exists()`` narrowing
+    Contract: this test ships broken if the source yields on a False verify
+    result or drops on a True one.
+
+    With a db_verify hook set, a remaining __lookup filter is verified by
+    awaiting db_verify(remaining, event): yield on True, drop on False. This
+    is the WU5 contract — the driver wires the single-row .exists() narrowing
     into the hook.
     """
     layer = InMemoryChannelLayer()
 
-    seen: list[tuple[dict, dict]] = []
+    seen: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
-    async def _verify(remaining: dict, event: dict) -> bool:
+    async def _verify(remaining: dict[str, Any], event: dict[str, Any]) -> bool:
         seen.append((dict(remaining), dict(event)))
         # Verify by tenant id carried in the event (stand-in for .exists()).
         return event.get("owner_tenant_id") == remaining.get("owner__tenant_id")
@@ -598,8 +726,12 @@ async def test_lookup_filter_with_verifier_true_yields_false_drops():
 # ---------------------------------------------------------------------------
 
 
-def test_source_module_has_no_graphene_import():
-    """The source module must never import graphene (no-graphene-import gate)."""
+def test_source_module_has_no_graphene_import() -> None:
+    """The source module must never import graphene (no-graphene-import gate).
+
+    Contract: this test ships broken if source.py gains a graphene import,
+    reintroducing a dependency the native engine was built to avoid.
+    """
     import pathlib
 
     from django_graphex.subscriptions import source as source_mod
@@ -609,8 +741,12 @@ def test_source_module_has_no_graphene_import():
     assert "from graphene" not in text
 
 
-def test_source_module_is_async_iterator():
-    """``ChannelLayerSource`` is async-iterator compatible (``__aiter__`` -> self)."""
+def test_source_module_is_async_iterator() -> None:
+    """ "ChannelLayerSource" must be async-iterator compatible ("__aiter__" -> self).
+
+    Contract: this test ships broken if ChannelLayerSource stops being
+    directly usable in an "async for" loop.
+    """
     layer = InMemoryChannelLayer()
     source = ChannelLayerSource(groups=["demo-create"], channel_layer=layer)
     assert source.__aiter__() is source

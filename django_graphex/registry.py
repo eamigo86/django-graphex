@@ -24,7 +24,11 @@ class Registry:
     """
 
     def __init__(self) -> None:
-        """Initialize empty registry stores."""
+        """Initialize empty registry stores.
+
+        Creates the separate keyed stores for object/input types, list types,
+        enums, directives, unions, interfaces and interface implementors.
+        """
         #: (model, for_input) -> object/input type. ``for_input`` is None for
         #: output types, else the action key ("create"/"update"/"delete").
         self._types: dict[tuple[type[Model], str | None], Any] = {}
@@ -41,6 +45,43 @@ class Registry:
         self._interface_types: dict[str, Any] = {}
         #: interface GraphQL name -> list of implementor DjangoObjectTypes.
         self._interface_implementors: dict[str, list] = {}
+        #: Companion NativeOutputRegistry holding this registry's compiled output
+        #: nodes (get_compiled/set_compiled), keyed by model. Lazily created by
+        #: output_registry(). For the global registry this is bound to the
+        #: process-wide shared singleton so global stamping stays byte-identical;
+        #: a local (Meta.registry) registry gets its own, so its compiled nodes
+        #: never leak into the global namespace.
+        self._output_registry: Any = None
+
+    def output_registry(self) -> Any:
+        """Return this registry's companion NativeOutputRegistry.
+
+        The companion stores the compiled GraphQLObjectType per model
+        (get_compiled/set_compiled) for the types registered here, so a relation
+        thunk of one type resolves a sibling type within the same registry
+        without stamping the process-global shared registry.
+
+        For the global registry (get_global_registry) the companion is the
+        process-wide shared singleton (get_shared_output_registry), so the
+        default/production path is byte-identical: every global-registry class
+        continues to stamp and read that one shared registry. A local registry
+        (declared via Meta.registry) gets its own companion, keeping its compiled
+        nodes schema-scoped and out of the global slot (the leak fix).
+
+        Returns:
+            registry: The companion NativeOutputRegistry for this registry.
+        """
+        from django_graphex.core.base import get_shared_output_registry
+
+        # The GLOBAL registry's companion is the shared singleton (byte-identical).
+        if self is get_global_registry():
+            return get_shared_output_registry()
+
+        if self._output_registry is None:
+            from django_graphex.core.registry_compiler import NativeOutputRegistry
+
+            self._output_registry = NativeOutputRegistry()
+        return self._output_registry
 
     def register_enum(self, key: str, enum: Any) -> None:
         """Register an enum type with the given key.
@@ -137,24 +178,24 @@ class Registry:
     def register_polymorphic(self, cls: Any) -> None:
         """Register a DjangoUnionType or DjangoInterfaceType by its name.
 
-        Routes a union to ``_union_types`` and an interface to
-        ``_interface_types``, keyed by ``cls._meta.name`` (set by graphene's
-        ``__init_subclass_with_meta__``). Never writes ``_types``.
+        Routes a union to "_union_types" and an interface to
+        "_interface_types", keyed by "cls._meta.name" (set by graphene's
+        "__init_subclass_with_meta__"). Never writes "_types".
 
         Idempotent by construction: a same-name re-registration overwrites the
         existing entry harmlessly. Both the auto-registration in the base's
-        ``__init_subclass_with_meta__`` and a manual ``register()`` land here, so
+        "__init_subclass_with_meta__" and a manual "register()" land here, so
         the second is a benign overwrite.
 
         Args:
             cls: the polymorphic type to register.
 
         Raises:
-            ValueError: if ``cls`` is bound to a different registry. This mirrors
-                the object-type ``register()`` guard so a union/interface built
+            ValueError: if "cls" is bound to a different registry. This mirrors
+                the object-type "register()" guard so a union/interface built
                 in registry A cannot be silently registered into registry B
-                (which would leave its ``resolve_type`` consulting A's ``_types``).
-            TypeError: if ``cls`` is neither a DjangoUnionType nor a
+                (which would leave its "resolve_type" consulting A's "_types").
+            TypeError: if "cls" is neither a DjangoUnionType nor a
                 DjangoInterfaceType, so direct misuse fails loud instead of
                 silently dropping the class from every store.
         """
@@ -181,8 +222,8 @@ class Registry:
     def get_model_for_type_name(self, name: str) -> type[Model] | None:
         """Resolve a GraphQL output-type name to its Django model.
 
-        Reverse-scans ``_types`` for the OUTPUT entry (``for_input`` is None)
-        whose value's ``_meta.name`` matches; input entries and the polymorphic
+        Reverse-scans "_types" for the OUTPUT entry ("for_input" is None)
+        whose value's "_meta.name" matches; input entries and the polymorphic
         stores are ignored so a union name never resolves to a member model.
 
         Args:
@@ -199,10 +240,10 @@ class Registry:
     def get_member_models(self, polymorphic_type: Any) -> list[type[Model]]:
         """Return the ordered member models of a union or interface.
 
-        For a union: the explicitly enumerated ``_dgx_member_models`` (stable
+        For a union: the explicitly enumerated "_dgx_member_models" (stable
         order, never derived from ContentType rows).
         For an interface: the models of every registered output DjangoObjectType
-        whose ``Meta.interfaces`` includes this interface. This is a PURE QUERY
+        whose "Meta.interfaces" includes this interface. This is a PURE QUERY
         HELPER with no MVP runtime consumer — it is only meaningful once the
         schema is fully built and all implementors are registered.
 
@@ -231,9 +272,9 @@ class Registry:
     def get_gfk_union(self, model: type[Model], fk_name: str) -> Any | None:
         """Return the companion DjangoUnionType for a model's GFK, if declared.
 
-        Looks up the registered OUTPUT DjangoObjectType for ``model`` and reads
-        ``_meta.gfk_unions.get(fk_name)``. The returned union must itself be
-        registered (its name present in ``_union_types``); a union referenced by
+        Looks up the registered OUTPUT DjangoObjectType for "model" and reads
+        "_meta.unions.get(fk_name)". The returned union must itself be
+        registered (its name present in "_union_types"); a union referenced by
         an owning type's Meta but absent from the registry (mis-ordered
         declaration) yields None so the caller can warn and fall back.
 
@@ -247,8 +288,8 @@ class Registry:
         owner = self.get_type_for_model(model)
         if owner is None:
             return None
-        gfk_unions = getattr(owner._meta, "gfk_unions", None) or {}
-        union = gfk_unions.get(fk_name)
+        unions = getattr(owner._meta, "unions", None) or {}
+        union = unions.get(fk_name)
         if union is None:
             return None
         if getattr(union._meta, "name", None) not in self._union_types:

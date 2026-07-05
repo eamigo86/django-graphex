@@ -29,7 +29,7 @@ _graphql_{identity}_{version}_{body_hash}
 | `_graphql_` | fixed prefix | Namespaces GraphQL entries inside a shared Django cache |
 | `{identity}` | `cache_key_prefix(request)` | Isolates responses by user identity (see below) |
 | `{version}` | per-identity version counter | Lets mutations invalidate a user's entries without a global flush |
-| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of `request.body` | Distinguishes different queries / variable sets |
+| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of `request.body`; for GET requests (where the body is empty) the hash also incorporates the `query`, `variables`, and `operationName` query-string parameters | Distinguishes different queries / variable sets |
 
 ---
 

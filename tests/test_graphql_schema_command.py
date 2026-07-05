@@ -1,18 +1,20 @@
-"""Tests for the ``graphql_schema`` management command.
+"""Tests for the "graphql_schema" management command.
 
-The command mirrors graphene-django's ``graphql_schema`` (same name, so it is a
+The command mirrors graphene-django's "graphql_schema" (same name, so it is a
 drop-in for migrating users) but is built on graphql-core — NO graphene import
 anywhere in the suite or the command.
 
 It exports the schema as introspection JSON (matching graphene-django's
-``{"data": <introspection>}`` shape so existing codegen keeps working), or as
-SDL when the output path ends in ``.graphql`` / ``.gql``.
+"{"data": <introspection>}" shape so existing codegen keeps working), or as
+SDL when the output path ends in ".graphql" / ".gql".
 """
 
 from __future__ import annotations
 
 import json
 from io import StringIO
+from pathlib import Path
+from typing import Any
 
 import pytest
 from django.core.management import call_command
@@ -27,21 +29,32 @@ from django_graphex.management.commands.graphql_schema import Command
 TEST_SCHEMA_PATH = "tests.schema.schema"
 
 
-def _run(*args, **kwargs):
+def _run(*args: Any, **kwargs: Any) -> str:
     """Invoke the command capturing stdout, returning the captured text.
 
-    The command is passed to ``call_command`` as a Command INSTANCE (a fully
+    The command is passed to "call_command" as a Command INSTANCE (a fully
     supported Django testing API) so the test does not require django_graphex
     to be listed in INSTALLED_APPS — the package is a library, not an app, and
-    its heavy ``__init__`` cannot be imported during app-registry population.
+    its heavy "__init__" cannot be imported during app-registry population.
+
+    Args:
+        *args: Positional arguments forwarded to "call_command" (e.g. "--out").
+        **kwargs: Keyword arguments forwarded to "call_command".
+
+    Returns:
+        output: The captured stdout text written by the command.
     """
     out = StringIO()
     call_command(Command(), *args, stdout=out, **kwargs)
     return out.getvalue()
 
 
-def test_default_json_output_is_introspection(tmp_path):
-    """Default run writes introspection JSON wrapped as {"data": ...}."""
+def test_default_json_output_is_introspection(tmp_path: Path) -> None:
+    """Default run must write introspection JSON wrapped as {"data": ...}.
+
+    Args:
+        tmp_path: Pytest fixture providing a unique temporary directory.
+    """
     out_file = tmp_path / "schema.json"
     _run("--out", str(out_file))
 
@@ -55,8 +68,12 @@ def test_default_json_output_is_introspection(tmp_path):
     assert "UserType" in type_names
 
 
-def test_json_output_indent_is_honored(tmp_path):
-    """The JSON is indented with the configured/overridden indent."""
+def test_json_output_indent_is_honored(tmp_path: Path) -> None:
+    """The JSON output must be indented with the configured/overridden indent.
+
+    Args:
+        tmp_path: Pytest fixture providing a unique temporary directory.
+    """
     out_file = tmp_path / "schema.json"
     _run("--out", str(out_file), "--indent", "4")
 
@@ -67,8 +84,12 @@ def test_json_output_indent_is_honored(tmp_path):
     json.loads(text)
 
 
-def test_graphql_extension_writes_sdl(tmp_path):
-    """An output path ending in .graphql writes SDL, not JSON."""
+def test_graphql_extension_writes_sdl(tmp_path: Path) -> None:
+    """An output path ending in .graphql must write SDL, not JSON.
+
+    Args:
+        tmp_path: Pytest fixture providing a unique temporary directory.
+    """
     out_file = tmp_path / "schema.graphql"
     _run("--out", str(out_file))
 
@@ -79,8 +100,12 @@ def test_graphql_extension_writes_sdl(tmp_path):
         json.loads(text)
 
 
-def test_gql_extension_writes_sdl(tmp_path):
-    """An output path ending in .gql also writes SDL."""
+def test_gql_extension_writes_sdl(tmp_path: Path) -> None:
+    """An output path ending in .gql must also write SDL.
+
+    Args:
+        tmp_path: Pytest fixture providing a unique temporary directory.
+    """
     out_file = tmp_path / "schema.gql"
     _run("--out", str(out_file))
 
@@ -88,8 +113,12 @@ def test_gql_extension_writes_sdl(tmp_path):
     assert "type Query" in text
 
 
-def test_out_dash_writes_to_stdout():
-    """--out - writes the schema to stdout instead of a file."""
+def test_out_dash_writes_to_stdout() -> None:
+    """ "--out -" must write the schema to stdout instead of a file.
+
+    If this breaks, users piping the command output would get an empty
+    stdout while the schema silently lands nowhere.
+    """
     output = _run("--out", "-")
 
     payload = json.loads(output)
@@ -97,8 +126,12 @@ def test_out_dash_writes_to_stdout():
     assert "__schema" in payload["data"]
 
 
-def test_schema_override_dotted_path(tmp_path):
-    """--schema <dotted.path> uses that schema instead of the settings one."""
+def test_schema_override_dotted_path(tmp_path: Path) -> None:
+    """ "--schema <dotted.path>" must use that schema instead of the settings one.
+
+    Args:
+        tmp_path: Pytest fixture providing a unique temporary directory.
+    """
     out_file = tmp_path / "schema.json"
     # Clear the settings SCHEMA so only --schema can resolve it.
     with override_settings(DJANGO_GRAPHEX={"SCHEMA": None}):
@@ -109,8 +142,12 @@ def test_schema_override_dotted_path(tmp_path):
     assert "Query" in type_names
 
 
-def test_schema_output_setting_default(tmp_path):
-    """SCHEMA_OUTPUT in DJANGO_GRAPHEX is the default output path."""
+def test_schema_output_setting_default(tmp_path: Path) -> None:
+    """ "SCHEMA_OUTPUT" in DJANGO_GRAPHEX must act as the default output path.
+
+    Args:
+        tmp_path: Pytest fixture providing a unique temporary directory.
+    """
     out_file = tmp_path / "from_settings.json"
     with override_settings(
         DJANGO_GRAPHEX={
@@ -125,8 +162,12 @@ def test_schema_output_setting_default(tmp_path):
     assert "__schema" in payload["data"]
 
 
-def test_schema_indent_setting_default(tmp_path):
-    """SCHEMA_INDENT in DJANGO_GRAPHEX controls the default JSON indent."""
+def test_schema_indent_setting_default(tmp_path: Path) -> None:
+    """ "SCHEMA_INDENT" in DJANGO_GRAPHEX must control the default JSON indent.
+
+    Args:
+        tmp_path: Pytest fixture providing a unique temporary directory.
+    """
     out_file = tmp_path / "indented.json"
     with override_settings(
         DJANGO_GRAPHEX={
@@ -141,8 +182,12 @@ def test_schema_indent_setting_default(tmp_path):
     assert "\n    " in text
 
 
-def test_no_schema_raises_command_error(tmp_path):
-    """No settings SCHEMA and no --schema raises a clear CommandError."""
+def test_no_schema_raises_command_error(tmp_path: Path) -> None:
+    """No settings SCHEMA and no "--schema" must raise a clear CommandError.
+
+    Args:
+        tmp_path: Pytest fixture providing a unique temporary directory.
+    """
     out_file = tmp_path / "schema.json"
     with override_settings(DJANGO_GRAPHEX={"SCHEMA": None}):
         with pytest.raises(CommandError) as exc_info:

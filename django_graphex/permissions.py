@@ -10,7 +10,9 @@ for create/update.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from .core.perm_labels import required_perms_for
 
 if TYPE_CHECKING:
     from django.db.models import Model
@@ -23,6 +25,7 @@ __all__ = (
     "IsAdmin",
     "IsAuthenticatedOrReadOnly",
     "IsAdminOrReadOnly",
+    "DjangoModelPermissions",
 )
 
 #: The read-only actions (used by the *OrReadOnly variants). Subscribing is an
@@ -56,87 +59,405 @@ class BasePermission:
     """
 
     def has_permission(
-        self, info: GraphQLResolveInfo, action: str, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        action: str,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Return whether the given "action" is allowed. Default: allow."""
+        """Return whether the given "action" is allowed.
+
+        The default implementation allows every action; override it to gate all
+        actions the same way.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            action: The CRUD action being checked (e.g. "create").
+            model: The Django model class the action targets.
+            **kwargs: Action-specific extras, e.g. "data=" for create/update.
+
+        Returns:
+            allowed: True when the action is permitted.
+        """
         return True
 
     def has_create_permission(
-        self, info: GraphQLResolveInfo, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Return the permission for the "create" action."""
+        """Return the permission for the "create" action.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            model: The Django model class the action targets.
+            **kwargs: Action-specific extras, forwarded to "has_permission".
+
+        Returns:
+            allowed: True when the "create" action is permitted.
+        """
         return self.has_permission(info, "create", model, **kwargs)
 
     def has_update_permission(
-        self, info: GraphQLResolveInfo, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Return the permission for the "update" action."""
+        """Return the permission for the "update" action.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            model: The Django model class the action targets.
+            **kwargs: Action-specific extras, forwarded to "has_permission".
+
+        Returns:
+            allowed: True when the "update" action is permitted.
+        """
         return self.has_permission(info, "update", model, **kwargs)
 
     def has_delete_permission(
-        self, info: GraphQLResolveInfo, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Return the permission for the "delete" action."""
+        """Return the permission for the "delete" action.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            model: The Django model class the action targets.
+            **kwargs: Action-specific extras, forwarded to "has_permission".
+
+        Returns:
+            allowed: True when the "delete" action is permitted.
+        """
         return self.has_permission(info, "delete", model, **kwargs)
 
     def has_retrieve_permission(
-        self, info: GraphQLResolveInfo, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Return the permission for the "retrieve" action."""
+        """Return the permission for the "retrieve" action.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            model: The Django model class the action targets.
+            **kwargs: Action-specific extras, forwarded to "has_permission".
+
+        Returns:
+            allowed: True when the "retrieve" action is permitted.
+        """
         return self.has_permission(info, "retrieve", model, **kwargs)
 
     def has_list_permission(
-        self, info: GraphQLResolveInfo, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Return the permission for the "list" action."""
+        """Return the permission for the "list" action.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            model: The Django model class the action targets.
+            **kwargs: Action-specific extras, forwarded to "has_permission".
+
+        Returns:
+            allowed: True when the "list" action is permitted.
+        """
         return self.has_permission(info, "list", model, **kwargs)
 
     def has_subscribe_permission(
-        self, info: GraphQLResolveInfo, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Return the permission for the "subscribe" action (read-like)."""
+        """Return the permission for the "subscribe" action (read-like).
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            model: The Django model class the action targets.
+            **kwargs: Action-specific extras, forwarded to "has_permission".
+
+        Returns:
+            allowed: True when the "subscribe" action is permitted.
+        """
         return self.has_permission(info, "subscribe", model, **kwargs)
 
 
 class AllowAny(BasePermission):
-    """Allow every action (explicit form of the default)."""
+    """Allow every action (explicit form of the default).
+
+    Inherits the allow-all "BasePermission" behavior unchanged; use it to make
+    the open policy explicit at a call site.
+    """
 
 
 class IsAuthenticated(BasePermission):
-    """Require an authenticated user for every action."""
+    """Require an authenticated user for every action.
+
+    Every action, read or write, is denied unless the request carries an
+    authenticated user.
+    """
 
     def has_permission(
-        self, info: GraphQLResolveInfo, action: str, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        action: str,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Allow only authenticated users."""
+        """Allow only authenticated users.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            action: The CRUD action being checked (ignored: all actions gate
+                the same way).
+            model: The Django model class the action targets (ignored).
+            **kwargs: Action-specific extras (ignored).
+
+        Returns:
+            allowed: True when the request user is authenticated.
+        """
         return _is_authenticated(info)
 
 
 class IsAdmin(BasePermission):
-    """Require an active staff superuser for every action."""
+    """Require an active staff superuser for every action.
+
+    Every action, read or write, is denied unless the request user is active,
+    staff, and a superuser.
+    """
 
     def has_permission(
-        self, info: GraphQLResolveInfo, action: str, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        action: str,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Allow only admin users."""
+        """Allow only admin users.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            action: The CRUD action being checked (ignored: all actions gate
+                the same way).
+            model: The Django model class the action targets (ignored).
+            **kwargs: Action-specific extras (ignored).
+
+        Returns:
+            allowed: True when the request user is an active staff superuser.
+        """
         return _is_admin(info)
 
 
 class IsAuthenticatedOrReadOnly(BasePermission):
-    """Anyone may read; only authenticated users may write."""
+    """Anyone may read; only authenticated users may write.
+
+    Read actions (see "READ_ACTIONS") are always allowed; every other action
+    requires an authenticated user.
+    """
 
     def has_permission(
-        self, info: GraphQLResolveInfo, action: str, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        action: str,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Allow reads for anyone, writes for authenticated users."""
+        """Allow reads for anyone, writes for authenticated users.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            action: The CRUD action being checked; read actions (see
+                "READ_ACTIONS") are always allowed.
+            model: The Django model class the action targets (ignored).
+            **kwargs: Action-specific extras (ignored).
+
+        Returns:
+            allowed: True for read actions, otherwise True only when the user
+                is authenticated.
+        """
         return True if action in READ_ACTIONS else _is_authenticated(info)
 
 
 class IsAdminOrReadOnly(BasePermission):
-    """Anyone may read; only admin users may write."""
+    """Anyone may read; only admin users may write.
+
+    Read actions (see "READ_ACTIONS") are always allowed; every other action
+    requires an active staff superuser.
+    """
 
     def has_permission(
-        self, info: GraphQLResolveInfo, action: str, model: type[Model], **kwargs
+        self,
+        info: GraphQLResolveInfo,
+        action: str,
+        model: type[Model],
+        **kwargs: Any,
     ) -> bool:
-        """Allow reads for anyone, writes for admin users."""
+        """Allow reads for anyone, writes for admin users.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            action: The CRUD action being checked; read actions (see
+                "READ_ACTIONS") are always allowed.
+            model: The Django model class the action targets (ignored).
+            **kwargs: Action-specific extras (ignored).
+
+        Returns:
+            allowed: True for read actions, otherwise True only when the user
+                is an active staff superuser.
+        """
         return True if action in READ_ACTIONS else _is_admin(info)
+
+
+class DjangoModelPermissions(BasePermission):
+    """Map CRUD actions to Django's built-in model permissions (DRF-style).
+
+    Each action is mapped to the Django permission codenames the user must
+    hold (checked with "user.has_perms"). The mapping lives in "perms_map", a
+    class variable subclasses may override to customize the required codenames
+    per action.
+
+    The default "perms_map" is composite: because a mutation payload returns
+    instance data, each write action requires BOTH its write verb AND "view".
+    Read/observe actions stay view-only:
+
+        create     "{app_label}.add_{model_name}" + "{app_label}.view_{model_name}"
+        update     "{app_label}.change_{model_name}" + "{app_label}.view_{model_name}"
+        delete     "{app_label}.delete_{model_name}" + "{app_label}.view_{model_name}"
+        retrieve   "{app_label}.view_{model_name}"
+        list       "{app_label}.view_{model_name}"
+        subscribe  "{app_label}.view_{model_name}"
+
+    Override "perms_map" in a subclass to customize the required codenames (e.g.
+    a write-only inbox that maps "create" to "add" alone, dropping the "view"
+    requirement).
+
+    This class is fail-closed: an unauthenticated user, a missing "model"
+    context, or an unknown action is denied. Because it denies when "model" is
+    None, it is intended for "DjangoModelType.permission_classes" (where a
+    model is always supplied) and NOT for view-level
+    "AuthenticatedGraphQLView.permission_classes" (where no model is passed).
+
+    Superusers pass automatically: Django's "ModelBackend" grants every
+    permission to an active superuser, so "has_perms" returns True.
+    """
+
+    #: Action -> tuple of "str.format" templates resolved against the model's
+    #: "app_label" and "model_name". Override in a subclass to customize.
+    perms_map: ClassVar[dict[str, tuple[str, ...]]] = {
+        "create": ("{app_label}.add_{model_name}", "{app_label}.view_{model_name}"),
+        "update": ("{app_label}.change_{model_name}", "{app_label}.view_{model_name}"),
+        "delete": ("{app_label}.delete_{model_name}", "{app_label}.view_{model_name}"),
+        "retrieve": ("{app_label}.view_{model_name}",),
+        "list": ("{app_label}.view_{model_name}",),
+        "subscribe": ("{app_label}.view_{model_name}",),
+    }
+
+    def get_required_permissions(
+        self, action: str, model: type[Model]
+    ) -> list[str] | None:
+        """Return the permission codenames "action" requires on "model".
+
+        Args:
+            action: The CRUD action being checked (e.g. "create").
+            model: The Django model class the action targets.
+
+        Returns:
+            perms: The resolved permission codenames (e.g. "['app.add_thing']"),
+                or None when "action" is not present in "perms_map".
+        """
+        templates = self.perms_map.get(action)
+        if templates is None:
+            return None
+        opts = model._meta
+        return [
+            template.format(app_label=opts.app_label, model_name=opts.model_name)
+            for template in templates
+        ]
+
+    def has_permission(
+        self,
+        info: GraphQLResolveInfo,
+        action: str,
+        model: type[Model],
+        **kwargs: Any,
+    ) -> bool:
+        """Allow only users holding the model permissions for "action".
+
+        Fail-closed: denies unauthenticated users, a missing "model", and
+        unknown actions before consulting "user.has_perms".
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            action: The CRUD action being checked (e.g. "create").
+            model: The Django model class the action targets.
+            **kwargs: Action-specific extras (ignored here).
+
+        Returns:
+            allowed: True only when an authenticated user holds every codename
+                that "action" requires on "model".
+        """
+        if not _is_authenticated(info):
+            return False
+        if model is None:
+            return False
+        perms = self.get_required_permissions(action, model)
+        if perms is None:
+            return False
+        return bool(_user(info).has_perms(perms))
+
+    def has_subscribe_permission(
+        self,
+        info: GraphQLResolveInfo,
+        model: type[Model],
+        **kwargs: Any,
+    ) -> bool:
+        """Gate a subscribe request by its per-action COMPOSITE permissions.
+
+        When the native subscribe entry forwards the requested action
+        ("create" / "update" / "delete" / "all_actions"), the check is
+        composite: subscribing to a write action requires BOTH "view" AND that
+        action's write verb (a payload returns instance data), mirroring the P0
+        table. Without an action (a caller that never forwards one), it falls
+        back to the generic view-only "subscribe" gate, preserving the
+        pre-change contract.
+
+        This is the RUNTIME half of the defense-in-depth model: even against the
+        FULL schema (a bypass of the pruned action enum), a user lacking the
+        action's write verb is denied here.
+
+        The forwarded action-value arrives under the "subscription_action"
+        kwarg ("authorize" reserves the positional "action" for the CRUD verb
+        "subscribe"), falling back to "action" for direct callers.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+            model: The Django model class the subscription targets.
+            **kwargs: Action-specific extras; "subscription_action" (or
+                "action") carries the forwarded write verb to gate against.
+
+        Returns:
+            allowed: True only when an authenticated user holds every codename
+                the resolved subscribe action requires on "model".
+        """
+        if not _is_authenticated(info):
+            return False
+        if model is None:
+            return False
+        action = kwargs.get("subscription_action", kwargs.get("action"))
+        if action is None:
+            # No action forwarded: fall back to the generic view-only gate.
+            return self.has_permission(info, "subscribe", model, **kwargs)
+        try:
+            perms = required_perms_for(model, "subscribe", subaction=action)
+        except KeyError:
+            # Unknown subscribe action -> fail-closed.
+            return False
+        return bool(_user(info).has_perms(sorted(perms)))

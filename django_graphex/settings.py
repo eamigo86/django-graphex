@@ -2,11 +2,11 @@
 
 This module provides configuration management for the django-graphex
 package, including pagination, caching, schema/middleware and other global
-settings. Everything is read from the SINGLE ``DJANGO_GRAPHEX`` Django-setting
-namespace, exposed through the :data:`graphql_api_settings` singleton.
+settings. Everything is read from the SINGLE "DJANGO_GRAPHEX" Django-setting
+namespace, exposed through the "graphql_api_settings" singleton.
 
-Migration note (v1.x -> v2.0): the legacy graphene-django ``GRAPHENE`` namespace
-is renamed to ``DJANGO_GRAPHEX`` (its schema/middleware/subscription keys are
+Migration note (v1.x -> v2.0): the legacy graphene-django "GRAPHENE" namespace
+is renamed to "DJANGO_GRAPHEX" (its schema/middleware/subscription keys are
 merged into this package's own settings dict — there is no separate namespace).
 """
 
@@ -29,6 +29,13 @@ DEFAULTS = {
     "CLEAN_RESPONSE": False,  # strip null values from the response payload
     "CACHE_ACTIVE": False,  # enable per-request response caching in GraphQLView
     "CACHE_TIMEOUT": 300,  # response cache TTL in seconds (default 5 min)
+    # In-process bound (per LRU) for the parse+validate document cache. graphql-
+    # core re-parses and re-validates the identical document on every request; a
+    # small replayed document set makes both memoizable. The parse cache maps
+    # query text -> DocumentNode (immutable AST); the validation cache is keyed by
+    # the schema OBJECT (a per-schema sub-cache) so a permission-pruned schema
+    # never serves another schema's verdict. 0 disables both caches entirely.
+    "DOCUMENT_CACHE_MAXSIZE": 128,
     # Queryset optimization (N+1)
     # Apply nested select_related / prefetch_related derived from the query.
     "OPTIMIZE_QUERYSET": True,
@@ -41,11 +48,11 @@ DEFAULTS = {
     # and fall back to the in-memory order+slice path (exact pre-Phase-C
     # behavior).
     "OPTIMIZE_NESTED_PAGINATION": True,
-    # Subscriptions: when False (default), change notifications carry only
-    # {"id": <pk>} and skip serializing the instance; set True to serialize the
-    # full instance with the subscription's backend. Can be overridden
-    # per subscription with `Meta.serialize_data`.
-    "SUBSCRIPTION_SERIALIZE_DATA": False,
+    # Subscriptions: "id_only" (default) makes change notifications carry only
+    # {"id": <pk>} and skip serializing the instance; "full" serializes the full
+    # instance with the subscription's backend. Can be overridden per subscription
+    # with `Meta.payload_mode` ("full" | "id_only").
+    "SUBSCRIPTION_PAYLOAD_MODE": "id_only",
     # HTTP/view hardening
     # Maximum number of operations permitted in a single batch request.
     # Batch requests exceeding this limit are rejected with HTTP 400.
@@ -62,9 +69,30 @@ DEFAULTS = {
     # Extra top-level field names requiring auth (AuthenticatedFieldsMiddleware)
     # when not using DjangoGraphQLSchema.
     "PROTECTED_FIELDS": (),
+    # Restrict the AUTHENTICATED endpoint (AuthenticatedGraphQLView) to members
+    # of this Django auth Group (by name). "" (default) disables the gate (zero
+    # impact). Non-members get HTTP 403 before any GraphQL parsing/execution; an
+    # ACTIVE SUPERUSER always passes (hardcoded bypass). The public GraphQLView
+    # is NOT affected. Not an import string.
+    "API_ACCESS_GROUP": "",
+    # Serve each AUTHENTICATED request (AuthenticatedGraphQLView) a permission-
+    # scoped pruned schema: fields whose required perms the caller lacks are
+    # ABSENT (a pruned field reads as "Cannot query field", not an authz error).
+    # Read PER-REQUEST. Default False = byte-identical to today (feature inert).
+    # An active superuser always gets the full schema; a non-superuser whose
+    # pruned Query root is empty gets the endpoint's generic 403. The public
+    # GraphQLView is NEVER pruned. Requires a labeled DjangoGraphQLSchema.
+    "PERMISSION_SCOPED_SCHEMA": False,
+    # In-process LRU bound (signature -> pruned schema) for PERMISSION_SCOPED_
+    # SCHEMA. Entries are keyed by the caller's permission signature (perms ∩
+    # schema label-set), never by user id, so distinct permission profiles share
+    # one entry. Least-recently-used entries evict past this cap. Benchmark-
+    # calibrated (64 holds a realistic ~50-signature working set at ~97% hit
+    # rate for a few KiB each); raise it only if you have many distinct profiles.
+    "PERMISSION_SCHEMA_CACHE_MAXSIZE": 64,
     # Global default maximum query depth (nested object levels) enforced by
     # DepthLimitValidationRule. None disables the global limit; per-type
-    # `Meta.max_deep` still applies on top of (or instead of) it.
+    # `Meta.max_depth` still applies on top of (or instead of) it.
     "MAX_QUERY_DEPTH": None,
     # Query cost analysis (CostLimitValidationRule). Estimated cost of a query is
     # `own_cost + pagination_multiplier * sum(children)`; scalars cost 0, object/
@@ -223,7 +251,11 @@ class _BaseAPISettings:
 
 
 class GraphQLAPISettings(_BaseAPISettings):
-    """Read the ``DJANGO_GRAPHEX`` settings namespace."""
+    """Read the "DJANGO_GRAPHEX" settings namespace.
+
+    Binds the base reader to the "DJANGO_GRAPHEX" namespace with this package's
+    "DEFAULTS" and "IMPORT_STRINGS", so callers get a ready-to-use singleton.
+    """
 
     def __init__(
         self,
@@ -231,13 +263,13 @@ class GraphQLAPISettings(_BaseAPISettings):
         defaults: dict[str, Any] | None = None,
         import_strings: tuple[str, ...] | None = None,
     ) -> None:
-        """Initialize the reader bound to the ``DJANGO_GRAPHEX`` namespace.
+        """Initialize the reader bound to the "DJANGO_GRAPHEX" namespace.
 
         Args:
             user_settings: Explicit user settings (else read from Django).
-            defaults: The default values mapping (defaults to ``DEFAULTS``).
+            defaults: The default values mapping (defaults to "DEFAULTS").
             import_strings: Keys whose string values are import paths
-                (defaults to ``IMPORT_STRINGS``).
+                (defaults to "IMPORT_STRINGS").
         """
         super().__init__(
             user_settings,
@@ -302,11 +334,11 @@ graphql_api_settings = GraphQLAPISettings(None, DEFAULTS, IMPORT_STRINGS)
 
 
 def reload_api_settings(*args: Any, **kwargs: Any) -> None:
-    """Clear the cached settings on the singleton when ``DJANGO_GRAPHEX`` changes.
+    """Clear the cached settings on the singleton when "DJANGO_GRAPHEX" changes.
 
-    Keeps ``override_settings(DJANGO_GRAPHEX=...)`` working in tests. Uses
-    ``singleton.reload()`` rather than replacing the object so that any
-    ``from .settings import graphql_api_settings`` bindings in other modules
+    Keeps "override_settings(DJANGO_GRAPHEX=...)" working in tests. Uses
+    "singleton.reload()" rather than replacing the object so that any
+    "from .settings import graphql_api_settings" bindings in other modules
     continue to reference the correct (updated) singleton.
 
     Args:

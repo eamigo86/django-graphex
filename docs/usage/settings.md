@@ -29,6 +29,9 @@ DJANGO_GRAPHEX = {
     "CACHE_TIMEOUT": 300,
     "CLEAN_RESPONSE": False,
 
+    # --- Document cache (parse + validate) ---------------------------------- #
+    "DOCUMENT_CACHE_MAXSIZE": 128,  # bounds the parse + per-schema validation LRUs (0 disables both)
+
     # --- Queryset optimization (N+1) --------------------------------------- #
     "OPTIMIZE_QUERYSET": True,
     "OPTIMIZE_ONLY_FIELDS": True,
@@ -37,7 +40,7 @@ DJANGO_GRAPHEX = {
     "OPTIMIZE_ANNOTATED_FIELDS": True,
 
     # --- Subscriptions ----------------------------------------------------- #
-    "SUBSCRIPTION_SERIALIZE_DATA": False,
+    "SUBSCRIPTION_PAYLOAD_MODE": "id_only",
 
     # --- HTTP / view hardening --------------------------------------------- #
     "MAX_BATCH_SIZE": 10,            # max operations per batch request (None = unlimited)
@@ -46,6 +49,9 @@ DJANGO_GRAPHEX = {
     "ALLOW_INTROSPECTION": False,
     "INTROSPECTION_ALLOW_SUPERUSER": True,
     "PROTECTED_FIELDS": (),
+    "API_ACCESS_GROUP": "",             # restrict AuthenticatedGraphQLView to this auth Group ("" = off)
+    "PERMISSION_SCOPED_SCHEMA": False,  # prune each authed request's schema to the caller's perms (off = inert)
+    "PERMISSION_SCHEMA_CACHE_MAXSIZE": 64,  # LRU bound for the per-signature pruned-schema cache
 
     # --- Query depth & cost ------------------------------------------------ #
     "MAX_QUERY_DEPTH": None,
@@ -74,7 +80,7 @@ part of `DJANGO_GRAPHEX` like everything else.
 | `SCHEMA` | `None` | Dotted path (or the object) of the schema `GraphQLView` uses **when you don't pass `schema=` to `.as_view()`**. `None` = you must pass `schema=` explicitly. Accepts an import string. |
 | `SCHEMA_OUTPUT` | `"schema.json"` | Default output file for the [`graphql_schema`](#exporting-the-schema) management command. A `.json` path writes introspection JSON; a `.graphql` / `.gql` path writes SDL. Override per-run with `--out`. |
 | `SCHEMA_INDENT` | `2` | JSON indentation used by the [`graphql_schema`](#exporting-the-schema) command. Override per-run with `--indent`. Ignored for SDL output. |
-| `MIDDLEWARE` | `()` | GraphQL **execution** middleware chain — dotted paths or callables/objects. The bundled security middlewares plug in here, e.g. `"django_graphex.security.DisableIntrospectionMiddleware"` and `"…AuthenticatedFieldsMiddleware"`, plus `"django_graphex.GraphQLDirectiveMiddleware"` if you use directives. Accepts import strings. Used as the view's default when `middleware=` isn't passed. |
+| `MIDDLEWARE` | `()` | GraphQL **execution** middleware chain — dotted paths or callables/objects. The bundled security middlewares plug in here, e.g. `"django_graphex.security.DisableIntrospectionMiddleware"` and `"…AuthenticatedFieldsMiddleware"`, plus `"django_graphex.middleware.GraphQLDirectiveMiddleware"` if you use directives. Accepts import strings. Used as the view's default when `middleware=` isn't passed. |
 | `SUBSCRIPTION_PATH` | `None` | Path of the WebSocket subscription endpoint advertised to GraphiQL / the bundled client. `None` = default routing. See [Subscriptions](subscriptions.md). |
 | `ATOMIC_MUTATIONS` | `False` | Wrap each mutation in `transaction.atomic()` so a failing mutation rolls back its writes. |
 | `MAX_VALIDATION_ERRORS` | `None` | Cap the number of GraphQL validation errors returned in a single response (also honored by the WS/SSE subscription transports). `None` = no cap. |
@@ -133,6 +139,38 @@ class MyView(GraphQLView):
 
 The `fetch_cache_key` staticmethod (which hashes the request body) remains separately overridable; the two are composed in `dispatch` so overriding either one does not break the other.
 
+## Document cache (parse + validate)
+
+| Setting | Default | Description |
+|---|---|---|
+| `DOCUMENT_CACHE_MAXSIZE` | `128` | In-process bound (per LRU) for two independent document caches in the view layer. `0` disables **both** caches. |
+
+graphql-core re-parses and re-revalidates the identical query document on every
+request; real APIs replay a small, stable set of documents (a handful of
+persisted queries from your frontend), so both steps are memoizable:
+
+- **Parse cache** — global, keyed on the raw query string. The parsed
+  `DocumentNode` (AST) is immutable and schema-independent, so a single cached
+  document is safely **shared across every request and every schema**.
+- **Validation cache** — per-schema. Verdicts are stored in a
+  `WeakKeyDictionary` keyed by the `GraphQLSchema` **object itself**, with an
+  inner LRU (also bounded by `DOCUMENT_CACHE_MAXSIZE`) inside each schema's
+  sub-cache. This means a permission-pruned schema (see
+  [`PERMISSION_SCOPED_SCHEMA`](#security)) **never** shares a validation
+  verdict with another schema — a query invalid against a pruned schema can
+  never read a full schema's cached "valid" result. Because the cache is keyed
+  by object identity, a garbage-collected schema's sub-cache is dropped
+  automatically instead of risking an `id()`-reuse collision with an unrelated
+  schema instance. The key also folds in the runtime query-limit settings
+  (`MAX_QUERY_DEPTH`, `MAX_QUERY_COST`, and the cost-analysis page-size
+  settings), so tightening a limit at runtime invalidates previously cached
+  "valid" verdicts immediately — the cache never serves a stale verdict across
+  a limit change.
+
+Raise `DOCUMENT_CACHE_MAXSIZE` if your application legitimately replays more
+than 128 distinct documents per schema; set it to `0` to disable both caches
+entirely (e.g. while debugging a parse/validation-related issue).
+
 ## Queryset optimization (N+1)
 
 | Setting | Default | Description |
@@ -147,7 +185,7 @@ The `fetch_cache_key` staticmethod (which hashes the request body) remains separ
 
 | Setting | Default | Description |
 |---|---|---|
-| `SUBSCRIPTION_SERIALIZE_DATA` | `False` | When `False`, change notifications carry only `{"id": <pk>}`; `True` serializes the full instance through the subscription's backend. Per-subscription override: `Meta.serialize_data`. See [Subscriptions](subscriptions.md). |
+| `SUBSCRIPTION_PAYLOAD_MODE` | `"id_only"` | When `"id_only"`, change notifications carry only `{"id": <pk>}`; `"full"` serializes the full instance through the subscription's backend. Per-subscription override: `Meta.payload_mode`. See [Subscriptions](subscriptions.md). |
 
 ## HTTP / view hardening
 
@@ -189,12 +227,15 @@ DJANGO_GRAPHEX = {
 | `ALLOW_INTROSPECTION` | `False` | Allow `__schema` / `__type` introspection (`DisableIntrospectionMiddleware`). |
 | `INTROSPECTION_ALLOW_SUPERUSER` | `True` | Let superusers bypass the introspection block. |
 | `PROTECTED_FIELDS` | `()` | Top-level field names requiring auth via `AuthenticatedFieldsMiddleware` (when not using `DjangoGraphQLSchema`). See [Security](security.md). |
+| `API_ACCESS_GROUP` | `""` | Restrict the **authenticated endpoint** (`AuthenticatedGraphQLView`) to members of this Django auth `Group` (by name). `""` disables the gate. Non-members get a generic `403` before any GraphQL parsing/execution; an **active superuser always bypasses** it. The public `GraphQLView` is **not** affected. See [Views → Endpoint-level auth](views.md#endpoint-level-auth-authenticatedgraphqlview) and the [permission guide](permission-scoped-schema.md#layer-2-the-endpoint-gate-api_access_group) (with curl examples). |
+| `PERMISSION_SCOPED_SCHEMA` | `False` | Serve each **authenticated** request (`AuthenticatedGraphQLView`) a schema pruned to the caller's permissions: a field whose required perms the user lacks is **absent**, so selecting it reads as `Cannot query field` (a not-found, never an authz leak). Read **per-request**. An **active superuser** always gets the full schema (no signature computed); a non-superuser whose pruned `Query` root is **empty** gets the endpoint's generic `403`. The public `GraphQLView` is **never** pruned. **Subscriptions:** the **same** flag also gates the bundled `pruned_schema_for` helper used by the SSE/WS transports' `schema_provider` (read **per connection**), so a subscription connection wired to it serves the full schema when off and the pruned one when on — see [Subscriptions → Per-connection schema](subscriptions.md#per-connection-schema-permission-scoped-subscriptions). A **custom** provider callable that does not route through `pruned_schema_for` is not gated. Requires a labeled `DjangoGraphQLSchema`. `False` (default) is byte-identical to today. For a worked, role-by-role walkthrough (pruned SDL per user, exact denial responses), see the [permission guide](permission-scoped-schema.md). |
+| `PERMISSION_SCHEMA_CACHE_MAXSIZE` | `64` | In-process **LRU** bound for the `PERMISSION_SCOPED_SCHEMA` cache. Entries are keyed by the caller's permission **signature** (`perms ∩ schema label-set`), never by user id, so users with the same relevant perms share one pruned schema; least-recently-used entries evict past this cap. |
 
 ## Query depth & cost
 
 | Setting | Default | Description |
 |---|---|---|
-| `MAX_QUERY_DEPTH` | `None` | Global max nested-object depth (`DepthLimitValidationRule`). `None` disables the global limit; per-type `Meta.max_deep` still applies. |
+| `MAX_QUERY_DEPTH` | `None` | Global max nested-object depth (`DepthLimitValidationRule`). `None` disables the global limit; per-type `Meta.max_depth` still applies. |
 | `MAX_QUERY_COST` | `None` | Reject queries whose estimated cost exceeds this (`CostLimitValidationRule`). `None` disables the budget. |
 | `EXPOSE_QUERY_COST` | `False` | Add `extensions.cost` (`requestedCost` / `maxCost`) to responses. Combine with `MAX_QUERY_COST=None` for a non-blocking observation mode. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Cost multiplier for a list field whose page size is unknown (no literal/variable value and no `MAX_PAGE_SIZE` cap). |

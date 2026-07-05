@@ -20,7 +20,11 @@ __all__ = (
 
 
 class ShuffleGraphQLDirective(BaseExtraGraphQLDirective):
-    """Shuffle the list into a random order."""
+    """Return the list value reordered randomly.
+
+    A fresh copy is shuffled so a queryset result cache or shared list is never
+    mutated in place. Empty or falsy values pass through unchanged.
+    """
 
     @staticmethod
     def resolve(
@@ -29,7 +33,7 @@ class ShuffleGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the shuffle directive.
 
@@ -53,7 +57,12 @@ class ShuffleGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class SampleGraphQLDirective(BaseExtraGraphQLDirective):
-    """Sample k random elements from a list."""
+    """Return a random subset of the list value.
+
+    The required "k" argument sets how many elements to draw; it is clamped to
+    the "[0, len(value)]" range so an over-large "k" never raises. Empty or
+    falsy values pass through unchanged.
+    """
 
     @staticmethod
     def get_args() -> dict[str, GraphQLArgument]:
@@ -75,7 +84,7 @@ class SampleGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the sample directive.
 
@@ -97,7 +106,12 @@ class SampleGraphQLDirective(BaseExtraGraphQLDirective):
 
 
 class UniqueGraphQLDirective(BaseExtraGraphQLDirective):
-    """De-duplicate a list, preserving the original order."""
+    """Return the list value with duplicates removed, keeping first-seen order.
+
+    Hashable items are de-duplicated via a set; unhashable items fall back to an
+    identity/equality membership check against the accumulated result. Empty or
+    falsy values pass through unchanged.
+    """
 
     @staticmethod
     def resolve(
@@ -106,7 +120,7 @@ class UniqueGraphQLDirective(BaseExtraGraphQLDirective):
         directive: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Resolve the unique directive.
 

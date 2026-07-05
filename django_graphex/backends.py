@@ -1,9 +1,9 @@
 """Serializer backend: the seam between the GraphQL types and validation/persistence.
 
-``DjangoModelType`` / ``DjangoModelMutation`` / ``Subscription`` don't
-validate or persist directly; they go through a :class:`SerializerBackend`. The
-package ships a single :class:`~django_graphex.native.backend.PydanticBackend`
-(selected by ``Meta.model``); the abstraction keeps a clean seam and allows custom
+"DjangoModelType" / "DjangoModelMutation" / "Subscription" don't
+validate or persist directly; they go through a "SerializerBackend". The
+package ships a single "PydanticBackend"
+(selected by "Meta.model"); the abstraction keeps a clean seam and allows custom
 backends.
 """
 
@@ -25,7 +25,11 @@ class SerializerBackend:
     """
 
     def get_model(self) -> type[Model]:
-        """Return the Django model this backend writes."""
+        """Return the Django model this backend writes.
+
+        Returns:
+            The Django model class this backend validates and persists.
+        """
         raise NotImplementedError
 
     def save_object(
@@ -40,7 +44,7 @@ class SerializerBackend:
         serializer_kwargs: dict[str, Any] | None = None,
         save_kwargs: dict[str, Any] | None = None,
     ) -> tuple[bool, Any]:
-        """Validate ``data`` and create/update a single object.
+        """Validate "data" and create/update a single object.
 
         Args:
             host: The owning type/mutation class.
@@ -53,21 +57,31 @@ class SerializerBackend:
             save_kwargs: Attributes injected at save time (e.g. a reverse FK).
 
         Returns:
-            ``(True, instance)`` or ``(False, errors)`` where ``errors`` is a
-            list of ``ErrorType`` with flat field names (callers prefix nested
+            "(True, instance)" or "(False, errors)" where "errors" is a
+            list of "ErrorType" with flat field names (callers prefix nested
             fields).
         """
         raise NotImplementedError
 
     def to_representation(self, instance: Model) -> dict[str, Any]:
-        """Serialize an instance to a plain dict (subscriptions output)."""
+        """Serialize an instance to a plain dict (subscriptions output).
+
+        Args:
+            instance: The model instance to serialize.
+
+        Returns:
+            The instance serialized as a plain dict of output field values.
+        """
         raise NotImplementedError
 
     def output_field_names(self) -> list[str]:
-        """Return the field names that appear in ``to_representation``.
+        """Return the field names that appear in "to_representation".
 
-        Used to build a subscription's ``<Model>Fields`` enum (the ``data``
+        Used to build a subscription's "<Model>Fields" enum (the "data"
         argument) when notifications carry the full serialized instance.
+
+        Returns:
+            The list of output field names.
         """
         raise NotImplementedError
 
@@ -77,39 +91,39 @@ def resolve_backend(
     *,
     pydantic_model: Any | None = None,
 ) -> SerializerBackend:
-    """Build the serializer backend for a type's ``Meta.model``.
+    """Build the serializer backend for a type's "Meta.model".
 
     Args:
-        model: The ``Meta.model`` the type is backed by.
+        model: The "Meta.model" the type is backed by.
         pydantic_model: Optional user Pydantic base carrying custom validators.
 
     Returns:
-        A configured :class:`SerializerBackend`.
+        A configured "SerializerBackend".
 
     Raises:
-        ImproperlyConfigured: If no ``model`` is given.
+        ImproperlyConfigured: If no "model" is given.
     """
     from django.core.exceptions import ImproperlyConfigured
 
     if model is None:
         raise ImproperlyConfigured("A Meta.model is required.")
 
-    from .native.backend import PydanticBackend
+    from .core.backend import PydanticBackend
 
     return PydanticBackend(model, pydantic_model)
 
 
 def backend_for_nested(spec: Any) -> SerializerBackend:
-    """Resolve the backend for a ``Meta.nested_fields`` child spec.
+    """Resolve the backend for a "Meta.nested_fields" child spec.
 
     Args:
         spec: The nested-field value — a Django model class.
 
     Returns:
-        A configured :class:`SerializerBackend` for the child.
+        A configured "SerializerBackend" for the child.
 
     Raises:
-        ImproperlyConfigured: If ``spec`` is not a Django model class.
+        ImproperlyConfigured: If "spec" is not a Django model class.
     """
     from django.core.exceptions import ImproperlyConfigured
     from django.db.models import Model
@@ -119,6 +133,6 @@ def backend_for_nested(spec: Any) -> SerializerBackend:
             f"nested_fields values must be Django model classes, received {spec!r}."
         )
 
-    from .native.backend import PydanticBackend
+    from .core.backend import PydanticBackend
 
     return PydanticBackend(spec)

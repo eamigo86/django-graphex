@@ -4,23 +4,23 @@
 RED phase: these tests MUST FAIL before the fix is applied, then pass after.
 
 Defect A — Enum registry key collision for same-class-name models across apps:
-  Two models sharing the same object_name (``Item``) but with *different* choices
-  on a same-named field (``status``) must produce two DISTINCT enum types, not
+  Two models sharing the same object_name ("Item") but with *different* choices
+  on a same-named field ("status") must produce two DISTINCT enum types, not
   collide into one.
 
 Defect B — Genuine self-referential OneToOneField silently dropped:
-  A model with ``spouse = OneToOneField('self', ...)`` must have that field present
+  A model with "spouse = OneToOneField('self', ...)" must have that field present
   in both the output GraphQL type and the create/update input types.
 """
 
 from __future__ import annotations
 
-from django_graphex import DjangoObjectType
 from django_graphex.converter import (
     build_choices_enum_type,
     convert_field_to_djangomodel,
 )
 from django_graphex.registry import Registry
+from django_graphex.types import DjangoObjectType
 
 from .models import EnumCollisionItemA, EnumCollisionItemB, PersonWithSpouse
 
@@ -30,11 +30,19 @@ from .models import EnumCollisionItemA, EnumCollisionItemB, PersonWithSpouse
 
 
 class TestEnumKeyCollision:
-    """Two models sharing object_name but different choices must not collide."""
+    """Two models sharing object_name but different choices must not collide.
 
-    def test_same_object_name_different_app_produces_distinct_enums(self):
-        """Simulate the cross-app collision: two models both called 'Item' but
-        with divergent status choices should produce two distinct enums."""
+    Covers both the model-instance-patched simulation and the direct
+    distinct-model-class case.
+    """
+
+    def test_same_object_name_different_app_produces_distinct_enums(self) -> None:
+        """Two models sharing object_name "Item" with divergent choices must
+        produce two distinct enums.
+
+        Simulates the cross-app collision: two models both called "Item" but
+        with divergent status choices must not collide into a single enum.
+        """
         local_registry = Registry()
 
         # Build two fields that share object_name="Item" and field name "status"
@@ -86,12 +94,12 @@ class TestEnumKeyCollision:
         assert members_a == {"A", "B"}, f"ItemA enum members wrong: {members_a}"
         assert members_b == {"X", "Y", "Z"}, f"ItemB enum members wrong: {members_b}"
 
-    def test_distinct_model_classes_produce_independent_enums(self):
-        """Using distinct model classes, each field produces its own enum.
+    def test_distinct_model_classes_produce_independent_enums(self) -> None:
+        """Using distinct model classes, each field must produce its own enum.
 
         S-input-5: both the OUTPUT and INPUT converter paths return the dead-scalar
-        sentinel (graphene-free); the native ``build_choices_enum_type`` builds +
-        keys the enum from ``model._meta``.
+        sentinel (graphene-free); the native "build_choices_enum_type" builds +
+        keys the enum from "model._meta".
         """
         local_registry = Registry()
 
@@ -109,11 +117,11 @@ class TestEnumKeyCollision:
         assert members_a == {"A", "B"}
         assert members_b == {"X", "Y", "Z"}
 
-    def test_input_flag_enums_keyed_independently_per_model_class(self):
+    def test_input_flag_enums_keyed_independently_per_model_class(self) -> None:
         """The same fix must apply to the native enums per model class.
 
         S-input-5: the INPUT choices surface now uses the SHARED native enum (the
-        same ``build_choices_enum_type`` slot the OUTPUT path uses), so the
+        same "build_choices_enum_type" slot the OUTPUT path uses), so the
         per-model-class keying contract is asserted on that builder.
         """
         local_registry = Registry()
@@ -157,13 +165,22 @@ class TestEnumKeyCollision:
 
 
 class TestSelfReferentialO2O:
-    """PersonWithSpouse.spouse must appear in output and input GraphQL types."""
+    """PersonWithSpouse.spouse must appear in output and input GraphQL types.
 
-    def test_self_ref_o2o_output_field_present(self):
-        """The 'spouse' field must be present in the DjangoObjectType."""
+    Also covers the MTI parent_link guard that must not misfire on it.
+    """
+
+    def test_self_ref_o2o_output_field_present(self) -> None:
+        """The "spouse" field must be present in the DjangoObjectType.
+
+        If this breaks, a genuine self-referential OneToOneField would be
+        silently dropped from the generated GraphQL output type.
+        """
         local_registry = Registry()
 
         class PersonType(DjangoObjectType):
+            """Local DjangoObjectType wrapping PersonWithSpouse for the assertion."""
+
             class Meta:
                 model = PersonWithSpouse
                 registry = local_registry
@@ -174,17 +191,17 @@ class TestSelfReferentialO2O:
             f"Got: {field_names}"
         )
 
-    def test_self_ref_o2o_output_converter_does_not_drop(self):
+    def test_self_ref_o2o_output_converter_does_not_drop(self) -> None:
         """The self-ref O2O OUTPUT converter must never silently drop the field.
 
         S-rel-2 retired graphene on the to-ONE relation OUTPUT path: a genuine
         self-referential OneToOne now converts to a graphene-free
-        ``NativeRelationField`` presence/ordering marker (the issue #52 trap is
+        "NativeRelationField" presence/ordering marker (the issue #52 trap is
         the MTI parent_link guard incorrectly firing on a genuine self-ref O2O,
         which would drop the field).
         """
         from django_graphex.converter import _DEAD_SCALAR
-        from django_graphex.native.descriptors import NativeRelationField
+        from django_graphex.core.descriptors import NativeRelationField
 
         local_registry = Registry()
         field = PersonWithSpouse._meta.get_field("spouse")
@@ -208,8 +225,12 @@ class TestSelfReferentialO2O:
             "is the issue #52 silent-drop trap (parent_link guard firing)."
         )
 
-    def test_self_ref_o2o_present_in_create_input_type(self):
-        """The spouse field (as an ID) must be present in the create input type."""
+    def test_self_ref_o2o_present_in_create_input_type(self) -> None:
+        """The spouse field (as an ID) must be present in the create input type.
+
+        If this breaks, a genuine self-referential OneToOneField would be
+        silently dropped from the generated create-input GraphQL type.
+        """
         from django_graphex.types import DjangoInputObjectType
 
         local_registry = Registry()
@@ -227,8 +248,12 @@ class TestSelfReferentialO2O:
             f"fields as an ID. Got: {input_field_names}"
         )
 
-    def test_mti_parent_link_flag_identifies_real_mti_fields(self):
-        """parent_link=True correctly identifies MTI auto-generated fields."""
+    def test_mti_parent_link_flag_identifies_real_mti_fields(self) -> None:
+        """ "parent_link=True" must correctly identify MTI auto-generated fields.
+
+        If this breaks, the MTI parent_link guard could misclassify a genuine
+        self-referential O2O as an MTI-generated field and drop it.
+        """
         field = PersonWithSpouse._meta.get_field("spouse")
         # A genuine self-ref O2O must NOT have parent_link=True.
         assert not getattr(field.remote_field, "parent_link", False), (

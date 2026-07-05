@@ -55,10 +55,10 @@ class Post(models.Model):
 
 ```python
 # schema.py
-from django_graphex import (
-    DjangoListObjectField, DjangoListObjectType, DjangoObjectType,
-    LimitOffsetGraphqlPagination, ObjectType,
-)
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
+from django_graphex.paginations import LimitOffsetGraphqlPagination
+from django_graphex.types import DjangoListObjectType, DjangoObjectType
 
 class PostType(DjangoObjectType):
     class Meta:
@@ -150,7 +150,9 @@ when there is one — so its `pagination` and `filter_fields` are honored even w
 the model appears nested under a different model:
 
 ```python
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
+from django_graphex.paginations import PageGraphqlPagination
+from django_graphex.types import DjangoModelType, DjangoObjectType
 
 class UserListType(DjangoModelType):
     class Meta:
@@ -173,34 +175,39 @@ default paginator (`DJANGO_GRAPHEX["DEFAULT_PAGINATION_CLASS"]`, or
 ## Performance (N+1)
 
 !!! tip "Hub"
-    This is the deep reference for DB-side window slicing. For a worked example
-    with the query and the constant-query-count payoff, see
+    This section owns the **nested-list specifics**: the decline list (when
+    DB-side slicing falls back to in-memory) and the fallback semantics. For
+    the full window-slicing mechanics — the `Window()` queryset it builds and a
+    worked example with the constant-query-count payoff — see
     [Query Optimization → DB-side nested pagination](query-optimization.md#db-side-nested-pagination-window-slicing).
 
 Nested lists are designed to keep the [query optimizer](query-optimization.md)'s
 N+1 elimination intact — **even when filtered or paginated** — and to fetch only
-the requested page rows from the database where possible:
+the requested page rows from the database where possible. In short: a
+**windowable** reverse-FK nested list (one paginated with a
+`LimitOffsetGraphqlPagination` or `PageGraphqlPagination` paginator, filtered or
+not) is sliced **DB-side** inside the **single** `Prefetch` built for the whole
+level, with a filter-aware per-parent `totalCount` — one query for the level,
+only each parent's page rows fetched. It is on by default, controlled by
+`DJANGO_GRAPHEX["OPTIMIZE_NESTED_PAGINATION"]` (see
+[Settings](settings.md#queryset-optimization-n1)).
 
-- **DB-side window slicing is on by default**, controlled by
-  `DJANGO_GRAPHEX["OPTIMIZE_NESTED_PAGINATION"]` (default `True` — see
-  [Settings](settings.md#queryset-optimization-n1)).
-- A **windowable** reverse-FK nested list (one paginated with a
-  `LimitOffsetGraphqlPagination` or `PageGraphqlPagination` paginator) is sliced
-  **DB-side**. A single `Prefetch` for **all** parents adds two window functions
-  to its queryset and filters to the page window:
+The nested-list payoff, using the [worked example](#worked-example-2-models)
+above:
 
-  ```python
-  _gqx_rn    = Window(RowNumber(), partition_by=[F("author_id")], order_by=...)
-  _gqx_total = Window(Count("*"),  partition_by=[F("author_id")])
-  # ...then .filter(_gqx_rn__gt=offset, _gqx_rn__lte=offset + limit)
-  ```
+```graphql
+{
+  authors {
+    results {
+      posts(filter: { title: { icontains: "x" } }) {
+        results(limit: 5) { title }
+        totalCount
+      }
+    }
+  }
+}
+```
 
-  This is **one** query for the whole level (not one per parent) that fetches
-  **only each parent's page rows**, with a **filter-aware `totalCount`** read
-  from `_gqx_total` per partition.
-- This works for both **filtered** and **unfiltered** nested lists.
-
-So a query like `authors { results { posts(filter: { title: { icontains: "x" } }) { results(limit: 5) { … } totalCount } } }`
 runs a **constant** number of queries regardless of how many authors are
 returned.
 
@@ -314,7 +321,9 @@ default `False` setting the exception propagates normally.
 
 ```python
 from django.db.models import Prefetch
-from django_graphex import DjangoObjectType, DjangoListObjectType, DjangoListObjectField, DjangoNestedListObjectField, ObjectType
+from django_graphex.fields import DjangoListObjectField, DjangoNestedListObjectField
+from django_graphex.core import ObjectType
+from django_graphex.types import DjangoObjectType, DjangoListObjectType
 
 class PostListType(DjangoListObjectType):
     class Meta:

@@ -20,18 +20,16 @@ from ._strconv import to_camel_case
 __all__ = ("collect_field_names", "DenyAllRegistry", "DjangoGraphQLSchema")
 
 
-def collect_field_names(
-    *object_types: Any, camelcase: bool = True
-) -> frozenset[str]:
+def collect_field_names(*object_types: Any, camelcase: bool = True) -> frozenset[str]:
     """Return the (camelCased) field names declared on the given ObjectTypes.
 
-    Reads field names from EITHER a native graphql-core ``GraphQLObjectType``
-    (its ``.fields`` keys are ALREADY camelCase — no second ``to_camel_case``
-    pass) OR a graphene ``ObjectType`` (snake_case ``_meta.fields`` keys,
-    camelCased here to match ``info.field_name`` under ``auto_camelcase=True``).
+    Reads field names from EITHER a native graphql-core "GraphQLObjectType"
+    (its ".fields" keys are ALREADY camelCase — no second "to_camel_case"
+    pass) OR a graphene "ObjectType" (snake_case "_meta.fields" keys,
+    camelCased here to match "info.field_name" under "auto_camelcase=True").
 
     Args:
-        *object_types: The native ``GraphQLObjectType`` or graphene ObjectTypes
+        *object_types: The native "GraphQLObjectType" or graphene ObjectTypes
             to collect field names from.
         camelcase: Whether to camelCase graphene snake_case keys (ignored for
             native types whose keys are already camelCase).
@@ -105,27 +103,27 @@ class DjangoGraphQLSchema:
     """A schema wrapper that records private fields for the auth middleware.
 
     S6f closes the S6 metaclass-swap block: this is a **plain class** (no longer
-    a ``graphene.Schema`` subclass). The underlying ``graphql_schema`` — a
-    graphql-core ``GraphQLSchema`` — is built DIRECTLY from the native root
-    compiler (:meth:`_build_native_graphql_schema`); the graphene
+    a "graphene.Schema" subclass). The underlying "graphql_schema" — a
+    graphql-core "GraphQLSchema" — is built DIRECTLY from the native root
+    compiler ("_build_native_graphql_schema"); the graphene
     schema-assembly path has been removed. The class preserves the public
     surface its callers depend on without inheriting graphene:
 
-    - ``graphql_schema``: the graphql-core schema (read by ``views.py`` and the
+    - "graphql_schema": the graphql-core schema (read by "views.py" and the
       subscription transports);
-    - ``query`` / ``mutation`` / ``subscription``: the (still-graphene) root
+    - "query" / "mutation" / "subscription": the (still-graphene) root
       classes, kept for legacy readers;
-    - ``__str__``: renders the SDL via ``graphql.utilities.print_schema`` (same
-      output graphene's ``Schema.__str__`` produced);
-    - ``auto_camelcase``: exposed for parity readers (graphene default ``True``).
+    - "__str__": renders the SDL via "graphql.utilities.print_schema" (same
+      output graphene's "Schema.__str__" produced);
+    - "auto_camelcase": exposed for parity readers (graphene default "True").
 
-    Each ``private_*`` ObjectType is **unioned** into its root, so you can keep
+    Each "private_*" ObjectType is **unioned** into its root, so you can keep
     public and private fields in separate roots and the schema exposes the union
     while the private fields require authentication. Nothing is protected unless
-    declared in a ``private_*`` root.
+    declared in a "private_*" root.
 
     - "private_query" / "private_mutation" / "private_subscription": their
-      fields are merged into the corresponding root and require authentication::
+      fields are merged into the corresponding root and require authentication:
 
           # disjoint public / private roots -> the schema exposes the union
           DjangoGraphQLSchema(
@@ -133,60 +131,65 @@ class DjangoGraphQLSchema:
               subscription=PublicSubs, private_subscription=PrivateSubs,
           )
 
-      Passing a single full root plus a ``private_*`` marker subset (the field
+      Passing a single full root plus a "private_*" marker subset (the field
       names to protect) also works unchanged.
     """
 
     def __init__(
         self,
-        *args,
+        *args: Any,
         private_query: Any = None,
         private_mutation: Any = None,
         private_subscription: Any = None,
         auto_camelcase: bool = True,
         registries: Any = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Build the schema and attach the protected-field registry.
 
-        The public root and its ``private_*`` counterpart are **unioned** into
+        The public root and its "private_*" counterpart are **unioned** into
         the actual schema root, so callers may pass disjoint public/private roots
         (each app contributes a public and a private subset; the private subset
         both *defines* and *protects* its fields). Passing a single full root
-        plus a ``private_*`` marker subset still works unchanged.
+        plus a "private_*" marker subset still works unchanged.
 
-        S6f: ``self.graphql_schema`` is built DIRECTLY from the native root
-        compiler (no graphene ``Schema.__init__``). ``_merge_root`` field-unions
-        public + private into a native ``GraphQLObjectType``, RAISING
-        ``ValueError`` on a field-name collision (the inverse-MRO security hazard
+        S6f: "self.graphql_schema" is built DIRECTLY from the native root
+        compiler (no graphene "Schema.__init__"). "_merge_root" field-unions
+        public + private into a native "GraphQLObjectType", RAISING
+        "ValueError" on a field-name collision (the inverse-MRO security hazard
         graphene silently shadowed). Protected fields land on
-        ``schema.extensions['gdx_protected_fields']`` (C14). NO try/except
+        "schema.extensions['gdx_protected_fields']" (C14). NO try/except
         fallback: if native assembly fails it MUST raise (loud); a
-        ``NotImplementedError`` for a not-yet-built field kind propagates by
+        "NotImplementedError" for a not-yet-built field kind propagates by
         design.
 
         Args:
             *args: Positional arguments (a single positional is treated as the
-                ``query`` root, preserving the ``Schema(Query, ...)`` idiom).
+                "query" root, preserving the "Schema(Query, ...)" idiom).
             private_query: An ObjectType whose fields require authentication.
             private_mutation: An ObjectType whose fields require authentication.
             private_subscription: An ObjectType whose fields require
                 authentication.
             auto_camelcase: Stored on the instance for parity readers (the native
                 compiler camelCases field names unconditionally; this flag is kept
-                for graphene-API compatibility). Defaults to ``True``.
-            registries: The ``SchemaRegistries`` pair this schema compiles
-                against (item-b, B3). ``None`` selects the process-wide global
-                default pair (``default_schema_registries()``), so existing
+                for graphene-API compatibility). Defaults to "True".
+            registries: The "SchemaRegistries" pair this schema compiles
+                against (item-b, B3). "None" selects the process-wide global
+                default pair ("default_schema_registries()"), so existing
                 callers are byte-identical. The selected pair is threaded into the
                 native build (compile caches/registry) AND stowed on
-                ``graphql_schema.extensions['gdx_registry']`` so the polymorphic
-                ``resolve_type`` can scope its registry read per-schema at query
+                "graphql_schema.extensions['gdx_registry']" so the polymorphic
+                "resolve_type" can scope its registry read per-schema at query
                 time (B4). For B3 every schema still uses the default pair (no
                 fork yet — B5), so SDL + behavior stay byte-identical.
-            **kwargs: ``query`` / ``mutation`` / ``subscription`` roots plus
-                ``directives`` / ``types`` (forwarded to the graphql-core schema
-                by :meth:`_build_native_graphql_schema`).
+            **kwargs: "query" / "mutation" / "subscription" roots plus
+                "directives" / "types" (forwarded to the graphql-core schema
+                by "_build_native_graphql_schema").
+
+        Raises:
+            GraphQLError: When no "query" root is provided.
+            ValueError: Propagated from "_merge_root" when a public and private
+                root declare a colliding top-level field name.
         """
         query = kwargs.pop("query", None)
         mutation = kwargs.pop("mutation", None)
@@ -214,7 +217,7 @@ class DjangoGraphQLSchema:
         # ``None`` -> the process-wide global default pair, so existing callers
         # are byte-identical. Threaded into every native compile entrypoint below
         # AND exposed on the built schema's extensions for query-time scoping.
-        from django_graphex.native.base import default_schema_registries
+        from django_graphex.core.base import default_schema_registries
 
         _default_pair = default_schema_registries()
         if registries is None:
@@ -253,8 +256,8 @@ class DjangoGraphQLSchema:
             is not getattr(_default_pair, "graphene", None)
         )
 
-        from django_graphex.native.base import _forking_build, _gdx_output_registry
-        from django_graphex.native.registry_compiler import compile_outputs_into
+        from django_graphex.core.base import _forking_build, _gdx_output_registry
+        from django_graphex.core.registry_compiler import compile_outputs_into
 
         # The forked-build guard makes class-def auto-creation of pair-scoped types
         # SKIP the global registry writes (no-op for the default pair). The
@@ -310,7 +313,7 @@ class DjangoGraphQLSchema:
         # resolving to another schema's same-named instance). Raises loudly on a
         # cross-schema leak. Skipped for the default pair (no fork, byte-identical).
         if _is_forked:
-            from django_graphex.native.registry_compiler import (
+            from django_graphex.core.registry_compiler import (
                 assert_schema_pair_isolation,
             )
 
@@ -405,8 +408,8 @@ class DjangoGraphQLSchema:
         """
         from graphql import GraphQLObjectType, GraphQLSchema
 
-        from django_graphex.native.base import default_schema_registries
-        from django_graphex.native.schema_compiler import compile_native_root
+        from django_graphex.core.base import default_schema_registries
+        from django_graphex.core.schema_compiler import compile_native_root
 
         # item-b (B3): resolve the pair this build compiles against. ``None`` ->
         # the global default pair, so the compile + the stowed extension are
@@ -457,6 +460,14 @@ class DjangoGraphQLSchema:
         # pair, so the query-time read resolves the same registry as before.
         extensions["gdx_registry"] = registries
 
+        # P0: compute + stow the schema's GLOBAL label-set — the union of every
+        # ``gdx_required_perms`` stamped on a root field (the P1 pruner projects
+        # a user's perms onto THIS set to derive a signature). Subscription fields
+        # carry a per-action ``dict``; its values are flattened in.
+        extensions["gdx_label_set"] = DjangoGraphQLSchema._compute_label_set(
+            native_query, native_mutation, native_subscription
+        )
+
         # Forward ``directives`` exactly like graphene: a non-None custom list
         # REPLACES graphql-core's specified_directives (so SDL parity holds for
         # schemas built with ``directives=all_directives``); None keeps the
@@ -483,6 +494,38 @@ class DjangoGraphQLSchema:
             types=native_types,
             extensions=extensions,
         )
+
+    @staticmethod
+    def _compute_label_set(*roots: Any) -> frozenset[str]:
+        """Return the union of every ``gdx_required_perms`` on the roots' fields.
+
+        The label-set is the projection target for the P1 pruner: a user's live
+        permissions are intersected with THIS set to derive a stable signature.
+        A plain field stamps a ``frozenset``; a subscription field stamps a
+        per-action ``dict`` whose values are flattened in. Untagged (public)
+        fields contribute nothing.
+
+        Args:
+            *roots: The compiled native root ``GraphQLObjectType`` instances
+                (Query / Mutation / Subscription); ``None`` roots are skipped.
+
+        Returns:
+            A ``frozenset`` of all stamped permission codenames.
+        """
+        labels: set[str] = set()
+        for root in roots:
+            if root is None:
+                continue
+            for gql_field in root.fields.values():
+                perms = (gql_field.extensions or {}).get("gdx_required_perms")
+                if perms is None:
+                    continue
+                if isinstance(perms, dict):
+                    for action_perms in perms.values():
+                        labels.update(action_perms)
+                else:
+                    labels.update(perms)
+        return frozenset(labels)
 
     @staticmethod
     def _native_types_for_forwarding(
@@ -532,9 +575,9 @@ class DjangoGraphQLSchema:
 
         from graphql import GraphQLNamedType
 
-        from django_graphex.native.base import resolved_output_type
-        from django_graphex.native.scalars import GDX_SCALAR_MAP
-        from django_graphex.native.schema_compiler import (
+        from django_graphex.core.base import resolved_output_type
+        from django_graphex.core.scalars import GDX_SCALAR_MAP
+        from django_graphex.core.schema_compiler import (
             _compile_plain_object_type,
             _is_plain_object_type,
             _plain_django_output_type,
@@ -686,9 +729,9 @@ class DjangoGraphQLSchema:
         # closes through the registered instance.
         from graphql import GraphQLObjectType
 
-        from django_graphex.native.bridge import GdxPayload
-        from django_graphex.native.ir import GdxMeta
-        from django_graphex.native.schema_compiler import compile_native_root
+        from django_graphex.core.bridge import GdxPayload
+        from django_graphex.core.ir import GdxMeta
+        from django_graphex.core.schema_compiler import compile_native_root
 
         public_native = compile_native_root(
             public,

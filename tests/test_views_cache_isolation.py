@@ -8,19 +8,20 @@ Covers:
 - #11b  Mutation invalidates only the issuing user's namespace; other users'
         cached entries survive
 - #11c  Malformed query with CACHE_ACTIVE=True returns HTTP 400, not 500
-- #11d  Cache key prefix is ``_graphql_``, not the typo ``_graplql_``
+- #11d  Cache key prefix is "_graphql_", not the typo "_graplql_"
 - sentinel  A legitimately cached falsy/empty body is served from cache on
             the second request (no spurious cache miss for falsy values)
-- GET-key  Two DIFFERENT GET queries share a key collision → wrong cached
+- GET-key  Two DIFFERENT GET queries share a key collision -> wrong cached
            response served (HIGH-1 fix: incorporate GET params into the hash)
 """
 
 import json
+from typing import Any
 from unittest.mock import patch
 
 from django.contrib.auth.models import AnonymousUser, User
 from django.core.cache import cache
-from django.http import HttpResponse  # noqa: F401 — used in SentinelHitCheckTest
+from django.http import HttpRequest, HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.views import GraphQLView
@@ -31,8 +32,25 @@ from tests.cache_helpers import CACHE_ON, graphql_post
 from tests.cache_helpers import minimal_cache_schema as _schema
 
 
-def _make_request(factory, query, user=None, method="post"):
-    """Build a POST or GET request, optionally with an authenticated user."""
+def _make_request(
+    factory: RequestFactory,
+    query: str,
+    user: "User | AnonymousUser | None" = None,
+    method: str = "post",
+) -> HttpRequest:
+    """Build a POST or GET request, optionally with an authenticated user.
+
+    Args:
+        factory: The request factory used to build the request.
+        query: The GraphQL query string to embed in the request.
+        user: The Django user to attach to the request; defaults to an
+            "AnonymousUser" when not given.
+        method: Either "post" (JSON body) or any other value for a GET
+            request with the query as a URL parameter.
+
+    Returns:
+        request: A request ready to be dispatched to a view.
+    """
     if method == "post":
         return graphql_post(factory, query, user=user)
     req = factory.get("/graphql/", {"query": query})
@@ -47,17 +65,26 @@ def _make_request(factory, query, user=None, method="post"):
 
 @override_settings(**CACHE_ON)
 class CrossUserIsolationTest(TestCase):
-    """#11a — Authenticated user A's cached response MUST NOT be served to user B."""
+    """#11a — Authenticated user A's cached response MUST NOT be served to user B.
 
-    def setUp(self):
+    Also covers same-user cache reuse and anon/authenticated isolation.
+    """
+
+    def setUp(self) -> None:
+        """Build a fresh factory, clear the cache, and prepare two test users.
+
+        Runs before each test in this class.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.user_a = User(pk=1, username="alice")
         self.user_b = User(pk=2, username="bob")
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_user_a_response_not_served_to_user_b(self):
-        """User B MUST receive their own resolver result, not user A's cached data."""
+    def test_user_a_response_not_served_to_user_b(self) -> None:
+        """Ship-broken contract: user B must receive their own resolver
+        result, not user A's cached data, for the same query.
+        """
         query = "{ me }"
 
         # User A populates the cache.
@@ -78,8 +105,10 @@ class CrossUserIsolationTest(TestCase):
             "User B received user A's cached response (cross-user leak)",
         )
 
-    def test_same_user_hits_cache_on_second_request(self):
-        """The SAME user MUST benefit from caching (second call hits cache)."""
+    def test_same_user_hits_cache_on_second_request(self) -> None:
+        """Ship-broken contract: the same user must benefit from caching, so
+        the backend is invoked only once across two identical requests.
+        """
         query = "{ hello }"
         req1 = _make_request(self.factory, query, user=self.user_a)
         req2 = _make_request(self.factory, query, user=self.user_a)
@@ -87,7 +116,20 @@ class CrossUserIsolationTest(TestCase):
         call_count = {"n": 0}
         original_super_call = GraphQLView.super_call
 
-        def counting_super_call(self_view, request, *args, **kwargs):
+        def counting_super_call(
+            self_view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
+        ) -> HttpResponse:
+            """Count invocations while delegating to the real super_call.
+
+            Args:
+                self_view: The view instance the call is bound to.
+                request: The request being dispatched.
+                args: Additional positional arguments forwarded as-is.
+                kwargs: Additional keyword arguments forwarded as-is.
+
+            Returns:
+                response: Whatever the original "super_call" returns.
+            """
             call_count["n"] += 1
             return original_super_call(self_view, request, *args, **kwargs)
 
@@ -101,8 +143,10 @@ class CrossUserIsolationTest(TestCase):
             "Backend was called twice for the same user+query — cache hit failed",
         )
 
-    def test_anon_and_authenticated_do_not_share_cache(self):
-        """Anonymous and authenticated requests for the same query body MUST be isolated."""
+    def test_anon_and_authenticated_do_not_share_cache(self) -> None:
+        """Ship-broken contract: anonymous and authenticated requests for the
+        same query body must not share a cache entry.
+        """
         query = "{ me }"
 
         req_auth = _make_request(self.factory, query, user=self.user_a)
@@ -122,20 +166,42 @@ class CrossUserIsolationTest(TestCase):
 
 @override_settings(**CACHE_ON)
 class AnonSharingTest(TestCase):
-    """#11a — Two anonymous requests for the same query MUST share the cache."""
+    """#11a — Two anonymous requests for the same query MUST share the cache.
 
-    def setUp(self):
+    No per-anonymous-user partitioning is applied.
+    """
+
+    def setUp(self) -> None:
+        """Build a fresh factory, clear the cache, and build a shared view.
+
+        Runs before each test in this class.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_two_anon_requests_share_cache(self):
-        """The second anonymous request MUST be served from cache."""
+    def test_two_anon_requests_share_cache(self) -> None:
+        """Ship-broken contract: the second anonymous request must be served
+        from cache, so the backend is invoked only once.
+        """
         query = "{ hello }"
         call_count = {"n": 0}
         original_super_call = GraphQLView.super_call
 
-        def counting_super_call(self_view, request, *args, **kwargs):
+        def counting_super_call(
+            self_view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
+        ) -> HttpResponse:
+            """Count invocations while delegating to the real super_call.
+
+            Args:
+                self_view: The view instance the call is bound to.
+                request: The request being dispatched.
+                args: Additional positional arguments forwarded as-is.
+                kwargs: Additional keyword arguments forwarded as-is.
+
+            Returns:
+                response: Whatever the original "super_call" returns.
+            """
             call_count["n"] += 1
             return original_super_call(self_view, request, *args, **kwargs)
 
@@ -159,15 +225,21 @@ class MutationScopedInvalidationTest(TestCase):
     User B's cache entries MUST survive when User A sends a mutation.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Build a fresh factory, clear the cache, and prepare two test users.
+
+        Runs before each test in this class.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.user_a = User(pk=1, username="alice")
         self.user_b = User(pk=2, username="bob")
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_mutation_does_not_invalidate_other_users_cache(self):
-        """User B's cached entry MUST survive User A's mutation."""
+    def test_mutation_does_not_invalidate_other_users_cache(self) -> None:
+        """Ship-broken contract: user B's cached entry must survive user A's
+        mutation, since invalidation is scoped to the issuing user only.
+        """
         query = "{ hello }"
 
         # Seed user B's cache first.
@@ -184,7 +256,20 @@ class MutationScopedInvalidationTest(TestCase):
         call_count = {"n": 0}
         original_super_call = GraphQLView.super_call
 
-        def counting_super_call(self_view, request, *args, **kwargs):
+        def counting_super_call(
+            self_view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
+        ) -> HttpResponse:
+            """Count invocations while delegating to the real super_call.
+
+            Args:
+                self_view: The view instance the call is bound to.
+                request: The request being dispatched.
+                args: Additional positional arguments forwarded as-is.
+                kwargs: Additional keyword arguments forwarded as-is.
+
+            Returns:
+                response: Whatever the original "super_call" returns.
+            """
             call_count["n"] += 1
             return original_super_call(self_view, request, *args, **kwargs)
 
@@ -201,15 +286,24 @@ class MutationScopedInvalidationTest(TestCase):
 
 @override_settings(**CACHE_ON)
 class MalformedQueryParseGuardTest(TestCase):
-    """#11c — A malformed query MUST return HTTP 400, not 500, with CACHE_ACTIVE=True."""
+    """#11c — A malformed query MUST return HTTP 400, not 500, with CACHE_ACTIVE=True.
 
-    def setUp(self):
+    Guards against the parse guard being bypassed by the caching layer.
+    """
+
+    def setUp(self) -> None:
+        """Build a fresh factory, clear the cache, and build a shared view.
+
+        Runs before each test in this class.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_malformed_query_returns_400_with_cache_active(self):
-        """Syntactically invalid GraphQL MUST return 400, not raise a 500."""
+    def test_malformed_query_returns_400_with_cache_active(self) -> None:
+        """Ship-broken contract: syntactically invalid GraphQL must return
+        400, not raise an unhandled 500, even with response caching enabled.
+        """
         malformed = "{ broken {{"
         body = json.dumps({"query": malformed})
         request = self.factory.post("/graphql/", body, content_type="application/json")
@@ -223,22 +317,42 @@ class MalformedQueryParseGuardTest(TestCase):
 
 
 class CacheKeyPrefixTest(TestCase):
-    """#11d — The cache key prefix MUST be ``_graphql_`` (not the typo ``_graplql_``)."""
+    """#11d — The cache key prefix MUST be "_graphql_" (not the typo "_graplql_").
 
-    def setUp(self):
+    Pins the historical typo fix as a regression guard.
+    """
+
+    def setUp(self) -> None:
+        """Build a fresh factory and clear the cache before each test.
+
+        Runs before each test in this class.
+        """
         self.factory = RequestFactory()
         cache.clear()
 
     @override_settings(**CACHE_ON)
-    def test_cache_key_uses_correct_prefix(self):
-        """Cache entries MUST be stored with the ``_graphql_`` prefix."""
+    def test_cache_key_uses_correct_prefix(self) -> None:
+        """Ship-broken contract: cache entries must be stored under the
+        "_graphql_" prefix, never the historical "_graplql_" typo.
+        """
         from django.core.cache import caches as _caches
 
-        stored_keys = []
+        stored_keys: list[str] = []
         real_cache = _caches["default"]
         original_set = real_cache.set
 
-        def capturing_set(key, value, *args, **kwargs):
+        def capturing_set(key: str, value: Any, *args: Any, **kwargs: Any) -> Any:
+            """Record the cache key while delegating to the real "set".
+
+            Args:
+                key: The cache key being written.
+                value: The value being cached.
+                args: Additional positional arguments forwarded as-is.
+                kwargs: Additional keyword arguments forwarded as-is.
+
+            Returns:
+                result: Whatever the original "set" returns.
+            """
             stored_keys.append(key)
             return original_set(key, value, *args, **kwargs)
 
@@ -267,17 +381,23 @@ class CacheKeyPrefixTest(TestCase):
 class SentinelHitCheckTest(TestCase):
     """Sentinel test — a cached falsy/empty body MUST be served from cache.
 
-    The old ``if not response:`` check treats a falsy cached value as a cache
+    The old "if not response:" check treats a falsy cached value as a cache
     miss, causing the backend to be called again. The sentinel pattern fixes this.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Build a fresh factory, clear the cache, and build a shared view.
+
+        Runs before each test in this class.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_empty_cached_response_is_served_without_re_executing(self):
-        """A falsy cached value MUST be returned as-is (sentinel cache miss check)."""
+    def test_empty_cached_response_is_served_without_re_executing(self) -> None:
+        """Ship-broken contract: a falsy (empty-body) cached response must be
+        returned as-is on a repeat request, per the sentinel cache-miss check.
+        """
         # Pre-seed the cache with an empty-body response (falsy content).
         empty_response = HttpResponse(b"", content_type="application/json", status=200)
 
@@ -292,7 +412,21 @@ class SentinelHitCheckTest(TestCase):
         call_count = {"n": 0}
         original_super_call = GraphQLView.super_call
 
-        def counting_super_call(self_view, request, *args, **kwargs):
+        def counting_super_call(
+            self_view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
+        ) -> HttpResponse:
+            """Count invocations, then return the fixed empty response.
+
+            Args:
+                self_view: The view instance the call is bound to.
+                request: The request being dispatched.
+                args: Additional positional arguments forwarded as-is.
+                kwargs: Additional keyword arguments forwarded as-is.
+
+            Returns:
+                response: The fixed "empty_response" (discarding the real
+                    result) so a falsy value ends up cached.
+            """
             call_count["n"] += 1
             # Discard real result; store an empty (falsy) response in its place.
             original_super_call(self_view, request, *args, **kwargs)
@@ -328,13 +462,17 @@ class SentinelHitCheckTest(TestCase):
 class GetCacheKeyIsolationTest(TestCase):
     """HIGH-1 — Two DIFFERENT GET queries by the SAME identity MUST NOT share a cache entry.
 
-    Before the fix, ``fetch_cache_key`` hashed only ``request.body``.  For GET
-    requests ``request.body`` is always ``b''``, so every GET query produced
-    sha256('') → identical cache key → the second query received the first
+    Before the fix, "fetch_cache_key" hashed only "request.body". For GET
+    requests "request.body" is always "b''", so every GET query produced
+    sha256('') -> identical cache key -> the second query received the first
     query's stale response.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Build a fresh factory, clear the cache, and prepare a shared view/user.
+
+        Runs before each test in this class.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.view = GraphQLView.as_view(schema=_schema)
@@ -343,8 +481,10 @@ class GetCacheKeyIsolationTest(TestCase):
     # ------------------------------------------------------------------
     # Test 1: two DIFFERENT GET queries return their OWN correct data
     # ------------------------------------------------------------------
-    def test_different_get_queries_return_own_data(self):
-        """GET query A's cached response MUST NOT be served for a different GET query B."""
+    def test_different_get_queries_return_own_data(self) -> None:
+        """Ship-broken contract: GET query A's cached response must not be
+        served for a different GET query B by the same identity.
+        """
         # Query A: { hello } → should return "world"
         req_a = self.factory.get("/graphql/", {"query": "{ hello }"})
         req_a.user = self.user
@@ -373,12 +513,27 @@ class GetCacheKeyIsolationTest(TestCase):
     # ------------------------------------------------------------------
     # Test 2: the SAME GET query by the SAME identity still hits the cache
     # ------------------------------------------------------------------
-    def test_same_get_query_hits_cache_on_second_request(self):
-        """The SAME GET query+identity MUST be served from cache on the second call."""
+    def test_same_get_query_hits_cache_on_second_request(self) -> None:
+        """Ship-broken contract: the same GET query and identity must be
+        served from cache on the second call, invoking the backend only once.
+        """
         call_count = {"n": 0}
         original_super_call = GraphQLView.super_call
 
-        def counting_super_call(self_view, request, *args, **kwargs):
+        def counting_super_call(
+            self_view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
+        ) -> HttpResponse:
+            """Count invocations while delegating to the real super_call.
+
+            Args:
+                self_view: The view instance the call is bound to.
+                request: The request being dispatched.
+                args: Additional positional arguments forwarded as-is.
+                kwargs: Additional keyword arguments forwarded as-is.
+
+            Returns:
+                response: Whatever the original "super_call" returns.
+            """
             call_count["n"] += 1
             return original_super_call(self_view, request, *args, **kwargs)
 
@@ -402,12 +557,27 @@ class GetCacheKeyIsolationTest(TestCase):
     # Test 3: POST caching still works; POST and GET of the same query
     #         do NOT incorrectly collide
     # ------------------------------------------------------------------
-    def test_post_caching_still_works(self):
-        """POST requests MUST still be cached correctly after the GET fix."""
+    def test_post_caching_still_works(self) -> None:
+        """Ship-broken contract: POST requests must still be cached
+        correctly after the GET cache-key fix, invoking the backend once.
+        """
         call_count = {"n": 0}
         original_super_call = GraphQLView.super_call
 
-        def counting_super_call(self_view, request, *args, **kwargs):
+        def counting_super_call(
+            self_view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
+        ) -> HttpResponse:
+            """Count invocations while delegating to the real super_call.
+
+            Args:
+                self_view: The view instance the call is bound to.
+                request: The request being dispatched.
+                args: Additional positional arguments forwarded as-is.
+                kwargs: Additional keyword arguments forwarded as-is.
+
+            Returns:
+                response: Whatever the original "super_call" returns.
+            """
             call_count["n"] += 1
             return original_super_call(self_view, request, *args, **kwargs)
 
@@ -425,9 +595,10 @@ class GetCacheKeyIsolationTest(TestCase):
             "POST caching broken — backend called twice for the same POST query+identity",
         )
 
-    def test_post_and_get_same_query_do_not_incorrectly_collide(self):
-        """A POST and a GET for the same query string MUST NOT share the same cache key,
-        because their request structures (and potentially headers) differ.
+    def test_post_and_get_same_query_do_not_incorrectly_collide(self) -> None:
+        """Ship-broken contract: a POST and a GET for the same query string
+        must not share the same cache key, because their request structures
+        (and potentially headers) differ.
 
         Concretely: after a POST seeds the cache, a subsequent GET for the same
         query MUST call the backend (it must not be served the POST's cached
@@ -443,7 +614,20 @@ class GetCacheKeyIsolationTest(TestCase):
         call_count = {"n": 0}
         original_super_call = GraphQLView.super_call
 
-        def counting_super_call(self_view, request, *args, **kwargs):
+        def counting_super_call(
+            self_view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
+        ) -> HttpResponse:
+            """Count invocations while delegating to the real super_call.
+
+            Args:
+                self_view: The view instance the call is bound to.
+                request: The request being dispatched.
+                args: Additional positional arguments forwarded as-is.
+                kwargs: Additional keyword arguments forwarded as-is.
+
+            Returns:
+                response: Whatever the original "super_call" returns.
+            """
             call_count["n"] += 1
             return original_super_call(self_view, request, *args, **kwargs)
 

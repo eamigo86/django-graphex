@@ -27,7 +27,7 @@ class DisableIntrospectionMiddleware:
     """
 
     def resolve(
-        self, next: Callable, root: Any, info: GraphQLResolveInfo, **kwargs
+        self, next: Callable, root: Any, info: GraphQLResolveInfo, **kwargs: Any
     ) -> Any:
         """Raise on introspection fields when introspection is not allowed.
 
@@ -80,7 +80,7 @@ class AuthenticatedFieldsMiddleware:
     """
 
     def resolve(
-        self, next: Callable, root: Any, info: GraphQLResolveInfo, **kwargs
+        self, next: Callable, root: Any, info: GraphQLResolveInfo, **kwargs: Any
     ) -> Any:
         """Gate private top-level fields on an authenticated user.
 
@@ -114,7 +114,18 @@ class AuthenticatedFieldsMiddleware:
         return next(root, info, **kwargs)
 
     def get_protected_fields(self, info: GraphQLResolveInfo) -> Any:
-        """Return the set of protected top-level field names for this request."""
+        """Return the set of protected top-level field names for this request.
+
+        Resolves the protected-field set from the first available source: the
+        native schema extensions, then the legacy schema attribute, then the
+        "PROTECTED_FIELDS" setting (see the class docstring for the order).
+
+        Args:
+            info: The GraphQL resolve info for the current field.
+
+        Returns:
+            The collection of protected top-level field names (a set/frozenset).
+        """
         schema = getattr(info, "schema", None)
         # 1) Native canonical location: schema.extensions['gdx_protected_fields'].
         extensions = getattr(schema, "extensions", None) or {}
@@ -131,5 +142,16 @@ class AuthenticatedFieldsMiddleware:
     def get_error_extensions(
         self, info: GraphQLResolveInfo, user: Any
     ) -> dict[str, Any]:
-        """Return the GraphQL error "extensions" for an auth failure."""
+        """Return the GraphQL error "extensions" for an auth failure.
+
+        Override this to enrich the authentication-error payload (for example
+        to add a hint or a login URL).
+
+        Args:
+            info: The GraphQL resolve info for the current field.
+            user: The (missing or unauthenticated) request user.
+
+        Returns:
+            The "extensions" mapping attached to the raised "GraphQLError".
+        """
         return {"code": "UNAUTHENTICATED", "status_code": 401}

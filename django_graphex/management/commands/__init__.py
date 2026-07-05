@@ -1,1 +1,1 @@
-"""``manage.py`` commands shipped by django-graphex."""
+"""The "manage.py" commands shipped by django-graphex."""

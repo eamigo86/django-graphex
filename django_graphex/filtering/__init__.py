@@ -1,4 +1,4 @@
-"""Native, ``Q``-based filtering layer (the model->schema->queryset path).
+"""Native, "Q"-based filtering layer (the model->schema->queryset path).
 
 Exposes the filter backend seam plus the lookup catalogs that drive schema
 generation and translation.

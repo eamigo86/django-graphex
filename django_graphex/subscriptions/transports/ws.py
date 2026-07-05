@@ -1,60 +1,61 @@
 r"""graphql-transport-ws WebSocket transport adapter for the native engine.
 
-The WebSocket transport is the SECOND (heavier) engine validator (design §7): a
-Channels ``AsyncJsonWebsocketConsumer`` speaking the `graphql-transport-ws`_
+The WebSocket transport is the SECOND (heavier) engine validator (design section
+7): a Channels "AsyncJsonWebsocketConsumer" speaking the graphql-transport-ws
 protocol over a SINGLE socket that multiplexes N concurrent operations. Both
 transports drive the SAME serialize-once engine — the WS adapter only frames the
-protocol envelopes and translates a per-id ``complete`` / a disconnect into the
-matching ``source.aclose()`` teardown.
+protocol envelopes and translates a per-id "complete" / a disconnect into the
+matching "source.aclose()" teardown.
 
 Protocol (graphql-transport-ws, primary subprotocol only; the legacy
-``graphql-ws`` shim is DEFERRED):
+"graphql-ws" shim is DEFERRED):
 
-  * Handshake — ``connection_init`` → ``connection_ack``. The ``connection_init``
+  * Handshake — "connection_init" -> "connection_ack". The "connection_init"
     IS the auth boundary: the authenticated socket carries the user in
-    ``self.scope['user']`` (no detached per-operation token). The server waits at
-    most ``init_timeout`` seconds (``connectionInitWaitTimeout``) for the first
-    ``connection_init``; on timeout it closes with **4408**. A SECOND
-    ``connection_init`` closes with **4429** (Too many initialisation requests). A
-    ``subscribe`` BEFORE the ack closes with **4401** (Unauthorized).
-  * Operations — each ``subscribe{id, payload:{query, variables, operationName}}``
-    starts an ``asyncio.Task`` that runs the engine's native subscribe entry over
-    its own :class:`ChannelLayerSource`, then drives WU5 ``drive_subscription``,
-    emitting ``next{id, payload}`` per delivered event and a terminal
-    ``complete{id}`` when the source ends. A subscribe-time error (validation /
-    authorize-deny / parse) is delivered as ``error{id, payload:[...]}``. A
-    duplicate ``id`` (one already running) closes with **4409**. N operations are
+    "self.scope['user']" (no detached per-operation token). The server waits at
+    most "init_timeout" seconds ("connectionInitWaitTimeout") for the first
+    "connection_init"; on timeout it closes with 4408. A SECOND
+    "connection_init" closes with 4429 (Too many initialisation requests). A
+    "subscribe" BEFORE the ack closes with 4401 (Unauthorized).
+  * Operations — each "subscribe{id, payload:{query, variables, operationName}}"
+    starts an "asyncio.Task" that runs the engine's native subscribe entry over
+    its own "ChannelLayerSource", then drives WU5 "drive_subscription",
+    emitting "next{id, payload}" per delivered event and a terminal
+    "complete{id}" when the source ends. A subscribe-time error (validation /
+    authorize-deny / parse) is delivered as "error{id, payload:[...]}". A
+    duplicate "id" (one already running) closes with 4409. N operations are
     multiplexed independently over the one socket.
-  * ``ping`` → ``pong`` (keep-alive, either direction; the server answers a
-    client ``ping``).
-  * Client ``complete{id}`` cancels ONLY that id's task and ``group_discard``s ITS
-    groups (via ``source.aclose()``); other ids keep streaming. The server does
-    NOT echo a ``complete`` for a client-initiated complete (per the spec — a
-    server ``complete`` is the stream-ended signal).
-  * Disconnect cancels ALL operation tasks and ``group_discard``s every joined
+  * "ping" -> "pong" (keep-alive, either direction; the server answers a
+    client "ping").
+  * Client "complete{id}" cancels ONLY that id's task and "group_discard"s ITS
+    groups (via "source.aclose()"); other ids keep streaming. The server does
+    NOT echo a "complete" for a client-initiated complete (per the spec — a
+    server "complete" is the stream-ended signal).
+  * Disconnect cancels ALL operation tasks and "group_discard"s every joined
     group (full source teardown), so no ghost subscriber survives.
-  * A malformed message (non-mapping, or an unknown ``type``) closes with **4400**
+  * A malformed message (non-mapping, or an unknown "type") closes with 4400
     (Bad Request).
 
-Per-task cleanup uses ``add_done_callback`` (the strawberry.channels hardening):
+Per-task cleanup uses "add_done_callback" (the strawberry.channels hardening):
 the operation is removed from the registry the instant its task ends — normal
 completion, error, OR an abnormal cancel — so the registry never leaks a dead id.
 
-Transport-neutral context (design §7): the engine hooks/``execute`` receive a
-context exposing ``.user`` + a ``scope`` mapping, here built from ``self.scope``
-(the Channels scope dict — NOT an ``HttpRequest``), so the authorize/scope hooks
+Transport-neutral context (design section 7): the engine hooks/"execute" receive
+a context exposing ".user" + a "scope" mapping, here built from "self.scope"
+(the Channels scope dict — NOT an "HttpRequest"), so the authorize/scope hooks
 behave identically to the SSE transport.
 
-This module reads ``graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT``
-(NOT ``graphene_settings`` — the no-graphene-import gate). It imports neither
-graphene at any scope nor ``channels`` at module scope; ``channels`` is imported
+This module reads "graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT"
+(NOT "graphene_settings" — the no-graphene-import gate). It imports neither
+graphene at any scope nor "channels" at module scope; "channels" is imported
 lazily inside the factory so the base subscriptions package never hard-requires
-the optional ``[subscriptions]`` extra (the consumer module is only imported when
+the optional "[subscriptions]" extra (the consumer module is only imported when
 WS is actually routed).
 
-.. _graphql-transport-ws:
-    https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
+The protocol reference is the graphql-transport-ws PROTOCOL.md:
+https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -74,7 +75,7 @@ from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from graphql import DocumentNode, GraphQLSchema
 
@@ -97,6 +98,14 @@ _CODE_TOO_MANY_INIT_REQUESTS = 4429
 # The accepted (and only) subprotocol.
 _SUBPROTOCOL = "graphql-transport-ws"
 
+# A generic denial for a subscription-less (fully-pruned) schema. Mirrors the SSE
+# transport / HTTP view's generic-403 philosophy: it leaks NOTHING about which
+# subscription field/type is missing, so a per-user pruned schema whose
+# Subscription root is None never reveals the server's schema shape (instead of
+# graphql-core's vague-but-leaky "Schema is not configured to execute
+# subscription operation.").
+_SUBSCRIPTION_DENIED_MESSAGE = "Subscriptions are not available."
+
 
 # A scope-identity → consumer registry so callers/tests can observe the live
 # consumer (its per-id operation registry + started sources). A
@@ -106,53 +115,56 @@ _LIVE_CONSUMERS: "WeakValueDictionary[int, Any]" = WeakValueDictionary()
 
 
 def get_live_consumer(scope: "Mapping[str, Any]") -> Any:
-    """Return the live consumer instance backing *scope* (or ``None``).
+    """Return the live consumer instance backing "scope" (or "None").
 
-    The consumer registers itself under ``id(scope)`` while connected so a caller
+    The consumer registers itself under "id(scope)" while connected so a caller
     holding the ASGI scope (e.g. a test communicator) can introspect the live
     per-id operation registry and the started sources.
 
-    Scope-GC caveat (audit rank 20)
-    -------------------------------
-    The registry is a ``WeakValueDictionary`` keyed by ``id(scope)``, so this
-    lookup may return ``None`` if the consumer has been garbage-collected — and,
-    more subtly, the key itself uses ``id(scope)``, which Python may RECYCLE for a
-    different object once the original scope is collected. This is purely a
-    test/introspection-utility caveat: the live subscription is UNAFFECTED because
-    the running consumer keeps its OWN strong references (Channels holds the
-    consumer for the lifetime of the socket; the consumer holds its per-id
-    operation registry and sources). Losing the weak entry here only means an
-    out-of-band observer can no longer reach the consumer through this helper — the
-    subscription keeps delivering. Callers must therefore treat a ``None`` result as
-    "not observable via this registry", not as "the subscription is gone".
+    Scope-GC caveat (audit rank 20): the registry is a "WeakValueDictionary" keyed
+    by "id(scope)", so this lookup may return "None" if the consumer has been
+    garbage-collected — and, more subtly, the key itself uses "id(scope)", which
+    Python may RECYCLE for a different object once the original scope is collected.
+    This is purely a test/introspection-utility caveat: the live subscription is
+    UNAFFECTED because the running consumer keeps its OWN strong references
+    (Channels holds the consumer for the lifetime of the socket; the consumer
+    holds its per-id operation registry and sources). Losing the weak entry here
+    only means an out-of-band observer can no longer reach the consumer through
+    this helper — the subscription keeps delivering. Callers must therefore treat
+    a "None" result as "not observable via this registry", not as "the
+    subscription is gone".
 
     Args:
         scope: The Channels ASGI scope dict the connection was opened with.
 
     Returns:
-        The connected consumer instance, or ``None`` when not connected (or when
+        The connected consumer instance, or "None" when not connected (or when
         the weak entry has been collected — see the scope-GC caveat above).
     """
     return _LIVE_CONSUMERS.get(id(scope))
 
 
 class TransportContext:
-    """Transport-neutral context exposing ``.user`` + a ``scope`` mapping (§7).
+    """Transport-neutral context exposing ".user" + a "scope" mapping (section 7).
 
-    Built from the Channels ``scope`` dict (NOT an ``HttpRequest``) so the engine
-    hooks (``authorize``/``scope``) work uniformly across SSE (``HttpRequest``) and
-    WS (Channels ``scope``). Only ``.user`` and ``.scope`` are part of the contract
+    Built from the Channels "scope" dict (NOT an "HttpRequest") so the engine
+    hooks ("authorize"/"scope") work uniformly across SSE ("HttpRequest") and
+    WS (Channels "scope"). Only ".user" and ".scope" are part of the contract
     the hooks rely on.
 
     Attributes:
-        user: The authenticated (or anonymous) user from ``scope['user']``.
-        scope: The Channels scope mapping (carries ``user``/``session``/etc.).
+        user: The authenticated (or anonymous) user from "scope['user']".
+        scope: The Channels scope mapping (carries "user"/"session"/etc.).
     """
 
     __slots__ = ("user", "scope")
 
     def __init__(self, scope: "Mapping[str, Any]") -> None:
-        """Build the neutral context from a Channels ``scope`` mapping."""
+        """Build the neutral context from a Channels "scope" mapping.
+
+        Args:
+            scope: The Channels ASGI scope mapping the connection was opened with.
+        """
         self.scope = scope
         self.user = scope.get("user") if scope else None
 
@@ -160,17 +172,17 @@ class TransportContext:
 def _make_spec(schema: "GraphQLSchema", document: "DocumentNode") -> SubscriptionSpec:
     """Build the minimal driver spec carrying the live schema + parsed document.
 
-    ``drive_subscription`` reads ONLY ``spec.schema`` and ``spec.document`` (the
-    per-event ``execute`` inputs); every other spec field is the subscribe-time
-    concern already handled by ``create_source_event_stream`` (which ran the
-    field's own native subscribe entry). Mirrors the SSE transport's ``_make_spec``.
+    "drive_subscription" reads ONLY "spec.schema" and "spec.document" (the
+    per-event "execute" inputs); every other spec field is the subscribe-time
+    concern already handled by "create_source_event_stream" (which ran the
+    field's own native subscribe entry). Mirrors the SSE transport's "_make_spec".
 
     Args:
-        schema: The live native ``GraphQLSchema``.
-        document: The parsed subscription ``DocumentNode``.
+        schema: The live native "GraphQLSchema".
+        document: The parsed subscription "DocumentNode".
 
     Returns:
-        A :class:`SubscriptionSpec` carrying schema + document for delivery.
+        A "SubscriptionSpec" carrying schema + document for delivery.
     """
     return SubscriptionSpec(
         model_label="",
@@ -182,30 +194,45 @@ def _make_spec(schema: "GraphQLSchema", document: "DocumentNode") -> Subscriptio
 
 def subscription_ws_consumer(
     *,
-    schema: "GraphQLSchema",
+    schema: "GraphQLSchema | None" = None,
+    schema_provider: "Callable[[Any], GraphQLSchema] | None" = None,
     init_timeout: float | None = None,
 ) -> type:
-    """Build the graphql-transport-ws consumer class bound to *schema*.
+    """Build the graphql-transport-ws consumer class bound to "schema".
 
-    The returned class is a Channels ``AsyncJsonWebsocketConsumer`` that accepts
-    the ``graphql-transport-ws`` subprotocol, runs the connection_init/ack auth
-    handshake, multiplexes N ``subscribe`` operations (each driving the
-    serialize-once engine over its own :class:`ChannelLayerSource`), answers
-    ``ping`` with ``pong``, and tears every source down on per-id ``complete`` /
-    disconnect.
+    The returned class is a Channels "AsyncJsonWebsocketConsumer" that accepts
+    the "graphql-transport-ws" subprotocol, runs the connection_init/ack auth
+    handshake, multiplexes N "subscribe" operations (each driving the
+    serialize-once engine over its own "ChannelLayerSource"), answers "ping"
+    with "pong", and tears every source down on per-id "complete" / disconnect.
 
     Args:
-        schema: The live native graphql-core ``GraphQLSchema`` the subscription
+        schema: The live native graphql-core "GraphQLSchema" the subscription
             executes against (validation, the subscribe entry, and the per-event
-            delivery ``execute`` all use it).
-        init_timeout: Seconds to wait for the first ``connection_init`` before
-            closing with 4408. ``None`` reads
-            ``graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT``
+            delivery "execute" all use it). Backward compatible: passing a plain
+            "schema=" keeps the pre-change behavior.
+        schema_provider: Optional per-connection resolver
+            "Callable[[user], GraphQLSchema]". When given it WINS over "schema"
+            and is resolved ONCE per socket using "scope['user']" (on the first
+            subscribe, then cached for the connection), so the WS connection uses
+            the SAME pruned schema as HTTP for that user. When "None" the baked
+            "schema" is used unchanged.
+        init_timeout: Seconds to wait for the first "connection_init" before
+            closing with 4408. "None" reads
+            "graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT"
             (default 3.0). A test may pass a tiny value to avoid waiting.
 
     Returns:
-        A Channels consumer class (an ``AsyncJsonWebsocketConsumer`` subclass).
+        A Channels consumer class (an "AsyncJsonWebsocketConsumer" subclass).
+
+    Raises:
+        ValueError: If neither "schema" nor "schema_provider" is supplied.
     """
+    if schema is None and schema_provider is None:
+        raise ValueError(
+            "subscription_ws_consumer requires either schema= or schema_provider=."
+        )
+
     # channels is imported lazily here so importing the base subscriptions
     # package never hard-requires the optional [subscriptions] extra; this module
     # is only imported when WS is actually routed.
@@ -220,8 +247,8 @@ def subscription_ws_consumer(
             """Accept the socket on the graphql-transport-ws subprotocol.
 
             The accept advertises the negotiated subprotocol. A
-            ``connectionInitWaitTimeout`` watchdog is armed: if no
-            ``connection_init`` arrives in time the socket is closed with 4408.
+            "connectionInitWaitTimeout" watchdog is armed: if no
+            "connection_init" arrives in time the socket is closed with 4408.
             """
             self._acked = False
             self._operations: dict[str, asyncio.Task] = {}
@@ -234,13 +261,11 @@ def subscription_ws_consumer(
 
             timeout = resolved_timeout
             if timeout is None:
-                timeout = (
-                    graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT
-                )
+                timeout = graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT
             self._init_timer = asyncio.ensure_future(self._init_watchdog(timeout))
 
         async def _init_watchdog(self, timeout: float) -> None:
-            """Close with 4408 if no ``connection_init`` arrives within *timeout*."""
+            """Close with 4408 if no "connection_init" arrives within "timeout"."""
             try:
                 await asyncio.sleep(timeout)
             except asyncio.CancelledError:
@@ -251,7 +276,7 @@ def subscription_ws_consumer(
         async def receive_json(self, content: Any, **kwargs: Any) -> None:
             """Dispatch one decoded graphql-transport-ws message.
 
-            A non-mapping payload or an unknown ``type`` closes with 4400.
+            A non-mapping payload or an unknown "type" closes with 4400.
             """
             if self._closing:
                 return
@@ -276,9 +301,9 @@ def subscription_ws_consumer(
                 await self._close(_CODE_BAD_REQUEST)
 
         async def _on_connection_init(self) -> None:
-            """Answer the first ``connection_init`` with ``connection_ack``.
+            """Answer the first "connection_init" with "connection_ack".
 
-            A SECOND ``connection_init`` is a protocol violation → 4429.
+            A SECOND "connection_init" is a protocol violation -> 4429.
             """
             if self._acked:
                 await self._close(_CODE_TOO_MANY_INIT_REQUESTS)
@@ -290,18 +315,18 @@ def subscription_ws_consumer(
             await self.send_json({"type": "connection_ack"})
 
         async def _on_ping(self, content: dict[str, Any]) -> None:
-            """Answer a ``ping`` with ``pong`` (echoing an optional payload)."""
+            """Answer a "ping" with "pong" (echoing an optional payload)."""
             pong: dict[str, Any] = {"type": "pong"}
             if content.get("payload") is not None:
                 pong["payload"] = content["payload"]
             await self.send_json(pong)
 
         async def _on_subscribe(self, content: dict[str, Any]) -> None:
-            """Start a multiplexed operation for ``subscribe{id, payload}``.
+            """Start a multiplexed operation for "subscribe{id, payload}".
 
             A subscribe BEFORE the ack is Unauthorized (4401). A duplicate id
-            (one already running) is 4409. Otherwise an ``asyncio.Task`` runs the
-            engine for this id; ``add_done_callback`` removes it from the registry
+            (one already running) is 4409. Otherwise an "asyncio.Task" runs the
+            engine for this id; "add_done_callback" removes it from the registry
             the instant the task ends (normal/error/cancel).
             """
             if not self._acked:
@@ -326,19 +351,41 @@ def subscription_ws_consumer(
                 lambda _t, _id=op_id: self._operations.pop(_id, None)
             )
 
+        def _resolve_schema(self) -> "GraphQLSchema":
+            """Return the schema for THIS connection (provider wins, cached once).
+
+            When a "schema_provider" was supplied it is resolved ONCE per socket
+            using "scope['user']" and cached on the instance, so every
+            multiplexed operation on this connection shares the SAME pruned schema
+            (matching the HTTP pruned schema for that user). Otherwise the baked
+            "schema" is returned unchanged.
+            """
+            cached = getattr(self, "_conn_schema", None)
+            if cached is not None:
+                return cached
+            if schema_provider is not None:
+                user = self.scope.get("user") if self.scope else None
+                resolved = schema_provider(user)
+            else:
+                resolved = schema
+            self._conn_schema = resolved
+            return resolved
+
         async def _run_operation(self, op_id: str, payload: dict[str, Any]) -> None:
-            """Run one subscription operation: subscribe → next* → complete.
+            """Run one subscription operation: subscribe -> next* -> complete.
 
             A subscribe-time error (parse / validation / authorize-deny) is
-            delivered as ``error{id, payload:[...]}`` (no source started). A
-            started source is driven via WU5 ``drive_subscription`` (COND-A — NOT
-            ``MapAsyncIterator``): each ``ExecutionResult`` → ``next{id, payload}``;
-            when the source ends → terminal ``complete{id}``. A cancel (client
-            ``complete`` / disconnect) tears the source down in ``finally``.
+            delivered as "error{id, payload:[...]}" (no source started). A
+            started source is driven via WU5 "drive_subscription" (COND-A — NOT
+            "MapAsyncIterator"): each "ExecutionResult" -> "next{id, payload}";
+            when the source ends -> terminal "complete{id}". A cancel (client
+            "complete" / disconnect) tears the source down in "finally".
             """
             query = payload.get("query")
             if not query:
-                await self._send_error(op_id, [{"message": "No GraphQL query provided."}])
+                await self._send_error(
+                    op_id, [{"message": "No GraphQL query provided."}]
+                )
                 return
 
             try:
@@ -360,15 +407,28 @@ def subscription_ws_consumer(
 
             context = TransportContext(self.scope)
 
+            # Per-connection schema (provider wins, resolved once via scope user).
+            conn_schema = self._resolve_schema()
+
+            # Subscription-less (fully-pruned) schema short-circuit: a per-user
+            # pruned schema whose Subscription root is None would make graphql-core
+            # raise the vague-but-leaky "Schema is not configured to execute
+            # subscription operation." Deny GENERICALLY here (mirroring the SSE
+            # transport / HTTP view generic-403 philosophy) so nothing about the
+            # server's schema shape leaks. No source is ever started.
+            if conn_schema.subscription_type is None:
+                await self._send_error(
+                    op_id, [{"message": _SUBSCRIPTION_DENIED_MESSAGE}]
+                )
+                return
+
             validation_errors = validate(
-                schema,
+                conn_schema,
                 document,
                 max_errors=graphql_api_settings.MAX_VALIDATION_ERRORS,
             )
             if validation_errors:
-                await self._send_error(
-                    op_id, [e.formatted for e in validation_errors]
-                )
+                await self._send_error(op_id, [e.formatted for e in validation_errors])
                 return
 
             # Run the subscription field's native subscribe entry. The KEPT hooks
@@ -377,7 +437,7 @@ def subscription_ws_consumer(
             # ExecutionResult when the subscribe resolver reported an error (deny).
             try:
                 source_or_result = await create_source_event_stream(
-                    schema,
+                    conn_schema,
                     document,
                     context_value=context,
                     variable_values=payload.get("variables"),
@@ -398,7 +458,7 @@ def subscription_ws_consumer(
 
             source: "ChannelLayerSource" = source_or_result  # type: ignore[assignment]
             self._sources[op_id] = source
-            spec = _make_spec(schema, document)
+            spec = _make_spec(conn_schema, document)
             delivery = drive_subscription(source, spec, context)
             try:
                 async for result in delivery:
@@ -416,11 +476,11 @@ def subscription_ws_consumer(
                 await delivery.aclose()
 
         async def _on_complete(self, content: dict[str, Any]) -> None:
-            """Client ``complete{id}``: cancel ONLY that id (discard ITS groups).
+            """Client "complete{id}": cancel ONLY that id (discard ITS groups).
 
             The other operations keep streaming. The cancel propagates into the
-            operation task whose ``finally`` runs ``delivery.aclose()`` →
-            ``source.aclose()`` → ``group_discard`` for every joined group.
+            operation task whose "finally" runs "delivery.aclose()" ->
+            "source.aclose()" -> "group_discard" for every joined group.
             """
             op_id = content.get("id")
             if op_id is None:
@@ -444,11 +504,11 @@ def subscription_ws_consumer(
             self._sources.pop(op_id, None)
 
         async def disconnect(self, code: int) -> None:
-            """Disconnect: cancel ALL operation tasks + ``group_discard`` all.
+            """Disconnect: cancel ALL operation tasks + "group_discard" all.
 
             Every started source is torn down so no ghost subscriber survives the
             socket close. Best-effort: a teardown error never propagates out of
-            ``disconnect``.
+            "disconnect".
             """
             self._closing = True
             _LIVE_CONSUMERS.pop(id(self.scope), None)
@@ -469,7 +529,7 @@ def subscription_ws_consumer(
 
         # -- protocol frame senders -----------------------------------------
         async def _send_next(self, op_id: str, result: ExecutionResult) -> None:
-            """Send a ``next{id, payload}`` frame for one execution result."""
+            """Send a "next{id, payload}" frame for one execution result."""
             payload: dict[str, Any] = {}
             if result.data is not None:
                 payload["data"] = result.data
@@ -478,29 +538,28 @@ def subscription_ws_consumer(
             await self.send_json({"id": op_id, "type": "next", "payload": payload})
 
         async def _send_error(self, op_id: str, errors: list[Any]) -> None:
-            """Send an ``error{id, payload:[...]}`` frame (subscribe-time error)."""
+            """Send an "error{id, payload:[...]}" frame (subscribe-time error)."""
             await self.send_json({"id": op_id, "type": "error", "payload": errors})
 
         async def _close(self, code: int) -> None:
-            """Close the socket with *code*, tearing every operation down FIRST.
+            """Close the socket with "code", tearing every operation down FIRST.
 
             A server-initiated close (4400/4401/4408/4409/4429) must ACTIVELY
-            tear down before delegating to ``self.close()``. Channels'
-            ``AsyncWebsocketConsumer.close()`` only emits a ``websocket.close``
-            ASGI message — it does NOT invoke ``disconnect()``, so the
-            cancel-all + ``group_discard`` teardown that lives in ``disconnect``
-            would NOT run until a subsequent inbound ``websocket.disconnect``
+            tear down before delegating to "self.close()". Channels'
+            "AsyncWebsocketConsumer.close()" only emits a "websocket.close"
+            ASGI message — it does NOT invoke "disconnect()", so the
+            cancel-all + "group_discard" teardown that lives in "disconnect"
+            would NOT run until a subsequent inbound "websocket.disconnect"
             arrives (which an ASGI server/proxy may never deliver, or a stalled
             client may delay). Without active teardown, any live operation's task
-            + group membership would DANGLE → ghost subscriber + leaked task.
+            + group membership would DANGLE -> ghost subscriber + leaked task.
 
-            So here we drain every operation (cancel its task + ``aclose()`` its
-            source → ``group_discard`` its groups, exactly as ``disconnect``
+            So here we drain every operation (cancel its task + "aclose()" its
+            source -> "group_discard" its groups, exactly as "disconnect"
             does), sweep any remaining sources defensively, and ONLY THEN close
-            the socket. ``source.aclose()`` is idempotent and
-            ``_cancel_operation`` pops the registries, so a later inbound
-            ``disconnect()`` finds empty dicts → no double-discard, no
-            double-cancel.
+            the socket. "source.aclose()" is idempotent and "_cancel_operation"
+            pops the registries, so a later inbound "disconnect()" finds empty
+            dicts -> no double-discard, no double-cancel.
             """
             if self._closing:
                 return
@@ -526,9 +585,9 @@ def subscription_ws_consumer(
             return set(self._operations)
 
         def started_source(self, op_id: str) -> "ChannelLayerSource | None":
-            """Return the started :class:`ChannelLayerSource` for *op_id*.
+            """Return the started "ChannelLayerSource" for "op_id".
 
-            ``None`` until the operation's subscribe entry has started its source,
+            "None" until the operation's subscribe entry has started its source,
             or after the operation completed / was cancelled.
             """
             return self._sources.get(op_id)

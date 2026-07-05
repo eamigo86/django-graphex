@@ -2,7 +2,8 @@
 
 These examples build on the schema from
 [Sample Application](blog-schema.md): creating and updating records, file
-uploads and error handling.
+uploads and error handling. For a complete runnable project see
+`examples/playground/` in the repo.
 
 ### Creating Records
 
@@ -11,7 +12,7 @@ uploads and error handling.
 === "Mutation"
 
     ```graphql
-    mutation CreateUserWithProfile($userData: NewUser!) {
+    mutation CreateUserWithProfile($userData: UserCreateGenericType!) {
       createUser(newUser: $userData) {
         ok
         user {
@@ -83,7 +84,7 @@ uploads and error handling.
 === "Mutation"
 
     ```graphql
-    mutation CreatePost($postData: NewPost!) {
+    mutation CreatePost($postData: PostCreateGenericType!) {
       createPost(newPost: $postData) {
         ok
         post {
@@ -119,7 +120,7 @@ uploads and error handling.
         "slug": "advanced-graphql-techniques",
         "content": "In this post, we'll explore advanced GraphQL patterns...",
         "excerpt": "Learn advanced GraphQL patterns and best practices",
-        "status": "draft",
+        "status": "DRAFT",
         "category": "1",
         "tags": ["1", "2", "3"]
       }
@@ -138,7 +139,7 @@ uploads and error handling.
             "title": "Advanced GraphQL Techniques",
             "slug": "advanced-graphql-techniques",
             "content": "In this post, we'll explore advanced GraphQL patterns...",
-            "status": "draft",
+            "status": "DRAFT",
             "author": { "username": "admin" },
             "category": { "name": "Technology" },
             "tags": { "results": [{ "name": "graphql" }, { "name": "django" }, { "name": "api" }] }
@@ -154,7 +155,7 @@ uploads and error handling.
 === "Update Post"
 
     ```graphql
-    mutation UpdatePost($postData: PostInput!) {
+    mutation UpdatePost($postData: PostUpdateGenericType!) {
       updatePost(newPost: $postData) {
         ok
         post {
@@ -180,7 +181,7 @@ uploads and error handling.
         "id": "1",
         "title": "Advanced GraphQL Techniques - Updated",
         "content": "Updated content with new examples...",
-        "status": "published"
+        "status": "PUBLISHED"
       }
     }
     ```

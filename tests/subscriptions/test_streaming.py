@@ -1,33 +1,35 @@
 # -*- coding: utf-8 -*-
 """WU5 — streaming.py: SubscriptionSpec + drive_subscription + native subscribe.
 
-Design §2 (``SubscriptionSpec`` plain ``@dataclass`` + ``drive_subscription``),
-§3 (the serialize-once data path: the native subscribe entry runs the KEPT hooks
-BEFORE the source — authorize -> validate_filters -> scope -> merge filters ->
-compute index/groups -> ``ChannelLayerSource``; the action arg picks the join
-set), §4 (COND-A: ``drive_subscription`` composes the source through the WU2
-``DeliveryIterator`` running ``execute()`` PER event over the flat dict; NO
-``MapAsyncIterator``; out-of-band close), §6 (snake-closure projection), §7
-(transport-neutral context: ``.user`` + a scope mapping — works for both SSE
-``HttpRequest`` and WS Channels scope).
+Design paragraph 2 (SubscriptionSpec plain @dataclass + drive_subscription),
+paragraph 3 (the serialize-once data path: the native subscribe entry runs
+the KEPT hooks BEFORE the source — authorize -> validate_filters -> scope ->
+merge filters -> compute index/groups -> ChannelLayerSource; the action arg
+picks the join set), paragraph 4 (COND-A: drive_subscription composes the
+source through the WU2 DeliveryIterator running execute() PER event over the
+flat dict; NO MapAsyncIterator; out-of-band close), paragraph 6
+(snake-closure projection), paragraph 7 (transport-neutral context: .user
+plus a scope mapping — works for both SSE HttpRequest and WS Channels scope).
 
 This is the WU5 gate (InMemoryChannelLayer, channels 4.3.2). It proves:
 
-  - authorize-DENY short-circuits BEFORE any ``group_add`` (no source, no group)
-  - scope WINS over a conflicting client filter; effective = client ∪ scope
-  - hooks run BEFORE ``ChannelLayerSource`` construction (ordering)
-  - ``drive_subscription`` yields an ``ExecutionResult`` whose data is the
-    projected flat dict; ``assertNumQueries(0)`` per delivered event; one
-    ``execute()`` runs PER event over the SAME dict (serialize-once)
-  - the delivery path contains NO ``MapAsyncIterator`` (structural assert)
-  - ``db_verify`` is wired: a ``__lookup``-filtered subscription DELIVERS verified
-    events and DROPS a non-matching ``__lookup`` event (the WU4 conservative-drop
+  - authorize-DENY short-circuits BEFORE any group_add (no source, no group)
+  - scope WINS over a conflicting client filter; effective = client union scope
+  - hooks run BEFORE ChannelLayerSource construction (ordering)
+  - drive_subscription yields an ExecutionResult whose data is the
+    projected flat dict; assertNumQueries(0) per delivered event; one
+    execute() runs PER event over the SAME dict (serialize-once)
+  - the delivery path contains NO MapAsyncIterator (structural assert)
+  - db_verify is wired: a __lookup-filtered subscription DELIVERS verified
+    events and DROPS a non-matching __lookup event (the WU4 conservative-drop
     gap is closed by the wired verifier)
-  - out-of-band close (``aclose``) stops promptly and ``group_discard``s (source)
+  - out-of-band close (aclose) stops promptly and group_discards (source)
 """
+
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 from graphql import (
@@ -44,6 +46,7 @@ from graphql import (
 pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
+from pytest_django.fixtures import DjangoAssertNumQueries  # noqa: E402
 
 from django_graphex.subscriptions.resolvers import make_snake_resolver  # noqa: E402
 from django_graphex.subscriptions.source import ChannelLayerSource  # noqa: E402
@@ -61,11 +64,15 @@ from django_graphex.subscriptions.streaming import (  # noqa: E402
 
 
 def _build_event_schema() -> GraphQLSchema:
-    """A minimal subscription schema with a snake-closure-projected event type.
+    """Build a minimal subscription schema with a snake-closure-projected event type.
 
-    The ``demoEvent`` field's ``resolve`` is identity (root IS the flat source
+    The "demoEvent" field's resolve is identity (root IS the flat source
     dict); each event field resolver is a sentinel-tagged snake-closure that maps
     a camelCase wire name to the snake key present in the serialized payload.
+
+    Returns:
+        schema: The assembled GraphQLSchema with a "demoEvent" subscription
+            field.
     """
     event_type = GraphQLObjectType(
         "DemoEvent",
@@ -101,8 +108,20 @@ def _build_event_schema() -> GraphQLSchema:
 _DOC = parse("subscription { demoEvent { id isActive ownerId name } }")
 
 
-def _notify(group: str, data: dict, *, action: str = "create", pk=1) -> dict:
-    """Build a producer-shaped ``subscription.notify`` envelope (bindings.py)."""
+def _notify(
+    group: str, data: dict[str, Any], *, action: str = "create", pk: int = 1
+) -> dict[str, Any]:
+    """Build a producer-shaped "subscription.notify" envelope (bindings.py).
+
+    Args:
+        group: The channel-layer group name the message targets.
+        data: The serialized payload data to embed in the message.
+        action: The CRUD action name to embed in the payload.
+        pk: The primary key to embed in the envelope.
+
+    Returns:
+        message: The assembled notify message dict.
+    """
     return {
         "type": "subscription.notify",
         "stream": "demo",
@@ -113,26 +132,44 @@ def _notify(group: str, data: dict, *, action: str = "create", pk=1) -> dict:
 
 
 class _Ctx:
-    """A transport-neutral context exposing ``.user`` + a scope mapping (§7).
+    """A transport-neutral context exposing ".user" plus a scope mapping (paragraph 7).
 
-    Both SSE (``HttpRequest``) and WS (Channels ``scope``) can satisfy this
-    minimal contract: a ``user`` attribute and a ``scope`` mapping. Hooks must
-    NOT assume ``HttpRequest``.
+    Both SSE (HttpRequest) and WS (Channels scope) can satisfy this
+    minimal contract: a "user" attribute and a "scope" mapping. Hooks must
+    NOT assume HttpRequest.
     """
 
-    def __init__(self, user=None, scope=None):
+    def __init__(self, user: Any = None, scope: dict[str, Any] | None = None) -> None:
+        """Store the user and scope mapping for this stand-in context.
+
+        Args:
+            user: The stand-in user object to expose as ".user".
+            scope: The scope mapping to expose as ".scope"; defaults to {}.
+        """
         self.user = user
         self.scope = scope or {}
 
 
 class _RecordingLayer(InMemoryChannelLayer):
-    """An InMemoryChannelLayer that records every ``group_add`` for assertions."""
+    """An InMemoryChannelLayer that records every "group_add" for assertions."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the underlying layer and the group_add call log.
+
+        Args:
+            args: Positional arguments forwarded to InMemoryChannelLayer.
+            kwargs: Keyword arguments forwarded to InMemoryChannelLayer.
+        """
         super().__init__(*args, **kwargs)
         self.group_add_calls: list[tuple[str, str]] = []
 
-    async def group_add(self, group, channel):
+    async def group_add(self, group: str, channel: str) -> None:
+        """Record the join, then delegate to the real implementation.
+
+        Args:
+            group: The group name being joined.
+            channel: The channel name joining the group.
+        """
         self.group_add_calls.append((group, channel))
         return await super().group_add(group, channel)
 
@@ -142,19 +179,31 @@ class _RecordingLayer(InMemoryChannelLayer):
 # decoupled from the graphene base so WU5 can test the engine in isolation.
 def _spec(
     *,
-    authorize=None,
-    scope=None,
-    index_fields=(),
-    declared_fields=("id", "is_active", "owner_id", "name"),
-    db_exists=None,
+    authorize: Any = None,
+    scope: Any = None,
+    index_fields: tuple[str, ...] = (),
+    declared_fields: tuple[str, ...] = ("id", "is_active", "owner_id", "name"),
+    db_exists: Any = None,
 ) -> SubscriptionSpec:
-    """Build a SubscriptionSpec with injectable hooks for the test."""
+    """Build a SubscriptionSpec with injectable hooks for the test.
 
-    def _authorize(context, **kw):
+    Args:
+        authorize: An optional callable(context, **kw) raising to deny.
+        scope: An optional callable(context, **kw) returning a scope mapping.
+        index_fields: The field names used for value-scoped group routing.
+        declared_fields: The output field names the spec declares.
+        db_exists: An optional single-row existence-check callable wired as
+            the spec's db_exists hook.
+
+    Returns:
+        spec: The assembled SubscriptionSpec.
+    """
+
+    def _authorize(context: Any, **kw: Any) -> None:
         if authorize is not None:
             authorize(context, **kw)
 
-    def _scope(context, **kw):
+    def _scope(context: Any, **kw: Any) -> Any:
         return scope(context, **kw) if scope is not None else None
 
     return SubscriptionSpec(
@@ -172,12 +221,22 @@ def _spec(
     )
 
 
-def _group_name(action, *, id=None, index=None):
+def _group_name(
+    action: str, *, id: int | None = None, index: dict[str, Any] | None = None
+) -> str:
     """Mirror Subscription._group_name's naming for the test.
 
-    Uses ``safe_group_name`` so a value-scoped name carrying ``:`` / ``=`` / ``&``
+    Uses "safe_group_name" so a value-scoped name carrying ":" / "=" / "&"
     (which Channels rejects) is deterministically hashed — exactly what the real
-    ``Subscription._group_name`` does, so producer and consumer names match.
+    Subscription._group_name does, so producer and consumer names match.
+
+    Args:
+        action: The CRUD action name the group is scoped to.
+        id: An optional instance id to further scope the group name.
+        index: An optional index-field mapping to further scope the group.
+
+    Returns:
+        name: The computed, Channels-safe group name.
     """
     from urllib.parse import quote
 
@@ -193,9 +252,29 @@ def _group_name(action, *, id=None, index=None):
     return safe_group_name(name)
 
 
-async def _start_source(spec, layer, *, action="create", obj_id=None, filters=None,
-                        context=None):
-    """Run native_subscribe and return the started ChannelLayerSource."""
+async def _start_source(
+    spec: SubscriptionSpec,
+    layer: Any,
+    *,
+    action: str = "create",
+    obj_id: int | None = None,
+    filters: dict[str, Any] | None = None,
+    context: Any = None,
+) -> ChannelLayerSource:
+    """Run native_subscribe and return the started ChannelLayerSource.
+
+    Args:
+        spec: The SubscriptionSpec driving the subscribe.
+        layer: The channel layer to subscribe through.
+        action: The CRUD action to subscribe to.
+        obj_id: An optional instance id to scope the subscription to.
+        filters: An optional client filter mapping.
+        context: An optional transport-neutral context; defaults to a
+            _Ctx with a bare object() user.
+
+    Returns:
+        source: The started ChannelLayerSource.
+    """
     return await native_subscribe(
         spec,
         layer,
@@ -211,8 +290,12 @@ async def _start_source(spec, layer, *, action="create", obj_id=None, filters=No
 # ---------------------------------------------------------------------------
 
 
-def test_subscription_spec_is_plain_dataclass():
-    """``SubscriptionSpec`` is a plain ``@dataclass`` (NOT ModelMetaclass/#1452)."""
+def test_subscription_spec_is_plain_dataclass() -> None:
+    """SubscriptionSpec must be a plain @dataclass, not ModelMetaclass (#1452 C-A).
+
+    Contract: this test ships broken if SubscriptionSpec regresses to a
+    pydantic/graphene metaclass-driven type instead of a plain dataclass.
+    """
     import dataclasses
 
     assert dataclasses.is_dataclass(SubscriptionSpec)
@@ -229,15 +312,15 @@ def test_subscription_spec_is_plain_dataclass():
 # ---------------------------------------------------------------------------
 
 
-async def test_authorize_deny_short_circuits_before_group_add():
-    """A denying ``authorize`` raises BEFORE any source/group is created.
+async def test_authorize_deny_short_circuits_before_group_add() -> None:  # noqa: DOC005
+    """A denying authorize hook must raise before any source/group is created.
 
-    No ``ChannelLayerSource`` is constructed and the channel layer receives ZERO
-    ``group_add`` calls (deny short-circuits before any join).
+    Contract: this test ships broken if a denied authorize still constructs
+    a source or joins any group.
     """
     layer = _RecordingLayer()
 
-    def _deny(context, **kw):
+    def _deny(context: Any, **kw: Any) -> None:
         raise PermissionError("denied")
 
     spec = _spec(authorize=_deny)
@@ -249,22 +332,28 @@ async def test_authorize_deny_short_circuits_before_group_add():
     assert layer.group_add_calls == []
 
 
-async def test_authorize_runs_before_source_construction(monkeypatch):
-    """Hook ORDER: authorize fires BEFORE ``ChannelLayerSource`` is constructed.
+async def test_authorize_runs_before_source_construction(  # noqa: DOC005
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hook order: authorize must fire before ChannelLayerSource is constructed.
 
-    Patches ``ChannelLayerSource.__init__`` to record construction; a denying
-    authorize must raise with construction NEVER recorded.
+    Contract: this test ships broken if a denying authorize still allows
+    ChannelLayerSource construction to be recorded.
+
+    Args:
+        monkeypatch: The pytest fixture used to spy on
+            ChannelLayerSource.__init__.
     """
     layer = _RecordingLayer()
     events: list[str] = []
 
-    def _authorize(context, **kw):
+    def _authorize(context: Any, **kw: Any) -> None:
         events.append("authorize")
         raise PermissionError("nope")
 
     orig_init = ChannelLayerSource.__init__
 
-    def _spy_init(self, *a, **k):
+    def _spy_init(self: ChannelLayerSource, *a: Any, **k: Any) -> None:
         events.append("source_init")
         return orig_init(self, *a, **k)
 
@@ -282,11 +371,15 @@ async def test_authorize_runs_before_source_construction(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_scope_wins_over_conflicting_client_filter():
-    """``subscription_scope`` overrides a conflicting client filter (server wins)."""
+async def test_scope_wins_over_conflicting_client_filter() -> None:
+    """subscription_scope must override a conflicting client filter (server wins).
+
+    Contract: this test ships broken if a client-supplied filter value beats
+    the server-side scope instead of being overridden by it.
+    """
     layer = _RecordingLayer()
 
-    def _scope(context, **kw):
+    def _scope(context: Any, **kw: Any) -> dict[str, int]:
         return {"owner_id": 5}
 
     spec = _spec(scope=_scope)
@@ -300,11 +393,15 @@ async def test_scope_wins_over_conflicting_client_filter():
         await source.aclose()
 
 
-async def test_filters_are_client_union_scope():
-    """Effective filters are the union of client filters and server scope."""
+async def test_filters_are_client_union_scope() -> None:
+    """Effective filters must be the union of client filters and server scope.
+
+    Contract: this test ships broken if a non-conflicting client filter and
+    a server scope key fail to both survive into the effective filter set.
+    """
     layer = _RecordingLayer()
 
-    def _scope(context, **kw):
+    def _scope(context: Any, **kw: Any) -> dict[str, int]:
         return {"tenant_id": 7}
 
     spec = _spec(scope=_scope, declared_fields=("id", "name", "tenant_id"))
@@ -315,15 +412,19 @@ async def test_filters_are_client_union_scope():
         await source.aclose()
 
 
-async def test_hooks_run_before_source_then_join():
-    """authorize -> validate -> scope all run, THEN the source joins its group."""
+async def test_hooks_run_before_source_then_join() -> None:
+    """authorize -> validate -> scope must all run, then the source joins its group.
+
+    Contract: this test ships broken if the source joins its group before
+    every hook has run, or if hooks run out of order.
+    """
     layer = _RecordingLayer()
     order: list[str] = []
 
-    def _authorize(context, **kw):
+    def _authorize(context: Any, **kw: Any) -> None:
         order.append("authorize")
 
-    def _scope(context, **kw):
+    def _scope(context: Any, **kw: Any) -> dict[str, int]:
         order.append("scope")
         return {"owner_id": 1}
 
@@ -338,8 +439,12 @@ async def test_hooks_run_before_source_then_join():
         await source.aclose()
 
 
-async def test_validate_filters_rejects_undeclared_root():
-    """A client filter rooting on an undeclared output field is rejected."""
+async def test_validate_filters_rejects_undeclared_root() -> None:
+    """A client filter rooting on an undeclared output field must be rejected.
+
+    Contract: this test ships broken if an undeclared filter root is
+    silently accepted instead of raising before any group_add.
+    """
     layer = _RecordingLayer()
     spec = _spec(declared_fields=("id", "name"))
     with pytest.raises(Exception):  # noqa: PT011 - GraphQLError or ValueError
@@ -353,8 +458,12 @@ async def test_validate_filters_rejects_undeclared_root():
 # ---------------------------------------------------------------------------
 
 
-async def test_single_action_joins_exactly_one_group_1420():
-    """A single-action subscribe joins ONLY its group (the #1420 guard)."""
+async def test_single_action_joins_exactly_one_group_1420() -> None:
+    """A single-action subscribe must join only its group (the #1420 guard).
+
+    Contract: this test ships broken if a single-action subscribe rejoins
+    the other action groups.
+    """
     layer = _RecordingLayer()
     spec = _spec()
     source = await _start_source(spec, layer, action="update")
@@ -364,8 +473,12 @@ async def test_single_action_joins_exactly_one_group_1420():
         await source.aclose()
 
 
-async def test_all_actions_joins_three_groups():
-    """``all_actions`` joins exactly the create/update/delete groups."""
+async def test_all_actions_joins_three_groups() -> None:
+    """all_actions must join exactly the create/update/delete groups.
+
+    Contract: this test ships broken if an all-actions subscribe joins a
+    different group set than exactly create/update/delete.
+    """
     layer = _RecordingLayer()
     spec = _spec()
     source = await _start_source(spec, layer, action="all_actions")
@@ -384,12 +497,15 @@ async def test_all_actions_joins_three_groups():
 # ---------------------------------------------------------------------------
 
 
-async def test_drive_subscription_yields_execution_result_over_flat_dict():
-    """A source event -> drive yields an ``ExecutionResult`` projecting the dict.
+async def test_drive_subscription_yields_execution_result_over_flat_dict() -> None:
+    """A source event must drive an ExecutionResult that projects the flat dict.
+
+    Contract: this test ships broken if a multi-word field (isActive) reads
+    null instead of the real value from the snake-keyed payload.
 
     The snake-closure resolvers map camelCase wire names to snake payload keys, so
-    a multi-word field (``isActive`` -> ``is_active``) delivers the REAL value, not
-    null. ``execute()`` runs over the flat dict that IS the root.
+    a multi-word field (isActive -> is_active) delivers the REAL value, not
+    null. execute() runs over the flat dict that IS the root.
     """
     from graphql import ExecutionResult
 
@@ -416,14 +532,18 @@ async def test_drive_subscription_yields_execution_result_over_flat_dict():
     }
 
 
-async def test_execute_runs_per_event_over_same_dict():
-    """``execute()`` runs ONCE PER delivered event (serialize-once data path)."""
+async def test_execute_runs_per_event_over_same_dict() -> None:
+    """execute() must run exactly once per delivered event (serialize-once path).
+
+    Contract: this test ships broken if execute() runs more or fewer times
+    than once per delivered event.
+    """
     import django_graphex.subscriptions.streaming as streaming_mod
 
     calls = {"n": 0}
     real_execute = streaming_mod.execute
 
-    def _counting(*args, **kwargs):
+    def _counting(*args: Any, **kwargs: Any) -> Any:
         calls["n"] += 1
         return real_execute(*args, **kwargs)
 
@@ -453,18 +573,25 @@ async def test_execute_runs_per_event_over_same_dict():
 
 @pytest.mark.django_db
 def test_drive_subscription_assert_num_queries_zero_per_event(
-    django_assert_num_queries,
-):
-    """Each delivered event's ``execute()`` hits ZERO DB queries (no ORM).
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    """Each delivered event's execute() must hit zero DB queries (no ORM).
 
-    SYNC test driving the async delivery via ``asyncio.run`` inside the assertion
-    block — ``django_assert_num_queries`` calls ``ensure_connection()``
-    synchronously which raises ``SynchronousOnlyOperation`` under a running loop.
+    Contract: this test ships broken if the projection over the flat dict
+    falls through to a real DB query.
+
+    SYNC test driving the async delivery via asyncio.run inside the assertion
+    block — django_assert_num_queries calls ensure_connection()
+    synchronously which raises SynchronousOnlyOperation under a running loop.
+
+    Args:
+        django_assert_num_queries: The pytest-django fixture used as a
+            context manager asserting an exact DB query count.
     """
     layer = InMemoryChannelLayer()
     spec = _spec()
 
-    async def _drive() -> dict:
+    async def _drive() -> dict[str, Any]:
         source = await _start_source(spec, layer)
         delivery = drive_subscription(source, spec)
         try:
@@ -490,8 +617,12 @@ def test_drive_subscription_assert_num_queries_zero_per_event(
 # ---------------------------------------------------------------------------
 
 
-async def test_delivery_path_is_not_map_async_iterator():
-    """``drive_subscription`` composes the WU2 DeliveryIterator, NOT MapAsyncIterator."""
+async def test_delivery_path_is_not_map_async_iterator() -> None:
+    """drive_subscription must compose the WU2 DeliveryIterator, not MapAsyncIterator.
+
+    Contract: the COND-A win ships broken if drive_subscription ever
+    returns a MapAsyncIterator instead of a DeliveryIterator.
+    """
     from graphql.execution.map_async_iterator import MapAsyncIterator
 
     from django_graphex.subscriptions.delivery import DeliveryIterator
@@ -507,8 +638,12 @@ async def test_delivery_path_is_not_map_async_iterator():
         await delivery.aclose()
 
 
-def test_streaming_module_has_no_map_async_iterator():
-    """Static guard: ``streaming.py`` must not import/use MapAsyncIterator."""
+def test_streaming_module_has_no_map_async_iterator() -> None:
+    """Static guard: "streaming.py" must not import or use MapAsyncIterator.
+
+    Contract: this test ships broken if the module gains a MapAsyncIterator
+    reference, silently reintroducing the stock overhead.
+    """
     import inspect
 
     from django_graphex.subscriptions import streaming
@@ -518,8 +653,12 @@ def test_streaming_module_has_no_map_async_iterator():
     assert "map_async_iterator" not in src
 
 
-def test_streaming_module_has_no_graphene_import():
-    """No-graphene-import gate: ``streaming.py`` must not import graphene."""
+def test_streaming_module_has_no_graphene_import() -> None:
+    """No-graphene-import gate: "streaming.py" must not import graphene.
+
+    Contract: this test ships broken if the module gains a graphene
+    dependency.
+    """
     import pathlib
 
     from django_graphex.subscriptions import streaming
@@ -534,17 +673,22 @@ def test_streaming_module_has_no_graphene_import():
 # ---------------------------------------------------------------------------
 
 
-async def test_lookup_filter_wired_db_verify_delivers_verified():
-    """A ``__lookup`` filter is wired to ``source.db_verify`` -> verified delivers.
+async def test_lookup_filter_wired_db_verify_delivers_verified() -> None:
+    """A "__lookup" filter wired to source.db_verify must deliver a verified event.
 
-    WU4 left a conservative-drop gap: a non-empty ``__lookup`` "remaining" mapping
-    dropped UNLESS a ``db_verify`` hook is wired. WU5 wires ``source.db_verify``
-    (the single-row ``.exists()`` narrowing) so a verified event DELIVERS.
+    Contract: this test ships broken if a verified event is dropped instead
+    of delivered, reopening the WU4 conservative-drop gap.
+
+    WU4 left a conservative-drop gap: a non-empty __lookup "remaining" mapping
+    dropped UNLESS a db_verify hook is wired. WU5 wires source.db_verify
+    (the single-row .exists() narrowing) so a verified event DELIVERS.
     """
     layer = InMemoryChannelLayer()
-    seen: list[tuple[dict, dict]] = []
+    seen: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
-    def _db_exists(remaining, event, *, obj_id=None):
+    def _db_exists(
+        remaining: dict[str, Any], event: dict[str, Any], *, obj_id: int | None = None
+    ) -> bool:
         # Stand-in for the single-row .exists() narrowing: match by the event's
         # carried snake key against the remaining __lookup expected value.
         seen.append((dict(remaining), dict(event)))
@@ -554,9 +698,7 @@ async def test_lookup_filter_wired_db_verify_delivers_verified():
         declared_fields=("id", "is_active", "owner", "name"),
         db_exists=_db_exists,
     )
-    source = await _start_source(
-        spec, layer, filters={"owner__tenant_id": 7}
-    )
+    source = await _start_source(spec, layer, filters={"owner__tenant_id": 7})
     delivery = drive_subscription(source, spec)
 
     # The source must have a db_verify hook wired by native_subscribe.
@@ -581,11 +723,17 @@ async def test_lookup_filter_wired_db_verify_delivers_verified():
     assert seen, "db_verify hook was never invoked"
 
 
-async def test_lookup_filter_non_matching_dropped():
-    """A non-matching ``__lookup`` event is DROPPED by the wired verifier."""
+async def test_lookup_filter_non_matching_dropped() -> None:
+    """A non-matching "__lookup" event must be dropped by the wired verifier.
+
+    Contract: this test ships broken if a non-matching event is delivered
+    instead of dropped by the db_verify hook.
+    """
     layer = InMemoryChannelLayer()
 
-    def _db_exists(remaining, event, *, obj_id=None):
+    def _db_exists(
+        remaining: dict[str, Any], event: dict[str, Any], *, obj_id: int | None = None
+    ) -> bool:
         return event.get("owner_tenant_id") == remaining.get("owner__tenant_id")
 
     spec = _spec(
@@ -616,12 +764,16 @@ async def test_lookup_filter_non_matching_dropped():
 # ---------------------------------------------------------------------------
 
 
-async def test_drive_subscription_aclose_stops_promptly_and_discards():
-    """``drive_subscription`` aclose() releases a blocked pull PROMPTLY + discards.
+async def test_drive_subscription_aclose_stops_promptly_and_discards() -> None:
+    """drive_subscription's aclose() must release a blocked pull promptly and discard.
 
-    A background pull parks in the source's ``receive()``; ``aclose()`` on the
+    Contract: this test ships broken if aclose() hangs on the next broadcast
+    instead of releasing promptly, or if any joined group is left
+    un-discarded.
+
+    A background pull parks in the source's receive(); aclose() on the
     delivery must release it (sub-500ms, not gated on the next broadcast) and the
-    underlying source must ``group_discard`` every joined group (no ghost
+    underlying source must group_discard every joined group (no ghost
     subscriber).
     """
     import time
@@ -651,8 +803,12 @@ async def test_drive_subscription_aclose_stops_promptly_and_discards():
     assert source.is_closed is True
 
 
-async def test_drive_subscription_aclose_idempotent():
-    """Calling ``drive_subscription`` aclose() twice is safe."""
+async def test_drive_subscription_aclose_idempotent() -> None:
+    """Calling drive_subscription's aclose() twice must be safe.
+
+    Contract: this test ships broken if a redundant second aclose() call
+    raises.
+    """
     layer = InMemoryChannelLayer()
     spec = _spec()
     source = await _start_source(spec, layer)
@@ -667,23 +823,28 @@ async def test_drive_subscription_aclose_idempotent():
 # ---------------------------------------------------------------------------
 
 
-async def test_context_is_transport_neutral():
-    """Hooks receive a transport-neutral context (``.user`` + scope), not HttpRequest.
+async def test_context_is_transport_neutral() -> None:
+    """Hooks must receive a transport-neutral context (.user + scope), not HttpRequest.
 
-    The same ``native_subscribe`` works whether the context is an SSE-style
-    object or a WS-style scope-bearing object — neither is an ``HttpRequest``.
-    The hook reads ``context.user`` to build the scope.
+    Contract: this test ships broken if a hook cannot read .user/.scope from
+    a WS-style context, coupling the engine to HttpRequest.
+
+    The same native_subscribe works whether the context is an SSE-style
+    object or a WS-style scope-bearing object — neither is an HttpRequest.
+    The hook reads context.user to build the scope.
     """
     layer = _RecordingLayer()
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
-    def _scope(context, **kw):
+    def _scope(context: Any, **kw: Any) -> dict[str, Any]:
         # Read from the transport-neutral context: .user + .scope mapping.
         captured["user"] = context.user
         captured["scope_keys"] = set(context.scope)
         return {"owner_id": getattr(context.user, "pk", None)}
 
     class _User:
+        """A minimal user stand-in exposing a fixed pk."""
+
         pk = 42
 
     spec = _spec(scope=_scope)
@@ -709,11 +870,16 @@ async def test_context_is_transport_neutral():
 # ---------------------------------------------------------------------------
 
 
-async def test_index_fields_route_to_value_scoped_group():
-    """When every index field is in scope, join the value-scoped group."""
+async def test_index_fields_route_to_value_scoped_group() -> None:
+    """When every index field is in scope, the subscribe must join the value-scoped group.
+
+    Contract: this test ships broken if the source falls back to the coarse
+    group instead of the value-scoped one when scope covers all index
+    fields.
+    """
     layer = _RecordingLayer()
 
-    def _scope(context, **kw):
+    def _scope(context: Any, **kw: Any) -> dict[str, int]:
         return {"owner_id": 5}
 
     spec = _spec(scope=_scope, index_fields=("owner_id",))
@@ -730,8 +896,12 @@ async def test_index_fields_route_to_value_scoped_group():
         await source.aclose()
 
 
-async def test_index_fields_fallback_when_not_in_scope():
-    """When an index field is NOT in scope, fall back to the coarse group."""
+async def test_index_fields_fallback_when_not_in_scope() -> None:
+    """When an index field is not in scope, the subscribe must fall back to the coarse group.
+
+    Contract: this test ships broken if the source joins a value-scoped
+    group without the server having supplied a scope value.
+    """
     layer = _RecordingLayer()
     spec = _spec(index_fields=("owner_id",))  # no scope -> owner_id absent
     source = await _start_source(spec, layer, action="create")

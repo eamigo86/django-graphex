@@ -6,14 +6,14 @@ Three independent bugs in GraphQLView._get_cache_version / _bump_cache_version:
 (a) BUMP-BEFORE-COMMIT TOCTOU: the version is bumped before the mutation's DB
     transaction commits.  A concurrent query in that window can cache stale
     pre-mutation data at the new version key.
-    Fix: wrap the bump in ``transaction.on_commit`` so it fires only when the
+    Fix: wrap the bump in "transaction.on_commit" so it fires only when the
     write is durable.  Verify a rolled-back mutation does NOT bump.
 
 (b) VERSION-KEY TTL SKEW: the version key was stored with no timeout, inheriting
     the backend default (300 s by default for LocMemCache).  If CACHE_TIMEOUT >
     300 the counter expires before its response entries, letting old entries be
     reused.
-    Fix: store the version key with ``timeout=None`` (never expire).
+    Fix: store the version key with "timeout=None" (never expire).
 
 (c) COLD-KEY HEAL TO 0: the heal path initialised the counter to 0.  A bump on a
     cold namespace only reaches 1, and any concurrent request that already
@@ -57,12 +57,17 @@ class BumpOnCommitTest(TestCase):
     Guarantee: a rolled-back mutation must NOT advance the version counter.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Build a fresh RequestFactory, clear the cache, and bind the view.
+
+        Ensures each test starts from a clean cache and an isolated view
+        instance so caching effects from a prior test cannot leak in.
+        """
         self.factory = RequestFactory()
         cache.clear()
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_rollback_does_not_bump_version(self):
+    def test_rollback_does_not_bump_version(self) -> None:
         """A mutation whose DB write is rolled back MUST NOT advance the version counter.
 
         Strategy: capture the current version, simulate a mutation dispatch that
@@ -70,6 +75,10 @@ class BumpOnCommitTest(TestCase):
         the version has NOT changed.  Because on_commit callbacks are not invoked on
         rollback this property holds automatically when the fix is applied; when the
         buggy bump-before-commit code is present the counter advances regardless.
+
+        Raises:
+            ValueError: Raised internally and immediately caught to force the
+                transaction to roll back; not propagated to the caller.
         """
         view_instance = GraphQLView(schema=_schema)
         _cache = cache
@@ -112,10 +121,10 @@ class BumpOnCommitTest(TestCase):
             "Version counter advanced despite transaction rollback",
         )
 
-    def test_bump_registered_via_on_commit(self):
+    def test_bump_registered_via_on_commit(self) -> None:
         """GraphQLView._bump_cache_version MUST schedule the incr via transaction.on_commit.
 
-        We intercept ``transaction.on_commit`` and confirm it receives a callable
+        We intercept "transaction.on_commit" and confirm it receives a callable
         rather than the bump executing immediately inside the mutation branch of
         dispatch.
         """
@@ -144,12 +153,12 @@ class BumpOnCommitTest(TestCase):
             "_bump_cache_version did not call transaction.on_commit — TOCTOU bug still present",
         )
 
-    def test_version_advances_after_mutation_commit(self):
+    def test_version_advances_after_mutation_commit(self) -> None:
         """After a mutation completes (no rollback) the version counter MUST advance.
 
-        Django's TestCase wraps each test in a transaction, so ``on_commit``
+        Django's TestCase wraps each test in a transaction, so "on_commit"
         callbacks are held and only flushed when the test-level transaction would
-        commit.  We use ``captureOnCommitCallbacks(execute=True)`` (Django 4.1+)
+        commit. We use "captureOnCommitCallbacks(execute=True)" (Django 4.1+)
         to simulate the commit within the test.
         """
         view_instance = GraphQLView(schema=_schema)
@@ -189,12 +198,20 @@ class VersionKeyTTLTest(TestCase):
     response entries.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Build a fresh RequestFactory and clear the cache.
+
+        Ensures each test starts from a cold cache with no stale version key.
+        """
         self.factory = RequestFactory()
         cache.clear()
 
-    def test_get_cache_version_stores_with_no_timeout(self):
-        """_get_cache_version MUST call cache.set(version_key, ..., timeout=None) on cold start."""
+    def test_get_cache_version_stores_with_no_timeout(self) -> None:
+        """_get_cache_version MUST call cache.set(version_key, ..., timeout=None) on cold start.
+
+        If this breaks, the version key inherits the backend's default
+        timeout and can expire before cached response entries do.
+        """
         view_instance = GraphQLView(schema=_schema)
         _cache = cache
         identity = "ttl_test"
@@ -224,7 +241,7 @@ class VersionKeyTTLTest(TestCase):
                 f"Version key '{key}' stored with timeout={timeout!r}; expected None (never expire)",
             )
 
-    def test_bump_heal_stores_with_no_timeout(self):
+    def test_bump_heal_stores_with_no_timeout(self) -> None:
         """_bump_cache_version heal path MUST store version key with timeout=None.
 
         The on_commit callback is executed inside captureOnCommitCallbacks so the
@@ -261,7 +278,7 @@ class VersionKeyTTLTest(TestCase):
             )
 
     @override_settings(**CACHE_ON_LONG_TIMEOUT)
-    def test_version_key_persists_beyond_cache_timeout(self):
+    def test_version_key_persists_beyond_cache_timeout(self) -> None:
         """With CACHE_TIMEOUT=600 > LocMemCache default the version key MUST survive.
 
         Regression guard: if the version key were stored with a finite timeout
@@ -335,11 +352,15 @@ class ColdKeyHealTest(TestCase):
     reachable indefinitely.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
+        """Build a fresh RequestFactory and clear the cache.
+
+        Ensures each test starts from a cold cache with no version key set.
+        """
         self.factory = RequestFactory()
         cache.clear()
 
-    def test_cold_bump_advances_to_2_not_1(self):
+    def test_cold_bump_advances_to_2_not_1(self) -> None:
         """A bump on a cold (missing) key MUST produce version 2 after second bump.
 
         Sequence:
@@ -378,7 +399,7 @@ class ColdKeyHealTest(TestCase):
             f"After second bump version should be '2', got {version_after_second_bump!r}",
         )
 
-    def test_get_cache_version_cold_start_returns_1(self):
+    def test_get_cache_version_cold_start_returns_1(self) -> None:
         """_get_cache_version on a cold key MUST initialise and return '1'.
 
         A cold start via _get_cache_version (no prior bump) must seed to 1 so any
@@ -396,8 +417,12 @@ class ColdKeyHealTest(TestCase):
             f"Cold _get_cache_version should return '1', got {version!r}",
         )
 
-    def test_v0_never_used_as_cache_key(self):
-        """No request should be served a cached response stored at version 0."""
+    def test_v0_never_used_as_cache_key(self) -> None:
+        """No request should be served a cached response stored at version 0.
+
+        If this breaks, the cold-heal-to-0 bug is back and a request racing
+        the very first heal can be cached at a version that never advances.
+        """
         view = GraphQLView.as_view(schema=_schema)
         factory = RequestFactory()
 

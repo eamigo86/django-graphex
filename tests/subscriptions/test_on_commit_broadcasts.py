@@ -11,25 +11,29 @@ Covers:
   (d) A committed delete carries the real pk (non-None) in id-only mode, and
       routes to the per-pk group (regression: #69 — pk was None after on_commit
       because Django nulls instance.pk at the end of Model.delete()).
-  (e) A committed delete in serialize_data=True mode does not raise an exception
+  (e) A committed delete in payload_mode="full" mode does not raise an exception
       (regression: #69 — serialize_instance hit M2M on a pk-less instance).
   (f) A committed delete on an indexed subscription emits the index-scoped delete
-      group names (bindings.py:250-251 — the ``if index:`` branch in
-      ``_broadcast_delete``), and every message carries the real (non-None) pk.
+      group names (bindings.py:250-251 — the "if index:" branch in
+      "_broadcast_delete"), and every message carries the real (non-None) pk.
 
 Django's test runner wraps every test in a transaction (TestCase) so
-on_commit callbacks never fire by default.  We use:
-  - pytest-django's ``transaction=True`` marker for real commit tests.
-  - Django's ``captureOnCommitCallbacks(execute=True)`` in non-transactional
+on_commit callbacks never fire by default. We use:
+  - pytest-django's "transaction=True" marker for real commit tests.
+  - Django's "captureOnCommitCallbacks(execute=True)" in non-transactional
     tests where we still want on_commit to run.
 """
 
 from __future__ import annotations
 
+from typing import Any, Generator
+
 import pytest
+from django.contrib.auth.models import AbstractUser
 from django.db import transaction
 
 from django_graphex.subscriptions import Subscription
+from django_graphex.subscriptions.bindings import SubscriptionBinding
 from tests.models import BasicModel, HookModel
 
 from .schema import UserSubscription
@@ -43,18 +47,23 @@ class _IdOnlyDeleteSubscription(Subscription):
     class Meta:
         model = BasicModel
         stream = "basic_delete_idonly"
-        serialize_data = False
+        payload_mode = "id_only"
 
 
 @pytest.fixture(autouse=True)
-def _arm_binding():
+def _arm_binding() -> None:
     """Ensure the UserSubscription binding is wired before each test."""
     UserSubscription.get_binding()
 
 
 @pytest.fixture()
-def _arm_idonly_binding():
-    """Wire the id-only delete subscription and tear it down after the test."""
+def _arm_idonly_binding() -> Generator[SubscriptionBinding, None, None]:
+    """Wire the id-only delete subscription and tear it down after the test.
+
+    Yields:
+        binding: The registered SubscriptionBinding for
+            _IdOnlyDeleteSubscription, unregistered again after the test.
+    """
     binding = _IdOnlyDeleteSubscription.get_binding()
     binding.register()
     yield binding
@@ -66,12 +75,18 @@ def _arm_idonly_binding():
 # ---------------------------------------------------------------------------
 
 
-def test_rolled_back_save_emits_no_broadcast(captured_group_sends):
+def test_rolled_back_save_emits_no_broadcast(  # noqa: DOC005
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+) -> None:
     """A save that is rolled back must not produce any subscription notification.
 
     post_save fires inside the still-open transaction; the broadcast must be
     deferred via transaction.on_commit so that a subsequent rollback suppresses
     it entirely.
+
+    Args:
+        captured_group_sends: The (group, message) pairs recorded by the
+            captured_group_sends fixture for every group_send call.
     """
     from django.contrib.auth.models import User
 
@@ -89,10 +104,20 @@ def test_rolled_back_save_emits_no_broadcast(captured_group_sends):
     )
 
 
-def test_rolled_back_delete_emits_no_broadcast(
-    db, django_user_model, captured_group_sends
-):
-    """A delete that is rolled back must not produce any subscription notification."""
+def test_rolled_back_delete_emits_no_broadcast(  # noqa: DOC005
+    db: None,
+    django_user_model: type[AbstractUser],
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """A delete that is rolled back must not produce any subscription notification.
+
+    Args:
+        db: The pytest-django fixture granting database access for the test.
+        django_user_model: The pytest-django fixture returning the active
+            user model class.
+        captured_group_sends: The (group, message) pairs recorded by the
+            captured_group_sends fixture for every group_send call.
+    """
     user = django_user_model.objects.create(username="doomed", email="d@example.com")
     captured_group_sends.clear()  # ignore the create broadcast
 
@@ -113,8 +138,18 @@ def test_rolled_back_delete_emits_no_broadcast(
 # ---------------------------------------------------------------------------
 
 
-def test_committed_save_broadcasts_exactly_once(captured_group_sends):
-    """A committed save still delivers the expected notification — no regression."""
+def test_committed_save_broadcasts_exactly_once(
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """A committed save must still deliver the expected notification.
+
+    Contract: this test ships broken (regression) if a committed save either
+    drops the coarse or per-pk group broadcast, or emits extras.
+
+    Args:
+        captured_group_sends: The (group, message) pairs recorded by the
+            captured_group_sends fixture for every group_send call.
+    """
     from django.contrib.auth.models import User
 
     user = User.objects.create(username="real_user", email="real@example.com")
@@ -136,27 +171,38 @@ def test_committed_save_broadcasts_exactly_once(captured_group_sends):
 
 
 def test_committed_delete_idonly_carries_real_pk(
-    captured_group_sends, _arm_idonly_binding
-):
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+    _arm_idonly_binding: SubscriptionBinding,
+) -> None:
     """A committed delete in id-only mode must broadcast the real pk, not None.
 
-    Regression: _on_delete deferred `lambda: self.broadcast("delete", instance)`.
+    Contract: regression #69 ships broken again if the envelope pk, the
+    per-pk group name, or the payload data["id"] read as None instead of the
+    real primary key.
+
+    Regression: _on_delete deferred "lambda: self.broadcast('delete', instance)".
     Django nulls instance.pk *before* the on_commit callback fires, so
     broadcast() read instance.pk=None — the envelope pk was None, the data dict
-    was {'id': None}, and the per-pk group collapsed to the coarse group.
+    was {"id": None}, and the per-pk group collapsed to the coarse group.
 
     The delete MUST happen inside an explicit atomic() block so that the
     on_commit callback fires *after* the block exits — that is the moment
     Django nulls instance.pk, making the regression observable.
 
     This test MUST FAIL on unpatched code.
+
+    Args:
+        captured_group_sends: The (group, message) pairs recorded by the
+            captured_group_sends fixture for every group_send call.
+        _arm_idonly_binding: The registered SubscriptionBinding fixture for
+            _IdOnlyDeleteSubscription.
     """
     instance = BasicModel.objects.create(text="to-be-deleted")
     real_pk = instance.pk
     captured_group_sends.clear()  # ignore the create broadcast
 
     # Filter only the stream we care about.
-    def _stream_sends():
+    def _stream_sends() -> list[tuple[str, dict[str, Any]]]:
         return [
             (g, m)
             for g, m in captured_group_sends
@@ -196,23 +242,33 @@ def test_committed_delete_idonly_carries_real_pk(
 
 
 # ---------------------------------------------------------------------------
-# (e) Committed delete — serialize_data=True — must not raise (regression #69)
+# (e) Committed delete — payload_mode="full" — must not raise (regression #69)
 # ---------------------------------------------------------------------------
 
 
 def test_committed_delete_serialize_mode_no_exception(
-    captured_group_sends, serialize_full
-):
-    """A committed delete with serialize_data=True must not propagate a ValueError.
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+    serialize_full: None,
+) -> None:
+    """A committed delete with payload_mode="full" must not propagate a ValueError.
+
+    Contract: regression #69 ships broken again if a full-payload broadcast
+    on a just-deleted instance raises instead of completing silently.
 
     Regression: broadcast() called serialize_instance on the pk-less instance,
-    hitting the M2M accessor → ValueError "needs a value for field id before
+    hitting the M2M accessor -> ValueError "needs a value for field id before
     this many-to-many relationship can be used" escaping the user's atomic() block.
 
-    UserSubscription uses serialize_data=True (via schema.py) and is bound by
-    the autouse ``_arm_binding`` fixture, so User.delete() exercises that path.
+    UserSubscription uses payload_mode="full" (via schema.py) and is bound by
+    the autouse "_arm_binding" fixture, so User.delete() exercises that path.
 
     This test MUST NOT raise — if the bug is present it will raise ValueError.
+
+    Args:
+        captured_group_sends: The (group, message) pairs recorded by the
+            captured_group_sends fixture for every group_send call.
+        serialize_full: The fixture forcing subscriptions into full-payload
+            serialization mode for the duration of the test.
     """
     from django.contrib.auth.models import User
 
@@ -244,21 +300,26 @@ def test_committed_delete_serialize_mode_no_exception(
 class _IndexedDeleteSubscription(Subscription):
     """Indexed id-only subscription over HookModel (index field: text).
 
-    Used to exercise bindings.py:250-251 — the ``if index:`` branch inside
-    ``_broadcast_delete`` that appends the coarse-index and per-pk-index group
-    names when the subscription declares ``subscription_index_fields``.
+    Used to exercise bindings.py:250-251 — the "if index:" branch inside
+    "_broadcast_delete" that appends the coarse-index and per-pk-index group
+    names when the subscription declares "subscription_index_fields".
     """
 
     class Meta:
         model = HookModel
         stream = "hookmodel_indexed_delete"
-        serialize_data = False
+        payload_mode = "id_only"
         subscription_index_fields = ("text",)
 
 
 @pytest.fixture()
-def _arm_indexed_binding():
-    """Wire the indexed delete subscription and tear it down after the test."""
+def _arm_indexed_binding() -> Generator[SubscriptionBinding, None, None]:
+    """Wire the indexed delete subscription and tear it down after the test.
+
+    Yields:
+        binding: The registered SubscriptionBinding for
+            _IndexedDeleteSubscription, unregistered again after the test.
+    """
     binding = _IndexedDeleteSubscription.get_binding()
     binding.register()
     yield binding
@@ -266,12 +327,17 @@ def _arm_indexed_binding():
 
 
 def test_committed_delete_indexed_subscription_emits_index_scoped_groups(
-    captured_group_sends, _arm_indexed_binding
-):
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+    _arm_indexed_binding: SubscriptionBinding,
+) -> None:
     """A committed delete on an indexed subscription must emit index-scoped group names.
 
-    Exercises bindings.py:250-251 — the ``if index:`` branch in
-    ``_broadcast_delete`` that calls::
+    Contract: this test ships broken if the "if index:" branch inside
+    _broadcast_delete (bindings.py:250-251) stops appending the coarse-index
+    and per-pk-index group names, or if any message loses its real pk.
+
+    Exercises bindings.py:250-251 — the "if index:" branch in
+    "_broadcast_delete" that calls:
 
         group_names.append(cls._group_name("delete", index=index))
         group_names.append(cls._group_name("delete", id=pk_snapshot, index=index))
@@ -279,12 +345,18 @@ def test_committed_delete_indexed_subscription_emits_index_scoped_groups(
     The delete is wrapped in explicit atomic() so that the on_commit callback
     fires after the block exits (same pattern as tests (d) and (e) above).
     Every message in the stream must carry the real (non-None) pk snapshot.
+
+    Args:
+        captured_group_sends: The (group, message) pairs recorded by the
+            captured_group_sends fixture for every group_send call.
+        _arm_indexed_binding: The registered SubscriptionBinding fixture for
+            _IndexedDeleteSubscription.
     """
     instance = HookModel.objects.create(text="indexed-val")
     real_pk = instance.pk
     captured_group_sends.clear()  # discard the create broadcast
 
-    def _stream_sends():
+    def _stream_sends() -> list[tuple[str, dict[str, Any]]]:
         return [
             (g, m)
             for g, m in captured_group_sends

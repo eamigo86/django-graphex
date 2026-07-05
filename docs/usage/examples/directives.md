@@ -45,7 +45,7 @@ the full directive reference see [Directives](../../directives.md).
 
     ```graphql
     query GetPostStats {
-      allPosts(filter: { status: { exact: "published" } }) {
+      allPosts(filter: { status: { exact: PUBLISHED } }) {
         results {
           id
           title

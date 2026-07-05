@@ -1,21 +1,21 @@
 """End-to-end round-trip tests for the playground's subscription transports.
 
 These are the real thing: they drive the SAME WebSocket consumer
-(``config.asgi`` / ``blog.consumers.AppWSConsumer``) and the SAME SSE view
-(``config/urls.py`` / ``subscription_sse_view``) the playground serves, against
-the live ``blog.schema``. A subscriber opens a subscription, the test triggers
-the corresponding change through the ORM (a genuine ``Post`` save fires Django's
-``post_save`` signal, which the subscription engine broadcasts), and the test
-asserts the change is delivered as a ``next`` frame.
+("config.asgi" / "blog.consumers.AppWSConsumer") and the SAME SSE view
+("config/urls.py" / "subscription_sse_view") the playground serves, against
+the live "blog.schema". A subscriber opens a subscription, the test triggers
+the corresponding change through the ORM (a genuine "Post" save fires Django's
+"post_save" signal, which the subscription engine broadcasts), and the test
+asserts the change is delivered as a "next" frame.
 
-Why a real ORM save (not a hand-rolled ``group_send``): it exercises the full
-producer path — ``post_save`` → ``SubscriptionBinding.broadcast`` →
-serialize-once → ``group_send`` — exactly as ``postCreate`` does in the live
-playground. The binding is wired the moment ``blog.schema`` is imported (its
-``PostSubscription.Field()`` mount calls ``get_binding()``), so importing the
+Why a real ORM save (not a hand-rolled "group_send"): it exercises the full
+producer path — "post_save" -> "SubscriptionBinding.broadcast" ->
+serialize-once -> "group_send" — exactly as "postCreate" does in the live
+playground. The binding is wired the moment "blog.schema" is imported (its
+"PostSubscription.Field()" mount calls "get_binding()"), so importing the
 schema is all the setup the producer side needs.
 
-Run from this directory::
+Run from this directory:
 
     cd examples/playground
     DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q
@@ -25,8 +25,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from blog.models import Author
 
 pytest.importorskip("channels")
 
@@ -37,8 +41,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 _POST_SUB_QUERY = (
-    "subscription { postSubscription(action: ALL_ACTIONS) "
-    "{ id title status } }"
+    "subscription { postSubscription(action: ALL_ACTIONS) { id title status } }"
 )
 
 
@@ -81,9 +84,7 @@ async def _await_started_group(ws_module, communicator, op_id, *, timeout=3.0):
             if source is not None and source.joined_groups:
                 return source.joined_groups[0]
         await asyncio.sleep(0.01)
-    raise AssertionError(
-        f"operation {op_id!r} never joined a group within {timeout}s"
-    )
+    raise AssertionError(f"operation {op_id!r} never joined a group within {timeout}s")
 
 
 # --------------------------------------------------------------------------- #
@@ -91,11 +92,15 @@ async def _await_started_group(ws_module, communicator, op_id, *, timeout=3.0):
 # --------------------------------------------------------------------------- #
 
 
-async def test_ws_subscription_delivers_post_create(author):
-    """WS round-trip: subscribe → create a Post via the ORM → receive a ``next``.
+async def test_ws_subscription_delivers_post_create(author: Author) -> None:
+    """Exercise the WS round-trip: subscribe, create a Post, receive a "next".
 
-    Drives the playground's own ``AppWSConsumer`` (the consumer mounted in
-    ``config/asgi.py``) over the graphql-transport-ws subprotocol.
+    Drives the playground's own "AppWSConsumer" (the consumer mounted in
+    "config/asgi.py") over the graphql-transport-ws subprotocol, waits for the
+    subscribe to join its Channels group, then triggers a real ORM create.
+
+    Args:
+        author: The persisted "Author" fixture that owns the created post.
     """
     from blog.consumers import AppWSConsumer
     from blog.models import Post
@@ -152,8 +157,13 @@ async def test_ws_subscription_delivers_post_create(author):
     await communicator.disconnect()
 
 
-async def test_ws_handshake_then_ping_pong():
-    """Smoke: the playground consumer completes the handshake and answers ping."""
+async def test_ws_handshake_then_ping_pong() -> None:
+    """Smoke-test that the consumer completes the handshake and answers ping.
+
+    Connects over graphql-transport-ws, performs the connection_init /
+    connection_ack exchange, then asserts a "ping" frame is answered with a
+    "pong".
+    """
     from blog.consumers import AppWSConsumer
     from channels.testing import WebsocketCommunicator
 
@@ -181,11 +191,15 @@ async def test_ws_handshake_then_ping_pong():
 # --------------------------------------------------------------------------- #
 
 
-async def test_sse_subscription_delivers_post_create(author):
-    """SSE round-trip: open the stream → create a Post → receive an ``event: next``.
+async def test_sse_subscription_delivers_post_create(author: Author) -> None:
+    """Exercise the SSE round-trip: open the stream, create a Post, receive "next".
 
-    Drives the playground's own SSE view, built exactly as ``config/urls.py``
-    builds it: ``subscription_sse_view(schema=schema.graphql_schema)``.
+    Drives the playground's own SSE view, built exactly as "config/urls.py"
+    builds it: "subscription_sse_view(schema=schema.graphql_schema)", then
+    asserts the first streamed frame is the "event: next" carrying the post.
+
+    Args:
+        author: The persisted "Author" fixture that owns the created post.
     """
     from blog.models import Post
     from blog.schema import schema

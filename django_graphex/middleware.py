@@ -14,14 +14,20 @@ if TYPE_CHECKING:
 
 
 class GraphQLDirectiveMiddleware:
-    """Middleware that processes custom GraphQL directives during execution."""
+    """Middleware that processes custom GraphQL directives during execution.
+
+    Wraps each field resolver so that any custom directive registered on the
+    field (via the global registry) is applied to the resolved value, in field
+    declaration order. The built-in "@skip" / "@include" directives are left to
+    graphql-core and ignored here.
+    """
 
     def resolve(
         self,
         next: Callable[..., Any],
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Process field resolution with directive handling.
 
@@ -29,6 +35,7 @@ class GraphQLDirectiveMiddleware:
             next: The next resolver in the middleware chain.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: The field arguments forwarded to the next resolver.
 
         Returns:
             The field value after applying any custom directives.
@@ -41,7 +48,7 @@ class GraphQLDirectiveMiddleware:
         value: Any,
         root: Any,
         info: GraphQLResolveInfo,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Apply each custom directive on the field to the resolved value.
 

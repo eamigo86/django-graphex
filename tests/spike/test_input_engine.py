@@ -15,7 +15,9 @@ import django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "")
 if not django.conf.settings.configured:
     django.conf.settings.configure(
-        DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+        DATABASES={
+            "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}
+        },
         INSTALLED_APPS=["django.contrib.contenttypes", "django.contrib.auth", "tests"],
         SECRET_KEY="spike-test-secret",
         USE_I18N=True,
@@ -23,39 +25,47 @@ if not django.conf.settings.configured:
     django.setup()
 
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-import pytest
-from graphql import GraphQLInputObjectType, GraphQLInputField, GraphQLNonNull, GraphQLString
+from graphql import (
+    GraphQLInputField,
+    GraphQLInputObjectType,
+    GraphQLNonNull,
+    GraphQLString,
+)
 from pydantic import BaseModel
 
-from django_graphex.native.fields import build_model_schema
-from django_graphex.native.validators import build_validator_model
-from django_graphex.native.backend import PydanticBackend
+from django_graphex.core.fields import build_model_schema
+from django_graphex.core.validators import build_validator_model
 
 # We import the test models via Django's app registry
 from tests.models import Category
-
 
 # ---------------------------------------------------------------------------
 # Inline helper: map Pydantic model fields -> GraphQLInputObjectType
 # ---------------------------------------------------------------------------
 
+
 def _to_graphql_input(pydantic_model: type) -> GraphQLInputObjectType:
     """Build a GraphQLInputObjectType from a Pydantic model's model_fields.
 
-    For each field, we create a GraphQLInputField with out_name = the snake_case
-    field name. Required fields are wrapped in GraphQLNonNull.
+    For each field, this creates a GraphQLInputField with out_name set to the
+    snake_case field name. Required fields are wrapped in GraphQLNonNull.
+
+    Args:
+        pydantic_model: The Pydantic model class whose fields are mapped.
+
+    Returns:
+        input_type: The assembled GraphQLInputObjectType.
     """
-    from pydantic.fields import PydanticUndefined
-    from graphql import GraphQLString, GraphQLInt, GraphQLFloat, GraphQLBoolean, GraphQLID
     import datetime
     import decimal
     import uuid
 
     PYTHON_TO_GQL = {
         str: GraphQLString,
-        int: GraphQLString,   # simplification for spike
+        int: GraphQLString,  # simplification for spike
         float: GraphQLString,
         bool: GraphQLString,
         datetime.date: GraphQLString,
@@ -69,6 +79,7 @@ def _to_graphql_input(pydantic_model: type) -> GraphQLInputObjectType:
         annotation = field_info.annotation
         # Unwrap Optional[X] -> X
         import typing
+
         origin = getattr(annotation, "__origin__", None)
         if origin is typing.Union:
             args = [a for a in annotation.__args__ if a is not type(None)]
@@ -94,11 +105,21 @@ def _to_graphql_input(pydantic_model: type) -> GraphQLInputObjectType:
 # G1: Model-coupled input field carries out_name
 # ---------------------------------------------------------------------------
 
-class TestG1InputEngineModelCoupled:
-    """G1: build_model_schema + _to_graphql_input produces out_name on fields."""
 
-    def test_name_field_has_out_name(self):
-        """The 'title' field of Category carries out_name='title'."""
+class TestG1InputEngineModelCoupled:
+    """G1: build_model_schema + _to_graphql_input produces out_name on fields.
+
+    Covers both field-level out_name propagation and Pydantic-side validation
+    of the generated schema.
+    """
+
+    def test_name_field_has_out_name(self) -> None:
+        """The "title" field of Category must carry out_name="title".
+
+        Contract: input-field wiring ships broken if the generated
+        GraphQLInputField for a model field loses its out_name, since that
+        is what maps the camelCase wire name back to the snake_case field.
+        """
         schema = build_model_schema(Category)
         input_type = _to_graphql_input(schema)
         # Category has a 'title' field
@@ -109,8 +130,13 @@ class TestG1InputEngineModelCoupled:
             f"Expected out_name='title', got: {input_type.fields['title'].out_name!r}"
         )
 
-    def test_validated_data_usable_by_pydantic_backend(self, db):
-        """Validated data from the schema is accepted by PydanticBackend.save_object."""
+    def test_validated_data_usable_by_pydantic_backend(self, db: None) -> None:
+        """Validated data from the schema must be accepted by PydanticBackend.
+
+        Args:
+            db: The pytest-django fixture granting database access for the
+                test (the model class itself requires the app registry).
+        """
         schema_cls = build_model_schema(Category)
         validated = schema_cls(title="Tech")
         assert validated.title == "Tech"
@@ -125,11 +151,21 @@ class TestG1InputEngineModelCoupled:
 # G2: Inline validator strips whitespace
 # ---------------------------------------------------------------------------
 
-class TestG2InlineValidator:
-    """G2: build_validator_model + build_model_schema strips whitespace via validate_name."""
 
-    def test_validator_strips_whitespace(self):
-        """build_validator_model produces a base that strips category title."""
+class TestG2InlineValidator:
+    """G2: build_validator_model + build_model_schema strips whitespace.
+
+    Confirms a model-declared validate_<field> classmethod is wired into the
+    generated Pydantic schema through build_validator_model.
+    """
+
+    def test_validator_strips_whitespace(self) -> None:
+        """ "build_validator_model" must produce a base that strips category title.
+
+        Contract: inline field validators ship broken if a declared
+        validate_title classmethod is not applied when the generated schema
+        validates input.
+        """
 
         class CategoryWithValidator(Category):
             class Meta:
@@ -141,7 +177,9 @@ class TestG2InlineValidator:
                 return value.strip()
 
         # build_validator_model(host_cls, model, pydantic_model=None)
-        validator_base = build_validator_model(CategoryWithValidator, CategoryWithValidator)
+        validator_base = build_validator_model(
+            CategoryWithValidator, CategoryWithValidator
+        )
         schema = build_model_schema(CategoryWithValidator, base=validator_base)
         result = schema(title=" Tech ")
         assert result.title == "Tech", (
@@ -153,11 +191,20 @@ class TestG2InlineValidator:
 # G3: ModelMetaclass identity
 # ---------------------------------------------------------------------------
 
-class TestG3ModelMetaclass:
-    """G3: Any Pydantic-based class has ModelMetaclass as its metaclass."""
 
-    def test_model_free_type_has_pydantic_metaclass(self):
-        """A hand-written BaseModel subclass has type __name__ == 'ModelMetaclass'."""
+class TestG3ModelMetaclass:
+    """G3: Any Pydantic-based class has ModelMetaclass as its metaclass.
+
+    Confirms the metaclass identity holds both for hand-written BaseModel
+    subclasses and for schemas generated by build_model_schema.
+    """
+
+    def test_model_free_type_has_pydantic_metaclass(self) -> None:
+        """A hand-written BaseModel subclass's type must be named "ModelMetaclass".
+
+        Contract: this test ships broken if Pydantic's metaclass identity for
+        a plain BaseModel subclass ever changes name across versions.
+        """
 
         class SearchInput(BaseModel):
             query: str
@@ -168,8 +215,13 @@ class TestG3ModelMetaclass:
             f"Expected 'ModelMetaclass', got: {metaclass_name!r}"
         )
 
-    def test_model_free_type_emits_field_via_to_graphql_input(self):
-        """_to_graphql_input on a hand-written BaseModel emits the annotated field."""
+    def test_model_free_type_emits_field_via_to_graphql_input(self) -> None:
+        """ "_to_graphql_input" on a hand-written BaseModel must emit the annotated field.
+
+        Contract: schema-free input types ship broken if _to_graphql_input
+        does not work for a BaseModel that was never routed through
+        build_model_schema.
+        """
 
         class SearchInput(BaseModel):
             query: str
@@ -180,8 +232,12 @@ class TestG3ModelMetaclass:
             f"Expected 'query' in fields, got: {list(input_type.fields.keys())}"
         )
 
-    def test_build_model_schema_result_has_pydantic_metaclass(self):
-        """A model built with build_model_schema also carries ModelMetaclass."""
+    def test_build_model_schema_result_has_pydantic_metaclass(self) -> None:
+        """A model built with build_model_schema must also carry ModelMetaclass.
+
+        Contract: this test ships broken if build_model_schema's generated
+        class stops being a genuine Pydantic model (wrong metaclass).
+        """
         schema_cls = build_model_schema(Category)
         metaclass_name = type(schema_cls).__name__
         assert metaclass_name == "ModelMetaclass", (

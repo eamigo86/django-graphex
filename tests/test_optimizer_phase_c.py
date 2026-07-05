@@ -14,28 +14,32 @@ from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from graphql import graphql_sync
 
-from django_graphex import DjangoGraphQLSchema, ObjectType
+from django_graphex.core import ObjectType
+from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
+
+from ._schema_isolation import isolated_pair
 
 
 def _execute(schema, query):
-    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free).
+    """Execute *query* against a native "DjangoGraphQLSchema" (graphene-free).
 
-    Drop-in for the retired ``schema.execute(query)``: returns the graphql-core
-    ``ExecutionResult`` (same ``.data`` / ``.errors`` shape graphene returned).
+    Drop-in for the retired "schema.execute(query)": returns the graphql-core
+    "ExecutionResult" (same ".data" / ".errors" shape graphene returned).
     """
     return graphql_sync(schema.graphql_schema, query)
 
 
 def _gtype(name, bases, ns):
-    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+    """Build a dynamic native type via "type()" with pydantic-safe namespace.
 
-    Native ``ObjectType`` / ``DjangoObjectType`` / ``DjangoListObjectType`` are
-    pydantic ``BaseModel`` subclasses. When such a class is built dynamically with
-    ``type(name, bases, ns)`` (instead of a ``class`` statement), pydantic's
-    metaclass requires ``ns['__module__']`` and recognizes a nested ``Meta`` class
-    ONLY when its ``__qualname__`` is ``"<Outer>.Meta"`` (the value a real ``class``
+    Native "ObjectType" / "DjangoObjectType" / "DjangoListObjectType" are
+    pydantic "BaseModel" subclasses. When such a class is built dynamically with
+    "type(name, bases, ns)" (instead of a "class" statement), pydantic's
+    metaclass requires "ns['__module__']" and recognizes a nested "Meta" class
+    ONLY when its "__qualname__" is '"<Outer>.Meta"' (the value a real "class"
     body would produce). This helper supplies both so the dynamic form behaves
-    exactly like the equivalent ``class`` statement (no behavior change).
+    exactly like the equivalent "class" statement (no behavior change).
     """
     ns = dict(ns)
     ns.setdefault("__module__", __name__)
@@ -55,10 +59,16 @@ def _gtype(name, bases, ns):
 
 
 class TestOptimizeNestedPaginationSetting(TestCase):
-    """Tests for the OPTIMIZE_NESTED_PAGINATION setting (tasks 1.1 and 1.3)."""
+    """Tests for the OPTIMIZE_NESTED_PAGINATION setting (tasks 1.1 and 1.3).
 
-    def test_setting_default(self):
-        """OPTIMIZE_NESTED_PAGINATION absent from DJANGO_GRAPHEX defaults to True (task 1.1)."""
+    See the tests below for the exact contract covered.
+    """
+
+    def test_setting_default(self) -> None:
+        """OPTIMIZE_NESTED_PAGINATION absent from DJANGO_GRAPHEX defaults to True (task 1.1).
+
+        This test breaks if this contract regresses.
+        """
         from django_graphex import settings as settings_module
 
         # Read via the module-level singleton so override_settings reload is respected.
@@ -74,8 +84,11 @@ class TestOptimizeNestedPaginationSetting(TestCase):
         )
 
     @override_settings(DJANGO_GRAPHEX={"OPTIMIZE_NESTED_PAGINATION": False})
-    def test_setting_explicit_false(self):
-        """OPTIMIZE_NESTED_PAGINATION=False propagates via override_settings (task 1.3)."""
+    def test_setting_explicit_false(self) -> None:
+        """OPTIMIZE_NESTED_PAGINATION=False propagates via override_settings (task 1.3).
+
+        This test breaks if this contract regresses.
+        """
         from django_graphex import settings as settings_module
 
         s = settings_module.graphql_api_settings
@@ -87,10 +100,16 @@ class TestOptimizeNestedPaginationSetting(TestCase):
 
 
 class TestAlreadyPaginatedFlag(TestCase):
-    """Tests for the already_paginated field on DjangoListObjectBase (task 1.5)."""
+    """Tests for the already_paginated field on DjangoListObjectBase (task 1.5).
 
-    def test_already_paginated_flag_default(self):
-        """already_paginated defaults to False, can be set True, old calls still valid (task 1.5)."""
+    See the tests below for the exact contract covered.
+    """
+
+    def test_already_paginated_flag_default(self) -> None:
+        """already_paginated defaults to False, can be set True, old calls still valid (task 1.5).
+
+        This test breaks if this contract regresses.
+        """
         from django_graphex.base_types import DjangoListObjectBase
 
         # Old-style call with no already_paginated kwarg must still work.
@@ -134,15 +153,22 @@ class TestG3WindowOnlySpike(TestCase):
     SELF_NARROW_VERIFIED: bool | None = None  # populated by test_g3_window_only_spike
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with five posts, for the G3 self-narrow spike test.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="SpikeAuthor")
         for i in range(5):
             Post.objects.create(title=f"SpPost{i}", author=cls.author)
 
-    def test_g3_window_only_spike(self):
-        """Build Window+filter+only chain on Post, assert it runs and narrows SELECT."""
+    def test_g3_window_only_spike(self) -> None:
+        """Build Window+filter+only chain on Post, assert it runs and narrows SELECT.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Post
 
         fk_attname = "author_id"  # Post.author FK attname
@@ -271,10 +297,17 @@ def _make_test_nested_field():
 
 
 class TestBuildWindowPrefetchPreChecks(TestCase):
-    """Tests for the applicability pre-checks in build_window_prefetch (task 4.1–4.7)."""
+    """Tests for the applicability pre-checks in build_window_prefetch (task 4.1–4.7).
+
+    See the tests below for the exact contract covered.
+    """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with five posts, for the build_window_prefetch pre-check tests.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="BWPAuthor")
@@ -282,11 +315,17 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             Post.objects.create(title=f"BWPPost{i}", author=cls.author)
 
     def _get_inst(self):
-        """Return a minimal DjangoNestedListObjectField for Post."""
+        """Return a minimal DjangoNestedListObjectField for Post.
+
+        This test breaks if this contract regresses.
+        """
         return _make_test_nested_field()
 
-    def test_precheck_returns_none_when_setting_false(self):
-        """Pre-check 1: OPTIMIZE_NESTED_PAGINATION=False -> build_window_prefetch returns None."""
+    def test_precheck_returns_none_when_setting_false(self) -> None:
+        """Pre-check 1: OPTIMIZE_NESTED_PAGINATION=False -> build_window_prefetch returns None.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author
 
         inst = self._get_inst()
@@ -306,8 +345,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 result, "Must return None when OPTIMIZE_NESTED_PAGINATION=False"
             )
 
-    def test_precheck_returns_none_when_slice_none(self):
-        """Pre-check 2: slice_tuple=None -> returns None (Cursor/unbounded fallback)."""
+    def test_precheck_returns_none_when_slice_none(self) -> None:
+        """Pre-check 2: slice_tuple=None -> returns None (Cursor/unbounded fallback).
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author
 
         inst = self._get_inst()
@@ -323,7 +365,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         )
         self.assertIsNone(result, "Must return None when slice_tuple is None")
 
-    def test_precheck_returns_none_when_m2m(self):
+    def test_precheck_returns_none_when_m2m(self) -> None:
         """Pre-check 3: many_to_many relation -> returns None.
 
         The fabricated related_field has many_to_many=True AND one_to_many=True so
@@ -383,8 +425,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             result, "Must return None for M2M relations (pre-check 3 isolation)"
         )
 
-    def test_precheck_returns_none_when_not_one_to_many(self):
-        """Pre-check 4: relation that is not one_to_many -> returns None."""
+    def test_precheck_returns_none_when_not_one_to_many(self) -> None:
+        """Pre-check 4: relation that is not one_to_many -> returns None.
+
+        This test breaks if this contract regresses.
+        """
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
@@ -433,8 +478,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         )
         self.assertIsNone(result, "Must return None for non-one_to_many relations")
 
-    def test_precheck_returns_none_for_non_concrete_ordering(self):
-        """Pre-check 5: non-concrete ordering term -> returns None."""
+    def test_precheck_returns_none_for_non_concrete_ordering(self) -> None:
+        """Pre-check 5: non-concrete ordering term -> returns None.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author
 
         inst = self._get_inst()
@@ -451,8 +499,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         )
         self.assertIsNone(result, "Must return None for non-concrete ordering term")
 
-    def test_precheck_returns_none_for_full_load(self):
-        """Pre-check 6: _compute_child_only returns None (full load) -> returns None."""
+    def test_precheck_returns_none_for_full_load(self) -> None:
+        """Pre-check 6: _compute_child_only returns None (full load) -> returns None.
+
+        This test breaks if this contract regresses.
+        """
         from unittest import mock
 
         import django_graphex.fields as fields_module
@@ -479,8 +530,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             result, "Must return None when _compute_child_only returns None (full load)"
         )
 
-    def test_build_window_prefetch_returns_prefetch_object(self):
-        """Happy path: build_window_prefetch returns a Prefetch object with window SQL."""
+    def test_build_window_prefetch_returns_prefetch_object(self) -> None:
+        """Happy path: build_window_prefetch returns a Prefetch object with window SQL.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author
 
         inst = self._get_inst()
@@ -503,8 +557,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         )
         self.assertEqual(result.prefetch_through, "posts")
 
-    def test_window_prefetch_sql_contains_row_number_and_count(self):
-        """build_window_prefetch queryset emits ROW_NUMBER() and COUNT(*) OVER in SQL."""
+    def test_window_prefetch_sql_contains_row_number_and_count(self) -> None:
+        """build_window_prefetch queryset emits ROW_NUMBER() and COUNT(*) OVER in SQL.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author
 
         inst = self._get_inst()
@@ -529,8 +586,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         self.assertIn("PARTITION BY", sql, "SQL must contain PARTITION BY")
         self.assertIn("AUTHOR_ID", sql, "SQL must partition by author_id")
 
-    def test_window_prefetch_sql_contains_filter_range(self):
-        """Window queryset must filter rows in the slice range."""
+    def test_window_prefetch_sql_contains_filter_range(self) -> None:
+        """Window queryset must filter rows in the slice range.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author
 
         inst = self._get_inst()
@@ -554,8 +614,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             self.assertGreater(row._gqx_rn, offset)
             self.assertLessEqual(row._gqx_rn, offset + limit)
 
-    def test_window_prefetch_fk_attname_in_rows(self):
-        """All rows from window prefetch carry the FK attname (author_id)."""
+    def test_window_prefetch_fk_attname_in_rows(self) -> None:
+        """All rows from window prefetch carry the FK attname (author_id).
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author
 
         inst = self._get_inst()
@@ -575,8 +638,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 row.author_id, self.author.pk, "author_id must be set on each row"
             )
 
-    def test_precheck_returns_none_for_distinct_filter(self):
-        """Pre-check 7: filter that forces .distinct() -> returns None (G5)."""
+    def test_precheck_returns_none_for_distinct_filter(self) -> None:
+        """Pre-check 7: filter that forces .distinct() -> returns None (G5).
+
+        This test breaks if this contract regresses.
+        """
         from unittest import mock
 
         from tests.models import Author
@@ -586,7 +652,10 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
 
         # Patch filter_backend.apply to return a queryset with .query.distinct = True.
         class _DistinctQS:
-            """Fake queryset that reports distinct=True."""
+            """Fake queryset that reports distinct=True.
+
+            See the tests below for the exact contract covered.
+            """
 
             model = None
             query = type("Q", (), {"distinct": True})()
@@ -618,12 +687,11 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
 # ---------------------------------------------------------------------------
 
 
-_REG_WALK = {}
-
-
 def _build_walk_schema():
-    """Build a minimal graphene Schema for walk tests with Author + paginated posts."""
+    """Build a minimal graphene Schema for walk tests with Author + paginated posts.
 
+    This test breaks if this contract regresses.
+    """
 
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -634,7 +702,7 @@ def _build_walk_schema():
     )
     from tests.models import Author, Post
 
-    _REG_WALK.clear()
+    _REG_WALK = Registry()
 
     _PostType = _gtype(
         "_WalkPostType",
@@ -673,14 +741,13 @@ def _build_walk_schema():
         {"Meta": type("Meta", (), {"model": Author, "registry": _REG_WALK})},
     )
 
-
-
     schema = DjangoGraphQLSchema(
         query=_gtype(
             "WalkQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG_WALK),
     )
     return schema
 
@@ -697,7 +764,11 @@ class TestWalkerPaginationArgExtraction(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with eight posts, for the walker paginator-resolution tests.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="WalkAuthor")
@@ -711,14 +782,14 @@ class TestWalkerPaginationArgExtraction(TestCase):
 
     def test_paginator_resolution_helper_returns_paginator_for_native_pagination_field(
         self,
-    ):
+    ) -> None:
         """G2 guard: _resolve_results_paginator returns paginator from a
         NativePaginationField's wrap_resolve closure.
 
-        S-del-backend-11: the graphene ``GenericPaginationField`` was deleted; the
-        native ``NativePaginationField.wrap_resolve`` exposes ``paginator_instance``
+        S-del-backend-11: the graphene "GenericPaginationField" was deleted; the
+        native "NativePaginationField.wrap_resolve" exposes "paginator_instance"
         directly on the returned closure. Calls the production function directly so
-        breaking the getattr chain in ``_resolve_results_paginator`` goes RED.
+        breaking the getattr chain in "_resolve_results_paginator" goes RED.
         """
         from django_graphex.paginations.pagination import (
             BaseDjangoGraphqlPagination,
@@ -730,7 +801,7 @@ class TestWalkerPaginationArgExtraction(TestCase):
         paginator_instance = LimitOffsetGraphqlPagination(default_limit=5)
 
         # NativePaginationField.wrap_resolve returns a plain closure carrying
-        # ``paginator_instance`` directly (the native recovery path).
+        # "paginator_instance" directly (the native recovery path).
         field = NativePaginationField(type=None, paginator=paginator_instance)
         resolve_fn = field.wrap_resolve(parent_resolver=None)
 
@@ -750,7 +821,7 @@ class TestWalkerPaginationArgExtraction(TestCase):
             "_resolve_results_paginator must return the exact paginator_instance",
         )
 
-    def test_paginator_resolution_helper_returns_none_for_custom_resolver(self):
+    def test_paginator_resolution_helper_returns_none_for_custom_resolver(self) -> None:
         """G2 guard: _resolve_results_paginator returns None for a plain-function resolver.
 
         Calls the production function directly so that breaking the None-return
@@ -772,7 +843,9 @@ class TestWalkerPaginationArgExtraction(TestCase):
             "_resolve_results_paginator must return None for a plain-function resolver",
         )
 
-    def test_paginator_resolution_helper_returns_none_when_not_base_paginator(self):
+    def test_paginator_resolution_helper_returns_none_when_not_base_paginator(
+        self,
+    ) -> None:
         """G2 guard: _resolve_results_paginator returns None when bound object's
         paginator_instance is not a BaseDjangoGraphqlPagination instance.
 
@@ -802,7 +875,7 @@ class TestWalkerPaginationArgExtraction(TestCase):
             "_resolve_results_paginator must return None when paginator_instance is not BaseDjangoGraphqlPagination",
         )
 
-    def test_walker_live_path_emits_window_sql_in_c3(self):
+    def test_walker_live_path_emits_window_sql_in_c3(self) -> None:
         """C3 live: walker now calls build_window_prefetch for windowable nested lists.
 
         With C3 active, the live query for a LimitOffset nested list with
@@ -827,8 +900,11 @@ class TestWalkerPaginationArgExtraction(TestCase):
             "C3 live: walker must emit ROW_NUMBER() SQL for windowable nested lists",
         )
 
-    def test_walker_falls_back_when_results_sub_field_not_selected(self):
-        """Walker falls back to plain path when results sub-field not selected."""
+    def test_walker_falls_back_when_results_sub_field_not_selected(self) -> None:
+        """Walker falls back to plain path when results sub-field not selected.
+
+        This test breaks if this contract regresses.
+        """
         schema = _build_walk_schema()
 
         # Query only totalCount — no results sub-field selected.
@@ -845,9 +921,11 @@ class TestWalkerPaginationArgExtraction(TestCase):
             "Walker must NOT emit window SQL when results sub-field absent",
         )
 
-    def test_g2_custom_resolver_falls_back_without_crash(self):
-        """G2: custom results resolver -> graceful fallback, no AttributeError/crash."""
+    def test_g2_custom_resolver_falls_back_without_crash(self) -> None:
+        """G2: custom results resolver -> graceful fallback, no AttributeError/crash.
 
+        This test breaks if this contract regresses.
+        """
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.types import (
@@ -857,7 +935,7 @@ class TestWalkerPaginationArgExtraction(TestCase):
         )
         from tests.models import Author, Post
 
-        _g2_reg = {}
+        _g2_reg = Registry()
         _PostType_g2 = _gtype(
             "_G2PostType",
             (DjangoObjectType,),
@@ -885,14 +963,13 @@ class TestWalkerPaginationArgExtraction(TestCase):
             {"Meta": type("Meta", (), {"model": Author, "registry": _g2_reg})},
         )
 
-
-
         schema = DjangoGraphQLSchema(
             query=_gtype(
                 "G2Query",
                 (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListTypeCustom)},
-            )
+            ),
+            registries=isolated_pair(_g2_reg),
         )
 
         # Query: with results sub-field but no paginator -> resolver is not GenericPaginationField
@@ -930,15 +1007,21 @@ class TestWalkWindowParamsDirect(TestCase):
     """
 
     def _make_info(self, variable_values=None):
-        """Return a minimal mock of GraphQLResolveInfo."""
+        """Return a minimal mock of GraphQLResolveInfo.
+
+        This test breaks if this contract regresses.
+        """
         from unittest.mock import MagicMock
 
         info = MagicMock()
         info.variable_values = variable_values or {}
         return info
 
-    def test_returns_none_when_sub_gql_is_none(self):
-        """Early exit: sub_gql=None -> returns None (line 1209)."""
+    def test_returns_none_when_sub_gql_is_none(self) -> None:
+        """Early exit: sub_gql=None -> returns None (line 1209).
+
+        This test breaks if this contract regresses.
+        """
         from unittest.mock import MagicMock
 
         from graphql.language.ast import FieldNode, NameNode, SelectionSetNode
@@ -955,8 +1038,11 @@ class TestWalkWindowParamsDirect(TestCase):
             result, "_walk_window_params must return None when sub_gql is None"
         )
 
-    def test_returns_none_when_selection_set_is_none(self):
-        """Early exit: field.selection_set=None -> returns None (line 1209)."""
+    def test_returns_none_when_selection_set_is_none(self) -> None:
+        """Early exit: field.selection_set=None -> returns None (line 1209).
+
+        This test breaks if this contract regresses.
+        """
         from unittest.mock import MagicMock
 
         from graphql import GraphQLObjectType
@@ -977,8 +1063,11 @@ class TestWalkWindowParamsDirect(TestCase):
             "_walk_window_params must return None when field.selection_set is None",
         )
 
-    def test_returns_none_when_results_name_not_found(self):
-        """Early exit: inst.type has no _meta.results_field_name -> returns None (line 1214)."""
+    def test_returns_none_when_results_name_not_found(self) -> None:
+        """Early exit: inst.type has no _meta.results_field_name -> returns None (line 1214).
+
+        This test breaks if this contract regresses.
+        """
         from unittest.mock import MagicMock
 
         from graphql import GraphQLObjectType
@@ -1002,8 +1091,11 @@ class TestWalkWindowParamsDirect(TestCase):
             "_walk_window_params must return None when results_field_name is None",
         )
 
-    def test_returns_none_when_results_not_in_selections(self):
-        """Early exit: results sub-field absent from selections -> returns None (line 1227-1229)."""
+    def test_returns_none_when_results_not_in_selections(self) -> None:
+        """Early exit: results sub-field absent from selections -> returns None (line 1227-1229).
+
+        This test breaks if this contract regresses.
+        """
         from unittest.mock import MagicMock
 
         from graphql import GraphQLObjectType
@@ -1028,8 +1120,11 @@ class TestWalkWindowParamsDirect(TestCase):
             "_walk_window_params must return None when results sub-field is absent",
         )
 
-    def test_returns_none_when_results_field_def_missing(self):
-        """Early exit: sub_gql has no 'results' field definition -> returns None (line 1235-1236)."""
+    def test_returns_none_when_results_field_def_missing(self) -> None:
+        """Early exit: sub_gql has no 'results' field definition -> returns None (line 1235-1236).
+
+        This test breaks if this contract regresses.
+        """
         from unittest.mock import MagicMock
 
         from graphql import GraphQLObjectType
@@ -1054,7 +1149,7 @@ class TestWalkWindowParamsDirect(TestCase):
             "_walk_window_params must return None when results field def is missing from sub_gql",
         )
 
-    def test_returns_none_when_paginator_unresolvable(self):
+    def test_returns_none_when_paginator_unresolvable(self) -> None:
         """Early exit: _resolve_results_paginator returns None -> returns None (line 1240-1241).
 
         This exercises the G2 guard path inside _walk_window_params.
@@ -1091,7 +1186,7 @@ class TestWalkWindowParamsDirect(TestCase):
             "_walk_window_params must return None when paginator cannot be resolved (G2 guard)",
         )
 
-    def test_happy_path_returns_tuple(self):
+    def test_happy_path_returns_tuple(self) -> None:
         """Happy path: all guards pass -> returns (slice_tuple, results_field_node, page_args, paginator).
 
         Exercises lines 1244-1254 (get_argument_values + prefetch_window_slice + return).
@@ -1182,7 +1277,11 @@ class TestG4OrderingParity(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with posts inserted out of pk order, for the G4 ordering-parity test.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="G4Author")
@@ -1192,7 +1291,7 @@ class TestG4OrderingParity(TestCase):
             p = Post.objects.create(title=f"G4Post{i}", author=cls.author)
             cls.pids.append(p.pk)
 
-    def test_limitoffset_falsy_order_in_memory_sorted_by_pk(self):
+    def test_limitoffset_falsy_order_in_memory_sorted_by_pk(self) -> None:
         """LimitOffset paginate_queryset with no order on an in-memory list must sort by pk.
 
         This is the G4 fix: before, list(qs) returned arrival order; after,
@@ -1214,8 +1313,11 @@ class TestG4OrderingParity(TestCase):
             "In-memory LimitOffset with no ordering must sort by pk asc",
         )
 
-    def test_page_falsy_order_in_memory_sorted_by_pk(self):
-        """PageGraphqlPagination paginate_queryset with no order on in-memory list must sort by pk."""
+    def test_page_falsy_order_in_memory_sorted_by_pk(self) -> None:
+        """PageGraphqlPagination paginate_queryset with no order on in-memory list must sort by pk.
+
+        This test breaks if this contract regresses.
+        """
         from django_graphex.paginations.pagination import PageGraphqlPagination
         from tests.models import Post
 
@@ -1238,8 +1340,10 @@ class TestG4OrderingParity(TestCase):
 
 
 def _build_c3_schema(page_size=5, use_page=False):
-    """Build a minimal schema for C3 e2e tests with a paginated nested posts field."""
+    """Build a minimal schema for C3 e2e tests with a paginated nested posts field.
 
+    This test breaks if this contract regresses.
+    """
 
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import (
@@ -1253,7 +1357,7 @@ def _build_c3_schema(page_size=5, use_page=False):
     )
     from tests.models import Author, Post
 
-    _REG = {}
+    _REG = Registry()
     paginator = (
         PageGraphqlPagination(page_size=page_size)
         if use_page
@@ -1302,7 +1406,8 @@ def _build_c3_schema(page_size=5, use_page=False):
             "_C3Query",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG),
     )
     return schema
 
@@ -1313,7 +1418,11 @@ class TestAlreadyPaginatedListResolver(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with ten posts, for the already_paginated resolver tests.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="C3Author")
@@ -1327,7 +1436,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
         assert result.errors is None, result.errors
         return result.data
 
-    def test_window_cache_detected_already_paginated(self):
+    def test_window_cache_detected_already_paginated(self) -> None:
         """7.1: list_resolver detects _gqx_total on cache rows → already_paginated=True.
 
         When the window prefetch is active, the rows in the cache carry _gqx_total.
@@ -1394,8 +1503,11 @@ class TestAlreadyPaginatedListResolver(TestCase):
         )
         self.assertEqual(len(result.results), len(rows))
 
-    def test_zero_child_parent_totalcount_zero(self):
-        """7.2: Empty cache for a zero-child parent → totalCount=0, already_paginated=True."""
+    def test_zero_child_parent_totalcount_zero(self) -> None:
+        """7.2: Empty cache for a zero-child parent → totalCount=0, already_paginated=True.
+
+        This test breaks if this contract regresses.
+        """
         from django_graphex.base_types import DjangoListObjectBase
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
@@ -1434,7 +1546,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
             "Zero-child parent must have totalCount=0",
         )
 
-    def test_offset_beyond_end_totalcount_nonzero(self):
+    def test_offset_beyond_end_totalcount_nonzero(self) -> None:
         """7.3: Window cache empty due to offset-beyond-end → totalCount=K (non-zero).
 
         The author has K posts but we request a page past the end. The window
@@ -1460,8 +1572,11 @@ class TestAlreadyPaginatedListResolver(TestCase):
             "Beyond-end offset must return totalCount=K (10), not 0",
         )
 
-    def test_window_slice_e2e_limitoffset(self):
-        """7.4/9.1: Happy-path e2e with LimitOffset: ROW_NUMBER in SQL + correct results."""
+    def test_window_slice_e2e_limitoffset(self) -> None:
+        """7.4/9.1: Happy-path e2e with LimitOffset: ROW_NUMBER in SQL + correct results.
+
+        This test breaks if this contract regresses.
+        """
         schema = _build_c3_schema(page_size=5)
         query = (
             '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") '
@@ -1489,8 +1604,11 @@ class TestAlreadyPaginatedListResolver(TestCase):
             posts_data["totalCount"], 10, "totalCount must equal full partition count"
         )
 
-    def test_window_slice_e2e_page(self):
-        """7.4/9.2: Happy-path e2e with Page paginator: ROW_NUMBER in SQL + correct results."""
+    def test_window_slice_e2e_page(self) -> None:
+        """7.4/9.2: Happy-path e2e with Page paginator: ROW_NUMBER in SQL + correct results.
+
+        This test breaks if this contract regresses.
+        """
         schema = _build_c3_schema(page_size=5, use_page=True)
         query = (
             '{ authors { results { posts { results(page: 1, ordering: "id") '
@@ -1517,15 +1635,15 @@ class TestAlreadyPaginatedListResolver(TestCase):
             posts_data["totalCount"], 10, "totalCount must equal full partition count"
         )
 
-    def test_already_paginated_no_double_slice(self):
+    def test_already_paginated_no_double_slice(self) -> None:
         """8.1: the pagination field must NOT re-slice when already_paginated=True.
 
         The rows returned are exactly the DB slice; re-slicing would corrupt
         results (e.g. returning slice[0:5] of a 5-element list at offset=5 gives []).
 
-        S-del-backend-11: the graphene ``GenericPaginationField`` was deleted; the
-        backend-neutral slicing logic (honoring ``already_paginated``) lives on the
-        native ``NativePaginationField``.
+        S-del-backend-11: the graphene "GenericPaginationField" was deleted; the
+        backend-neutral slicing logic (honoring "already_paginated") lives on the
+        native "NativePaginationField".
         """
         from django_graphex.base_types import DjangoListObjectBase
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1565,7 +1683,11 @@ class TestC3FallbackRegressions(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with five posts, for the C3 fallback-regression tests.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post, Tag
 
         cls.author = Author.objects.create(name="FallbackAuthor")
@@ -1586,8 +1708,11 @@ class TestC3FallbackRegressions(TestCase):
         sql_list = [q["sql"].upper() for q in ctx.captured_queries]
         return all("ROW_NUMBER()" not in s for s in sql_list)
 
-    def test_fallback_setting_false_no_window_sql(self):
-        """9.5: OPTIMIZE_NESTED_PAGINATION=False → in-memory path, no ROW_NUMBER()."""
+    def test_fallback_setting_false_no_window_sql(self) -> None:
+        """9.5: OPTIMIZE_NESTED_PAGINATION=False → in-memory path, no ROW_NUMBER().
+
+        This test breaks if this contract regresses.
+        """
         schema = _build_c3_schema(page_size=5)
         query = (
             '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") '
@@ -1616,8 +1741,11 @@ class TestC3FallbackRegressions(TestCase):
             data_off["authors"]["results"][0]["posts"]["totalCount"],
         )
 
-    def test_fallback_results_subfield_absent_no_window_sql(self):
-        """9.6: results sub-field not selected → walker falls back, no ROW_NUMBER()."""
+    def test_fallback_results_subfield_absent_no_window_sql(self) -> None:
+        """9.6: results sub-field not selected → walker falls back, no ROW_NUMBER().
+
+        This test breaks if this contract regresses.
+        """
         schema = _build_c3_schema(page_size=5)
         # Query only totalCount (no results sub-field).
         query = "{ authors { results { posts { totalCount } } } }"
@@ -1628,7 +1756,7 @@ class TestC3FallbackRegressions(TestCase):
         )
         self.assertIsNotNone(data)
 
-    def test_fallback_m2m_no_window_sql(self):
+    def test_fallback_m2m_no_window_sql(self) -> None:
         """9.7: M2M nested list (tags) → falls back to in-memory path, no ROW_NUMBER().
 
         A real Django ManyToManyField has one_to_many=False, so both pre-check 3
@@ -1639,7 +1767,6 @@ class TestC3FallbackRegressions(TestCase):
         TestBuildWindowPrefetchPreChecks.test_precheck_returns_none_when_m2m.
         """
 
-
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
         from django_graphex.types import (
@@ -1649,7 +1776,7 @@ class TestC3FallbackRegressions(TestCase):
         )
         from tests.models import Post, Tag
 
-        _REG = {}
+        _REG = Registry()
         paginator = LimitOffsetGraphqlPagination(default_limit=5)
 
         _TagType = _gtype(
@@ -1687,7 +1814,8 @@ class TestC3FallbackRegressions(TestCase):
                 "_M2MQuery",
                 (ObjectType,),
                 {"posts": DjangoListObjectField(_PostListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
         query = "{ posts { results { tags { results(limit: 5, offset: 0) { label } totalCount } } } }"
         with CaptureQueriesContext(connection) as ctx:
@@ -1701,9 +1829,11 @@ class TestC3FallbackRegressions(TestCase):
             all("ft1" == lbl for lbl in all_tags), "M2M results must be correct"
         )
 
-    def test_fallback_unbounded_no_window_sql(self):
-        """9.8: Unbounded paginator (no default_limit, no limit arg) → in-memory path."""
+    def test_fallback_unbounded_no_window_sql(self) -> None:
+        """9.8: Unbounded paginator (no default_limit, no limit arg) → in-memory path.
 
+        This test breaks if this contract regresses.
+        """
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1714,7 +1844,7 @@ class TestC3FallbackRegressions(TestCase):
         )
         from tests.models import Author, Post
 
-        _REG = {}
+        _REG = Registry()
         # Unbounded: no default_limit, no max_limit → prefetch_window_slice returns None.
         paginator = LimitOffsetGraphqlPagination()  # DEFAULT_PAGE_SIZE=None → unbounded
 
@@ -1753,7 +1883,8 @@ class TestC3FallbackRegressions(TestCase):
                 "_UbQuery",
                 (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
         query = "{ authors { results { posts { results { id } totalCount } } } }"
         with CaptureQueriesContext(connection) as ctx:
@@ -1764,9 +1895,11 @@ class TestC3FallbackRegressions(TestCase):
         post_results = data["authors"]["results"][0]["posts"]["results"]
         self.assertEqual(len(post_results), 5, "Unbounded must return all posts")
 
-    def test_fallback_non_concrete_ordering_no_window_sql(self):
-        """9.9: Non-concrete ordering term → pre-check 5 fallback, no ROW_NUMBER()."""
+    def test_fallback_non_concrete_ordering_no_window_sql(self) -> None:
+        """9.9: Non-concrete ordering term → pre-check 5 fallback, no ROW_NUMBER().
 
+        This test breaks if this contract regresses.
+        """
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1777,7 +1910,7 @@ class TestC3FallbackRegressions(TestCase):
         )
         from tests.models import Author, Post
 
-        _REG = {}
+        _REG = Registry()
         # default ordering="display_name" is a @property, not a concrete attname.
         # But that's on Author, not Post. Let's use a non-existent field name.
         paginator = LimitOffsetGraphqlPagination(
@@ -1819,7 +1952,8 @@ class TestC3FallbackRegressions(TestCase):
                 "_NcQuery",
                 (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
         query = "{ authors { results { posts { results(limit: 5, offset: 0) { id } totalCount } } } }"
         with CaptureQueriesContext(connection) as ctx:
@@ -1830,9 +1964,11 @@ class TestC3FallbackRegressions(TestCase):
         # Must still return results (fallback path, not a crash).
         self.assertIn("authors", data)
 
-    def test_fallback_full_load_no_window_sql(self):
-        """9.10: Full-load selection → pre-check 6 fallback, no ROW_NUMBER()."""
+    def test_fallback_full_load_no_window_sql(self) -> None:
+        """9.10: Full-load selection → pre-check 6 fallback, no ROW_NUMBER().
 
+        This test breaks if this contract regresses.
+        """
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1843,7 +1979,7 @@ class TestC3FallbackRegressions(TestCase):
         )
         from tests.models import Author, Post
 
-        _REG = {}
+        _REG = Registry()
         paginator = LimitOffsetGraphqlPagination(default_limit=5)
 
         # AuthorType with display_name (@property) will trigger full-load guard
@@ -1891,7 +2027,8 @@ class TestC3FallbackRegressions(TestCase):
                 "_FlQuery",
                 (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
         query = '{ authors { results { posts { results(limit: 5, offset: 0, ordering: "id") { id } totalCount } } } }'
         with patch("django_graphex.fields._compute_child_only", return_value=None):
@@ -1902,9 +2039,11 @@ class TestC3FallbackRegressions(TestCase):
         )
         self.assertIn("authors", data)
 
-    def test_fallback_query_count_m2m_matches_baseline(self):
-        """9.11: M2M assertNumQueries matches pre-Phase-C baseline AND results identical."""
+    def test_fallback_query_count_m2m_matches_baseline(self) -> None:
+        """9.11: M2M assertNumQueries matches pre-Phase-C baseline AND results identical.
 
+        This test breaks if this contract regresses.
+        """
 
         from django_graphex.fields import DjangoNestedListObjectField
         from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
@@ -1915,7 +2054,7 @@ class TestC3FallbackRegressions(TestCase):
         )
         from tests.models import Post, Tag
 
-        _REG = {}
+        _REG = Registry()
         paginator = LimitOffsetGraphqlPagination(default_limit=5)
 
         _TagType = _gtype(
@@ -1952,7 +2091,8 @@ class TestC3FallbackRegressions(TestCase):
                 "_QM2MQuery",
                 (ObjectType,),
                 {"posts": DjangoListObjectField(_PostListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
         query = '{ posts { results { tags { results(limit: 5, offset: 0, ordering: "id") { label } totalCount } } } }'
 
@@ -1978,10 +2118,17 @@ class TestC3FallbackRegressions(TestCase):
 
 
 class TestC3ConstantQueryCount(TestCase):
-    """9.1-9.4: assertNumQueries for window-slice happy path must be constant."""
+    """9.1-9.4: assertNumQueries for window-slice happy path must be constant.
+
+    See the tests below for the exact contract covered.
+    """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create five authors with posts, for the constant-query-count window-slice tests.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.authors = []
@@ -1996,16 +2143,19 @@ class TestC3ConstantQueryCount(TestCase):
         assert result.errors is None, result.errors
         return result.data
 
-    def test_constant_query_count_limitoffset(self):
-        """9.3: N parents with windowed LimitOffset posts → constant query count of exactly 3.
+    def test_constant_query_count_limitoffset(self) -> None:
+        """9.3: N parents with windowed LimitOffset posts → constant query count.
 
-        The exact count is derived empirically against the baseline:
-        - DjangoListObjectField (authors): 1 count + 1 select = 2
+        The outer "authors.totalCount" is NOT selected here, so the flat
+        list COUNT is deferred (lazy totalCount) and never issued. The exact
+        count is derived empirically against the baseline:
+        - DjangoListObjectField (authors): 1 select (COUNT deferred, unselected)
         - Window posts prefetch: 1 query
-        Total: 3 (constant regardless of N parents).
+        Total: 2 (constant regardless of N parents).
 
         Asserting the exact value (not ≤ 4) ensures a regression that adds a
-        query is caught immediately.
+        query is caught immediately. The nested "posts.totalCount" rides the
+        window "_gqx_total" so it issues no COUNT SQL.
         """
         schema = _build_c3_schema(page_size=5)
         query = (
@@ -2020,17 +2170,40 @@ class TestC3ConstantQueryCount(TestCase):
         self.assertTrue(len(window_sql) >= 1, "Must have window SQL")
 
         n_queries = len(ctx.captured_queries)
-        # Exact constant: 2 (authors count + select) + 1 (window prefetch) = 3.
-        # Any regression adding a query will be caught by this assertion.
+        # Exact constant: 1 (authors select; COUNT deferred as unselected)
+        # + 1 (window prefetch) = 2. Any regression adding a query is caught.
+        self.assertEqual(
+            n_queries, 2, f"Query count must be exactly 2, got {n_queries}"
+        )
+
+    def test_constant_query_count_limitoffset_with_outer_total_count(self) -> None:
+        """9.3b: selecting the outer authors.totalCount adds exactly one COUNT.
+
+        Pins the lazy-totalCount contract on the window path: when the client
+        DOES select the outer "authors.totalCount", the deferred COUNT fires
+        exactly once, lifting the count from 2 to 3.
+        """
+        schema = _build_c3_schema(page_size=5)
+        query = (
+            "{ authors { totalCount results { posts { "
+            'results(limit: 5, offset: 0, ordering: "id") { id title } totalCount } } } }'
+        )
+        with CaptureQueriesContext(connection) as ctx:
+            data = self._exec(schema, query)
+
+        self.assertEqual(data["authors"]["totalCount"], 5)
+        n_queries = len(ctx.captured_queries)
+        # 1 (authors select) + 1 (authors COUNT, now selected) + 1 (window) = 3.
         self.assertEqual(
             n_queries, 3, f"Query count must be exactly 3, got {n_queries}"
         )
 
-    def test_constant_query_count_page(self):
-        """9.4: N parents with windowed Page posts → constant query count of exactly 3.
+    def test_constant_query_count_page(self) -> None:
+        """9.4: N parents with windowed Page posts → constant query count.
 
-        Same breakdown as LimitOffset: 2 (authors) + 1 (window prefetch) = 3.
-        Asserting the exact value ensures any regression that adds a query is caught.
+        Same breakdown as LimitOffset: the outer "authors.totalCount" is
+        unselected so its COUNT is deferred: 1 (authors select) + 1 (window
+        prefetch) = 2. Asserting the exact value catches any added query.
         """
         schema = _build_c3_schema(page_size=5, use_page=True)
         query = (
@@ -2045,9 +2218,9 @@ class TestC3ConstantQueryCount(TestCase):
         self.assertTrue(len(window_sql) >= 1, "Must have window SQL for Page paginator")
 
         n_queries = len(ctx.captured_queries)
-        # Exact constant: 2 (authors count + select) + 1 (window prefetch) = 3.
+        # Exact constant: 1 (authors select; COUNT deferred) + 1 (window) = 2.
         self.assertEqual(
-            n_queries, 3, f"Query count must be exactly 3, got {n_queries}"
+            n_queries, 2, f"Query count must be exactly 2, got {n_queries}"
         )
 
 
@@ -2066,7 +2239,6 @@ def _build_c3_filtered_schema(page_size=5):
     unfiltered partition size instead of the filtered one.
     """
 
-
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
     from django_graphex.types import (
@@ -2076,7 +2248,7 @@ def _build_c3_filtered_schema(page_size=5):
     )
     from tests.models import Author, Post
 
-    _REG = {}
+    _REG = Registry()
     paginator = LimitOffsetGraphqlPagination(default_limit=page_size)
 
     _PostType = _gtype(
@@ -2119,7 +2291,8 @@ def _build_c3_filtered_schema(page_size=5):
             "_FC3Query",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG),
     )
     return schema
 
@@ -2138,7 +2311,11 @@ class TestFilteredOffsetBeyondEndTotalCount(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with matching and non-matching posts, for the filtered-beyond-end test.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="FilteredBeyondEndAuthor")
@@ -2157,7 +2334,7 @@ class TestFilteredOffsetBeyondEndTotalCount(TestCase):
         assert result.errors is None, result.errors
         return result.data
 
-    def test_filtered_offset_beyond_end_totalcount_matches_baseline(self):
+    def test_filtered_offset_beyond_end_totalcount_matches_baseline(self) -> None:
         """CRITICAL: filtered nested list at offset:100 returns totalCount == filtered K.
 
         Phase C ON must match Phase C OFF (OPTIMIZE_NESTED_PAGINATION=False baseline).
@@ -2202,7 +2379,7 @@ class TestFilteredOffsetBeyondEndTotalCount(TestCase):
             results_on, [], "Beyond-end filtered offset must return empty results"
         )
 
-    def test_filtered_zero_match_totalcount_zero_matches_baseline(self):
+    def test_filtered_zero_match_totalcount_zero_matches_baseline(self) -> None:
         """Zero filtered matches: totalCount must be 0 with Phase C ON, matching baseline.
 
         This tests the other empty-cache sub-branch: a filter that matches 0
@@ -2256,15 +2433,24 @@ class TestBuildWindowPrefetchWithSubSelection(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with three posts, for the real-sub_selection narrowed-SELECT test.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="SubSelAuthor")
         for i in range(3):
             Post.objects.create(title=f"SSPost{i}", author=cls.author)
 
-    def test_build_window_prefetch_narrowed_select_with_real_sub_selection(self):
-        """build_window_prefetch + real sub_selection: SELECT excludes 'body' column."""
+    def test_build_window_prefetch_narrowed_select_with_real_sub_selection(
+        self,
+    ) -> None:
+        """build_window_prefetch + real sub_selection: SELECT excludes 'body' column.
+
+        This test breaks if this contract regresses.
+        """
         from graphql.language.ast import FieldNode, NameNode, SelectionSetNode
 
         from django_graphex.fields import SELF_NARROW_VERIFIED
@@ -2324,8 +2510,10 @@ class TestBuildWindowPrefetchWithSubSelection(TestCase):
 
 
 def _build_cursor_schema():
-    """Build a minimal schema with a CursorGraphqlPagination nested posts field."""
+    """Build a minimal schema with a CursorGraphqlPagination nested posts field.
 
+    This test breaks if this contract regresses.
+    """
 
     from django_graphex.fields import DjangoNestedListObjectField
     from django_graphex.paginations.pagination import CursorGraphqlPagination
@@ -2336,7 +2524,7 @@ def _build_cursor_schema():
     )
     from tests.models import Author, Post
 
-    _REG = {}
+    _REG = Registry()
     paginator = CursorGraphqlPagination(ordering="id", page_size=5)
 
     _PostType = _gtype(
@@ -2378,7 +2566,8 @@ def _build_cursor_schema():
             "_CurQuery",
             (ObjectType,),
             {"authors": DjangoListObjectField(_AuthorListType)},
-        )
+        ),
+        registries=isolated_pair(_REG),
     )
     return schema
 
@@ -2392,7 +2581,11 @@ class TestCursorFallbackParity(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with five posts, for the cursor-paginator fallback-parity test.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="CursorFallbackAuthor")
@@ -2406,7 +2599,7 @@ class TestCursorFallbackParity(TestCase):
         assert result.errors is None, result.errors
         return result.data
 
-    def test_cursor_fallback_on_vs_off_identical_results(self):
+    def test_cursor_fallback_on_vs_off_identical_results(self) -> None:
         """Cursor nested list: Phase C ON and OFF return byte-for-byte identical results.
 
         Cursor paginator returns slice_tuple=None from prefetch_window_slice
@@ -2462,7 +2655,11 @@ class TestG4NoOrderingE2EParity(TestCase):
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create one author with five posts, for the G4 no-ordering e2e parity test.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         cls.author = Author.objects.create(name="G4E2EAuthor")
@@ -2476,8 +2673,11 @@ class TestG4NoOrderingE2EParity(TestCase):
         assert result.errors is None, result.errors
         return result.data
 
-    def test_no_ordering_nested_page_on_vs_off_identical_rows(self):
-        """G4 e2e: no ordering arg -> Phase C ON and OFF return identical rows (same pks, same order)."""
+    def test_no_ordering_nested_page_on_vs_off_identical_rows(self) -> None:
+        """G4 e2e: no ordering arg -> Phase C ON and OFF return identical rows (same pks, same order).
+
+        This test breaks if this contract regresses.
+        """
 
         from django.test import override_settings
 
@@ -2490,7 +2690,7 @@ class TestG4NoOrderingE2EParity(TestCase):
         )
         from tests.models import Author, Post
 
-        _REG = {}
+        _REG = Registry()
         # Paginator with NO default ordering (ordering="") — G4 scenario.
         paginator = LimitOffsetGraphqlPagination(default_limit=3)
 
@@ -2528,7 +2728,8 @@ class TestG4NoOrderingE2EParity(TestCase):
                 "_G4E2EQuery",
                 (ObjectType,),
                 {"authors": DjangoListObjectField(_AuthorListType)},
-            )
+            ),
+            registries=isolated_pair(_REG),
         )
 
         # No ordering argument.
@@ -2559,15 +2760,19 @@ class TestEmptyWindowPageNoCountN1(TestCase):
     When OPTIMIZE_NESTED_PAGINATION=True (default) and the requested page falls
     beyond a parent's total child count (offset > child count), the window
     prefetch returns an empty list for that parent.  Before the fix, list_resolver
-    issued a per-parent ``qs.count()`` for every such parent — O(N) queries.
+    issued a per-parent "qs.count()" for every such parent — O(N) queries.
 
     After the fix, the total is read from a subquery annotation on the parent row
-    (``root._gqx_cnt_<accessor>``) stored in-memory with the window result — O(1)
+    ("root._gqx_cnt_<accessor>") stored in-memory with the window result — O(1)
     queries regardless of N parents with empty pages.
     """
 
     @classmethod
-    def setUpTestData(cls):
+    def setUpTestData(cls) -> None:
+        """Create several authors, each with exactly three posts, for the empty-window-page O(1) test.
+
+        This test breaks if this contract regresses.
+        """
         from tests.models import Author, Post
 
         # N parents, each with exactly 3 posts.  We will query with offset=100,
@@ -2585,14 +2790,14 @@ class TestEmptyWindowPageNoCountN1(TestCase):
         assert result.errors is None, result.errors
         return result.data
 
-    def test_empty_page_constant_query_count(self):
+    def test_empty_page_constant_query_count(self) -> None:
         """#64: N parents with empty window pages emit a CONSTANT query count (no per-parent COUNT).
 
         Before the fix: 2 (authors) + 1 (window) + N (per-parent COUNT) = 2 + 1 + 6 = 9.
         After the fix:  2 (authors) + 1 (window) = 3 (constant regardless of N).
 
         The subquery count is embedded in the parent annotation, so no per-parent
-        ``qs.count()`` fires even when the window-sliced page is empty.
+        "qs.count()" fires even when the window-sliced page is empty.
         """
         schema = _build_c3_schema(page_size=5)
         # offset=100: far beyond any parent's 3 posts → every parent has empty page.
@@ -2629,7 +2834,7 @@ class TestEmptyWindowPageNoCountN1(TestCase):
                 "Beyond-end offset must return empty results",
             )
 
-    def test_empty_page_zero_child_totalcount_zero(self):
+    def test_empty_page_zero_child_totalcount_zero(self) -> None:
         """#64: Parent with zero children + empty window page → totalCount=0, constant queries.
 
         Verifies the zero-child subcase: the annotation returns NULL (no rows for
@@ -2688,7 +2893,7 @@ class TestEmptyWindowPageNoCountN1(TestCase):
                 "Zero-child author must have totalCount=0",
             )
 
-    def test_non_empty_page_totalcount_unchanged(self):
+    def test_non_empty_page_totalcount_unchanged(self) -> None:
         """#64 non-regression: non-empty window page still reads count from _gqx_total.
 
         The subquery annotation path must not break the happy path where the page

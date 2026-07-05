@@ -2,6 +2,93 @@
 
 This section provides detailed API documentation for GraphQL type classes in `django-graphex`.
 
+## Field descriptors
+
+Capitalized field descriptors for declaring custom (non-model) fields and
+mutation arguments. All are imported from `django_graphex.core`. See
+[Declaring fields: the descriptor API](../usage/types.md#declaring-fields-the-descriptor-api)
+for the usage guide.
+
+### `Field` (both positions)
+
+```python
+Field(type, *, source=None, required=False, default=_UNSET, description=None,
+      name=None, resolver=None, args=None, deprecation_reason=None)
+```
+
+**One** descriptor for **both** positions — an `ObjectType` / `Mutation` payload
+body (output) and a `class Arguments` body or `Field(args={...})` /
+`field(args={...})` mapping (input). Direction comes from the declaration site,
+never from the descriptor. `type` takes:
+
+- **Output:** any graphql-core output type, a `DjangoObjectType` reference
+  (resolved lazily), or a `NativeList` / `NativeNonNull` wrapper.
+- **Input:** a `DjangoInputObjectType` / `InputType` **CLASS** (resolved lazily
+  to its compiled input type) or a bare graphql-core scalar.
+
+| Keyword | Effect |
+|---------|--------|
+| `source="attr"` | **Output only.** Resolve by reading `attr` off the root (or calling it if callable). |
+| `required=True` | Wrap the type in non-null (`T!`) — lazy on output, eager on input. |
+| `default=value` | **Input only.** GraphQL argument default; omit it (the `_UNSET` sentinel) to leave the argument with no default, or pass `default=None` for a real `null` default. |
+| `description` | Field / argument description. |
+| `name` | Explicit wire name (skips camelCase). |
+| `resolver` | **Output only.** Field-level resolver (wins over the parent). |
+| `args` | **Output only.** Explicit `{name: arg}` mapping (each value may be a `Field`). |
+| `deprecation_reason` | Renders `@deprecated(reason: ...)` on the field / argument. |
+
+Wrong-position keywords fail loud: an output-only `source=` / `resolver=` /
+`args=` set on a field used in an argument position raises a clear `TypeError`;
+the input-only `default=` set in an output position raises a `TypeError` at
+output compile.
+
+### Scalar shortcuts
+
+There are **11** shortcuts, each binding one scalar and each **position-agnostic**
+(usable in an `ObjectType` body *and* a `class Arguments` body). Each returns a
+`Field`. Signature:
+`(*, source=None, required=False, default=_UNSET, description=None, name=None, resolver=None, deprecation_reason=None)`
+(`JSONField` additionally takes `as_str=False`).
+
+| Shortcut | GraphQL type |
+|----------|--------------|
+| `IDField` | `ID` |
+| `IntField` | `Int` |
+| `FloatField` | `Float` |
+| `BooleanField` | `Boolean` |
+| `CharField` | `String` |
+| `DateField` | `CustomDate` |
+| `DateTimeField` | `CustomDateTime` |
+| `TimeField` | `CustomTime` |
+| `DecimalField` | `Decimal` |
+| `UUIDField` | `UUID` |
+| `JSONField` | `JSON` (or `JSONString` with `as_str=True`) |
+
+The 12 former `*InputField` twins (`CharInputField`, `IntInputField`, …) and the
+standalone `InputField` descriptor are **removed** in 2.0 — the single `Field`
+and these shortcuts cover both positions.
+
+!!! note "Date/time scalars and JSON"
+    The date/time shortcuts render as `CustomDate` / `CustomDateTime` /
+    `CustomTime` (v1 SDL parity; the plain `Date` / `DateTime` / `Time` names
+    belong to the filter-lookup scalars). `JSONField()` binds the raw `JSON`
+    scalar (structured JSON on the wire); `JSONField(as_str=True)` binds the
+    string-encoded `JSONString` escape hatch. See
+    [Accepted date/time input formats](../usage/types.md#accepted-datetime-input-formats)
+    and [`JSONField` → `JSON`](../usage/types.md#jsonfield-json).
+
+!!! warning "Import from `django_graphex.core`, not `django.db.models`"
+    `django.db.models` also exports `CharField`, `IntegerField`, etc. Declaring a
+    **model** field where a descriptor is expected raises a loud `TypeError`
+    naming the likely import mistake — on both the type-body and mutation-argument
+    paths. Always import descriptors from `django_graphex.core`.
+
+!!! note "`field()` is the low-level substrate"
+    The descriptors are sugar over the public `field(type, *, description=None,
+    args=None, resolver=None, name=None, required_perms=None)` helper, which stays
+    public and unchanged. `field()` has no `source=` / `required=` (those live on
+    the descriptors); use it for the raw graphql-core-typed primitive.
+
 ## DjangoObjectType
 
 Enhanced Django model GraphQL type with filtering and pagination support.
@@ -34,15 +121,16 @@ class UserType(DjangoObjectType):
 | `include_fields` | `tuple/list` | `()` | Additional fields to include |
 | `filter_fields` | `dict` | `None` | Field filtering configuration |
 | `interfaces` | `tuple` | `()` | GraphQL interfaces to implement |
-| `max_deep` | `int` | `None` | Max nested-object depth below this type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
+| `description` | `str` | `None` | GraphQL description for this type; defaults to the class docstring when omitted |
+| `unions` | `dict` | `None` | Mapping of `GenericForeignKey` field name → `DjangoUnionType` subclass; enables typed GFK targets instead of `GenericForeignKeyType`. Renamed from `gfk_unions` in 2.0 — the old key raises `ImproperlyConfigured`. |
+| `max_depth` | `int` | `None` | Max nested-object depth below this type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of a field returning this type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 
-!!! warning "Unknown Meta options raise ImproperlyConfigured (v1.2.2+)"
-    Since v1.2.2 (#65), any key not in the table above is rejected at server
-    startup with `django.core.exceptions.ImproperlyConfigured`. A previously
-    silent typo (e.g. `filter_Filed`) now surfaces immediately. Review your
-    `DjangoObjectType` and `DjangoListObjectType` subclasses before upgrading
-    from pre-1.2.2. See also [Meta options are validated](../usage/types.md#meta-options-validated).
+!!! warning "Unknown Meta options raise ImproperlyConfigured"
+    Any key not in the table above is rejected at server startup with
+    `django.core.exceptions.ImproperlyConfigured`. A previously silent typo
+    (e.g. `filter_Filed`) now surfaces immediately. See also
+    [Meta options are validated](../usage/types.md#meta-options-validated).
 
 ### Methods
 
@@ -87,7 +175,7 @@ Get a single node by ID.
 === "Basic Type"
 
     ```python
-    from django_graphex import DjangoObjectType
+    from django_graphex.types import DjangoObjectType
     from .models import User
 
     class UserType(DjangoObjectType):
@@ -139,7 +227,7 @@ Get a single node by ID.
 Django model GraphQL input type for mutations and arguments.
 
 ```python
-class DjangoInputObjectType(InputObjectType)
+class DjangoInputObjectType(InputType)  # InputType = django_graphex.core
 ```
 
 ### Meta Configuration
@@ -181,7 +269,7 @@ Get the type when the unmounted type is mounted.
 === "Create Input"
 
     ```python
-    from django_graphex import DjangoInputObjectType
+    from django_graphex.types import DjangoInputObjectType
 
     class UserCreateInput(DjangoInputObjectType):
         class Meta:
@@ -237,11 +325,16 @@ class UserListType(DjangoListObjectType):
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `model` | `Model` | Required | Django model class |
+| `registry` | `Registry` | Global registry | Type registry instance |
+| `only_fields` | `tuple/list` | `()` | Include only specified fields |
+| `exclude_fields` | `tuple/list` | `()` | Exclude specified fields |
+| `include_fields` | `tuple/list` | `()` | Additional fields to include |
+| `queryset` | `QuerySet` | `None` | Base queryset for the list |
 | `description` | `str` | Auto-generated | Type description |
 | `results_field_name` | `str` | `'results'` | Name of results field |
 | `pagination` | `BaseDjangoGraphqlPagination` | `None` | Pagination configuration |
 | `filter_fields` | `dict` | `None` | Field filtering configuration |
-| `max_deep` | `int` | `None` | Max nested-object depth below this list type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
+| `max_depth` | `int` | `None` | Max nested-object depth below this list type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of a field returning this list type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 
 ### Generated Fields
@@ -259,15 +352,6 @@ Pagination and ordering arguments (`limit`, `offset`, `page`, `pageSize`, `first
 are placed on the list field itself.
 
 ### Methods
-
-#### `ListField(**kwargs)` (classmethod)
-
-Create a field for this list type.
-
-**Parameters:**
-- `**kwargs`: Additional field arguments
-
-**Returns:** `DjangoListObjectField` instance
 
 #### `RetrieveField(**kwargs)` (classmethod)
 
@@ -289,10 +373,8 @@ Return the base `DjangoObjectType` wrapped by this list type.
 === "Basic List Type"
 
     ```python
-    from django_graphex import (
-        DjangoListObjectType,
-        LimitOffsetGraphqlPagination
-    )
+    from django_graphex.paginations import LimitOffsetGraphqlPagination
+    from django_graphex.types import DjangoListObjectType
 
     class UserListType(DjangoListObjectType):
         class Meta:
@@ -304,7 +386,7 @@ Return the base `DjangoObjectType` wrapped by this list type.
 === "With Custom Pagination"
 
     ```python
-    from django_graphex import PageGraphqlPagination
+    from django_graphex.paginations import PageGraphqlPagination
 
     class PostListType(DjangoListObjectType):
         class Meta:
@@ -323,7 +405,8 @@ Return the base `DjangoObjectType` wrapped by this list type.
 === "Scoping via a custom resolver"
 
     ```python
-    from django_graphex import DjangoListObjectField, ObjectType
+    from django_graphex.fields import DjangoListObjectField
+    from django_graphex.core import ObjectType
 
     class UserListType(DjangoListObjectType):
         class Meta:
@@ -342,7 +425,9 @@ Return the base `DjangoObjectType` wrapped by this list type.
 === "Schema Integration"
 
     ```python
-    from django_graphex import DjangoGraphQLSchema, DjangoListObjectField, ObjectType
+    from django_graphex.fields import DjangoListObjectField
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
 
     class Query(ObjectType):
         # Preferred: DjangoListObjectField takes the list type directly
@@ -421,7 +506,10 @@ class UserType(DjangoModelType):
 | `nested_fields` | `tuple/dict` | `()` | Nested field configuration |
 | `filter_fields` | `dict` | `None` | Field filtering configuration |
 | `description` | `str` | Auto-generated | Type description |
-| `max_deep` | `int` | `None` | Max nested-object depth below the generated output type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
+| `stream` | `str` | `None` | Subscription stream name; required to expose a subscription field |
+| `payload_mode` | `str` | `None` | Force `"full"` or `"id_only"` subscription payloads; `None` inherits the global setting |
+| `subscription_index_fields` | `tuple/list` | `None` | Model field names used to route notifications to value-scoped subscriber groups |
+| `max_depth` | `int` | `None` | Max nested-object depth below the generated output type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of the generated output type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 
 ### Generated Methods
@@ -488,7 +576,7 @@ checks. See `django_graphex.permissions`.
 === "Basic Model Type"
 
     ```python
-    from django_graphex import DjangoModelType
+    from django_graphex.types import DjangoModelType
     from .models import User
 
     class UserType(DjangoModelType):
@@ -514,7 +602,8 @@ checks. See `django_graphex.permissions`.
 === "Schema Integration"
 
     ```python
-    from django_graphex import DjangoGraphQLSchema, ObjectType
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
 
     class Query(ObjectType):
         # Generate both fields automatically
@@ -554,7 +643,7 @@ registry.register(CustomUserType)
 `django_graphex`:
 
 ```python
-from django_graphex import Registry
+from django_graphex.registry import Registry
 
 # Create custom registry
 custom_registry = Registry()
@@ -570,12 +659,11 @@ class UserType(DjangoObjectType):
 ### Custom Field Resolvers
 
 ```python
-from graphql import GraphQLInt, GraphQLString
-from django_graphex import field
+from django_graphex.core import CharField, IntField
 
 class UserType(DjangoObjectType):
-    full_name = field(GraphQLString)
-    post_count = field(GraphQLInt)
+    full_name = CharField()
+    post_count = IntField()
 
     class Meta:
         model = User
@@ -597,9 +685,8 @@ class UserType(DjangoObjectType):
     @classmethod
     def __init_subclass_with_meta__(cls, **options):
         # Add dynamic fields before calling super
-        from graphql import GraphQLString
-        from django_graphex import field
-        cls.custom_field = field(GraphQLString)
+        from django_graphex.core import CharField
+        cls.custom_field = CharField()
         super().__init_subclass_with_meta__(**options)
 ```
 
@@ -645,11 +732,10 @@ class UserType(DjangoObjectType):
 ### Field Resolution Errors
 
 ```python
-from graphql import GraphQLString
-from django_graphex import field
+from django_graphex.core import CharField
 
 class UserType(DjangoObjectType):
-    avatar_url = field(GraphQLString)
+    avatar_url = CharField()
 
     class Meta:
         model = User
@@ -701,20 +787,20 @@ class UserType(DjangoObjectType):
 GraphQL Union over explicitly enumerated `DjangoObjectType` members.
 
 ```python
-class DjangoUnionType(Union)
+class DjangoUnionType(ObjectType)  # ObjectType = django_graphex.core
 ```
 
 ### Meta Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `gfk_types` | `tuple[DjangoObjectType, ...]` | Required (≥ 1) | Member types of the union. Members are enumerated explicitly — the `django_content_type` table is never queried to discover them. |
+| `types` | `tuple[DjangoObjectType, ...]` | Required (≥ 1) | Member types of the union. Members are enumerated explicitly — the `django_content_type` table is never queried to discover them. |
 
 ### Declaration Order (load-bearing)
 
 1. Declare all **member** `DjangoObjectType`s first.
-2. Declare the `DjangoUnionType` with `Meta.gfk_types`.
-3. Declare the **owner** `DjangoObjectType` LAST, referencing the union via `Meta.gfk_unions`.
+2. Declare the `DjangoUnionType` with `Meta.types`.
+3. Declare the **owner** `DjangoObjectType` LAST, referencing the union via `Meta.unions` (renamed from `gfk_unions` in 2.0; the old key raises `ImproperlyConfigured`).
 
 A mis-ordered declaration logs a `WARNING` and falls back to `GenericForeignKeyType` — the schema still builds.
 
@@ -732,7 +818,7 @@ You do not override this method.
 ### Example Usage
 
 ```python
-from django_graphex import DjangoObjectType, DjangoUnionType
+from django_graphex.types import DjangoObjectType, DjangoUnionType
 
 class AccountType(DjangoObjectType):
     class Meta:
@@ -744,12 +830,12 @@ class InvoiceType(DjangoObjectType):
 
 class CommentTargetUnion(DjangoUnionType):
     class Meta:
-        gfk_types = (AccountType, InvoiceType)
+        types = (AccountType, InvoiceType)
 
 class CommentType(DjangoObjectType):
     class Meta:
         model = Comment              # has `target = GenericForeignKey(...)`
-        gfk_unions = {"target": CommentTargetUnion}
+        unions = {"target": CommentTargetUnion}
 ```
 
 See [Types — DjangoUnionType](../usage/types.md#djangouniontype-typed-genericforeignkey-targets) for the full usage guide including optimizer behavior.
@@ -762,7 +848,7 @@ GraphQL Interface for shared field declarations across multiple
 `DjangoObjectType` implementors.
 
 ```python
-class DjangoInterfaceType(Interface)
+class DjangoInterfaceType(ObjectType)  # ObjectType = django_graphex.core
 ```
 
 ### Meta Options
@@ -783,11 +869,11 @@ You do not override this method.
 ### Example Usage
 
 ```python
-from graphql import GraphQLString
-from django_graphex import DjangoInterfaceType, DjangoObjectType, field
+from django_graphex.core import CharField
+from django_graphex.types import DjangoInterfaceType, DjangoObjectType
 
 class ProductInterface(DjangoInterfaceType):
-    name = field(GraphQLString)
+    name = CharField()
 
     class Meta:
         pass

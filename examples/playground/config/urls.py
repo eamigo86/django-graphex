@@ -1,19 +1,18 @@
 """URL configuration: admin + the GraphQL endpoints (with GraphiQL).
 
-v2.0: the legacy ``SubscriptionGraphQLView`` (one-shot HTTP subscribe/unsubscribe
-confirmation) was removed. Queries/mutations are served by ``GraphQLView``;
-subscriptions are served by the native SSE view (HTTP ``text/event-stream``) and
-the native WebSocket consumer (see ``config/asgi.py``).
+v2.0: the legacy "SubscriptionGraphQLView" (one-shot HTTP subscribe/unsubscribe
+confirmation) was removed. Queries/mutations are served by "GraphQLView";
+subscriptions are served by the native SSE view (HTTP "text/event-stream") and
+the native WebSocket consumer (see "config/asgi.py").
 """
 
+from blog.schema import schema
 from django.contrib import admin
 from django.urls import path
 
-from django_graphex import AuthenticatedGraphQLView, GraphQLView
 from django_graphex.subscriptions import SubscriptionClientView
 from django_graphex.subscriptions.transports.sse import subscription_sse_view
-
-from blog.schema import schema
+from django_graphex.views import AuthenticatedGraphQLView, GraphQLView
 
 urlpatterns = [
     path("admin/", admin.site.urls),

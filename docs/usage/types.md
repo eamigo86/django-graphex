@@ -19,7 +19,7 @@ relations → nested list types). It is the building block every other type and
 field resolves to.
 
 ```python
-from django_graphex import DjangoObjectType
+from django_graphex.types import DjangoObjectType
 from django.contrib.auth.models import User
 
 class UserType(DjangoObjectType):
@@ -46,7 +46,8 @@ GraphQL filter argument** directly on the type, co-located with its logic:
 ```python
 from graphql import GraphQLString
 from django.db.models import Q
-from django_graphex import DjangoObjectType, filter_field
+from django_graphex.filtering import filter_field
+from django_graphex.types import DjangoObjectType
 
 class PostType(DjangoObjectType):
     class Meta:
@@ -130,7 +131,7 @@ The full set of recognised options for `DjangoObjectType.Meta` is:
 | `include_fields` | Additional fields to include |
 | `filter_fields` | Field filtering configuration |
 | `interfaces` | GraphQL interfaces to implement |
-| `max_deep` | Max nested-object depth below this type |
+| `max_depth` | Max nested-object depth below this type |
 | `complexity` | Cost weight for query cost analysis |
 | `description` | Type description exposed in the schema |
 
@@ -143,7 +144,7 @@ and `DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
     Extends DjangoObjectType with built-in pagination and filtering support.
 
 ```python
-from django_graphex import DjangoListObjectType
+from django_graphex.types import DjangoListObjectType
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django.contrib.auth.models import User
 
@@ -171,6 +172,12 @@ class UserListType(DjangoListObjectType):
 - **Custom Queryset**: Override default queryset behavior
 
 ### Configuration Options
+
+A `DjangoListObjectType` concentrates all of its list behavior in `Meta`: the
+paginator (with its default/max page size and ordering), the `filter_fields`
+lookups exposed on the `filter:` argument, a custom base `queryset`, and the
+usual field restrictions. The example below shows every common option in one
+place:
 
 ```python
 class UserListType(DjangoListObjectType):
@@ -204,8 +211,15 @@ class UserListType(DjangoListObjectType):
 
 ### Helper Methods
 
+To mount a `DjangoListObjectType` on your `Query`, wrap it in a
+[`DjangoListObjectField`](fields.md#djangolistobjectfield) — that produces the
+paginated `results` / `totalCount` field with the declared filters. The type
+also provides a `RetrieveField()` classmethod that builds a single-object
+lookup (by `id`) from the same node type:
+
 ```python
-from django_graphex import DjangoListObjectField, ObjectType
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.core import ObjectType
 
 class Query(ObjectType):
     # Preferred: use DjangoListObjectField directly
@@ -220,12 +234,221 @@ class Query(ObjectType):
     classmethod on `DjangoModelType`, not on `DjangoListObjectType`. Use
     `DjangoListObjectField(UserListType)` instead.
 
+## Declaring fields: the descriptor API
+
+When a model doesn't already provide a field — a computed value, a hand-written
+mutation payload, a custom argument — declare it with a **capitalized field
+descriptor** imported from `django_graphex.core`. This is the primary idiom for
+custom (non-model) fields:
+
+```python
+from django_graphex.core import CharField, IntField, Field, ObjectType
+
+class UserType(ObjectType):
+    full_name  = CharField(description="First + last")   # -> String
+    post_count = IntField(required=True)                 # -> Int!
+    email      = CharField(source="user_email")          # reads root.user_email
+
+    def resolve_full_name(self, info):
+        return f"{self.first_name} {self.last_name}"
+```
+
+Every descriptor compiles to the **exact same** graphql-core type as the
+low-level `field()` substrate it wraps — the SDL is byte-identical. The
+descriptors just give you a Django-model-field-style surface (`source=`,
+`required=`, typed shortcuts) with real import-time names your IDE can resolve.
+
+### Scalar shortcuts { #output-scalar-shortcuts }
+
+Each shortcut binds one GraphQL scalar. There are **11** of them, and every one
+is **position-agnostic** — the same shortcut works in an `ObjectType` body
+(output) *and* in a `class Arguments` body (input). Use them anywhere you'd
+hand-write `Field(<scalar>)`:
+
+| Shortcut | GraphQL type |
+|----------|--------------|
+| `IDField` | `ID` |
+| `IntField` | `Int` |
+| `FloatField` | `Float` |
+| `BooleanField` | `Boolean` |
+| `CharField` | `String` |
+| `DateField` | `CustomDate` |
+| `DateTimeField` | `CustomDateTime` |
+| `TimeField` | `CustomTime` |
+| `DecimalField` | `Decimal` |
+| `UUIDField` | `UUID` |
+| `JSONField` | `JSON` (or `JSONString` with `as_str=True`) |
+
+!!! note "The `Custom*` date/time scalar names"
+    The output/argument date/time scalars render as `CustomDate` /
+    `CustomDateTime` / `CustomTime`, matching the v1 (graphene-django) SDL for
+    drop-in schema parity. The plain `Date` / `DateTime` / `Time` names are
+    reserved for the **filter-lookup** scalars — see
+    [Accepted date/time input formats](#accepted-datetime-input-formats).
+
+Every shortcut accepts the same keyword surface (the same one the unified
+`Field` accepts):
+
+| Keyword | Effect |
+|---------|--------|
+| `required=True` | Wrap the type in non-null (`T!`). |
+| `source="attr"` | **Output only.** Resolve by reading `attr` off the root object (or calling it if it's a method). |
+| `default=value` | **Input only.** GraphQL default for the argument (an explicit `default=None` declares a real `null` default). |
+| `description="..."` | Field / argument description in the SDL. |
+| `name="wireName"` | Explicit wire name (skips the automatic camelCase pass). |
+| `resolver=fn` | **Output only.** Field-level resolver (wins over the parent resolver). |
+| `deprecation_reason="..."` | Marks the field / argument `@deprecated(reason: ...)`. |
+
+Setting an output-only keyword (`source=` / `resolver=`) on a field used in an
+argument position raises a clear `TypeError`; setting the input-only `default=`
+in an output position raises a `TypeError` at output compile.
+
+For a type with no named shortcut (a `DjangoObjectType` reference, a
+`GraphQLList`/`GraphQLNonNull` wrapper, a custom scalar), use the general
+`Field` descriptor — it takes any type positionally and offers the same surface:
+
+```python
+from graphql import GraphQLList, GraphQLString
+from django_graphex.core import Field
+
+class Query(ObjectType):
+    me   = Field(UserType)                       # a DjangoObjectType reference
+    tags = Field(GraphQLList(GraphQLString))     # list via the graphql-core wrapper
+    slug = Field(GraphQLString, required=True)   # -> String!
+```
+
+### Custom fields with resolvers { #custom-fields-with-resolvers }
+
+Descriptors work the same on a **`DjangoObjectType`**: declare the field on the
+class body and it is merged with the model-derived fields. When `source=` isn't
+enough, back the field with a **`resolve_<name>` method** — the contract is:
+
+- The method name is `resolve_` + the **snake_case attribute name** of a field
+  declared on the class (`full_name` → `resolve_full_name`).
+- It is called as `resolve_<name>(self, info, **args)`: `self` is the object
+  being serialized (the model instance on a `DjangoObjectType`), `info.context`
+  is the request, and the field's declared arguments arrive as keyword arguments.
+- Precedence: an explicit `resolver=` callable on the descriptor wins over the
+  method; `source=` is the no-logic shortcut (it reads the named attribute off
+  the instance, calling it if it's a method).
+
+```python
+from django.contrib.auth.models import User
+from graphql import GraphQLArgument, GraphQLInt, GraphQLString
+from django_graphex.core import CharField, Field
+from django_graphex.types import DjangoObjectType
+
+class UserType(DjangoObjectType):
+    # source= shortcut — reads (or calls) `get_short_name` on the instance.
+    initials = CharField(source="get_short_name")
+
+    # Computed field backed by the resolve_full_name method below.
+    full_name = CharField(description="First + last name")
+
+    # A field with its own GraphQL arguments; the resolver reads them as kwargs.
+    greeting = Field(
+        GraphQLString,
+        args={"width": GraphQLArgument(GraphQLInt)},
+    )
+
+    class Meta:
+        model = User
+        only_fields = ("id", "username", "first_name", "last_name")
+
+    def resolve_full_name(self, info):
+        return f"{self.first_name} {self.last_name}".strip()
+
+    def resolve_greeting(self, info, width=None):
+        text = f"Hello, {self.username}!"
+        return text.center(width) if width else text
+```
+
+```graphql
+{ user(id: 1) { fullName initials greeting(width: 30) } }
+```
+
+Argument dict keys are used **verbatim** as the wire names (declare a multi-word
+argument in camelCase, e.g. `args={"maxWidth": ...}`); each argument reaches the
+resolver as its **snake_case** keyword (`max_width`). The same contract applies
+on a plain `ObjectType` root (see the `Query` examples above) and on a
+[`DjangoModelType`](#resolve_field-methods), where the resolver is forwarded to
+the generated output type.
+
+### Arguments use the same descriptors { #the-unified-argument-idiom }
+
+There is **one** `Field` for both positions. Arguments on a hand-written
+`Mutation` (or inside `Field(args={...})`) are declared with the very same
+`Field` / scalar shortcuts you use in an `ObjectType` body — the direction comes
+from the **declaration site**, never from the descriptor. `Field` accepts
+**either** a `DjangoInputObjectType` / `InputType` CLASS (resolved lazily to its
+compiled input type) **or** a bare graphql-core scalar, so one descriptor covers
+both cases:
+
+```python
+from django_graphex.core import CharField, Field, Mutation
+
+class CreateUser(Mutation):
+    class Arguments:
+        new_user = Field(UserCreateInput, required=True)  # an input-object CLASS
+        note     = CharField()                            # a bare String arg
+
+    user = Field(UserType)
+    ...
+```
+
+`Field(SomeInput, required=True)` replaces the older
+`lambda: GraphQLArgument(GraphQLNonNull(SomeInput._meta.graphql_input_type))`
+thunk — same lazy timing, one readable line. In an argument position, a scalar
+shortcut accepts `required=`, `default=`, `description=`, `name=`, and
+`deprecation_reason=`; the output-only `source=` / `resolver=` / `args=` raise a
+clear `TypeError` if set there.
+
+!!! note "No more `*InputField` twins (2.0)"
+    In v1 the 12 typed shortcuts each had an `*InputField` sibling
+    (`CharInputField`, `IntInputField`, …) and a separate `InputField`
+    descriptor for arguments. **Those are gone.** The single `Field` and the 11
+    surviving scalar shortcuts (`CharField`, `IntField`, `JSONField`, … —
+    `GenericJSONField` was folded into `JSONField(as_str=...)`) work in **both**
+    positions. Replace every `InputField(X, ...)` with `Field(X, ...)` and every
+    `CharInputField()` with `CharField()`.
+
+!!! warning "Don't import field classes from `django.db.models`"
+    `django.db.models` also exports `CharField`, `IntegerField`, and friends. If
+    you accidentally import a **model** field class and declare it where a GraphQL
+    descriptor is expected, django-graphex raises a loud `TypeError` instead of
+    silently mis-compiling:
+
+    ```text
+    'name': got a django.db.models.Field (<django.db.models.CharField>). Did you
+    import CharField from django.db.models instead of django_graphex.core? Use
+    django_graphex.core.CharField (or Field) for GraphQL fields.
+    ```
+
+    The guard fires on both the type-body path and the mutation-argument path.
+    The fix is always the same: import from `django_graphex.core`.
+
+!!! note "`field()` is the low-level substrate"
+    The capitalized descriptors are sugar over `field()`, which stays public and
+    unchanged. Reach for `field()` directly only when you want the raw
+    graphql-core-typed primitive with no Django-style surface:
+
+    ```python
+    from graphql import GraphQLString
+    from django_graphex.core import field
+
+    server_time = field(GraphQLString, description="ISO timestamp")
+    ```
+
+    `field()` takes `description=`, `args=`, `resolver=`, `name=`, and
+    `required_perms=` — but **not** `source=` or `required=` (those live on the
+    descriptors). Prefer `CharField(...)` / `Field(...)` in new code.
+
 ## DjangoInputObjectType
 
 Creates input types for mutations based on Django models.
 
 ```python
-from django_graphex import DjangoInputObjectType
+from django_graphex.types import DjangoInputObjectType
 from django.contrib.auth.models import User
 
 class UserInput(DjangoInputObjectType):
@@ -239,15 +462,14 @@ class UserInput(DjangoInputObjectType):
 
 ### Advanced Configuration
 
+A `DjangoInputObjectType` derives its input fields from the model. Shape them
+with `only_fields` / `exclude_fields` and a `description`:
+
 ```python
-from graphql import GraphQLString
-from django_graphex import DjangoInputObjectType, field
+from django_graphex.types import DjangoInputObjectType
 
 class UserCreateInput(DjangoInputObjectType):
     """Input for creating new users"""
-
-    # Add custom fields
-    confirm_password = field(GraphQLString, required=True)
 
     class Meta:
         model = User
@@ -263,26 +485,35 @@ class UserUpdateInput(DjangoInputObjectType):
         description = "Input type for user updates"
 ```
 
+!!! note "Input bodies are model-derived"
+    A `DjangoInputObjectType` compiles its input fields from the model — custom
+    descriptors declared on the class body are **not** added to the input type.
+    For a bespoke input field that isn't backed by a model column, declare a
+    hand-written `Mutation` and pass the extra argument with `Field` / a scalar
+    shortcut (e.g. `CharField`) in its `class Arguments` (see
+    [the descriptor API](#declaring-fields-the-descriptor-api) and
+    [Mutations](mutations.md#custom-arguments-with-field)). Custom
+    **output** fields — with `source=` or a `resolve_<name>` method — belong on
+    the object types instead: see
+    [Custom fields with resolvers](#custom-fields-with-resolvers).
+
 ### Usage in Mutations
 
 A `DjangoInputObjectType` is most often wired through a
 [`DjangoModelMutation`](mutations.md), which consumes it automatically. For a
-hand-written `Mutation`, reference the compiled graphql-core input type
-(`UserCreateInput._meta.graphql_input_type`) as a `GraphQLArgument` — via a zero-arg
-**thunk**, since the input type is compiled at schema-build time:
+hand-written `Mutation`, pass the input-type **class** to `Field` — it
+resolves the compiled input type lazily at schema-build time, so you reference
+the class directly with no thunk boilerplate:
 
 ```python
-from graphql import GraphQLArgument, GraphQLBoolean, GraphQLNonNull
-from django_graphex import Mutation, field
+from django_graphex.core import BooleanField, Field, Mutation
 
 class CreateUserMutation(Mutation):
-    class args:
-        new_user = lambda: GraphQLArgument(  # noqa: E731 - native lazy arg thunk
-            GraphQLNonNull(UserCreateInput._meta.graphql_input_type)
-        )
+    class Arguments:
+        new_user = Field(UserCreateInput, required=True)
 
-    user = field(UserType)
-    success = field(GraphQLBoolean)
+    user = Field(UserType)
+    success = BooleanField()
 
     @classmethod
     def mutate(cls, root, info, **kwargs):
@@ -293,6 +524,11 @@ class CreateUserMutation(Mutation):
         # ... mutation logic
         return cls(user=..., success=True)
 ```
+
+`Field(UserCreateInput, required=True)` compiles to exactly the same
+`GraphQLArgument(GraphQLNonNull(...))` the older lambda thunk produced. The thunk
+form still works as a low-level substrate — see
+[Declaring fields: the descriptor API](#declaring-fields-the-descriptor-api).
 
 !!! tip "Prefer `DjangoModelMutation` for model inputs"
     For ordinary create/update/delete against a model, use
@@ -315,7 +551,7 @@ class CreateUserMutation(Mutation):
 
 ```python
 from django.contrib.auth.models import User
-from django_graphex import DjangoModelType
+from django_graphex.types import DjangoModelType
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 
 class UserModelType(DjangoModelType):
@@ -357,17 +593,18 @@ is the request:
 
 ```python
 from django.db.models import Count, F
+from myapp.models import Author
 
-class PropertyManagerType(DjangoModelType):
+class AuthorType(DjangoModelType):
     class Meta:
-        model = PropertyManager
+        model = Author
 
     @classmethod
     def get_queryset(cls, manager, info, **kwargs):
         # custom base queryset for retrieve/list (and mutation responses)
-        return PropertyManager.objects.select_related("user").annotate(
+        return Author.objects.select_related("user").annotate(
             email=F("user__email"),
-            lease_count=Count("leases"),
+            post_count=Count("posts"),
         )
 
     @classmethod
@@ -376,7 +613,7 @@ class PropertyManagerType(DjangoModelType):
         user = info.context.user
         if user.is_superuser:
             return qs
-        return qs.filter(company=user.company)
+        return qs.filter(user=user)
 ```
 
 - `get_queryset(cls, manager, info, **kwargs)` supplies the base queryset and
@@ -401,21 +638,21 @@ It is added to the generated output type, so it shows up in **both**
 `RetrieveField()` and `ListField()` — no separate `DjangoObjectType` required:
 
 ```python
-from graphql import GraphQLInt, GraphQLString
-from django_graphex import field
+from django_graphex.core import CharField, IntField
 
-class PropertyManagerType(DjangoModelType):
-    # Native field() declarations, resolved from the instance (here from the
-    # annotations added in get_queryset above, and a model property).
-    lease_count = field(GraphQLInt, source="lease_count")
-    email = field(GraphQLString, source="email")
-    logo_url = field(GraphQLString, source="logo_url")   # a model @property
+class AuthorType(DjangoModelType):
+    # Typed descriptors, resolved from the instance (here from the annotations
+    # added in get_queryset above, and a model property). `source=` reads the
+    # named attribute off the instance.
+    post_count = IntField(source="post_count")
+    email = CharField(source="email")
+    avatar_url = CharField(source="avatar_url")   # a model @property
 
     class Meta:
-        model = PropertyManager
+        model = Author
 ```
 
-- The field is resolved like any native field: `source="x"` reads
+- The field is resolved like any descriptor: `source="x"` reads
   `getattr(instance, "x")`, or add a `resolve_<name>` method for custom logic.
 - It appears in the detail **and** the list, because the list reuses the same
   item type.
@@ -428,21 +665,22 @@ generated output type, so it runs for both the retrieve and the list. This lets 
 custom field return another GraphQL type with arbitrary logic:
 
 ```python
-from django_graphex import DjangoModelType, field
-from myapp.types import PersonType
-from myapp.models import Company
+from django_graphex.core import Field
+from django_graphex.types import DjangoModelType
+from myapp.types import CommentType
+from myapp.models import Post
 
-class CompanyType(DjangoModelType):
+class PostType(DjangoModelType):
     # A computed object field, resolved by the method below.
-    owner = field(PersonType)
+    featured_comment = Field(CommentType)
 
     class Meta:
-        model = Company
+        model = Post
 
-    def resolve_owner(self, info):
-        # `self` is the Company instance being serialized; return any object
-        # PersonType can resolve (here, the primary contact).
-        return self.contacts.filter(is_primary=True).first()
+    def resolve_featured_comment(self, info):
+        # `self` is the Post instance being serialized; return any object
+        # CommentType can resolve (here, the first approved comment).
+        return self.comments.filter(is_approved=True).first()
 ```
 
 - The method name must be `resolve_<field>` where `<field>` is the
@@ -458,17 +696,16 @@ Custom fields are **inherited** like normal class attributes, so shared fields
 can live on an abstract base and a subclass may override one by redeclaring it:
 
 ```python
-from graphql import GraphQLInt, GraphQLString
-from django_graphex import field
+from django_graphex.core import CharField, IntField
 
 class TimestampedType(DjangoModelType):
-    age = field(GraphQLString, source="age_display")   # shared by subclasses
+    age = CharField(source="age_display")   # shared by subclasses
 
     class Meta:
         abstract = True
 
 class InvoiceType(TimestampedType):
-    total = field(GraphQLInt, source="total_cents")     # adds its own
+    total = IntField(source="total_cents")     # adds its own
 
     class Meta:
         model = Invoice        # gets `age` + `total`
@@ -483,14 +720,21 @@ class InvoiceType(TimestampedType):
 
 ### Auto-generated Query Fields
 
+A `DjangoModelType` builds its read operations for you: `RetrieveField()`
+returns a single-object lookup (by `id`, routed through the type's
+`get_queryset` / `filter_queryset` hooks) and `ListField()` returns the
+paginated + filtered list with the uniform `results` / `totalCount` shape.
+`QueryFields()` is the shorthand that returns both at once. The GraphQL field
+names come from the attribute names you assign them to (`user_retrieve` →
+`userRetrieve`):
+
 ```python
-from django_graphex import ObjectType
+from django_graphex.core import ObjectType
 
 class Query(ObjectType):
     # Generate both retrieve and list queries automatically
     user_retrieve, user_list = UserModelType.QueryFields(
-        description='User queries',
-        deprecation_reason='Optional deprecation message'
+        description='User queries'
     )
 
     # Or define them separately
@@ -504,8 +748,14 @@ class Query(ObjectType):
 
 ### Auto-generated Mutation Fields
 
+The write side is generated the same way: `CreateField()`, `DeleteField()` and
+`UpdateField()` each return a complete mutation — input type derived from the
+model, validation and DB integrity checks included — whose payload carries the
+mutated object plus `ok` / `errors`. `MutationFields()` is the shorthand that
+returns all three in **create, delete, update** order:
+
 ```python
-from django_graphex import ObjectType
+from django_graphex.core import ObjectType
 
 class Mutation(ObjectType):
     # Generate all CRUD mutations
@@ -517,6 +767,44 @@ class Mutation(ObjectType):
     create_user = UserModelType.CreateField(description='Create new user')
     delete_user = UserModelType.DeleteField(description='Delete user')
     update_user = UserModelType.UpdateField(description='Update user')
+```
+
+### Custom mutation arguments — `class Arguments`
+
+The generated mutations accept extra arguments beyond the auto-derived input
+object. Declare a `class Arguments` on the `DjangoModelType` — its members are
+added to **every** generated mutation (`create` / `update` / `delete`)
+alongside `new_<model>`, using the same
+[argument descriptors](#declaring-fields-the-descriptor-api) as a hand-written
+`Mutation` (a raw `GraphQLArgument` also works):
+
+```python
+from django_graphex.core import BooleanField
+from django_graphex.types import DjangoModelType
+
+class UserModelType(DjangoModelType):
+    class Arguments:
+        dry_run = BooleanField(description="Validate only; do not save")
+
+    class Meta:
+        model = User
+```
+
+```graphql
+mutation {
+  userCreate(newUser: { username: "ada" }, dryRun: true) { ok }
+}
+```
+
+The extra argument reaches the resolver as a snake_case kwarg — consume it by
+overriding the operation classmethod and delegating to `super()`:
+
+```python
+    @classmethod
+    def create(cls, root, info, dry_run=False, **kwargs):
+        if dry_run:
+            return cls(ok=True)
+        return super().create(root, info, **kwargs)
 ```
 
 ### Custom validation
@@ -549,7 +837,7 @@ When a create/update fails validation, the mutation returns `ok: false` and an
 `GenericForeignKeyType` scalar — so a client can select concrete fields per
 member with inline fragments (`... on AccountType { balance }`).
 
-Members are **explicitly enumerated** via `Meta.gfk_types`; the library never
+Members are **explicitly enumerated** via `Meta.types`; the library never
 inspects the `django_content_type` table to discover them.
 
 ### Required declaration order
@@ -558,12 +846,16 @@ The declaration order is **load-bearing** (no lazy string forward-references in
 this release):
 
 1. Declare the **member** `DjangoObjectType`s first.
-2. Declare the `DjangoUnionType` with `Meta.gfk_types = (MemberAType, MemberBType)`.
+2. Declare the `DjangoUnionType` with `Meta.types = (MemberAType, MemberBType)`.
 3. Declare the **owner** `DjangoObjectType` LAST, naming its GFK union via
-   `Meta.gfk_unions = {"<gfk_field_name>": TheUnion}`.
+   `Meta.unions = {"<gfk_field_name>": TheUnion}`.
+
+!!! warning "`gfk_unions` was renamed to `unions` (2.0)"
+    The Meta key is now `unions`. Declaring the old `gfk_unions` key raises
+    `django.core.exceptions.ImproperlyConfigured` at server startup — rename it.
 
 ```python
-from django_graphex import DjangoObjectType, DjangoUnionType
+from django_graphex.types import DjangoObjectType, DjangoUnionType
 
 # 1. Members first.
 class AccountType(DjangoObjectType):
@@ -577,13 +869,13 @@ class InvoiceType(DjangoObjectType):
 # 2. The union, enumerating members explicitly.
 class CommentTargetUnion(DjangoUnionType):
     class Meta:
-        gfk_types = (AccountType, InvoiceType)
+        types = (AccountType, InvoiceType)
 
 # 3. The GFK owner LAST, mapping the GFK field name -> the union.
 class CommentType(DjangoObjectType):
     class Meta:
         model = Comment              # has `target = GenericForeignKey(...)`
-        gfk_unions = {"target": CommentTargetUnion}
+        unions = {"target": CommentTargetUnion}
 ```
 
 Querying it:
@@ -645,11 +937,11 @@ introduces no new queryset/fetch path; each implementor's own model drives its
 column narrowing.
 
 ```python
-from graphql import GraphQLString
-from django_graphex import DjangoInterfaceType, DjangoObjectType, field
+from django_graphex.core import CharField
+from django_graphex.types import DjangoInterfaceType, DjangoObjectType
 
 class ProductInterface(DjangoInterfaceType):
-    name = field(GraphQLString)
+    name = CharField()
     class Meta:
         pass
 
@@ -668,7 +960,7 @@ Implementors declare membership with the `Meta.interfaces`
 kwarg. Like `DjangoUnionType`, `DjangoInterfaceType` provides a mandatory
 `resolve_type` that maps each row to its concrete implementor.
 
-## Limiting query shape: `max_deep` & `complexity`
+## Limiting query shape: `max_depth` & `complexity`
 
 Every type above accepts two optional `Meta` options that protect your API from
 abusive queries. They are enforced **before execution** by the validation rules
@@ -676,21 +968,21 @@ the library's `GraphQLView` enables by default. See
 [Query depth & cost limits](query-limits.md) for the full reference; the
 mini-examples below are the gist.
 
-**`max_deep`** — caps how many nested object levels may be selected below a field
+**`max_depth`** — caps how many nested object levels may be selected below a field
 returning this type (scalars don't count):
 
 ```python
-class RentalCompanyType(DjangoModelType):
+class CategoryType(DjangoModelType):
     class Meta:
-        model = RentalCompany
-        max_deep = 2          # company -> properties -> units OK; one level deeper is rejected
+        model = Category
+        max_depth = 2          # category -> posts -> comments OK; one level deeper is rejected
 ```
 
 ```graphql
-rentalCompany {
-  properties {        # level 1 ✅
-    units {           # level 2 ✅
-      tenant { name } # level 3 ❌ "Query exceeds the maximum nesting depth of 2 ..."
+category {
+  posts {                # level 1 ✅
+    comments {           # level 2 ✅
+      author { username }  # level 3 ❌ "Query exceeds the maximum nesting depth of 2 ..."
     }
   }
 }
@@ -765,13 +1057,14 @@ How Django model fields map to GraphQL **output** types:
 | `IntegerField` / `AutoField` / `BigIntegerField` | `Int` |
 | `FloatField` / `DecimalField` | `Float` |
 | `BooleanField` | `Boolean` |
-| `DateField` / `DateTimeField` / `TimeField` | `Date` / `DateTime` / `Time` |
+| `DateField` / `DateTimeField` / `TimeField` | `CustomDate` / `CustomDateTime` / `CustomTime` (see [input formats](#accepted-datetime-input-formats)) |
 | any field with `choices` | a generated `Enum` (see above) |
 | `ForeignKey` / `OneToOneField` | the related object type |
 | reverse FK / `ManyToManyField` | a `<Model>ListType` container (`results` + `totalCount`) |
 | `ArrayField(inner)` | `[<inner>]` — nested arrays as `[[<inner>]]`; a `choices` base as `[<Enum>]` |
 | `*RangeField` (Integer/BigInteger/Decimal/Date/DateTime) | a `{ lower, upper }` composite typed by the bound scalar |
-| `GenericForeignKey` | a typed union when declared in `Meta.gfk_unions`, otherwise a flat `GenericForeignKeyType` |
+| `JSONField` | the `JSON` scalar — **raw** structured JSON on the wire (see [below](#jsonfield-json)) |
+| `GenericForeignKey` | a typed union when declared in `Meta.unions`, otherwise a flat `GenericForeignKeyType` |
 | File/image, `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
 
 Worked example — `ArrayField` (incl. a `choices` base) and a range field:
@@ -792,6 +1085,145 @@ class Article(models.Model):
 ```graphql
 { articles { tags grid statuses span { lower upper } } }
 ```
+
+### Accepted date/time input formats { #accepted-datetime-input-formats }
+
+`DateField` / `DateTimeField` / `TimeField` (both the model-derived output
+fields and the `DateField()` / `DateTimeField()` / `TimeField()` shortcuts)
+parse input with Python's `datetime.fromisoformat`, and serialize output with
+`.isoformat()`. What that means in practice:
+
+| Input on the wire | Result |
+|---|---|
+| `"2024-01-15T10:30:00Z"` | Accepted — the trailing `Z` is honored (UTC). |
+| `"2024-01-15T10:30:00+05:00"` | Accepted — the **offset is preserved** (no conversion). |
+| `"2024-01-15T10:30:00"` | Accepted — **naive passthrough**; the library does not call `make_aware`. |
+| `"2024-01-15 10:30:00"` | Accepted — a **space** separator works in place of `T`. |
+| `"2024-01-15"` (into a `DateTime`) | Accepted — a bare date becomes **midnight** (`00:00:00`). |
+| `1700000000` (a numeric timestamp) | **Rejected** — the scalar only parses ISO-8601 *strings*, never numbers. |
+
+Output is always `.isoformat()`, so an aware datetime renders with an explicit
+offset (`2024-01-15T10:30:00+00:00`) — **never** the shorthand `Z`.
+
+!!! note "Why `CustomDate` / `CustomDateTime` / `CustomTime`?"
+    The output/argument scalars use these `Custom*` names for **SDL parity with
+    v1** (graphene-django), so a v2 schema is a drop-in match. The plain `Date` /
+    `DateTime` / `Time` names are **not** free — they belong to the
+    filter-lookup scalars (the `exact` / `gte` / … values inside a
+    `<Model><Field>Lookups` input). Keeping the two families distinct is what
+    lets both render in one schema without a name clash.
+
+!!! warning "`USE_TZ` interactions on the write path"
+    Because parsing is a plain `fromisoformat` (no `make_aware`), what you send
+    interacts with Django's timezone handling on save:
+
+    - **`USE_TZ = True`, naive input** (`"2024-01-15T10:30:00"`): Django emits its
+      own `RuntimeWarning` ("received a naive datetime … while time zone support
+      is active") and interprets the value in your `TIME_ZONE`. A naive
+      `10:30:00` under `TIME_ZONE = "America/New_York"` is stored (and re-read) as
+      the aware `2024-01-15T15:30:00+00:00` — so the value the client reads back
+      differs from the naive string it sent. Send an **offset-qualified** string
+      (or `Z`) to avoid the ambiguity.
+    - **`USE_TZ = False`, aware input** (`"…+05:00"`) on **SQLite**: Django raises
+      a top-level error — *"SQLite backend does not support timezone-aware
+      datetimes when USE_TZ is False."* — surfaced as a `GraphQLError`. Send a
+      naive string when `USE_TZ` is off.
+
+### `JSONField` → `JSON` { #jsonfield-json }
+
+A model `JSONField` is exposed as the **`JSON`** scalar in every direction. `JSON`
+carries **raw** structured JSON on the wire: objects, lists, and scalars pass
+through as-is, with no string-encoding step and no client-side `JSON.parse`.
+
+| Direction | GraphQL type | Behavior |
+|---|---|---|
+| Query output | `JSON` | The stored value is sent structurally — a client selecting `specs` gets a real object `{ "ram": 16 }`, not a string. |
+| Mutation input | `JSON` | A real `dict` / `list` (or scalar) reaches the model field. Inline object/list **literals** in the query document are accepted, and so are **variables**. |
+| Filters | `JSON` | `filter_fields = {"specs": ("exact",)}` compiles the lookup input with a `JSON` value. |
+
+```python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    specs = models.JSONField(null=True, blank=True)
+```
+
+```graphql
+# Inline object literal — accepted (no variables required):
+mutation {
+  productCreate(newProduct: { name: "Laptop", specs: { ram: 16, tags: ["a", "b"] } }) {
+    product {
+      specs      # -> { "ram": 16, "tags": ["a", "b"] }  (a real object; no parsing)
+    }
+    ok
+  }
+}
+```
+
+```graphql
+# Variables work too:
+mutation CreateProduct($specs: JSON) {
+  productCreate(newProduct: { name: "Laptop", specs: $specs }) {
+    product { specs }
+    ok
+  }
+}
+# variables: { "specs": { "ram": 16 } }
+```
+
+Omitting `specs` leaves the column untouched; passing `specs: null` writes SQL
+`NULL` — the usual omit-vs-null semantics, unchanged.
+
+!!! tip "Custom JSON fields: the `JSONField()` descriptor and `as_str=`"
+
+    For a hand-declared (non-model) field, the
+    [`JSONField()` shortcut](#output-scalar-shortcuts) covers **both** JSON
+    styles through one `as_str` flag. `JSONField()` (the default) binds the raw
+    `JSON` scalar — structured objects/lists on the wire, exactly like a model
+    `JSONField`. `JSONField(as_str=True)` is the **escape hatch**: it binds the
+    string-encoded `JSONString` scalar, whose wire value is a JSON-**encoded
+    string** the server decodes with `json.loads` on input and encodes with
+    `json.dumps` on output.
+
+    ```python
+    from django_graphex.core import JSONField, ObjectType
+
+    class Query(ObjectType):
+        config     = JSONField()              # -> JSON:       { "theme": "dark" }
+        raw_config = JSONField(as_str=True)   # -> JSONString: "{\"theme\": \"dark\"}"
+
+        def resolve_config(self, info):
+            return {"theme": "dark"}   # sent as a JSON object
+
+        def resolve_raw_config(self, info):
+            return {"theme": "dark"}   # serialized to a JSON string
+    ```
+
+    **Which one do I use?** Reach for the default `JSONField()` (raw `JSON`)
+    unless a client specifically expects a JSON **string** — e.g. it stores the
+    value verbatim, or you need wire parity with a legacy graphene-django schema
+    that used `JSONString`. In that case use `JSONField(as_str=True)`.
+
+    The scalar singletons themselves are importable for use with `Field` /
+    `field()` / `GraphQLArgument`:
+
+    ```python
+    from django_graphex.core import GdxJSON, GdxJSONString
+    ```
+
+!!! note "Inline literals are accepted"
+
+    The raw `JSON` scalar parses an **object or list literal written inline** in
+    the query document (`echo(data: { a: [1, 2] })` reaches the resolver as a
+    real `dict`) — the literal parser recurses through nested objects, lists, and
+    variable references. You do **not** need to route structured values through
+    variables (though variables work identically):
+
+    ```graphql
+    query Echo($d: JSON) { echo(data: $d) }
+    # variables: { "d": { "a": [1, 2] } }
+    ```
 
 ## Type Comparison
 
@@ -867,7 +1299,7 @@ class UserModelType(DjangoModelType):
 
 # Use DjangoListObjectType for complex list logic
 class UserAnalyticsType(DjangoListObjectType):
-    total_posts = field(GraphQLInt)
+    total_posts = IntField()          # a custom, computed output field
 
     class Meta:
         model = User
@@ -875,19 +1307,17 @@ class UserAnalyticsType(DjangoListObjectType):
     def resolve_total_posts(self, info):
         return self.posts.count()
 
-# Use DjangoInputObjectType for complex input validation
+# Use DjangoInputObjectType for model-derived input; shape it with only_fields.
+# For a bespoke, non-model input argument, use a hand-written Mutation with a
+# Field / CharField argument instead (input bodies are model-derived).
 class UserRegistrationInput(DjangoInputObjectType):
-    confirm_password = field(GraphQLString, required=True)
-    terms_accepted = field(GraphQLBoolean, required=True)
-
     class Meta:
         model = User
         only_fields = ("username", "email", "password")
 ```
 
-These examples assume native imports at the top of the module:
+These examples assume the descriptor imports at the top of the module:
 
 ```python
-from graphql import GraphQLBoolean, GraphQLInt, GraphQLString
-from django_graphex import field
+from django_graphex.core import IntField
 ```

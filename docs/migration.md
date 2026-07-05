@@ -71,7 +71,7 @@ class UserType(DjangoSerializerType):
         serializer_class = UserSerializer
 
 # After (django-graphex): native (Pydantic) backend
-from django_graphex import DjangoModelType
+from django_graphex.types import DjangoModelType
 
 class UserType(DjangoModelType):
     class Meta:
@@ -104,7 +104,7 @@ from graphene_django_extras.views import ExtraGraphQLView
 path("graphql", ExtraGraphQLView.as_view(graphiql=True))
 
 # After
-from django_graphex import GraphQLView   # also top-level now
+from django_graphex.views import GraphQLView
 path("graphql", GraphQLView.as_view(graphiql=True))
 ```
 
@@ -243,11 +243,11 @@ so its filter, `limit`, `offset` and `ordering` all stay on the field (no
    must become `django_graphex`:
 
     - `from graphene_django_extras import DjangoSerializerType` →
-      `from django_graphex import DjangoModelType`
+      `from django_graphex.types import DjangoModelType`
     - `from graphene_django_extras import DjangoSerializerMutation` →
-      `from django_graphex import DjangoModelMutation`
+      `from django_graphex.mutation import DjangoModelMutation`
     - `from graphene_django_extras.views import ExtraGraphQLView` →
-      `from django_graphex import GraphQLView`
+      `from django_graphex.views import GraphQLView`
     - Settings: `GRAPHENE_DJANGO_EXTRAS = {…}` → `DJANGO_GRAPHEX = {…}`
 
 4. **Drop DRF from your types/mutations.** Replace `Meta.serializer_class` with

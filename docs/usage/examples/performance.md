@@ -22,7 +22,7 @@
 === "Custom Resolver Optimization"
 
     ```python
-    from django_graphex import ObjectType
+    from django_graphex.core import ObjectType
 
     class Query(ObjectType):
         popular_posts = DjangoFilterListField(PostType)

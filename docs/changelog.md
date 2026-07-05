@@ -34,22 +34,112 @@ before/after snippets and a migration codemod (`scripts/migrate_2_0.py`).
   namespace is no longer consulted. The codemod `--apply` folds an existing
   `GRAPHENE` dict into `DJANGO_GRAPHEX` (no key collisions).
 - **`graphene.ObjectType` schema roots → native `ObjectType`.** Import the root
-  base from `django_graphex` (`from django_graphex import ObjectType`).
+  base from `django_graphex.core` (`from django_graphex.core import ObjectType`).
 - **`graphene.Schema(...)` → `DjangoGraphQLSchema(...)`.** Build the schema with
-  the public `django_graphex.DjangoGraphQLSchema` class.
+  the public `django_graphex.schema.DjangoGraphQLSchema` class.
 - **graphene field descriptors → native `field(...)`.** Hand-declared (non-model)
   fields use `field(GraphQLString)` / `field(GraphQLList(...))` with graphql-core
   types instead of `graphene.String()` / `graphene.Field(...)`.
-- **`graphene.Argument(...)` in a Mutation `class args` → `GraphQLArgument(...)`.**
+- **`graphene.Argument(...)` in a Mutation `class Arguments` → `GraphQLArgument(...)`.**
   Mutation arguments are declared with native graphql-core `GraphQLArgument` (a
-  bare graphql-core type is auto-wrapped). This is a **clean break**: a non-native
-  value left in `class args` now raises `TypeError` instead of being silently
-  dropped.
+  bare graphql-core type is auto-wrapped) inside the `class Arguments` inner class.
+  This is a **clean break**: a non-native value left in `class Arguments` now
+  raises `TypeError` instead of being silently dropped.
 - **`choices` fields now render as a GraphQL enum on both output and input.** A
   model field with `choices` is exposed as a real `GraphQLEnumType` on the output
   type and on filter/input types (previously a choices field could render as a
   plain `String` on the native path). This is an observable wire-format change —
   review clients that send/read choices values as raw strings.
+- **Update mutations now honour an explicit `null` (GraphQL-spec-correct:
+  omitted ≠ null).** Previously `update()` stripped every `None` from the input
+  and treated `null` as "not provided", so a nullable field or an M2M could not
+  be cleared over the wire. Now an **omitted** field is left unchanged (partial
+  update), while an **explicit `null`** sets a nullable scalar/FK column to
+  `NULL` and clears a top-level (`ID`-list) M2M — `tags: null` is equivalent to
+  `tags: []`. A `null` on a **required** field returns a clean validation
+  `errors[]` payload (`ok: false`), never a 500. **Nested** inputs
+  (`Meta.nested_fields`) still treat `null` / `[]` / `{}` as a **no-op** (related
+  children are never deleted). This is an observable behavior change — review
+  clients that relied on `null` being silently ignored on update. Both mutation
+  surfaces (`DjangoModelMutation` and `DjangoModelType`) behave identically. See
+  [Mutations → Explicit-null semantics](usage/mutations.md#explicit-null-semantics-in-update-mutations).
+- **Public-API renames.** Five names were renamed for clarity and consistency
+  (no deprecated aliases — update call sites directly):
+    - **`Meta.max_deep` → `Meta.max_depth`** on `DjangoObjectType`,
+      `DjangoListObjectType`, and `DjangoModelType` (aligns with the
+      `MAX_QUERY_DEPTH` setting). The unknown-option guard names the new spelling.
+    - **`@filter_field(graphene_type=…)` → `@filter_field(graphql_type=…)`**
+      (graphene is gone; the argument type must be a graphql-core `GraphQLType`).
+    - **`DjangoUnionType` `Meta.gfk_types` → `Meta.types`**. Declaring the old
+      `gfk_types` now raises `ImproperlyConfigured` with a rename hint.
+    - **GFK-owner `Meta.gfk_unions` → `Meta.unions`** (the key that maps a
+      `GenericForeignKey` to a typed union on a `DjangoObjectType`). Declaring the
+      old `gfk_unions` now raises `ImproperlyConfigured` with a rename hint
+      (`gfk_unions was renamed to unions in v2.0`).
+    - **Mutation argument container `class args` → `class Arguments`** on the
+      native hand-written `Mutation` base (unifies with `DjangoModelMutation` /
+      `DjangoModelType`, which already used `Arguments`). A subclass that still
+      declares the legacy inner `class args` (and no `Arguments`) raises
+      `TypeError` with a rename hint at `Field()` build time.
+    - **Subscription `Meta.serialize_data` → `Meta.payload_mode`** and the
+      **`SUBSCRIPTION_SERIALIZE_DATA` setting → `SUBSCRIPTION_PAYLOAD_MODE`**. The
+      boolean flag becomes a string mode: `serialize_data=True` → `payload_mode=
+      "full"`, `serialize_data=False` → `payload_mode="id_only"` (the new global
+      default), `None` still inherits the setting. Semantics are unchanged (id-only
+      broadcasts `{"id": <pk>}`; full broadcasts a flat serialization). Declaring
+      the old `Meta.serialize_data` key or the old `SUBSCRIPTION_SERIALIZE_DATA`
+      setting key raises `ImproperlyConfigured` with a rename hint, and an invalid
+      `payload_mode` value names both valid values.
+- **`InputField` and the 12 `*InputField` twins removed — one unified `Field`.**
+  The `Field` / `InputField` split is gone: the single `Field` descriptor (and 11
+  typed shortcuts — `IntField`, `CharField`, `FloatField`, `BooleanField`,
+  `IDField`, `DateField`, `DateTimeField`, `TimeField`, `DecimalField`,
+  `UUIDField`, `JSONField`) now works in **both** an output body **and** a
+  `class Arguments` body. `InputField` and every `*InputField` twin
+  (`IntInputField`, `CharInputField`, …) are **removed** with no alias — port with
+  a search-and-replace that drops the `Input` infix (`InputField` → `Field`,
+  `IntInputField` → `IntField`, …). `resolver=` / `source=` / `args=` are
+  output-only (a `TypeError` in an argument position) and `default=` is input-only
+  (a `TypeError` at output compile). The raw `GraphQLArgument` idiom is unaffected.
+  See [Upgrade Guide → §8](UPGRADE-2.0.md#8-inputfield-inputfield-twins-removed-one-unified-field).
+- **`JSONField` now carries raw JSON on the wire (SDL scalar `JSON`).** A model
+  `models.JSONField` and the `JSONField()` descriptor are transported as **raw,
+  structured JSON** (SDL scalar `JSON`) across all three paths — output, mutation
+  input, and filters — instead of the JSON-encoded string wire (SDL scalar
+  `JSONString`) used before. Objects, lists, and scalars pass through
+  structurally, and inline object / list literals are accepted directly in a
+  query. **Clients that `JSON.parse()`d the old `JSONString` wire (or
+  `JSON.stringify()`d it on input) must stop.** The escape hatch
+  `JSONField(as_str=True)` keeps the old `JSONString` (string-encoded) wire for a
+  single descriptor field. `GenericJSONField` and the `GenericScalar` SDL scalar
+  name are **removed** (the raw scalar is exported as `GdxJSON`, SDL name `JSON`;
+  the legacy graphene `GenericScalar` class still resolves to it for backward
+  compatibility, and `GdxJSONString` stays). This is an observable SDL change.
+  See [Upgrade Guide → §9](UPGRADE-2.0.md#9-jsonfield-now-carries-raw-json-on-the-wire-sdl-scalar-json).
+- **Cursor pagination cursor format is now composite (`value` + `pk`).**
+  `CursorGraphqlPagination` encodes the boundary row's ordering value **plus** its
+  primary key as a deterministic tiebreak, so tied ordering values page correctly
+  (rows are never dropped or duplicated across a boundary). Any **stored** v1 /
+  beta cursor string is no longer valid and raises a clean
+  `GraphQLError("Invalid cursor")` — re-fetch from the first page after upgrading.
+  The `first` argument is unchanged.
+  See [Upgrade Guide → §11](UPGRADE-2.0.md#11-cursor-pagination-cursor-format-changed-composite-keyset).
+- **Output camelCase digit parity — `phone_1` → `phone1` (bugfix, wire-visible).**
+  A field name with a trailing digit component was camelCased incorrectly on the
+  **output** side (`phone_1` stayed `phone_1`), diverging from the **input** side
+  (Pydantic), which already produced `phone1`. Output now routes through the same
+  canonical camelCase, so `phone_1` → `phone1`, `address_2` → `address2`,
+  `iso_8601_date` → `iso8601Date` — restoring output/input wire parity (and v1
+  graphene parity). Fields without a digit component (`created_at` → `createdAt`)
+  are unchanged. Review clients that selected the old `phone_1`-style output name.
+  See [Upgrade Guide → §12](UPGRADE-2.0.md#12-output-camelcase-digit-parity-phone_1-phone1).
+- **Filter input SDL name `<Model>Filterinput` → `<Model>FilterInput` (bugfix,
+  wire-visible).** The generated filter input type name is now capitalized
+  idiomatically (`UserFilterInput`, not `UserFilterinput`). Inline
+  `filter: { ... }` usage is unaffected; update any named-variable reference
+  (`$filter: UserFilterInput`) or SDL snapshot / codegen artifact that pinned the
+  old spelling.
+  See [Upgrade Guide → §13](UPGRADE-2.0.md#13-filter-input-sdl-name-modelfilterinput-modelfilterinput).
 
 ### Removed
 
@@ -58,6 +148,91 @@ before/after snippets and a migration codemod (`scripts/migrate_2_0.py`).
 
 ### Added
 
+- **Django-style field descriptor API** (`django_graphex.core`), **unified across
+  positions**. One capitalized, Django-model-field-style `Field` descriptor
+  declares custom (non-model) fields in **both** an `ObjectType` / `Mutation`
+  payload body **and** a `class Arguments` body — direction is inferred from the
+  declaration site, not the descriptor. It is sugar over the `field()` /
+  `GraphQLArgument` substrate (every descriptor compiles byte-identical, no
+  wire/SDL change). `Field(type, *, source=None, required=False, default=_UNSET,
+  description=None, name=None, resolver=None, args=None, deprecation_reason=None)`:
+  `source=` / `resolver=` / `args=` are **output-only** (a clear `TypeError` if left
+  on an argument-position field) and `default=` is **input-only** (a `TypeError` at
+  output compile). Ships **11 typed scalar shortcuts** usable in both positions —
+  `IntField`, `CharField`, `FloatField`, `BooleanField`, `IDField`, `DateField`,
+  `DateTimeField`, `TimeField`, `DecimalField`, `UUIDField`, `JSONField` — plus a
+  **collision guard** that raises a loud `TypeError` naming the likely import
+  mistake if a `django.db.models.Field` is used where a descriptor is expected. The
+  low-level `field()` helper and the raw `GraphQLArgument` / lambda-thunk idiom stay
+  public and unchanged. See
+  [Declaring fields: the descriptor API](usage/types.md#declaring-fields-the-descriptor-api).
+- **Ordering values accept camelCase (GraphQL-consistency).** Because every field
+  *name* is exposed in camelCase on the wire, the `ordering` **value** now accepts
+  camelCase too: each term is normalized to its snake_case attname (preserving the
+  `-`/`+` direction prefix) at one canonical point, so `ordering: "createdAt"`
+  behaves **exactly** like `ordering: "created_at"` — on the DB path, the
+  in-memory (prefetch-cache) path, **and** the nested window-prefetch optimization
+  (which no longer declines for a camelCase term). snake_case keeps working
+  unchanged; an invalid camelCase field still raises the same
+  `Invalid ordering field` `GraphQLError`, and relation-spanning terms are still
+  rejected. `CursorGraphqlPagination` (server-configured ordering) is unaffected.
+  This also fixes a latent bug where a camelCase ordering term **silently degraded**
+  on the in-memory path (it sorted by a missing attribute — a no-op) instead of
+  matching the DB path.
+- **Permission-scoped schema** (`PERMISSION_SCOPED_SCHEMA` setting, default
+  `False` — fully inert until enabled). `AuthenticatedGraphQLView` can serve each
+  authenticated request a schema **pruned to the caller's permissions**: a field
+  whose required perms the caller lacks is *absent* from validation, so selecting
+  it reads as a native `Cannot query field` (a not-found, never an authorization
+  error — no existence leak). Both validation and execution run against the
+  pruned schema; a caller whose entire `Query` root is pruned away gets the
+  endpoint's generic `403`; an active superuser always gets the full schema; the
+  public `GraphQLView` is never pruned. Includes:
+    - **`field(required_perms=…)`** and a **`Mutation.required_perms`** class
+      attribute to label fields explicitly, on top of the automatic labels
+      stamped on every generated CRUD field (`extensions["gdx_required_perms"]`);
+      an unlabeled field is treated as public.
+    - a **revised composite `DjangoModelPermissions.perms_map`** — because a
+      write payload returns instance data, `create`/`update`/`delete` now require
+      the write verb **and** `view` (read actions stay `view`-only; override
+      `perms_map` to restore write-only behavior).
+    - **per-action subscription authorization** — `authorize_subscription` now
+      forwards the requested `action`, so subscribe permissions are enforced per
+      CRUD action (defense in depth: the action's enum value is pruned at
+      validation *and* denied at runtime).
+    - a **per-connection `schema_provider`** on the WS/SSE subscription
+      transports, so subscriptions prune to the same schema as HTTP for a user.
+    - **cache-key hardening** — pruned schemas are memoized in a bounded
+      in-process LRU keyed by the caller's *permission signature*
+      (`perms ∩ schema label-set`, never by user id, revoke-safe;
+      `PERMISSION_SCHEMA_CACHE_MAXSIZE`, benchmark-calibrated default `64`), and
+      the HTTP response cache folds the signature into its key so a low-permission
+      caller can never read a high-permission caller's cached response body.
+
+  Requires a labeled `DjangoGraphQLSchema`; with the flag `False` behavior is
+  byte-identical to today. See
+  [Views → Permission-scoped schema](usage/views.md#permission-scoped-schema-permission_scoped_schema),
+  [Security → Permission-scoped schema](usage/security.md#permission-scoped-schema-permission_scoped_schema),
+  and [Settings → Security](usage/settings.md#security).
+- **`API_ACCESS_GROUP` setting** (`DJANGO_GRAPHEX`). Restricts the authenticated
+  endpoint (`AuthenticatedGraphQLView`) to members of a single Django auth
+  `Group` (by name). `""` (default) disables the gate — zero impact. When set,
+  non-members are rejected with a generic **HTTP 403** before any GraphQL
+  parsing/execution (the message never leaks the group requirement), an **active
+  superuser always bypasses** the gate (hardcoded invariant), and a
+  missing/anonymous user is denied (fail-closed, independent of
+  `permission_classes`). The public `GraphQLView` is **not** affected. See
+  [Views → Endpoint-level auth](usage/views.md#restricting-the-endpoint-to-a-group-api_access_group)
+  and [Settings → Security](usage/settings.md#security).
+- **`DjangoModelPermissions` permission class** (`django_graphex.permissions`).
+  A DRF-style permission that maps each CRUD action to Django's built-in model
+  permissions (`add`/`change`/`delete`/`view`) and checks them with
+  `user.has_perms`. Fail-closed (anonymous users, a missing model, and unknown
+  actions are denied), superusers pass automatically, and the per-action
+  codenames are customizable via the `perms_map` class attribute or by
+  overriding `get_required_permissions`. Intended for
+  `DjangoModelType.permission_classes`. See
+  [Permissions → `DjangoModelPermissions`](usage/permissions.md#djangomodelpermissions).
 - **`graphql_schema` management command** (introspection JSON / SDL export).
   Mirrors graphene-django's command of the same name (a drop-in for migrating
   users) but is built on graphql-core with no graphene import. Writes
@@ -67,6 +242,112 @@ before/after snippets and a migration codemod (`scripts/migrate_2_0.py`).
   (incl. `-` for stdout), `--indent`/`-i`, and `--schema <dotted.path>`. New
   settings `SCHEMA_OUTPUT` and `SCHEMA_INDENT` back the command's defaults. See
   [Settings → Exporting the schema](usage/settings.md#exporting-the-schema).
+- **`deprecation_reason=` across the descriptor API and every Django field/mutation
+  builder.** `field()`, `Field`, and all 11 typed shortcuts accept a
+  `deprecation_reason=`, and so do every Django mounting builder —
+  `DjangoObjectField`, `DjangoListObjectField`, `DjangoFilterListField`,
+  `DjangoFilterPaginateListField`, `RetrieveField`, `QueryFields`, and the mutation
+  builders (`CreateField` / `DeleteField` / `UpdateField` / `MutationFields`). When
+  set, the reason is wired into the compiled field / argument so the SDL renders
+  `@deprecated(reason: "…")`.
+- **Pydantic `InputType` `list[...]` fields render as GraphQL lists with defaults.**
+  A `list[...]`-annotated field on an `InputType` now compiles to a GraphQL list
+  input (`[T]`), and a Python field default is carried into the SDL as the
+  argument's default value.
+
+### Performance
+
+Five behavior-preserving optimizations (response shape is unchanged in all
+five; SQL query counts and per-request timings improve). A reproducible
+cross-library benchmark harness lives at `benchmarks/` if you want to measure
+these against your own workload.
+
+- **`totalCount` is computed lazily.** The `COUNT` query is only issued when
+  the client actually selects `totalCount`, and reuses an already-materialized
+  results list (`len()`) instead of a fresh query when one is available.
+  Skips one `COUNT` query per request for any list operation that doesn't
+  select `totalCount`.
+- **Parse + validate document cache** (`DOCUMENT_CACHE_MAXSIZE` setting,
+  default `128`). graphql-core's `parse()` and `validate()` are memoized in two
+  bounded LRUs — a global parse cache keyed on the query string (the AST is
+  immutable and schema-independent) and a per-schema validation cache keyed by
+  the schema **object** (a `WeakKeyDictionary`, so a permission-pruned schema
+  never shares a verdict with another schema). Shaves the re-parse/re-validate
+  cost (each on the order of a fraction of a millisecond) on every repeated
+  document. See
+  [Settings → Document cache](usage/settings.md#document-cache-parse-validate).
+- **Cached Pydantic validator build.** `build_model_schema` (the dynamically
+  generated Pydantic model backing create/update validation) is now memoized
+  per `(model, partial, base, exclude)` instead of rebuilt on every mutation
+  call — the derived class is a pure function of that key, so rebuilding it per
+  request was wasted work.
+- **FK existence check moves to the mutation failure path.** A valid
+  create/update mutation issues a single `INSERT`/`UPDATE` — the per-FK
+  existence pre-check no longer runs on the happy path. A bad FK still returns
+  the same structured `errors[]` envelope; the diagnostics that produce it now
+  run only after an `IntegrityError`. Saves one `SELECT` per FK field on every
+  successful mutation.
+- **Nested-write savepoint opens only when nested work is present.** A
+  create/update mutation with `Meta.nested_fields` no longer opens a
+  `transaction.atomic()` savepoint when the request has no nested child
+  payload — a plain, parent-only mutation pays no savepoint overhead.
+
+See [Mutations → performance note](usage/mutations.md#error-handling) and
+[Pagination → `totalCount` is computed lazily](usage/pagination.md#query-examples)
+for the user-facing behavior these changes preserve.
+
+### Fixed
+
+- **Subscription transports' `schema_provider` now respects
+  `PERMISSION_SCOPED_SCHEMA`.** Once a `schema_provider` was wired on
+  `subscription_ws_consumer` / `subscription_sse_view`, the bundled
+  `pruned_schema_for` helper pruned **unconditionally** — the provider path never
+  read `PERMISSION_SCOPED_SCHEMA` even though the HTTP `AuthenticatedGraphQLView`
+  is gated by it, so the transports diverged from HTTP. The bundled helper now
+  reads the flag **per connection** (never at import): it returns the **full**
+  schema when the flag is off (default) and the **pruned** schema when on, so one
+  flag rules the feature across HTTP, SSE, and WebSocket. The active-superuser
+  invariant is unchanged (always the full schema), and a **custom** provider
+  callable that does not route through `pruned_schema_for` is honored as-is (the
+  flag gates the bundled helper only).
+- **Model-derived `JSONField` mutation inputs now store a real Python object.** A
+  model-derived `JSONField` (and `HStoreField`) was rendered as a plain `String`
+  on the mutation **input** type, so the submitted JSON text was assigned to the
+  column verbatim — a double-encoded string instead of the parsed value. Model
+  `JSONField` / `HStoreField` inputs now render as the raw `JSON` scalar (see the
+  JSON-flip breaking change above) and store a dict **or** a list as a real Python
+  object on both create and update — output, input, and filter paths all agree on
+  the `JSON` scalar. The custom scalars are exported for reuse:
+  `from django_graphex.core import GdxJSON` (also `GdxJSONString`, `GdxDate`,
+  `GdxDateTime`, `GdxTime`, `GdxDecimal`, `GdxUUID`).
+- **Pagination `limit` / `first` guards — zero and negative now raise a clean
+  `GraphQLError`.** A `limit: 0` / `first: 0` or a negative `limit` / `first`
+  previously slipped through (or produced a negative-offset slice); both now raise
+  a structured `GraphQLError` (e.g. `Invalid limit: -5. Limit must be a positive
+  integer.`) instead of an HTTP 500 or an empty page. Negative `offset` already
+  raised.
+- **`PageGraphqlPagination` supports backward (negative-page) access.** `page: -1`
+  returns the **last** `page_size` rows in true `list[-N:]` order, `page: -2` the
+  window before it, and an overshoot clamps to the first rows. A negative page
+  costs one `COUNT` (needed to compute the count-relative offset) and opts out of
+  the nested window-prefetch optimization; `page: 0` still raises a `GraphQLError`.
+- **`prune_schema` forwards interface implementers (`PERMISSION_SCOPED_SCHEMA`
+  polymorphic fix).** A surviving object type that implemented a surviving
+  interface but was only ever returned *via* the interface used to fall out of the
+  pruned schema's `type_map`, leaving `possible_types` empty and breaking
+  inline-fragment queries. The pruner now forwards those implementers, so an
+  interface keeps its implementers in the pruned schema exactly as in the full one.
+- **SSE subscription transport hardening.** The bundled SSE view is now
+  `csrf_exempt` (the event-stream endpoint no longer trips CSRF), and the SSE
+  client's request path building and value escaping were corrected.
+- **GenericForeignKey custom-PK resolution uses `root.pk`.** A GFK whose owner has
+  a non-default primary key name is now resolved via `root.pk` (rather than a
+  hard-coded `id`), so custom-PK owners resolve their GFK target correctly.
+- **Inline JSON literals are accepted on `JSON` arguments.** The `JSON` scalar's
+  literal parser recurses `ObjectValueNode` / `ListValueNode` (and resolves nested
+  `VariableNode` references), so an inline object / list literal
+  (`payload: { a: 1, tags: [1, 2] }`) is parsed into a real Python `dict` / `list`
+  instead of being rejected.
 
 ## 1.3.0 — 2026-06-13
 
@@ -78,8 +359,11 @@ before/after snippets and a migration codemod (`scripts/migrate_2_0.py`).
   the graphene type (default `graphene.String`) and an optional description are
   configurable. `filter_fields` continues to work for model-field lookups; custom
   logic is now exclusively via `@filter_field`. Composition order at query time:
-  standard lookups → `@filter_field` methods (declaration order) →
-  `filter_queryset` (last). (#26)
+  `get_queryset`/`filter_queryset` scoping first, then standard lookups, then
+  `@filter_field` methods (declaration order). (#26)
+  <small>*Erratum: this entry originally described `filter_queryset` as running
+  last — the scoping hook has always run first. See
+  [Filtering → Composition order](usage/filtering.md#composition-order).*</small>
 
 - **`Base64FileInput` — opt-in base64 file uploads** (#25) —
   `Base64FileInput(graphene.InputObjectType)` with `filename` (required),
@@ -588,7 +872,7 @@ before/after snippets and a migration codemod (`scripts/migrate_2_0.py`).
   `ExtraGraphQLSchema` → **`DjangoGraphQLSchema`** and
   `ExtraGraphQLDirectiveMiddleware` → **`GraphQLDirectiveMiddleware`**. Update your
   imports and the `GRAPHENE["MIDDLEWARE"]` dotted path to
-  `django_graphex.GraphQLDirectiveMiddleware`. `DjangoGraphQLSchema` also avoids the
+  `django_graphex.middleware.GraphQLDirectiveMiddleware`. `DjangoGraphQLSchema` also avoids the
   name clash with `graphql.GraphQLSchema` from graphql-core.
 
 ## 1.0.0
@@ -643,7 +927,7 @@ The first release. A GraphQL + Django toolkit built directly on `graphene`
 ### Permissions & security
 - DRF-style **permission classes** (`BasePermission`, `IsAuthenticated`, `IsAdmin`,
   `IsAuthenticatedOrReadOnly`, …) usable on types, subscriptions and views.
-- **Query depth limiting** (`MAX_QUERY_DEPTH` / `Meta.max_deep`) and **query cost
+- **Query depth limiting** (`MAX_QUERY_DEPTH` / `Meta.max_depth`) and **query cost
   analysis** (`MAX_QUERY_COST` / `Meta.complexity`, optional `extensions.cost`).
 - **Security middlewares** — `DisableIntrospectionMiddleware`,
   `AuthenticatedFieldsMiddleware` — and `ExtraGraphQLSchema` for declaring private

@@ -3,40 +3,42 @@
 
 WU6 provides the native subscription compile path:
 
-  * ``Subscription._build_native_event_type()`` — a graphql-core
-    ``GraphQLObjectType`` whose every field carries a ``make_snake_resolver``
-    (WU1) closure (sentinel-tagged so COND-B/``guard.py`` whitelists it) and
-    which carries ``extensions['gdx']`` (the native bridge).
-  * ``Subscription._build_native_spec(schema, document)`` — a fully-populated
-    WU5 ``SubscriptionSpec`` wired from the class: model/stream/index_fields,
-    the KEPT hooks (``authorize_subscription``/``subscription_scope``/
-    ``_validate_filters``), ``group_name``/``instance_index`` = the kept
-    ``_group_name``/``_instance_index``, and ``db_exists`` = the single-row
-    ``.exists()`` narrowing that closes the WU4 conservative-drop gap.
-  * ``Subscription._build_native_field(schema, document)`` — a DIRECT graphql-core
-    ``GraphQLField(type=<event type>, subscribe=<source factory>,
-    resolve=identity)`` (NOT graphene ``Subscription.Field()``); the field args
-    are reduced to ``{action, id, filters}`` under native.
+  * "Subscription._build_native_event_type()" — a graphql-core
+    GraphQLObjectType whose every field carries a make_snake_resolver
+    (WU1) closure (sentinel-tagged so COND-B/guard.py whitelists it) and
+    which carries extensions['gdx'] (the native bridge).
+  * "Subscription._build_native_spec(schema, document)" — a fully-populated
+    WU5 SubscriptionSpec wired from the class: model/stream/index_fields,
+    the KEPT hooks (authorize_subscription/subscription_scope/
+    _validate_filters), group_name/instance_index = the kept
+    _group_name/_instance_index, and db_exists = the single-row
+    .exists() narrowing that closes the WU4 conservative-drop gap.
+  * "Subscription._build_native_field(schema, document)" — a DIRECT graphql-core
+    GraphQLField(type=<event type>, subscribe=<source factory>,
+    resolve=identity) (NOT graphene Subscription.Field()); the field args
+    are reduced to {action, id, filters} under native.
 
-The native subscribe factory builds the source via WU5 ``native_subscribe`` and
-is driven through WU5 ``drive_subscription`` (COND-A, no ``MapAsyncIterator``).
+The native subscribe factory builds the source via WU5 "native_subscribe" and
+is driven through WU5 "drive_subscription" (COND-A, no MapAsyncIterator).
 
-INDEX-ROUTING RECONCILIATION (the WU5 SUGGESTION): the kept ``_subscribe`` hook
-routes index groups SCOPE-ONLY (``all(f in scope for f in index_fields)``), NOT
-``merged`` (client ∪ scope). WU6 reconciles ``native_subscribe`` to SCOPE-ONLY
+INDEX-ROUTING RECONCILIATION (the WU5 SUGGESTION): the kept "_subscribe" hook
+routes index groups SCOPE-ONLY ("all(f in scope for f in index_fields)"), NOT
+merged (client union scope). WU6 reconciles "native_subscribe" to SCOPE-ONLY
 parity so a CLIENT-supplied index-field value never narrows the joined group —
-only a server ``subscription_scope`` value does (no cross-subscriber leak via a
+only a server "subscription_scope" value does (no cross-subscriber leak via a
 client-chosen value-scoped group). This test asserts that parity.
 
-S6e UPDATE (#1452): the metaclass swap is now DONE — ``type(<a Subscription
-subclass>) is pydantic ModelMetaclass`` (re-parented off graphene ``ObjectType``
-onto ``native.base.ObjectType``). The base-class assertions below were inverted
+S6e UPDATE (#1452): the metaclass swap is now DONE — type(<a Subscription
+subclass>) is pydantic ModelMetaclass (re-parented off graphene ObjectType
+onto native.base.ObjectType). The base-class assertions below were inverted
 from the old C-A "stays graphene" constraint to the native reality. The native
-compile path (event type + ``_build_native_field`` mount seam) is UNCHANGED.
+compile path (event type + "_build_native_field" mount seam) is UNCHANGED.
 """
+
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -58,19 +60,43 @@ from tests.models import Author, Post  # noqa: E402
 
 
 class _RecordingLayer(InMemoryChannelLayer):
-    """An InMemoryChannelLayer recording every ``group_add`` for assertions."""
+    """An InMemoryChannelLayer recording every "group_add" for assertions."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the underlying layer and the group_add call log.
+
+        Args:
+            args: Positional arguments forwarded to InMemoryChannelLayer.
+            kwargs: Keyword arguments forwarded to InMemoryChannelLayer.
+        """
         super().__init__(*args, **kwargs)
         self.group_add_calls: list[tuple[str, str]] = []
 
-    async def group_add(self, group, channel):
+    async def group_add(self, group: str, channel: str) -> None:
+        """Record the join, then delegate to the real implementation.
+
+        Args:
+            group: The group name being joined.
+            channel: The channel name joining the group.
+        """
         self.group_add_calls.append((group, channel))
         return await super().group_add(group, channel)
 
 
-def _notify(group: str, data: dict, *, action: str = "create", pk=1) -> dict:
-    """Build a producer-shaped ``subscription.notify`` envelope (bindings.py)."""
+def _notify(
+    group: str, data: dict[str, Any], *, action: str = "create", pk: int = 1
+) -> dict[str, Any]:
+    """Build a producer-shaped "subscription.notify" envelope (bindings.py).
+
+    Args:
+        group: The channel-layer group name the message targets.
+        data: The serialized payload data to embed in the message.
+        action: The CRUD action name to embed in the payload.
+        pk: The primary key to embed in the envelope.
+
+    Returns:
+        message: The assembled notify message dict.
+    """
     return {
         "type": "subscription.notify",
         "stream": "posts",
@@ -80,14 +106,21 @@ def _notify(group: str, data: dict, *, action: str = "create", pk=1) -> dict:
     }
 
 
-def _make_subscription(**meta):
-    """Build a fresh ``PostSubscription`` (native base, S6e re-parent).
+def _make_subscription(**meta: Any) -> Any:
+    """Build a fresh "PostSubscription" (native base, S6e re-parent).
 
-    ``Subscription`` is now a pydantic ``ModelMetaclass`` type (S6e); a 3-arg
-    ``type(name, bases, ns)`` build must inject ``__module__``/``__qualname__``
-    (and re-stamp the nested ``Meta`` qualname) or pydantic's
-    ``inspect_namespace`` raises ``KeyError('__module__')`` — mirroring the
-    production ``DjangoModelType.subscription_type`` builder.
+    "Subscription" is now a pydantic ModelMetaclass type (S6e); a 3-arg
+    type(name, bases, ns) build must inject __module__/__qualname__
+    (and re-stamp the nested Meta qualname) or pydantic's
+    inspect_namespace raises KeyError('__module__') — mirroring the
+    production "DjangoModelType.subscription_type" builder.
+
+    Args:
+        meta: Extra attributes merged into the generated Meta class (model
+            and stream are always set; overrides here win).
+
+    Returns:
+        PostSubscription: The freshly created Subscription subclass.
     """
     from django_graphex.subscriptions import Subscription
 
@@ -107,19 +140,22 @@ def _make_subscription(**meta):
 # ---------------------------------------------------------------------------
 
 
-def test_subscription_base_is_native_object_type():
-    """The public ``Subscription`` base subclasses the native ObjectType (S6e).
+def test_subscription_base_is_native_object_type() -> None:
+    """The public "Subscription" base must subclass the native ObjectType (S6e).
 
-    Re-parented off graphene ``ObjectType`` onto ``native.base.ObjectType`` in
+    Contract: this test ships broken if the base reverts to a graphene-driven
+    type instead of the native.base.ObjectType with pydantic's ModelMetaclass.
+
+    Re-parented off graphene ObjectType onto native.base.ObjectType in
     S6e. It must NO LONGER be a graphene-driven type: the metaclass swap is done
     (Phase 7 / #1452). The graphene-free proof is twofold — the base IS a
-    ``native.base.ObjectType`` subclass, and its metaclass IS pydantic's
-    ``ModelMetaclass`` (NOT graphene's ``SubclassWithMeta_Meta``), which a graphene
-    ``ObjectType`` subclass could never satisfy.
+    native.base.ObjectType subclass, and its metaclass IS pydantic's
+    ModelMetaclass (NOT graphene's SubclassWithMeta_Meta), which a graphene
+    ObjectType subclass could never satisfy.
     """
     from pydantic._internal._model_construction import ModelMetaclass
 
-    from django_graphex.native.base import ObjectType as NativeObjectType
+    from django_graphex.core.base import ObjectType as NativeObjectType
     from django_graphex.subscriptions import Subscription
 
     assert issubclass(Subscription, NativeObjectType)
@@ -128,13 +164,16 @@ def test_subscription_base_is_native_object_type():
     assert type(Subscription) is ModelMetaclass
 
 
-def test_subscription_subclass_is_model_metaclass():
-    """``type(PostSubscription) is pydantic ModelMetaclass`` (S6e swap done).
+def test_subscription_subclass_is_model_metaclass() -> None:
+    """type(PostSubscription) must be pydantic ModelMetaclass (S6e swap done).
+
+    Contract: this test ships broken if any concrete Subscription subclass
+    ends up with a metaclass other than pydantic's ModelMetaclass.
 
     A class has ONE metaclass fixed at definition. After re-parenting the base
-    onto the graphene-free native ``ObjectType`` (whose metaclass is pydantic's
-    ``ModelMetaclass``, NOT graphene's ``SubclassWithMeta_Meta``), every concrete
-    ``Subscription`` subclass's metaclass IS ``ModelMetaclass`` — the systemic
+    onto the graphene-free native ObjectType (whose metaclass is pydantic's
+    ModelMetaclass, NOT graphene's SubclassWithMeta_Meta), every concrete
+    Subscription subclass's metaclass IS ModelMetaclass — the systemic
     metaclass-identity invariant (#1452).
     """
     from pydantic._internal._model_construction import ModelMetaclass
@@ -148,13 +187,17 @@ def test_subscription_subclass_is_model_metaclass():
 # ---------------------------------------------------------------------------
 
 
-def test_bespoke_transport_graphene_subscribe_path_removed():
-    """The bespoke graphene ``_subscribe`` (channel_id/operation confirmation) is gone.
+def test_bespoke_transport_graphene_subscribe_path_removed() -> None:
+    """The bespoke graphene "_subscribe" resolver must be removed in the cutover.
+
+    Contract: this test ships broken if the retired channel_id/operation
+    confirmation resolver reappears while the SubscriptionField mount and
+    native compile seam stay intact.
 
     WU11 retires the bespoke transport in lockstep with its tests. The
-    confirmation-frame ``_subscribe`` resolver (which drove the deleted consumer
-    via channel-ownership + ``subscription.register`` control messages) is
-    removed. The ``SubscriptionField`` mount + the native compile path stay so a
+    confirmation-frame "_subscribe" resolver (which drove the deleted consumer
+    via channel-ownership + "subscription.register" control messages) is
+    removed. The SubscriptionField mount + the native compile path stay so a
     native schema still assembles the Subscription type.
     """
     from django_graphex.subscriptions import subscription as sub_mod
@@ -168,8 +211,12 @@ def test_bespoke_transport_graphene_subscribe_path_removed():
     assert hasattr(sub_mod, "SubscriptionField")
 
 
-def test_channel_ownership_block_deleted():
-    """The channel-ownership registry block is DELETED in the WU11 cutover."""
+def test_channel_ownership_block_deleted() -> None:
+    """The channel-ownership registry block must be deleted in the WU11 cutover.
+
+    Contract: this test ships broken (spec capability 9 regression) if any
+    ownership helper or the bespoke transport modules become importable again.
+    """
     from django_graphex.subscriptions import subscription as sub_mod
 
     # The ownership helpers are gone (the WS socket / HTTP request is the auth
@@ -195,12 +242,15 @@ def test_channel_ownership_block_deleted():
 # ---------------------------------------------------------------------------
 
 
-def test_native_event_type_carries_gdx_and_snake_resolvers():
-    """The native event type carries ``extensions['gdx']`` + snake-closure resolvers.
+def test_native_event_type_carries_gdx_and_snake_resolvers() -> None:
+    """The native event type must carry extensions['gdx'] plus snake-closure resolvers.
 
-    Every event field's resolver must carry the ``_gdx_pure_projection`` sentinel
-    so COND-B (``guard.py``) whitelists it — proving the WU1 snake-closure wiring
-    and the serialize-once safety-net seam (the full per-field auto-gen is WU7).
+    Contract: this test ships broken if any event field's resolver lacks the
+    "_gdx_pure_projection" sentinel COND-B relies on to whitelist it.
+
+    Every event field's resolver must carry the sentinel so COND-B (guard.py)
+    whitelists it — proving the WU1 snake-closure wiring and the
+    serialize-once safety-net seam (the full per-field auto-gen is WU7).
     """
     from django_graphex.subscriptions.guard import check_subscription_output_type
 
@@ -218,12 +268,16 @@ def test_native_event_type_carries_gdx_and_snake_resolvers():
     check_subscription_output_type(event_type)
 
 
-def test_native_field_is_direct_graphql_field_with_reduced_args():
-    """``_build_native_field`` returns a DIRECT graphql-core ``GraphQLField``.
+def test_native_field_is_direct_graphql_field_with_reduced_args() -> None:
+    """ "_build_native_field" must return a direct graphql-core GraphQLField.
 
-    NOT a graphene ``Field``/``SubscriptionField``. ``subscribe`` is a source
-    factory; ``resolve`` is identity (the source dict IS the root); args are
-    reduced to ``{action, id, filters}`` under native.
+    Contract: this test ships broken if the returned field regresses to a
+    graphene Field/SubscriptionField, loses its identity resolve, or carries
+    the old bespoke argument set instead of {action, id, filters}.
+
+    NOT a graphene Field/SubscriptionField. subscribe is a source
+    factory; resolve is identity (the source dict IS the root); args are
+    reduced to {action, id, filters} under native.
     """
     sub = _make_subscription()
     schema = _native_schema(sub)
@@ -256,14 +310,17 @@ def test_native_field_is_direct_graphql_field_with_reduced_args():
 # ---------------------------------------------------------------------------
 
 
-def test_native_event_type_m2m_is_deliverable_pk_list():
-    """An M2M wire field is a DELIVERABLE pk-list (``[ID]``), never a bare String.
+def test_native_event_type_m2m_is_deliverable_pk_list() -> None:
+    """An M2M wire field must be a deliverable pk-list ([ID]), never a bare String.
 
-    ``tests.Post`` has M2M ``tags`` / ``co_authors``. Under the deliverable-pk
+    Contract: this test ships broken if an M2M field reverts to the old
+    String stand-in or the DB-backed results/totalCount container.
+
+    "tests.Post" has M2M tags / co_authors. Under the deliverable-pk
     contract the M2M field is ALWAYS PRESENT (no registered related node type
     needed — the pk scalar is derived from the related model's pk field) and is a
-    list of pk scalars (``[ID]``), NEVER the old ``coAuthors: String`` stand-in
-    and NEVER the DB-backed ``<Model>ListType`` results/totalCount container.
+    list of pk scalars ([ID]), NEVER the old "coAuthors: String" stand-in
+    and NEVER the DB-backed <Model>ListType results/totalCount container.
     """
     from graphql import GraphQLID as _GraphQLID
     from graphql import GraphQLList as _GraphQLList
@@ -273,7 +330,7 @@ def test_native_event_type_m2m_is_deliverable_pk_list():
     sub = _make_subscription()
     event_type = sub._build_native_event_type()
 
-    def _unwrap(t):
+    def _unwrap(t: Any) -> Any:
         while hasattr(t, "of_type"):
             t = t.of_type
         return t
@@ -297,13 +354,16 @@ def test_native_event_type_m2m_is_deliverable_pk_list():
     assert event_type.fields["author"].type is _GraphQLID
 
 
-async def test_native_drive_query_without_selected_m2m_delivers_clean():
-    """A query NOT selecting an M2M field delivers with NO coercion error.
+async def test_native_drive_query_without_selected_m2m_delivers_clean() -> None:
+    """A query not selecting an M2M field must deliver with no coercion error.
 
-    The producer payload carries the M2M list (``co_authors=[7, 8]``); the
+    Contract: this test ships broken if an unselected M2M value carried in
+    the payload raises instead of being silently ignored.
+
+    The producer payload carries the M2M list (co_authors=[7, 8]); the
     document does not select it, so it is ignored and a scalar selection delivers
-    cleanly. Under the deliverable-pk contract ``author`` is a pk scalar (``ID``)
-    and ``co_authors`` is a pk-list (``[ID]``) — both leaves over the flat payload,
+    cleanly. Under the deliverable-pk contract "author" is a pk scalar (ID)
+    and "co_authors" is a pk-list ([ID]) — both leaves over the flat payload,
     so neither raises a coercion error even when carried in the payload.
     """
     from graphql import ExecutionResult
@@ -315,7 +375,12 @@ async def test_native_drive_query_without_selected_m2m_delivers_clean():
     schema = _native_schema(sub)
     spec = sub._build_native_spec(schema, _DOC_SCALARS)
     source = await sub._native_subscribe(
-        layer, schema, _DOC_SCALARS, action="create", obj_id=None, filters=None,
+        layer,
+        schema,
+        _DOC_SCALARS,
+        action="create",
+        obj_id=None,
+        filters=None,
         context=None,
     )
     delivery = drive_subscription(source, spec)
@@ -337,8 +402,16 @@ async def test_native_drive_query_without_selected_m2m_delivers_clean():
 # ---------------------------------------------------------------------------
 
 
-def _native_schema(sub) -> GraphQLSchema:
-    """Assemble a native subscription schema mounting *sub*'s event type."""
+def _native_schema(sub: Any) -> GraphQLSchema:
+    """Assemble a native subscription schema mounting "sub"'s event type.
+
+    Args:
+        sub: The Subscription subclass whose native event type is mounted.
+
+    Returns:
+        schema: The assembled GraphQLSchema with a "postEvent" subscription
+            field returning sub's native event type.
+    """
     event_type = sub._build_native_event_type()
     subscription_type = GraphQLObjectType(
         "Subscription",
@@ -359,8 +432,13 @@ _DOC = parse("subscription { postEvent { id title author } }")
 _DOC_SCALARS = parse("subscription { postEvent { id title } }")
 
 
-async def test_native_subscribe_returns_channel_layer_source():
-    """The native subscribe factory builds a started ``ChannelLayerSource`` (WU5)."""
+async def test_native_subscribe_returns_channel_layer_source() -> None:
+    """The native subscribe factory must build a started ChannelLayerSource (WU5).
+
+    Contract: this test ships broken if the action routes to more than one
+    group (regression of #1420's single-group guarantee) or fails to build
+    a ChannelLayerSource.
+    """
     from django_graphex.subscriptions.source import ChannelLayerSource
 
     layer = _RecordingLayer()
@@ -378,8 +456,11 @@ async def test_native_subscribe_returns_channel_layer_source():
         await source.aclose()
 
 
-async def test_native_drive_delivers_serialize_once_flat_dict():
-    """Driving the native source yields a projected flat-dict ExecutionResult.
+async def test_native_drive_delivers_serialize_once_flat_dict() -> None:
+    """Driving the native source must yield a projected flat-dict ExecutionResult.
+
+    Contract: this test ships broken if the delivered result carries stale,
+    missing, or re-serialized values instead of the real flat payload data.
 
     The snake-closure resolvers map camelCase wire names to snake payload keys,
     so the projection delivers REAL values over the flat dict (serialize-once;
@@ -394,7 +475,12 @@ async def test_native_drive_delivers_serialize_once_flat_dict():
     schema = _native_schema(sub)
     spec = sub._build_native_spec(schema, _DOC_SCALARS)
     source = await sub._native_subscribe(
-        layer, schema, _DOC_SCALARS, action="create", obj_id=None, filters=None,
+        layer,
+        schema,
+        _DOC_SCALARS,
+        action="create",
+        obj_id=None,
+        filters=None,
         context=None,
     )
     delivery = drive_subscription(source, spec)
@@ -411,15 +497,19 @@ async def test_native_drive_delivers_serialize_once_flat_dict():
     assert result.data == {"postEvent": {"id": "1", "title": "hello"}}
 
 
-async def test_native_authorize_deny_short_circuits_before_group_add():
-    """A denying ``authorize_subscription`` raises BEFORE any ``group_add``."""
+async def test_native_authorize_deny_short_circuits_before_group_add() -> None:  # noqa: DOC005
+    """A denying authorize_subscription must raise before any group_add.
+
+    Contract: this test ships broken if the deny check runs after the
+    source/group already exists instead of short-circuiting first.
+    """
     from graphql import GraphQLError
 
     layer = _RecordingLayer()
 
     sub = _make_subscription()
 
-    def _deny(cls, info, **kwargs):
+    def _deny(cls: Any, info: Any, **kwargs: Any) -> None:
         raise GraphQLError("denied")
 
     sub.authorize_subscription = classmethod(_deny)
@@ -427,7 +517,12 @@ async def test_native_authorize_deny_short_circuits_before_group_add():
 
     with pytest.raises(GraphQLError, match="denied"):
         await sub._native_subscribe(
-            layer, schema, _DOC, action="create", obj_id=None, filters=None,
+            layer,
+            schema,
+            _DOC,
+            action="create",
+            obj_id=None,
+            filters=None,
             context=None,
         )
     # Deny fired before the source/group existed.
@@ -440,23 +535,26 @@ async def test_native_authorize_deny_short_circuits_before_group_add():
 
 
 @pytest.mark.django_db(transaction=True)
-async def test_native_lookup_filter_delivers_verified_and_drops():
-    """A ``__lookup`` native subscription DELIVERS a DB-verified event, DROPS others.
+async def test_native_lookup_filter_delivers_verified_and_drops() -> None:
+    """A "__lookup" native subscription must deliver a DB-verified event and drop others.
 
-    WU6 wires ``spec.db_exists`` = ``Subscription._native_db_exists`` (the
-    single-row ``.exists()`` narrowing), so a non-empty ``__lookup`` "remaining"
-    filter is verified against the DB and a non-matching event is dropped —
-    closing the WU4 conservative-drop gap for the native path.
+    Contract: this test ships broken if the DB-verified event is dropped or
+    if a non-matching event is delivered instead of dropped, reopening the
+    WU4 conservative-drop gap for the native path.
 
-    Uses ``transaction=True`` + ``database_sync_to_async`` (the repo's e2e
-    pattern) so the threadpool ``.exists()`` reads committed rows (no sqlite lock).
+    WU6 wires spec.db_exists = Subscription._native_db_exists (the
+    single-row .exists() narrowing), so a non-empty __lookup "remaining"
+    filter is verified against the DB and a non-matching event is dropped.
+
+    Uses transaction=True + database_sync_to_async (the repo's e2e
+    pattern) so the threadpool .exists() reads committed rows (no sqlite lock).
     """
     from channels.db import database_sync_to_async
 
     from django_graphex.subscriptions.streaming import drive_subscription
 
     @database_sync_to_async
-    def _seed():
+    def _seed() -> tuple[Author, Author, Post, Post]:
         author = Author.objects.create(name="alice")
         other = Author.objects.create(name="bob")
         post = Post.objects.create(title="t", author=author)
@@ -464,7 +562,7 @@ async def test_native_lookup_filter_delivers_verified_and_drops():
         return author, other, post, other_post
 
     @database_sync_to_async
-    def _cleanup():
+    def _cleanup() -> None:
         Post.objects.all().delete()
         Author.objects.all().delete()
 
@@ -479,8 +577,13 @@ async def test_native_lookup_filter_delivers_verified_and_drops():
         # Filter on a forward FK lookup that the in-memory equality gate cannot
         # resolve -> needs the DB .exists() narrowing (spec.db_exists).
         source = await sub._native_subscribe(
-            layer, schema, _DOC, action="create", obj_id=None,
-            filters={"author__name": "alice"}, context=None,
+            layer,
+            schema,
+            _DOC,
+            action="create",
+            obj_id=None,
+            filters={"author__name": "alice"},
+            context=None,
         )
         assert source.db_verify is not None, "native_subscribe must wire db_verify"
         delivery = drive_subscription(source, spec)
@@ -492,7 +595,8 @@ async def test_native_lookup_filter_delivers_verified_and_drops():
         )
         # Matching: the real post under author=alice -> verifier delivers.
         await layer.group_send(
-            group, _notify(group, {"id": post.pk, "title": "t", "author": author.pk}),
+            group,
+            _notify(group, {"id": post.pk, "title": "t", "author": author.pk}),
         )
         result = await asyncio.wait_for(delivery.__anext__(), timeout=2.0)
         await delivery.aclose()
@@ -506,13 +610,17 @@ async def test_native_lookup_filter_delivers_verified_and_drops():
 # ---------------------------------------------------------------------------
 
 
-async def test_index_routing_is_scope_only_not_client_filter():
-    """Index routing uses SCOPE-ONLY (parity with the kept ``_subscribe`` hook).
+async def test_index_routing_is_scope_only_not_client_filter() -> None:
+    """Index routing must be scope-only, matching the kept "_subscribe" hook.
+
+    Contract: this test ships broken if a client-supplied index-field value
+    narrows the joined group instead of only a server subscription_scope
+    value being allowed to.
 
     A CLIENT-supplied index-field value must NOT narrow the joined group — only a
-    server ``subscription_scope`` value does. This is the WU5 SUGGESTION
-    reconciliation: the kept hook routes on ``scope``, never on ``merged`` (client
-    ∪ scope), so a client cannot pick a value-scoped group it shouldn't see.
+    server subscription_scope value does. This is the WU5 SUGGESTION
+    reconciliation: the kept hook routes on scope, never on merged (client
+    union scope), so a client cannot pick a value-scoped group it shouldn't see.
     """
     layer = _RecordingLayer()
     sub = _make_subscription(subscription_index_fields=("author",))
@@ -521,8 +629,13 @@ async def test_index_routing_is_scope_only_not_client_filter():
     # Client tries to supply the index field value, but scope does NOT -> the
     # subscribe must FALL BACK to the coarse group (scope-only routing).
     source = await sub._native_subscribe(
-        layer, schema, _DOC, action="create", obj_id=None,
-        filters={"author": 5}, context=None,
+        layer,
+        schema,
+        _DOC,
+        action="create",
+        obj_id=None,
+        filters={"author": 5},
+        context=None,
     )
     try:
         coarse = sub._group_name("create")
@@ -533,12 +646,16 @@ async def test_index_routing_is_scope_only_not_client_filter():
         await source.aclose()
 
 
-async def test_index_routing_uses_server_scope_value():
-    """When ``subscription_scope`` supplies the index field, route value-scoped."""
+async def test_index_routing_uses_server_scope_value() -> None:
+    """When subscription_scope supplies the index field, routing must be value-scoped.
+
+    Contract: this test ships broken if a server-supplied scope value fails
+    to route to the value-scoped group instead of falling back to coarse.
+    """
     layer = _RecordingLayer()
     sub = _make_subscription(subscription_index_fields=("author",))
 
-    def _scope(cls, info, **kwargs):
+    def _scope(cls: Any, info: Any, **kwargs: Any) -> dict[str, int]:
         return {"author": 5}
 
     sub.subscription_scope = classmethod(_scope)
@@ -561,12 +678,15 @@ async def test_index_routing_uses_server_scope_value():
 # ---------------------------------------------------------------------------
 
 
-def test_native_field_does_not_use_graphene_field():
-    """The native field builder must not return a graphene ``Field`` subclass.
+def test_native_field_does_not_use_graphene_field() -> None:
+    """The native field builder must not return a graphene Field subclass.
+
+    Contract: this test ships broken if the native field builder ever
+    returns a graphene-package Field instead of a graphql-core one.
 
     Proven graphene-free: the returned field's class is defined in the graphql-core
-    package (``graphql.*``). A graphene ``Field`` lives in the ``graphene`` package
-    and is an unrelated class, so a ``graphql.*`` field is provably not one.
+    package (graphql.*). A graphene Field lives in the graphene package
+    and is an unrelated class, so a graphql.* field is provably not one.
     """
     sub = _make_subscription()
     schema = _native_schema(sub)

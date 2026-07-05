@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from asgiref.sync import sync_to_async
+from django.conf import settings as django_settings
+from django.core.exceptions import ImproperlyConfigured
 
 # S6e re-parent (#1452): ``Subscription`` is re-parented off graphene
 # ``ObjectType`` onto the graphene-free native base (``native.base.ObjectType``)
@@ -42,9 +44,9 @@ from asgiref.sync import sync_to_async
 from graphql import GraphQLError
 
 from ..backends import resolve_backend
-from ..native.base import NativeObjectTypeOptions
-from ..native.base import ObjectType as NativeObjectType
-from ..native.descriptors import NativeMountedField
+from ..core.base import NativeObjectTypeOptions
+from ..core.base import ObjectType as NativeObjectType
+from ..core.descriptors import NativeMountedField
 from ..settings import graphql_api_settings
 from .bindings import SubscriptionBinding
 from .mixins import safe_group_name
@@ -63,24 +65,24 @@ class SubscriptionField(NativeMountedField):
     """Provide the MOUNT-SEAM marker the native root compiler detects.
 
     S-sub-6: this is now a NATIVE marker class (graphene-free) subclassing
-    :class:`~django_graphex.native.descriptors.NativeMountedField`. Subclassing
-    that base is what keeps the MOUNT SEAM intact on a *graphene* root: graphene's
-    root metaclass DROPS any non-graphene attribute from ``_meta.fields``, but the
-    native schema compiler's ``_collect_dropped_native_fields`` recovers every
-    class-body ``NativeMountedField`` (and orders them by ``creation_counter``), so
-    the dropped subscription field is re-merged and ordered for byte-stable SDL.
+    "NativeMountedField". Subclassing that base is what keeps the MOUNT SEAM intact
+    on a graphene root: graphene's root metaclass DROPS any non-graphene attribute
+    from "_meta.fields", but the native schema compiler's
+    "_collect_dropped_native_fields" recovers every class-body "NativeMountedField"
+    (and orders them by "creation_counter"), so the dropped subscription field is
+    re-merged and ordered for byte-stable SDL.
 
-    The native root compiler (``schema_compiler._is_subscription_field``) then
-    detects the recovered field purely by class NAME (``type(field).__name__ ==
-    'SubscriptionField'``) and ``field.type`` carrying ``_build_native_field`` — it
-    never required a graphene ``Field`` base. The compiler ignores the args /
-    subscribe carried here and calls ``field.type._build_native_field()`` to build
-    the DIRECT graphql-core subscription field (its own action enum + ``{action,
-    id, filters}`` args + native event output type).
+    The native root compiler ("schema_compiler._is_subscription_field") then
+    detects the recovered field purely by class NAME ("type(field).__name__ ==
+    'SubscriptionField'") and "field.type" carrying "_build_native_field" — it
+    never required a graphene "Field" base. The compiler ignores the args /
+    subscribe carried here and calls "field.type._build_native_field()" to build
+    the DIRECT graphql-core subscription field (its own action enum + "{action,
+    id, filters}" args + native event output type).
 
-    ``field.type`` resolves to the ``Subscription`` subclass verbatim (a class is
-    returned as-is by ``_resolve_thunk``); ``args`` carries the native
-    ``_meta.arguments`` (presence/keys contract).
+    "field.type" resolves to the "Subscription" subclass verbatim (a class is
+    returned as-is by "_resolve_thunk"); "args" carries the native
+    "_meta.arguments" (presence/keys contract).
     """
 
     def __init__(
@@ -91,17 +93,17 @@ class SubscriptionField(NativeMountedField):
         subscribe: Callable[..., Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Store the mounted ``Subscription`` subclass + its args/subscribe.
+        """Store the mounted "Subscription" subclass + its args/subscribe.
 
         Args:
-            type: The ``Subscription`` subclass (``_meta.output``) this field
-                mounts. The native compiler reads ``_build_native_field`` off it
-                (via ``NativeMountedField.type``, which returns a class verbatim).
-            args: The native ``_meta.arguments`` mapping (presence/keys contract;
+            type: The "Subscription" subclass ("_meta.output") this field
+                mounts. The native compiler reads "_build_native_field" off it
+                (via "NativeMountedField.type", which returns a class verbatim).
+            args: The native "_meta.arguments" mapping (presence/keys contract;
                 unused by the native compile path which builds its own args).
             subscribe: An optional subscribe resolver (unused under native — the
-                native field carries its own ``subscribe`` source factory).
-            **kwargs: Extra mount kwargs (e.g. ``description``); ``description`` is
+                native field carries its own "subscribe" source factory).
+            **kwargs: Extra mount kwargs (e.g. "description"); "description" is
                 forwarded to the base, the rest retained for API parity.
         """
         super().__init__(
@@ -134,12 +136,12 @@ class SubscriptionOptions(NativeObjectTypeOptions):
     """Provide the Meta options container for "Subscription" subclasses.
 
     S6e (#1452): graphene-free. Was a subclass of graphene's frozen
-    ``ObjectTypeOptions``; now a thin subclass of the mutable
-    ``NativeObjectTypeOptions`` whose parity-table surface ALREADY enumerates
-    every subscription ``_meta`` attribute (``output``/``arguments``/``model``/
-    ``stream``/``backend``/``queryset``/``serialize_data``/``index_fields``/
-    ``subscription_index_fields``) with graphene-equivalent defaults. The driver
-    plain-assigns each attr below (no ``object.__setattr__`` freeze-bypass — the
+    "ObjectTypeOptions"; now a thin subclass of the mutable
+    "NativeObjectTypeOptions" whose parity-table surface ALREADY enumerates
+    every subscription "_meta" attribute ("output"/"arguments"/"model"/
+    "stream"/"backend"/"queryset"/"payload_mode"/"index_fields"/
+    "subscription_index_fields") with graphene-equivalent defaults. The driver
+    plain-assigns each attr below (no "object.__setattr__" freeze-bypass — the
     native Options is mutable by design), so this subclass adds nothing beyond a
     stable, subscription-named type the duck-typed callers can keep referencing.
     """
@@ -149,24 +151,28 @@ class Subscription(NativeObjectType):
     """Define the subscription type.
 
     Subclass it through "Meta" and mount it on the schema's subscription root
-    via "Field"::
+    via "Field":
 
         class UserSubscription(Subscription):
             class Meta:
                 model = User
                 stream = "users"
 
-    S6e (#1452): re-parented off graphene ``ObjectType`` onto the graphene-free
-    native base. The native base's ``__init_subclass__`` driver reproduces
-    graphene's ``SubclassWithMeta`` dispatch (read ``Meta``, pop ``abstract``,
-    dispatch ``super(cls, cls).__init_subclass_with_meta__``), so this base stays
+    S6e (#1452): re-parented off graphene "ObjectType" onto the graphene-free
+    native base. The native base's "__init_subclass__" driver reproduces
+    graphene's "SubclassWithMeta" dispatch (read "Meta", pop "abstract",
+    dispatch "super(cls, cls).__init_subclass_with_meta__"), so this base stays
     abstract and each concrete subclass routes into the driver below — exactly as
-    under graphene's metaclass, but now ``type(<subclass>) is
-    pydantic.ModelMetaclass``.
+    under graphene's metaclass, but now "type(<subclass>) is
+    pydantic.ModelMetaclass".
     """
 
     class Meta:
-        """Mark the "Subscription" base itself as abstract (not a schema type)."""
+        """Mark the "Subscription" base itself as abstract (not a schema type).
+
+        The native base's "__init_subclass__" driver reads this "Meta", pops
+        "abstract", and skips schema-type registration for the base class.
+        """
 
         abstract = True
 
@@ -177,7 +183,7 @@ class Subscription(NativeObjectType):
         pydantic_model: Any = None,
         stream: str | None = None,
         queryset: QuerySet | None = None,
-        serialize_data: bool | None = None,
+        payload_mode: str | None = None,
         subscription_index_fields: tuple[str, ...] | list[str] | None = None,
         description: str = "",
         **options: Any,
@@ -189,7 +195,7 @@ class Subscription(NativeObjectType):
             pydantic_model: Optional user Pydantic base for custom validation.
             stream: The stream name this subscription serves.
             queryset: An optional queryset whose model must match the backend's.
-            serialize_data: Force full or id-only payloads, or "None" to inherit
+            payload_mode: Force "full" or "id_only" payloads, or "None" to inherit
                 the global setting.
             subscription_index_fields: Optional model field names used to route
                 notifications to value-scoped groups (only the matching
@@ -221,11 +227,18 @@ class Subscription(NativeObjectType):
             model.__name__
         )
 
-        if serialize_data not in (None, True, False):
-            raise TypeError(
-                '{}.Meta.serialize_data must be None, True or False, received "{}"'.format(
-                    cls.__name__, serialize_data
-                )
+        # HARD rename guard (v2.0): the legacy ``Meta.serialize_data`` key is
+        # caught in ``**options`` — fail loudly with the new spelling.
+        if "serialize_data" in options:
+            raise ImproperlyConfigured(
+                "{}.Meta.serialize_data was renamed to payload_mode in v2.0 "
+                '(use "full" or "id_only").'.format(cls.__name__)
+            )
+
+        if payload_mode not in (None, "full", "id_only"):
+            raise ImproperlyConfigured(
+                '{}.Meta.payload_mode must be "full", "id_only" or None, '
+                'received "{}".'.format(cls.__name__, payload_mode)
             )
 
         index_fields = tuple(subscription_index_fields or ())
@@ -241,7 +254,7 @@ class Subscription(NativeObjectType):
         # already builds the ENTIRE ``_meta`` (it passes ``_meta=_meta`` to super,
         # graphene's driver never derived these from kwargs), so the audit is a
         # no-op for the subscription attrs below: ``output``/``model``/``stream``/
-        # ``backend``/``queryset``/``serialize_data``/``index_fields``/
+        # ``backend``/``queryset``/``payload_mode``/``index_fields``/
         # ``arguments`` are all plain-assigned onto the mutable
         # ``NativeObjectTypeOptions`` (each one exists on its parity surface, so
         # no silent ``AttributeError`` on read). No ``types=`` analogue exists for
@@ -252,7 +265,7 @@ class Subscription(NativeObjectType):
         _meta.stream = stream
         _meta.backend = backend
         _meta.queryset = queryset
-        _meta.serialize_data = serialize_data
+        _meta.payload_mode = payload_mode
         _meta.index_fields = index_fields
 
         # Native-only argument set: {action, id, filters}. The bespoke
@@ -278,20 +291,40 @@ class Subscription(NativeObjectType):
         )
 
     @classmethod
-    def _should_serialize_data(cls) -> bool:
+    def _payload_is_full(cls) -> bool:
         """Tell whether notifications carry the full serialized instance.
 
-        "Meta.serialize_data" (if set) wins; otherwise the global
-        "SUBSCRIPTION_SERIALIZE_DATA" setting decides. Read at broadcast time so
+        "Meta.payload_mode" (if set) wins; otherwise the global
+        "SUBSCRIPTION_PAYLOAD_MODE" setting decides. Read at broadcast time so
         runtime/"override_settings" changes are honored.
 
         Returns:
-            "True" when the full serialized instance should be sent.
+            "True" when the full serialized instance should be sent ("full" mode);
+            "False" for id-only payloads.
+
+        Raises:
+            ImproperlyConfigured: If the legacy "SUBSCRIPTION_SERIALIZE_DATA"
+                setting key is still present, or the resolved payload mode is not
+                one of "full" / "id_only".
         """
-        value = cls._meta.serialize_data
+        # HARD rename guard (v2.0): the old setting key would otherwise be
+        # silently ignored by the settings reader — fail loudly instead.
+        user_settings = getattr(django_settings, "DJANGO_GRAPHEX", {})
+        if "SUBSCRIPTION_SERIALIZE_DATA" in user_settings:
+            raise ImproperlyConfigured(
+                "The DJANGO_GRAPHEX setting SUBSCRIPTION_SERIALIZE_DATA was renamed "
+                'to SUBSCRIPTION_PAYLOAD_MODE in v2.0 (use "full" or "id_only").'
+            )
+
+        value = cls._meta.payload_mode
         if value is None:
-            value = graphql_api_settings.SUBSCRIPTION_SERIALIZE_DATA
-        return bool(value)
+            value = graphql_api_settings.SUBSCRIPTION_PAYLOAD_MODE
+        if value not in ("full", "id_only"):
+            raise ImproperlyConfigured(
+                'SUBSCRIPTION_PAYLOAD_MODE must be "full" or "id_only", '
+                'received "{}".'.format(value)
+            )
+        return value == "full"
 
     @classmethod
     def model_label(cls) -> str:
@@ -314,7 +347,7 @@ class Subscription(NativeObjectType):
     ) -> str:
         """Build the Channels group name for an action (optionally per-object).
 
-        When an ``index`` mapping is given, a canonical ``:k=v&...`` suffix
+        When an "index" mapping is given, a canonical ":k=v&..." suffix
         (keys sorted) is appended so that subscribers scoped to those values land
         in their own group. The subscribe side and the broadcast side build the
         same suffix -- one from the scope, the other from the changed instance --
@@ -323,7 +356,7 @@ class Subscription(NativeObjectType):
         Args:
             action: The change action the group is built for.
             id: An optional object primary key for a per-object group.
-            index: An optional ``{field: value}`` mapping for value-scoped groups.
+            index: An optional "{field: value}" mapping for value-scoped groups.
 
         Returns:
             The Channels-safe group name.
@@ -350,18 +383,18 @@ class Subscription(NativeObjectType):
 
     @classmethod
     def _instance_index(cls, instance: Any) -> dict[str, Any] | None:
-        """Build the index ``{field: value}`` mapping from a live instance.
+        """Build the index "{field: value}" mapping from a live instance.
 
-        Reads each ``Meta.index_fields`` entry by its ``attname`` so foreign keys
-        yield the raw id (e.g. ``owner_id``) without a related-object query and
-        plain fields yield their value. Returns ``None`` when no index is
+        Reads each "Meta.index_fields" entry by its "attname" so foreign keys
+        yield the raw id (e.g. "owner_id") without a related-object query and
+        plain fields yield their value. Returns "None" when no index is
         configured.
 
         Args:
             instance: The model instance that changed.
 
         Returns:
-            The index mapping, or ``None`` when ``index_fields`` is empty.
+            The index mapping, or "None" when "index_fields" is empty.
         """
         fields = cls._meta.index_fields
         if not fields:
@@ -376,10 +409,10 @@ class Subscription(NativeObjectType):
     def authorize_subscription(cls, info: GraphQLResolveInfo, **kwargs: Any) -> None:
         """Authorize a subscribe request before joining any group.
 
-        Hook meant to be overridden (or injected by ``DjangoModelType``).
-        Raise ``GraphQLError`` to deny; the denial is surfaced to the client as
-        ``ok: False`` / ``error``. The default allows. Runs in the HTTP request
-        context, so ``info.context.user`` is available -- keep it free of
+        Hook meant to be overridden (or injected by "DjangoModelType").
+        Raise "GraphQLError" to deny; the denial is surfaced to the client as
+        "ok: False" / "error". The default allows. Runs in the HTTP request
+        context, so "info.context.user" is available -- keep it free of
         blocking ORM access.
 
         Args:
@@ -394,38 +427,38 @@ class Subscription(NativeObjectType):
     ) -> dict[str, Any] | None:
         """Return server-forced notification filters for this subscriber.
 
-        Hook meant to be overridden (or injected by ``DjangoModelType``).
+        Hook meant to be overridden (or injected by "DjangoModelType").
         The returned mapping (Django ORM lookup -> value, e.g.
-        ``{"owner": info.context.user.pk}``) is merged into the subscriber's
-        filters with **server precedence**, so it cannot be widened or removed by
+        "{'owner': info.context.user.pk}") is merged into the subscriber's
+        filters with SERVER PRECEDENCE, so it cannot be widened or removed by
         the client, and is enforced per event at delivery time. The default
-        returns ``None`` (no scoping).
+        returns "None" (no scoping).
 
         Args:
             info: GraphQL resolve info for the subscribe request.
             **kwargs: The subscription arguments.
 
         Returns:
-            The forced filter mapping, or ``None``.
+            The forced filter mapping, or "None".
         """
         return None
 
     @classmethod
     def _validate_filters(cls, client_filters: dict[str, Any]) -> None:
-        """Validate that all *client_filters* keys root on declared output fields.
+        """Validate that all "client_filters" keys root on declared output fields.
 
         Each filter key may be a bare field name or a field name followed by a
-        Django ORM lookup suffix (e.g. ``username__icontains``).  The root
-        field (everything before the first ``__``) must be present in the
-        subscription's serialized output field names.  Filters whose root is
-        not declared raise ``GraphQLError`` so arbitrary ORM field probing is
-        rejected at subscribe time.
+        Django ORM lookup suffix (e.g. "username__icontains"). The root field
+        (everything before the first "__") must be present in the subscription's
+        serialized output field names. Filters whose root is not declared raise
+        "GraphQLError" so arbitrary ORM field probing is rejected at subscribe
+        time.
 
-        Server-forced scope filters (from ``subscription_scope``) are **not**
-        subject to this check — they originate from server code, not the client.
+        Server-forced scope filters (from "subscription_scope") are NOT subject
+        to this check — they originate from server code, not the client.
 
         Args:
-            client_filters: The raw ``filters`` dict supplied by the subscriber.
+            client_filters: The raw "filters" dict supplied by the subscriber.
 
         Raises:
             GraphQLError: When a filter key roots on an undeclared field.
@@ -473,49 +506,49 @@ class Subscription(NativeObjectType):
 
     @classmethod
     def _build_native_event_type(cls) -> Any:
-        """Build the native event output ``GraphQLObjectType`` (deliverable pk shape).
+        """Build the native event output "GraphQLObjectType" (deliverable pk shape).
 
-        DESIGN RECONCILIATION (#1432 §3 vs §8): the serialize-once payload
-        (``native/backend.py:to_representation``) is FLAT PKS by design — one
+        DESIGN RECONCILIATION (#1432 section 3 vs section 8): the serialize-once
+        payload ("native/backend.py:to_representation") is FLAT PKS by design — one
         serialize feeds N subscribers with ZERO DB per subscriber. So the event
         type's relation fields MUST render the DELIVERABLE pk scalars/lists the
         flat payload actually carries, NOT the DB-backed nested output-type SDL
-        (§8's "byte-identical to the DjangoObjectType OUTPUT type" goal is a
-        category error vs the §3 flat-pk payload — nested FK/M2M resolution over a
-        subscription event would need a per-subscriber DB query, the N+1 cliff
-        serialize-once forbids). The deliverable representation is:
+        (section 8's "byte-identical to the DjangoObjectType OUTPUT type" goal is a
+        category error vs the section 3 flat-pk payload — nested FK/M2M resolution
+        over a subscription event would need a per-subscriber DB query, the N+1
+        cliff serialize-once forbids). The deliverable representation is:
 
-          * scalars -> the Phase-5 native names/nullability (``id: ID!``, model
-            scalars NULLABLE, ``Date`` -> ``CustomDate`` / ``UUID`` -> ``UUID`` /
-            ``JSON`` -> ``JSONString`` / ``Decimal`` -> ``Float`` …) reusing
-            ``native.output_compiler.compile_output_fields`` — KEEP;
-          * FK / O2O -> the PK SCALAR (``backend.to_representation`` carries the FK
-            under key ``<field.name>`` as the pk int via ``getattr(obj,
-            "<name>_id")``). Rendered as the pk's GraphQL scalar (``ID`` for an
+          * scalars -> the Phase-5 native names/nullability ("id: ID!", model
+            scalars NULLABLE, "Date" -> "CustomDate" / "UUID" -> "UUID" /
+            "JSON" -> "JSONString" / "Decimal" -> "Float" …) reusing
+            "native.output_compiler.compile_output_fields" — KEEP;
+          * FK / O2O -> the PK SCALAR ("backend.to_representation" carries the FK
+            under key "<field.name>" as the pk int via "getattr(obj,
+            '<name>_id')"). Rendered as the pk's GraphQL scalar ("ID" for an
             auto/id pk, else the pk field's scalar). NOT the nested object type;
-          * M2M / reverse to-many -> a LIST of pk scalars (``to_representation``
-            carries the M2M under key ``<field.name>`` as ``list(... values_list(
-            "pk", flat=True))``). Rendered as ``[<pk scalar>]``. NOT the
+          * M2M / reverse to-many -> a LIST of pk scalars ("to_representation"
+            carries the M2M under key "<field.name>" as "list(... values_list(
+            'pk', flat=True))"). Rendered as "[<pk scalar>]". NOT the
             results/totalCount container.
 
-        Each field's resolver is a WU1 ``make_snake_resolver`` closure (tagged
-        ``_gdx_pure_projection`` so COND-B/``guard.py`` whitelists it) keyed by the
-        SNAKE payload key ``backend.to_representation`` actually writes
-        (``field.name`` for every kind — scalars, FK pk, M2M pk-list), fixing the
+        Each field's resolver is a WU1 "make_snake_resolver" closure (tagged
+        "_gdx_pure_projection" so COND-B/"guard.py" whitelists it) keyed by the
+        SNAKE payload key "backend.to_representation" actually writes
+        ("field.name" for every kind — scalars, FK pk, M2M pk-list), fixing the
         camelCase-default-resolver silent-null. The flat serialize-once payload
-        holds pks (``author=7``, ``co_authors=[7, 8]``) and the snake closure
+        holds pks ("author=7", "co_authors=[7, 8]") and the snake closure
         DELIVERS those pks directly (no DB, no re-serialize). The type carries
-        ``extensions['gdx']`` (the native bridge); ``check_subscription_output_type``
+        "extensions['gdx']" (the native bridge); "check_subscription_output_type"
         (COND-B) is run AFTER the sentinels are attached.
 
         Returns:
-            A graphql-core ``GraphQLObjectType`` carrying ``extensions['gdx']``.
+            A graphql-core "GraphQLObjectType" carrying "extensions['gdx']".
         """
         from graphql import GraphQLField as _GraphQLField
         from graphql import GraphQLObjectType
 
-        from ..native.bridge import GdxPayload
-        from ..native.ir import GdxMeta
+        from ..core.bridge import GdxPayload
+        from ..core.ir import GdxMeta
         from .guard import check_subscription_output_type
         from .resolvers import make_snake_resolver
 
@@ -527,8 +560,8 @@ class Subscription(NativeObjectType):
             from graphql import GraphQLID as _GraphQLID
             from graphql import GraphQLList as _GraphQLList
 
-            from ..native.base import get_shared_output_registry
-            from ..native.output_compiler import (
+            from ..core.base import get_shared_output_registry
+            from ..core.output_compiler import (
                 _get_django_to_gql,
                 _to_camel_case,
                 compile_output_fields,
@@ -580,9 +613,7 @@ class Subscription(NativeObjectType):
                     # M2M -> [pk scalar]; payload carries a list of pks under
                     # key ``field.name``.
                     related = field.related_model
-                    built[wire] = _GraphQLField(
-                        _GraphQLList(_pk_scalar(related))
-                    )
+                    built[wire] = _GraphQLField(_GraphQLList(_pk_scalar(related)))
                 elif isinstance(
                     field, (_dj_models.ForeignKey, _dj_models.OneToOneField)
                 ):
@@ -621,28 +652,28 @@ class Subscription(NativeObjectType):
 
     @classmethod
     def _build_native_spec(cls, schema: Any, document: Any) -> Any:
-        """Build the fully-populated WU5 ``SubscriptionSpec`` from this class.
+        """Build the fully-populated WU5 "SubscriptionSpec" from this class.
 
-        Wires the kept hooks (``authorize_subscription``/``subscription_scope``),
-        ``group_name``/``instance_index`` = the kept ``_group_name``/
-        ``_instance_index`` (so producer + consumer group names match by
-        construction), index_fields, and ``db_exists`` = the single-row
-        ``.exists()`` narrowing that closes the WU4 conservative-drop gap so
-        native ``__lookup`` subscriptions deliver DB-verified events.
+        Wires the kept hooks ("authorize_subscription"/"subscription_scope"),
+        "group_name"/"instance_index" = the kept "_group_name"/
+        "_instance_index" (so producer + consumer group names match by
+        construction), index_fields, and "db_exists" = the single-row
+        ".exists()" narrowing that closes the WU4 conservative-drop gap so
+        native "__lookup" subscriptions deliver DB-verified events.
 
         Filter-key validation in the native path does NOT use the kept
-        ``_validate_filters`` classmethod: it is enforced in ``streaming.py`` by
-        ``_validate_client_filters`` against ``declared_output_fields`` (the
-        subscription backend's ``output_field_names()``), passed on the spec
-        below. ``_validate_filters`` is retained for the graphene path only.
+        "_validate_filters" classmethod: it is enforced in "streaming.py" by
+        "_validate_client_filters" against "declared_output_fields" (the
+        subscription backend's "output_field_names()"), passed on the spec
+        below. "_validate_filters" is retained for the graphene path only.
 
         Args:
-            schema: The native graphql-core ``GraphQLSchema`` the per-event
-                ``execute`` runs against.
-            document: The parsed subscription ``DocumentNode`` executed per event.
+            schema: The native graphql-core "GraphQLSchema" the per-event
+                "execute" runs against.
+            document: The parsed subscription "DocumentNode" executed per event.
 
         Returns:
-            A WU5 ``SubscriptionSpec``.
+            A WU5 "SubscriptionSpec".
         """
         from .streaming import SubscriptionSpec
 
@@ -667,7 +698,7 @@ class Subscription(NativeObjectType):
             instance_index=cls._instance_index,
             db_exists=cls._native_db_exists,
             event_type_name=cls._native_event_type_name(),
-            serialize_data=cls._meta.serialize_data,
+            payload_mode=cls._meta.payload_mode,
             model=cls._meta.model,
         )
 
@@ -675,27 +706,27 @@ class Subscription(NativeObjectType):
     def _native_db_exists(
         cls, remaining: dict[str, Any], event: dict[str, Any], *, obj_id: Any = None
     ) -> Any:
-        """Single-row ``.exists()`` narrowing for non-empty ``__lookup`` filters.
+        """Single-row ".exists()" narrowing for non-empty "__lookup" filters.
 
-        Closes the WU4 conservative-drop gap: a ``__lookup`` filter the in-memory
-        equality gate cannot resolve (e.g. ``author__name`` / a relation lookup)
-        is verified by a single-row ``.exists()`` against the changed instance's
+        Closes the WU4 conservative-drop gap: a "__lookup" filter the in-memory
+        equality gate cannot resolve (e.g. "author__name" / a relation lookup)
+        is verified by a single-row ".exists()" against the changed instance's
         pk — so only events whose row actually matches the lookup are delivered.
 
-        Wrapped via ``sync_to_async``: the source's ``db_verify`` runs inside the
-        async receive loop, so a direct blocking ORM ``.exists()`` would raise
-        ``SynchronousOnlyOperation`` on an ASGI server. The returned coroutine is
-        awaited by the WU5 ``_build_db_verify`` wrapper (``_maybe_await``).
+        Wrapped via "sync_to_async": the source's "db_verify" runs inside the
+        async receive loop, so a direct blocking ORM ".exists()" would raise
+        "SynchronousOnlyOperation" on an ASGI server. The returned coroutine is
+        awaited by the WU5 "_build_db_verify" wrapper ("_maybe_await").
 
         Args:
-            remaining: The non-empty ``__lookup`` filters left after the in-memory
+            remaining: The non-empty "__lookup" filters left after the in-memory
                 equality gate (Django ORM lookup -> expected value).
             event: The already-serialized flat snake dict for the changed instance.
             obj_id: An optional per-object id (unused — the pk is read from the
                 event so the narrowing targets exactly the changed row).
 
         Returns:
-            An awaitable resolving to ``True`` when the changed row matches every
+            An awaitable resolving to "True" when the changed row matches every
             remaining lookup.
         """
         pk = event.get("id")
@@ -719,26 +750,25 @@ class Subscription(NativeObjectType):
         filters: dict[str, Any] | None = None,
         context: Any = None,
     ) -> Any:
-        """Run the native subscribe (WU5 ``native_subscribe``) for this subscription.
+        """Run the native subscribe (WU5 "native_subscribe") for this subscription.
 
-        Builds the spec from this class and delegates to WU5 ``native_subscribe``,
-        which runs the KEPT hooks BEFORE any ``group_add`` (deny short-circuits
+        Builds the spec from this class and delegates to WU5 "native_subscribe",
+        which runs the KEPT hooks BEFORE any "group_add" (deny short-circuits
         before the source), joins exactly the action-selected groups (#1420), and
-        wires ``source.db_verify`` to the single-row ``.exists()`` narrowing.
+        wires "source.db_verify" to the single-row ".exists()" narrowing.
 
         Args:
             channel_layer: The constructed Channels channel layer (injected).
             schema: The native graphql-core schema for the per-event execute.
             document: The parsed subscription document executed per event.
-            action: The requested action (``create``/``update``/``delete``/
-                ``all_actions``); picks the join set.
+            action: The requested action ("create"/"update"/"delete"/
+                "all_actions"); picks the join set.
             obj_id: An optional per-object primary key.
             filters: The raw client-supplied filters.
-            context: The transport-neutral context (``.user`` + scope mapping).
+            context: The transport-neutral context (".user" + scope mapping).
 
         Returns:
-            The STARTED :class:`ChannelLayerSource` (drive via
-            :func:`drive_subscription`).
+            The STARTED "ChannelLayerSource" (drive via "drive_subscription").
         """
         from .streaming import native_subscribe
 
@@ -754,23 +784,23 @@ class Subscription(NativeObjectType):
 
     @classmethod
     def _build_native_field_args(cls, model: Any = None) -> dict[str, Any]:
-        """Build the native ``{action, id, filters}`` graphql-core args (graphene-free).
+        """Build the native "{action, id, filters}" graphql-core args (graphene-free).
 
         S-sub-6: the single source of truth for the subscription field arguments.
-        Used both for ``_meta.arguments`` (the graphene-free presence/keys
-        contract built at subclass-def) and for the live ``_build_native_field``
-        compile (the DIRECT graphql-core ``GraphQLField`` the native root compiler
+        Used both for "_meta.arguments" (the graphene-free presence/keys
+        contract built at subclass-def) and for the live "_build_native_field"
+        compile (the DIRECT graphql-core "GraphQLField" the native root compiler
         mounts). Building it here keeps the two in lockstep with ZERO graphene.
 
         Args:
             model: The Django model whose name scopes the action enum. Passed
-                explicitly at subclass-def (where ``cls._meta`` is not yet bound);
-                defaults to ``cls._meta.model`` for the live compile call.
+                explicitly at subclass-def (where "cls._meta" is not yet bound);
+                defaults to "cls._meta.model" for the live compile call.
 
         Returns:
-            A ``{name: GraphQLArgument}`` mapping with a non-null model-scoped
-            action enum, an optional ``id`` (``GraphQLID``), and an optional
-            JSON-encoded ``filters`` (``GraphQLString``).
+            A "{name: GraphQLArgument}" mapping with a non-null model-scoped
+            action enum, an optional "id" ("GraphQLID"), and an optional
+            JSON-encoded "filters" ("GraphQLString").
         """
         from graphql import (
             GraphQLArgument,
@@ -814,32 +844,30 @@ class Subscription(NativeObjectType):
         }
 
     @classmethod
-    def _build_native_field(
-        cls, schema: Any = None, document: Any = None
-    ) -> Any:
-        """Build the native subscription field as a DIRECT graphql-core ``GraphQLField``.
+    def _build_native_field(cls, schema: Any = None, document: Any = None) -> Any:
+        """Build the native subscription field as a DIRECT graphql-core "GraphQLField".
 
-        NOT a graphene ``Field``/``SubscriptionField`` (design §3 / C-A). The field
-        carries:
+        NOT a graphene "Field"/"SubscriptionField" (design section 3 / C-A). The
+        field carries:
 
-          * ``type`` = the native event output type (``extensions['gdx']`` +
+          * "type" = the native event output type ("extensions['gdx']" +
             snake-closure resolvers),
-          * ``subscribe`` = a source factory that runs WU5 ``native_subscribe``
-            (returning a :class:`ChannelLayerSource`; the transport layer drives
-            it via WU5 ``drive_subscription``),
-          * ``resolve`` = identity (the source dict IS the root; the event type's
+          * "subscribe" = a source factory that runs WU5 "native_subscribe"
+            (returning a "ChannelLayerSource"; the transport layer drives
+            it via WU5 "drive_subscription"),
+          * "resolve" = identity (the source dict IS the root; the event type's
             snake-closure resolvers project it),
-          * ``args`` reduced to ``{action, id, filters}`` under native (the
-            graphene-only ``channel_id``/``operation`` args are dropped).
+          * "args" reduced to "{action, id, filters}" under native (the
+            graphene-only "channel_id"/"operation" args are dropped).
 
-        ``schema``/``document`` are OPTIONAL: the subscribe factory only builds the
-        :class:`ChannelLayerSource` (group join), which does NOT read the spec's
-        ``schema``/``document`` (only ``drive_subscription`` — the transport's
+        "schema"/"document" are OPTIONAL: the subscribe factory only builds the
+        "ChannelLayerSource" (group join), which does NOT read the spec's
+        "schema"/"document" (only "drive_subscription" — the transport's
         per-event delivery — does). So the field is buildable at SCHEMA-COMPILE
-        time (``compile_native_root``, WU7 root wiring) when the assembled native
+        time ("compile_native_root", WU7 root wiring) when the assembled native
         schema and the per-request document are not yet known; the transport layer
         (WU8/WU9) supplies the live schema + parsed request document to
-        ``drive_subscription`` at delivery time. When provided here they are
+        "drive_subscription" at delivery time. When provided here they are
         forwarded for direct/test drive paths.
 
         Args:
@@ -849,7 +877,7 @@ class Subscription(NativeObjectType):
                 (optional — the per-request selection set, supplied at delivery).
 
         Returns:
-            A graphql-core ``GraphQLField``.
+            A graphql-core "GraphQLField".
         """
         from graphql import (
             GraphQLField as _GraphQLField,
@@ -886,7 +914,7 @@ class Subscription(NativeObjectType):
                 context=getattr(info, "context", None),
             )
 
-        return _GraphQLField(
+        _sub_field = _GraphQLField(
             cls._build_native_event_type(),
             args=args,
             subscribe=_subscribe_source,
@@ -899,16 +927,36 @@ class Subscription(NativeObjectType):
             resolve=lambda root, _info, **_kwargs: root,
             description=f"Native subscription for {cls._meta.model.__name__} model",
         )
+        # P0: stamp per-action composite permissions so the pruner can filter the
+        # subscription action enum per signature. The value is a
+        # ``dict{action_value: frozenset}`` (create/update/delete/all_actions).
+        from django_graphex.core.perm_labels import required_perms_for
+
+        _model = cls._meta.model
+        _sub_field.extensions = {
+            **(_sub_field.extensions or {}),
+            "gdx_required_perms": {
+                _sub_action: required_perms_for(_model, "subscribe", _sub_action)
+                for _sub_action in ("create", "update", "delete", "all_actions")
+            },
+        }
+        return _sub_field
 
     @classmethod
     def Field(cls, *args: Any, **kwargs: Any) -> SubscriptionField:
         """Mount this subscription on a root subscription "ObjectType".
 
-        The mounted ``SubscriptionField`` is the seam the native schema compiler
-        reads (``schema_compiler.compile_native_root`` detects the field by class
-        name and calls ``field.type._build_native_field()`` to build the DIRECT
+        The mounted "SubscriptionField" is the seam the native schema compiler
+        reads ("schema_compiler.compile_native_root" detects the field by class
+        name and calls "field.type._build_native_field()" to build the DIRECT
         graphql-core subscription field — the native compile path). The native
         field drives the source.
+
+        Args:
+            *args: Positional mount arguments (accepted for graphene "Field" API
+                parity; unused).
+            **kwargs: Extra mount kwargs; "description" defaults to a generated
+                label when omitted.
 
         Returns:
             The "SubscriptionField" carrying this subscription's output type.

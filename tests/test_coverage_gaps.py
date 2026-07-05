@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -20,7 +21,8 @@ from django.db import models
 from django.test import RequestFactory, TestCase, override_settings
 from graphql import GraphQLString
 
-from django_graphex import DjangoGraphQLSchema, ObjectType, field
+from django_graphex.core import ObjectType, field
+from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.views import GraphQLView
 
 # Django 5.1 renamed ``CheckConstraint`` kwarg ``check`` -> ``condition``;
@@ -32,11 +34,11 @@ _CHECK_CONSTRAINT_KW = "condition"
 # ---------------------------------------------------------------------------
 
 
-def test_version_from_pyproject_fallback():
-    """The source-checkout fallback reads the version straight from
-    pyproject.toml and must agree with both the installed metadata and
-    ``__version__`` — pinning the single source of truth so the version can
-    never drift between pyproject.toml and the package.
+def test_version_from_pyproject_fallback() -> None:
+    """The source-checkout fallback must agree with installed metadata and "__version__".
+
+    Pins the single source of truth so the version can never drift between
+    pyproject.toml, the installed package metadata, and the module attribute.
     """
     import importlib.metadata
 
@@ -66,11 +68,21 @@ class _DummyBase(models.Model):
 
 
 class NonUCCheckModel(_DummyBase):
-    """Model with a CheckConstraint — must NOT trigger the UniqueConstraint path."""
+    """Model with a CheckConstraint — must NOT trigger the UniqueConstraint path.
+
+    Used to confirm the isinstance(constraint, models.UniqueConstraint) guard
+    skips non-UniqueConstraint entries in Meta.constraints.
+    """
 
     value = models.IntegerField()
 
     class Meta:
+        """Meta options declaring a CheckConstraint (not a UniqueConstraint).
+
+        Used to keep the UniqueConstraint skip-path from ever seeing this
+        constraint.
+        """
+
         app_label = "tests"
         constraints = [
             models.CheckConstraint(
@@ -81,11 +93,20 @@ class NonUCCheckModel(_DummyBase):
 
 
 class ExpressionUCModel(_DummyBase):
-    """Model with a functional UniqueConstraint (expressions=) — must be skipped."""
+    """Model with a functional UniqueConstraint (expressions=) — must be skipped.
+
+    Used to confirm expression-based unique constraints are excluded from the
+    per-field unique-violation check.
+    """
 
     name = models.CharField(max_length=50)
 
     class Meta:
+        """Meta options declaring an expression-based UniqueConstraint.
+
+        The constraint wraps "Upper(name)" rather than a plain field list.
+        """
+
         app_label = "tests"
         constraints = [
             models.UniqueConstraint(
@@ -96,21 +117,33 @@ class ExpressionUCModel(_DummyBase):
 
 
 class DoubleUniqueModel(_DummyBase):
-    """Field has unique=True AND a UniqueConstraint — the UC must be skipped (dedup)."""
+    """Field has unique=True AND a UniqueConstraint — the UC must be skipped (dedup).
+
+    Used to confirm the unique-constraint dedup logic reports at most one
+    error for a field covered by both a field-level unique and a UC.
+    """
 
     code = models.CharField(max_length=10, unique=True)
 
     class Meta:
+        """Meta options declaring a UniqueConstraint duplicating the field's own unique=True.
+
+        Used to confirm the dedup path avoids a double error report.
+        """
+
         app_label = "tests"
         constraints = [
             models.UniqueConstraint(fields=["code"], name="uc_double_code"),
         ]
 
 
-def test_non_unique_constraint_is_skipped():
-    """A CheckConstraint in Meta.constraints must not be processed by _db_check_errors
-    (the isinstance(constraint, models.UniqueConstraint) guard, line 159)."""
-    from django_graphex.native.backend import PydanticBackend
+def test_non_unique_constraint_is_skipped() -> None:
+    """A CheckConstraint in Meta.constraints must not be processed as a UniqueConstraint.
+
+    If this breaks, "_db_check_errors" could crash or misreport errors when a
+    model declares a non-unique constraint alongside its fields.
+    """
+    from django_graphex.core.backend import PydanticBackend
 
     backend = PydanticBackend(NonUCCheckModel)
     # Should not raise and should return no errors for a simple value.
@@ -119,9 +152,13 @@ def test_non_unique_constraint_is_skipped():
 
 
 @pytest.mark.django_db
-def test_expression_unique_constraint_is_skipped():
-    """A UniqueConstraint with expressions= must be skipped (line 165)."""
-    from django_graphex.native.backend import PydanticBackend
+def test_expression_unique_constraint_is_skipped() -> None:
+    """A UniqueConstraint built from expressions= must be skipped by "_db_check_errors".
+
+    If this breaks, an expression-based unique constraint could crash the
+    check instead of being safely ignored (the ORM already enforces it).
+    """
+    from django_graphex.core.backend import PydanticBackend
 
     backend = PydanticBackend(ExpressionUCModel)
     errors = backend._db_check_errors({"name": "Alice"}, instance=None)
@@ -131,10 +168,14 @@ def test_expression_unique_constraint_is_skipped():
 
 
 @pytest.mark.django_db
-def test_single_field_uc_dedup_when_field_also_has_unique():
-    """A single-field UC on a field that already has unique=True must not produce
-    duplicate errors (the dedup skip at line 180)."""
-    from django_graphex.native.backend import PydanticBackend
+def test_single_field_uc_dedup_when_field_also_has_unique() -> None:
+    """A single-field UniqueConstraint on a field already marked unique=True must not duplicate errors.
+
+    If this breaks, a field covered by both a field-level unique and a
+    matching UniqueConstraint would surface two error messages for the same
+    violation instead of one.
+    """
+    from django_graphex.core.backend import PydanticBackend
 
     # Create an existing row to trigger the unique violation.
     DoubleUniqueModel.objects.create(code="X1")
@@ -159,9 +200,20 @@ def test_single_field_uc_dedup_when_field_also_has_unique():
 
 
 class _Q(ObjectType):
+    """Minimal query root exposing a single "hello" scalar field."""
+
     hello = field(GraphQLString)
 
-    def resolve_hello(root, info):
+    def resolve_hello(root: Any, info: Any) -> str:
+        """Resolve the "hello" field to a constant greeting.
+
+        Args:
+            root: The unused root value passed by the executor.
+            info: The unused GraphQL resolve info passed by the executor.
+
+        Returns:
+            greeting: The literal string "world".
+        """
         return "world"
 
 
@@ -171,15 +223,25 @@ CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
 
 
 class CacheKeyPrefixAuthHeaderTest(TestCase):
-    """GraphQLView.cache_key_prefix must return a 't<hash>' prefix for anonymous
-    requests that carry an Authorization header (lines 635, 638)."""
+    """Coverage of "GraphQLView.cache_key_prefix" for the Authorization-header path.
 
-    def setUp(self):
+    Confirms anonymous requests carrying a bearer token get a "t"-prefixed
+    identity distinct from the plain "anon" identity.
+    """
+
+    def setUp(self) -> None:
+        """Create a request factory shared by each test method.
+
+        Runs before every test in this class per unittest convention.
+        """
         self.factory = RequestFactory()
 
-    def test_auth_header_gives_token_prefix(self):
-        """A request with an Authorization header (no authenticated user) must get
-        a 't'-prefixed identity token."""
+    def test_auth_header_gives_token_prefix(self) -> None:
+        """A request with an Authorization header (no authenticated user) must get a "t"-prefixed identity token.
+
+        If this breaks, token-authenticated anonymous requests could share a
+        cache key with unrelated requests instead of being isolated by token.
+        """
         request = self.factory.post(
             "/graphql/",
             json.dumps({"query": "{ hello }"}),
@@ -192,8 +254,12 @@ class CacheKeyPrefixAuthHeaderTest(TestCase):
             f"Expected 't' prefix for token-auth identity, got: {identity!r}",
         )
 
-    def test_no_auth_gives_anon_prefix(self):
-        """A request with no Authorization header and no user gets 'anon' identity."""
+    def test_no_auth_gives_anon_prefix(self) -> None:
+        """A request with no Authorization header and no user must get the "anon" identity.
+
+        If this breaks, fully anonymous requests could be mis-tagged with a
+        token-derived identity instead of the shared anonymous cache key.
+        """
         request = self.factory.post(
             "/graphql/",
             json.dumps({"query": "{ hello }"}),
@@ -203,8 +269,12 @@ class CacheKeyPrefixAuthHeaderTest(TestCase):
         self.assertEqual(identity, "anon")
 
     @override_settings(**CACHE_ON)
-    def test_token_auth_request_cached_and_served(self):
-        """With CACHE_ACTIVE, an Authorization-header request is cached by token."""
+    def test_token_auth_request_cached_and_served(self) -> None:
+        """With CACHE_ACTIVE, an Authorization-header request must be cached and served by token identity.
+
+        If this breaks, token-identified responses could bypass the cache or
+        be served from a mismatched entry.
+        """
         from django.core.cache import cache
 
         cache.clear()
@@ -240,15 +310,27 @@ class CacheKeyPrefixAuthHeaderTest(TestCase):
 
 
 class IntrospectionDocumentTest(TestCase):
-    """_is_introspection_document must handle edge cases cleanly."""
+    """Coverage of "GraphQLView._is_introspection_document" edge-case handling.
 
-    def test_none_document_returns_false(self):
-        """Passing None as document must return False (line 786)."""
+    Exercises None input, fragment-only documents, empty documents, empty
+    selection sets, and top-level inline fragments.
+    """
+
+    def test_none_document_returns_false(self) -> None:
+        """Passing None as the document must return False, not raise.
+
+        If this breaks, a missing document could crash introspection
+        detection instead of being treated as non-introspection.
+        """
         self.assertFalse(GraphQLView._is_introspection_document(None))
 
-    def test_fragment_definition_is_not_introspection(self):
-        """A document containing a fragment definition (not OperationDefinitionNode)
-        must return False — the isinstance guard skips the definition (line 791)."""
+    def test_fragment_definition_is_not_introspection(self) -> None:
+        """A document containing only a fragment definition (no operation) must return False.
+
+        If this breaks, the isinstance guard that skips non-operation
+        definitions could mis-detect a fragment-only document as
+        introspection.
+        """
         from graphql import parse
 
         doc = parse("fragment F on Query { hello }")
@@ -257,9 +339,12 @@ class IntrospectionDocumentTest(TestCase):
         result = GraphQLView._is_introspection_document(doc)
         self.assertFalse(result)
 
-    def test_non_operation_definition_is_skipped(self):
-        """A document whose only definition is a fragment (not OperationDefinitionNode)
-        exercises the isinstance guard at line 791 and returns False at line 808."""
+    def test_non_operation_definition_is_skipped(self) -> None:
+        """A document whose only definition is a fragment must be skipped and return False.
+
+        If this breaks, non-operation definitions could be mishandled by the
+        introspection-detection loop instead of being skipped cleanly.
+        """
         from graphql import parse
 
         # A fragment-definition-only document — no operations.
@@ -268,18 +353,25 @@ class IntrospectionDocumentTest(TestCase):
         result = GraphQLView._is_introspection_document(doc)
         self.assertFalse(result)
 
-    def test_empty_document_returns_false(self):
-        """A document with no definitions returns False at line 808."""
+    def test_empty_document_returns_false(self) -> None:
+        """A document with no definitions at all must return False.
+
+        If this breaks, an empty document could crash introspection
+        detection instead of yielding a safe False.
+        """
         from graphql.language.ast import DocumentNode
 
         empty_doc = DocumentNode(definitions=())
         result = GraphQLView._is_introspection_document(empty_doc)
         self.assertFalse(result)
 
-    def test_operation_with_empty_selection_set_returns_false(self):
-        """An OperationDefinitionNode with no selections hits the
-        'if not selections: continue' branch (line 796) and falls through
-        to return False (line 808)."""
+    def test_operation_with_empty_selection_set_returns_false(self) -> None:
+        """An operation with no selections must fall through to return False.
+
+        If this breaks, an operation with an empty selection set could be
+        mis-detected as introspection instead of falling through the
+        "if not selections: continue" branch.
+        """
         from graphql import OperationType
         from graphql.language.ast import (
             DocumentNode,
@@ -300,9 +392,13 @@ class IntrospectionDocumentTest(TestCase):
         result = GraphQLView._is_introspection_document(doc)
         self.assertFalse(result)
 
-    def test_inline_fragment_at_top_level_is_not_introspection(self):
-        """A top-level inline fragment (not FieldNode) causes the else branch
-        to return False (line 805)."""
+    def test_inline_fragment_at_top_level_is_not_introspection(self) -> None:
+        """A top-level inline fragment (not a field selection) must return False.
+
+        If this breaks, an inline fragment used as a top-level selection
+        could be mis-detected as introspection instead of hitting the
+        else-branch fallthrough.
+        """
         from graphql import parse
 
         # An operation whose only top-level selection is an inline fragment.
@@ -316,15 +412,24 @@ class IntrospectionDocumentTest(TestCase):
         result = GraphQLView._is_introspection_document(doc)
         self.assertFalse(result)
 
-    def test_schema_introspection_is_detected(self):
-        """A pure __schema introspection query must return True."""
+    def test_schema_introspection_is_detected(self) -> None:
+        """A pure "__schema" introspection query must return True.
+
+        If this breaks, genuine introspection queries could be missed by
+        cost/permission checks meant to exempt them.
+        """
         from graphql import parse
 
         doc = parse("{ __schema { types { name } } }")
         self.assertTrue(GraphQLView._is_introspection_document(doc))
 
-    def test_mixed_fields_are_not_introspection(self):
-        """A query with __schema + a regular field must return False."""
+    def test_mixed_fields_are_not_introspection(self) -> None:
+        """A query mixing "__schema" with a regular field must return False.
+
+        If this breaks, a query that smuggles real data-fetching fields
+        alongside introspection could be wrongly exempted from cost or
+        permission enforcement.
+        """
         from graphql import parse
 
         doc = parse("{ __schema { types { name } } hello }")
@@ -336,12 +441,13 @@ class IntrospectionDocumentTest(TestCase):
 # ---------------------------------------------------------------------------
 
 
-def test_subscription_session_key_from_context_session():
-    """When _session_key is None and info.context has a .session attribute,
-    session_key must be derived from session.session_key (line 595).
+def test_subscription_session_key_from_context_session() -> None:
+    """When no explicit "_session_key" is given and "info.context" has a "session", the key must be derived from it.
 
-    We test the code path directly rather than going through the full
-    Subscription machinery (which requires a real model).
+    Tests the code path directly rather than going through the full
+    Subscription machinery (which requires a real model). If this breaks,
+    anonymous-channel subscriptions could lose their session-derived
+    identity.
     """
     pytest.importorskip("channels")  # skip if channels not installed
 
@@ -369,18 +475,37 @@ def test_subscription_session_key_from_context_session():
 # ---------------------------------------------------------------------------
 
 
-def test_multiselect_field_import_fallback():
-    """When multiselectfield is not installed, the isinstance check falls back
-    to a name-based check (line 281 is only reached when the import succeeds).
+def test_multiselect_field_import_fallback() -> None:
+    """When multiselectfield is not installed, the isinstance check must fall back to a name-based check.
 
-    This test exercises the ImportError branch to ensure the fallback works.
+    Exercises the ImportError branch (the isinstance check is only reachable
+    when the optional import succeeds) to ensure the fallback still works.
+
+    Raises:
+        ImportError: Simulated internally by "mock_import" for the
+            "multiselectfield" module name, to exercise the not-installed
+            branch; the test itself does not propagate this error.
     """
     # Simulate multiselectfield not being installed.
     import builtins
 
     real_import = builtins.__import__
 
-    def mock_import(name, *args, **kwargs):
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        """Delegate to the real "__import__", except fail for "multiselectfield".
+
+        Args:
+            name: The dotted module name being imported.
+            args: Additional positional arguments forwarded to "__import__".
+            kwargs: Additional keyword arguments forwarded to "__import__".
+
+        Returns:
+            module: The imported module, from the real "__import__".
+
+        Raises:
+            ImportError: When "name" is "multiselectfield", to simulate the
+                package not being installed.
+        """
         if name == "multiselectfield":
             raise ImportError("no multiselectfield")
         return real_import(name, *args, **kwargs)

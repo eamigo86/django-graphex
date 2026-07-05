@@ -3,22 +3,22 @@
 
 Phase 7 graphene-removal: the public conversion of a Django model into a GraphQL
 OUTPUT type is now performed by the NATIVE output compiler
-(``django_graphex.native.output_compiler``). It reads ``model._meta`` directly and
+("django_graphex.core.output_compiler"). It reads "model._meta" directly and
 maps each Django scalar field to a graphql-core scalar (CharField->GraphQLString,
-DateField->GdxDate, ...). The legacy graphene ``convert_django_field`` SCALAR
+DateField->GdxDate, ...). The legacy graphene "convert_django_field" SCALAR
 dispatchers return a dead-scalar sentinel (the
 graphene scalar descriptor is never read on the native output path), so the OLD
-``isinstance(out, graphene.String)`` assertions no longer describe native
+"isinstance(out, graphene.String)" assertions no longer describe native
 behavior. Each scalar test below was CONVERTED to drive the SAME conceptual code
-path on native — ``_to_graphql_field`` — and assert the graphql-core scalar it
+path on native — "_to_graphql_field" — and assert the graphql-core scalar it
 produces, preserving the original per-field-type coverage.
 
-RELATION conversion (FK / M2M / reverse) is performed by ``convert_django_field``,
-which now returns a graphene-free ``NativeRelationField`` presence/ordering marker
+RELATION conversion (FK / M2M / reverse) is performed by "convert_django_field",
+which now returns a graphene-free "NativeRelationField" presence/ordering marker
 that the native output thunk consumes (the marker keeps the field in
-``_meta.fields`` so the native compiler can build the output field from
-``model._meta`` directly). The pure helpers ``convert_choice_name`` /
-``choice_enum_name`` / ``get_choices`` and the choices->enum conversion are
+"_meta.fields" so the native compiler can build the output field from
+"model._meta" directly). The pure helpers "convert_choice_name" /
+"choice_enum_name" / "get_choices" and the choices->enum conversion are
 backend-independent and are exercised through their original entry points.
 
 Run: .venv/bin/python -m pytest tests/test_converter.py -q -o addopts=""
@@ -42,11 +42,11 @@ from django_graphex.converter import (
     convert_django_field_with_choices,
     get_choices,
 )
-from django_graphex.native.output_compiler import _to_graphql_field
-from django_graphex.native.scalars import (
+from django_graphex.core.output_compiler import _to_graphql_field
+from django_graphex.core.scalars import (
     GdxDate,
     GdxDateTime,
-    GdxJSONString,
+    GdxJSON,
     GdxTime,
     GdxUUID,
 )
@@ -86,7 +86,11 @@ def _native_scalar(field):
 
 
 class TestModel(models.Model):
-    """Test model for converter tests."""
+    """A model exercising one field of every scalar/relation type under test.
+
+    Used as the fixture model for the field->GraphQL conversion assertions
+    below; not itself a test case.
+    """
 
     __test__ = False  # ORM fixture, not a pytest test class
 
@@ -122,84 +126,155 @@ class TestModel(models.Model):
     basics = models.ManyToManyField(BasicModel, blank=True)
 
     class Meta:
+        """Register this ORM fixture under the "tests" app label.
+
+        Required so Django can resolve the model without a real installed
+        app owning it.
+        """
+
         app_label = "tests"
 
 
 class ConverterTest(TestCase):
-    """Test cases for native Django-field -> GraphQL-scalar conversion."""
+    """Test cases for native Django-field -> GraphQL-scalar conversion.
 
-    def test_convert_char_field(self):
-        """CharField -> GraphQLString."""
+    Covers every scalar/relation field type on "TestModel", asserting each
+    converts to the expected graphql-core type on the native output path.
+    """
+
+    def test_convert_char_field(self) -> None:
+        """CharField must convert to GraphQLString on the native output path.
+
+        Ships broken if the native scalar dispatcher stops recognizing
+        CharField and falls back to the wrong GraphQL scalar.
+        """
         field = TestModel._meta.get_field("char_field")
         self.assertIs(_native_scalar(field), GraphQLString)
 
-    def test_convert_text_field(self):
-        """TextField -> GraphQLString."""
+    def test_convert_text_field(self) -> None:
+        """TextField must convert to GraphQLString on the native output path.
+
+        Ships broken if TextField loses its GraphQLString mapping in the
+        native scalar dispatcher.
+        """
         field = TestModel._meta.get_field("text_field")
         self.assertIs(_native_scalar(field), GraphQLString)
 
-    def test_convert_integer_field(self):
-        """IntegerField -> GraphQLInt."""
+    def test_convert_integer_field(self) -> None:
+        """IntegerField must convert to GraphQLInt on the native output path.
+
+        Ships broken if IntegerField loses its GraphQLInt mapping in the
+        native scalar dispatcher.
+        """
         field = TestModel._meta.get_field("integer_field")
         self.assertIs(_native_scalar(field), GraphQLInt)
 
-    def test_convert_float_field(self):
-        """FloatField -> GraphQLFloat."""
+    def test_convert_float_field(self) -> None:
+        """FloatField must convert to GraphQLFloat on the native output path.
+
+        Ships broken if FloatField loses its GraphQLFloat mapping in the
+        native scalar dispatcher.
+        """
         field = TestModel._meta.get_field("float_field")
         self.assertIs(_native_scalar(field), GraphQLFloat)
 
-    def test_convert_decimal_field(self):
-        """DecimalField -> GraphQLFloat (graphene-django parity, #1508)."""
+    def test_convert_decimal_field(self) -> None:
+        """DecimalField must convert to GraphQLFloat, matching graphene-django #1508.
+
+        Ships broken if DecimalField stops mapping to GraphQLFloat, breaking
+        parity with the historical graphene-django behavior.
+        """
         field = TestModel._meta.get_field("decimal_field")
         self.assertIs(_native_scalar(field), GraphQLFloat)
 
-    def test_convert_boolean_field(self):
-        """BooleanField -> GraphQLBoolean."""
+    def test_convert_boolean_field(self) -> None:
+        """BooleanField must convert to GraphQLBoolean on the native output path.
+
+        Ships broken if BooleanField loses its GraphQLBoolean mapping in the
+        native scalar dispatcher.
+        """
         field = TestModel._meta.get_field("boolean_field")
         self.assertIs(_native_scalar(field), GraphQLBoolean)
 
-    def test_convert_date_field(self):
-        """DateField -> GdxDate (renders as the ``CustomDate`` scalar)."""
+    def test_convert_date_field(self) -> None:
+        """DateField must convert to GdxDate, which renders as the "CustomDate" scalar.
+
+        Ships broken if DateField stops mapping to the custom GdxDate scalar
+        on the native output path.
+        """
         field = TestModel._meta.get_field("date_field")
         self.assertIs(_native_scalar(field), GdxDate)
 
-    def test_convert_datetime_field(self):
-        """DateTimeField -> GdxDateTime (renders as ``CustomDateTime``)."""
+    def test_convert_datetime_field(self) -> None:
+        """DateTimeField must convert to GdxDateTime, rendering as "CustomDateTime".
+
+        Ships broken if DateTimeField stops mapping to the custom GdxDateTime
+        scalar on the native output path.
+        """
         field = TestModel._meta.get_field("datetime_field")
         self.assertIs(_native_scalar(field), GdxDateTime)
 
-    def test_convert_time_field(self):
-        """TimeField -> GdxTime (renders as ``CustomTime``)."""
+    def test_convert_time_field(self) -> None:
+        """TimeField must convert to GdxTime, which renders as the "CustomTime" scalar.
+
+        Ships broken if TimeField stops mapping to the custom GdxTime scalar
+        on the native output path.
+        """
         field = TestModel._meta.get_field("time_field")
         self.assertIs(_native_scalar(field), GdxTime)
 
-    def test_convert_email_field(self):
-        """EmailField -> GraphQLString."""
+    def test_convert_email_field(self) -> None:
+        """EmailField must convert to GraphQLString on the native output path.
+
+        Ships broken if EmailField loses its GraphQLString mapping in the
+        native scalar dispatcher.
+        """
         field = TestModel._meta.get_field("email_field")
         self.assertIs(_native_scalar(field), GraphQLString)
 
-    def test_convert_url_field(self):
-        """URLField -> GraphQLString."""
+    def test_convert_url_field(self) -> None:
+        """URLField must convert to GraphQLString on the native output path.
+
+        Ships broken if URLField loses its GraphQLString mapping in the
+        native scalar dispatcher.
+        """
         field = TestModel._meta.get_field("url_field")
         self.assertIs(_native_scalar(field), GraphQLString)
 
-    def test_convert_slug_field(self):
-        """SlugField -> GraphQLString."""
+    def test_convert_slug_field(self) -> None:
+        """SlugField must convert to GraphQLString on the native output path.
+
+        Ships broken if SlugField loses its GraphQLString mapping in the
+        native scalar dispatcher.
+        """
         field = TestModel._meta.get_field("slug_field")
         self.assertIs(_native_scalar(field), GraphQLString)
 
-    def test_convert_uuid_field(self):
-        """UUIDField -> GdxUUID (renders as the ``UUID`` scalar)."""
+    def test_convert_uuid_field(self) -> None:
+        """UUIDField must convert to GdxUUID, which renders as the "UUID" scalar.
+
+        Ships broken if UUIDField stops mapping to the custom GdxUUID scalar
+        on the native output path.
+        """
         field = TestModel._meta.get_field("uuid_field")
         self.assertIs(_native_scalar(field), GdxUUID)
 
-    def test_convert_json_field(self):
-        """JSONField -> GdxJSONString (renders as the ``JSONString`` scalar)."""
-        field = TestModel._meta.get_field("json_field")
-        self.assertIs(_native_scalar(field), GdxJSONString)
+    def test_convert_json_field(self) -> None:
+        """JSONField must convert to GdxJSON (v2 RAW-JSON default), rendering as "JSON".
 
-    def test_convert_choice_field(self):
-        """Test field with choices conversion (S-enum-2: native OUTPUT sentinel)."""
+        Ships broken if JSONField stops mapping to the custom GdxJSON scalar
+        on the native output path.
+        """
+        field = TestModel._meta.get_field("json_field")
+        self.assertIs(_native_scalar(field), GdxJSON)
+
+    def test_convert_choice_field(self) -> None:
+        """A choices field must convert to the native OUTPUT dead-scalar sentinel.
+
+        S-enum-2: the native output compiler renders the enum from
+        "model._meta" directly, so the field-conversion path only needs to
+        return the sentinel rather than a graphene Enum descriptor.
+        """
         from django_graphex.converter import _DEAD_SCALAR
 
         field = TestModel._meta.get_field("choice_field")
@@ -218,9 +293,14 @@ class ConverterTest(TestCase):
         # at class-definition time.
         self.assertIs(graphql_field, _DEAD_SCALAR)
 
-    def test_convert_foreign_key_field(self):
-        """Test ForeignKey field conversion (S-rel-2: native OUTPUT marker)."""
-        from django_graphex.native.descriptors import NativeRelationField
+    def test_convert_foreign_key_field(self) -> None:
+        """A to-ONE ForeignKey must convert to a NativeRelationField marker.
+
+        S-rel-2: on the native OUTPUT path the conversion returns a
+        graphene-free "NativeRelationField" presence/ordering marker; the
+        native output type itself is built from "model._meta" directly.
+        """
+        from django_graphex.core.descriptors import NativeRelationField
 
         field = TestModel._meta.get_field("user")
         graphql_field = convert_django_field(field)
@@ -231,9 +311,15 @@ class ConverterTest(TestCase):
         # graphene ``Dynamic`` was dead weight that only pinned graphene).
         self.assertIsInstance(graphql_field, NativeRelationField)
 
-    def test_convert_many_to_many_field(self):
-        """Test ManyToManyField conversion (S-rel-3: native OUTPUT marker)."""
-        from django_graphex.native.descriptors import NativeRelationField
+    def test_convert_many_to_many_field(self) -> None:
+        """A to-MANY ManyToManyField must convert to a NativeRelationField marker.
+
+        S-rel-3: on the native OUTPUT path the conversion returns a
+        graphene-free "NativeRelationField" presence/ordering marker; the
+        native output builds the "<Model>ListType" results/totalCount
+        container from "model._meta" directly.
+        """
+        from django_graphex.core.descriptors import NativeRelationField
 
         field = TestModel._meta.get_field("basics")
         graphql_field = convert_django_field(field)
@@ -245,8 +331,12 @@ class ConverterTest(TestCase):
         # ``Dynamic`` was dead weight that only pinned graphene).
         self.assertIsInstance(graphql_field, NativeRelationField)
 
-    def test_convert_choice_name(self):
-        """Test choice name conversion."""
+    def test_convert_choice_name(self) -> None:
+        """convert_choice_name must uppercase and normalize dashes/spaces to underscores.
+
+        Ships broken if generated enum value names stop matching GraphQL's
+        allowed identifier charset or lose their uppercase convention.
+        """
         # Test various choice name conversions
         self.assertEqual(convert_choice_name("CHOICE_A"), "CHOICE_A")
         self.assertEqual(
@@ -256,8 +346,12 @@ class ConverterTest(TestCase):
             convert_choice_name("choice with spaces"), "CHOICE_WITH_SPACES"
         )
 
-    def test_get_choices(self):
-        """Test choices extraction from field."""
+    def test_get_choices(self) -> None:
+        """get_choices must yield (name, value, description) tuples for each choice.
+
+        Ships broken if the choice enum builder receives malformed tuples and
+        produces an incomplete or mis-ordered GraphQL enum.
+        """
         field = TestModel._meta.get_field("choice_field")
         choices = list(get_choices(field.choices))
 
@@ -268,12 +362,12 @@ class ConverterTest(TestCase):
         self.assertIn((1, "Choice A"), choice_values)
         self.assertIn((2, "Choice B"), choice_values)
 
-    def test_nullable_field_conversion(self):
-        """A nullable scalar field is rendered nullable (not wrapped in NonNull).
+    def test_nullable_field_conversion(self) -> None:
+        """A nullable scalar field must render nullable, not wrapped in NonNull.
 
         On the native OUTPUT path every non-pk scalar is nullable
-        (graphene-django #1494 parity), so ``_to_graphql_field`` returns the bare
-        scalar with no ``GraphQLNonNull`` wrapper.
+        (graphene-django #1494 parity), so "_to_graphql_field" returns the bare
+        scalar with no "GraphQLNonNull" wrapper.
         """
         field = TestModel._meta.get_field("float_field")
         field_map = _to_graphql_field(field, _StubRegistry())
@@ -282,10 +376,10 @@ class ConverterTest(TestCase):
         self.assertNotIsInstance(gql_type, GraphQLNonNull)
         self.assertIs(gql_type, GraphQLFloat)
 
-    def test_required_field_conversion(self):
-        """A required (non-pk) CharField renders as a plain nullable String.
+    def test_required_field_conversion(self) -> None:
+        """A required (non-pk) CharField must render as a plain nullable String.
 
-        Output fields are intentionally NOT wrapped in ``GraphQLNonNull`` on the
+        Output fields are intentionally NOT wrapped in "GraphQLNonNull" on the
         native path (only the pk is non-null on output, graphene-django #1494
         parity); requiredness is enforced by the input/serializer path, not the
         output type.
@@ -297,13 +391,21 @@ class ConverterTest(TestCase):
         self.assertIs(gql_type, GraphQLString)
         self.assertNotIsInstance(gql_type, GraphQLNonNull)
 
-    def test_field_with_default_conversion(self):
-        """A field with a default still converts by its type (IntegerField->Int)."""
+    def test_field_with_default_conversion(self) -> None:
+        """A field with a default must still convert by its underlying type.
+
+        Confirms the "default" attribute does not influence the resolved
+        scalar type (IntegerField still maps to GraphQLInt).
+        """
         field = TestModel._meta.get_field("integer_field")
         self.assertIs(_native_scalar(field), GraphQLInt)
 
-    def test_auto_field_conversion(self):
-        """The model pk (AutoField) converts to a non-null GraphQL ID (``id: ID!``)."""
+    def test_auto_field_conversion(self) -> None:
+        """The model pk (AutoField) converts to a non-null GraphQL ID ("id: ID!").
+
+        Ships broken if the pk field stops being wrapped in GraphQLNonNull,
+        letting clients query a nullable id on the output type.
+        """
         field = TestModel._meta.get_field("id")  # Auto-created id field
         field_map = _to_graphql_field(field, _StubRegistry())
         gql_type = next(iter(field_map.values())).type
@@ -314,15 +416,19 @@ class ConverterTest(TestCase):
 
 
 class ConverterUtilsTest(TestCase):
-    """Test cases for converter utility functions (backend-independent)."""
+    """Test cases for converter utility functions (backend-independent).
 
-    def test_convert_choices_with_enum(self):
+    Covers choice-name normalization and choice-tuple extraction, which are
+    shared by the output, filter-input, and mutation-input paths.
+    """
+
+    def test_convert_choices_with_enum(self) -> None:
         """Test conversion of choices creates proper enum.
 
         S-enum-2 (OUTPUT) + S-input-5 (INPUT) retired graphene on the choices
         converter path: on native it returns the dead-scalar sentinel for BOTH
         output and input, and the choices enum is built by the native canonical
-        builder ``build_choices_enum_type`` (a graphql-core ``GraphQLEnumType``
+        builder "build_choices_enum_type" (a graphql-core "GraphQLEnumType"
         shared by the output + filter-input + mutation-input paths).
         """
         field = TestModel._meta.get_field("choice_field")
@@ -344,8 +450,12 @@ class ConverterUtilsTest(TestCase):
         self.assertIsInstance(enum, GraphQLEnumType)
         self.assertEqual(set(enum.values.keys()), {"CHOICE_A", "CHOICE_B"})
 
-    def test_choices_extraction(self):
-        """Test choices extraction from different field types."""
+    def test_choices_extraction(self) -> None:
+        """Test choices extraction from different field types.
+
+        Ships broken if integer-keyed choices stop yielding the expected
+        (value, description) pairs in declaration order.
+        """
         # Test with integer choices
         field = TestModel._meta.get_field("choice_field")
         choices = list(get_choices(field.choices))
@@ -356,8 +466,12 @@ class ConverterUtilsTest(TestCase):
         self.assertEqual(choice_values[0], (1, "Choice A"))
         self.assertEqual(choice_values[1], (2, "Choice B"))
 
-    def test_choice_name_normalization(self):
-        """Test choice name normalization for GraphQL."""
+    def test_choice_name_normalization(self) -> None:
+        """Test choice name normalization for GraphQL.
+
+        Ships broken if mixed-case, dashed, or spaced choice names stop
+        normalizing to valid upper-snake-case GraphQL enum value names.
+        """
         # Test various name formats
         self.assertEqual(convert_choice_name("simple"), "SIMPLE")
         self.assertEqual(convert_choice_name("ALREADY_UPPER"), "ALREADY_UPPER")
@@ -367,16 +481,20 @@ class ConverterUtilsTest(TestCase):
 
 
 class FieldConversionIntegrationTest(TestCase):
-    """Integration tests for field conversion."""
+    """Integration tests for field conversion.
 
-    def test_model_to_graphql_type_conversion(self):
+    Exercises the full model-to-GraphQL-type compilation path end to end,
+    beyond the single-field unit assertions in "ConverterTest".
+    """
+
+    def test_model_to_graphql_type_conversion(self) -> None:
         """Test complete model to GraphQL OUTPUT type conversion.
 
         On native, the model -> GraphQL OUTPUT type is built by the native output
-        compiler and exposed as ``_meta.graphql_output_type`` (a graphql-core
-        ``GraphQLObjectType``). Assert it carries the converted fields.
+        compiler and exposed as "_meta.graphql_output_type" (a graphql-core
+        "GraphQLObjectType"). Assert it carries the converted fields.
         """
-        from django_graphex import DjangoObjectType
+        from django_graphex.types import DjangoObjectType
 
         class TestModelType(DjangoObjectType):
             class Meta:
@@ -396,13 +514,13 @@ class FieldConversionIntegrationTest(TestCase):
         self.assertIn("choiceField", fields)
         self.assertIn("user", fields)
 
-    def test_input_type_conversion(self):
+    def test_input_type_conversion(self) -> None:
         """Test model to input type conversion.
 
         On native the INPUT type is compiled to a graphql-core
-        ``GraphQLInputObjectType`` exposed via ``_meta.graphql_input_type``.
+        "GraphQLInputObjectType" exposed via "_meta.graphql_input_type".
         """
-        from django_graphex import DjangoInputObjectType
+        from django_graphex.types import DjangoInputObjectType
 
         class TestModelInput(DjangoInputObjectType):
             class Meta:
@@ -416,9 +534,14 @@ class FieldConversionIntegrationTest(TestCase):
         fields = TestModelInput._meta.graphql_input_type.fields
         self.assertIn("charField", fields)
 
-    def test_relationship_field_conversion(self):
-        """Test relationship field conversion."""
-        from django_graphex.native.descriptors import NativeRelationField
+    def test_relationship_field_conversion(self) -> None:
+        """Test relationship field conversion.
+
+        Ships broken if to-one or to-many relation fields stop converting to
+        the graphene-free NativeRelationField marker the native output
+        compiler expects.
+        """
+        from django_graphex.core.descriptors import NativeRelationField
 
         # Test that foreign keys and m2m fields are converted correctly
         user_field = TestModel._meta.get_field("user")
@@ -428,9 +551,9 @@ class FieldConversionIntegrationTest(TestCase):
         basics_graphql_field = convert_django_field(basics_field)
 
         # S-rel-2: User field (to-ONE FK) converts to a graphene-free
-        # ``NativeRelationField`` marker on the native OUTPUT path.
+        # "NativeRelationField" marker on the native OUTPUT path.
         self.assertIsInstance(user_graphql_field, NativeRelationField)
         # S-rel-3: Basics field (to-MANY M2M) ALSO converts to a graphene-free
-        # ``NativeRelationField`` marker on the native OUTPUT path (the native
-        # output builds the ``<Model>ListType`` container from ``model._meta``).
+        # "NativeRelationField" marker on the native OUTPUT path (the native
+        # output builds the "<Model>ListType" container from "model._meta").
         self.assertIsInstance(basics_graphql_field, NativeRelationField)

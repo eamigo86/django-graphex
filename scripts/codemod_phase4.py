@@ -9,9 +9,11 @@ Rewrites performed (IDEMPOTENT — safe to run multiple times):
      (adds ``from django_graphex import Mutation`` if not already present)
 
 2. Inside ``Mutation`` subclasses only (parent-class check prevents false positives):
-   - ``class Arguments:`` → ``class args:``
    - First parameter ``self`` → ``root`` in ``def mutate(…)`` and
      ``def resolve_*(…)`` methods
+
+Note: ``class Arguments:`` is the native v2.0 arguments container name (unified
+with DjangoModelMutation), so it is left UNCHANGED — the codemod does not rename it.
 
 Usage::
 
@@ -37,6 +39,7 @@ targeted lines are touched; all other formatting (blank lines, comments,
 indentation style) is preserved.  Because only targeted lines are rewritten,
 running the codemod twice produces identical output (idempotency).
 """
+
 from __future__ import annotations
 
 import ast
@@ -44,7 +47,6 @@ import difflib
 import re
 import sys
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -106,14 +108,9 @@ def _in_mutation_range(lineno: int, ranges: list[tuple[int, int]]) -> bool:
 # Line-level transforms
 # ---------------------------------------------------------------------------
 
-# Regex for ``class Arguments:`` (with optional trailing whitespace / comment)
-_RE_ARGUMENTS = re.compile(r"^(\s*)class\s+Arguments\s*:")
-
 # Regex for ``def mutate(self, …)`` or ``def resolve_*(self, …)``
 # Captures: (indent)(def )(name)( \( )(self)(, …)
-_RE_SELF_PARAM = re.compile(
-    r"^(\s*def\s+(?:mutate|resolve_\w+)\s*\()\s*self\s*,\s*"
-)
+_RE_SELF_PARAM = re.compile(r"^(\s*def\s+(?:mutate|resolve_\w+)\s*\()\s*self\s*,\s*")
 
 # Regex for ``from graphene import Mutation`` (exact; ignores multi-import lines)
 _RE_FROM_GRAPHENE_MUTATION = re.compile(
@@ -204,9 +201,7 @@ def transform_source(src: str) -> str:  # noqa: C901 (complexity justified)
     lines = src.splitlines(keepends=True)
 
     # Pre-scan: does ``from django_graphex import Mutation`` already exist?
-    already_has_gdx_mutation = _has_import(
-        lines, "from django_graphex import Mutation"
-    )
+    already_has_gdx_mutation = _has_import(lines, "from django_graphex import Mutation")
 
     # Pre-scan: is ``graphene.Mutation`` used as a base class anywhere?
     has_graphene_mutation_base = any(
@@ -260,21 +255,13 @@ def transform_source(src: str) -> str:  # noqa: C901 (complexity justified)
         in_mutation = _in_mutation_range(lineno, mutation_ranges)
 
         if in_mutation:
-            # Rename ``class Arguments:`` → ``class args:``
-            m_arg = _RE_ARGUMENTS.match(line)
-            if m_arg:
-                line = _RE_ARGUMENTS.sub(r"\1class args:", line)
-                new_lines.append(line)
-                i += 1
-                continue
-
             # Rewrite ``def mutate(self, …)`` / ``def resolve_X(self, …)``
             m_self = _RE_SELF_PARAM.match(line)
             if m_self:
                 # Replace ``self,`` → ``root,`` at the first parameter position
                 # m_self.group(0) is everything up to (not including) the rest
                 prefix = m_self.group(1)  # ``    def mutate(``
-                rest = line[m_self.end():]  # everything after ``self, ``
+                rest = line[m_self.end() :]  # everything after ``self, ``
                 line = prefix + "root, " + rest
                 new_lines.append(line)
                 i += 1
@@ -352,6 +339,7 @@ def process_path(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse CLI args and run the Phase 4 codemod over the given paths."""
     import argparse
 
     parser = argparse.ArgumentParser(

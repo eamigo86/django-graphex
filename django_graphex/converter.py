@@ -140,18 +140,18 @@ def convert_choice_name(name: Any) -> str:
 
 
 def choice_enum_name(value: Any, label: Any) -> str:
-    """Pick a readable GraphQL enum-member name for a ``(value, label)`` choice.
+    """Pick a readable GraphQL enum-member name for a (value, label) choice.
 
-    Cascade (so numeric/opaque values don't surface as ``A_1``):
+    Cascade (so numeric/opaque values don't surface as "A_1"):
 
-    1. the **value** if it is non-blank and yields a valid GraphQL name (e.g.
-       ``"draft"`` -> ``DRAFT``);
-    2. otherwise the **label**, resolved as its *source* string with translations
-       deactivated -- so a lazy ``_("Male")`` becomes ``MALE`` deterministically,
+    1. the value if it is non-blank and yields a valid GraphQL name (e.g.
+       "draft" -> "DRAFT");
+    2. otherwise the label, resolved as its source string with translations
+       deactivated -- so a lazy '_("Male")' becomes "MALE" deterministically,
        independent of the active locale;
-    3. a **blank** value (empty or whitespace) with no usable label -> ``EMPTY``
+    3. a blank value (empty or whitespace) with no usable label -> "EMPTY"
        (the "no selection" choice);
-    4. otherwise ``A_<value>`` as a last resort.
+    4. otherwise "A_<value>" as a last resort.
 
     Args:
         value: the stored choice value.
@@ -266,24 +266,22 @@ def convert_django_field_with_choices(
     return convert_django_field(field, registry, input_flag, nested_field)
 
 
-def choices_enum_name(
-    field: DjangoField, input_flag: str | None = None
-) -> str:
+def choices_enum_name(field: DjangoField, input_flag: str | None = None) -> str:
     """Return the CANONICAL GraphQL enum name for a choices field.
 
-    Keyed by ``(app_label, object_name, field_name)`` so two models that share a
+    Keyed by (app_label, object_name, field_name) so two models that share a
     class name across different Django apps — and carry the same choices-field
-    name — never collide in the registry (mirrors the ``(model_class,
-    for_input)`` keying used for object/input types). When ``input_flag`` is set
-    the name is suffixed so an input-only enum never clobbers the output slot.
+    name — never collide in the registry (mirrors the (model_class, for_input)
+    keying used for object/input types). When "input_flag" is set the name is
+    suffixed so an input-only enum never clobbers the output slot.
 
     This is the SINGLE source of truth for the choices-enum name shared by the
     converter, the native OUTPUT compiler and the native filter-input builder, so
-    all three resolve the SAME registry slot for one ``(model, field)``.
+    all three resolve the SAME registry slot for one (model, field) pair.
 
     Args:
         field: the Django model field carrying choices.
-        input_flag: input action key, or ``None`` for an output field.
+        input_flag: input action key, or None for an output field.
 
     Returns:
         The canonical camelCase enum name.
@@ -308,39 +306,39 @@ def build_choices_enum_type(
     registry: Registry,
     input_flag: str | None = None,
 ) -> Any:
-    """Build (or fetch the cached) graphql-core ``GraphQLEnumType`` for a choices field.
+    """Build (or fetch the cached) graphql-core "GraphQLEnumType" for a choices field.
 
-    Canonical builder. Reuses :func:`get_choices` (the 4-tier ``choice_enum_name``
+    Canonical builder. Reuses "get_choices" (the 4-tier "choice_enum_name"
     cascade) for the value names + per-choice descriptions, and compiles via
-    ``native.compiler.compile_enum`` so the native OUTPUT and FILTER-INPUT paths
-    share ONE instance per ``(model, field)``:
+    "core.compiler.compile_enum" so the native OUTPUT and FILTER-INPUT paths
+    share ONE instance per (model, field) pair:
 
-    * ``GraphQLEnumValue.value`` carries the RAW python value, so resolution
+    * "GraphQLEnumValue.value" carries the RAW python value, so resolution
       returns the stored value.
-    * ``GraphQLEnumValue.description`` carries the per-choice label so the SDL
+    * "GraphQLEnumValue.description" carries the per-choice label so the SDL
       keeps per-choice descriptions (oracle req #7).
 
     Sharing slot: the enum is memoized in the registry under a NATIVE-namespaced
-    key (:data:`_NATIVE_ENUM_SLOT_PREFIX` + :func:`choices_enum_name`). The
-    namespaced key keeps the graphql-core enum from being clobbered by — or
-    returned in place of — any other registry entry under the bare canonical
-    name, while the OUTPUT and FILTER-INPUT paths both converge on this one
-    native slot. The GraphQLEnumType STILL carries the bare canonical NAME for
-    SDL parity; only the registry KEY is namespaced.
+    key ("_NATIVE_ENUM_SLOT_PREFIX" + "choices_enum_name"). The namespaced key
+    keeps the graphql-core enum from being clobbered by — or returned in place
+    of — any other registry entry under the bare canonical name, while the
+    OUTPUT and FILTER-INPUT paths both converge on this one native slot. The
+    GraphQLEnumType STILL carries the bare canonical NAME for SDL parity; only
+    the registry KEY is namespaced.
 
     Args:
         field: the Django model field carrying choices.
         registry: the registry whose enum slot is shared across native paths.
-        input_flag: input action key, or ``None`` for an output field.
+        input_flag: input action key, or None for an output field.
 
     Returns:
-        A ``GraphQLEnumType`` for the field's choices, or ``None`` when the
-        field has no usable choices.
+        A "GraphQLEnumType" for the field's choices, or None when the field has
+        no usable choices.
     """
     from graphql import GraphQLEnumType  # noqa: PLC0415
 
-    from .native.compiler import compile_enum  # noqa: PLC0415
-    from .native.ir import EnumSpec  # noqa: PLC0415
+    from .core.compiler import compile_enum  # noqa: PLC0415
+    from .core.ir import EnumSpec  # noqa: PLC0415
 
     name = choices_enum_name(field, input_flag)
     slot_key = f"{_NATIVE_ENUM_SLOT_PREFIX}{name}"
@@ -751,7 +749,7 @@ def convert_onetoone_field_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A ``NativeRelationField`` presence/ordering marker.
+        A "NativeRelationField" presence/ordering marker.
     """
     model = field.related_model
 
@@ -765,7 +763,7 @@ def convert_onetoone_field_to_djangomodel(
     # ``NativeRelationField`` (never ``None`` — the silent-drop trap) so the field
     # stays in ``_meta.fields`` with the SAME ``creation_counter`` for SDL field
     # ORDER. (S-rel-2 OUTPUT; S-input-5 INPUT.)
-    from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    from .core.descriptors import NativeRelationField  # noqa: PLC0415
 
     return NativeRelationField(related_model=model)
 
@@ -786,7 +784,7 @@ def convert_field_to_list_or_connection(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A ``NativeRelationField`` presence/ordering marker.
+        A "NativeRelationField" presence/ordering marker.
     """
     model = get_related_model(field)
 
@@ -801,7 +799,7 @@ def convert_field_to_list_or_connection(
     # PRESENCE/ORDERING marker. Emit a ``NativeRelationField`` (the
     # silent-drop guard, never ``None`` / ``_DEAD_SCALAR``) carrying the SAME
     # ``creation_counter`` for SDL field ORDER. (S-rel-3 OUTPUT; S-input-5 INPUT.)
-    from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    from .core.descriptors import NativeRelationField  # noqa: PLC0415
 
     return NativeRelationField(related_model=model)
 
@@ -823,8 +821,8 @@ def convert_many_rel_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A ``NativeRelationField`` presence/ordering marker
-        (reverse FK / reverse M2M / reverse ``GenericRel``).
+        A "NativeRelationField" presence/ordering marker
+        (reverse FK / reverse M2M / reverse "GenericRel").
     """
     model = field.related_model
 
@@ -843,7 +841,7 @@ def convert_many_rel_to_djangomodel(
     # rendered by the native output compiler at all
     # (``output_compiler._is_many_relation`` is False for ``GenericRel``).
     # (S-rel-3/4 OUTPUT; S-input-5 INPUT.)
-    from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    from .core.descriptors import NativeRelationField  # noqa: PLC0415
 
     return NativeRelationField(related_model=model)
 
@@ -865,7 +863,7 @@ def convert_field_to_djangomodel(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A ``NativeRelationField`` presence/ordering marker.
+        A "NativeRelationField" presence/ordering marker.
     """
     model = get_related_model(field)
 
@@ -879,7 +877,7 @@ def convert_field_to_djangomodel(
     # (the silent-drop guard, never ``None`` / ``_DEAD_SCALAR`` — cf. test_issue52
     # self-ref O2O) with the SAME ``creation_counter`` for SDL field ORDER.
     # (S-rel-2 OUTPUT; S-input-5 INPUT.)
-    from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    from .core.descriptors import NativeRelationField  # noqa: PLC0415
 
     return NativeRelationField(related_model=model)
 
@@ -899,7 +897,7 @@ def convert_generic_foreign_key_to_object(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A ``NativeRelationField`` presence/ordering marker.
+        A "NativeRelationField" presence/ordering marker.
     """
     model = field.model
 
@@ -916,7 +914,7 @@ def convert_generic_foreign_key_to_object(
     # SAME ``creation_counter`` for SDL field ORDER. The flat type, union Field,
     # and mis-order WARNING are emitted by the native union injector.
     # (S-rel-4 / S-input-5.)
-    from .native.descriptors import NativeRelationField  # noqa: PLC0415
+    from .core.descriptors import NativeRelationField  # noqa: PLC0415
 
     return NativeRelationField(related_model=model)
 
@@ -937,7 +935,7 @@ def convert_generic_relation_to_object_list(
 
     Returns:
         A GraphQL Dynamic field that resolves lazily to the related list, or a
-        ``NativeRelationField`` marker on the native OUTPUT path.
+        "NativeRelationField" marker on the native OUTPUT path.
     """
     model = field.related_model
 
@@ -952,7 +950,7 @@ def convert_generic_relation_to_object_list(
     # field (``GenericRelation`` has no input) — return the dead-scalar sentinel so
     # ``construct_fields`` OMITS it. (S-rel-4.)
     if input_flag is None:
-        from .native.descriptors import NativeRelationField  # noqa: PLC0415
+        from .core.descriptors import NativeRelationField  # noqa: PLC0415
 
         return NativeRelationField(related_model=model)
     return _DEAD_SCALAR
@@ -1033,7 +1031,17 @@ def convert_postgres_field_to_string(
     input_flag: str | None = None,
     nested_field: bool = False,
 ) -> Any:
-    """Convert PostgreSQL HStore and JSON fields to the GraphQL JSONString type.
+    """HStore / JSON field converter descriptor — DEAD on the native path.
+
+    S-del-backend-11: the native OUTPUT compiler derives the scalar for
+    HStore/JSON fields directly from "model._meta" — "output_compiler" maps
+    "models.JSONField" to the raw "JSON" scalar ("GdxJSON") by default, so
+    structured objects/lists pass through as-is on the wire. The
+    string-encoded "JSONString" wire is an opt-in escape hatch via the
+    "JSONField(n=True)" descriptor flag, not the default mapping. The native
+    INPUT compiler and the filter-input map follow the same default
+    ("filtering.native_schema"). No converter descriptor is read, so this
+    returns the dead-scalar sentinel to keep "construct_fields" SDL-neutral.
 
     Args:
         field: the Django HStore or JSON field to convert.
@@ -1042,7 +1050,7 @@ def convert_postgres_field_to_string(
         nested_field: whether the field is being converted as nested.
 
     Returns:
-        A GraphQL JSONString field for the Django field.
+        The "_DEAD_SCALAR" sentinel so "construct_fields" OMITS the field.
     """
     return _DEAD_SCALAR
 

@@ -62,11 +62,12 @@ The base install never imports `channels`; only the `subscriptions` extra does.
 
 ```python
 from django.contrib.auth.models import User
-from django_graphex import (
-    DjangoGraphQLSchema, DjangoListObjectField, DjangoListObjectType,
-    DjangoModelMutation, ObjectType,
-)
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.mutation import DjangoModelMutation
+from django_graphex.core import ObjectType
 from django_graphex.paginations import LimitOffsetGraphqlPagination
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoListObjectType
 
 
 class UserListType(DjangoListObjectType):
@@ -126,9 +127,10 @@ DJANGO_GRAPHEX = {
 To use directives, add the middleware and pass `all_directives` to the schema:
 
 ```python
-DJANGO_GRAPHEX = {"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]}
+DJANGO_GRAPHEX = {"MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"]}
 
-from django_graphex import all_directives, DjangoGraphQLSchema
+from django_graphex.directives import all_directives
+from django_graphex.schema import DjangoGraphQLSchema
 schema = DjangoGraphQLSchema(query=Query, mutation=Mutation, directives=all_directives)
 ```
 

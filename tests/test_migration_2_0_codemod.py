@@ -1,15 +1,15 @@
-"""Tests for ``scripts/migrate_2_0.py`` — the v1.x -> v2.0 migration codemod.
+"""Tests for "scripts/migrate_2_0.py" — the v1.x -> v2.0 migration codemod.
 
 v2.0 removed the graphene backend entirely (decision #1603). This codemod helps
 users move their project off graphene:
 
-* MECHANICAL REWRITE (``--apply`` / ``rewrite_source``): the schema/middleware
-  settings namespace ``GRAPHENE = {...}`` is folded into the SINGLE
-  ``DJANGO_GRAPHEX = {...}`` namespace (rename when no target dict exists, key
+* MECHANICAL REWRITE ("--apply" / "rewrite_source"): the schema/middleware
+  settings namespace "GRAPHENE = {...}" is folded into the SINGLE
+  "DJANGO_GRAPHEX = {...}" namespace (rename when no target dict exists, key
   MERGE when it does).
 * REPORT-AND-FLAG (always): graphene constructs that v2.0 no longer accepts —
-  ``graphene.Argument(...)`` in a ``Mutation`` ``class args``, ``graphene.ObjectType``
-  schema roots, ``graphene.Schema(...)`` and graphene field descriptors — are
+  "graphene.Argument(...)" in a "Mutation" "class args", "graphene.ObjectType"
+  schema roots, "graphene.Schema(...)" and graphene field descriptors — are
   detected and surfaced with actionable native-API guidance.
 
 IMPORTANT: graphene is UNINSTALLED in v2.0. This test must NEVER import graphene.
@@ -19,12 +19,14 @@ fragments / appear only inside string literals — never on a physical import li
 Run:
     .venv/bin/python -m pytest -q tests/test_migration_2_0_codemod.py
 """
+
 from __future__ import annotations
 
 import ast
 import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -35,7 +37,18 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _CODEMOD_PATH = _REPO_ROOT / "scripts" / "migrate_2_0.py"
 
 
-def _load_codemod():
+def _load_codemod() -> ModuleType:
+    """Load the migration codemod module directly from its file path.
+
+    The scripts directory is not a package, so the module is imported by
+    spec from its absolute path and registered in "sys.modules" before
+    execution (dataclass field-type resolution reads
+    "sys.modules[cls.__module__].__dict__", which requires the module to
+    already be registered under its own name).
+
+    Returns:
+        ModuleType: The imported migrate_2_0 module object.
+    """
     spec = importlib.util.spec_from_file_location("migrate_2_0", _CODEMOD_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
@@ -63,12 +76,12 @@ _IMPORT_GRAPHENE = f"import {_G}"
 # and drops the GRAPHENE assignment.
 SETTINGS_FIXTURE = (
     "# settings.py\n"
-    'GRAPHENE = {\n'
+    "GRAPHENE = {\n"
     '    "SCHEMA": "myapp.schema.schema",\n'
     '    "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],\n'
     "}\n"
     "\n"
-    'DJANGO_GRAPHEX = {\n'
+    "DJANGO_GRAPHEX = {\n"
     '    "DEFAULT_PAGE_SIZE": 20,\n'
     "}\n"
 )
@@ -77,7 +90,7 @@ SETTINGS_FIXTURE = (
 # The codemod renames GRAPHENE -> DJANGO_GRAPHEX in place.
 SETTINGS_RENAME_FIXTURE = (
     "# settings.py\n"
-    'GRAPHENE = {\n'
+    "GRAPHENE = {\n"
     '    "SCHEMA": "myapp.schema.schema",\n'
     '    "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],\n'
     "}\n"
@@ -85,7 +98,7 @@ SETTINGS_RENAME_FIXTURE = (
 
 SCHEMA_FIXTURE = (
     f"{_IMPORT_GRAPHENE}\n"
-    "from django_graphex import DjangoListObjectField\n"
+    "from django_graphex.fields import DjangoListObjectField\n"
     "\n"
     "\n"
     f"class Query({_G}.ObjectType):\n"
@@ -110,32 +123,51 @@ SCHEMA_FIXTURE = (
 # 1. GRAPHENE -> DJANGO_GRAPHEX settings rewrite (the mechanical, safe          #
 #    transform): rename when no target dict exists, MERGE when it does.         #
 # --------------------------------------------------------------------------- #
-def test_rewrite_merges_graphene_keys_into_existing_django_graphex():
-    """When a ``DJANGO_GRAPHEX`` dict exists, ``GRAPHENE`` keys are merged into it."""
+def test_rewrite_merges_graphene_keys_into_existing_django_graphex() -> None:
+    """When a "DJANGO_GRAPHEX" dict exists, "GRAPHENE" keys are merged into it.
+
+    This test breaks if the codemod starts dropping legacy settings values or
+    stops repointing the flat middleware import path to its v2.0 submodule.
+    """
     new_source, changed = migrate_2_0.rewrite_source(SETTINGS_FIXTURE)
 
     assert changed is True
     # The unified namespace remains; the legacy GRAPHENE assignment is gone.
     assert "DJANGO_GRAPHEX = {" in new_source
     assert "GRAPHENE = {" not in new_source
-    # The merged schema/middleware values are preserved verbatim.
+    # SCHEMA is merged verbatim; the flat middleware path is repointed to its
+    # v2.0 submodule path (the package root no longer re-exports the class).
     assert '"SCHEMA": "myapp.schema.schema"' in new_source
-    assert '"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]' in new_source
+    assert (
+        '"MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"]'
+        in new_source
+    )
 
 
-def test_rewrite_renames_graphene_when_no_django_graphex_dict():
-    """With ONLY a legacy ``GRAPHENE`` dict, it is renamed to ``DJANGO_GRAPHEX``."""
+def test_rewrite_renames_graphene_when_no_django_graphex_dict() -> None:
+    """With ONLY a legacy "GRAPHENE" dict, it is renamed to "DJANGO_GRAPHEX".
+
+    This test breaks if the codemod stops handling the no-existing-target
+    case and only supports merging into a pre-existing dict.
+    """
     new_source, changed = migrate_2_0.rewrite_source(SETTINGS_RENAME_FIXTURE)
 
     assert changed is True
     assert "DJANGO_GRAPHEX = {" in new_source
     assert "GRAPHENE = {" not in new_source
     assert '"SCHEMA": "myapp.schema.schema"' in new_source
-    assert '"MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"]' in new_source
+    assert (
+        '"MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"]'
+        in new_source
+    )
 
 
-def test_rewritten_settings_imports_cleanly_and_unifies_into_django_graphex():
-    """The rewritten fixture is valid Python and exposes a single merged DJANGO_GRAPHEX."""
+def test_rewritten_settings_imports_cleanly_and_unifies_into_django_graphex() -> None:
+    """The rewritten fixture is valid Python and exposes a single merged DJANGO_GRAPHEX.
+
+    This test breaks if the rewrite produces syntactically invalid source or
+    if the merged dict's values diverge from the originals.
+    """
     new_source, _ = migrate_2_0.rewrite_source(SETTINGS_FIXTURE)
 
     # Parses (valid Python).
@@ -146,17 +178,21 @@ def test_rewritten_settings_imports_cleanly_and_unifies_into_django_graphex():
     exec(compile(tree, "<rewritten-settings>", "exec"), namespace)  # noqa: S102
 
     assert "GRAPHENE" not in namespace
-    # The schema/middleware keys are merged into the SINGLE DJANGO_GRAPHEX dict,
-    # alongside the package's own keys.
+    # The schema/middleware keys are merged into the SINGLE DJANGO_GRAPHEX dict;
+    # the flat middleware path is repointed to its v2.0 submodule path.
     assert namespace["DJANGO_GRAPHEX"] == {
         "DEFAULT_PAGE_SIZE": 20,
         "SCHEMA": "myapp.schema.schema",
-        "MIDDLEWARE": ["django_graphex.GraphQLDirectiveMiddleware"],
+        "MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"],
     }
 
 
-def test_rewrite_is_idempotent_and_noop_without_graphene_namespace():
-    """A file with no ``GRAPHENE`` namespace is returned unchanged (changed=False)."""
+def test_rewrite_is_idempotent_and_noop_without_graphene_namespace() -> None:
+    """A file with no "GRAPHENE" namespace is returned unchanged (changed=False).
+
+    This test breaks if the codemod stops being a safe no-op on already
+    migrated, or never-graphene, settings files.
+    """
     already_migrated = 'DJANGO_GRAPHEX = {"SCHEMA": "myapp.schema.schema"}\n'
     new_source, changed = migrate_2_0.rewrite_source(already_migrated)
 
@@ -164,32 +200,92 @@ def test_rewrite_is_idempotent_and_noop_without_graphene_namespace():
     assert new_source == already_migrated
 
 
+def test_rewrite_repoints_flat_middleware_paths_standalone() -> None:
+    """A DJANGO_GRAPHEX-only project with FLAT middleware paths gets them repointed.
+
+    The flat "django_graphex.<Name>" path no longer resolves once the root
+    re-exports were removed, so it must be rewritten to its v2.0 submodule
+    path even when there is no legacy "GRAPHENE" dict to merge.
+
+    This test breaks if the flat-path repoint stops firing for projects that
+    already use the DJANGO_GRAPHEX namespace.
+    """
+    source = (
+        "DJANGO_GRAPHEX = {\n"
+        '    "MIDDLEWARE": [\n'
+        '        "django_graphex.GraphQLDirectiveMiddleware",\n'
+        '        "django_graphex.DisableIntrospectionMiddleware",\n'
+        '        "django_graphex.AuthenticatedFieldsMiddleware",\n'
+        "    ],\n"
+        "}\n"
+    )
+    new_source, changed = migrate_2_0.rewrite_source(source)
+
+    assert changed is True
+    assert "django_graphex.middleware.GraphQLDirectiveMiddleware" in new_source
+    assert "django_graphex.security.DisableIntrospectionMiddleware" in new_source
+    assert "django_graphex.security.AuthenticatedFieldsMiddleware" in new_source
+    # No flat path survives (the deep paths never contain the flat substring).
+    assert '"django_graphex.GraphQLDirectiveMiddleware"' not in new_source
+    assert '"django_graphex.DisableIntrospectionMiddleware"' not in new_source
+    assert '"django_graphex.AuthenticatedFieldsMiddleware"' not in new_source
+
+
+def test_middleware_repoint_is_idempotent() -> None:
+    """Re-running on already-submodule middleware paths is a no-op (changed=False).
+
+    This test breaks if the codemod starts rewriting paths that are already
+    on their correct v2.0 submodule location.
+    """
+    already = (
+        "DJANGO_GRAPHEX = {\n"
+        '    "MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"],\n'
+        "}\n"
+    )
+    new_source, changed = migrate_2_0.rewrite_source(already)
+
+    assert changed is False
+    assert new_source == already
+
+
 # --------------------------------------------------------------------------- #
 # 2. REPORT-AND-FLAG graphene constructs v2.0 no longer accepts                 #
 # --------------------------------------------------------------------------- #
-def test_analyze_flags_graphene_argument_in_mutation_args():
-    """A ``graphene.Argument(...)`` is flagged with native ``GraphQLArgument`` guidance."""
+def test_analyze_flags_graphene_argument_in_mutation_args() -> None:
+    """A "graphene.Argument(...)" is flagged with native "GraphQLArgument" guidance.
+
+    This test breaks if the analyzer stops recognizing the legacy Mutation
+    "class args" pattern or loses the "class Arguments" migration pointer.
+    """
     findings = migrate_2_0.analyze_source(SCHEMA_FIXTURE, path="schema.py")
 
     arg_findings = [f for f in findings if f.kind == "graphene-argument"]
     assert arg_findings, "graphene.Argument(...) must be flagged"
     guidance = arg_findings[0].guidance
     assert "GraphQLArgument" in guidance
-    # It must point at the breaking-change semantics (clean break / TypeError).
-    assert "class args" in guidance or "Mutation" in guidance
+    # It must point at the native v2.0 arguments container (`class Arguments`).
+    assert "class Arguments" in guidance
 
 
-def test_analyze_flags_graphene_objecttype_root():
-    """``graphene.ObjectType`` roots are flagged with the native ``ObjectType`` guidance."""
+def test_analyze_flags_graphene_objecttype_root() -> None:
+    """ "graphene.ObjectType" roots are flagged with the native "ObjectType" guidance.
+
+    This test breaks if the analyzer stops detecting graphene's ObjectType
+    base class or drops the native import guidance from the finding.
+    """
     findings = migrate_2_0.analyze_source(SCHEMA_FIXTURE, path="schema.py")
 
     root_findings = [f for f in findings if f.kind == "graphene-objecttype"]
     assert root_findings, "graphene.ObjectType root must be flagged"
-    assert "from django_graphex import ObjectType" in root_findings[0].guidance
+    assert "from django_graphex.core import ObjectType" in root_findings[0].guidance
 
 
-def test_analyze_flags_graphene_schema_root():
-    """``graphene.Schema(...)`` is flagged with the ``DjangoGraphQLSchema`` guidance."""
+def test_analyze_flags_graphene_schema_root() -> None:
+    """ "graphene.Schema(...)" is flagged with the "DjangoGraphQLSchema" guidance.
+
+    This test breaks if the analyzer stops detecting the legacy schema root
+    constructor or loses its native replacement guidance.
+    """
     findings = migrate_2_0.analyze_source(SCHEMA_FIXTURE, path="schema.py")
 
     schema_findings = [f for f in findings if f.kind == "graphene-schema"]
@@ -197,9 +293,13 @@ def test_analyze_flags_graphene_schema_root():
     assert "DjangoGraphQLSchema" in schema_findings[0].guidance
 
 
-def test_analyze_flags_graphene_field_descriptor():
-    """A graphene field descriptor (``graphene.Boolean()`` / ``graphene.String()``)
-    is flagged with the native ``field(...)`` guidance."""
+def test_analyze_flags_graphene_field_descriptor() -> None:
+    """A graphene field descriptor is flagged with the native "field(...)" guidance.
+
+    Covers both "graphene.Boolean()" and "graphene.String()" style
+    descriptors. This test breaks if the analyzer stops recognizing graphene
+    field descriptor calls as breaking constructs.
+    """
     findings = migrate_2_0.analyze_source(SCHEMA_FIXTURE, path="schema.py")
 
     desc_findings = [f for f in findings if f.kind == "graphene-field-descriptor"]
@@ -207,8 +307,12 @@ def test_analyze_flags_graphene_field_descriptor():
     assert "field(" in desc_findings[0].guidance
 
 
-def test_analyze_reports_line_numbers():
-    """Every finding carries a 1-based line number so the report is actionable."""
+def test_analyze_reports_line_numbers() -> None:
+    """Every finding carries a 1-based line number so the report is actionable.
+
+    This test breaks if the analyzer starts emitting findings with a missing,
+    zero, or wrong source path.
+    """
     findings = migrate_2_0.analyze_source(SCHEMA_FIXTURE, path="schema.py")
     assert findings, "the schema fixture has graphene usage to flag"
     for finding in findings:
@@ -216,10 +320,15 @@ def test_analyze_reports_line_numbers():
         assert finding.path == "schema.py"
 
 
-def test_analyze_clean_native_source_yields_no_findings():
-    """A native (graphene-free) module produces zero findings."""
+def test_analyze_clean_native_source_yields_no_findings() -> None:
+    """A native (graphene-free) module produces zero findings.
+
+    This test breaks if the analyzer starts false-flagging native
+    django_graphex constructs as legacy graphene usage.
+    """
     native_source = (
-        "from django_graphex import DjangoGraphQLSchema, ObjectType, field\n"
+        "from django_graphex.schema import DjangoGraphQLSchema\n"
+        "from django_graphex.core import ObjectType, field\n"
         "from django_graphex.fields import DjangoListObjectField\n"
         "from graphql import GraphQLBoolean\n"
         "\n"
@@ -238,8 +347,12 @@ def test_analyze_clean_native_source_yields_no_findings():
 # --------------------------------------------------------------------------- #
 # 3. report formatting + end-to-end run on the fixtures                         #
 # --------------------------------------------------------------------------- #
-def test_format_report_lists_all_construct_kinds():
-    """The human report names each detected breaking construct."""
+def test_format_report_lists_all_construct_kinds() -> None:
+    """The human report names each detected breaking construct.
+
+    This test breaks if the formatted report stops surfacing every kind of
+    graphene finding or drops the actionable native-API pointers.
+    """
     findings = migrate_2_0.analyze_source(SCHEMA_FIXTURE, path="schema.py")
     report = migrate_2_0.format_report(findings)
 
@@ -251,8 +364,13 @@ def test_format_report_lists_all_construct_kinds():
     assert "DjangoGraphQLSchema" in report
 
 
-def test_codemod_module_does_not_import_graphene():
-    """The codemod itself must never import graphene (it is uninstalled in v2.0)."""
+def test_codemod_module_does_not_import_graphene() -> None:
+    """The codemod itself must never import graphene (it is uninstalled in v2.0).
+
+    This test breaks if the codemod gains a hard dependency on graphene,
+    which would make it unusable in a v2.0 environment where the package is
+    not installed.
+    """
     assert "graphene" not in sys.modules or sys.modules.get("graphene") is None
     # The module's source has no top-level graphene import.
     source = _CODEMOD_PATH.read_text(encoding="utf-8")
@@ -267,14 +385,30 @@ def test_codemod_module_does_not_import_graphene():
 
 @pytest.fixture
 def project_tree(tmp_path: Path) -> Path:
+    """Write the settings and schema fixtures into a throwaway project tree.
+
+    Args:
+        tmp_path: Pytest's per-test temporary directory.
+
+    Returns:
+        Path: The temporary directory containing "settings.py" and
+        "schema.py" seeded with the module-level fixtures.
+    """
     (tmp_path / "settings.py").write_text(SETTINGS_FIXTURE, encoding="utf-8")
     (tmp_path / "schema.py").write_text(SCHEMA_FIXTURE, encoding="utf-8")
     return tmp_path
 
 
-def test_run_apply_rewrites_settings_file_in_place(project_tree: Path):
-    """``run(paths, apply=True)`` rewrites the GRAPHENE namespace on disk and
-    flags the graphene constructs in schema.py (which it does NOT rewrite)."""
+def test_run_apply_rewrites_settings_file_in_place(project_tree: Path) -> None:
+    """ "run(paths, apply=True)" rewrites settings.py and flags schema.py without touching it.
+
+    Args:
+        project_tree: Temporary project directory seeded with the settings
+            and schema fixtures.
+
+    This test breaks if "--apply" starts mutating report-only files like
+    schema.py, or if it stops actually rewriting settings.py on disk.
+    """
     result = migrate_2_0.run([str(project_tree)], apply=True)
 
     rewritten = (project_tree / "settings.py").read_text(encoding="utf-8")
@@ -293,8 +427,16 @@ def test_run_apply_rewrites_settings_file_in_place(project_tree: Path):
     assert "graphene-schema" in flagged_kinds
 
 
-def test_run_report_only_does_not_mutate_files(project_tree: Path):
-    """Without ``apply=True`` the codemod is read-only (report + would-change)."""
+def test_run_report_only_does_not_mutate_files(project_tree: Path) -> None:
+    """Without "apply=True" the codemod is read-only (report + would-change).
+
+    Args:
+        project_tree: Temporary project directory seeded with the settings
+            and schema fixtures.
+
+    This test breaks if the default (non-apply) run mode starts mutating
+    files on disk instead of only reporting what would change.
+    """
     settings_before = (project_tree / "settings.py").read_text(encoding="utf-8")
 
     result = migrate_2_0.run([str(project_tree)], apply=False)

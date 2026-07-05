@@ -34,6 +34,7 @@ class UserMutation(DjangoModelMutation):
 | `output_field_name` | `str` | `'{model}'` | Name of output field |
 | `description` | `str` | Auto-generated | Mutation description |
 | `nested_fields` | `dict` | `{}` | Nested field configuration |
+| `model_operations` | `tuple` | `("create", "update", "delete")` | Which CRUD operations to generate; any subset of `("create", "update", "delete")`. Calling the `*Field()` builder for an excluded operation raises `AttributeError`. |
 
 ### Fields
 
@@ -170,7 +171,7 @@ Get all mutation fields (create, delete, update).
 === "Basic Mutation"
 
     ```python
-    from django_graphex import DjangoModelMutation
+    from django_graphex.mutation import DjangoModelMutation
     from .models import User
 
     class UserMutation(DjangoModelMutation):
@@ -208,16 +209,15 @@ Get all mutation fields (create, delete, update).
 === "Custom Arguments"
 
     ```python
-    from graphql import GraphQLArgument, GraphQLBoolean
+    from django_graphex.core import BooleanField
 
     class UserMutation(DjangoModelMutation):
         class Meta:
             model = User
 
         class Arguments:
-            send_email = GraphQLArgument(
-                GraphQLBoolean,
-                default_value=False,
+            send_email = BooleanField(
+                default=False,
                 description="Send welcome email",
             )
 
@@ -256,7 +256,8 @@ Get all mutation fields (create, delete, update).
 === "Individual Fields"
 
     ```python
-    from django_graphex import DjangoGraphQLSchema, ObjectType
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
 
     class Mutation(ObjectType):
         create_user = UserMutation.CreateField()
@@ -269,7 +270,8 @@ Get all mutation fields (create, delete, update).
 === "All Fields at Once"
 
     ```python
-    from django_graphex import DjangoGraphQLSchema, ObjectType
+    from django_graphex.core import ObjectType
+    from django_graphex.schema import DjangoGraphQLSchema
 
     class Mutation(ObjectType):
         create_user, delete_user, update_user = UserMutation.MutationFields()
@@ -378,28 +380,11 @@ mutation DeleteUser($id: ID!) {
 }
 ```
 
-## SerializerMutationOptions
+!!! note "Internal options container"
 
-Configuration options class for `DjangoModelMutation`.
-
-```python
-class SerializerMutationOptions(BaseOptions)
-```
-
-### Attributes
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `fields` | `dict` | GraphQL fields for the mutation |
-| `input_fields` | `dict` | Input fields configuration |
-| `interfaces` | `tuple` | GraphQL interfaces |
-| `model` | `Model` | Django model class |
-| `pydantic_model` | `BaseModel` | Pydantic model used for validation |
-| `action` | `str` | Mutation action type |
-| `arguments` | `dict` | GraphQL arguments |
-| `output` | `ObjectType` | Output type |
-| `resolver` | `Callable` | Resolver function |
-| `nested_fields` | `dict` | Nested field configuration |
+    `DjangoModelMutation._meta` is a `NativeObjectTypeOptions` instance
+    (`django_graphex.core.base.NativeObjectTypeOptions`). It is an internal
+    detail — the public API is the `Meta` class options documented above.
 
 ## Advanced Usage
 
@@ -481,16 +466,15 @@ class UserMutation(DjangoModelMutation):
 Standard error type used in mutation responses.
 
 ```python
-from graphql import GraphQLList, GraphQLNonNull, GraphQLString
-from django_graphex import field
-from django_graphex.native.base import ObjectType
-
-class ErrorType(ObjectType):
-    field = field(GraphQLNonNull(GraphQLString))                  # String!
-    messages = field(
-        GraphQLNonNull(GraphQLList(GraphQLNonNull(GraphQLString)))  # [String!]!
-    )
+from django_graphex.errors import ErrorType
 ```
+
+`ErrorType` is a native `ObjectType` (graphene-free) with two fields:
+
+| Field | GraphQL type | Description |
+|-------|-------------|-------------|
+| `field` | `String!` | The name of the field that failed validation |
+| `messages` | `[String!]!` | One or more error messages for that field |
 
 ## Best Practices
 
