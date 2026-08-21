@@ -570,19 +570,26 @@ async def test_native_lookup_filter_delivers_verified_and_drops() -> None:
     try:
         layer = InMemoryChannelLayer()
         sub = _make_subscription()
+        # 2.0.1: relation traversal ("author__name") is rejected in CLIENT
+        # filters (it made delivery a boolean oracle over the related model), so
+        # the forward-FK lookup is supplied by the SERVER scope hook — which is
+        # exempt from filter-key validation by design.
+        sub.subscription_scope = classmethod(
+            lambda _cls, _ctx, **_kw: {"author__name": "alice"}
+        )
         schema = _native_schema(sub)
         spec = sub._build_native_spec(schema, _DOC)
         # spec.db_exists is the REAL single-row .exists() narrowing.
         assert spec.db_exists == sub._native_db_exists
-        # Filter on a forward FK lookup that the in-memory equality gate cannot
-        # resolve -> needs the DB .exists() narrowing (spec.db_exists).
+        # A forward-FK lookup the in-memory equality gate cannot resolve ->
+        # needs the DB .exists() narrowing (spec.db_exists).
         source = await sub._native_subscribe(
             layer,
             schema,
             _DOC,
             action="create",
             obj_id=None,
-            filters={"author__name": "alice"},
+            filters=None,
             context=None,
         )
         assert source.db_verify is not None, "native_subscribe must wire db_verify"

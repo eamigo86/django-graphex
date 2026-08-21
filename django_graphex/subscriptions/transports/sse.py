@@ -61,7 +61,7 @@ from graphql import (
 from graphql.utilities import get_operation_ast
 
 from ...settings import graphql_api_settings
-from ..streaming import SubscriptionSpec, drive_subscription
+from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterator, Callable
@@ -122,9 +122,12 @@ class TransportContext:
             'session': request.session}" when available).
         request: The originating "HttpRequest" (transport-specific; not part of
             the neutral contract).
+        middleware: The connection's "DJANGO_GRAPHEX['MIDDLEWARE']" manager
+            (built ONCE per request), read by the subscribe entry and carried
+            onto the delivery spec.
     """
 
-    __slots__ = ("user", "scope", "request")
+    __slots__ = ("user", "scope", "request", "middleware")
 
     def __init__(self, request: "HttpRequest") -> None:
         """Build the neutral context from an "HttpRequest".
@@ -138,6 +141,12 @@ class TransportContext:
         session = getattr(request, "session", None)
         if session is not None:
             self.scope["session"] = session
+        # SECURITY (2.0.1): subscriptions are served ONLY by this transport and
+        # the WS one, and neither used to build a MiddlewareManager — so every
+        # configured GraphQL middleware (AuthenticatedFieldsMiddleware included)
+        # was inert on subscriptions. One manager per connection, shared by the
+        # subscribe entry and the per-event delivery execute.
+        self.middleware = build_middleware_manager()
 
 
 def _read_request_body(request: "HttpRequest") -> dict[str, Any]:
@@ -187,28 +196,34 @@ def _frame_next(result: ExecutionResult) -> bytes:
 _COMPLETE_FRAME: bytes = b"event: complete\ndata: \n\n"
 
 
-def _make_spec(schema: "GraphQLSchema", document: "DocumentNode") -> SubscriptionSpec:
+def _make_spec(
+    schema: "GraphQLSchema",
+    document: "DocumentNode",
+    middleware: Any = None,
+) -> SubscriptionSpec:
     """Build the minimal driver spec carrying the live schema + parsed document.
 
-    "drive_subscription" reads ONLY "spec.schema" and "spec.document" (the
-    per-event "execute" inputs); every other spec field is the subscribe-time
-    concern already handled by "create_source_event_stream" (which ran the
-    field's own native subscribe entry). So the transport supplies a spec whose
-    sole job is to carry the live schema + the per-request selection set into the
-    delivery "execute".
+    "drive_subscription" reads ONLY "spec.schema", "spec.document" and
+    "spec.middleware" (the per-event "execute" inputs); every other spec field is
+    the subscribe-time concern already handled by "create_source_event_stream"
+    (which ran the field's own native subscribe entry). So the transport supplies
+    a spec whose sole job is to carry the live schema, the per-request selection
+    set and the connection's middleware chain into the delivery "execute".
 
     Args:
         schema: The live native "GraphQLSchema".
         document: The parsed subscription "DocumentNode".
+        middleware: The connection's "MiddlewareManager" (or "None").
 
     Returns:
-        A "SubscriptionSpec" carrying schema + document for delivery.
+        A "SubscriptionSpec" carrying schema + document + middleware for delivery.
     """
     return SubscriptionSpec(
         model_label="",
         stream="",
         schema=schema,
         document=document,
+        middleware=middleware,
     )
 
 
@@ -327,7 +342,7 @@ def subscription_sse_view(
                 else:
                     started_source = source_or_result  # type: ignore[assignment]
 
-        spec = _make_spec(conn_schema, document)
+        spec = _make_spec(conn_schema, document, context.middleware)
 
         async def _event_stream() -> "AsyncIterator[bytes]":
             # A pre-stream result (validation error / subscribe deny) is delivered

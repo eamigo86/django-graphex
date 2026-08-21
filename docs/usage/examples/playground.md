@@ -285,7 +285,7 @@ playground mounts the SSE view on that route) before connecting.
 More things to try:
 
 - **Per-subscriber filters** — subscribe with
-  `commentSubscription(action: ALL_ACTIONS, filters: { post: 1 }) { id text }`
+  `commentSubscription(action: ALL_ACTIONS, filters: "{\"post\": 1}") { id text }`
   and only that post's comments are delivered.
 - **Private subscription** — log in at `/admin/` first, then subscribe to
   `noteSubscription(action: ALL_ACTIONS) { id title }` from the same browser

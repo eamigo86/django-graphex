@@ -16,6 +16,7 @@ import pytest
 from django.contrib.auth.models import AbstractUser
 
 from django_graphex.subscriptions import bindings
+from django_graphex.subscriptions import subscription as subscription_mod
 
 from .schema import UserSubscription
 
@@ -93,7 +94,9 @@ def test_signal_registration_is_idempotent(
     UserSubscription.get_binding()
 
     with mock.patch.object(
-        bindings, "serialize_instance", wraps=bindings.serialize_instance
+        subscription_mod,
+        "serialize_instance",
+        wraps=subscription_mod.serialize_instance,
     ) as spy:
         django_user_model.objects.create(username="dave")
 

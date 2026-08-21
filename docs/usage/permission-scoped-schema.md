@@ -169,12 +169,20 @@ codegen, `__schema` queries — reflects **their** schema. Side by side
       allPosts: PostListType
     }
 
+    type PostGenericType {
+      id: ID!
+      title: String
+      body: String
+    }
+
     type Mutation {
       newsletterSignup: Boolean
     }
 
     # comment / allComments, every Post mutation, the whole Subscription
     # root and every type reachable only through them are ABSENT.
+    # So is PostGenericType.comments — the RELATION into Comment — because
+    # ana lacks blog.view_comment (see "Relation traversal" below).
     ```
 
 === "luis — `view_post` + `change_post`"
@@ -315,6 +323,46 @@ the runtime layer passes too.
     no public fields simply disappears for callers with no relevant perms
     (and an empty **Query** root triggers the generic `403` above).
 
+### Relation traversal is covered too
+
+Pruning is **not** limited to the root fields. Every generated field whose
+output type is a model type — a forward `ForeignKey`/`OneToOneField` object
+field, and the `<Model>ListType` container a `ManyToManyField` or a reverse FK
+renders as — requires the **target** model's read permission (`view_M`), the
+same one its own `retrieve`/`list` roots require.
+
+So ana, holding only `blog.view_post`, cannot reach comments the long way
+round:
+
+```graphql
+{ post(id: 1) { title comments { totalCount results { text } } } }
+```
+
+```json
+{
+  "errors": [
+    { "message": "Cannot query field 'comments' on type 'PostGenericType'." }
+  ]
+}
+```
+
+The relation field is simply **absent** from her `PostGenericType`, so this is
+the same not-found she gets for `allComments` — no authorization vocabulary, no
+confirmation that comments exist. A caller holding both `blog.view_post` and
+`blog.view_comment` keeps the field and reads straight through it.
+
+This holds however deep the path runs and whether or not the target model has
+root fields of its own: `Comment` exposed *only* through `Post.comments` is
+still gated by `blog.view_comment`.
+
+!!! note "Explicit labels win"
+
+    A field carrying an explicit
+    [`required_perms`](#labeling-custom-fields-and-mutations-required_perms)
+    label keeps that label — the target-model requirement is a *fallback*, used
+    only for the generated relation fields nothing else labels. A field
+    returning a plain (non-model) type stays untagged and therefore public.
+
 ## Layer 1: runtime enforcement with `DjangoModelPermissions`
 
 `permission_classes = [DjangoModelPermissions]` on a `DjangoModelType` checks
@@ -410,7 +458,9 @@ class PublishPostMutation(DjangoModelMutation):
         model = Post
 ```
 
-The schema's global label-set (the union of every stamped permission) is what a
+The schema's global label-set (the union of every stamped permission, plus the
+read permission of every model type reachable in the schema — that is what
+covers [relation traversal](#relation-traversal-is-covered-too)) is what a
 caller's permissions are projected onto — permissions outside it can never
 affect pruning, so unrelated grants don't fragment the
 [schema cache](#operations-the-pruned-schema-cache).

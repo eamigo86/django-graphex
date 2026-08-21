@@ -18,6 +18,7 @@ Each test asserts a real raised type / returned value / parsed result.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -55,6 +56,20 @@ def _make_subscription(**meta: Any) -> type[Subscription]:
         (Subscription,),
         {"__module__": __name__, "__qualname__": "PostSubscription", "Meta": meta_cls},
     )
+
+
+class _ResolveInfo:
+    """A minimal "GraphQLResolveInfo" stand-in for direct subscribe-factory calls.
+
+    The native subscribe factory runs the configured
+    "DJANGO_GRAPHEX['MIDDLEWARE']" chain (2.0.1: the transports are the only
+    subscription servers, so the chain is applied at the subscribe resolver), and
+    the bundled directive middleware reads "info.field_nodes" — so the stand-in
+    carries a directive-free field node.
+    """
+
+    context = None
+    field_nodes = (SimpleNamespace(directives=()),)
 
 
 # ---------------------------------------------------------------------------
@@ -335,11 +350,8 @@ async def test_native_subscribe_source_raises_without_channel_layer(
     # No channel layer configured → the factory must raise.
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: None)
 
-    class _Info:
-        context = None
-
     with pytest.raises(RuntimeError) as exc_info:
-        await field.subscribe(None, _Info(), action="create")
+        await field.subscribe(None, _ResolveInfo(), action="create")
     assert "No channel layer configured" in str(exc_info.value)
     assert sub_mod  # module referenced
 
@@ -385,10 +397,9 @@ async def test_native_subscribe_source_parses_json_string_filters(
         lambda cls, *a, **k: _capture_native_subscribe(*a, **k)
     )
 
-    class _Info:
-        context = None
-
-    await field.subscribe(None, _Info(), action="create", filters=json.dumps({"id": 7}))
+    await field.subscribe(
+        None, _ResolveInfo(), action="create", filters=json.dumps({"id": 7})
+    )
     # The JSON string was decoded to a dict before reaching the engine.
     assert captured["filters"] == {"id": 7}
 
@@ -429,9 +440,6 @@ async def test_native_subscribe_source_blank_filters_skip_json_branch(
         lambda cls, *a, **k: _capture(*a, **k)
     )
 
-    class _Info:
-        context = None
-
     # filters="" → coerced to None by ``or None`` (never enters the str branch).
-    await field.subscribe(None, _Info(), action="create", filters="")
+    await field.subscribe(None, _ResolveInfo(), action="create", filters="")
     assert captured["filters"] is None

@@ -801,3 +801,119 @@ class IsoLeakPost(DummyModel):
         null=True,
         on_delete=models.SET_NULL,
     )
+
+
+# --- Dedicated models for the relation permission-bypass regression test ---- #
+class PermRelPost(DummyModel):
+    """Post-like model owning a perm-gated reverse-FK relation.
+
+    Paired with "PermRelComment" so the permission-scoped-schema tests can
+    traverse "postRetrieve { comments { results { secretText } } }" with a
+    caller that holds only the "view_permrelpost" permission. Kept separate
+    from the shared "Post" model so the module never touches shared registry
+    slots.
+    """
+
+    title = models.CharField(max_length=200)
+
+
+class PermRelComment(DummyModel):
+    """Comment-like model reachable ONLY through "PermRelPost.comments".
+
+    Its "secret_text" column is the payload the relation-traversal bypass
+    leaked: a caller without "view_permrelcomment" must not be able to read it
+    through the parent's nested-list relation field.
+    """
+
+    post = models.ForeignKey(
+        PermRelPost, related_name="comments", on_delete=models.CASCADE
+    )
+    secret_text = models.TextField(default="")
+
+
+class PermRelAuthor(DummyModel):
+    """Author-like model reachable through a to-ONE relation on "PermRelArticle".
+
+    Backs the "no permission_classes anywhere" baseline: its type declares no
+    permission classes, so relation traversal from it must keep behaving
+    exactly as it did before the relation labels were introduced.
+    """
+
+    secret_name = models.CharField(max_length=100, default="")
+
+
+class PermRelArticle(DummyModel):
+    """Article-like model owning a forward FK to "PermRelAuthor".
+
+    Its "articles" reverse relation is the nested list the permission-class-free
+    baseline traverses.
+    """
+
+    title = models.CharField(max_length=200)
+    author = models.ForeignKey(
+        PermRelAuthor, related_name="articles", on_delete=models.CASCADE
+    )
+
+
+# --- Dedicated models for the filter-input shape-fork regression test ------ #
+# tests/core/test_filter_input_shape_fork.py filters the SAME model from two
+# contexts: as a ROOT list (its own "filter_fields") and as a NESTED relation
+# reached through a column its own type does not declare ("author__email").
+# Both contexts must converge on ONE "<Model>FilterInput" instance, so the
+# family is kept separate from the shared Author/Post slots (the test also
+# builds schemas in BOTH declaration orders).
+class FilterForkAuthor(DummyModel):
+    """Author-like relation target for the filter-input shape-fork test.
+
+    Declares both "name" (the column its own root type filters on) and
+    "email" (the column only the nested relation context filters on), which
+    is what forks the "FilterForkAuthorFilterInput" shape.
+    """
+
+    name = models.CharField(max_length=100)
+    email = models.EmailField(default="")
+
+
+class FilterForkPost(DummyModel):
+    """Post-like owner filtering "FilterForkAuthor" through a nested relation.
+
+    Its "filter_fields" reach through "author__email", a column the author's
+    own root type does not expose.
+    """
+
+    title = models.CharField(max_length=200)
+    author = models.ForeignKey(
+        FilterForkAuthor, related_name="posts", on_delete=models.CASCADE
+    )
+
+
+# --- Dedicated models for the 2.0.1 subscription security regressions ------ #
+# tests/subscriptions/test_security_2_0_1.py needs models it can subscribe to
+# WITHOUT touching the shared "User"/"Post" slots: the projection test registers
+# a live signal binding (which would leak extra group sends into every other
+# subscription test if it were wired on "User"), and the private-subscription
+# transport test registers an output type (last-registration-wins), which would
+# fork the shared "Post" type for whatever test runs next.
+class SecretRecord(DummyModel):
+    """Subscription target for the private-subscription transport tests.
+
+    Deliberately relation-free and unprojected: the transport tests only need a
+    model whose subscription field can be declared private.
+    """
+
+    title = models.CharField(max_length=200)
+
+
+class SecretLedger(DummyModel):
+    """Subscription target for the "only_fields"/"exclude_fields" projection tests.
+
+    Carries one public column ("label"), one sensitive column ("secret") and one
+    orderable column ("created") so the projection can be proven on BOTH the
+    declared filter set and the broadcast event payload, and so the client
+    filter lookup allow list can be proven against a real date/time column
+    (ordered lookups and date-part transforms both resolve on it).
+    """
+
+    label = models.CharField(max_length=100)
+    secret = models.CharField(max_length=128, default="")
+    created = models.DateTimeField(null=True)

@@ -558,11 +558,11 @@ for the full wire protocol of both transports).
 
 ### Filtered subscription (per-post comments)
 
-Subscribe with `filters: { post: <id> }` to receive only that post's comments:
+Subscribe with `filters: "{\"post\": <id>}"` to receive only that post's comments:
 
 ```graphql
 subscription {
-  commentSubscription(action: ALL_ACTIONS, filters: { post: 1 }) { id text }
+  commentSubscription(action: ALL_ACTIONS, filters: "{\"post\": 1}") { id text }
 }
 ```
 

@@ -12,6 +12,56 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 2.0.1 — 2026-07-05
+
+**Security release.** Five defects confirmed in 2.0.0 by a line-by-line audit of
+the released code. Upgrading is strongly recommended for any deployment using
+permissions, subscriptions, relation filtering, or a public GraphQL endpoint.
+
+### Security
+
+- **Relation traversal bypassed permission scoping.** Only generated root fields
+  carried the permission label the pruner reads, so a user could read a model
+  they had no `view_<model>` permission for by traversing a relation from a
+  parent they *could* read (`post { comments { ... } }`). Untagged fields now
+  fall back to the implicit label of their output type, and the schema label set
+  is widened accordingly, so `PERMISSION_SCOPED_SCHEMA` removes those relation
+  fields. See [Permission-Scoped Access](usage/permission-scoped-schema.md).
+- **Subscription client filters were an extraction oracle.** The filter
+  whitelist was built from the unprojected model, and only the segment before
+  the first `__` was validated — so a subscriber could probe any column
+  (including `password`) one comparison at a time via lookups such as
+  `startswith`, and could traverse into related models. `Meta.only_fields` /
+  `Meta.exclude_fields` are now honoured by the subscription backend, relation
+  traversal is rejected, and client filters accept only `exact`, `iexact`, `in`
+  and `isnull`. Ordered and pattern lookups (`startswith`, `icontains`, `gt`,
+  `regex`, `range`, date parts) are refused — move that logic to
+  `subscription_scope`. See [Subscriptions](usage/subscriptions.md).
+- **`private_subscription` was not enforced on either transport.**
+  `DJANGO_GRAPHEX['MIDDLEWARE']` was read only by `GraphQLView`, while
+  subscriptions are served exclusively by the SSE view and the WebSocket
+  consumer — so `AuthenticatedFieldsMiddleware` never ran and an anonymous
+  subscriber received protected events. Both transports now build and apply the
+  configured middleware chain for the subscribe and delivery paths.
+- **Sub-kilobyte documents could pin a worker (DoS).** The bundled depth and
+  cost validation rules re-walked each fragment once per reachable path, so a
+  ~1 KB document with fan-out fragments took over ten seconds of CPU — before
+  authentication, on any stock `GraphQLView`. Both rules now memoize each
+  fragment's contribution; reported depth and cost values are unchanged.
+
+### Fixed
+
+- **`<Model>FilterInput` name collision refused to build the schema.** Filtering
+  a relation by a column the related type does not itself declare (for example
+  `filter_fields = {"author__email": ("exact",)}`) produced two input types with
+  the same name and a hard `TypeError` at schema construction — the application
+  did not start. One canonical instance per model is now cached and widened in
+  place, converging regardless of build order.
+- **Documented `filters` syntax could never work.** Every snippet showed
+  `filters: { post: 7 }`, but the argument is a `String` carrying JSON, so the
+  object literal failed input coercion. Docs and the playground now show the
+  JSON-encoded form.
+
 ## 2.0.0 — 2026-06-17
 
 **graphene removed — `django-graphex` now runs on native graphql-core + Pydantic

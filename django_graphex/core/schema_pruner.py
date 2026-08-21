@@ -10,7 +10,13 @@ identity with the source (the FULL schema is a process singleton).
 Design (SDD "permission-scoped-schema" D2):
 
 - A field survives iff its "gdx_required_perms" (a "frozenset") is a subset of
-  "granted". An UNTAGGED field (no extension) is PUBLIC and always survives.
+  "granted". An UNTAGGED field falls back to the IMPLICIT label of its output
+  type (the target model's read permission, via
+  "perm_labels.implicit_perms_for_type") — this is what gates RELATION and
+  NESTED-LIST fields, which are built with no permission context and would
+  otherwise be "untagged == public" and let a caller read a model through a
+  relation after its own roots were pruned away. An untagged field whose output
+  type is not a generated model-backed type is PUBLIC and always survives.
 - A subscription field carries a per-action "dict{action: frozenset}" instead.
   Its "action" enum is rebuilt per signature: an action-value survives iff its
   perms are held; "ALL_ACTIONS" survives only when every write verb is held.
@@ -63,6 +69,8 @@ from graphql import (
     is_union_type,
 )
 
+from django_graphex.core.perm_labels import implicit_perms_for_type
+
 __all__ = ("prune_schema",)
 
 # The subscribe action-value whose perms span every write verb. ``all_actions``
@@ -104,6 +112,8 @@ class _Pruner:
         # Memoized clones, keyed by type name, so shared references stay shared
         # within the pruned universe (and self-references resolve).
         self._clones: dict[str, Any] = {}
+        # Memoized implicit (output-type-derived) perms, keyed by type name.
+        self._implicit: dict[str, frozenset[str] | None] = {}
 
     # -- entry point -------------------------------------------------------- #
     def run(self) -> GraphQLSchema:
@@ -179,16 +189,44 @@ class _Pruner:
     def _field_permitted(self, gql_field: GraphQLField) -> bool:
         """Return whether *gql_field* clears the caller's permissions.
 
-        Untagged (no ``gdx_required_perms``) means public, so permitted. A plain
-        ``frozenset`` must be a subset of *granted*. A subscription per-action
-        ``dict`` is permitted iff at least one action-value survives.
+        An explicit ``gdx_required_perms`` stamp always wins: a plain
+        ``frozenset`` must be a subset of *granted*, and a subscription
+        per-action ``dict`` is permitted iff at least one action-value survives.
+
+        An UNTAGGED field falls back to the IMPLICIT label of its output type
+        (:func:`~django_graphex.core.perm_labels.implicit_perms_for_type`). Only
+        the generated CRUD / mutation / subscription ROOT fields are stamped at
+        compile time; relation and nested-list fields are built deep inside the
+        output compiler with no permission context, so without this fallback
+        they would be "untagged == public" and a caller whose direct roots for
+        the TARGET model were pruned away could still read its rows by
+        traversing the relation. A field returning anything that is not a
+        generated model-backed type (a scalar, an enum, a plain object) implies
+        nothing and stays public, exactly as before.
         """
         perms = (gql_field.extensions or {}).get("gdx_required_perms")
         if perms is None:
-            return True
+            implicit = self._implicit_perms(gql_field.type)
+            return implicit is None or implicit <= self._granted
         if isinstance(perms, dict):
             return bool(self._surviving_actions(perms))
         return frozenset(perms) <= self._granted
+
+    def _implicit_perms(self, gtype: Any) -> frozenset[str] | None:
+        """Return the output type's implicit read perms, memoized by type name.
+
+        Args:
+            gtype: The field's (possibly list- / non-null-wrapped) output type.
+
+        Returns:
+            The target model's read permissions, or ``None`` when the output
+            type is not a generated model-backed type.
+        """
+        named = get_named_type(gtype)
+        name = named.name
+        if name not in self._implicit:
+            self._implicit[name] = implicit_perms_for_type(named)
+        return self._implicit[name]
 
     def _surviving_actions(self, perms: dict[str, Any]) -> set[str]:
         """Return the subscribe action-values whose perms the caller holds.

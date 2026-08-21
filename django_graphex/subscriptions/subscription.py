@@ -7,6 +7,7 @@ engine.
 
 from __future__ import annotations
 
+from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -49,7 +50,8 @@ from ..core.base import ObjectType as NativeObjectType
 from ..core.descriptors import NativeMountedField
 from ..settings import graphql_api_settings
 from .bindings import SubscriptionBinding
-from .mixins import safe_group_name
+from .mixins import safe_group_name, serialize_instance
+from .streaming import build_middleware_manager
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from typing import Callable
@@ -185,6 +187,8 @@ class Subscription(NativeObjectType):
         queryset: QuerySet | None = None,
         payload_mode: str | None = None,
         subscription_index_fields: tuple[str, ...] | list[str] | None = None,
+        only_fields: tuple[str, ...] | list[str] | None = None,
+        exclude_fields: tuple[str, ...] | list[str] | None = None,
         description: str = "",
         **options: Any,
     ) -> None:
@@ -197,6 +201,13 @@ class Subscription(NativeObjectType):
             queryset: An optional queryset whose model must match the backend's.
             payload_mode: Force "full" or "id_only" payloads, or "None" to inherit
                 the global setting.
+            only_fields: Restrict the subscription's serialized output to these
+                field names ("None"/empty keeps every backend output field). The
+                projection gates the event type, the broadcast payload AND the
+                declared set client filters must root on.
+            exclude_fields: Drop these field names from the subscription's
+                serialized output. Use it to keep a sensitive column ("password")
+                out of both the payload and the client-filter surface.
             subscription_index_fields: Optional model field names used to route
                 notifications to value-scoped groups (only the matching
                 subscribers are woken). Must be concrete fields and a subset of
@@ -267,6 +278,12 @@ class Subscription(NativeObjectType):
         _meta.queryset = queryset
         _meta.payload_mode = payload_mode
         _meta.index_fields = index_fields
+        # SECURITY (2.0.1): the output projection. Previously swallowed by
+        # ``**options`` — so ``exclude_fields = ("password",)``, documented as THE
+        # way to keep a column out of a subscription, silently did nothing and the
+        # column stayed both serialized and client-filterable.
+        _meta.only_fields = tuple(only_fields or ())
+        _meta.exclude_fields = tuple(exclude_fields or ())
 
         # Native-only argument set: {action, id, filters}. The bespoke
         # ``channel_id``/``operation`` args and the ``data`` field-projection
@@ -444,15 +461,58 @@ class Subscription(NativeObjectType):
         return None
 
     @classmethod
+    def _projection_keeps(cls, name: str) -> bool:
+        """Check whether "name" survives the "Meta" output projection.
+
+        Args:
+            name: A serialized output field name.
+
+        Returns:
+            "True" when "Meta.only_fields" is empty or lists "name" AND
+            "Meta.exclude_fields" does not list it.
+        """
+        only = cls._meta.only_fields
+        return (not only or name in only) and name not in cls._meta.exclude_fields
+
+    @classmethod
+    def _output_field_names(cls) -> list[str]:
+        """Return the serialized output field names left by the "Meta" projection.
+
+        This is the subscription's DECLARED set: what the event payload carries
+        and what a client filter key may root on.
+
+        Returns:
+            The projected output field names, in model field order.
+        """
+        return [
+            name
+            for name in cls._meta.backend.output_field_names()
+            if cls._projection_keeps(name)
+        ]
+
+    @classmethod
+    def _serialize_payload(cls, instance: Any) -> dict[str, Any]:
+        """Serialize "instance" once, keeping only the projected output fields.
+
+        Args:
+            instance: The changed model instance to serialize.
+
+        Returns:
+            The JSON-safe payload mapping with projected-out columns removed.
+        """
+        data = serialize_instance(cls._meta.backend, instance)
+        return {key: value for key, value in data.items() if cls._projection_keeps(key)}
+
+    @classmethod
     def _validate_filters(cls, client_filters: dict[str, Any]) -> None:
         """Validate that all "client_filters" keys root on declared output fields.
 
         Each filter key may be a bare field name or a field name followed by a
         Django ORM lookup suffix (e.g. "username__icontains"). The root field
         (everything before the first "__") must be present in the subscription's
-        serialized output field names. Filters whose root is not declared raise
-        "GraphQLError" so arbitrary ORM field probing is rejected at subscribe
-        time.
+        PROJECTED serialized output field names. Filters whose root is not
+        declared raise "GraphQLError" so arbitrary ORM field probing is rejected
+        at subscribe time.
 
         Server-forced scope filters (from "subscription_scope") are NOT subject
         to this check — they originate from server code, not the client.
@@ -465,7 +525,7 @@ class Subscription(NativeObjectType):
         """
         if not client_filters:
             return
-        declared: set[str] = set(cls._meta.backend.output_field_names())
+        declared: set[str] = set(cls._output_field_names())
         for key in client_filters:
             root = key.split("__")[0]
             if root not in declared:
@@ -631,6 +691,12 @@ class Subscription(NativeObjectType):
             rewrapped: dict[str, Any] = {}
             for wire, field in built.items():
                 snake = to_snake_case(wire)
+                # SECURITY (2.0.1): honor the ``Meta`` output projection so a
+                # projected-out column is absent from the event TYPE too — not
+                # merely absent from the payload dict (which would render as a
+                # silent NULL and still advertise the column in the SDL).
+                if not cls._projection_keeps(snake):
+                    continue
                 rewrapped[wire] = _GraphQLField(
                     field.type,
                     args=field.args,
@@ -664,8 +730,9 @@ class Subscription(NativeObjectType):
         Filter-key validation in the native path does NOT use the kept
         "_validate_filters" classmethod: it is enforced in "streaming.py" by
         "_validate_client_filters" against "declared_output_fields" (the
-        subscription backend's "output_field_names()"), passed on the spec
-        below. "_validate_filters" is retained for the graphene path only.
+        PROJECTED "_output_field_names()") and the spec's "model" (the Django
+        lookup registry the key suffixes are checked against), both passed on the
+        spec below. "_validate_filters" is retained for the graphene path only.
 
         Args:
             schema: The native graphql-core "GraphQLSchema" the per-event
@@ -690,7 +757,7 @@ class Subscription(NativeObjectType):
             stream=cls._meta.stream,
             schema=schema,
             document=document,
-            declared_output_fields=set(cls._meta.backend.output_field_names()),
+            declared_output_fields=set(cls._output_field_names()),
             index_fields=tuple(cls._meta.index_fields),
             authorize=_authorize,
             scope=_scope,
@@ -889,6 +956,28 @@ class Subscription(NativeObjectType):
         args = cls._build_native_field_args()
 
         async def _subscribe_source(root: Any, info: Any, **kwargs: Any) -> Any:
+            # SECURITY (2.0.1): graphql-core's ``create_source_event_stream``
+            # accepts NO ``middleware=`` argument, and this resolver is the ONE
+            # choke point every transport's subscribe routes through — so the
+            # connection's configured chain (``DJANGO_GRAPHEX['MIDDLEWARE']``,
+            # e.g. ``AuthenticatedFieldsMiddleware``) is applied HERE, before any
+            # ``group_add``. A raising middleware short-circuits with no source.
+            # The manager is built once per connection by the transport and
+            # carried on the neutral context; a non-transport caller falls back to
+            # the setting so protection is never OFF by omission.
+            context = getattr(info, "context", None)
+            manager = getattr(context, "middleware", None)
+            if manager is None:
+                manager = build_middleware_manager()
+            resolver = (
+                _start_source
+                if manager is None
+                else manager.get_field_resolver(_start_source)
+            )
+            result = resolver(root, info, **kwargs)
+            return await result if isawaitable(result) else result
+
+        async def _start_source(root: Any, info: Any, **kwargs: Any) -> Any:
             from channels.layers import get_channel_layer
 
             channel_layer = get_channel_layer()

@@ -409,6 +409,7 @@ class DjangoGraphQLSchema:
         from graphql import GraphQLObjectType, GraphQLSchema
 
         from django_graphex.core.base import default_schema_registries
+        from django_graphex.core.perm_labels import implicit_label_set
         from django_graphex.core.schema_compiler import compile_native_root
 
         # item-b (B3): resolve the pair this build compiles against. ``None`` ->
@@ -486,7 +487,7 @@ class DjangoGraphQLSchema:
             kwargs.get("types"), registries
         )
 
-        return GraphQLSchema(
+        schema = GraphQLSchema(
             query=native_query,
             mutation=native_mutation,
             subscription=native_subscription,
@@ -494,6 +495,19 @@ class DjangoGraphQLSchema:
             types=native_types,
             extensions=extensions,
         )
+
+        # P0 (relation coverage): widen the label-set with the IMPLICIT read
+        # permission of every generated model-backed type in the BUILT type map.
+        # Relation / nested-list fields are never stamped at compile time, so the
+        # pruner derives their label from their OUTPUT TYPE — and its caller
+        # intersects the user's perms with THIS set before pruning, so a label
+        # missing here would be stripped and the relation would disappear for
+        # everyone. The roots alone cannot supply it: a model exposed ONLY
+        # through a relation has no root field to read a stamp from.
+        schema.extensions["gdx_label_set"] = extensions[
+            "gdx_label_set"
+        ] | implicit_label_set(schema)
+        return schema
 
     @staticmethod
     def _compute_label_set(*roots: Any) -> frozenset[str]:

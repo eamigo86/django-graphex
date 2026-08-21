@@ -209,22 +209,26 @@ class GdxFilterInputSpec:
     is_lookups: bool = False
 
 
-#: Memo of generated native input types keyed by ``(model, frozenset(filter_fields))``.
-#: Separate from the graphene ``schema._INPUT_CACHE`` so the two backends never
-#: cross-contaminate. The and/or/not combinators (WU4) close over the cached
-#: reference registered here BEFORE the field thunk evaluates (cache-before-thunk).
+#: Memo of generated native input types keyed by ``(model, custom-filter identity)``.
+#: The filter declaration is deliberately NOT part of the key: one model has ONE
+#: ``<Model>FilterInput`` name, so every context filtering that model must share
+#: a single instance, widened in place when a later context asks for paths the
+#: current shape lacks. Separate from the graphene ``schema._INPUT_CACHE`` so the
+#: two backends never cross-contaminate. The and/or/not combinators (WU4) close
+#: over the cached reference registered here BEFORE the field thunk evaluates
+#: (cache-before-thunk).
 #:
 #: item-b (B2): this dict is the DEFAULT pair's filter-input cache namespace —
 #: ``default_schema_registries().filter_input_cache`` IS this very object (bound
 #: by identity). ``build_filter_input_type`` resolves its cache from the threaded
 #: ``SchemaRegistries`` pair, so the default path keeps writing here
 #: (byte-identical) while a forked pair (later slices) owns its own namespace.
-_NATIVE_INPUT_CACHE: dict[tuple[Any, Any, Any], GraphQLInputObjectType] = {}
+_NATIVE_INPUT_CACHE: dict[tuple[Any, Any], GraphQLInputObjectType] = {}
 
 
 def _filter_input_cache(
     registries: SchemaRegistries | None,
-) -> dict[tuple[Any, Any, Any], GraphQLInputObjectType]:
+) -> dict[tuple[Any, Any], GraphQLInputObjectType]:
     """Return the filter-input cache for *registries* (default pair when None).
 
     The default pair's "filter_input_cache" IS "_NATIVE_INPUT_CACHE" (bound by
@@ -418,7 +422,7 @@ def _canonical_filter_fields(
     model: type[models.Model],
     requested: dict[str, tuple[str, ...] | None],
     registry: Registry,
-) -> tuple[dict[str, tuple[str, ...] | None], bool]:
+) -> dict[str, tuple[str, ...] | None]:
     """Resolve the canonical filter declaration for a model build.
 
     Defect #6: the same model can be built as a ROOT list (its own
@@ -428,10 +432,11 @@ def _canonical_filter_fields(
     graphene silently merged them (one shape won), graphql-core rejects the
     duplicate name.
 
-    The fix converges on ONE canonical type per model: when the model has a
-    registered root filter declaration that COVERS the requested paths, every
-    context (root or nested) builds from that single root declaration, so the
-    resulting type instance is identical and the cache dedupes it.
+    This seeds the convergence: when the model has a registered root filter
+    declaration, every context (root or nested) starts from the root's paths, so
+    the canonical shape does not depend on which context is compiled first. The
+    cache then keeps ONE instance per model and widens it in place if a later
+    context still asks for paths the root does not expose.
 
     Args:
         model: The model being built.
@@ -440,19 +445,16 @@ def _canonical_filter_fields(
         registry: The registry holding the model's root type.
 
     Returns:
-        A "(normalized, distinct)" pair. "normalized" is the declaration to
-        build from (the canonical root when it covers "requested", else
-        "requested" unchanged). "distinct" is "True" only when the model
-        has a root declaration that does NOT cover "requested" — a genuine
-        shape fork that must receive a deterministic distinct name (the
-        single-context common case never sets this).
+        The declaration to build from: the canonical root when it covers
+        "requested", the union (root then requested) when the contexts diverge,
+        and "requested" unchanged when the model has no registered root.
     """
     root = _model_root_filter_fields(model, registry)
     if not root:
         # No registered root for this model: the requested (nested) declaration
         # IS the only / canonical shape. Single-context models (e.g. a relation
         # target with no root list type) keep their narrow shape + canonical name.
-        return requested, False
+        return requested
 
     root_normalized = _normalize_filter_fields(root)
 
@@ -461,17 +463,138 @@ def _canonical_filter_fields(
     # superset of lookups still serves the narrower nested request: the extra
     # lookups are valid ORM lookups, and the nested query only uses its own).
     if all(path in root_normalized for path in requested):
-        return root_normalized, False
+        return root_normalized
 
     # Genuine fork: the model is filtered with paths its root does NOT expose.
     # Reconcile by building the UNION (root ∪ requested) under the canonical
-    # name so a single type still serves both; flag it so callers can detect the
-    # divergence. (A union keeps both contexts working without a second name; a
-    # strict distinct-name split would also be valid per the brief but is not
-    # needed by any current declaration.)
+    # name so a single type serves both contexts. Root paths come FIRST so the
+    # field order is the same whichever context is compiled first.
     merged = dict(root_normalized)
-    merged.update(requested)
-    return merged, True
+    _union_filter_paths(merged, requested)
+    return merged
+
+
+def _union_filter_paths(
+    base: dict[str, tuple[str, ...] | None],
+    extra: dict[str, tuple[str, ...] | None],
+) -> bool:
+    """Merge "extra" into "base" in place and report whether "base" grew.
+
+    Paths absent from "base" are appended; a path present in both keeps the
+    union of the two lookup tuples (a "None" value means "the default lookup
+    set" and always wins, since it is the widest declaration either side can
+    ask for).
+
+    Args:
+        base: The accumulated declaration, mutated in place.
+        extra: The declaration to merge in.
+
+    Returns:
+        "True" when "base" actually changed, so the caller knows the compiled
+        input type has to be rebuilt.
+    """
+    changed = False
+    for path, lookups in extra.items():
+        if path not in base:
+            base[path] = lookups
+            changed = True
+            continue
+        current = base[path]
+        if current == lookups:
+            continue
+        if current is None or lookups is None:
+            merged: tuple[str, ...] | None = None
+        else:
+            merged = current + tuple(x for x in lookups if x not in current)
+        if merged != current:
+            base[path] = merged
+            changed = True
+    return changed
+
+
+def _split_filter_paths(
+    model: type[models.Model], paths: dict[str, tuple[str, ...] | None]
+) -> tuple[
+    dict[str, tuple[str, ...] | None],
+    dict[str, dict[str, tuple[str, ...] | None]],
+    dict[str, tuple[str, ...] | None],
+]:
+    """Split a canonical declaration into own leaves, relations and direct pks.
+
+    Recomputed on every field-thunk evaluation so a filter input widened after
+    its first build (a later context asking for paths the first one did not)
+    recompiles from the CURRENT declaration.
+
+    Args:
+        model: The model the declaration belongs to.
+        paths: The canonical "{path: lookups}" declaration.
+
+    Returns:
+        A "(own, relations, relation_direct)" triple: "own" holds this model's
+        own leaf lookups, "relations" maps a relation name to the nested
+        sub-declaration reached through it, and "relation_direct" holds
+        relations declared without a tail (filtered by primary key).
+    """
+    own: dict[str, tuple[str, ...] | None] = {}
+    relations: dict[str, dict[str, tuple[str, ...] | None]] = {}
+    relation_direct: dict[str, tuple[str, ...] | None] = {}
+
+    for path, lookups in paths.items():
+        head, sep, tail = path.partition("__")
+        related = _relation_model(model, head)
+        if sep:
+            if related is None:
+                own[path] = lookups
+            else:
+                relations.setdefault(head, {})[tail] = lookups
+        else:
+            if related is not None:
+                relation_direct[head] = lookups
+            else:
+                own[head] = lookups
+
+    return own, relations, relation_direct
+
+
+#: Instance attribute holding a compiled filter input's accumulated
+#: ``{path: lookups}`` declaration. The field thunk closes over that very dict,
+#: so widening it (plus ``_recompile_filter_input``) reshapes the type WITHOUT
+#: minting a second instance under the same ``<Model>FilterInput`` name.
+_CANONICAL_PATHS_ATTR = "_gdx_canonical_filter_paths"
+
+
+def _canonical_paths(
+    gql_input_type: GraphQLInputObjectType,
+) -> dict[str, tuple[str, ...] | None]:
+    """Return the accumulated declaration a cached filter input compiles from.
+
+    Args:
+        gql_input_type: A filter input previously built by this module.
+
+    Returns:
+        The mutable "{path: lookups}" dict the type's field thunk reads.
+    """
+    paths: dict[str, tuple[str, ...] | None] = getattr(
+        gql_input_type, _CANONICAL_PATHS_ATTR
+    )
+    return paths
+
+
+def _recompile_filter_input(gql_input_type: GraphQLInputObjectType) -> None:
+    """Drop a filter input's memoized ".fields" so its thunk recompiles.
+
+    "GraphQLInputObjectType.fields" is a "cached_property" over the thunk this
+    module builds, and the build-time assertions force it immediately. Widening
+    the canonical declaration therefore has to evict that memo and re-run the
+    assertions, which recompiles the fields from the widened declaration WITHOUT
+    replacing the type instance every other context already references.
+
+    Args:
+        gql_input_type: The cached filter input whose declaration just grew.
+    """
+    gql_input_type.__dict__.pop("fields", None)
+    _assert_filter_type_complete(gql_input_type)
+    _assert_filter_input_out_names(gql_input_type)
 
 
 def build_filter_input_type(
@@ -522,38 +645,28 @@ def build_filter_input_type(
     # otherwise two differently-shaped types share the name and graphql-core
     # rejects the duplicate (graphene used to silently merge one shape away).
     if normalized:
-        normalized, _forked = _canonical_filter_fields(model, normalized, registry)
+        normalized = _canonical_filter_fields(model, normalized, registry)
 
     custom_key = tuple(
         (name, meta.get("graphql_type")) for name, _fn, meta in (custom_filters or [])
     )
-    cache_key = (
-        model,
-        frozenset((path, lookups) for path, lookups in normalized.items()),
-        custom_key,
-    )
+    # ONE instance per (model, custom-filter identity): the declaration is NOT
+    # part of the key, because the same model filtered from two contexts must
+    # resolve to the SAME instance under the single ``<Model>FilterInput`` name.
+    # A context asking for paths the cached shape lacks WIDENS that shape in
+    # place instead of minting a second, same-named type — which is what made
+    # graphql-core reject the schema outright ("Schema must contain uniquely
+    # named types but contains multiple types named '<Model>FilterInput'").
+    cache_key = (model, custom_key)
     cached = cache.get(cache_key)
     if cached is not None:
+        if _union_filter_paths(_canonical_paths(cached), normalized):
+            _recompile_filter_input(cached)
         return cached
 
-    # Split paths into this model's own leaves and per-relation sub-declarations.
-    own: dict[str, tuple[str, ...] | None] = {}
-    relations: dict[str, dict[str, tuple[str, ...] | None]] = {}
-    relation_direct: dict[str, tuple[str, ...] | None] = {}
-
-    for path, lookups in normalized.items():
-        head, sep, tail = path.partition("__")
-        related = _relation_model(model, head)
-        if sep:
-            if related is None:
-                own[path] = lookups
-            else:
-                relations.setdefault(head, {})[tail] = lookups
-        else:
-            if related is not None:
-                relation_direct[head] = lookups
-            else:
-                own[head] = lookups
+    # The accumulated declaration this type compiles from. Mutable and captured
+    # by the field thunk below, so a later widening recompiles from it.
+    canonical = dict(normalized)
 
     # Build the PascalCase name directly. ``to_camel_case`` is a snake_case →
     # camelCase helper: feeding it the PascalCase compound ``User_FilterInput``
@@ -564,6 +677,8 @@ def build_filter_input_type(
 
     def _fields() -> dict[str, GraphQLInputField]:
         out: dict[str, GraphQLInputField] = {}
+        # Re-split on every evaluation: a widened declaration recompiles here.
+        own, relations, relation_direct = _split_filter_paths(model, canonical)
 
         for field_name, lookups in own.items():
             try:
@@ -618,6 +733,9 @@ def build_filter_input_type(
         fields=_fields,
         extensions={"gdx": GdxFilterInputSpec(model=model, name=name)},
     )
+    # Carry the accumulated declaration on the instance so a later context that
+    # reaches this type through the cache can widen it (see ``_canonical_paths``).
+    setattr(input_type, _CANONICAL_PATHS_ATTR, canonical)
     # Register BEFORE returning (and before the field thunk above can evaluate)
     # so the and/or/not combinators close over the cached reference without
     # re-entering the builder — the cache-before-thunk recursion guard (D5).

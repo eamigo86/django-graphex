@@ -661,7 +661,8 @@ class PostSubscription(Subscription):
 class CommentSubscription(Subscription):
     """Public subscription over comments, demonstrating per-subscriber filters.
 
-    On a post-detail page, subscribe with "filters: {post: <id>}" to receive
+    On a post-detail page, subscribe with the JSON-encoded argument
+    "filters: '{\"post\": <id>}'" to receive
     only that post's comments.
     """
 
