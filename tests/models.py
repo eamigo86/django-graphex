@@ -917,3 +917,52 @@ class SecretLedger(DummyModel):
     label = models.CharField(max_length=100)
     secret = models.CharField(max_length=128, default="")
     created = models.DateTimeField(null=True)
+
+
+# --- Dedicated models for the 2.1.0 subscription filter-input API ---------- #
+# tests/subscriptions/test_subscription_filter_input.py asserts GENERATED TYPE
+# NAMES byte-for-byte ("SubFilterCommentFilterInput" vs
+# "SubFilterCommentSubscriptionFilterInput") and mounts both a query filter
+# input and a subscription on the SAME model. Sharing "Post"/"Comment" would
+# make those assertions depend on which sibling module registered the shared
+# slot first under randomized collection order. Same isolation pattern as
+# SecretRecord/SecretLedger.
+class SubFilterTag(DummyModel):
+    """M2M target for "SubFilterPost".
+
+    A to-many field still renders in the generated subscription filter input,
+    and is the one shape whose "exact" keeps its ORM suffix (the payload value
+    is a LIST of primary keys, which the in-memory equality gate cannot decide).
+    """
+
+    label = models.CharField(max_length=50)
+
+
+class SubFilterPost(DummyModel):
+    """Subscription target carrying a choices column and a sensitive column.
+
+    "status" has choices so the generated lookups input is proven to reuse the
+    shared choices enum; "secret" is the column the "Meta.exclude_fields"
+    projection test keeps out of the generated input type.
+    """
+
+    STATUS_CHOICES = (("open", "Open"), ("urgent", "Urgent"), ("closed", "Closed"))
+
+    title = models.CharField(max_length=200)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="open")
+    secret = models.CharField(max_length=128, default="")
+    tags = models.ManyToManyField(SubFilterTag, related_name="posts", blank=True)
+
+
+class SubFilterComment(DummyModel):
+    """Comment on a "SubFilterPost".
+
+    Its forward FK "post" is what the end-to-end SSE test scopes on, so the
+    delivered/dropped split proves the nested filter input really flattened
+    into a working ORM lookup.
+    """
+
+    post = models.ForeignKey(
+        SubFilterPost, related_name="comments", on_delete=models.CASCADE
+    )
+    text = models.TextField(default="")

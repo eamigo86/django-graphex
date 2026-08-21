@@ -85,7 +85,7 @@ model's projected fields** (the serialized instance) — a true streaming
 subscription, not the legacy one-shot confirmation object. It exposes:
 
 - **Arguments:** `action` (required, see the enum below), `id` (optional — scope
-  to one instance by pk), and `filters` (optional — see
+  to one instance by pk), and `filter` (optional — see
   [Filtering notifications](#filtering-notifications)). The legacy `channelId` and
   `operation` arguments are **gone** (the transport handles connection lifecycle).
 - **Enum:** `ActionSubscriptionEnum {CREATE, UPDATE, DELETE, ALL_ACTIONS}`.
@@ -280,7 +280,7 @@ schema = DjangoGraphQLSchema(query=Query, subscription=Subscription)
 `UserModelType.subscription_type()` builds (and caches) the `Subscription`
 lazily, so the **base install stays Channels-free** until you actually wire a
 subscription. The generated subscription supports the same arguments — including
-[`filters`](#filtering-notifications). Setting `Meta.stream` is required to use
+[`filter`](#filtering-notifications). Setting `Meta.stream` is required to use
 `SubscriptionField()` / `subscription_type()`. The transport (SSE or WS) is chosen
 at routing time; the subscription class is transport-agnostic.
 
@@ -307,7 +307,7 @@ The generated subscription honors the type's authorization and scoping:
   arrives under `kwargs["subscription_action"]`).
 - **`subscription_scope(info, **kwargs)`** returns a server-forced filter mapping
   (e.g. `{"owner": info.context.user.pk}`). It is evaluated at subscribe time and
-  enforced **per event at delivery**, merged over the client `filters` with
+  enforced **per event at delivery**, merged over the client `filter` with
   server precedence — the client can neither widen nor drop it. Equality scopes
   on a serialized field (like `owner`) are decided **in memory**, so there is no
   per-event query.
@@ -570,15 +570,15 @@ cleanup then leaves every joined group — no ghost subscribers.
 
 `id` scopes by the changed object's own primary key. To scope by **field
 values** instead — e.g. a post-detail page that should only receive the comments
-of *that* post — pass the optional `filters` argument: a **JSON-encoded string**
-mapping Django ORM lookups to values (the argument's GraphQL type is `String`,
-so a bare object literal is rejected by input coercion).
+of *that* post — pass the optional `filter` argument. It is a real generated
+input object, `<Model>SubscriptionFilterInput`, with the **same nested shape**
+queries use:
 
 ```graphql
 subscription {
   commentSubscription(
     action: ALL_ACTIONS
-    filters: "{\"post\": 7}"       # only comments whose post == 7
+    filter: { post: { exact: 7 } }       # only comments whose post == 7
   ) {
     id
     text
@@ -586,30 +586,53 @@ subscription {
 }
 ```
 
+The type exposes exactly the subscription's **projected output fields** (see
+`only_fields` / `exclude_fields`), each with exactly **four** lookups —
+`exact`, `iexact`, `in`, `isnull`. Nothing else is expressible: the schema
+itself is the boundary now, so your IDE autocompletes the valid keys and an
+invalid one fails validation before the request ever reaches the engine.
+
 Filters are evaluated **per connection at delivery time**:
 
-- **Equality** filters (`{post: 7}`) are decided in memory against the
-  serialized payload — no extra query.
-- **Lookups** fall back to a single-row database check. Only
-  **equality and membership** lookups are accepted from a client: `exact`,
-  `iexact`, `in`, `isnull` — plus the bare field name, which means `exact`.
-- Combine them: `filters: "{\"post\": 7, \"status__in\": [\"open\", \"urgent\"]}"`.
-- Omitting `filters` keeps the previous behavior (every event in the group).
+- **`exact`** is decided in memory against the serialized payload — no extra
+  query. This is the fast path the whole serialize-once engine is built around,
+  so prefer it for scoping.
+- **The other three lookups** fall back to a single-row database check.
+- Combine them:
+  `filter: { post: { exact: 7 }, status: { in: ["open", "urgent"] } }`.
+- Omitting `filter` delivers every event in the group.
 
-!!! warning "Ordered and pattern lookups are rejected (changed in 2.0.1)"
+!!! warning "Breaking change in 2.1.0 — `filters` is now `filter`"
+    Through 2.0.x the argument was `filters`, typed `String`, carrying a
+    JSON-encoded object (`filters: "{\"post\": 7}"`). There is **no alias**: the
+    old name and the old string form are gone. Rewrite
+
+    ```graphql
+    commentSubscription(action: ALL_ACTIONS, filters: "{\"post\": 7}")
+    ```
+
+    as
+
+    ```graphql
+    commentSubscription(action: ALL_ACTIONS, filter: { post: { exact: 7 } })
+    ```
+
+    See the [changelog](../changelog.md) for the full before/after.
+
+!!! warning "Ordered and pattern lookups are rejected"
     `startswith`, `icontains`, `regex`, `gt`/`gte`/`lt`/`lte`, `range` and the
-    date-part transforms (`year`, `month`, `day`, …) are **refused** at
-    subscribe time with an error frame, on **every** field — including declared
-    ones. Delivery evaluates a filter as an ORM lookup and whether the event
-    arrives is observable, so a comparison lookup is a boolean oracle an
-    attacker can walk one character (or one bisection) at a time. Equality and
-    membership only answer "is it exactly this value?", which forces a
-    whole-value guess.
+    date-part transforms (`year`, `month`, `day`, …) are **not declared** on the
+    generated input type, so they fail schema validation — on **every** field,
+    including declared ones. Delivery evaluates a filter as an ORM lookup and
+    whether the event arrives is observable, so a comparison lookup is a boolean
+    oracle an attacker can walk one character (or one bisection) at a time.
+    Equality and membership only answer "is it exactly this value?", which
+    forces a whole-value guess.
 
-    `text__icontains` was documented as usable in 2.0.0
-    and no longer validates. Move the substring match to `subscription_scope`
-    (server code, exempt from this check) or filter client-side on the
-    delivered payload.
+    2.0.0 documented `text__icontains` as usable; 2.0.1 started rejecting it at
+    subscribe time and 2.1.0 makes it unexpressible in the schema. Move the
+    substring match to `subscription_scope` (server code, exempt from this
+    check) or filter client-side on the delivered payload.
 
 !!! note "Delete + lookup filters"
     On a `delete` the row no longer exists, so only the in-memory (equality)
@@ -618,7 +641,7 @@ Filters are evaluated **per connection at delivery time**:
     non-pk filters cannot be evaluated on delete and the notification is dropped.
 
 !!! tip "Scoping vs. security"
-    Client-supplied `filters` are a **convenience** scope, not an authorization
+    A client-supplied `filter` is a **convenience** scope, not an authorization
     boundary. To enforce row-level access (e.g. "only my records"), gate the
     subscription with `private_subscription` / your auth layer rather than
     relying on a client-provided filter.
@@ -810,7 +833,12 @@ subscription fields: an unauthenticated subscriber is denied **before** any
 
 ### Filter key validation
 
-Client-supplied `filters` are validated at subscribe time, on the **full key**:
+Since 2.1.0 the **schema** is the first gate: `<Model>SubscriptionFilterInput`
+declares only the projected output fields, each with only the four allowed
+lookups, so anything else fails GraphQL validation before the subscribe
+resolver runs. A second, runtime check (`_validate_client_filters`) still
+validates the flattened key as defence in depth for anything that reaches the
+engine without going through schema coercion:
 
 1. the **root** (everything before the first `__`) must be a declared output
    field of the subscription's serialized payload;
@@ -819,26 +847,24 @@ Client-supplied `filters` are validated at subscribe time, on the **full key**:
 3. every **remaining segment** must also be one of the four allowed lookups:
    `exact`, `iexact`, `in`, `isnull`.
 
-A bare field name (`{"post": 7}`) carries no segment and means `exact`, so the
-scoping use needs nothing from this list.
+| Filter | Verdict |
+|--------|---------|
+| `{ post: { exact: 7 } }` | accepted — equality, decided in memory |
+| `{ post: { in: [7, 9] } }` | accepted — membership |
+| `{ username: { iexact: "neo" } }` | accepted |
+| `{ deletedAt: { isnull: true } }` | accepted |
+| `{ authToken: { exact: "x" } }` | rejected — undeclared field, not in the input type |
+| `{ groups: { name: { startswith: "adm" } } }` | rejected — relation traversal is unexpressible (the input is flat) |
+| `{ password: { startswith: "pbkdf2" } }` | rejected — pattern lookup, not declared |
+| `{ created: { gte: "2024-01-01" } }` | rejected — ordered lookup, not declared |
+| `{ created: { year: { gte: 2024 } } }` | rejected — date-part transform, not declared |
+| `{ text: { icontains: "urgent" } }` | rejected — pattern lookup, not declared |
 
-| Key | Verdict |
-|-----|---------|
-| `{"post": 7}` | accepted — bare name, means `exact` |
-| `{"post__in": [7, 9]}` | accepted — membership |
-| `{"username__iexact": "neo"}` | accepted |
-| `{"deleted_at__isnull": true}` | accepted |
-| `{"auth_token__key": "x"}` | rejected — undeclared root |
-| `{"groups__name__startswith": "adm"}` | rejected — relation traversal (`name` is not a lookup on `groups`) |
-| `{"password__startswith": "pbkdf2"}` | rejected — pattern lookup |
-| `{"created__gte": "2024-01-01"}` | rejected — ordered lookup |
-| `{"created__year__gte": 2024}` | rejected — date-part transform |
-| `{"text__icontains": "urgent"}` | rejected — pattern lookup |
+Schema rejections arrive as a normal GraphQL validation error and **no** group
+is joined; a runtime rejection likewise raises **before** any group is joined,
+and its message names the offending lookup alongside the allowed ones.
 
-All rejections raise a `GraphQLError` **before** any group is joined, and the
-message names the offending lookup alongside the allowed ones.
-
-**Why:** the `filters` argument executes as ORM lookups at event-delivery time
+**Why:** the `filter` argument executes as ORM lookups at event-delivery time
 and delivery is observable, so a filter key is a boolean oracle. Rooting it on a
 declared field bounds *which* column it can probe; restricting the lookup bounds
 *how much* each probe reveals. An ordered or pattern lookup answers a
@@ -857,9 +883,11 @@ enforce server-side filters that cannot be widened or removed by the client.
 
 !!! note "Relation and comparison lookups are server-side only"
     Multi-hop keys such as `{"author__name": "alice"}` and comparison keys such
-    as `{"text__icontains": "urgent"}` are no longer accepted from a client.
-    Both remain available from `subscription_scope`, which is server code and
-    therefore exempt from filter-key validation.
+    as `{"text__icontains": "urgent"}` are not accepted from a client — since
+    2.1.0 they cannot even be written, because the generated input type is flat
+    and declares only the four allowed lookups. Both remain available from
+    `subscription_scope`, which is server code and therefore exempt from
+    filter-key validation.
 
 ### Percent-encoded index group names
 

@@ -4,14 +4,13 @@
 "subscription.py" is the DUAL-BACKEND module (graphene base + native compile
 path), measured COMBINED across both runs. Phase 6 verify flagged it at 84.44%
 combined branch. The misses are: the Meta-validation TypeError guards, the
-"_payload_is_full" global-setting fallback, the graphene-path
-"_validate_filters" reject, the native "_pk_scalar" mro fallback, the
-"_native_db_exists" pk-None guard, the native "_subscribe_source" no-channel
-plus JSON-string-filters arms, and the "_enum_value" nested unwrap.
+"_payload_is_full" global-setting fallback, the native "_pk_scalar" mro
+fallback, the "_native_db_exists" pk-None guard, the native
+"_subscribe_source" no-channel arm, and the "_enum_value" nested unwrap.
 
-Backend-agnostic tests (Meta validation, payload-mode, validate-filters, enum)
-run under BOTH backends and contribute to the COMBINED measurement; native-only
-tests cover the native compile-path branches.
+Backend-agnostic tests (Meta validation, payload-mode, enum) run under BOTH
+backends and contribute to the COMBINED measurement; native-only tests cover
+the native compile-path branches.
 
 Each test asserts a real raised type / returned value / parsed result.
 """
@@ -210,44 +209,6 @@ def test_payload_mode_meta_value_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _validate_filters — graphene-path filter-key validation
-# ---------------------------------------------------------------------------
-
-
-def test_validate_filters_rejects_undeclared_root_field() -> None:
-    """A filter key rooting on an undeclared output field must raise GraphQLError.
-
-    Contract: this test ships broken if an undeclared filter root is
-    silently accepted instead of raising.
-
-    Covers subscription.py:392-398 — the reject arm. "not_a_field" is not a
-    declared output field of the Post subscription.
-    """
-    from graphql import GraphQLError
-
-    sub = _make_subscription(payload_mode="full")
-    with pytest.raises(GraphQLError) as exc_info:
-        sub._validate_filters({"not_a_field__icontains": "x"})
-    assert "not a declared output field" in str(exc_info.value)
-
-
-def test_validate_filters_accepts_declared_root_and_empty() -> None:
-    """A declared filter root, and an empty filter set, must both pass validation.
-
-    Contract: pins the "not client_filters" early-return (392-393) and the
-    declared-root accept arm (the "root not in declared" False path) —
-    ships broken if either legitimate case starts raising.
-    """
-    sub = _make_subscription(payload_mode="full")
-    # Empty filters → early return, no raise.
-    assert sub._validate_filters({}) is None
-    assert sub._validate_filters(None) is None
-    # A declared field root with an ORM lookup suffix is accepted.
-    sub._validate_filters({"id": 1})
-    sub._validate_filters({"title__icontains": "hi"})
-
-
-# ---------------------------------------------------------------------------
 # _enum_value — nested unwrap
 # ---------------------------------------------------------------------------
 
@@ -356,90 +317,104 @@ async def test_native_subscribe_source_raises_without_channel_layer(
     assert sub_mod  # module referenced
 
 
-async def test_native_subscribe_source_parses_json_string_filters(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A JSON-string filters argument must be decoded before reaching the engine.
-
-    Contract: this test ships broken if a JSON-encoded filters string reaches
-    the subscription engine undecoded instead of as a parsed dict.
-
-    Covers subscription.py:796-800 — the "isinstance(client_filters, str)" arm
-    decodes the JSON into a dict. We capture the filters the engine receives by
-    intercepting "_native_subscribe".
+def _capturing_field(sub: Any, monkeypatch: pytest.MonkeyPatch, captured: dict) -> Any:
+    """Build a native field whose engine call records its kwargs instead of running.
 
     Args:
-        monkeypatch: The pytest fixture used to configure an in-memory
-            channel layer.
-    """
-    import json
+        sub: The Subscription subclass to build the native field from.
+        monkeypatch: The pytest fixture used to configure an in-memory layer.
+        captured: The dict the intercepted engine kwargs are recorded into.
 
-    from channels.layers import InMemoryChannelLayer
-    from graphql import parse
-
-    sub = _make_subscription()
-    document = parse("subscription { postEvent { id } }")
-    field = sub._build_native_field(None, document)
-
-    layer = InMemoryChannelLayer()
-    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
-
-    captured: dict = {}
-
-    async def _capture_native_subscribe(channel_layer, schema, doc, **kwargs):
-        captured.update(kwargs)
-        # Return something truthy so the factory completes; the source object is
-        # not driven here (we only assert the decoded filters reached the engine).
-        return object()
-
-    # Patch the bound classmethod the factory delegates to.
-    sub._native_subscribe = classmethod(  # type: ignore[assignment]
-        lambda cls, *a, **k: _capture_native_subscribe(*a, **k)
-    )
-
-    await field.subscribe(
-        None, _ResolveInfo(), action="create", filters=json.dumps({"id": 7})
-    )
-    # The JSON string was decoded to a dict before reaching the engine.
-    assert captured["filters"] == {"id": 7}
-
-
-async def test_native_subscribe_source_blank_filters_skip_json_branch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A blank filters string ("") must normalize to None before the JSON arm.
-
-    Contract: pins subscription.py:796 — "kwargs.get('filters') or None"
-    coerces a blank string to None, so the "isinstance(client_filters, str)"
-    JSON-decode arm is NOT entered (the engine receives None). This
-    documents why the "else None" sub-arm of line 800 is defensively
-    unreachable (a non-empty string is always truthy at that point). Ships
-    broken if a blank filters string reaches the JSON-decode branch instead.
-
-    Args:
-        monkeypatch: The pytest fixture used to configure an in-memory
-            channel layer.
+    Returns:
+        The built native "GraphQLField" with "_native_subscribe" intercepted.
     """
     from channels.layers import InMemoryChannelLayer
     from graphql import parse
 
-    sub = _make_subscription()
-    document = parse("subscription { postEvent { id } }")
-    field = sub._build_native_field(None, document)
-
+    field = sub._build_native_field(None, parse("subscription { postEvent { id } }"))
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    captured: dict = {}
-
-    async def _capture(channel_layer, schema, doc, **kwargs):
+    async def _capture(channel_layer: Any, schema: Any, doc: Any, **kwargs: Any) -> Any:
         captured.update(kwargs)
+        # Truthy so the factory completes; the source is never driven here.
         return object()
 
     sub._native_subscribe = classmethod(  # type: ignore[assignment]
         lambda cls, *a, **k: _capture(*a, **k)
     )
+    return field
 
-    # filters="" → coerced to None by ``or None`` (never enters the str branch).
-    await field.subscribe(None, _ResolveInfo(), action="create", filters="")
+
+async def test_native_subscribe_source_flattens_the_filter_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The nested "filter" input must reach the engine as flat ORM lookups.
+
+    Contract: this test ships broken if the coerced "{field: {lookup: value}}"
+    dict reaches the engine unflattened, or if "exact" stops collapsing to the
+    BARE key — which would push the documented scoping case onto a per-event
+    database query instead of the serialize-once in-memory equality gate. A
+    to-many field is the exception: its payload value is a LIST of pks, so it
+    keeps the "__exact" suffix and is answered against the database.
+
+    Args:
+        monkeypatch: The pytest fixture used to configure an in-memory
+            channel layer.
+    """
+    sub = _make_subscription()
+    captured: dict = {}
+    field = _capturing_field(sub, monkeypatch, captured)
+
+    await field.subscribe(
+        None,
+        _ResolveInfo(),
+        action="create",
+        filter={
+            "author": {"exact": 7},
+            "title": {"in": ["a", "b"], "isnull": False},
+            "tags": {"exact": 3},
+        },
+    )
+    assert captured["filters"] == {
+        "author": 7,
+        "title__in": ["a", "b"],
+        "title__isnull": False,
+        "tags__exact": 3,
+    }
+
+
+@pytest.mark.parametrize("value", [None, {}, {"title": None}])
+async def test_native_subscribe_source_empty_filter_is_none(
+    value: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An omitted or empty "filter" must reach the engine as None, not "{}".
+
+    Contract: pins the "no filtering at all" arms of "_flatten_filter_input" —
+    ships broken if an empty selection produces a truthy filter mapping, which
+    the engine would then carry through the delivery gate.
+
+    Args:
+        value: The "filter" argument value under test.
+        monkeypatch: The pytest fixture used to configure an in-memory
+            channel layer.
+    """
+    sub = _make_subscription()
+    captured: dict = {}
+    field = _capturing_field(sub, monkeypatch, captured)
+
+    await field.subscribe(None, _ResolveInfo(), action="create", filter=value)
     assert captured["filters"] is None
+
+
+def test_filter_lookup_key_falls_back_when_the_field_is_unknown() -> None:
+    """An unknown field name must not blow up the flattener.
+
+    Contract: pins the "_filter_lookup_key" except arm — a name that reaches
+    the resolver without going through schema coercion is flattened to a plain
+    key and left for "streaming._validate_client_filters" to reject with a
+    clear message, instead of raising "FieldDoesNotExist" here.
+    """
+    sub = _make_subscription()
+    assert sub._filter_lookup_key("not_a_field", "exact") == "not_a_field"
+    assert sub._filter_lookup_key("not_a_field", "in") == "not_a_field__in"

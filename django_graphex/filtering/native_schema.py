@@ -37,6 +37,7 @@ that a circular thunk would otherwise ship unnoticed.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -65,10 +66,19 @@ if TYPE_CHECKING:
 
 __all__ = (
     "build_filter_input_type",
+    "build_subscription_filter_input_type",
     "_assert_filter_type_complete",
     "_assert_filter_input_out_names",
     "_canonical_filter_fields",
 )
+
+#: The ONLY lookups a subscription client filter may use (2.0.1 security fix,
+#: mirrored from "subscriptions.streaming._ALLOWED_LOOKUPS"). Equality and
+#: membership answer "is it exactly this value?"; an ordered or pattern lookup
+#: answers a comparison, which event delivery turns into a boolean oracle an
+#: attacker composes into a prefix walk. Declared in the ORDER the generated
+#: SDL renders them.
+SUBSCRIPTION_FILTER_LOOKUPS: tuple[str, ...] = ("exact", "iexact", "in", "isnull")
 
 
 # ---------------------------------------------------------------------------
@@ -752,6 +762,82 @@ def build_filter_input_type(
     # build-time guard turns that silent failure into a loud one.
     _assert_filter_input_out_names(input_type)
     return input_type
+
+
+def build_subscription_filter_input_type(
+    model: type[models.Model],
+    field_names: Sequence[str],
+    registry: Registry | None = None,
+) -> GraphQLInputObjectType | None:
+    """Build the FLAT "<Model>SubscriptionFilterInput" for a subscription field.
+
+    Deliberately a separate builder from "build_filter_input_type", not a mode
+    of it. The query filter input is wide by design — every declared lookup,
+    nested relation inputs, recursive and/or/not combinators, and one cached
+    canonical instance per model that later contexts WIDEN in place. A
+    subscription filter is the opposite on all four counts:
+
+      * only "exact"/"iexact"/"in"/"isnull" (the 2.0.1 allow list), because
+        event delivery turns any ordered or pattern lookup into a boolean
+        oracle over a column the subscriber may not select;
+      * FLAT — no relation traversal, which the 2.0.1 validator rejects for the
+        same reason;
+      * no combinators, because the delivery path consumes a flat mapping of
+        ORM lookups that cannot express them;
+      * NOT cached, and NOT sharing the query builder's per-model cache slot —
+        widening one from the other would silently hand a subscriber the query's
+        full lookup set.
+
+    Every field carries the snake ORM "out_name", exactly like the query
+    builder, so a camelCase wire key maps back to a real column.
+
+    Args:
+        model: The subscribed Django model.
+        field_names: The subscription's PROJECTED output field names (what
+            "Meta.only_fields"/"Meta.exclude_fields" left), in model order.
+        registry: The registry providing the shared choices enums; defaults to
+            the global registry.
+
+    Returns:
+        A "GraphQLInputObjectType", or "None" when the projection left no
+        filterable field.
+    """
+    if not field_names:
+        return None
+
+    if registry is None:
+        registry = get_global_registry()
+
+    object_name = model._meta.object_name
+    fields: dict[str, GraphQLInputField] = {}
+    for field_name in field_names:
+        try:
+            field = model._meta.get_field(field_name)
+        except FieldDoesNotExist:  # pragma: no cover - projection yields real fields
+            continue
+        if field.is_relation:
+            # Relations are filtered by primary key (the payload carries pks).
+            scalar: Any = _pk_scalar(field.related_model)
+        elif getattr(field, "choices", None):
+            scalar = _choices_enum(field, registry)
+        else:
+            scalar = _field_scalar(field)
+        camel = to_camel_case(field_name)
+        lookups_name = f"{object_name}{camel[:1].upper()}{camel[1:]}SubscriptionLookups"
+        fields[camel] = GraphQLInputField(
+            _build_lookups_type(lookups_name, scalar, SUBSCRIPTION_FILTER_LOOKUPS),
+            out_name=field_name,
+        )
+
+    if not fields:  # pragma: no cover - a non-empty projection yields fields
+        return None
+
+    name = f"{object_name}SubscriptionFilterInput"
+    return GraphQLInputObjectType(
+        name=name,
+        fields=fields,
+        extensions={"gdx": GdxFilterInputSpec(model=model, name=name)},
+    )
 
 
 def _assert_filter_type_complete(gql_input_type: GraphQLInputObjectType) -> None:

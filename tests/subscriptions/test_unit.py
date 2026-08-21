@@ -141,7 +141,7 @@ def test_generated_arguments_contract() -> None:
     from graphql.type import GraphQLEnumType
 
     args = UserSubscription._meta.arguments
-    assert set(args) == {"action", "id", "filters"}
+    assert set(args) == {"action", "id", "filter"}
     # `action` is required -> wrapped in GraphQLNonNull of the action enum.
     action_type = args["action"].type
     assert isinstance(action_type, GraphQLNonNull)

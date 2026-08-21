@@ -591,6 +591,13 @@ async def test_a_rejected_lookup_never_starts_a_stream_over_sse(
     the lookup against the database and the arrival (or not) of an event would
     answer the attacker's probe.
 
+    2.1.0 moved the rejection one step EARLIER: the argument is now the typed
+    "<Model>SubscriptionFilterInput", which only declares the four allowed
+    lookups, so "startswith" fails SCHEMA VALIDATION before the subscribe
+    resolver runs at all. The runtime allow list ("_validate_client_filters",
+    exercised directly above) stays as defence in depth for anything that
+    reaches the resolver without going through schema coercion.
+
     Args:
         monkeypatch: The pytest fixture used to stub the channel layer.
     """
@@ -601,7 +608,7 @@ async def test_a_rejected_lookup_never_starts_a_stream_over_sse(
 
     query = (
         "subscription { secretRecord("
-        'action: CREATE, filters: "{\\"title__startswith\\": \\"a\\"}"'
+        'action: CREATE, filter: { title: { startswith: "a" } }'
         ") { id title } }"
     )
     with _auth_settings():
@@ -618,8 +625,8 @@ async def test_a_rejected_lookup_never_starts_a_stream_over_sse(
         frames = await _drain(response)
 
     body = "".join(frames)
-    assert "is not an allowed lookup" in body, body
     assert "startswith" in body, body
+    assert "SecretRecordTitleSubscriptionLookups" in body, body
 
 
 def test_model_type_forwards_the_projection_to_its_subscription() -> None:

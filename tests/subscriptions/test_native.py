@@ -62,7 +62,7 @@ def test_no_data_projection_argument_after_cutover() -> None:
     # reduced {action, id, filters} regardless of payload_mode='full'.
     args = set(ThingNativeSubscription._meta.arguments)
     assert "data" not in args
-    assert args == {"action", "id", "filters"}
+    assert args == {"action", "id", "filter"}
 
 
 @pytest.mark.django_db(transaction=True)

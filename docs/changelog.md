@@ -12,6 +12,63 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 2.1.0 — unreleased
+
+**The subscription filter argument is now a real typed input object.** Queries
+took `filter` as a generated `<Model>FilterInput`; subscriptions took `filters`
+as a plain `String` carrying JSON — two names, two shapes, and no schema
+validation or autocompletion on the subscription side. That inconsistency is why
+the documented subscription filter syntax was wrong for two releases. This
+release unifies them.
+
+### Changed (BREAKING)
+
+- **`filters` → `filter`, typed `<Model>SubscriptionFilterInput`.** The
+  subscription argument is renamed to the singular query term and takes a
+  generated input object with the same nested `{field: {lookup: value}}` shape
+  queries use. There is **no `filters` alias** — 2.0.0 shipped one day before
+  2.0.1 and the documented syntax never worked, so the exposed surface is
+  minimal.
+
+    Before (2.0.x):
+
+    ```graphql
+    subscription {
+      commentSubscription(action: ALL_ACTIONS, filters: "{\"post\": 7}") {
+        id
+        text
+      }
+    }
+    ```
+
+    After (2.1.0):
+
+    ```graphql
+    subscription {
+      commentSubscription(action: ALL_ACTIONS, filter: { post: { exact: 7 } }) {
+        id
+        text
+      }
+    }
+    ```
+
+    Combining lookups works the same way:
+    `filter: { post: { exact: 7 }, status: { in: ["open", "urgent"] } }`.
+
+- **The schema is now the filter boundary.** The generated input type is
+  deliberately **not** the query's `<Model>FilterInput` — reusing it would
+  re-expose every lookup and reopen the extraction oracle closed in 2.0.1. It
+  declares exactly the subscription's projected output fields (honouring
+  `Meta.only_fields` / `Meta.exclude_fields`) and exactly the four allowed
+  lookups (`exact`, `iexact`, `in`, `isnull`). It is flat, so relation traversal
+  is unexpressible. A banned lookup, an excluded column or a relation path is now
+  a **GraphQL validation error** instead of a runtime rejection. The runtime
+  check remains as defence in depth for anything reaching the engine without
+  schema coercion.
+
+  Both input types coexist in one schema; the query-side
+  `<Model>FilterInput` SDL is unchanged.
+
 ## 2.0.1 — 2026-07-05
 
 **Security release.** Five defects confirmed in 2.0.0 by a line-by-line audit of

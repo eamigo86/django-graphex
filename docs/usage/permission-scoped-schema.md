@@ -199,7 +199,7 @@ codegen, `__schema` queries — reflects **their** schema. Side by side
     }
 
     type Subscription {
-      postSubscription(action: PostSubscriptionAction!, id: ID, filters: String): PostSubscriptionEvent
+      postSubscription(action: PostSubscriptionAction!, id: ID, filter: PostSubscriptionFilterInput): PostSubscriptionEvent
     }
 
     enum PostSubscriptionAction {
@@ -228,7 +228,7 @@ codegen, `__schema` queries — reflects **their** schema. Side by side
     }
 
     type Subscription {
-      postSubscription(action: PostSubscriptionAction!, id: ID, filters: String): PostSubscriptionEvent
+      postSubscription(action: PostSubscriptionAction!, id: ID, filter: PostSubscriptionFilterInput): PostSubscriptionEvent
     }
 
     enum PostSubscriptionAction {

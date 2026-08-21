@@ -25,7 +25,7 @@ from django.core.exceptions import ImproperlyConfigured
 # Defining a ``Subscription`` subclass and mounting it (``.Field()``) no longer
 # fires graphene at all (S8g had only LAZY-DEFERRED these — the firing still
 # happened at subclass-def + mount time, pinning graphene for the process):
-#   * ``_meta.arguments`` is now a NATIVE ``{action, id, filters}`` dict built
+#   * ``_meta.arguments`` is now a NATIVE ``{action, id, filter}`` dict built
 #     from graphql-core (``GraphQLArgument`` + a graphql-core action enum), NOT
 #     graphene ``Argument(ActionSubscriptionEnum)``/``ID``/``GenericScalar``. It
 #     mirrors the ``_build_native_field`` arg shape (the native compile path
@@ -42,8 +42,6 @@ from django.core.exceptions import ImproperlyConfigured
 #     the graphene-backend-only test contract (``test_unit``/``test_isolation``
 #     iterate the public re-export); those tests are deleted in S-del-tests-10 and
 #     the lazy factory with them. Nothing on the native build path references it.
-from graphql import GraphQLError
-
 from ..backends import resolve_backend
 from ..core.base import NativeObjectTypeOptions
 from ..core.base import ObjectType as NativeObjectType
@@ -80,7 +78,7 @@ class SubscriptionField(NativeMountedField):
     never required a graphene "Field" base. The compiler ignores the args /
     subscribe carried here and calls "field.type._build_native_field()" to build
     the DIRECT graphql-core subscription field (its own action enum + "{action,
-    id, filters}" args + native event output type).
+    id, filter}" args + native event output type).
 
     "field.type" resolves to the "Subscription" subclass verbatim (a class is
     returned as-is by "_resolve_thunk"); "args" carries the native
@@ -285,7 +283,11 @@ class Subscription(NativeObjectType):
         _meta.only_fields = tuple(only_fields or ())
         _meta.exclude_fields = tuple(exclude_fields or ())
 
-        # Native-only argument set: {action, id, filters}. The bespoke
+        super().__init_subclass_with_meta__(
+            _meta=_meta, description=description, **options
+        )
+
+        # Native-only argument set: {action, id, filter}. The bespoke
         # ``channel_id``/``operation`` args and the ``data`` field-projection
         # enum are gone (the cutover replaced field projection with the GraphQL
         # selection set, and the WS/SSE transports are the auth boundary, so no
@@ -297,15 +299,13 @@ class Subscription(NativeObjectType):
         # (``_build_native_field``) already builds its OWN args and never read this
         # dict; it now exists as a graphene-free presence/keys contract (the only
         # native consumer reads ``set(_meta.arguments)``). Built from this class'
-        # own ``_build_native_field`` so the arg shape stays in lockstep. The
-        # model is passed explicitly: ``_meta`` is not yet bound on ``cls`` here
-        # (it is assigned by the ``super()`` call below), so the builder cannot
-        # read ``cls._meta.model`` at this point.
+        # own ``_build_native_field_args`` so the arg shape stays in lockstep.
+        # Assigned AFTER super(): 2.1.0's generated ``filter`` input is built
+        # from ``cls._output_field_names()``, which reads the ``Meta`` output
+        # projection off ``cls._meta`` — bound by the super() call above. The
+        # options object is mutable (no graphene ``freeze()``), and ``cls._meta``
+        # IS this very object, so the late assignment lands on the class.
         _meta.arguments = cls._build_native_field_args(model=model)
-
-        super().__init_subclass_with_meta__(
-            _meta=_meta, description=description, **options
-        )
 
     @classmethod
     def _payload_is_full(cls) -> bool:
@@ -504,37 +504,6 @@ class Subscription(NativeObjectType):
         return {key: value for key, value in data.items() if cls._projection_keeps(key)}
 
     @classmethod
-    def _validate_filters(cls, client_filters: dict[str, Any]) -> None:
-        """Validate that all "client_filters" keys root on declared output fields.
-
-        Each filter key may be a bare field name or a field name followed by a
-        Django ORM lookup suffix (e.g. "username__icontains"). The root field
-        (everything before the first "__") must be present in the subscription's
-        PROJECTED serialized output field names. Filters whose root is not
-        declared raise "GraphQLError" so arbitrary ORM field probing is rejected
-        at subscribe time.
-
-        Server-forced scope filters (from "subscription_scope") are NOT subject
-        to this check — they originate from server code, not the client.
-
-        Args:
-            client_filters: The raw "filters" dict supplied by the subscriber.
-
-        Raises:
-            GraphQLError: When a filter key roots on an undeclared field.
-        """
-        if not client_filters:
-            return
-        declared: set[str] = set(cls._output_field_names())
-        for key in client_filters:
-            root = key.split("__")[0]
-            if root not in declared:
-                raise GraphQLError(
-                    "Subscription filter key '{}' is not a declared output field. "
-                    "Allowed fields: {}.".format(key, ", ".join(sorted(declared)))
-                )
-
-    @classmethod
     def get_binding(cls) -> SubscriptionBinding:
         """Return the cached, idempotent signal binding for this subscription.
 
@@ -727,12 +696,12 @@ class Subscription(NativeObjectType):
         ".exists()" narrowing that closes the WU4 conservative-drop gap so
         native "__lookup" subscriptions deliver DB-verified events.
 
-        Filter-key validation in the native path does NOT use the kept
-        "_validate_filters" classmethod: it is enforced in "streaming.py" by
-        "_validate_client_filters" against "declared_output_fields" (the
-        PROJECTED "_output_field_names()") and the spec's "model" (the Django
-        lookup registry the key suffixes are checked against), both passed on the
-        spec below. "_validate_filters" is retained for the graphene path only.
+        Filter-key validation lives in "streaming.py":
+        "_validate_client_filters" checks every key against
+        "declared_output_fields" (the PROJECTED "_output_field_names()") and the
+        spec's "model" (the Django lookup registry the key suffixes are checked
+        against), both passed on the spec below. That is the ONE choke point —
+        there is no second, weaker validator.
 
         Args:
             schema: The native graphql-core "GraphQLSchema" the per-event
@@ -851,7 +820,7 @@ class Subscription(NativeObjectType):
 
     @classmethod
     def _build_native_field_args(cls, model: Any = None) -> dict[str, Any]:
-        """Build the native "{action, id, filters}" graphql-core args (graphene-free).
+        """Build the native "{action, id, filter}" graphql-core args (graphene-free).
 
         S-sub-6: the single source of truth for the subscription field arguments.
         Used both for "_meta.arguments" (the graphene-free presence/keys
@@ -859,15 +828,22 @@ class Subscription(NativeObjectType):
         compile (the DIRECT graphql-core "GraphQLField" the native root compiler
         mounts). Building it here keeps the two in lockstep with ZERO graphene.
 
+        2.1.0: "filters" (a "GraphQLString" carrying JSON) became "filter", a
+        GENERATED "<Model>SubscriptionFilterInput" using the same nested shape
+        queries use, so the schema itself enforces the projected field set and
+        the 2.0.1 lookup allow list.
+
         Args:
-            model: The Django model whose name scopes the action enum. Passed
-                explicitly at subclass-def (where "cls._meta" is not yet bound);
-                defaults to "cls._meta.model" for the live compile call.
+            model: The Django model whose name scopes the action enum. Kept for
+                API parity with the historical subclass-def call; defaults to
+                "cls._meta.model".
 
         Returns:
             A "{name: GraphQLArgument}" mapping with a non-null model-scoped
             action enum, an optional "id" ("GraphQLID"), and an optional
-            JSON-encoded "filters" ("GraphQLString").
+            "filter" typed by the generated subscription filter input. The
+            "filter" argument is omitted when the projection leaves no
+            filterable field.
         """
         from graphql import (
             GraphQLArgument,
@@ -876,10 +852,11 @@ class Subscription(NativeObjectType):
         from graphql import (
             GraphQLID as _GraphQLID,
         )
-        from graphql import (
-            GraphQLString as _GraphQLString,
-        )
         from graphql.type import GraphQLEnumType, GraphQLEnumValue
+
+        from django_graphex.filtering.native_schema import (
+            build_subscription_filter_input_type,
+        )
 
         if model is None:
             model = cls._meta.model
@@ -892,7 +869,7 @@ class Subscription(NativeObjectType):
                 "ALL_ACTIONS": GraphQLEnumValue("all_actions"),
             },
         )
-        return {
+        args = {
             "action": GraphQLArgument(
                 GraphQLNonNull(action_enum),
                 description="Model change action to listen to.",
@@ -903,12 +880,76 @@ class Subscription(NativeObjectType):
                 description="Optional object id to scope a per-object subscription.",
                 out_name="id",
             ),
-            "filters": GraphQLArgument(
-                _GraphQLString,
-                description="Optional JSON-encoded per-subscriber field filters.",
-                out_name="filters",
-            ),
         }
+        filter_input = build_subscription_filter_input_type(
+            model, cls._output_field_names()
+        )
+        if filter_input is not None:
+            args["filter"] = GraphQLArgument(
+                filter_input,
+                description="Optional per-subscriber field filters.",
+                out_name="filter",
+            )
+        return args
+
+    @classmethod
+    def _filter_lookup_key(cls, field_name: str, lookup: str) -> str:
+        """Map one "(field, lookup)" pair to the ORM key the delivery gate reads.
+
+        Everything downstream — "streaming._validate_client_filters", the
+        in-memory equality gate and the single-row ".exists()" narrowing —
+        consumes a FLAT mapping of Django ORM lookups, so the nested input has
+        to collapse to one.
+
+        "exact" collapses to the BARE field name rather than "<field>__exact",
+        which is the same ORM lookup but keeps the serialize-once promise: the
+        in-memory gate ("mixins.split_filters") can only decide a key WITHOUT a
+        "__" suffix, so "<field>__exact" would push the documented scoping case
+        ("filter: { post: { exact: 7 } }") onto a per-event database query. The
+        one exception is a to-many field, whose serialized payload value is a
+        LIST of primary keys that no scalar comparison can decide — it keeps the
+        suffix so the ".exists()" narrowing answers it against the database.
+
+        Args:
+            field_name: The snake ORM field name (the input field's out_name).
+            lookup: The lookup name ("exact"/"iexact"/"in"/"isnull").
+
+        Returns:
+            The flat Django ORM lookup key.
+        """
+        if lookup != "exact":
+            return f"{field_name}__{lookup}"
+        try:
+            many = bool(cls._meta.model._meta.get_field(field_name).many_to_many)
+        except Exception:  # noqa: BLE001 - an unknown name is rejected downstream
+            many = False
+        return f"{field_name}__exact" if many else field_name
+
+    @classmethod
+    def _flatten_filter_input(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Flatten the coerced "filter" input object into ORM lookup keys.
+
+        Turns the nested wire shape "{'post': {'exact': 7}}" into the flat
+        "{'post': 7}" the delivery path consumes. graphql-core already delivered
+        snake keys here (every generated input field carries an "out_name"), so
+        this only has to join the two levels.
+
+        Args:
+            value: The coerced "filter" argument, or "None" when omitted.
+
+        Returns:
+            The flat Django-ORM-lookup mapping, or "None" when the client asked
+            for no filtering at all.
+        """
+        if not value:
+            return None
+        flat: dict[str, Any] = {}
+        for field_name, lookups in value.items():
+            for lookup, expected in (lookups or {}).items():
+                flat[cls._filter_lookup_key(field_name, lookup)] = expected
+        return flat or None
 
     @classmethod
     def _build_native_field(cls, schema: Any = None, document: Any = None) -> Any:
@@ -924,7 +965,7 @@ class Subscription(NativeObjectType):
             it via WU5 "drive_subscription"),
           * "resolve" = identity (the source dict IS the root; the event type's
             snake-closure resolvers project it),
-          * "args" reduced to "{action, id, filters}" under native (the
+          * "args" reduced to "{action, id, filter}" under native (the
             graphene-only "channel_id"/"operation" args are dropped).
 
         "schema"/"document" are OPTIONAL: the subscribe factory only builds the
@@ -950,7 +991,7 @@ class Subscription(NativeObjectType):
             GraphQLField as _GraphQLField,
         )
 
-        # Reduced native arg set: {action, id, filters} (no channel_id/operation).
+        # Reduced native arg set: {action, id, filter} (no channel_id/operation).
         # S-sub-6: shared with ``_meta.arguments`` via the single builder so the
         # live field + the subclass-def presence contract stay in lockstep.
         args = cls._build_native_field_args()
@@ -988,11 +1029,7 @@ class Subscription(NativeObjectType):
                 )
             action = _enum_value(kwargs.get("action"))
             obj_id = kwargs.get("id")
-            client_filters = kwargs.get("filters") or None
-            if isinstance(client_filters, str):
-                import json
-
-                client_filters = json.loads(client_filters) if client_filters else None
+            client_filters = cls._flatten_filter_input(kwargs.get("filter"))
             return await cls._native_subscribe(
                 channel_layer,
                 schema,
@@ -1009,7 +1046,7 @@ class Subscription(NativeObjectType):
             subscribe=_subscribe_source,
             # The source dict IS the root; the event type's snake-closure
             # resolvers project it. ``**_kwargs`` absorbs the field arguments
-            # ({action, id, filters}) that graphql-core's ``execute`` passes to the
+            # ({action, id, filter}) that graphql-core's ``execute`` passes to the
             # resolver per delivered event (the COND-A delivery path uses bare
             # ``execute``, NOT ``subscribe``, so the root field's resolve receives
             # the coerced args alongside root/info).
