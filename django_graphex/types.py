@@ -32,6 +32,7 @@ from .registry import Registry, get_global_registry
 from .settings import graphql_api_settings
 from .utils import (
     _apply_optimizations,
+    apply_object_type_get_queryset,
     get_Object_or_None,
     is_valid_django_model,
     maybe_queryset,
@@ -1167,10 +1168,18 @@ class DjangoObjectType(NativeObjectType):
             id: Primary key of the object to fetch.
 
         Returns:
-            The matching model instance, or None if it does not exist.
+            The matching model instance, or None if it does not exist or the
+            "get_queryset" scope excludes it.
         """
+        # SECURITY: the primary key comes straight from the caller, so this
+        # lookup goes through the same "get_queryset" choke point every other
+        # row-serving path uses -- resolving it on the bare manager would hand
+        # back exactly the rows the scope exists to hide.
         try:
-            return cls._meta.model.objects.get(pk=id)
+            scoped = apply_object_type_get_queryset(
+                cls._meta.model._default_manager.all(), cls, info
+            )
+            return scoped.get(pk=id)
         except cls._meta.model.DoesNotExist:
             return None
 
@@ -2445,15 +2454,46 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         if not output_type:
             output_type = factory_type("output", DjangoObjectType, **factory_kwargs)
-        elif extra_fields:
-            warnings.warn(
-                "{name}: custom fields declared on the type are ignored because a "
-                "DjangoObjectType is already registered for {model}; declare them on "
-                "that DjangoObjectType instead.".format(
-                    name=cls.__name__, model=model.__name__
-                ),
-                stacklevel=2,
-            )
+        else:
+            # SECURITY: the reused output type was built from ITS OWN Meta, so a
+            # projection declared here would be dropped and the column it was
+            # meant to hide would stay queryable. "exclude_fields" is documented
+            # as THE way to keep a sensitive column out (docs/api/types.md), so
+            # this fails the schema build instead of warning: a warning is
+            # filterable and would leave the leak live in production. Only the
+            # already-leaking configuration is affected -- move the projection to
+            # the registered type, or drop the option.
+            dropped = [
+                option
+                for option, value in (
+                    ("only_fields", only_fields),
+                    ("include_fields", include_fields),
+                    ("exclude_fields", exclude_fields),
+                )
+                if value
+            ]
+            if dropped:
+                raise ImproperlyConfigured(
+                    "{name}.Meta.{options} cannot be honored: the output type for "
+                    "{model} is reused from {registered}, which was built from its "
+                    "own Meta, so the projection would be silently dropped and any "
+                    "field it hides would stay exposed. Declare {options} on "
+                    "{registered} instead, or remove the option.".format(
+                        name=cls.__name__,
+                        options="/".join(dropped),
+                        model=model.__name__,
+                        registered=output_type.__name__,
+                    )
+                )
+            if extra_fields:
+                warnings.warn(
+                    "{name}: custom fields declared on the type are ignored because a "
+                    "DjangoObjectType is already registered for {model}; declare them "
+                    "on that DjangoObjectType instead.".format(
+                        name=cls.__name__, model=model.__name__
+                    ),
+                    stacklevel=2,
+                )
 
         output_list_type = factory_type("list", DjangoListObjectType, **factory_kwargs)
 
@@ -2776,9 +2816,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         """
         method_name = f"has_{action}_permission"
         for permission in cls.get_permissions():
-            if getattr(permission, method_name)(info, cls._meta.model, **kwargs) is (
-                False
-            ):
+            # SECURITY: fail closed on ANY falsy result, not just the "False"
+            # singleton. "return user and user.is_staff" -- the idiomatic
+            # one-liner -- yields None/an empty value for an anonymous caller,
+            # and an identity check would have granted the action.
+            if not getattr(permission, method_name)(info, cls._meta.model, **kwargs):
                 raise GraphQLError(
                     "You do not have permission to perform this action.",
                     extensions={"code": "PERMISSION_DENIED", "status_code": 403},
@@ -2838,12 +2880,19 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A success response with the deleted object, or an error response
-            when no matching object exists.
+            when no matching object exists or it falls outside the scoped
+            queryset.
         """
         cls.authorize(info, "delete", data=kwargs)
         pk = kwargs.get("id")
 
-        old_obj = get_Object_or_None(cls._meta.model, pk=pk)
+        # SECURITY: resolve the target row through the SAME scoped queryset the
+        # read path uses ("get_queryset" -> "filter_queryset"), never the bare
+        # model. A row outside the caller's scope must be "not found" for a
+        # write exactly as it already is for a read, so the response cannot be
+        # used to probe another tenant's primary keys.
+        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             old_obj.delete()
             setattr(old_obj, old_obj._meta.pk.attname, pk)
@@ -2862,7 +2911,8 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A success response with the updated object, or an error response
-            when no matching object exists.
+            when no matching object exists or it falls outside the scoped
+            queryset.
         """
         data = kwargs.get(cls._meta.input_field_name)
         cls.authorize(info, "update", data=data)
@@ -2875,7 +2925,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         # means no object can be found, so old_obj will be None and the resolver
         # returns a clean "not found" error rather than a 500.
         pk = data.pop("id", None)
-        old_obj = get_Object_or_None(cls._meta.model, pk=pk)
+        # SECURITY: same scoped lookup as "delete" -- see the comment there.
+        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(
                 root,

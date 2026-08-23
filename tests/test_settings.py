@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from django.core.checks import WARNING
 from django.test import TestCase, override_settings
 
 from django_graphex.paginations import LimitOffsetGraphqlPagination
@@ -114,3 +115,46 @@ class SettingsTest(TestCase):
 
         s = settings_module.graphql_api_settings
         self.assertIs(s.OPTIMIZER_SAFE_MODE, True)
+
+
+class UnknownSettingKeyCheckTest(TestCase):
+    """Test cases for the "DJANGO_GRAPHEX" unknown-key Django system check.
+
+    A misspelled key inside the "DJANGO_GRAPHEX" dict silently keeps the
+    library default, so a typo'd security cap ("MAX_PAGE_SIZ") or flag
+    ("CACHE_ACTIV") does nothing at all. The system check is the only signal
+    a project gets.
+    """
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZ": 10, "CACHE_ACTIV": True})
+    def test_unknown_keys_are_reported_by_run_checks(self) -> None:
+        """Assert misspelled DJANGO_GRAPHEX keys surface through "run_checks".
+
+        If this fails, a typo'd cap or security flag ships to production with
+        no signal whatsoever: the setting keeps its library default.
+        """
+        from django.core.checks import run_checks
+
+        messages = [m for m in run_checks() if m.id.startswith("django_graphex.")]
+        self.assertEqual(len(messages), 1, messages)
+        message = messages[0]
+        self.assertEqual(message.id, "django_graphex.W001")
+        self.assertEqual(message.level, WARNING)
+        self.assertIn("MAX_PAGE_SIZ", message.msg)
+        self.assertIn("CACHE_ACTIV", message.msg)
+        # The closest known key must be suggested, as the Meta-option idiom does.
+        self.assertIn("MAX_PAGE_SIZE", message.hint or "")
+        self.assertIn("CACHE_ACTIVE", message.hint or "")
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 10, "CACHE_ACTIVE": True})
+    def test_known_keys_report_nothing(self) -> None:
+        """Assert a correctly spelled DJANGO_GRAPHEX dict raises no message.
+
+        If this fails, every correctly configured project would see a spurious
+        warning and learn to ignore the check.
+        """
+        from django.core.checks import run_checks
+
+        self.assertEqual(
+            [m for m in run_checks() if m.id.startswith("django_graphex.")], []
+        )

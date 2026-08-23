@@ -388,16 +388,22 @@ related objects alongside the parent. The same engine backs both
 - **Reverse-O2O list guard** — supplying a list of more than one item to a
   reverse `OneToOneField` nested field raises a clean error instead of hitting
   the DB UNIQUE constraint.
-- **Reverse-FK ownership guard** — upsert of a reverse-FK child by pk is
-  rejected if that child currently belongs to a *different* parent. This
-  prevents a client from silently re-parenting (stealing) rows owned by another
-  object. The error message is `"Object <pk> does not belong to this <Model>."`.
+- **Reverse ownership guard** — upsert of a reverse child by pk is rejected if
+  that child currently belongs to a *different* parent. This prevents a client
+  from silently re-parenting (stealing) rows owned by another object. The error
+  message is `"Object <pk> does not belong to this <Model>."`. The guard covers
+  **both** reverse kinds — reverse `ForeignKey` **and** reverse
+  `OneToOneField` — identically, so the two are indistinguishable to a client.
+  It does **not** apply to forward `ForeignKey` / `OneToOneField` or to
+  `ManyToManyField` children: those rows are not owned by the parent (many
+  parents may legitimately point at the same one), so there is no owner to
+  compare against.
 
-!!! warning "Reverse-FK child re-parenting"
-    Attempting to assign an existing child (by pk) to a new parent via the
-    nested write path will fail with a validation error if the child's FK already
-    points to a different parent. To genuinely re-parent a row, issue a direct
-    update mutation on the child model instead.
+!!! warning "Reverse child re-parenting"
+    Attempting to assign an existing reverse child (by pk) to a new parent via
+    the nested write path will fail with a validation error if the child's FK or
+    O2O key already points to a different parent. To genuinely re-parent a row,
+    issue a direct update mutation on the child model instead.
 
 #### Worked examples — UPDATE + nested create and UPDATE + nested update (upsert)
 

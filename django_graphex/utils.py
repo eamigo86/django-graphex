@@ -3563,6 +3563,51 @@ def _apply_optimizations(
     return base
 
 
+def apply_object_type_get_queryset(
+    queryset: QuerySet, output_type: Any, info: GraphQLResolveInfo
+) -> QuerySet:
+    """Apply a "DjangoObjectType.get_queryset" row-level scope to a queryset.
+
+    The single choke point for the per-request scoping hook: every path that
+    serves rows for a "DjangoObjectType" routes through here, whether the
+    queryset came from a fresh manager ("queryset_factory") or from a parent's
+    relation accessor (the related fast path in
+    "DjangoFilterListField.list_resolver").
+
+    The sentinel "_dgx_has_object_type_get_queryset" is set on
+    "DjangoObjectType" and inherited by every plain subclass; it is NOT present
+    on "DjangoModelType" (separate hierarchy, whose own hook runs at the
+    CRUD-method level), so the check guards against calling the wrong contract.
+
+    Args:
+        queryset: The queryset to scope.
+        output_type: The "DjangoObjectType" subclass whose hook should run, or
+            None to skip the hook.
+        info: The GraphQL resolve info for the current field.
+
+    Returns:
+        The scoped queryset, or the input unchanged when no hook applies.
+
+    Raises:
+        TypeError: If the hook returns anything other than a "QuerySet". The
+            scope cannot be honoured in that case, so the request is denied
+            instead of silently serving unscoped rows.
+    """
+    if output_type is None or not getattr(
+        output_type, "_dgx_has_object_type_get_queryset", False
+    ):
+        return queryset
+
+    hooked = output_type.get_queryset(queryset, info)
+    if not isinstance(hooked, QuerySet):
+        raise TypeError(
+            f"{output_type.__name__}.get_queryset must return a QuerySet, got "
+            f"{type(hooked).__name__}. Returning anything else would serve "
+            f"unscoped rows."
+        )
+    return hooked
+
+
 def queryset_factory(
     manager: Any,
     root: Any,
@@ -3614,17 +3659,8 @@ def queryset_factory(
 
     # --- DjangoObjectType.get_queryset hook -----------------------------------
     # Apply the per-request scoping hook if the output type declares it.
-    # The sentinel ``_dgx_has_object_type_get_queryset`` is set on
-    # ``DjangoObjectType`` and inherited by every plain subclass; it is NOT
-    # present on ``DjangoModelType`` (separate hierarchy).  The check guards
-    # against accidentally calling it on unrelated types.
-    if output_type is not None and getattr(
-        output_type, "_dgx_has_object_type_get_queryset", False
-    ):
-        hooked = output_type.get_queryset(base, info)
-        if isinstance(hooked, QuerySet):
-            base = hooked
-            model = base.model
+    base = apply_object_type_get_queryset(base, output_type, info)
+    model = base.model
     # -------------------------------------------------------------------------
 
     if not graphql_api_settings.OPTIMIZE_QUERYSET:

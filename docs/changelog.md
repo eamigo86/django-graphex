@@ -14,9 +14,16 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
-**Correctness pass over the 2.1.0 audit backlog.** Twelve confirmed defects from
-the post-release audit, each reproduced before the fix and covered by a
-regression test. No API changes.
+**Correctness and security pass over the 2.1.0 audit backlog.** Confirmed
+defects from the post-release audit, each reproduced before the fix and covered
+by a regression test.
+
+One behaviour change worth calling out before you upgrade: declaring
+`only_fields` / `exclude_fields` / `include_fields` on a type whose output type
+is reused from the registry now raises `ImproperlyConfigured` at class
+definition instead of dropping the option silently. A schema that builds today
+can therefore fail to build after upgrading — which is the point: every schema
+that stops building was silently exposing a field it was told to hide.
 
 ### Fixed
 
@@ -84,6 +91,104 @@ regression test. No API changes.
   unbounded lists alike, across `DjangoListObjectField`,
   `DjangoFilterPaginateListField` and nested lists. Explicitly configured
   paginators are unchanged.
+
+### Security
+
+- **`update` and `delete` ignored the queryset scoping that protected reads.**
+  Both resolved their target row from the bare model, while `retrieve` and
+  `list` went through `get_queryset` → `filter_queryset` — so the documented
+  multi-tenant pattern (`qs.filter(tenant=info.context.user.tenant)`) hid
+  another tenant's row from a query and still let any caller overwrite or
+  delete it by primary key, returning `ok: true`. That is the worst possible
+  shape: a developer verifying the scope on the read path concludes it works.
+  Both write methods now resolve the row through the same scoped queryset, and
+  a row outside the scope answers exactly as a missing one (`ok: false` with
+  `<Model> with id <pk> does not exist.`), so the response cannot be used to
+  probe which primary keys exist. See
+  [Filtering › `filter_queryset`](usage/filtering.md#filter_queryset-scope-the-base-queryset).
+- **A permission returning `None`, `0` or `""` was treated as *allowed*.** The
+  check compared the result with the `False` singleton (`is False`), so only a
+  literal `False` denied: `return user and user.is_staff` — the single most
+  idiomatic way to write it — returns `None` for an anonymous caller and
+  granted every action, reads and writes alike. Any falsy value now denies.
+  See [Permissions › Writing a custom permission](usage/permissions.md#writing-a-custom-permission).
+- **`only_fields` / `exclude_fields` were silently dropped, keeping a sensitive
+  column exposed.** When a `DjangoObjectType` was already registered for the
+  model, the `DjangoModelType` reused that output type and discarded its own
+  projection without a word (the existing warning only fired for custom
+  fields), so `exclude_fields = ("secret",)` built a schema that still served
+  `secret` — defeating the control this library documents as *the* way to keep
+  a column out. Declaring `only_fields` / `include_fields` / `exclude_fields`
+  in that situation now raises `ImproperlyConfigured` at class definition,
+  naming the option, the model and the type that registered the output type.
+  This **fails the build for a schema that builds today**, deliberately: a
+  warning is filterable and would leave the leak live in production, and the
+  only configurations affected are the ones already leaking. Move the
+  projection to the registered `DjangoObjectType`, or drop the option. See
+  [Types › Custom output fields](usage/types.md#custom-output-fields).
+- **`DjangoObjectType.get_node` ignored `get_queryset`.** The sibling of the
+  item above on the plain-type hierarchy: it resolved its row on the bare
+  manager instead of the documented scoping choke point every other row-serving
+  path uses, so a caller passing a primary key straight to it got back exactly
+  the rows the scope exists to hide. It now runs through `get_queryset`, and an
+  excluded row is reported as missing.
+- **A nested reverse `OneToOneField` child could be stolen from its owner.** The
+  ownership guard on the nested-write path only tested the reverse-FK kind, so
+  updating your own parent row with `{id: <yours>, profile: {id: <theirs>, ...}}`
+  silently re-pointed another tenant's one-to-one child at you and returned
+  `ok: true` — while the same payload on a reverse FK was correctly rejected.
+  The guard now covers both reverse kinds with the identical error, so the two
+  paths are indistinguishable to a client. Forward FK/O2O and M2M children are
+  unaffected: those rows are not owned by the parent, so no ownership check
+  applies. See [Mutations](usage/mutations.md#how-nested-writes-work).
+- **Setting `root_value` silently disabled every private field.**
+  `AuthenticatedFieldsMiddleware` used "the root value is not `None`" as its
+  proxy for "this is a nested field", but `root_value` is a public seam (a
+  `GraphQLView` kwarg, a class attribute and an overridable `get_root_value()`).
+  Any view configured with one served every protected field to anonymous
+  callers, and the gate was skipped on each delivered subscription event too —
+  the event payload *is* the root value there. The top level is now read from
+  the resolve path, which is also correct for a field reached through an inline
+  fragment and for one nested inside a list element; an unreadable path is
+  treated as top level, so the gate fails closed. See
+  [Security](usage/security.md#field-level-authentication).
+- **A deactivated superuser could still introspect the schema.** The
+  `INTROSPECTION_ALLOW_SUPERUSER` bypass tested `is_superuser` alone, unlike
+  every sibling superuser check in the library, so an `is_active=False` account
+  kept full `__schema` access on backends that do not run Django's
+  `user_can_authenticate` (token / JWT). The bypass now requires an **active**
+  superuser. See [Security](usage/security.md#disable-introspection).
+- **Row-level scoping leaked through a parent relation.** A
+  `DjangoFilterListField` mounted on a parent type read the rows straight off
+  the relation accessor, a shortcut that skipped the node type's
+  `get_queryset`. A type that hid rows correctly at the top level exposed all of
+  them when reached through the parent — `{ authors { createdPosts { title } } }`
+  returned the rows `{ posts { title } }` withheld. The hook is now applied on
+  that path too, from a single shared choke point; it also rejects a hook that
+  returns a non-`QuerySet` instead of quietly serving unscoped rows. Types that
+  declare no scope keep the prefetch cache and the single query; a scoped type
+  costs one query per parent on that field. Auto-expanded nested lists
+  (`DjangoNestedListObjectField`) remain the documented boundary. See
+  [Types](usage/types.md#custom-queryset-per-request-filtering).
+- **A misspelled `DJANGO_GRAPHEX` key was dropped without a signal.** An unknown
+  key never reaches the reader, so the setting it was meant to configure keeps
+  its default: `"MAX_PAGE_SIZ": 10` left `MAX_PAGE_SIZE` at `None` (no page-size
+  cap) and `"CACHE_ACTIV": True` left the cache off, with nothing reported by
+  `manage.py check`. A Django system check (`django_graphex.W001`,
+  `Tags.compatibility`, registered from the app config) now compares your keys
+  against the known settings and names the closest match. It is a **warning**,
+  never an exception, so an app that starts today keeps starting. See
+  [Settings](usage/settings.md#typos-in-the-django_graphex-dict).
+- **The playground's "private" note subscription had no gate on the type.**
+  `examples/playground` documented `noteSubscription` as auth-gated, but the
+  only thing denying an anonymous subscriber was the schema-root wiring:
+  `"subscribe"` is a READ action, so `IsAuthenticatedOrReadOnly` allowed it, and
+  `subscription_scope` returned `None` — no scope, i.e. **every** user's notes —
+  for a caller with no user. Copied into a project that does not mount
+  `AuthenticatedFieldsMiddleware`, the type leaked the whole stream.
+  `NoteModelType` now denies the anonymous `subscribe` in `authorize` (before
+  any Channels group is joined) and fails closed in `subscription_scope`. See
+  [Subscriptions](usage/subscriptions.md#authorization-and-row-scoping).
 
 ### Documentation
 

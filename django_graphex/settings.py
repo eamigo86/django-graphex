@@ -12,11 +12,17 @@ merged into this package's own settings dict — there is no separate namespace)
 
 from __future__ import annotations
 
-from typing import Any
+from difflib import get_close_matches
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
+from django.core.checks import Warning as CheckWarning
 from django.test.signals import setting_changed
 from django.utils.module_loading import import_string
+
+if TYPE_CHECKING:
+    from django.apps import AppConfig
+    from django.core.checks import CheckMessage
 
 DEFAULTS = {
     # Pagination
@@ -351,3 +357,45 @@ def reload_api_settings(*args: Any, **kwargs: Any) -> None:
 
 
 setting_changed.connect(reload_api_settings)
+
+
+def check_unknown_settings(
+    app_configs: list[AppConfig] | None = None, **kwargs: Any
+) -> list[CheckMessage]:
+    """Report keys of the "DJANGO_GRAPHEX" dict that are not real settings.
+
+    An unknown key is silently dropped by the reader, so the setting it was
+    meant to configure keeps its library default: a misspelled cap
+    ("MAX_PAGE_SIZ") or security flag ("CACHE_ACTIV") does nothing at all.
+    This is a WARNING and never an exception, so an app that starts today
+    keeps starting. Registered from "DjangoGraphexConfig.ready" under
+    "Tags.compatibility", so "manage.py check" surfaces it.
+
+    Args:
+        app_configs: The app configs Django is checking, or None for all
+            (unused: the setting is global).
+        **kwargs: Extra arguments passed by the checks framework.
+
+    Returns:
+        A single-element list carrying the warning when unknown keys exist,
+        otherwise an empty list.
+    """
+    unknown = sorted(set(graphql_api_settings.user_settings) - set(DEFAULTS))
+    if not unknown:
+        return []
+    hints = []
+    for key in unknown:
+        closest = get_close_matches(key, DEFAULTS, n=1)
+        hints.append(
+            "'{}' -> did you mean '{}'?".format(key, closest[0])
+            if closest
+            else "'{}' has no close match — remove it.".format(key)
+        )
+    return [
+        CheckWarning(
+            "Unknown DJANGO_GRAPHEX setting(s) {!r}. They are IGNORED, so the "
+            "setting they were meant to configure keeps its default.".format(unknown),
+            hint=" ".join(hints),
+            id="django_graphex.W001",
+        )
+    ]

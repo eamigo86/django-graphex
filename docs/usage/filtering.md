@@ -495,6 +495,18 @@ class UserType(DjangoModelType):
         return qs.filter(tenant=info.context.user.tenant)
 ```
 
+The scope applies to **every** CRUD operation on the type, writes included:
+`retrieve` and `list` narrow their results, and `update` and `delete` resolve
+their target row through the same hook, so a row belonging to another tenant
+answers exactly as a missing one (`ok: false`, `<Model> with id <pk> does not
+exist.`) instead of being written.
+
+!!! danger "Upgrade note"
+    2.1.0 and earlier applied this scope on the read path only: `update` and
+    `delete` looked their target up on the bare model, so the snippet above
+    protected reads while leaving every row in the table writable by any
+    caller. Fixed in the next release.
+
 See [Permissions & hooks](permissions.md) for `get_queryset` / `filter_queryset`.
 
 ## Combining with pagination & ordering

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -258,3 +259,115 @@ async def test_sse_subscription_delivers_post_create(author: Author) -> None:
     aclose = getattr(aiter, "aclose", None)
     if aclose is not None:
         await aclose()
+
+
+# --------------------------------------------------------------------------- #
+# Private subscription: the auth gate the README promises                      #
+# --------------------------------------------------------------------------- #
+
+_NOTE_SUB_QUERY = "subscription { noteSubscription(action: ALL_ACTIONS) { id title } }"
+
+
+def _anonymous_info() -> SimpleNamespace:
+    """Build the minimal resolve-info stand-in carrying an anonymous user.
+
+    Returns:
+        info: An object exposing "context.user" as an "AnonymousUser", which is
+            all the subscribe hooks read.
+    """
+    from django.contrib.auth.models import AnonymousUser
+
+    return SimpleNamespace(context=SimpleNamespace(user=AnonymousUser()))
+
+
+@pytest.mark.django_db
+def test_note_subscription_type_denies_anonymous_subscribe() -> None:
+    """Assert "NoteModelType" itself denies an anonymous subscribe.
+
+    The README documents "noteSubscription" as gated by
+    "authorize_subscription". Without a gate on the TYPE, the only thing
+    standing between an anonymous client and every user's notes is the
+    schema-root wiring: "subscribe" counts as a read action for
+    "IsAuthenticatedOrReadOnly", so copying this type into a project that
+    does not mount "AuthenticatedFieldsMiddleware" leaks every note.
+    """
+    from blog.schema import NoteModelType
+    from graphql import GraphQLError
+
+    subscription_cls = NoteModelType.subscription_type()
+    with pytest.raises(GraphQLError):
+        subscription_cls.authorize_subscription(_anonymous_info(), action="all_actions")
+
+
+@pytest.mark.django_db
+def test_note_subscription_scope_denies_anonymous() -> None:
+    """Assert the note "subscription_scope" fails closed for an anonymous user.
+
+    Returning "None" here means NO server-forced filter, so an anonymous
+    subscriber that reached this hook would receive every user's notes. The
+    sibling "filter_queryset" already fails closed with "qs.none()".
+    """
+    from blog.schema import NoteModelType
+    from graphql import GraphQLError
+
+    subscription_cls = NoteModelType.subscription_type()
+    with pytest.raises(GraphQLError):
+        subscription_cls.subscription_scope(_anonymous_info(), action="all_actions")
+
+
+@pytest.mark.django_db
+def test_note_subscription_scope_forces_owner_for_authenticated(
+    demo_user: object,
+) -> None:
+    """Assert an authenticated subscriber still gets the server-forced owner scope.
+
+    Guards against the anonymous denial being bought by breaking the feature.
+
+    Args:
+        demo_user: The persisted user whose notes the scope must pin to.
+    """
+    from blog.schema import NoteModelType
+
+    info = SimpleNamespace(context=SimpleNamespace(user=demo_user))
+    subscription_cls = NoteModelType.subscription_type()
+    assert subscription_cls.subscription_scope(info, action="all_actions") == {
+        "owner": demo_user.pk
+    }
+    # And the subscribe itself is allowed.
+    subscription_cls.authorize_subscription(info, action="all_actions")
+
+
+async def test_anonymous_note_subscription_joins_no_group(demo_user: object) -> None:
+    """Assert an anonymous SSE subscriber is denied before joining any group.
+
+    End-to-end lock on the README claim: the denial reaches the client as an
+    UNAUTHENTICATED error and no live source is ever started, so no notes group
+    is joined.
+
+    Args:
+        demo_user: The persisted user whose private notes must never leak.
+    """
+    from blog.schema import schema
+    from django.contrib.auth.models import AnonymousUser
+    from django.test import RequestFactory
+
+    from django_graphex.subscriptions.transports import sse
+
+    view = sse.subscription_sse_view(schema=schema.graphql_schema)
+    request = RequestFactory().post(
+        "/graphql/stream",
+        data=json.dumps({"query": _NOTE_SUB_QUERY}),
+        content_type="application/json",
+    )
+    request.user = AnonymousUser()
+
+    response = await view(request)
+    assert sse.get_started_source(response) is None, (
+        "an anonymous subscriber must never start a live notes source"
+    )
+
+    frame = await asyncio.wait_for(
+        response.streaming_content.__aiter__().__anext__(), timeout=3.0
+    )
+    frame = frame.decode() if isinstance(frame, (bytes, bytearray)) else frame
+    assert "UNAUTHENTICATED" in frame, frame

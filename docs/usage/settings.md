@@ -225,7 +225,7 @@ DJANGO_GRAPHEX = {
 | Setting | Default | Description |
 |---|---|---|
 | `ALLOW_INTROSPECTION` | `False` | Allow `__schema` / `__type` introspection (`DisableIntrospectionMiddleware`). |
-| `INTROSPECTION_ALLOW_SUPERUSER` | `True` | Let superusers bypass the introspection block. |
+| `INTROSPECTION_ALLOW_SUPERUSER` | `True` | Let **active** superusers (`is_active` **and** `is_superuser`) bypass the introspection block; a deactivated superuser is blocked like anyone else. |
 | `PROTECTED_FIELDS` | `()` | Top-level field names requiring auth via `AuthenticatedFieldsMiddleware` (when not using `DjangoGraphQLSchema`). See [Security](security.md). |
 | `API_ACCESS_GROUP` | `""` | Restrict the **authenticated endpoint** (`AuthenticatedGraphQLView`) to members of this Django auth `Group` (by name). `""` disables the gate. Non-members get a generic `403` before any GraphQL parsing/execution; an **active superuser always bypasses** it. The public `GraphQLView` is **not** affected. See [Views → Endpoint-level auth](views.md#endpoint-level-auth-authenticatedgraphqlview) and the [permission guide](permission-scoped-schema.md#layer-2-the-endpoint-gate-api_access_group) (with curl examples). |
 | `PERMISSION_SCOPED_SCHEMA` | `False` | Serve each **authenticated** request (`AuthenticatedGraphQLView`) a schema pruned to the caller's permissions: a field whose required perms the user lacks is **absent**, so selecting it reads as `Cannot query field` (a not-found, never an authz leak). Read **per-request**. An **active superuser** always gets the full schema (no signature computed); a non-superuser whose pruned `Query` root is **empty** gets the endpoint's generic `403`. The public `GraphQLView` is **never** pruned. **Subscriptions:** the **same** flag also gates the bundled `pruned_schema_for` helper used by the SSE/WS transports' `schema_provider` (read **per connection**), so a subscription connection wired to it serves the full schema when off and the pruned one when on — see [Subscriptions → Per-connection schema](subscriptions.md#per-connection-schema-permission-scoped-subscriptions). A **custom** provider callable that does not route through `pruned_schema_for` is not gated. Requires a labeled `DjangoGraphQLSchema`. `False` (default) is byte-identical to today. For a worked, role-by-role walkthrough (pruned SDL per user, exact denial responses), see the [permission guide](permission-scoped-schema.md). |
@@ -325,4 +325,28 @@ command raises a `CommandError` with an actionable message.
 `DJANGO_GRAPHEX` is read through a small self-contained reader (no DRF
 dependency). Changes are picked up automatically in tests via Django's
 `setting_changed` signal, so `@override_settings(DJANGO_GRAPHEX={...})`
-works as expected. An unknown key raises `AttributeError` to catch typos early.
+works as expected. Reading a setting name that does not exist raises
+`AttributeError` to catch typos early.
+
+## Typos in the `DJANGO_GRAPHEX` dict
+
+A key the library does not know is **ignored**: the setting it was meant to
+configure silently keeps its default. A misspelled cap or security flag
+therefore does nothing at all — `"MAX_PAGE_SIZ": 10` leaves `MAX_PAGE_SIZE` at
+`None` (no cap), and `"CACHE_ACTIV": True` leaves the response cache off.
+
+django-graphex registers a Django system check (`django_graphex.W001`,
+`Tags.compatibility`) that compares your keys against the known settings and
+suggests the closest match, so `manage.py check` catches it:
+
+```console
+$ python manage.py check
+WARNINGS:
+?: (django_graphex.W001) Unknown DJANGO_GRAPHEX setting(s) ['CACHE_ACTIV', 'MAX_PAGE_SIZ'].
+  They are IGNORED, so the setting they were meant to configure keeps its default.
+	HINT: 'CACHE_ACTIV' -> did you mean 'CACHE_ACTIVE'? 'MAX_PAGE_SIZ' -> did you mean 'MAX_PAGE_SIZE'?
+```
+
+It is a warning, never an exception, so it cannot break an app that starts
+today. Silence it — after checking the key really is meant for something else —
+with `SILENCED_SYSTEM_CHECKS = ["django_graphex.W001"]`.

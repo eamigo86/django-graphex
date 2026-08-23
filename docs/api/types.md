@@ -152,7 +152,8 @@ Check if the root object is of this type.
 
 #### `get_queryset(queryset, info)` (classmethod)
 
-Override to customize the queryset used for this type.
+Override to customize the queryset used for this type. Applied wherever the type
+is mounted — at the root and through a parent relation alike.
 
 **Parameters:**
 - `queryset` (`QuerySet`): Base queryset
@@ -160,9 +161,14 @@ Override to customize the queryset used for this type.
 
 **Returns:** Modified `QuerySet`
 
+**Raises:** `TypeError` if the override returns anything other than a `QuerySet`
+(the scope cannot be honoured, so the request is denied instead of serving
+unscoped rows)
+
 #### `get_node(info, id)` (classmethod)
 
-Get a single node by ID.
+Get a single node by ID. The lookup runs through `get_queryset`, so a row the
+scope excludes is reported as missing — the ID comes straight from the caller.
 
 **Parameters:**
 - `info` (`ResolveInfo`): GraphQL resolve info
@@ -512,6 +518,18 @@ class UserType(DjangoModelType):
 | `max_depth` | `int` | `None` | Max nested-object depth below the generated output type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of the generated output type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 
+!!! warning "The projection needs an output type this type actually builds"
+    A `DjangoModelType` reuses the output type already registered for its model
+    — a `DjangoObjectType` you declared for the same model — and that type was
+    built from **its own** `Meta`. Declaring `only_fields`, `include_fields` or
+    `exclude_fields` here in that situation now raises `ImproperlyConfigured` at
+    class definition, naming the option, the model and the type that registered
+    the output type. Move the projection to that `DjangoObjectType` (or drop the
+    option); it is honored as usual when no other type registered the model.
+
+    (Fixed in the next release: the option used to be dropped silently, so a
+    column excluded here stayed queryable.)
+
 ### Generated Methods
 
 #### `QueryFields(**kwargs)` (classmethod)
@@ -560,6 +578,17 @@ uses `Meta.queryset` (falling back to the model's default manager) and applies
 
 Per-request scoping hook. The default returns `qs` unchanged.
 
+!!! warning "The scope covers writes, not only reads"
+    `retrieve`, `list`, **`update` and `delete`** all resolve their target rows
+    through `get_queryset` → `filter_queryset`. A row outside the scope answers
+    an `update`/`delete` exactly as a missing row does — `ok: false` with the
+    standard `<Model> with id <pk> does not exist.` error — so the response
+    cannot be used to probe which primary keys exist outside the scope.
+
+    (Fixed in the next release: 2.1.0 and earlier resolved the write target
+    from the bare model, so a scope enforced on the read path left `update` and
+    `delete` open to any row in the table.)
+
 #### `authorize(info, action, **kwargs)` (classmethod)
 
 Authorization hook called by every CRUD method before it runs. The default
@@ -569,7 +598,9 @@ raising `GraphQLError` when denied. Override to customize.
 #### `permission_classes` (class attribute)
 
 Tuple of permission classes checked per action. Empty (the default) means no
-checks. See `django_graphex.permissions`.
+checks. A permission denies on **any falsy return value** (`False`, `None`,
+`0`, `""`), so `return user and user.is_staff` is safe. See
+`django_graphex.permissions`.
 
 ### Example Usage
 

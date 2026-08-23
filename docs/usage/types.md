@@ -97,15 +97,35 @@ the already-narrowed queryset — the same interplay described for
 Both `results` **and** `totalCount` reflect the hook — the hook is applied
 before the `COUNT` query is issued.
 
-!!! note "Remaining boundary: nested-relation fields"
-    Relation fields on a **parent** type that auto-expand to a nested list
+The hook applies **wherever the field is mounted**, root or nested: a
+`DjangoFilterListField` you mount by hand on a parent type (e.g.
+`created_posts = DjangoFilterListField(PostType)` on `AuthorType`) scopes its
+rows even when it is reached through the parent's relation, not only at the top
+level.
+
+!!! warning "The hook must return a `QuerySet`"
+    Returning anything else (most often a missing `return`, so `None`) raises
+    `TypeError`.  The request is denied rather than served with the scope
+    silently skipped.
+
+!!! note "Cost of scoping a hand-mounted relation field"
+    A `DjangoFilterListField` mounted on a parent type normally reads the rows
+    straight out of the parent's prefetch cache.  When the child type declares a
+    `get_queryset` scope, that scope has to be applied to the relation, which
+    issues one query per parent instead.  Types that declare no scope keep the
+    cache and the single query.
+
+!!! note "Remaining boundary: auto-expanded nested-relation fields"
+    Relation fields that django-graphex **auto-expands** to a nested list
     (e.g. a `ForeignKey` reverse relation exposed as
-    `allAuthors { results { posts { results { title } } } }`) use the parent's
-    prefetch cache and do **not** call the child type's `get_queryset`.  This is
-    intentional: wiring the hook there would require rebuilding the prefetch
-    queryset inside the resolver, which conflicts with the window-pagination and
-    prefetch optimizations.  If you need per-relation row scoping, add a
-    `resolve_<relation>` method on the parent type.
+    `allAuthors { results { posts { results { title } } } }`, resolved by
+    `DjangoNestedListObjectField`) use the parent's prefetch cache and do
+    **not** call the child type's `get_queryset`.  This is intentional: wiring
+    the hook there would require rebuilding the prefetch queryset inside the
+    resolver, which conflicts with the window-pagination and prefetch
+    optimizations.  If you need per-relation row scoping there, either mount the
+    relation explicitly as a `DjangoFilterListField` (which does apply the hook)
+    or add a `resolve_<relation>` method on the parent type.
 
 !!! note "DjangoModelType uses a different hook"
     `DjangoModelType` has its own queryset-scoping API (`get_queryset` +
@@ -620,7 +640,9 @@ class AuthorType(DjangoModelType):
   applies `filter_queryset`; the default uses `Meta.queryset` (else the model
   manager).
 - `filter_queryset(cls, qs, info, **kwargs)` is the scoping hook; the default is a
-  no-op.
+  no-op. It scopes **every** CRUD operation: `update` and `delete` resolve the
+  row they are about to write through it too, and a row outside the scope is
+  reported as not found instead of being written.
 
 !!! note "Mutation responses"
 
@@ -717,6 +739,13 @@ class InvoiceType(TimestampedType):
     already registered for the model, the `DjangoModelType` reuses it and fields
     declared here are **ignored with a warning** — put them on that
     `DjangoObjectType` instead.
+
+    The same applies to the projection, but it **fails the build** rather than
+    warning: `only_fields` / `include_fields` / `exclude_fields` declared on a
+    `DjangoModelType` whose output type comes from the registry raise
+    `ImproperlyConfigured` at class definition, naming the option, the model and
+    the registered type. A silent no-op there would leave a column you excluded
+    for security reasons queryable.
 
 ### Auto-generated Query Fields
 

@@ -58,7 +58,13 @@ class DisableIntrospectionMiddleware:
             return True
         if graphql_api_settings.INTROSPECTION_ALLOW_SUPERUSER:
             user = getattr(getattr(info, "context", None), "user", None)
-            return bool(getattr(user, "is_superuser", False))
+            # A DEACTIVATED superuser keeps no privilege: authentication
+            # backends that skip "user_can_authenticate" (token / JWT) can put
+            # an inactive user on the request.
+            return bool(
+                getattr(user, "is_active", False)
+                and getattr(user, "is_superuser", False)
+            )
         return False
 
 
@@ -97,8 +103,13 @@ class AuthenticatedFieldsMiddleware:
             GraphQLError: If a protected top-level field is requested without
                 an authenticated user.
         """
-        # Only enforce at the top level; nested fields have a non-None root.
-        if root is not None:
+        # Only enforce at the top level, read from the RESOLVE PATH: a
+        # top-level field has no previous path segment. "root" is not a valid
+        # proxy for depth — "root_value" is a public seam (a "GraphQLView"
+        # kwarg / "get_root_value") and the subscription delivery pass feeds
+        # the event payload in as the root. An unreadable path is treated as
+        # top level, so the gate fails closed.
+        if getattr(getattr(info, "path", None), "prev", None) is not None:
             return next(root, info, **kwargs)
 
         if info.field_name not in self.get_protected_fields(info):

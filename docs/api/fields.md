@@ -220,7 +220,7 @@ Static method that resolves a filtered list of objects.
 - `manager` (`Manager`): Django model manager
 - `filter_backend` (`object`): native filter backend; apply with `filter_backend.apply(qs, kwargs.get("filter"))`
 - `custom_filters` (`list`): list of `(arg_name, method, metadata)` triples from `@filter_field`-decorated methods on the output type
-- `output_type` (`type`): the `DjangoObjectType` subclass for this field, forwarded to `queryset_factory` so its `get_queryset` hook is applied
+- `output_type` (`type`): the `DjangoObjectType` subclass for this field; its `get_queryset` hook is applied on both resolution paths — inside `queryset_factory` for a fresh queryset, and directly on the relation when the field is reached through a parent object
 - `root` (`Any`): Parent object in GraphQL resolution
 - `info` (`ResolveInfo`): GraphQL resolve info
 - `**kwargs`: Query arguments including the `filter` value

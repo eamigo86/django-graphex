@@ -576,9 +576,18 @@ mutation { commentCreate(newComment: { post: 2, authorName: "Bob", text: "yo" })
 
 ### Private subscription (auth-gated)
 
-`noteSubscription` requires an authenticated session — `authorize_subscription`
-denies the subscribe before any group is joined. Log in via `/admin` first,
-then subscribe from the same browser session.
+`noteSubscription` requires an authenticated session. The generated
+subscription's `authorize_subscription` hook calls `NoteModelType.authorize`,
+which denies an anonymous `subscribe` before any Channels group is joined. Log
+in via `/admin` first, then subscribe from the same browser session.
+
+The gate lives on the **type**, not only on the schema root. `subscribe` is a
+READ action, so `IsAuthenticatedOrReadOnly` alone lets anonymous callers
+through, and `AuthenticatedFieldsMiddleware` only protects the fields mounted
+under `private_subscription`. `NoteModelType` therefore overrides `authorize`
+and makes `subscription_scope` fail closed: with no user there is no
+server-forced `{"owner": ...}` filter, and an unscoped notes subscription is
+every user's notes.
 
 ```graphql
 subscription {

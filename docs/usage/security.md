@@ -40,17 +40,22 @@ untouched.
 ```python
 DJANGO_GRAPHEX = {
     "ALLOW_INTROSPECTION": False,            # default: block introspection
-    "INTROSPECTION_ALLOW_SUPERUSER": True,   # default: superusers may introspect
+    "INTROSPECTION_ALLOW_SUPERUSER": True,   # default: active superusers may introspect
 }
 ```
 
 | Setting | Default | Effect |
 |---------|---------|--------|
 | `ALLOW_INTROSPECTION` | `False` | When `True`, introspection is allowed for everyone. |
-| `INTROSPECTION_ALLOW_SUPERUSER` | `True` | When `True`, a superuser may introspect even if `ALLOW_INTROSPECTION` is `False`. |
+| `INTROSPECTION_ALLOW_SUPERUSER` | `True` | When `True`, an **active** superuser (`is_active` **and** `is_superuser`) may introspect even if `ALLOW_INTROSPECTION` is `False`. |
 
 A blocked introspection query returns an error; a missing `context`/`user`
-(non-HTTP execution) is treated as non-superuser and does not crash.
+(non-HTTP execution) is treated as non-superuser and does not crash. The bypass
+requires an **active** account, exactly like every other superuser check in the
+library ([`IsAdmin`](permissions.md), the endpoint gate and the
+[permission-scoped schema](permission-scoped-schema.md)): deactivating a
+superuser revokes it immediately, even on authentication backends that do not
+run Django's `user_can_authenticate` check (token / JWT).
 
 ```graphql
 query { __schema { queryType { name } } }
@@ -65,6 +70,13 @@ raising a `GraphQLError` otherwise. It only enforces at the top level — nested
 fields are never gated — and **nothing is protected unless you declare it**, so
 adding the middleware is safe.
 
+"Top level" is read from the **resolve path** (a top-level field has no parent
+path segment), never from the root value: setting `root_value` on the view, as a
+class attribute or through `get_root_value()` does **not** change what is gated,
+and a field is still gated when it is reached through an inline fragment. A
+selection nested under another field — including one inside a list element — is
+not gated even if its name matches a protected top-level field.
+
 The chain runs on **every** transport: the HTTP view, and — since 2.1.0 — the
 SSE and WebSocket subscription transports, which build the same
 `DJANGO_GRAPHEX['MIDDLEWARE']` chain once per connection and apply it both to
@@ -76,6 +88,15 @@ the subscribe entry (before any `group_add`) and to each delivered event.
     never ran for them and `private_subscription` protected nothing: an
     `AnonymousUser` could subscribe to a field reported in
     `gdx_protected_fields` and receive its events.
+
+!!! danger "Fixed after 2.1.0"
+    Up to and including 2.1.0 the middleware used "the root value is not `None`"
+    as its proxy for "this is a nested field". Because `root_value` is a public,
+    documented seam, a view configured with one (`GraphQLView.as_view(...,
+    root_value=...)`, the class attribute, or an overridden `get_root_value()`)
+    lost **all** private-field protection: every protected field resolved for
+    anonymous callers. The same proxy also skipped the gate on every delivered
+    subscription event, since the event payload *is* the root value there.
 
 A blocked field returns:
 

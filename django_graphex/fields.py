@@ -28,6 +28,7 @@ from .paginations.pagination import BaseDjangoGraphqlPagination, _split_ordering
 from .utils import (
     _apply_field_hook,
     _compute_child_only,
+    apply_object_type_get_queryset,
     find_field,
     get_extra_filters,
     get_related_fields,
@@ -369,8 +370,10 @@ class DjangoFilterListField(NativeMountedField):
 
         Composition order: standard ORM lookups (via "filter_backend") then
         custom "@filter_field" methods ("custom_filters", in declaration
-        order). The "get_queryset" hook fires inside "queryset_factory"
-        before both filter stages.
+        order). The "get_queryset" hook fires before both filter stages on
+        BOTH paths: inside "queryset_factory" for a fresh queryset, and
+        explicitly on the related fast path that reads the rows straight off
+        the parent's relation accessor.
 
         Args:
             manager: the model manager used to build the base queryset.
@@ -400,6 +403,10 @@ class DjangoFilterListField(NativeMountedField):
                 qs = operator.attrgetter(
                     f"{getattr(field, 'related_name', None) or field.name}.all"
                 )(root)()
+                # The relation accessor bypasses queryset_factory, so the
+                # row-level scope must be applied here too -- otherwise the
+                # hook enforced at the top level leaks through the parent.
+                qs = apply_object_type_get_queryset(qs, output_type, info)
                 qs = filter_backend.apply(qs, filter_value)
                 qs = apply_custom_filters(qs, custom_filters, info, filter_value)
             except AttributeError:

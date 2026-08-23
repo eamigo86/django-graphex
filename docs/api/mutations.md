@@ -87,8 +87,10 @@ Create successful mutation response.
 Validate and persist the parent plus any `Meta.nested_fields` children
 **atomically** (provided by `NestedFieldsMixin`). Forward FK/O2O children are
 written before the parent and their pk injected; reverse FK/O2O and M2M children
-are written after and linked to it. Any validation failure rolls the whole
-transaction back. See [How nested writes work](../usage/mutations.md#how-nested-writes-work).
+are written after and linked to it. A reverse child (FK **or** O2O) supplied by
+pk is rejected when it currently belongs to a different parent. Any validation
+failure rolls the whole transaction back.
+See [How nested writes work](../usage/mutations.md#how-nested-writes-work).
 
 **Parameters:**
 - `root` (`Any`): Root object

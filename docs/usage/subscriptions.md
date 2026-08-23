@@ -330,6 +330,17 @@ class NoteModelType(DjangoModelType):
         return {"owner": info.context.user.pk}   # only my notes
 ```
 
+!!! warning "Make `subscription_scope` fail closed"
+
+    `None` means **no scoping**, not "no notifications". A scope written as
+    `return {"owner": user.pk} if user.is_authenticated else None` therefore
+    serves an anonymous subscriber **every** row on the stream. Pair it with a
+    `permission_classes` / `authorize` gate that denies the anonymous
+    `subscribe` — remember `"subscribe"` is a READ action, so
+    `IsAuthenticatedOrReadOnly` does **not** deny it — and raise from the scope
+    itself when there is no user to scope by. `examples/playground`
+    (`NoteModelType`) does both.
+
 !!! note "Why not `filter_queryset`?"
 
     `filter_queryset` is an opaque queryset transform used by the query/list

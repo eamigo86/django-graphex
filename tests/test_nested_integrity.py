@@ -1,11 +1,14 @@
 """Integrity and safety tests for the nested-write layer (issue #62).
 
-Four gaps fixed:
+Five gaps fixed:
   (a) M2M non-existent pk -> structured ErrorType, not IntegrityError 500.
   (b) Reverse-FK child ownership check: cannot re-parent a child belonging
       to a different parent (steal prevention).
   (c) Reverse-O2O given a list of >1 -> clean _NestedError, not IntegrityError.
   (d) Forward FK/O2O given a multi-element list -> clean _NestedError.
+  (e) Reverse-O2O child ownership check: the same steal prevention as (b),
+      plus per-kind coverage of every relation kind the nested writer
+      supports.
 """
 
 from __future__ import annotations
@@ -407,3 +410,250 @@ class ForwardFKListTest(TestCase):
         )
         self.assertTrue(result.ok, msg=getattr(result, "errors", None))
         self.assertEqual(NestedIntegrityAuthor.objects.count(), 1)
+
+
+# ---------------------------------------------------------------------------
+# (e) Reverse-O2O ownership guard + per-kind coverage
+# ---------------------------------------------------------------------------
+
+
+class PostM2MNestedType(DjangoModelType):
+    """ "NestedIntegrityPost" type exposing "tags" as a nested M2M field.
+
+    Used by the per-kind ownership coverage tests below.
+    """
+
+    class Meta:
+        """Bind the type to "NestedIntegrityPost" with "tags" declared as nested.
+
+        No extra options are needed for these M2M coverage tests.
+        """
+
+        model = NestedIntegrityPost
+        nested_fields = {"tags": NestedIntegrityTag}
+
+
+class ReverseO2OOwnershipTest(TestCase):
+    """Upserting a reverse-O2O child by pk must refuse to re-parent it.
+
+    The reverse one-to-one path must behave exactly like the reverse-FK path:
+    a child that already belongs to another parent cannot be stolen, and the
+    rejection is indistinguishable from the reverse-FK rejection.
+    """
+
+    def setUp(self) -> None:
+        """Create two authors and a profile owned by the first author.
+
+        Sets up the fixtures shared by the reverse-O2O ownership tests below.
+        """
+        self.author1 = NestedIntegrityAuthor.objects.create(name="Author1")
+        self.author2 = NestedIntegrityAuthor.objects.create(name="Author2")
+        self.profile = NestedIntegrityProfile.objects.create(
+            author=self.author1, bio="Owned by 1"
+        )
+
+    def test_cannot_steal_reverse_o2o_child_from_another_parent(self) -> None:
+        """Upserting another parent's reverse-O2O child by pk is rejected.
+
+        This test breaks if the ownership guard skips the reverse one-to-one
+        kind, letting "author2" silently re-parent "author1"'s profile.
+        """
+        result = _update(
+            AuthorWithProfileType,
+            {
+                "id": self.author2.id,
+                "author_profile": {"id": self.profile.id, "bio": "Stolen"},
+            },
+        )
+        self.assertFalse(result.ok)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.author_id, self.author1.id)
+        self.assertEqual(self.profile.bio, "Owned by 1")
+
+    def test_cannot_steal_reverse_o2o_child_given_as_list(self) -> None:
+        """The single-item-list form of a reverse-O2O steal is rejected too.
+
+        This test breaks if the ownership guard is applied only to the scalar
+        dict form, leaving the degenerate one-item list as a bypass.
+        """
+        result = _update(
+            AuthorWithProfileType,
+            {
+                "id": self.author2.id,
+                "author_profile": [{"id": self.profile.id, "bio": "Stolen"}],
+            },
+        )
+        self.assertFalse(result.ok)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.author_id, self.author1.id)
+        self.assertEqual(self.profile.bio, "Owned by 1")
+
+    def test_reverse_o2o_rejection_matches_reverse_fk_rejection(self) -> None:
+        """The reverse-O2O and reverse-FK steal rejections are indistinguishable.
+
+        This test breaks if the two paths start reporting different message
+        text, letting a client tell one relation kind from the other.
+        """
+        post = NestedIntegrityPost.objects.create(title="P", author=self.author1)
+        o2o = _update(
+            AuthorWithProfileType,
+            {
+                "id": self.author2.id,
+                "author_profile": {"id": self.profile.id, "bio": "Stolen"},
+            },
+        )
+        fk = _update(
+            AuthorWithPostsType,
+            {
+                "id": self.author2.id,
+                "nested_integrity_posts": [{"id": post.id, "title": "Stolen"}],
+            },
+        )
+        self.assertFalse(o2o.ok)
+        self.assertFalse(fk.ok)
+        self.assertEqual(
+            [
+                message.replace(str(self.profile.pk), "<pk>")
+                for message in o2o.errors[0].messages
+            ],
+            [
+                message.replace(str(post.pk), "<pk>")
+                for message in fk.errors[0].messages
+            ],
+        )
+        self.assertEqual(
+            o2o.errors[0].messages,
+            [
+                f"Object {self.profile.pk} does not belong to this NestedIntegrityAuthor."
+            ],
+        )
+
+    def test_reverse_child_pk_that_does_not_exist_is_not_a_steal(self) -> None:
+        """A reverse payload naming a non-existent pk has no owner to conflict with.
+
+        There is no row to steal, so the guard stays out of the way and the
+        payload falls through to the create path. This test breaks if a missing
+        pk starts being treated as an ownership conflict (or the reverse).
+        """
+        result = _update(
+            AuthorWithPostsType,
+            {
+                "id": self.author2.id,
+                "nested_integrity_posts": [{"id": 9999, "title": "Ghost"}],
+            },
+        )
+        self.assertTrue(result.ok, msg=getattr(result, "errors", None))
+        self.assertEqual(self.author2.nested_integrity_posts.count(), 1)
+
+    def test_can_update_own_reverse_o2o_child(self) -> None:
+        """Upserting a reverse-O2O child the parent already owns still succeeds.
+
+        This test breaks if the ownership guard starts rejecting legitimate
+        updates to the parent's own one-to-one child.
+        """
+        result = _update(
+            AuthorWithProfileType,
+            {
+                "id": self.author1.id,
+                "author_profile": {"id": self.profile.id, "bio": "Updated"},
+            },
+        )
+        self.assertTrue(result.ok, msg=getattr(result, "errors", None))
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.bio, "Updated")
+        self.assertEqual(self.profile.author_id, self.author1.id)
+
+
+class NestedKindOwnershipCoverageTest(TestCase):
+    """State, per relation kind, whether the ownership guard applies.
+
+    The nested writer classifies every declared field as "forward",
+    "reverse_one", "reverse_many", "m2m" or None. The ownership guard is
+    meaningful only where the child row carries a single owning key back to
+    the parent -- that is, the two reverse kinds. The remaining kinds are
+    pinned here so a future change cannot quietly move a kind between the
+    two groups.
+    """
+
+    def test_reverse_one_and_reverse_many_are_guarded(self) -> None:
+        """Both reverse kinds route through the ownership guard.
+
+        This test breaks if either reverse kind stops reaching the guard, the
+        exact regression that let a reverse-O2O child be stolen.
+        """
+        author1 = NestedIntegrityAuthor.objects.create(name="A1")
+        author2 = NestedIntegrityAuthor.objects.create(name="A2")
+        post = NestedIntegrityPost.objects.create(title="P", author=author1)
+        profile = NestedIntegrityProfile.objects.create(author=author1, bio="B")
+
+        self.assertEqual(
+            AuthorWithPostsType._relation_kind("nested_integrity_posts")[0],
+            "reverse_many",
+        )
+        self.assertEqual(
+            AuthorWithProfileType._relation_kind("author_profile")[0], "reverse_one"
+        )
+        self.assertFalse(
+            _update(
+                AuthorWithPostsType,
+                {
+                    "id": author2.id,
+                    "nested_integrity_posts": [{"id": post.id, "title": "X"}],
+                },
+            ).ok
+        )
+        self.assertFalse(
+            _update(
+                AuthorWithProfileType,
+                {"id": author2.id, "author_profile": {"id": profile.id, "bio": "X"}},
+            ).ok
+        )
+
+    def test_forward_kind_is_not_guarded_by_design(self) -> None:
+        """A forward FK/O2O child is not owned by the parent, so no guard applies.
+
+        Many parents may point at the same forward child, so "belongs to this
+        parent" has no meaning there: pointing a post at an author that other
+        posts already reference is a legitimate write. This test breaks if an
+        ownership guard is bolted onto the forward path.
+        """
+        author = NestedIntegrityAuthor.objects.create(name="Shared")
+        NestedIntegrityPost.objects.create(title="First", author=author)
+
+        self.assertEqual(PostForwardNestedType._relation_kind("author")[0], "forward")
+        result = _create(
+            PostForwardNestedType,
+            {"title": "Second", "author": {"id": author.id, "name": "Shared"}},
+        )
+        self.assertTrue(result.ok, msg=getattr(result, "errors", None))
+        self.assertEqual(author.nested_integrity_posts.count(), 2)
+
+    def test_m2m_kind_is_not_guarded_by_design(self) -> None:
+        """An M2M child is shared by every parent that links it, so no guard applies.
+
+        The link table has no single owner to compare against and the writer is
+        additive, so re-using an existing tag is a legitimate write. This test
+        breaks if an ownership guard is bolted onto the M2M path.
+        """
+        author = NestedIntegrityAuthor.objects.create(name="A")
+        tag = NestedIntegrityTag.objects.create(label="shared")
+        NestedIntegrityPost.objects.create(title="First", author=author).tags.add(tag)
+
+        self.assertEqual(PostM2MNestedType._relation_kind("tags")[0], "m2m")
+        result = _create(
+            PostM2MNestedType,
+            {"title": "Second", "author": author.id, "tags": [{"id": tag.id}]},
+        )
+        self.assertTrue(result.ok, msg=getattr(result, "errors", None))
+        self.assertEqual(tag.nested_integrity_posts.count(), 2)
+
+    def test_unintrospectable_kind_writes_no_child_at_all(self) -> None:
+        """A field that is not a model relation never reaches the child writer.
+
+        Its payload is handed to the parent backend untouched, so there is no
+        child row to own and nothing for the guard to check. This test breaks
+        if an unknown nested field starts being classified as a relation.
+        """
+        self.assertEqual(
+            AuthorWithPostsType._relation_kind("not_a_field"), (None, None)
+        )

@@ -265,38 +265,37 @@ class NestedFieldsMixin:
                 )
 
             for item in items:
-                # Reverse-FK ownership guard: if the client supplies a pk for
-                # an existing child, verify that child currently points to
-                # *this* parent.  Without this check a client can silently
-                # re-parent (steal) a row that belongs to a different owner.
-                if kind == "reverse_many":
-                    pk_name = child_model._meta.pk.name
-                    child_pk = item.get(pk_name) if hasattr(item, "get") else None
-                    if child_pk is None and hasattr(item, "get"):
-                        child_pk = item.get("id")
-                    if child_pk is not None:
-                        existing = child_model._default_manager.filter(
-                            pk=child_pk
-                        ).first()
-                        if existing is not None:
-                            current_owner_id = getattr(existing, f"{fk_name}_id", None)
-                            if (
-                                current_owner_id is not None
-                                and current_owner_id != parent.pk
-                            ):
-                                parent_model_name = parent.__class__.__name__
-                                raise _NestedError(
-                                    [
-                                        ErrorType(
-                                            field=field,
-                                            messages=[
-                                                f"Object {child_pk} does not "
-                                                f"belong to this "
-                                                f"{parent_model_name}."
-                                            ],
-                                        )
-                                    ]
-                                )
+                # Reverse ownership guard: if the client supplies a pk for an
+                # existing child, verify that child currently points to *this*
+                # parent.  Without this check a client can silently re-parent
+                # (steal) a row that belongs to a different owner.  It covers
+                # BOTH reverse kinds -- reverse FK and reverse O2O -- because
+                # in both the child carries a single key naming its owner.
+                pk_name = child_model._meta.pk.name
+                child_pk = item.get(pk_name) if hasattr(item, "get") else None
+                if child_pk is None and hasattr(item, "get"):
+                    child_pk = item.get("id")
+                if child_pk is not None:
+                    existing = child_model._default_manager.filter(pk=child_pk).first()
+                    if existing is not None:
+                        current_owner_id = getattr(existing, f"{fk_name}_id", None)
+                        if (
+                            current_owner_id is not None
+                            and current_owner_id != parent.pk
+                        ):
+                            parent_model_name = parent.__class__.__name__
+                            raise _NestedError(
+                                [
+                                    ErrorType(
+                                        field=field,
+                                        messages=[
+                                            f"Object {child_pk} does not "
+                                            f"belong to this "
+                                            f"{parent_model_name}."
+                                        ],
+                                    )
+                                ]
+                            )
 
                 cls._persist_child(
                     field, child_model, item, info, save_kwargs={fk_name: parent}

@@ -1071,3 +1071,95 @@ class DefaultOrderMember(DummyModel):
         null=True,
         on_delete=models.CASCADE,
     )
+
+
+# --- Relation-scoping regression models (S6) ------------------------------ #
+class ScopedAuthor(DummyModel):
+    """Parent of "ScopedPost", used to reach a scoped type through a relation.
+
+    Exists so a hand-mounted "DjangoFilterListField" can be nested under a
+    parent object type and exercise the related fast path.
+    """
+
+    name = models.CharField(max_length=100)
+
+
+class ScopedPost(DummyModel):
+    """Row whose object type declares a row-level "get_queryset" scope.
+
+    Reached both at the top level and through "ScopedAuthor.created_posts", so
+    the hook can be asserted on BOTH paths.
+    """
+
+    title = models.CharField(max_length=200)
+    author = models.ForeignKey(
+        ScopedAuthor,
+        related_name="created_posts",
+        null=True,
+        on_delete=models.CASCADE,
+    )
+
+
+# --- Dedicated models for the 2.1.0 CRUD/permission security regressions --- #
+# tests/test_security_2_1_0_crud.py proves the write path is scoped by
+# "filter_queryset", that a falsy permission denies, and that a projection
+# option is rejected when the output type is reused from the registry. Each
+# defect gets its OWN model: the projection test must register a
+# "DjangoObjectType" for its model FIRST (last-registration-wins would fork the
+# shared slot for whatever test runs next under randomized order), and the
+# scoping test declares a "DjangoModelType" whose "filter_queryset" would leak
+# into any sibling module sharing the same model.
+class CrudScopedDoc(DummyModel):
+    """Tenant-owned row used by the cross-tenant write tests.
+
+    "tenant" is the scoping column the type's "filter_queryset" narrows on, and
+    "body" is the payload an out-of-scope update would overwrite.
+    """
+
+    tenant = models.CharField(max_length=50)
+    body = models.CharField(max_length=200)
+
+
+class CrudPermDoc(DummyModel):
+    """Row guarded by a permission class that returns a falsy non-False value.
+
+    Relation-free on purpose: the permission tests only need a model whose CRUD
+    fields can be mounted and called.
+    """
+
+    name = models.CharField(max_length=100)
+
+
+class CrudLeakDoc(DummyModel):
+    """Row carrying a sensitive column kept out with "exclude_fields".
+
+    "secret" is the column the projection must remove from the output type; it
+    stays readable through the manager so the test can prove the value really
+    exists in the database.
+    """
+
+    label = models.CharField(max_length=100)
+    secret = models.CharField(max_length=128, default="")
+
+
+class CrudFreshDoc(DummyModel):
+    """Row whose output type is built by its own "DjangoModelType".
+
+    Deliberately left without a hand-written "DjangoObjectType" so the
+    projection guard can be proven NOT to fire when nothing is registered yet.
+    """
+
+    label = models.CharField(max_length=100)
+    secret = models.CharField(max_length=128, default="")
+
+
+class CrudNodeDoc(DummyModel):
+    """Row fetched through "DjangoObjectType.get_node".
+
+    Carries the "is_public" column the type's "get_queryset" hook scopes on, so
+    the by-pk node lookup can be proven to honor the same scope the list and
+    single-object resolvers do.
+    """
+
+    title = models.CharField(max_length=100)
+    is_public = models.BooleanField(default=True)

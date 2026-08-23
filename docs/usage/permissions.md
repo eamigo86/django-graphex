@@ -59,7 +59,7 @@ Multiple classes are combined with **AND** — every class must allow the action
 Subclass `BasePermission` and override either `has_permission(self, info, action,
 model, **kwargs)` (applies to every action) or a single `has_<action>_permission(
 self, info, model, **kwargs)`. `info.context` is the request, and `kwargs` carries
-`data=` for `create`/`update`. Return `False` to deny.
+`data=` for `create`/`update`. Return a **falsy** value to deny.
 
 ```python
 from django_graphex.permissions import BasePermission
@@ -70,6 +70,20 @@ class IsOwnerOrReadOnly(BasePermission):
             return True
         return info.context.user.is_authenticated
 ```
+
+!!! warning "Any falsy value denies — you do not have to return `False`"
+    The check fails closed on `False`, `None`, `0` and `""` alike, so the
+    idiomatic one-liner is safe:
+
+    ```python
+    def has_permission(self, info, action, model, **kwargs):
+        user = getattr(info.context, "user", None)
+        return user and user.is_staff   # -> None for an anonymous caller: DENIED
+    ```
+
+    (Fixed in the next release: 2.1.0 and earlier compared the result with the
+    `False` singleton, so this exact one-liner granted every action to an
+    anonymous caller.)
 
 ## `DjangoModelPermissions`
 
@@ -196,3 +210,6 @@ class OrderType(DjangoModelType):
     Permissions answer *"may this action run at all?"*. To **scope the rows** a
     user can see (row-level filtering), use
     [`filter_queryset`](types.md#custom-queryset-per-request-filtering) instead.
+    That scope covers the rows a user can **write** too: `update` and `delete`
+    resolve their target through the same hook, and a row outside the scope is
+    reported as not found.
