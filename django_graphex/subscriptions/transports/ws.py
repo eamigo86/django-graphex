@@ -182,12 +182,15 @@ def _make_spec(
     schema: "GraphQLSchema",
     document: "DocumentNode",
     middleware: Any = None,
+    variable_values: "Mapping[str, Any] | None" = None,
+    operation_name: str | None = None,
 ) -> SubscriptionSpec:
     """Build the minimal driver spec carrying the live schema + parsed document.
 
-    "drive_subscription" reads ONLY "spec.schema", "spec.document" and
-    "spec.middleware" (the per-event "execute" inputs); every other spec field is
-    the subscribe-time concern already handled by "create_source_event_stream"
+    "drive_subscription" reads ONLY the per-event "execute" inputs
+    ("spec.schema", "spec.document", "spec.variable_values",
+    "spec.operation_name" and "spec.middleware"); every other spec field is the
+    subscribe-time concern already handled by "create_source_event_stream"
     (which ran the field's own native subscribe entry). Mirrors the SSE
     transport's "_make_spec".
 
@@ -195,9 +198,12 @@ def _make_spec(
         schema: The live native "GraphQLSchema".
         document: The parsed subscription "DocumentNode".
         middleware: The connection's "MiddlewareManager" (or "None").
+        variable_values: The operation's GraphQL variables (or "None") — the
+            SAME ones passed to "create_source_event_stream".
+        operation_name: The operation's name (or "None").
 
     Returns:
-        A "SubscriptionSpec" carrying schema + document + middleware for delivery.
+        A "SubscriptionSpec" carrying every per-event "execute" input.
     """
     return SubscriptionSpec(
         model_label="",
@@ -205,6 +211,8 @@ def _make_spec(
         schema=schema,
         document=document,
         middleware=middleware,
+        variable_values=variable_values,
+        operation_name=operation_name,
     )
 
 
@@ -474,7 +482,13 @@ def subscription_ws_consumer(
 
             source: "ChannelLayerSource" = source_or_result  # type: ignore[assignment]
             self._sources[op_id] = source
-            spec = _make_spec(conn_schema, document, context.middleware)
+            spec = _make_spec(
+                conn_schema,
+                document,
+                context.middleware,
+                variable_values=payload.get("variables"),
+                operation_name=payload.get("operationName"),
+            )
             delivery = drive_subscription(source, spec, context)
             try:
                 async for result in delivery:

@@ -966,3 +966,80 @@ class SubFilterComment(DummyModel):
         SubFilterPost, related_name="comments", on_delete=models.CASCADE
     )
     text = models.TextField(default="")
+
+
+# --- Models dedicated to the subscription delivery regressions -------------- #
+# Kept apart from "CustomPKProduct" (the mutation delete-pk fixtures) so mounting
+# a subscription over them cannot disturb the shared output registry slots those
+# tests assert on.
+class SubSlugPkItem(DummyModel):
+    """Subscription target whose primary key is a slug, not "id".
+
+    The broadcast payload of an "id_only" subscription is keyed by the real
+    primary-key field name, so this model is what proves a non-"id" pk is
+    delivered instead of a null on a non-nullable event field.
+    """
+
+    slug = models.SlugField(primary_key=True)
+    title = models.CharField(max_length=200, default="")
+
+
+class SubVariablesNote(DummyModel):
+    """Subscription target for the parameterised-subscription delivery tests.
+
+    Its own model so the GraphQL variables / operation-name delivery tests do
+    not share a subscription stream (or an event type) with any other module.
+    """
+
+    title = models.CharField(max_length=200, default="")
+
+
+# --- Dedicated models for the aliased / nested-window optimizer regressions - #
+class AliasWinAuthor(DummyModel):
+    """Author-like root for the aliased nested-list optimizer regressions.
+
+    Owns "posts" so a query can alias the same nested-list accessor twice with
+    different filters or pagination windows. Kept separate from the shared
+    "Author" model so those tests never touch shared registry slots.
+    """
+
+    name = models.CharField(max_length=100)
+
+
+class AliasWinPost(DummyModel):
+    """Post-like middle level owning both "comments" and a related_name-less FK.
+
+    "comments" gives the tests a second nested-list level so a window can be
+    nested under a windowed parent, while "AliasWinNote" points here WITHOUT a
+    "related_name" so the reverse accessor is "aliaswinnote_set".
+    """
+
+    title = models.CharField(max_length=200)
+    author = models.ForeignKey(
+        AliasWinAuthor, related_name="posts", on_delete=models.CASCADE
+    )
+
+
+class AliasWinComment(DummyModel):
+    """Comment on an "AliasWinPost", the innermost windowed nested list.
+
+    Gives the alias/window regressions a second nested-list level so a window
+    can be nested under a windowed parent.
+    """
+
+    text = models.CharField(max_length=200)
+    post = models.ForeignKey(
+        AliasWinPost, related_name="comments", on_delete=models.CASCADE
+    )
+
+
+class AliasWinNote(DummyModel):
+    """Note whose FK declares NO "related_name".
+
+    The reverse accessor is therefore "aliaswinnote_set" while
+    "_meta.get_field" only knows it as "aliaswinnote" -- the exact mismatch
+    that made the "optimize_<field>" prefetch hook resolve the wrong model.
+    """
+
+    body = models.CharField(max_length=200)
+    post = models.ForeignKey(AliasWinPost, on_delete=models.CASCADE)

@@ -217,10 +217,16 @@ def to_q(
             touched_to_many = touched_to_many or child_many
             continue
 
+        # Traversing a to-many relation fans the join out, whether the node
+        # descends into the related model's fields or applies plain-pk lookups
+        # against the relation itself. Both paths leave this loop below, so the
+        # flag is raised HERE, before the branch, or the pk-lookups leaf would
+        # silently skip ".distinct()" and return duplicated parent rows.
+        if _is_to_many(model, key):
+            touched_to_many = True
+
         related = _relation_target(model, key)
         if related is not None and not _is_pk_lookups(value):
-            if _is_to_many(model, key):
-                touched_to_many = True
             # Relation children keep their own combinator scope reset: a relation
             # node is a fresh filter node against the related model.
             child_q, child_many = to_q(value, related, f"{prefix}{key}__")

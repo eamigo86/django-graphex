@@ -38,6 +38,8 @@ from django_graphex.paginations.pagination import (
     PageGraphqlPagination as _PGP,
 )
 from django_graphex.paginations.pagination import (
+    _normalize_ordering_term,
+    _split_ordering,
     _validate_ordering_terms,
 )
 from django_graphex.registry import Registry
@@ -958,3 +960,82 @@ class TestPkAliasAccepted(TestCase):
 
         with pytest.raises(GraphQLError):
             _validate_ordering_terms(Post, "author")
+
+
+# ---------------------------------------------------------------------------
+# C9: direction-prefix parity — the validated term must be the term order_by
+# receives, so "+name" works and "--name" is rejected without a field dump.
+# ---------------------------------------------------------------------------
+
+
+class TestDirectionPrefixParity(TestCase):
+    """The direction prefix must be canonicalized at the single parse point.
+
+    "_normalize_ordering_term" is the only place the leading "-"/"+" is parsed,
+    so the term reaching "order_by" is byte-identical to the validated one. A
+    "+" prefix means ascending and is dropped; a repeated prefix ("--name") is
+    rejected because no convention gives it a meaning and Django's own
+    "FieldError" would enumerate every column of the model (CWE-209).
+    """
+
+    def setUp(self) -> None:
+        """Create three authors so the ordering assertions have rows to sort.
+
+        The names are inserted out of alphabetical order so an ascending sort
+        is distinguishable from insertion order.
+        """
+        for name in ("carol", "alice", "bob"):
+            Author.objects.create(name=name)
+
+    def test_plus_prefix_orders_ascending_through_the_schema(self) -> None:
+        """A "+name" ordering must sort ascending instead of raising.
+
+        If this fails, the "+" survives the validator and reaches "order_by",
+        where Django raises FieldError listing every column of the model.
+        """
+        result = graphql_sync(
+            sec_schema.graphql_schema,
+            '{ loList { results(ordering: "+name") { name } } }',
+        )
+        assert result.errors is None, result.errors
+        assert result.data is not None
+        names = [row["name"] for row in result.data["loList"]["results"]]
+        assert names == ["alice", "bob", "carol"]
+
+    def test_repeated_prefix_rejected_without_leaking_the_field_list(self) -> None:
+        """A "--name" ordering must fail with the clean allowlist error.
+
+        If this fails, the repeated prefix reaches "order_by" and Django's
+        FieldError message enumerates every concrete column of the model.
+        """
+        result = graphql_sync(
+            sec_schema.graphql_schema,
+            '{ loList { results(ordering: "--name") { name } } }',
+        )
+        assert result.errors is not None
+        message = result.errors[0].message
+        assert "Invalid ordering field" in message
+        assert "Choices are:" not in message
+
+    def test_split_ordering_rejects_a_repeated_prefix(self) -> None:
+        """The shared splitter must reject "--name" for every consumer.
+
+        "_split_ordering" is imported by the window-prefetch pre-check in
+        "django_graphex/fields.py" too, so rejecting here keeps the window path
+        and the paginator path from disagreeing on the same input.
+
+        Raises:
+            GraphQLError: Expected from "_split_ordering" and asserted via
+                pytest.raises.
+        """
+        with pytest.raises(GraphQLError, match="Invalid ordering field"):
+            _split_ordering("--name")
+
+    def test_plus_prefix_normalizes_to_the_bare_snake_case_attname(self) -> None:
+        """A "+createdAt" term must normalize to the plain "created_at" attname.
+
+        If this fails, the normalized term still carries a prefix Django does
+        not understand.
+        """
+        assert _normalize_ordering_term("+createdAt") == "created_at"
+        assert _normalize_ordering_term("-createdAt") == "-created_at"

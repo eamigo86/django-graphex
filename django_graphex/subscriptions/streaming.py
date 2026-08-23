@@ -145,6 +145,13 @@ class SubscriptionSpec:
             to the per-event delivery "execute" so the configured chain — e.g.
             "AuthenticatedFieldsMiddleware" — gates subscription delivery exactly
             as it gates the HTTP view. "None" runs delivery unwrapped.
+        variable_values: Optional GraphQL variables the client sent with the
+            operation. Threaded to the per-event delivery "execute" exactly as
+            the transport threads them to "create_source_event_stream", so a
+            parameterised subscription resolves its variables on every event
+            instead of erroring with "Variable '$x' ... was not provided".
+        operation_name: Optional operation name the client sent. Required by
+            "execute" when the document carries more than one operation.
     """
 
     model_label: str
@@ -163,6 +170,8 @@ class SubscriptionSpec:
     model: Any = None
     pydantic_model: Any = None
     middleware: Any = None
+    variable_values: "Mapping[str, Any] | None" = None
+    operation_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -508,12 +517,16 @@ def drive_subscription(
 
     The spec's "middleware" manager (the connection's configured
     "DJANGO_GRAPHEX['MIDDLEWARE']" chain) wraps every per-event resolver, so a
-    subscription is gated by the same middleware an HTTP operation is.
+    subscription is gated by the same middleware an HTTP operation is. Its
+    "variable_values" and "operation_name" are the SAME ones the transport gave
+    "create_source_event_stream", so a parameterised or multi-operation document
+    delivers events instead of erroring on every frame.
 
     Args:
         source: The STARTED "ChannelLayerSource" from "native_subscribe".
-        spec: The subscription spec carrying the "schema", "document" and
-            "middleware" the per-event "execute" runs with.
+        spec: The subscription spec carrying the "schema", "document",
+            "variable_values", "operation_name" and "middleware" the per-event
+            "execute" runs with.
         context: The transport-neutral "context_value" passed to "execute"
             (".user" + scope; design section 7). Defaults to "None".
 
@@ -532,6 +545,8 @@ def drive_subscription(
             spec.document,
             root_value=flat,
             context_value=context,
+            variable_values=spec.variable_values,
+            operation_name=spec.operation_name,
             middleware=spec.middleware,
         )
 

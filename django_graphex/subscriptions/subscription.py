@@ -765,7 +765,9 @@ class Subscription(NativeObjectType):
             An awaitable resolving to "True" when the changed row matches every
             remaining lookup.
         """
-        pk = event.get("id")
+        # The flat payload keys the primary key by its real field name (a "slug"
+        # pk lands under "slug"), in both "id_only" and "full" payload modes.
+        pk = event.get(cls._meta.model._meta.pk.name)
         if pk is None:
             return sync_to_async(lambda: False)()
 

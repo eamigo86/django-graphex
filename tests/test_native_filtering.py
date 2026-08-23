@@ -436,6 +436,42 @@ def test_to_q_relation_sets_distinct_for_to_many() -> None:
     assert "articles__title__exact" in str(q)
 
 
+def test_to_q_pk_lookups_on_to_many_relation_flag_distinct() -> None:
+    """Plain-pk lookups on a to-many relation report "many=True" like the nested form.
+
+    This test breaks if the to-many detection is only consulted on the nested
+    relation branch and skipped for the direct pk-lookups leaf.
+    """
+    q, many = to_q({"articles": {"in": [1, 2]}}, Author)
+    assert many is True
+    assert "articles__in" in str(q)
+
+
+def test_to_q_pk_lookups_on_to_many_inside_combinators_flag_distinct() -> None:
+    """The to-many flag propagates out of "and"/"or"/"not" for plain-pk lookups.
+
+    This test breaks if a combinator stops forwarding its child's to-many flag
+    on the direct pk-lookups path.
+    """
+    for node in (
+        {"or": [{"articles": {"in": [1]}}, {"name": {"exact": "x"}}]},
+        {"and": [{"articles": {"in": [1]}}]},
+        {"not": {"articles": {"isnull": True}}},
+    ):
+        _, many = to_q(node, Author)
+        assert many is True, node
+
+
+def test_to_q_forward_relation_pk_lookups_do_not_flag_distinct() -> None:
+    """A forward (to-one) relation filtered by pk must not request ".distinct()".
+
+    This test breaks if the to-many flag is raised for every relation instead
+    of only many-valued ones.
+    """
+    _, many = to_q({"author": {"in": [1, 2]}}, Article)
+    assert many is False
+
+
 def test_to_q_range_validates_length() -> None:
     """A "range" lookup with fewer than two bounds raises "GraphQLError".
 
@@ -528,3 +564,81 @@ def test_list_form_default_lookups_filter(db: None) -> None:
     assert result.errors is None, result.errors
     titles = [r["title"] for r in result.data["items"]["results"]]
     assert titles == ["alpha"]
+
+
+# --------------------------------------------------------------------------- #
+# A to-many relation declared directly (plain pk lookups) still de-duplicates  #
+# --------------------------------------------------------------------------- #
+RPK = Registry()
+
+
+class AuthorPkRelationListType(DjangoListObjectType):
+    """ "Author" list type declaring the reverse to-many relation as plain pk lookups.
+
+    Contrasts with "AuthorListType", which reaches through the relation into
+    the related model's own fields.
+    """
+
+    class Meta:
+        """Bind the list type to "Author" with "articles" filtered by primary key.
+
+        The relation itself is the filterable field, so its lookups resolve
+        against the related pk column rather than a nested filter node.
+        """
+
+        model = Author
+        registry = RPK
+        filter_fields = {"name": ("exact",), "articles": ("in", "isnull")}
+
+
+class _PkRelationQuery(ObjectType):
+    """Root query exposing the pk-filterable "authors" list field."""
+
+    authors = DjangoListObjectField(AuthorPkRelationListType)
+
+
+_pk_relation_schema = DjangoGraphQLSchema(
+    query=_PkRelationQuery, registries=isolated_pair(RPK)
+)
+
+
+def test_to_many_pk_lookups_do_not_duplicate_parent_rows(db: None) -> None:
+    """Filtering a reverse to-many relation by plain pk lookups returns each parent once.
+
+    Ada owns two of the seeded articles, so an "in" filter naming both of their
+    pks joins her author row twice. Without ".distinct()" she comes back
+    duplicated.
+
+    Args:
+        db: Pytest-django's database-access fixture; grants this test
+            permission to hit the database.
+    """
+    _Seed.seed()
+    result = graphql_sync(
+        _pk_relation_schema.graphql_schema,
+        "{ authors(filter: { articles: { in: [%d, %d] } }) "
+        "{ results { name } totalCount } }" % (_Seed.a1.pk, _Seed.a2.pk),
+    )
+    assert result.errors is None, result.errors
+    assert [r["name"] for r in result.data["authors"]["results"]] == ["Ada Lovelace"]
+    assert result.data["authors"]["totalCount"] == 1
+
+
+def test_to_many_pk_lookups_emit_distinct_sql(db: None) -> None:
+    """The backend adds "DISTINCT" to the SQL of a plain-pk to-many filter.
+
+    Guards the join fan-out at the SQL level, not only at the row level.
+
+    Args:
+        db: Pytest-django's database-access fixture; grants this test
+            permission to hit the database.
+    """
+    from django_graphex.filtering.backend import NativeFilterBackend
+
+    sql = str(
+        NativeFilterBackend()
+        .apply(Author.objects.all(), {"articles": {"in": [1, 2]}})
+        .query
+    )
+    assert "DISTINCT" in sql
+    assert "JOIN" in sql

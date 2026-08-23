@@ -8,22 +8,56 @@ below for Django-model-backed queries.
 ## Typed scalar descriptors
 
 For a plain scalar field or argument, the capitalized shortcuts are the
-quickest idiom — one shortcut per scalar, usable in **both** an `ObjectType`
-body (output) and a `class Arguments` body (input):
+quickest idiom — one shortcut per scalar, usable in **both** an output
+position (an `ObjectType` body) and an input position (a `Mutation`'s
+`class Arguments` body, or a `Field(args=...)` mapping).
+
+In an `ObjectType`, arguments belong on the field descriptor itself, via
+`Field(args=...)`:
 
 ```python
-from django_graphex.core import ObjectType, CharField, IntField, JSONField
+from django_graphex.core import ObjectType, Field, CharField, IntField
+from graphql import GraphQLString
 
 class Query(ObjectType):
-    greeting = CharField(description="a greeting")
-
-    class Arguments:
-        name = CharField(default="world")
-        loud = IntField(default=0)
+    greeting = Field(
+        GraphQLString,
+        description="a greeting",
+        args={"name": CharField(default="world"), "loud": IntField(default=0)},
+    )
 
     def resolve_greeting(self, info, **kwargs):
         return f"hello {kwargs['name']}" + ("!" if kwargs["loud"] else "")
 ```
+
+```graphql
+{ greeting(name: "ada", loud: 1) }   # -> "hello ada!"
+```
+
+In a `Mutation`, the same shortcuts go in a `class Arguments` body:
+
+```python
+from django_graphex.core import BooleanField, CharField, IntField, Mutation
+
+class Shout(Mutation):
+    class Arguments:
+        name = CharField(default="world")
+        loud = IntField(default=0)
+
+    ok = BooleanField()
+    message = CharField()
+
+    @classmethod
+    def mutate(cls, root, info, **kwargs):
+        text = f"hello {kwargs['name']}" + ("!" if kwargs["loud"] else "")
+        return cls(ok=True, message=text)
+```
+
+!!! warning "`class Arguments` only works inside a `Mutation`"
+    A `class Arguments` block nested in a plain `ObjectType` is **silently
+    ignored** — the field compiles with no arguments at all, and the resolver
+    then fails with `KeyError` on the argument it expected. Use
+    `Field(args=...)` for query arguments.
 
 | Shortcut | GraphQL type |
 |----------|--------------|

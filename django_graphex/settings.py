@@ -49,8 +49,8 @@ DEFAULTS = {
     # behavior).
     "OPTIMIZE_NESTED_PAGINATION": True,
     # Subscriptions: "id_only" (default) makes change notifications carry only
-    # {"id": <pk>} and skip serializing the instance; "full" serializes the full
-    # instance with the subscription's backend. Can be overridden per subscription
+    # {<pk field name>: <pk>} and skip serializing the instance; "full" serializes
+    # the full instance with the subscription's backend. Can be overridden per subscription
     # with `Meta.payload_mode` ("full" | "id_only").
     "SUBSCRIPTION_PAYLOAD_MODE": "id_only",
     # HTTP/view hardening

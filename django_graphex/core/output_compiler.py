@@ -26,6 +26,7 @@ Design contracts:
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from graphql import (
@@ -736,6 +737,30 @@ def _to_graphql_field(
             return getattr(root, _name, None)
 
         return {camel_name: GraphQLField(type_=GdxJSON, resolve=_hstore_resolver)}
+
+    # --- DurationField (audit B7: every populated read returned null) ---------
+    # The SDL scalar stays ``Float`` (graphene-django parity, see the
+    # DJANGO_TO_GQL comment above), but the column value is a ``timedelta``, and
+    # ``Float`` cannot serialize one — a populated row yielded ``null`` plus a
+    # "Float cannot represent non numeric value" field error. Resolve through
+    # ``total_seconds()`` so the Float surface actually carries the value; the
+    # INPUT side maps ``timedelta`` to the SAME ``Float`` (seconds), which
+    # pydantic coerces straight back, so the round-trip closes.
+    if field.get_internal_type() == "DurationField":
+
+        def _duration_resolver(
+            root: Any, _info: Any, *, _name: str = field_name
+        ) -> Any:
+            value = (
+                root.get(_name)
+                if isinstance(root, dict)
+                else getattr(root, _name, None)
+            )
+            return value.total_seconds() if isinstance(value, timedelta) else value
+
+        return {
+            camel_name: GraphQLField(type_=GraphQLFloat, resolve=_duration_resolver)
+        }
 
     # --- Scalar fields: map via DJANGO_TO_GQL --------------------------------
     django_to_gql = _get_django_to_gql()

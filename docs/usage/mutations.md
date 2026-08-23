@@ -825,13 +825,16 @@ input Base64FileInput {
 
 ```python
 from django_graphex.core import BooleanField, Field, Mutation
+from django_graphex.core.base import compile_all_inputs
 from django_graphex.uploads import Base64FileInput
+
+# Compile the imported InputType subclasses before any Field(...) reads them.
+# See the note below for why importing the module is not enough on its own.
+compile_all_inputs()
 
 class UploadAvatarMutation(Mutation):
     class Arguments:
-        # Pass the input-object CLASS directly. Field resolves the compiled
-        # GraphQLInputObjectType LAZILY at schema-build time, so there is no thunk
-        # boilerplate and no `_meta.graphql_input_type` reference at class scope.
+        # Pass the input-object CLASS directly — no thunk boilerplate.
         avatar = Field(Base64FileInput, required=True)
 
     ok = BooleanField()
@@ -843,6 +846,7 @@ class UploadAvatarMutation(Mutation):
         avatar = Base64FileInput(**kwargs["avatar"])
         # Pass max_size to override the global MAX_UPLOAD_SIZE for this field:
         uploaded = avatar.to_uploaded_file(max_size=512 * 1024)  # 512 KB cap
+        profile = info.context.user.profile
         profile.avatar.save(uploaded.name, uploaded, save=True)
         return cls(ok=True)
 ```
@@ -852,14 +856,40 @@ fields; rehydrate it with `Base64FileInput(**kwargs["avatar"])` to get a validat
 instance with `.filename`, `.data`, `.content_type` attributes **and** a
 `.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
 
-!!! note "How `Field` resolves the input type"
-    `Base64FileInput._meta.graphql_input_type` is compiled at schema-build time.
-    Listing `django_graphex` in `INSTALLED_APPS` triggers that compilation from
-    `AppConfig.ready()`, so `Field(Base64FileInput, ...)` resolves the class
-    to the real compiled input type when the schema mounts the field — lazily,
-    never reading the attribute (which would be `None`) at class-definition time.
+!!! warning "Compile the input type before you declare the mutation"
+    `Field(Base64FileInput, ...)` needs `Base64FileInput._meta.graphql_input_type`
+    to be compiled **already** — it is read when `YourMutation.Field()` is
+    evaluated in the surrounding `ObjectType` body, not lazily at schema-build
+    time. If it is still `None`, that line raises:
+
+    ```
+    TypeError: Can only create a wrapper for a GraphQLType, but got:
+    <class 'django_graphex.uploads.Base64FileInput'>
+    ```
+
+    `AppConfig.ready()` does call `compile_all_inputs()`, but it can only compile
+    the `InputType` subclasses that have been **imported** by then — and the
+    package never imports `django_graphex.uploads` itself. Listing
+    `django_graphex` in `INSTALLED_APPS` is therefore *not* sufficient on its own.
+
+    Do one of these:
+
+    ```python
+    # Option A — compile explicitly, right after the import. Works anywhere.
+    from django_graphex.core.base import compile_all_inputs
+    from django_graphex.uploads import Base64FileInput
+
+    compile_all_inputs()
+    ```
+
+    ```python
+    # Option B — import it from a module Django loads during app population
+    # (e.g. your app's models.py), so AppConfig.ready() picks it up.
+    from django_graphex.uploads import Base64FileInput  # noqa: F401
+    ```
+
     The older `lambda: GraphQLArgument(GraphQLNonNull(...))` thunk still works as
-    the low-level substrate.
+    the low-level substrate, and defers the lookup to schema-build time.
 
 You can also call the module-level helper directly if you hold the raw dict:
 

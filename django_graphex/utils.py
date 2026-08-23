@@ -10,7 +10,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterator
 
 from django.apps import apps
-from django.core.exceptions import FieldDoesNotExist, ValidationError
+from django.core.exceptions import ValidationError
 from django.db.models import (
     NOT_PROVIDED,
     Manager,
@@ -607,14 +607,16 @@ def _apply_plain_hook(
     _graphene_type, hook = entry
     # Wrap bare string into a Prefetch so the hook always receives a QuerySet.
     if isinstance(item, str):
-        # Resolve the child model via the lookup path.
+        # Resolve the child model via the lookup path. ``_leaf_model`` indexes
+        # relations by ORM ACCESSOR ("<model>_set" for a reverse FK with no
+        # ``related_name``), which ``_meta.get_field`` does not know about.
+        # An unresolvable segment leaves the lookup untouched — substituting
+        # the OWNER model here built a Prefetch whose queryset had the wrong
+        # model and blew up at query time.
         try:
-            child_model = model
-            for part in lookup.split(LOOKUP_SEP):
-                rel = child_model._meta.get_field(part)
-                child_model = rel.related_model or rel.remote_field.model
-        except (FieldDoesNotExist, AttributeError):
-            child_model = model
+            child_model = _leaf_model(model, lookup)
+        except Exception:  # noqa: BLE001 — unresolvable segment: skip the hook
+            return item
         pf = Prefetch(lookup, queryset=child_model._default_manager.all())
     else:
         pf = item
@@ -2450,7 +2452,7 @@ def _walk_filtered_prefetches(
     prefix: str,
     info: GraphQLResolveInfo,
     out: list[Any],
-    seen: dict[str, int],
+    seen: dict[str, set[tuple[bool, str, str]]],
     hook_map: dict | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> None:
@@ -2463,8 +2465,9 @@ def _walk_filtered_prefetches(
         prefix: The dotted ORM lookup prefix for the current position.
         info: The GraphQL resolve info for the current field.
         out: The accumulating list of Prefetch objects, mutated in place.
-        seen: A counter of how often each lookup was produced, mutated in
-            place.
+        seen: A map of lookup to the set of row-set signatures requested at
+            that lookup, mutated in place. Selections may share one Prefetch
+            only when they all carry the same signature.
         hook_map: A ``{orm_lookup -> (graphene_type, hook_callable)}`` map for
             unfiltered nested lists, mutated in place (Phase E AC2b).
         _fmap_cache: Optional request-scoped memoization dict (see
@@ -2549,6 +2552,19 @@ def _walk_filtered_prefetches(
             # C3: attempt window-slice path (fires for both filtered and unfiltered
             # nested lists when the paginator and relation support it).
             window_params = _walk_window_params(inst, field, sub_gql, info)
+
+            # Record the row set THIS selection needs.  Two selections at the
+            # same lookup (aliases, fragments) can share one prefetch cache
+            # only when their filter AND their window slice match; otherwise
+            # whichever cache we build would serve wrong rows to the others.
+            seen.setdefault(lookup, set()).add(
+                (
+                    bool(filter_value),
+                    repr(filter_value),
+                    repr(window_params[0] if window_params is not None else None),
+                )
+            )
+
             if window_params is not None:
                 slice_tuple, results_field_node, _page_args, _paginator = window_params
                 # Resolve the related_field from the parent model's relation map.
@@ -2612,7 +2628,6 @@ def _walk_filtered_prefetches(
                     # Tag the parent model+lookup so list_resolver can distinguish
                     # a window-sliced empty cache from a zero-child empty cache.
                     out.append(pf)
-                    seen[lookup] = seen.get(lookup, 0) + 1
                     if field.selection_set and sub_gql is not None:  # pragma: no branch
                         # #57: thread _fmap_cache through window-slice descent so
                         # _relation_field_map/_concrete_field_map are memoized at
@@ -2650,7 +2665,6 @@ def _walk_filtered_prefetches(
                         ),
                     )
                 out.append(pf)
-                seen[lookup] = seen.get(lookup, 0) + 1
             else:
                 # Phase E (AC2b): unfiltered path — record lookup in hook_map.
                 if hook is not None and hook_map is not None:
@@ -2903,7 +2917,7 @@ def _collect_annotated_fields(
 def build_filtered_prefetches(
     info: GraphQLResolveInfo,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
-) -> tuple[list[Any], dict]:
+) -> tuple[list[Any], dict, set[str]]:
     """Build filtered Prefetch objects for the nested list fields in the query.
 
     A nested list field carrying filter arguments is fetched in a single
@@ -2921,17 +2935,19 @@ def build_filtered_prefetches(
             "_relation_field_map").
 
     Returns:
-        result: A 2-tuple of the list of filtered Prefetch objects (one per
-            uniquely filtered nested list lookup) and the "hook_map" for
-            unfiltered nested lists with optimize hooks.
+        result: A 3-tuple of the list of filtered Prefetch objects (one per
+            uniquely filtered nested list lookup), the "hook_map" for
+            unfiltered nested lists with optimize hooks, and the set of
+            lookups whose selections disagree while at least one of them
+            applies a filter -- for those, no prefetch cache may exist at all.
     """
     return_type = get_named_type(info.return_type)
     field_nodes = info.field_nodes
     if not field_nodes or not isinstance(return_type, GraphQLObjectType):
-        return [], {}
+        return [], {}, set()
     field_node = field_nodes[0]
     if not field_node.selection_set:
-        return [], {}
+        return [], {}, set()
 
     # The source class is carried on ``extensions['gdx']._meta``.
     # ``_gdx_meta`` reads it, so the root model is recovered — without it ``model``
@@ -2945,7 +2961,7 @@ def build_filtered_prefetches(
         model = None
 
     out: list[Any] = []
-    seen: dict[str, int] = {}
+    seen: dict[str, set[tuple[bool, str, str]]] = {}
     hook_map: dict = {}
     _walk_filtered_prefetches(
         return_type,
@@ -2958,10 +2974,27 @@ def build_filtered_prefetches(
         hook_map=hook_map,
         _fmap_cache=_fmap_cache,
     )
-    # Drop lookups that appeared more than once (aliased fields with different
-    # filters): fall back to the per-parent path for those, for correctness.
-    filtered = [p for p in out if seen.get(p.prefetch_through, 0) == 1]
-    return filtered, hook_map
+    # Keep one Prefetch per lookup, and only where every selection at that
+    # lookup asked for the SAME row set. When they disagree the prefetch is
+    # dropped and each selection resolves per parent, which is correct for
+    # every one of them.
+    filtered: list[Any] = []
+    kept: set[str] = set()
+    for pf in out:
+        through = pf.prefetch_through
+        if len(seen.get(through, ())) != 1 or through in kept:
+            continue
+        kept.add(through)
+        filtered.append(pf)
+    # A disagreement that involves a filter also poisons the PLAIN prefetch:
+    # an unfiltered cache would serve unfiltered rows to the filtered
+    # selection. Report those lookups so the caller strips them too.
+    unsafe = {
+        lookup
+        for lookup, signatures in seen.items()
+        if len(signatures) > 1 and any(has_filter for has_filter, _, _ in signatures)
+    }
+    return filtered, hook_map, unsafe
 
 
 def _merge_filtered_prefetches(
@@ -3058,15 +3091,16 @@ def _merge_filtered_prefetches(
             if hook_map and abs_lookup in hook_map:
                 _graphene_type, hook = hook_map[abs_lookup]
                 # Resolve the child model from the ancestor model using the
-                # stripped path (relative to the ancestor).
-                child_model = ancestor_model
-                if child_model is not None:
+                # stripped path (relative to the ancestor). ``_leaf_model``
+                # indexes relations by ORM ACCESSOR, so a reverse FK declared
+                # without a ``related_name`` resolves instead of falling back
+                # to the OWNER model and producing a broken Prefetch.
+                child_model = None
+                if ancestor_model is not None:
                     try:
-                        for part in stripped_child.split(LOOKUP_SEP):
-                            rel = child_model._meta.get_field(part)
-                            child_model = rel.related_model or rel.remote_field.model
-                    except (FieldDoesNotExist, AttributeError):
-                        child_model = ancestor_model
+                        child_model = _leaf_model(ancestor_model, stripped_child)
+                    except Exception:  # noqa: BLE001 — unresolvable: skip the hook
+                        child_model = None
                 if child_model is not None:
                     child_qs = child_model._default_manager.all()
                     hooked_qs = _apply_field_hook(
@@ -3079,10 +3113,15 @@ def _merge_filtered_prefetches(
                 children.append(stripped_child)
 
         for child in filtered_children.get(pf.prefetch_through, []):
+            # "to_attr" MUST survive the re-root: it is what marks a window
+            # prefetch as already sliced. Dropping it put the page into the
+            # ordinary prefetch cache, where the resolver sliced it a second
+            # time and reported the page size as the total.
             children.append(
                 Prefetch(
                     strip(child.prefetch_through, pf.prefetch_through),
                     queryset=child.queryset,
+                    to_attr=child.to_attr,
                 )
             )
         if children:
@@ -3367,13 +3406,26 @@ def _apply_optimizations(
     # Prefetch. Anything prefetched *under* a filtered lookup is re-rooted into
     # that Prefetch's own queryset (Django forbids the same lookup with two
     # different querysets), which also optimizes the deeper level.
-    # Phase E: build_filtered_prefetches now returns (filtered_prefetches, hook_map).
+    # build_filtered_prefetches returns (filtered_prefetches, hook_map,
+    # unsafe_lookups).
     if fields_asts:
-        filtered_prefetches, hook_map = build_filtered_prefetches(
+        filtered_prefetches, hook_map, unsafe_lookups = build_filtered_prefetches(
             info, _fmap_cache=_fmap_cache
         )
     else:
-        filtered_prefetches, hook_map = [], {}
+        filtered_prefetches, hook_map, unsafe_lookups = [], {}, set()
+    # A lookup whose selections disagree about their filter must not be cached
+    # at all: the plain prefetch (and anything under it, which would populate
+    # the same cache) is dropped so every selection resolves per parent.
+    if unsafe_lookups:
+        prefetch_related = [
+            lk
+            for lk in prefetch_related
+            if not any(
+                lk == unsafe or lk.startswith(unsafe + LOOKUP_SEP)
+                for unsafe in unsafe_lookups
+            )
+        ]
     prefetch_related, filtered_prefetches = _merge_filtered_prefetches(
         prefetch_related, filtered_prefetches, hook_map=hook_map, info=info
     )

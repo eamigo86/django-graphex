@@ -12,6 +12,75 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## Unreleased
+
+**Correctness pass over the 2.1.0 audit backlog.** Twelve confirmed defects from
+the post-release audit, each reproduced before the fix and covered by a
+regression test. No API changes.
+
+### Fixed
+
+- **The optimizer returned wrong rows for aliased nested lists.** Selecting the
+  same relation twice under different filters made *both* aliases return the
+  unfiltered set, and adding a filtered or paginated alias next to a plain one
+  silently corrupted the plain one. The dedup guard counted only selections that
+  emitted a prefetch, so mismatched siblings were never detected. It now records
+  a row-set signature for every nested-list selection, keeps one shared prefetch
+  when the signatures agree, and drops the ambiguous lookup (and its
+  descendants) from `prefetch_related` so each alias resolves its own rows.
+- **A nested window under a windowed parent was paginated twice**, truncating
+  the inner page and reporting the page size as `totalCount`. The re-rooted
+  child prefetch now carries its `to_attr`, so the page is no longer sliced a
+  second time in memory.
+- **`optimize_<field>` crashed on a reverse FK declared without `related_name`.**
+  The accessor (`<model>_set`) was looked up in a map keyed by the relation name,
+  and the bare `except` substituted the owner model, producing a prefetch that
+  failed at query time. Both walk sites now resolve through the accessor-indexed
+  helper and leave an unresolvable segment untouched.
+- **Filtering a list by a to-many primary-key set returned duplicate parent
+  rows.** The `to_many` flag was only set on the nested-relation branch, so a
+  direct pk lookup never triggered `.distinct()`.
+- **Grouped `choices` with a repeated label produced a broken enum.** The
+  duplicate-name guard was re-created on every recursive call, so two groups
+  sharing a label collapsed into one member: the enum lost a value, rows holding
+  the losing value became unserialisable, and writing that member stored the
+  wrong value. Colliding names are now disambiguated deterministically; enums
+  without a collision are unchanged.
+- **Subscriptions were broken for any model whose primary key is not named
+  `id`.** The broadcast payload hardcoded the key `"id"`, so every event failed
+  the non-null check on the real pk field — in the default `id_only` mode.
+- **Subscriptions delivered only errors to clients using GraphQL variables.**
+  The per-event execution received neither `variable_values` nor
+  `operation_name`, so subscribing succeeded and every delivered event failed.
+  This affected every standard client (Apollo, urql, graphql-ws) and the bundled
+  browser client.
+- **Every read of a populated `DurationField` returned `null` plus a field
+  error**, because `timedelta` cannot coerce to `Float`. The value is now
+  resolved through `total_seconds()`, and the input side accepts it back.
+- **The `id` returned by a query could not be sent back to an update
+  mutation.** Output emitted `ID!` (a JSON string) while the update input
+  declared the raw pk type, so echoing it back raised a coercion error — the
+  sibling delete mutation already used `ID!`.
+- **`ordering: "+field"` returned a 500 that enumerated every column of the
+  model.** The allowlist stripped every leading `-`/`+` while the term handed to
+  the ORM kept them. Prefixes are now normalised before validation, so the
+  validated term is the one executed; a malformed `--field` is rejected with a
+  clean error instead of leaking the field list.
+- **With `CACHE_ACTIVE`, a malformed request body raised an unhandled exception
+  instead of returning 400.** The pre-cache preamble parsed the body outside the
+  handler that turns those errors into responses.
+- **A multi-operation document with `operationName` silently discarded the
+  mutation** and replayed a cached success payload without executing it. The
+  operation name is now honoured when classifying the request, and an
+  undeterminable operation bypasses the cache.
+
+### Documentation
+
+- The main tutorial (`Sample Application`), the first example on the Fields
+  page, the file-upload guide and several Query Recipes did not compile or
+  taught a pattern that crashes at runtime. Every snippet on the affected pages
+  was executed against a real schema and corrected.
+
 ## 2.1.0 — 2026-08-23
 
 **Security release — upgrade is strongly recommended.** This release closes five

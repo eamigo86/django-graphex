@@ -64,7 +64,7 @@ from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Mapping
 
     from django.http import HttpRequest
     from graphql import DocumentNode, GraphQLSchema
@@ -200,23 +200,30 @@ def _make_spec(
     schema: "GraphQLSchema",
     document: "DocumentNode",
     middleware: Any = None,
+    variable_values: "Mapping[str, Any] | None" = None,
+    operation_name: str | None = None,
 ) -> SubscriptionSpec:
     """Build the minimal driver spec carrying the live schema + parsed document.
 
-    "drive_subscription" reads ONLY "spec.schema", "spec.document" and
-    "spec.middleware" (the per-event "execute" inputs); every other spec field is
-    the subscribe-time concern already handled by "create_source_event_stream"
+    "drive_subscription" reads ONLY the per-event "execute" inputs
+    ("spec.schema", "spec.document", "spec.variable_values",
+    "spec.operation_name" and "spec.middleware"); every other spec field is the
+    subscribe-time concern already handled by "create_source_event_stream"
     (which ran the field's own native subscribe entry). So the transport supplies
     a spec whose sole job is to carry the live schema, the per-request selection
-    set and the connection's middleware chain into the delivery "execute".
+    set, the request's variables/operation name and the connection's middleware
+    chain into the delivery "execute".
 
     Args:
         schema: The live native "GraphQLSchema".
         document: The parsed subscription "DocumentNode".
         middleware: The connection's "MiddlewareManager" (or "None").
+        variable_values: The request's GraphQL variables (or "None") — the SAME
+            ones passed to "create_source_event_stream".
+        operation_name: The request's operation name (or "None").
 
     Returns:
-        A "SubscriptionSpec" carrying schema + document + middleware for delivery.
+        A "SubscriptionSpec" carrying every per-event "execute" input.
     """
     return SubscriptionSpec(
         model_label="",
@@ -224,6 +231,8 @@ def _make_spec(
         schema=schema,
         document=document,
         middleware=middleware,
+        variable_values=variable_values,
+        operation_name=operation_name,
     )
 
 
@@ -342,7 +351,13 @@ def subscription_sse_view(
                 else:
                     started_source = source_or_result  # type: ignore[assignment]
 
-        spec = _make_spec(conn_schema, document, context.middleware)
+        spec = _make_spec(
+            conn_schema,
+            document,
+            context.middleware,
+            variable_values=body["variables"],
+            operation_name=body["operationName"],
+        )
 
         async def _event_stream() -> "AsyncIterator[bytes]":
             # A pre-stream result (validation error / subscribe deny) is delivered

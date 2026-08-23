@@ -240,3 +240,82 @@ def test_naming_blank_value_prefers_useful_label() -> None:
     "EMPTY" sentinel when one is available.
     """
     assert _names((("", "Unknown"),)) == ["UNKNOWN"]
+
+
+# --------------------------------------------------------------------------- #
+# Cross-GROUP name collisions (repeated labels such as "Other" / "Unknown")    #
+# --------------------------------------------------------------------------- #
+#: Two option groups repeating the label "Other" for two distinct stored values.
+_GROUPED_COLLIDING = [("Sports", [(1, "Other")]), ("Arts", [(2, "Other")])]
+
+
+def _enum_for(choices: Any, field_name: str) -> Any:
+    """Build the native choices enum for a throwaway field carrying choices.
+
+    Args:
+        choices: Django field choices in any supported form.
+        field_name: The field name, which keys the canonical enum name.
+
+    Returns:
+        enum: The "GraphQLEnumType" built for those choices.
+    """
+    from django_graphex.converter import build_choices_enum_type
+    from django_graphex.registry import Registry
+
+    field = models.IntegerField(choices=choices)
+    field.name = field_name
+    field.model = BasicModel  # the converter reads field.model._meta for the name
+    return build_choices_enum_type(field, Registry())
+
+
+def test_naming_dedupes_colliding_names_across_groups() -> None:
+    """Repeated labels in two different option groups must not collapse into one name.
+
+    Ships broken if the de-duplication state is reset per option group, so a
+    label repeated across groups ("Other", "None", "Unknown") yields the same
+    enum-member name twice and one stored value disappears from the enum.
+    """
+    names = _names(_GROUPED_COLLIDING)
+    assert names[0] == "OTHER"
+    assert names[1] != names[0]
+    assert len(set(names)) == 2
+
+
+def test_grouped_colliding_labels_keep_every_value_in_the_enum() -> None:
+    """Every stored value of a grouped choices field must round-trip through the enum.
+
+    Ships broken if a cross-group name collision drops a member: the enum then
+    exposes one name bound to the WRONG stored value, serialization of the
+    missing value raises, and an input of that name writes the other value.
+    """
+    enum = _enum_for(_GROUPED_COLLIDING, "grouped_colliding")
+
+    assert {value.value for value in enum.values.values()} == {1, 2}
+    # Both stored values serialize, and each name parses back to its own value.
+    for stored in (1, 2):
+        name = enum.serialize(stored)
+        assert enum.parse_value(name) == stored
+
+
+def test_grouped_non_colliding_enum_sdl_is_unchanged() -> None:
+    """Grouped choices without a collision must keep their plain, unsuffixed SDL.
+
+    Ships broken if the cross-group de-duplication starts suffixing (or
+    re-naming) members that never collided, silently rewriting published SDL.
+    """
+    from graphql import print_type
+
+    enum = _enum_for(
+        [("Group A", [(1, "Low")]), ("Group B", [(2, "High")])],
+        "grouped_plain",
+    )
+
+    assert print_type(enum) == (
+        "enum testsBasicmodelGroupedPlainEnum {\n"
+        '  """Low"""\n'
+        "  LOW\n"
+        "\n"
+        '  """High"""\n'
+        "  HIGH\n"
+        "}"
+    )

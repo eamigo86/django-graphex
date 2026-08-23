@@ -42,6 +42,27 @@ class JSONScalar:
         return core_schema.any_schema()
 
 
+class IDScalar:
+    """Marker annotation for the synthetic primary key on an update input.
+
+    GraphQL serializes every pk on OUTPUT as the "ID" scalar (a JSON string),
+    and the sibling delete mutation declares "id: ID!". Typing the update
+    input's "id" from the model's pk Python type instead made the two ends
+    disagree: an integer pk rendered "id: Int", so echoing back the string a
+    query returned raised 'Int cannot represent non-integer value'.
+
+    This marker keeps the annotation a DISTINCT, keyable type the input
+    compiler renders as "ID", and validates permissively (the resolver pops
+    "id" before validation and hands it to the ORM, which coerces the wire
+    string to the model's own pk type).
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+        """Return a permissive ``any`` core schema (accept string or numeric ids)."""
+        return core_schema.any_schema()
+
+
 # -- Django internal type -> Python type -------------------------------------- #
 _INT = (
     "AutoField",
@@ -271,8 +292,11 @@ def build_model_schema(
     # excluded from ``writable_fields`` (it is not editable), so add it back here
     # for the partial case only.  The create input never carries ``id``.
     if partial and "id" not in exclude:
-        pk_field = model._meta.pk
-        pk_py_type = _scalar_type(pk_field)
+        # The pk is annotated with the ``IDScalar`` marker, NOT the pk's own
+        # Python type: graphene's contract (and this library's OUTPUT type and
+        # delete mutation) is ``id: ID``, and a pk-typed input (``Int`` for an
+        # ``AutoField``) rejected the very string a query hands back. The ORM
+        # coerces the wire value to the real pk type at lookup time.
         # ``id`` is OPTIONAL in the validation model: the resolver pops it from the
         # payload (``data.pop("id", None)``) to locate the row BEFORE the
         # remaining data is validated, so requiring it here would fail validation
@@ -280,7 +304,7 @@ def build_model_schema(
         # update input exposes ``id``); a missing pk simply yields a clean
         # "not found" error in the resolver rather than a validation error.
         definitions["id"] = (
-            pk_py_type | None,
+            IDScalar | None,
             Field(
                 default=None,
                 description="Django object unique identification field",

@@ -179,21 +179,37 @@ def _normalize_ordering_term(term: str) -> str:
 
     The leading ``-``/``+`` direction prefix is stripped, the bare term is run
     through :func:`~django_graphex._strconv.to_snake_case` (idempotent on
-    snake_case input), and the prefix is re-attached. This is the ONE canonical
-    conversion point every consumer routes through so the DB path, the in-memory
-    path, and the window-prefetch pre-check never diverge.
+    snake_case input), and the direction is re-attached in the ONLY spelling
+    Django's ORM understands: a single leading ``-`` for descending, nothing at
+    all for ascending. An explicit ``+`` therefore disappears here, so the
+    validated term is byte-identical to the one handed to ``order_by``. This is
+    the ONE canonical conversion point every consumer routes through so the DB
+    path, the in-memory path, and the window-prefetch pre-check never diverge.
+
+    A repeated prefix (``--name``, ``+-name``) is rejected rather than
+    normalized: no ordering convention assigns it a meaning, so any mapping
+    would silently sort by something the client did not ask for, and letting it
+    through reaches Django's ``FieldError``, whose message enumerates every
+    column of the model (CWE-209).
 
     Args:
         term: A single ordering term, optionally prefixed with ``-`` or ``+``.
 
     Returns:
-        The direction-preserving snake_case form of *term*. An empty/falsy term
-        is returned unchanged.
+        The direction-preserving snake_case form of *term*, descending terms
+        keeping a single leading ``-``. An empty/falsy term is returned
+        unchanged.
+
+    Raises:
+        GraphQLError: When the term carries more than one direction prefix.
     """
     if not term:
         return term
     if term[0] in "-+":
-        return term[0] + to_snake_case(term[1:])
+        bare = term[1:]
+        if bare[:1] in ("-", "+"):
+            raise GraphQLError(f"Invalid ordering field: '{term}'.")
+        return ("-" if term[0] == "-" else "") + to_snake_case(bare)
     return to_snake_case(term)
 
 

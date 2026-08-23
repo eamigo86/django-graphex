@@ -166,7 +166,10 @@ def _native_scalar_map() -> dict[type, GraphQLScalarType]:
     try:
         # GDX_SCALAR_MAP is keyed by name; we need type→scalar mapping.
         # The scalars module maps Python types we care about here:
-        from django_graphex.core.fields import JSONScalar  # type: ignore[import]
+        from django_graphex.core.fields import (  # type: ignore[import]
+            IDScalar,
+            JSONScalar,
+        )
         from django_graphex.core.scalars import (  # type: ignore[import]
             GdxDate,
             GdxDateTime,
@@ -182,6 +185,15 @@ def _native_scalar_map() -> dict[type, GraphQLScalarType]:
             datetime.time: GdxTime,
             decimal.Decimal: GdxDecimal,
             uuid.UUID: GdxUUID,
+            # DurationField -> ``Float`` SECONDS, the SAME scalar the OUTPUT
+            # compiler emits (it resolves through ``timedelta.total_seconds()``).
+            # Pydantic coerces a number straight back to a ``timedelta``, so the
+            # value a query returns can be written back unchanged. Without this
+            # the annotation fell through to the loud ``String`` degradation.
+            datetime.timedelta: GraphQLFloat,
+            # The synthetic update-input pk -> ``ID``, matching the ``id: ID!``
+            # the OUTPUT type and the sibling delete mutation already expose.
+            IDScalar: GraphQLID,
             # HStoreField -> dict; JSONField -> the dedicated JSONScalar marker.
             # v2 RAW-JSON default: BOTH render as the raw ``JSON`` scalar
             # (structured passthrough via GdxJSON.parse_literal/parse_value),

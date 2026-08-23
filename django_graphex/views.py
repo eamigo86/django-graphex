@@ -1099,16 +1099,26 @@ class GraphQLView(BaseGraphQLView):
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.
 
-        Returns None when there is no query or when the query is syntactically
+        Returns None when there is no query, when the query is syntactically
         invalid (a malformed document must not raise here; "dispatch" falls
-        through to "super_call" which returns a 400).
+        through to "super_call" which returns a 400), or when the document
+        declares several operations and the request does not name one — the
+        caller must then treat the operation as undeterminable.
+
+        The operation name is read through "get_graphql_params", the same
+        helper the execution path uses, so the operation classified here is the
+        operation actually executed. Passing None instead would make
+        graphql-core give up on ANY multi-operation document.
 
         Args:
             request: The incoming HTTP request.
 
         Returns:
-            The operation AST node, or None when there is no query or the
-            query cannot be parsed.
+            The operation AST node, or None when there is no query, the query
+            cannot be parsed, or the operation cannot be determined.
+
+        Raises:
+            HttpError: When the body or the "variables" parameter is malformed.
         """
         data = self.parse_body(request)
         query = request.GET.get("query") or data.get("query")
@@ -1126,7 +1136,8 @@ class GraphQLView(BaseGraphQLView):
         except GraphQLSyntaxError:
             return None
 
-        operation_ast = get_operation_ast(document_ast, None)
+        _, _, operation_name, _ = self.get_graphql_params(request, data)
+        operation_ast = get_operation_ast(document_ast, operation_name)
 
         return operation_ast
 
@@ -1393,11 +1404,22 @@ class GraphQLView(BaseGraphQLView):
 
         _cache = caches["default"]
         identity = self.cache_key_prefix(request)
-        operation_ast = self.get_operation_ast(request)
+        try:
+            operation_ast = self.get_operation_ast(request)
+        except HttpError:
+            # Malformed body / parameters: the base dispatch already turns this
+            # into the clean 400 envelope.  Raising here would turn ordinary bad
+            # client input into an unhandled 500.
+            return self.super_call(request, *args, **kwargs)
         # ``operation`` is a graphql-core ``OperationType`` enum; compare its
         # ``.value`` string — a bare ``== "mutation"`` is always ``False``
         # because the enum instance is never equal to the plain string.
         operation = getattr(getattr(operation_ast, "operation", None), "value", None)
+        if operation is None:
+            # Fail closed: no query, an unparsable document, or a multi-operation
+            # document with no operationName.  The request could be a mutation,
+            # so it must never be answered from — or stored in — the cache.
+            return self.super_call(request, *args, **kwargs)
         if operation == "mutation":
             self._bump_cache_version(_cache, identity)
             return self.super_call(request, *args, **kwargs)
