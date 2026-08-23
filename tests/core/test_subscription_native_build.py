@@ -115,7 +115,7 @@ def test_subscription_define_mount_build_does_not_import_graphene() -> None:
 
     # 3) Building the native field must not fire graphene.
     field = _NoGrapheneSub._build_native_field()
-    assert set(field.args) == {"action", "id", "filters"}
+    assert set(field.args) == {"action", "id", "filter"}
 
 
 def test_subscription_build_runs_with_graphene_blocked() -> None:
@@ -158,7 +158,7 @@ def test_subscription_build_runs_with_graphene_blocked() -> None:
         mounted = _BlockedSub.Field()
         assert type(mounted).__name__ == "SubscriptionField"
         field = _BlockedSub._build_native_field()
-        assert set(field.args) == {"action", "id", "filters"}
+        assert set(field.args) == {"action", "id", "filter"}
         # The whole subscription build path stayed graphene-free.
         assert "graphene" not in sys.modules
     finally:
@@ -217,7 +217,7 @@ def test_mount_seam_subscription_present_in_schema_root() -> None:
     assert isinstance(sub_root, GraphQLObjectType)
     assert "post" in sub_root.fields
     # The native subscription field carries the {action, id, filters} args.
-    assert set(sub_root.fields["post"].args) == {"action", "id", "filters"}
+    assert set(sub_root.fields["post"].args) == {"action", "id", "filter"}
 
 
 # --------------------------------------------------------------------------- #
@@ -225,9 +225,9 @@ def test_mount_seam_subscription_present_in_schema_root() -> None:
 #     is byte-identical before/after the migration.                             #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_subscription_root_sdl_action_enum_id_filters() -> None:
+def test_subscription_root_sdl_action_enum_id_filter() -> None:
     """Ships broken if the subscription root SDL stops rendering the
-    "action" enum plus the "id" and "filters" args.
+    "action" enum plus the "id" and "filter" args.
     """
     import re
 
@@ -272,14 +272,14 @@ def test_subscription_root_sdl_action_enum_id_filters() -> None:
     schema = DjangoGraphQLSchema(query=_SdlQuery, subscription=_SdlRoot)
     sdl = print_schema(schema.graphql_schema)
 
-    # The subscription root field carries the action enum + id + filters args.
+    # The subscription root field carries the action enum + id + filter args.
     m = re.search(r"post\((.*?)\):", sdl, re.DOTALL)
     assert m, f"subscription root field not found in SDL:\n{sdl}"
     args_block = m.group(1)
     assert "action:" in args_block
     assert re.search(r"action:\s*\w+!", args_block), args_block
     assert "id:" in args_block
-    assert "filters:" in args_block
+    assert "filter: PostSubscriptionFilterInput" in args_block
     # The action enum exposes the model-change actions.
     assert "PostSubscriptionAction" in sdl
     enum_m = re.search(r"enum PostSubscriptionAction \{(.*?)\}", sdl, re.DOTALL)

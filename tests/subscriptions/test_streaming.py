@@ -694,11 +694,14 @@ async def test_lookup_filter_wired_db_verify_delivers_verified() -> None:
         seen.append((dict(remaining), dict(event)))
         return event.get("owner_tenant_id") == remaining.get("owner__tenant_id")
 
+    # 2.0.1: relation traversal is rejected in CLIENT filters, so the __lookup
+    # is supplied by the SERVER scope hook (exempt from filter-key validation).
     spec = _spec(
         declared_fields=("id", "is_active", "owner", "name"),
         db_exists=_db_exists,
+        scope=lambda _ctx, **_kw: {"owner__tenant_id": 7},
     )
-    source = await _start_source(spec, layer, filters={"owner__tenant_id": 7})
+    source = await _start_source(spec, layer)
     delivery = drive_subscription(source, spec)
 
     # The source must have a db_verify hook wired by native_subscribe.
@@ -736,11 +739,14 @@ async def test_lookup_filter_non_matching_dropped() -> None:
     ) -> bool:
         return event.get("owner_tenant_id") == remaining.get("owner__tenant_id")
 
+    # 2.0.1: relation traversal is rejected in CLIENT filters, so the __lookup
+    # is supplied by the SERVER scope hook (exempt from filter-key validation).
     spec = _spec(
         declared_fields=("id", "is_active", "owner", "name"),
         db_exists=_db_exists,
+        scope=lambda _ctx, **_kw: {"owner__tenant_id": 7},
     )
-    source = await _start_source(spec, layer, filters={"owner__tenant_id": 7})
+    source = await _start_source(spec, layer)
     delivery = drive_subscription(source, spec)
 
     # Send only a non-matching event (tenant 99) then a matching one so we can

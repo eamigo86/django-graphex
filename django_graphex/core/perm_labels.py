@@ -26,12 +26,12 @@ are:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from django.db.models import Model
 
-__all__ = ("required_perms_for",)
+__all__ = ("implicit_perms_for_type", "implicit_label_set", "required_perms_for")
 
 #: CRUD action -> the codename verbs it requires (``view`` is always included
 #: for write verbs because the payload returns instance data).
@@ -82,3 +82,55 @@ def required_perms_for(
     else:
         verbs = _ACTION_VERBS[action]
     return frozenset(_codename(model, verb) for verb in verbs)
+
+
+def implicit_perms_for_type(gtype: Any) -> frozenset[str] | None:
+    """Return the read permissions a generated model-backed output type implies.
+
+    A GENERATED output type (a model node type or its "<Model>ListType"
+    container) carries its Django model on 'extensions["gdx"]._meta.model'. Any
+    field returning such a type is a READ of that model, so it requires the same
+    perms the model's own "retrieve" root does — this is what closes the
+    relation-traversal bypass (a nested relation field is never stamped at
+    compile time, so the label is derived from its OUTPUT TYPE instead).
+
+    Args:
+        gtype: A named GraphQL type (already unwrapped of list / non-null).
+
+    Returns:
+        The model's read permissions, or None when "gtype" is not a generated
+        model-backed type (a scalar, an enum, a plain "ObjectType" root, the
+        flat "GenericForeignKeyType", …) and therefore implies nothing.
+    """
+    gdx = (getattr(gtype, "extensions", None) or {}).get("gdx")
+    model = getattr(getattr(gdx, "_meta", None), "model", None)
+    if model is None:
+        return None
+    return required_perms_for(model, "retrieve")
+
+
+def implicit_label_set(schema: Any) -> frozenset[str]:
+    """Return every implicit permission label reachable in a built schema.
+
+    The schema-level "gdx_label_set" is the projection target the pruner's
+    caller intersects a user's live permissions against, so a label the pruner
+    consults but the set omits would be stripped before the pruner ever sees it
+    (removing the field for EVERYONE, including callers who hold the perm).
+    Relation labels are derived from output types rather than stamped at compile
+    time, so they are collected HERE, from the built type map — the roots alone
+    never reach a target model exposed only through a nested relation.
+
+    Args:
+        schema: The built "GraphQLSchema" whose type map is scanned.
+
+    Returns:
+        The union of every model-backed type's implicit read permissions.
+    """
+    labels: set[str] = set()
+    for name, gtype in schema.type_map.items():
+        if name.startswith("__"):
+            continue
+        perms = implicit_perms_for_type(gtype)
+        if perms is not None:
+            labels.update(perms)
+    return frozenset(labels)

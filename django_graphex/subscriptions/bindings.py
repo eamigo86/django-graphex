@@ -16,8 +16,6 @@ from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models.signals import post_delete, post_save
 
-from .mixins import serialize_instance
-
 if TYPE_CHECKING:  # pragma: no cover
     from django.db.models import Model
 
@@ -188,16 +186,16 @@ class SubscriptionBinding:
         # Two things happen at signal time that are correct here:
         #   * instance.pk is still set (the signal fires before the ORM clears it).
         #   * Scalar fields are still present on the in-memory instance.
-        #   * M2M rows have already been cascade-deleted, so serialize_instance
-        #     returns empty M2M lists — acceptable for a delete notification.
+        #   * M2M rows have already been cascade-deleted, so the payload
+        #     serialization returns empty M2M lists — acceptable for a delete notification.
         #
         # Note: post_delete fires while the DELETE is still inside the open
         # transaction; the callback runs only after the transaction commits, so
         # subscribers never receive phantom notifications for rolled-back deletes.
         pk_snapshot = instance.pk
         if self.subscription_cls._payload_is_full():
-            data_snapshot: dict[str, Any] | None = serialize_instance(
-                self.backend, instance
+            data_snapshot: dict[str, Any] | None = (
+                self.subscription_cls._serialize_payload(instance)
             )
         else:
             data_snapshot = None
@@ -291,7 +289,7 @@ class SubscriptionBinding:
         # id-only (default) skips serialization entirely; full mode serializes
         # the instance once via the subscription's backend.
         if self.subscription_cls._payload_is_full():
-            data = serialize_instance(self.backend, instance)
+            data = self.subscription_cls._serialize_payload(instance)
         else:
             data = {"id": instance.pk}
 

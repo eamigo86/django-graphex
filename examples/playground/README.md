@@ -151,7 +151,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | **Response caching** | | |
 | `CACHE_ACTIVE` / `CACHE_TIMEOUT` | note | Commented in `config/settings.py` — uncomment to activate query-result caching |
 | **Subscriptions** | | |
-| Public `Subscription` | ✅ | `PostSubscription` (stream `posts`), `CommentSubscription` (stream `comments`, per-subscriber `filters`) |
+| Public `Subscription` | ✅ | `PostSubscription` (stream `posts`), `CommentSubscription` (stream `comments`, per-subscriber `filter`) |
 | Private subscription via `DjangoModelType` | ✅ | `NoteModelType.SubscriptionField()` — gated by `AuthenticatedFieldsMiddleware` |
 | `subscription_scope` (server-forced row scope) | ✅ | `NoteModelType.subscription_scope` — only own notes |
 | `subscription_index_fields` | ✅ | `NoteModelType.Meta.subscription_index_fields = ("owner",)` |
@@ -558,11 +558,12 @@ for the full wire protocol of both transports).
 
 ### Filtered subscription (per-post comments)
 
-Subscribe with `filters: { post: <id> }` to receive only that post's comments:
+Subscribe with `filter: { post: { exact: <id> } }` to receive only that post's
+comments:
 
 ```graphql
 subscription {
-  commentSubscription(action: ALL_ACTIONS, filters: { post: 1 }) { id text }
+  commentSubscription(action: ALL_ACTIONS, filter: { post: { exact: 1 } }) { id text }
 }
 ```
 

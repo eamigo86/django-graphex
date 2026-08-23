@@ -2558,6 +2558,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         _meta.stream = stream
         _meta.payload_mode = payload_mode
         _meta.subscription_index_fields = tuple(subscription_index_fields or ())
+        # Stored so ``subscription_type()`` can forward the SAME projection to the
+        # generated ``Subscription`` (docs/api/types.md documents
+        # ``exclude_fields`` as THE way to keep a sensitive column out).
+        _meta.only_fields = tuple(only_fields or ())
+        _meta.exclude_fields = tuple(exclude_fields or ())
         _meta.max_depth = max_depth
         _meta.complexity = complexity
 
@@ -3292,6 +3297,12 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                 "stream": cls._meta.stream,
                 "payload_mode": cls._meta.payload_mode,
                 "subscription_index_fields": cls._meta.subscription_index_fields,
+                # SECURITY (2.0.1): forward the output projection. Without it the
+                # generated subscription's backend stayed UNPROJECTED, so an
+                # ``exclude_fields = ("password",)`` column was still serialized
+                # into every event AND still accepted as a client filter root.
+                "only_fields": cls._meta.only_fields,
+                "exclude_fields": cls._meta.exclude_fields,
             }
 
             # S6e (#1452): ``Subscription`` is now a native (pydantic

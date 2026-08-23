@@ -63,7 +63,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     from .delivery import DeliveryIterator
 
-__all__ = ["SubscriptionSpec", "drive_subscription", "native_subscribe"]
+__all__ = [
+    "SubscriptionSpec",
+    "build_middleware_manager",
+    "drive_subscription",
+    "native_subscribe",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +136,15 @@ class SubscriptionSpec:
             (diagnostics).
         payload_mode: Optional "full"/"id_only" payload mode (carried for the
             producer side).
-        model: Optional Django model object (carried for the producer side).
+        model: Optional Django model object. Also the model the client
+            filter-key lookup suffixes are validated against.
         pydantic_model: Optional user Pydantic base (carried for the producer
             side).
+        middleware: Optional graphql-core "MiddlewareManager" for the connection
+            (built by the transport from "DJANGO_GRAPHEX['MIDDLEWARE']"). Passed
+            to the per-event delivery "execute" so the configured chain — e.g.
+            "AuthenticatedFieldsMiddleware" — gates subscription delivery exactly
+            as it gates the HTTP view. "None" runs delivery unwrapped.
     """
 
     model_label: str
@@ -151,43 +162,171 @@ class SubscriptionSpec:
     payload_mode: str | None = None
     model: Any = None
     pydantic_model: Any = None
+    middleware: Any = None
+
+
+# ---------------------------------------------------------------------------
+# Execution middleware (CVE-2.0.1 #3): ``DJANGO_GRAPHEX['MIDDLEWARE']`` used to
+# be read ONLY by ``GraphQLView``, so every bundled security middleware (notably
+# ``AuthenticatedFieldsMiddleware``, the enforcement half of
+# ``private_subscription``) was INERT on subscriptions — the only transports that
+# serve them. The manager is built ONCE per connection by the transport and
+# threaded through BOTH the subscribe entry (via the transport context) and this
+# spec (the per-event delivery ``execute``).
+# ---------------------------------------------------------------------------
+
+
+def build_middleware_manager() -> Any:
+    """Build the graphql-core middleware manager for a subscription connection.
+
+    Reuses the exact construction "views.GraphQLView" performs
+    ("instantiate_middleware" + "MiddlewareManager") over the SAME
+    "DJANGO_GRAPHEX['MIDDLEWARE']" setting, so a subscription runs the chain an
+    HTTP operation runs. The setting is read per call (never memoized at import)
+    so "override_settings" is honored.
+
+    Returns:
+        A "MiddlewareManager", or "None" when no middleware is configured.
+    """
+    from graphql.execution.middleware import MiddlewareManager
+
+    from ..settings import graphql_api_settings
+    from ..views import instantiate_middleware
+
+    middleware = graphql_api_settings.MIDDLEWARE
+    if not middleware:
+        return None
+    return MiddlewareManager(*instantiate_middleware(middleware))
 
 
 # ---------------------------------------------------------------------------
 # Filter-key validation (design §3 / capability 4): a client filter key must
 # root on a declared output field, so an attacker cannot probe arbitrary ORM
 # fields. Server-forced scope filters are NOT subject to this check.
+#
+# The suffix ALLOW LIST below is the second half of that guard. Rooting a key on
+# a declared field is not enough: in the DEFAULT configuration (no
+# ``only_fields``/``exclude_fields``) EVERY serialized column is declared, and
+# delivery evaluates the key as ``.filter(pk=..., **client_filters).exists()`` —
+# a boolean oracle over a column an id-only subscriber cannot even select.
+#
+# What makes that oracle exploitable is INCREMENTAL extraction. An ordered or
+# pattern lookup (``gt``, ``startswith``, ``icontains``, ``regex``, a date part,
+# …) answers "is the hidden value greater than / does it begin with X?", so an
+# attacker walks a secret prefix-by-prefix or binary-searches it in a linear
+# number of probes. Equality and membership answer only "is it exactly X?",
+# which forces a whole-value guess — infeasible against a secret. So the allowed
+# suffixes are exactly equality/membership; everything else is refused.
 # ---------------------------------------------------------------------------
+
+#: The lookup suffixes a CLIENT filter key may carry. Equality and membership
+#: only: they cannot be composed into an incremental extraction of a value the
+#: subscriber is not allowed to read. Server-forced scope filters are exempt.
+_ALLOWED_LOOKUPS = frozenset({"exact", "iexact", "in", "isnull"})
+
+
+def _lookup_names(model: Any, root: str) -> "set[str]":
+    """Return the Django lookup/transform names registered for a model field.
+
+    Args:
+        model: The subscribed Django model, or "None" when the spec carries no
+            model (a bare driver spec) — the base "Field" registry is used then,
+            which is the conservative common subset.
+        root: The declared output field name the lookups are read from.
+
+    Returns:
+        The registered lookup and transform names accepted after "root".
+    """
+    from django.db.models import Field
+
+    field: Any = None
+    if model is not None:
+        try:
+            field = model._meta.get_field(root)
+        except Exception:  # noqa: BLE001 - an unknown name has no lookups
+            field = None
+    return set((field or Field()).get_lookups())
 
 
 def _validate_client_filters(
     client_filters: "Mapping[str, Any]",
     declared: set[str],
+    model: Any = None,
 ) -> None:
-    """Raise when any "client_filters" key roots on an undeclared output field.
+    """Raise when any "client_filters" key is not a declared field plus lookups.
 
-    A key may be a bare field name or a field followed by a Django ORM lookup
-    suffix ("username__icontains"). The root (everything before the first "__")
-    must be a declared output field.
+    The FULL key is validated, not just its root:
+
+      * the root (everything before the first "__") must be a declared —
+        i.e. "only_fields"/"exclude_fields"-projected — output field;
+      * every remaining segment must be a Django lookup or transform registered
+        on that field (so relation traversal is rejected);
+      * every remaining segment must ALSO be in the equality/membership allow
+        list, because delivery turns the key into a boolean oracle.
+
+    Relation traversal into another model's columns ("groups__name__startswith")
+    is REJECTED: "name" is not a lookup registered on the "groups" field.
+    Without this, event delivery ran "filter(pk=..., **client_filters)" and
+    became a boolean oracle over columns the payload never exposes.
+
+    Ordered and pattern lookups ("password__startswith", "created__gt",
+    "text__icontains", a date part) are REJECTED even on a declared field: they
+    answer comparisons, so an attacker composes them into a prefix walk or a
+    binary search and extracts a column an id-only subscriber cannot select.
+    Equality and membership only answer "is it exactly this value?", which
+    forces an infeasible whole-value guess, so they stay allowed and the
+    documented scoping use ("filters: { post: 7 }") keeps working.
+
+    A client can still test EQUALITY against any field the developer DECLARED as
+    subscription output. Keep sensitive columns out with
+    "only_fields"/"exclude_fields".
+
+    Server-forced scope filters are NOT subject to this check — they originate
+    from server code, not the client.
 
     Args:
         client_filters: The raw filters supplied by the subscriber.
         declared: The set of declared serialized output field names.
+        model: The subscribed Django model whose field lookups are consulted.
 
     Raises:
-        ValueError: When a filter key roots on an undeclared field. (A plain
-            exception keeps this module free of any graphene/graphql error
-            coupling; the transport layer translates it into an error frame.)
+        ValueError: When a filter key roots on an undeclared field, carries a
+            segment that is not a registered lookup, or carries a lookup outside
+            the equality/membership allow list. (A plain exception keeps this
+            module free of any graphene/graphql error coupling; the transport
+            layer translates it into an error frame.)
     """
     if not client_filters:
         return
     for key in client_filters:
-        root = key.split("__")[0]
+        root, *rest = key.split("__")
         if root not in declared:
             raise ValueError(
                 "Subscription filter key '{}' is not a declared output field. "
                 "Allowed fields: {}.".format(key, ", ".join(sorted(declared)))
             )
+        if not rest:
+            continue
+        lookups = _lookup_names(model, root)
+        for segment in rest:
+            if segment not in lookups:
+                raise ValueError(
+                    "Subscription filter key '{}' is not a valid Django lookup "
+                    "on the declared output field '{}': '{}' is neither a "
+                    "lookup nor a transform. Relation traversal is not allowed "
+                    "in client filters.".format(key, root, segment)
+                )
+            if segment not in _ALLOWED_LOOKUPS:
+                raise ValueError(
+                    "Subscription filter key '{}' uses '{}', which is not an "
+                    "allowed lookup in client filters. Allowed lookups: {} (or "
+                    "a bare field name, which means exact). Ordered and pattern "
+                    "lookups are refused because event delivery makes them a "
+                    "boolean oracle that can extract a field value one "
+                    "comparison at a time.".format(
+                        key, segment, ", ".join(sorted(_ALLOWED_LOOKUPS))
+                    )
+                )
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -297,8 +436,9 @@ async def native_subscribe(
         spec.authorize(context, action=action, id=obj_id, filters=filters)
     )
 
-    # (2) Validate client filter keys against declared output fields.
-    _validate_client_filters(client_filters, spec.declared_output_fields)
+    # (2) Validate client filter keys against declared output fields (FULL key:
+    # declared root + registered lookup suffixes — no relation traversal).
+    _validate_client_filters(client_filters, spec.declared_output_fields, spec.model)
 
     # (3) Server-forced scope.
     scope = await _maybe_await(
@@ -366,10 +506,14 @@ def drive_subscription(
     ("aclose()") propagates to the source so "complete{id}" / disconnect cancels
     promptly.
 
+    The spec's "middleware" manager (the connection's configured
+    "DJANGO_GRAPHEX['MIDDLEWARE']" chain) wraps every per-event resolver, so a
+    subscription is gated by the same middleware an HTTP operation is.
+
     Args:
         source: The STARTED "ChannelLayerSource" from "native_subscribe".
-        spec: The subscription spec carrying the "schema" and "document" the
-            per-event "execute" runs.
+        spec: The subscription spec carrying the "schema", "document" and
+            "middleware" the per-event "execute" runs with.
         context: The transport-neutral "context_value" passed to "execute"
             (".user" + scope; design section 7). Defaults to "None".
 
@@ -388,6 +532,7 @@ def drive_subscription(
             spec.document,
             root_value=flat,
             context_value=context,
+            middleware=spec.middleware,
         )
 
     return make_delivery_iterator(source, _execute_over_flat_dict)

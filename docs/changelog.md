@@ -12,6 +12,115 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 2.1.0 — 2026-08-23
+
+**Security release — upgrade is strongly recommended.** This release closes five
+defects confirmed in 2.0.0 by a line-by-line audit of the published code (see
+**Security** below), and unifies the subscription filter argument with the query
+one.
+
+**The subscription filter argument is now a real typed input object.** Queries
+took `filter` as a generated `<Model>FilterInput`; subscriptions took `filters`
+as a plain `String` carrying JSON — two names, two shapes, and no schema
+validation or autocompletion on the subscription side. That inconsistency is why
+the documented subscription filter syntax was wrong for two releases. This
+release unifies them.
+
+### Changed (BREAKING)
+
+- **`filters` → `filter`, typed `<Model>SubscriptionFilterInput`.** The
+  subscription argument is renamed to the singular query term and takes a
+  generated input object with the same nested `{field: {lookup: value}}` shape
+  queries use. There is **no `filters` alias** — 2.0.0 shipped one day before
+  2.1.0 and the documented syntax never worked, so the exposed surface is
+  minimal.
+
+    Before (2.0.x):
+
+    ```graphql
+    subscription {
+      commentSubscription(action: ALL_ACTIONS, filters: "{\"post\": 7}") {
+        id
+        text
+      }
+    }
+    ```
+
+    After (2.1.0):
+
+    ```graphql
+    subscription {
+      commentSubscription(action: ALL_ACTIONS, filter: { post: { exact: 7 } }) {
+        id
+        text
+      }
+    }
+    ```
+
+    Combining lookups works the same way:
+    `filter: { post: { exact: 7 }, status: { in: ["open", "urgent"] } }`.
+
+- **The schema is now the filter boundary.** The generated input type is
+  deliberately **not** the query's `<Model>FilterInput` — reusing it would
+  re-expose every lookup and reopen the extraction oracle closed in this release. It
+  declares exactly the subscription's projected output fields (honouring
+  `Meta.only_fields` / `Meta.exclude_fields`) and exactly the four allowed
+  lookups (`exact`, `iexact`, `in`, `isnull`). It is flat, so relation traversal
+  is unexpressible. A banned lookup, an excluded column or a relation path is now
+  a **GraphQL validation error** instead of a runtime rejection. The runtime
+  check remains as defence in depth for anything reaching the engine without
+  schema coercion.
+
+  Both input types coexist in one schema; the query-side
+  `<Model>FilterInput` SDL is unchanged.
+
+### Security
+
+*The five items below were prepared as 2.0.1; that patch was never published —
+they ship here in 2.1.0.*
+
+- **Relation traversal bypassed permission scoping.** Only generated root fields
+  carried the permission label the pruner reads, so a user could read a model
+  they had no `view_<model>` permission for by traversing a relation from a
+  parent they *could* read (`post { comments { ... } }`). Untagged fields now
+  fall back to the implicit label of their output type, and the schema label set
+  is widened accordingly, so `PERMISSION_SCOPED_SCHEMA` removes those relation
+  fields. See [Permission-Scoped Access](usage/permission-scoped-schema.md).
+- **Subscription client filters were an extraction oracle.** The filter
+  whitelist was built from the unprojected model, and only the segment before
+  the first `__` was validated — so a subscriber could probe any column
+  (including `password`) one comparison at a time via lookups such as
+  `startswith`, and could traverse into related models. `Meta.only_fields` /
+  `Meta.exclude_fields` are now honoured by the subscription backend, relation
+  traversal is rejected, and client filters accept only `exact`, `iexact`, `in`
+  and `isnull`. Ordered and pattern lookups (`startswith`, `icontains`, `gt`,
+  `regex`, `range`, date parts) are refused — move that logic to
+  `subscription_scope`. See [Subscriptions](usage/subscriptions.md).
+- **`private_subscription` was not enforced on either transport.**
+  `DJANGO_GRAPHEX['MIDDLEWARE']` was read only by `GraphQLView`, while
+  subscriptions are served exclusively by the SSE view and the WebSocket
+  consumer — so `AuthenticatedFieldsMiddleware` never ran and an anonymous
+  subscriber received protected events. Both transports now build and apply the
+  configured middleware chain for the subscribe and delivery paths.
+- **Sub-kilobyte documents could pin a worker (DoS).** The bundled depth and
+  cost validation rules re-walked each fragment once per reachable path, so a
+  ~1 KB document with fan-out fragments took over ten seconds of CPU — before
+  authentication, on any stock `GraphQLView`. Both rules now memoize each
+  fragment's contribution; reported depth and cost values are unchanged.
+
+### Fixed
+
+- **`<Model>FilterInput` name collision refused to build the schema.** Filtering
+  a relation by a column the related type does not itself declare (for example
+  `filter_fields = {"author__email": ("exact",)}`) produced two input types with
+  the same name and a hard `TypeError` at schema construction — the application
+  did not start. One canonical instance per model is now cached and widened in
+  place, converging regardless of build order.
+- **Documented `filters` syntax could never work.** Every snippet showed
+  `filters: { post: 7 }`, but the argument is a `String` carrying JSON, so the
+  object literal failed input coercion. Docs and the playground now show the
+  JSON-encoded form.
+
 ## 2.0.0 — 2026-06-17
 
 **graphene removed — `django-graphex` now runs on native graphql-core + Pydantic

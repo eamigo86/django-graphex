@@ -89,6 +89,11 @@ class DepthLimitValidationRule(ValidationRule):
         """
         super().__init__(context)
         self._errored = False
+        #: (fragment, parent type, remaining budget) triples already proven
+        #: violation-free, so a re-spread can be skipped instead of re-walked.
+        self._clean_spreads: set[tuple[str, str, int | None]] = set()
+        #: Counts cycle-guard short-circuits so truncated walks are not cached.
+        self._cycle_cuts = 0
 
     def enter_operation_definition(
         self, node: OperationDefinitionNode, *_args: Any
@@ -198,6 +203,7 @@ class DepthLimitValidationRule(ValidationRule):
             elif isinstance(selection, FragmentSpreadNode):
                 name = selection.name.value
                 if name in seen_fragments:
+                    self._cycle_cuts += 1
                     continue  # cyclic spread; the schema rejects it separately
                 fragment = self.context.get_fragment(name)
                 if fragment is None:
@@ -206,6 +212,20 @@ class DepthLimitValidationRule(ValidationRule):
                     self.context.schema.get_type(fragment.type_condition.name.value)
                     or parent_type
                 )
+                # Only the tightest inherited budget decides whether this
+                # subtree can violate anything: every constraint is checked
+                # against the same depth, and constraints created inside the
+                # subtree depend on its shape alone.  So the walk's verdict is
+                # a function of (fragment, parent type, tightest budget) --
+                # memoize it, or a fragment reachable by K paths is walked K
+                # times (exponential for a fan-out document).
+                budget = min(
+                    (c.limit - (depth - c.origin) for c in constraints), default=None
+                )
+                key = (name, frag_type.name, budget)
+                if key in self._clean_spreads:
+                    continue
+                cuts_before = self._cycle_cuts
                 self._walk(
                     fragment.selection_set,
                     frag_type,
@@ -213,6 +233,10 @@ class DepthLimitValidationRule(ValidationRule):
                     constraints,
                     seen_fragments | {name},
                 )
+                if not self._errored and cuts_before == self._cycle_cuts:
+                    # A walk truncated by the cycle guard is path-dependent,
+                    # so only untruncated clean walks may be cached.
+                    self._clean_spreads.add(key)
 
             if self._errored:
                 return

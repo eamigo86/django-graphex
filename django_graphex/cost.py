@@ -115,6 +115,10 @@ class _CostAnalyzer:
         self._variable_values = variable_values
         self._variable_defaults = variable_defaults
         self._pagination_args = tuple(_settings_value("COST_PAGINATION_ARGS") or ())
+        #: Cost of a spread, keyed by (fragment name, parent type name).
+        self._spread_costs: dict[tuple[str, str], int] = {}
+        #: Counts cycle-guard short-circuits so truncated walks are not cached.
+        self._cycle_cuts = 0
 
     # -- public ----------------------------------------------------------------
 
@@ -179,6 +183,7 @@ class _CostAnalyzer:
             elif isinstance(selection, FragmentSpreadNode):
                 name = selection.name.value
                 if name in seen_fragments:
+                    self._cycle_cuts += 1
                     continue
                 fragment = self._get_fragment(name)
                 if fragment is None:
@@ -187,9 +192,22 @@ class _CostAnalyzer:
                     self._schema.get_type(fragment.type_condition.name.value)
                     or parent_type
                 )
-                total += self._selection_set_cost(
-                    fragment.selection_set, frag_type, seen_fragments | {name}
-                )
+                # A spread's cost depends only on the fragment and the type it
+                # is resolved against, so memoize it: without this a fragment
+                # reachable by K paths is costed K times (exponential for a
+                # fan-out document).  Every spread still adds its full cost.
+                key = (name, frag_type.name)
+                cost = self._spread_costs.get(key)
+                if cost is None:
+                    cuts_before = self._cycle_cuts
+                    cost = self._selection_set_cost(
+                        fragment.selection_set, frag_type, seen_fragments | {name}
+                    )
+                    if cuts_before == self._cycle_cuts:
+                        # A walk truncated by the cycle guard is path-dependent
+                        # and must not be reused elsewhere.
+                        self._spread_costs[key] = cost
+                total += cost
 
         return total
 

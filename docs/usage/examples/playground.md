@@ -123,7 +123,7 @@ Everything lives in [`blog/schema.py`](https://github.com/eamigo86/django-graphe
 | **File uploads** | `UploadDocument` accepts a `Base64FileInput`; `MAX_UPLOAD_SIZE` (5 MB) and `MAX_REQUEST_BODY_SIZE` (20 MB) guard it in `config/settings.py` | [Mutations](../mutations.md) |
 | **Permissions** | `NoteModelType.permission_classes = [IsAuthenticatedOrReadOnly]`; a custom `IsOwnerOrReadOnly(BasePermission)`; per-request scoping via `filter_queryset` (`myNotes` returns only your notes) | [Permissions](../permissions.md) |
 | **Public/private schema split** | `DjangoGraphQLSchema(query=..., private_query=..., subscription=..., private_subscription=...)` + `AuthenticatedFieldsMiddleware` protects the private roots at resolve time | [Security](../security.md) |
-| **Subscriptions** | Public `PostSubscription` / `CommentSubscription` (`payload_mode = "full"`, per-subscriber `filters`); private `NoteModelType.SubscriptionField()` with `subscription_scope` (server-forced "only my notes") and `subscription_index_fields = ("owner",)` | [Subscriptions](../subscriptions.md) |
+| **Subscriptions** | Public `PostSubscription` / `CommentSubscription` (`payload_mode = "full"`, per-subscriber `filter`); private `NoteModelType.SubscriptionField()` with `subscription_scope` (server-forced "only my notes") and `subscription_index_fields = ("owner",)` | [Subscriptions](../subscriptions.md) |
 | **Query limits** | Global `MAX_QUERY_DEPTH = 6` in settings; per-type `PostType.Meta.max_depth = 4` and `complexity = 2` (most-restrictive wins) | [Query Limits](../query-limits.md) |
 
 !!! warning "Safe ordering, live"
@@ -285,7 +285,7 @@ playground mounts the SSE view on that route) before connecting.
 More things to try:
 
 - **Per-subscriber filters** — subscribe with
-  `commentSubscription(action: ALL_ACTIONS, filters: { post: 1 }) { id text }`
+  `commentSubscription(action: ALL_ACTIONS, filter: { post: { exact: 1 } }) { id text }`
   and only that post's comments are delivered.
 - **Private subscription** — log in at `/admin/` first, then subscribe to
   `noteSubscription(action: ALL_ACTIONS) { id title }` from the same browser

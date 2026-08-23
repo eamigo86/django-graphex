@@ -109,6 +109,17 @@ observe actions stay view-only:
 
 Notes:
 
+- **Relations are gated by the model they point at.** `permission_classes` runs
+  on the CRUD/subscribe entry points of *this* type; it does not run again on a
+  nested relation resolver. Reading a related model through a relation field
+  (`post { comments { results { text } } }`) is instead gated at the **schema**
+  layer: with
+  [`PERMISSION_SCOPED_SCHEMA`](permission-scoped-schema.md#relation-traversal-is-covered-too)
+  enabled, every generated relation and nested-list field requires the target
+  model's `view_{model_name}`, so a caller who cannot query `Comment` directly
+  cannot reach it through `Post` either. Without that flag the schema is never
+  pruned and a relation stays reachable — enable it if relation traversal must
+  be permission-checked.
 - **Superusers pass automatically** — Django's `ModelBackend` grants every
   permission to an active superuser.
 - **Anonymous users are always denied** (the class is fail-closed).

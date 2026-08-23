@@ -780,6 +780,25 @@ class UserType(DjangoObjectType):
         return queryset
 ```
 
+!!! tip "The projection reaches subscriptions too"
+    `only_fields` / `exclude_fields` on a `DjangoModelType` (or directly on a
+    `Subscription`) also gate the generated subscription: an excluded column is
+    absent from the event type, from the broadcast payload, and — since 2.1.0 —
+    from the generated `<Model>SubscriptionFilterInput` that types the `filter`
+    argument. Since client filters run as ORM lookups at delivery time, that
+    projection is the supported way to keep a sensitive column off the
+    subscription surface — see
+    [Subscriptions › Filter key validation](../usage/subscriptions.md#filter-key-validation).
+
+    That input type declares only `exact`, `iexact`, `in` and `isnull` per
+    field, so a **declared** column can be tested for equality but not walked
+    with `startswith` / `gt` / `icontains` — those do not exist in the schema.
+    The projection is still what keeps a column off the surface entirely.
+
+    (Fixed in 2.1.0: 2.0.0 silently dropped the option on the subscription path,
+    so the excluded column stayed both serialized and filterable. 2.1.0 moved
+    the same boundary into the type system.)
+
 ---
 
 ## DjangoUnionType

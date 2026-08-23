@@ -198,15 +198,16 @@ def test_meta_arguments_built_natively_graphene_free(db: None) -> None:
     S8g lazy-deferred the graphene "Argument"/"ID"/"GenericScalar" build;
     S-sub-6 RETIRES it from the subclass-def path. "_meta.arguments" now holds
     graphql-core "GraphQLArgument" values: "action" -> "GraphQLNonNull" of a
-    graphql-core action "GraphQLEnumType"; "id" -> "GraphQLID"; "filters"
-    -> "GraphQLString". The native compile path never read this dict — it is now
-    a graphene-free presence/keys contract built from "_build_native_field_args".
+    graphql-core action "GraphQLEnumType"; "id" -> "GraphQLID"; "filter"
+    -> the generated "<Model>SubscriptionFilterInput" (2.1.0). The native compile
+    path never read this dict — it is now a graphene-free presence/keys contract
+    built from "_build_native_field_args".
 
     Args:
         db: The pytest-django fixture enabling database access for this test.
     """
     from django.contrib.auth.models import User
-    from graphql import GraphQLID, GraphQLNonNull, GraphQLString
+    from graphql import GraphQLID, GraphQLInputObjectType, GraphQLNonNull
     from graphql.type import GraphQLEnumType
 
     from django_graphex.subscriptions.subscription import Subscription
@@ -217,7 +218,7 @@ def test_meta_arguments_built_natively_graphene_free(db: None) -> None:
             stream = "users-s8g"
 
     args = UserSubS8g._meta.arguments
-    assert set(args) == {"action", "id", "filters"}
+    assert set(args) == {"action", "id", "filter"}
     action_type = args["action"].type
     assert isinstance(action_type, GraphQLNonNull)
     assert isinstance(action_type.of_type, GraphQLEnumType)
@@ -228,9 +229,11 @@ def test_meta_arguments_built_natively_graphene_free(db: None) -> None:
         "DELETE",
         "ALL_ACTIONS",
     }
-    # id is a graphql-core ID scalar; filters is a graphql-core String.
+    # id is a graphql-core ID scalar; filter is the generated input object.
     assert args["id"].type is GraphQLID
-    assert args["filters"].type is GraphQLString
+    filter_type = args["filter"].type
+    assert isinstance(filter_type, GraphQLInputObjectType)
+    assert filter_type.name == "UserSubscriptionFilterInput"
 
 
 def test_mount_seam_field_is_named_subscription_field(db: None) -> None:
@@ -285,4 +288,4 @@ def test_native_delivery_path_stays_graphene_free(db: None) -> None:
 
     field = UserSubNative._build_native_field()
     assert isinstance(field, GraphQLField)
-    assert set(field.args) == {"action", "id", "filters"}
+    assert set(field.args) == {"action", "id", "filter"}

@@ -9,14 +9,14 @@ WU6 provides the native subscription compile path:
     which carries extensions['gdx'] (the native bridge).
   * "Subscription._build_native_spec(schema, document)" — a fully-populated
     WU5 SubscriptionSpec wired from the class: model/stream/index_fields,
-    the KEPT hooks (authorize_subscription/subscription_scope/
-    _validate_filters), group_name/instance_index = the kept
+    the KEPT hooks (authorize_subscription/subscription_scope),
+    group_name/instance_index = the kept
     _group_name/_instance_index, and db_exists = the single-row
     .exists() narrowing that closes the WU4 conservative-drop gap.
   * "Subscription._build_native_field(schema, document)" — a DIRECT graphql-core
     GraphQLField(type=<event type>, subscribe=<source factory>,
     resolve=identity) (NOT graphene Subscription.Field()); the field args
-    are reduced to {action, id, filters} under native.
+    are reduced to {action, id, filter} under native.
 
 The native subscribe factory builds the source via WU5 "native_subscribe" and
 is driven through WU5 "drive_subscription" (COND-A, no MapAsyncIterator).
@@ -290,7 +290,7 @@ def test_native_field_is_direct_graphql_field_with_reduced_args() -> None:
     assert isinstance(field, GraphQLField)
     assert type(field).__module__.startswith("graphql")
     # Reduced args under native: action, id, filters (channel_id/operation gone).
-    assert set(field.args) == {"action", "id", "filters"}
+    assert set(field.args) == {"action", "id", "filter"}
     # Identity resolve: the source dict IS the root.
     assert field.resolve(_sentinel := object(), None) is _sentinel
     assert callable(field.subscribe)
@@ -570,19 +570,26 @@ async def test_native_lookup_filter_delivers_verified_and_drops() -> None:
     try:
         layer = InMemoryChannelLayer()
         sub = _make_subscription()
+        # 2.0.1: relation traversal ("author__name") is rejected in CLIENT
+        # filters (it made delivery a boolean oracle over the related model), so
+        # the forward-FK lookup is supplied by the SERVER scope hook — which is
+        # exempt from filter-key validation by design.
+        sub.subscription_scope = classmethod(
+            lambda _cls, _ctx, **_kw: {"author__name": "alice"}
+        )
         schema = _native_schema(sub)
         spec = sub._build_native_spec(schema, _DOC)
         # spec.db_exists is the REAL single-row .exists() narrowing.
         assert spec.db_exists == sub._native_db_exists
-        # Filter on a forward FK lookup that the in-memory equality gate cannot
-        # resolve -> needs the DB .exists() narrowing (spec.db_exists).
+        # A forward-FK lookup the in-memory equality gate cannot resolve ->
+        # needs the DB .exists() narrowing (spec.db_exists).
         source = await sub._native_subscribe(
             layer,
             schema,
             _DOC,
             action="create",
             obj_id=None,
-            filters={"author__name": "alice"},
+            filters=None,
             context=None,
         )
         assert source.db_verify is not None, "native_subscribe must wire db_verify"

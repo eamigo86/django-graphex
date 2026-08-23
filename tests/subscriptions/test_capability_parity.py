@@ -431,7 +431,7 @@ def test_djangomodeltype_subscription_field_native_compiles_through_root() -> No
     assert "author" in event_type.fields
     assert event_type.fields["author"].type is GraphQLID
     # Reduced native arg set: {action, id, filters}.
-    assert set(native_root.fields["post"].args) == {"action", "id", "filters"}
+    assert set(native_root.fields["post"].args) == {"action", "id", "filter"}
 
 
 # ---------------------------------------------------------------------------
