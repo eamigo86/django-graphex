@@ -355,6 +355,39 @@ def _inmemory_order(items: Iterable[Any], ordering: Any) -> list[Any]:
     return ordered
 
 
+def _apply_ordering(qs: Any, ordering: Any) -> Any:
+    """Apply an ordering to a queryset or an in-memory list of rows.
+
+    The ONE place the "ordering" pagination argument is turned into a real
+    ordering, so every paginator branch (bounded page, unbounded "return
+    everything", queryset, prefetch-cache list) honors it identically. A
+    queryset is validated against the model's concrete attnames BEFORE
+    "order_by" so an invalid term raises the clean "Invalid ordering field"
+    error instead of Django's "FieldError", whose message enumerates every
+    column of the model (CWE-209); an in-memory list is sorted by
+    :func:`_inmemory_order`.
+
+    Args:
+        qs: The queryset or list of model instances to order.
+        ordering: An already-normalized ordering string, list of terms, or a
+            falsy value meaning "leave the natural order alone".
+
+    Returns:
+        The ordered queryset or a new ordered list; *qs* unchanged when
+        *ordering* is falsy.
+
+    Raises:
+        GraphQLError: When a term is invalid or relation-spanning (queryset
+            path only).
+    """
+    if not ordering:
+        return qs
+    if not isinstance(qs, QuerySet):
+        return _inmemory_order(qs, ordering)
+    _validate_ordering_terms(qs.model, ordering)
+    return qs.order_by(*_split_ordering(ordering))
+
+
 # *********************************************** #
 # ************ PAGINATION ClASSES *************** #
 # *********************************************** #
@@ -660,12 +693,18 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
     def paginate_queryset(self, qs: Any, **kwargs: Any) -> Any:
         """Paginate a queryset or an in-memory list using limit and offset.
 
+        The requested "ordering" is applied on every call, INDEPENDENTLY of the
+        page-size resolution: when neither a default nor a maximum limit is
+        configured the paginator is unbounded and the whole set is returned, but
+        it is still returned ordered.
+
         Args:
             qs: The queryset or list to paginate.
             **kwargs: The pagination arguments from the query.
 
         Returns:
-            The paginated slice of results.
+            The ordered, paginated slice of results, or the whole ordered set
+            when no page size is configured.
 
         Raises:
             GraphQLError: On a zero/negative limit, a negative offset, or an
@@ -678,16 +717,22 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
             param_label="limit",
         )
 
-        # Unbounded only when neither a default nor a max is configured.
-        if limit is None:
-            return qs
-
         # Normalize camelCase ordering to snake_case attnames at the single
         # canonical entry point, so the DB path, the in-memory path, and the
-        # validation allowlist all see the same terms.
+        # validation allowlist all see the same terms. Resolved BEFORE the
+        # unbounded early-return below: ``ordering`` is advertised on every list
+        # field this paginator backs, so skipping it whenever no page size is
+        # configured made the argument silently inert under the SHIPPED defaults
+        # (``DEFAULT_PAGE_SIZE`` and ``MAX_PAGE_SIZE`` are both ``None``).
         order = _normalize_ordering(
             kwargs.pop(self.ordering_param, None) or self.ordering
         )
+
+        # Unbounded only when neither a default nor a max is configured: the
+        # page is the WHOLE set, but it still has to come back ordered.
+        if limit is None:
+            return _apply_ordering(qs, order)
+
         offset = kwargs.get(self.offset_query_param, 0) or 0
 
         # Reject negative offsets before any DB or in-memory slice attempt.
@@ -713,19 +758,7 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
             items = _inmemory_order(qs, order) if order else list(qs)
             return items[offset : offset + abs(limit)]
 
-        # Validate ordering terms against the queryset model's concrete attnames
-        # before calling qs.order_by().  An invalid term would otherwise cause
-        # Django to raise FieldError, leaking the full model field list (CWE-209).
-        if order:
-            _validate_ordering_terms(qs.model, order)
-            if "," in order:
-                order = order.strip(",").replace(" ", "").split(",")
-                if len(order) > 0:
-                    qs = qs.order_by(*order)
-            else:
-                qs = qs.order_by(order)
-
-        return qs[offset : offset + abs(limit)]
+        return _apply_ordering(qs, order)[offset : offset + abs(limit)]
 
     def prefetch_window_slice(self, **kwargs: Any) -> tuple[int, int, Any] | None:
         """Return (offset, limit, ordering) for DB-side window slicing.
@@ -949,18 +982,7 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             items = _inmemory_order(qs, order) if order else list(qs)
             return items[offset : offset + page_size]
 
-        # Validate ordering terms against the queryset model's concrete attnames
-        # before calling qs.order_by() — same security guard as LimitOffset.
-        if order:
-            _validate_ordering_terms(qs.model, order)
-            if "," in order:
-                order = order.strip(",").replace(" ", "").split(",")
-                if len(order) > 0:
-                    qs = qs.order_by(*order)
-            else:
-                qs = qs.order_by(order)
-
-        return qs[offset : offset + page_size]
+        return _apply_ordering(qs, order)[offset : offset + page_size]
 
     def prefetch_window_slice(self, **kwargs: Any) -> tuple[int, int, Any] | None:
         """Return (offset, page_size, ordering) for DB-side window slicing.

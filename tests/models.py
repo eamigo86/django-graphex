@@ -1043,3 +1043,31 @@ class AliasWinNote(DummyModel):
 
     body = models.CharField(max_length=200)
     post = models.ForeignKey(AliasWinPost, on_delete=models.CASCADE)
+
+
+# --- Ordering-with-the-default-paginator regression models ---------------- #
+class DefaultOrderTeam(DummyModel):
+    """Parent of "DefaultOrderMember", used for the NESTED ordering path.
+
+    Exists so the nested list field ("team { members(ordering: ...) }") can be
+    exercised with the same default paginator the root list fields use.
+    """
+
+    label = models.CharField(max_length=50)
+
+
+class DefaultOrderMember(DummyModel):
+    """Row ordered by the client through the "ordering" pagination argument.
+
+    "sort_key" is a genuine multi-word snake_case attname, so the camelCase
+    wire spelling ("sortKey") round-trips through the ordering normalizer.
+    """
+
+    name = models.CharField(max_length=50)
+    sort_key = models.IntegerField(default=0)
+    team = models.ForeignKey(
+        DefaultOrderTeam,
+        related_name="members",
+        null=True,
+        on_delete=models.CASCADE,
+    )

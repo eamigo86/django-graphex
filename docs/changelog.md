@@ -73,6 +73,17 @@ regression test. No API changes.
   mutation** and replayed a cached success payload without executing it. The
   operation name is now honoured when classifying the request, and an
   undeterminable operation bypasses the cache.
+- **`ordering` did nothing on any list that used the default paginator.** With
+  the shipped defaults (no `pagination=` on the list type, no `DEFAULT_PAGE_SIZE`
+  or `MAX_PAGE_SIZE`) the paginator is unbounded, and it returned the queryset
+  from its unbounded early-return *before* reading `ordering` — so the argument
+  was advertised in the schema, autocompleted in GraphiQL, and silently ignored:
+  `ordering: "name"` and `ordering: "-name"` both returned insertion order, and
+  an invalid ordering field was not even rejected. Ordering is now resolved and
+  applied independently of the page-size decision, so it works on bounded and
+  unbounded lists alike, across `DjangoListObjectField`,
+  `DjangoFilterPaginateListField` and nested lists. Explicitly configured
+  paginators are unchanged.
 
 ### Documentation
 
