@@ -629,7 +629,7 @@ Filters are evaluated **per connection at delivery time**:
     Equality and membership only answer "is it exactly this value?", which
     forces a whole-value guess.
 
-    2.0.0 documented `text__icontains` as usable; 2.0.1 started rejecting it at
+    2.0.0 documented `text__icontains` as usable; 2.1.0 started rejecting it at
     subscribe time and 2.1.0 makes it unexpressible in the schema. Move the
     substring match to `subscription_scope` (server code, exempt from this
     check) or filter client-side on the delivered payload.
@@ -825,11 +825,11 @@ see [Security](security.md#field-level-authentication)) actually protects
 subscription fields: an unauthenticated subscriber is denied **before** any
 `group_add`, and no event is ever delivered to it.
 
-!!! warning "Fixed in 2.0.1"
+!!! warning "Fixed in 2.1.0"
     In 2.0.0 the setting was read only by `GraphQLView`, and subscriptions are
     served *only* by the SSE / WS transports — so every configured GraphQL
     middleware was inert on subscriptions and `private_subscription` protected
-    nothing there. Upgrade to 2.0.1 if you rely on it.
+    nothing there. Upgrade to 2.1.0 if you rely on it.
 
 ### Filter key validation
 

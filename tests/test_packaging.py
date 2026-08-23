@@ -28,14 +28,22 @@ def test_version_matches_importlib_metadata() -> None:
 
 
 def test_version_is_current_release() -> None:
-    """For the v2.0.0 release (graphene-free), "__version__" must equal "2.0.0".
+    """ "__version__" must equal the version declared in pyproject.toml.
 
-    This test breaks if pyproject.toml's version is bumped without
-    reinstalling the package, or vice versa.
+    Reads the declaration instead of hardcoding it, so a release bump does
+    not require editing this test. It still breaks when pyproject.toml is
+    bumped without reinstalling the package, or vice versa, which is the
+    drift this guard exists to catch.
     """
-    assert django_graphex.__version__ == "2.0.0", (
-        f"Expected __version__ == '2.0.0', got {django_graphex.__version__!r}. "
-        "Bump `version` in pyproject.toml and reinstall the package."
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    declared = tomllib.loads(pyproject.read_text())["project"]["version"]
+    assert django_graphex.__version__ == declared, (
+        f"Expected __version__ == {declared!r} (pyproject.toml), "
+        f"got {django_graphex.__version__!r}. Reinstall the package after "
+        "bumping the version."
     )
 
 

@@ -65,12 +65,12 @@ raising a `GraphQLError` otherwise. It only enforces at the top level — nested
 fields are never gated — and **nothing is protected unless you declare it**, so
 adding the middleware is safe.
 
-The chain runs on **every** transport: the HTTP view, and — since 2.0.1 — the
+The chain runs on **every** transport: the HTTP view, and — since 2.1.0 — the
 SSE and WebSocket subscription transports, which build the same
 `DJANGO_GRAPHEX['MIDDLEWARE']` chain once per connection and apply it both to
 the subscribe entry (before any `group_add`) and to each delivered event.
 
-!!! danger "Fixed in 2.0.1"
+!!! danger "Fixed in 2.1.0"
     In 2.0.0 `DJANGO_GRAPHEX['MIDDLEWARE']` was read only by `GraphQLView`.
     Subscriptions are served *only* by the SSE / WS transports, so the middleware
     never ran for them and `private_subscription` protected nothing: an
@@ -164,7 +164,7 @@ matched against `info.field_name` (camelCase under the default
 
     Enforcement is symmetric too: the SSE and WS transports run the configured
     middleware chain, so a declared-private subscription field is denied at
-    subscribe time and on every delivered event. (Before 2.0.1 it was declared
+    subscribe time and on every delivered event. (Before 2.1.0 it was declared
     but never enforced — see the danger note above.)
 
 !!! warning "Add the middleware"

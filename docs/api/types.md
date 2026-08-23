@@ -795,7 +795,7 @@ class UserType(DjangoObjectType):
     with `startswith` / `gt` / `icontains` — those do not exist in the schema.
     The projection is still what keeps a column off the surface entirely.
 
-    (Fixed in 2.0.1: 2.0.0 silently dropped the option on the subscription path,
+    (Fixed in 2.1.0: 2.0.0 silently dropped the option on the subscription path,
     so the excluded column stayed both serialized and filterable. 2.1.0 moved
     the same boundary into the type system.)
 

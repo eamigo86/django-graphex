@@ -12,7 +12,12 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
-## 2.1.0 — unreleased
+## 2.1.0 — 2026-08-23
+
+**Security release — upgrade is strongly recommended.** This release closes five
+defects confirmed in 2.0.0 by a line-by-line audit of the published code (see
+**Security** below), and unifies the subscription filter argument with the query
+one.
 
 **The subscription filter argument is now a real typed input object.** Queries
 took `filter` as a generated `<Model>FilterInput`; subscriptions took `filters`
@@ -27,7 +32,7 @@ release unifies them.
   subscription argument is renamed to the singular query term and takes a
   generated input object with the same nested `{field: {lookup: value}}` shape
   queries use. There is **no `filters` alias** — 2.0.0 shipped one day before
-  2.0.1 and the documented syntax never worked, so the exposed surface is
+  2.1.0 and the documented syntax never worked, so the exposed surface is
   minimal.
 
     Before (2.0.x):
@@ -57,7 +62,7 @@ release unifies them.
 
 - **The schema is now the filter boundary.** The generated input type is
   deliberately **not** the query's `<Model>FilterInput` — reusing it would
-  re-expose every lookup and reopen the extraction oracle closed in 2.0.1. It
+  re-expose every lookup and reopen the extraction oracle closed in this release. It
   declares exactly the subscription's projected output fields (honouring
   `Meta.only_fields` / `Meta.exclude_fields`) and exactly the four allowed
   lookups (`exact`, `iexact`, `in`, `isnull`). It is flat, so relation traversal
@@ -69,13 +74,10 @@ release unifies them.
   Both input types coexist in one schema; the query-side
   `<Model>FilterInput` SDL is unchanged.
 
-## 2.0.1 — 2026-07-05
-
-**Security release.** Five defects confirmed in 2.0.0 by a line-by-line audit of
-the released code. Upgrading is strongly recommended for any deployment using
-permissions, subscriptions, relation filtering, or a public GraphQL endpoint.
-
 ### Security
+
+*The five items below were prepared as 2.0.1; that patch was never published —
+they ship here in 2.1.0.*
 
 - **Relation traversal bypassed permission scoping.** Only generated root fields
   carried the permission label the pruner reads, so a user could read a model
