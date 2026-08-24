@@ -170,6 +170,33 @@ def _compile_declared_list_fields(
     return out
 
 
+def _model_derived_fields(model: type) -> list[Any]:
+    """Return every field Django derives for "model", PARENTS INCLUDED.
+
+    The single choke point every native compiler in this module goes through to
+    enumerate a model's fields. It deliberately uses the DEFAULT
+    "include_parents=True": passing "include_parents=False" is a no-op for an
+    ABSTRACT base (Django copies those columns onto the child) but silently
+    drops everything a MULTI-TABLE-INHERITANCE child inherits -- its "id", the
+    parent's own columns, and the parent's reverse relations -- which left MTI
+    child types carrying nothing but their own table's columns.
+
+    The parent link itself is NOT filtered out here; each caller already
+    discriminates on the field kind it cares about.
+
+    Args:
+        model: The Django model to enumerate.
+
+    Returns:
+        The derived fields, or the concrete fields when "_meta.get_fields" is
+        unavailable.
+    """
+    try:
+        return list(model._meta.get_fields())
+    except Exception:  # pragma: no cover — defensive
+        return list(model._meta.concrete_fields)
+
+
 def _model_field_names(model: type) -> set[str]:
     """Return the set of names Django derives for *model* (Slice D/E helper).
 
@@ -179,11 +206,7 @@ def _model_field_names(model: type) -> set[str]:
     relation-list injection) when scanning ``_meta.fields`` for declared fields.
     """
     names: set[str] = set()
-    try:
-        all_fields = model._meta.get_fields(include_parents=False)
-    except Exception:  # pragma: no cover — defensive
-        all_fields = model._meta.concrete_fields
-    for f in all_fields:
+    for f in _model_derived_fields(model):
         name = getattr(f, "name", None) or getattr(f, "attname", None)
         if name:
             names.add(name)
@@ -414,10 +437,7 @@ def _compile_relation_list_fields(
     only_set = set(only_fields) if only_fields else None
     exclude_set = set(exclude_fields) if exclude_fields else None
 
-    try:
-        all_fields = model._meta.get_fields(include_parents=False)
-    except Exception:  # pragma: no cover — defensive
-        all_fields = model._meta.concrete_fields
+    all_fields = _model_derived_fields(model)
 
     out: dict[str, Any] = {}
     for field in all_fields:
@@ -517,10 +537,7 @@ def _compile_reverse_o2o_fields(
     only_set = set(only_fields) if only_fields else None
     exclude_set = set(exclude_fields) if exclude_fields else None
 
-    try:
-        all_fields = model._meta.get_fields(include_parents=False)
-    except Exception:  # pragma: no cover — defensive
-        all_fields = model._meta.concrete_fields
+    all_fields = _model_derived_fields(model)
 
     out: dict[str, Any] = {}
     for field in all_fields:
@@ -1582,6 +1599,16 @@ def _resolve_native_relation_input_fields(
         if getattr(field, "primary_key", False):
             continue
 
+        # Server-managed relations are not client input. "construct_fields" and
+        # "_resolve_native_choices_input_fields" already honour "editable", so a
+        # non-editable SCALAR was excluded while a non-editable FK / O2O / M2M
+        # was still advertised as writable and then silently dropped on save.
+        # The guard is deliberately restricted to CONCRETE fields: Django sets
+        # "editable = False" on every "ForeignObjectRel", so applying it to the
+        # reverse branches below would delete the reverse-relation injection.
+        if isinstance(field, _dj_models.Field) and not field.editable:
+            continue
+
         # Forward FK / O2O (concrete, holds the key on this model).
         if isinstance(field, (_dj_models.ForeignKey, _dj_models.OneToOneField)):
             # Skip Django's MTI auto parent-link O2O (internal, not user input).
@@ -2495,7 +2522,27 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                     stacklevel=2,
                 )
 
-        output_list_type = factory_type("list", DjangoListObjectType, **factory_kwargs)
+        # The container MUST NOT be minted as "<Model>ListType": that is exactly
+        # the name the docs teach users to give their own
+        # "DjangoListObjectType", so declaring both put two distinct classes
+        # with one name into the same schema and graphql-core refused to build
+        # it ("Schema must contain uniquely named types"). Reusing the
+        # registered container instead was rejected: a "DjangoModelType" carries
+        # its OWN "pagination" / "results_field_name" / projection, and a
+        # user-declared container built from its own Meta would silently discard
+        # them. So the generated container takes the "Generic" name-space this
+        # type already mints its output ("<Model>GenericType") and input
+        # ("<Model>CreateGenericType") into, which no user convention claims.
+        from ._strconv import to_camel_case
+
+        output_list_type = factory_type(
+            "list",
+            DjangoListObjectType,
+            **{
+                **factory_kwargs,
+                "name": to_camel_case("{}_List_Generic_Type".format(model.__name__)),
+            },
+        )
 
         django_fields = OrderedDict(
             {output_field_name: NativeMountedField(output_type)}
@@ -3160,6 +3207,15 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         )
         _gql_field.extensions = {
             **(_gql_field.extensions or {}),
+            # item-b (B6), same contract as DjangoModelMutation: the payload
+            # above was compiled ONCE against the pair this class was DEFINED
+            # under, pinning its output field (e.g. "post: PostGenericType") to
+            # the GLOBAL node. "schema_compiler._maybe_refork_mutation_field"
+            # re-compiles that payload for a FORKED schema, but it keys off THIS
+            # extension -- without it the field kept the global node and mixing
+            # the mutation into a "registries=" schema died on a duplicate type
+            # name / "assert_schema_pair_isolation".
+            "gdx_mutation_source": cls,
             "gdx_required_perms": _perms,
         }
         _cache[operation] = _gql_field

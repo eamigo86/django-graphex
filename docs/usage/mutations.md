@@ -119,6 +119,32 @@ class UserMutation(DjangoModelMutation):
             exclude_fields = ('password', 'is_staff', 'is_superuser')
     ```
 
+#### `editable=False` fields are never input
+
+A model field declared `editable=False` is server-managed, so it is left out of
+the generated create and update inputs — you do not have to list it in
+`exclude_fields`. This covers relations too: a `created_by` / `tenant`
+`ForeignKey` or `OneToOneField` set inside `save()` no longer advertises itself
+as writable.
+
+```python
+class Document(models.Model):
+    title = models.CharField(max_length=200)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, editable=False)
+```
+
+```graphql
+input DocumentCreateGenericType {
+  title: String!
+  # no "owner" — the server owns it
+}
+```
+
+!!! warning "Known gap"
+    A non-editable `ManyToManyField` still appears in the input, now as a raw
+    list of primary keys rather than `[ID!]`. List it in `exclude_fields` if
+    you need it gone today.
+
 ### Custom Arguments with `Field`
 
 You can add custom arguments to your mutations. Declare them in a nested

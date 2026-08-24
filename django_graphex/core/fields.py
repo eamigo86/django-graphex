@@ -219,16 +219,22 @@ def writable_fields(model: type[models.Model]) -> list[models.Field]:
 
 
 def m2m_fields(model: type[models.Model]) -> list[models.ManyToManyField]:
-    """Return the model's forward many-to-many fields.
+    """Return the model's forward, editable many-to-many fields.
+
+    Non-editable relations are excluded for the same reason "writable_fields"
+    excludes them: a field the model refuses to write must not be advertised as
+    writable, or the input accepts a value and silently discards it.
 
     Args:
         model: The Django model class to inspect.
 
     Returns:
-        fields: The forward many-to-many fields declared on the model.
+        fields: The forward, editable many-to-many fields declared on the model.
     """
     return [
-        f for f in model._meta.get_fields() if isinstance(f, models.ManyToManyField)
+        f
+        for f in model._meta.get_fields()
+        if isinstance(f, models.ManyToManyField) and f.editable
     ]
 
 

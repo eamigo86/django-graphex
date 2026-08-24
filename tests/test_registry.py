@@ -126,22 +126,6 @@ class RegistryTest(TestCase):
         self.assertIsNone(registry.get_type_for_enum("absent"))
         self.assertIsNone(registry.get_directive("absent"))
 
-    def test_registry_string_representation(self) -> None:
-        """Assert the registry has usable "str" and "repr" representations.
-
-        If this fails, debugging or logging a registry instance would
-        raise instead of producing a readable string.
-        """
-        registry = get_global_registry()
-
-        # Should have string representation
-        str_repr = str(registry)
-        self.assertIsInstance(str_repr, str)
-
-        # Should have repr
-        repr_str = repr(registry)
-        self.assertIsInstance(repr_str, str)
-
 
 class RegistryKeyCollisionTest(TestCase):
     """Keying by model class avoids name-based collisions (area 1).

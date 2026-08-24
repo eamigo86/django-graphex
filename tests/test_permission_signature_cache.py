@@ -18,6 +18,7 @@ Coverage:
 
 from __future__ import annotations
 
+import gc
 import threading
 import time
 from hashlib import sha256
@@ -312,6 +313,58 @@ def test_recycled_id_entry_is_dropped_and_rebuilt() -> None:
 
     # The stale entry (ref -> schema_old) was detected and rebuilt for schema_new.
     assert result is not stale
+    assert builds == [id(schema_new)]
+    assert (result.extensions or {}).get("built_from") == id(schema_new)
+
+
+def test_collected_source_entry_is_dropped_and_rebuilt() -> None:
+    """Assert an entry whose source schema was COLLECTED is rebuilt, not served.
+
+    This is the recycling case production actually hits: the original schema is
+    garbage-collected (its weak reference goes dead) and a new schema is born at
+    the same address, so the composite key matches while the entry belongs to an
+    object that no longer exists. The test above keeps its "old" schema alive, so
+    the reference still resolves and only the live-ref branch runs — the branch
+    that cannot happen once an id has genuinely been recycled.
+
+    If this fails, a schema reusing a collected schema's address receives the
+    collected schema's pruned variant: the wrong schema, served silently.
+    """
+    schema_old = _full_schema()
+    cache = _fresh_cache()
+
+    builds: list[int] = []
+
+    def marking_prune(schema: GraphQLSchema, granted: frozenset[str]) -> GraphQLSchema:
+        builds.append(id(schema))
+        return GraphQLSchema(
+            query=GraphQLObjectType("Query", {"public": GraphQLField(GraphQLString)}),
+            extensions={"built_from": id(schema)},
+        )
+
+    dead_ref = psc._safe_ref(schema_old)
+    stale = marking_prune(schema_old, frozenset())
+
+    # Let the source schema go: the reference must actually die, otherwise this
+    # test silently degrades into the live-ref case again.
+    del schema_old
+    gc.collect()
+    assert dead_ref is not None and dead_ref() is None, (
+        "the source schema was not collected — the dead-ref branch is not "
+        "being exercised"
+    )
+
+    schema_new = _full_schema()
+    signature = psc.permission_signature(frozenset(), _LABEL_SET)
+    cache._entries[(id(schema_new), signature)] = (dead_ref, stale)
+    builds.clear()
+
+    result = cache.pruned_schema_for(_FakeUser(set()), schema_new, prune=marking_prune)
+
+    assert result is not stale, (
+        "a pruned schema built from a COLLECTED schema was served for a "
+        "different schema that reused its address"
+    )
     assert builds == [id(schema_new)]
     assert (result.extensions or {}).get("built_from") == id(schema_new)
 

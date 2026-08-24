@@ -25,8 +25,30 @@ definition instead of dropping the option silently. A schema that builds today
 can therefore fail to build after upgrading — which is the point: every schema
 that stops building was silently exposing a field it was told to hide.
 
+One rename is wire-visible: the list container a `DjangoModelType` generates is
+now `<Model>ListGenericType` instead of `<Model>ListType`, which was colliding
+with the name the guides give your own `DjangoListObjectType`. Field names and
+shapes are unchanged; only a client document that spells the container's type
+name out needs updating.
+
 ### Fixed
 
+- **A permission-scoped schema could be served for the wrong schema.** The
+  pruned-schema cache keys on `id(full)` and stores a weak reference to detect
+  address reuse, but a reference that had gone *dead* — the exact state an
+  `id` recycle leaves behind, since the original schema must be collected before
+  its address can be reused — was treated as "still valid" and the collected
+  schema's pruned variant was served to the new schema. Only a reference
+  resolving to the requested schema (or an entry stored without one, for a
+  schema that cannot be weakly referenced) is now trusted.
+- **Every validator-free type ran pydantic's deprecated `validate` on each
+  write.** The inline-validator collector walked the whole MRO, so it picked up
+  `pydantic.BaseModel.validate` — inherited by every host — as if it were a
+  user-declared object-level hook. `Meta.pydantic_model` stopped passing through,
+  a synthetic validator model was built for hosts that declared nothing, and each
+  save re-validated the payload against the host type itself (a
+  `PydanticDeprecatedSince20` warning per write, and a hard rejection for any
+  host with required fields). The walk now stops at `BaseModel`.
 - **The optimizer returned wrong rows for aliased nested lists.** Selecting the
   same relation twice under different filters made *both* aliases return the
   unfiltered set, and adding a filtered or paginated alias next to a plain one
@@ -516,6 +538,63 @@ that stops building was silently exposing a field it was told to hide.
   documented as such: `permission_classes` / `authorize` remain
   `DjangoModelType`-only. See
   [Mutations › Row scoping](usage/mutations.md#row-scoping-get_queryset-filter_queryset).
+- **A multi-table-inheritance child could not be put in a schema at all.** The
+  native compilers walked `model._meta.get_fields(include_parents=False)` —
+  correct for an abstract base, which copies its columns onto the child, and
+  wrong for multi-table inheritance, where everything inherited lives in the
+  parent's table. An inherited reverse relation was therefore still listed on
+  the type but had no compiled counterpart, and the schema build died with
+  `RestaurantType fields cannot be resolved. Cannot convert None to a
+  graphql-core type` — an error naming nothing that would let you find the
+  cause. The field walk in `types.py` now goes through one helper that
+  enumerates parents too, so an inherited reverse relation renders as its usual
+  `<Model>ListType` container. Models that do not use multi-table inheritance
+  are provably untouched (`include_parents` is a no-op for abstract and proxy
+  inheritance). The output compiler walks parents too, so the inherited
+  **columns** render as well — a multi-table child used to reach the schema
+  without so much as an `id`, because every column it inherits (its primary key
+  included) lives on the parent. The implicit `<parent>_ptr` link is hidden: the
+  child now exposes each inherited column directly, so the link would only offer
+  a redundant hop back to a copy of the same row. See
+  [Types › Model inheritance](usage/types.md#model-inheritance).
+- **`editable=False` relations were accepted in mutation input and silently
+  dropped.** The scalar path already honoured `field.editable`, but the
+  relation path did not, so a server-managed `ForeignKey` / `OneToOneField` /
+  `ManyToManyField` (`created_by`, `tenant`, anything a custom `save()` owns)
+  advertised itself as writable, returned `ok: true`, and wrote nothing. Such
+  relations are now excluded from the create and update inputs. The guard is
+  restricted to concrete fields on purpose: Django hardcodes `editable = False`
+  on every reverse relation object, so applying it there would have deleted the
+  reverse-relation injection wholesale. The validation-model layer honours
+  `editable` on many-to-many too, so a non-editable `ManyToManyField` no longer
+  leaks back in as a raw primary-key list.
+- **A populated `BinaryField` always read as `null`.** The output compiler
+  mapped it to a bare `String` with no resolver, so the `bytes` the column
+  yields reached graphql-core's string serializer, which cannot represent them.
+  It now resolves through the same shape the `DurationField` precedent uses, and
+  delivers the column as **base64** — unconditionally, matching what the
+  subscription payload encoder already sends for the same field, so a client is
+  never left guessing whether it received text or base64.
+- **`DjangoModelType`'s generated list container took the name the docs teach
+  you to use.** The container was minted as `<Model>ListType` — the exact name
+  the guides give your own `DjangoListObjectType` — so declaring both over one
+  model put two different types with one name into a schema and the build
+  failed with `Schema must contain uniquely named types`. It is now
+  `<Model>ListGenericType`, matching the `Generic` name-space the same type
+  already mints its node (`<Model>GenericType`) and inputs
+  (`<Model>CreateGenericType`) into. **This is wire-visible**: update any
+  client document that spells the container's type name out. Reusing a
+  registered container instead was rejected — a `DjangoModelType` carries its
+  own `pagination` / `results_field_name` / projection, which a container built
+  from someone else's `Meta` would silently discard.
+- **A `DjangoModelType` mutation could not be mixed into a forked schema.** The
+  generated field stamped only `gdx_required_perms`, while the compiler keys
+  its forked-schema payload re-compile off `extensions["gdx_mutation_source"]`
+  — the key `DjangoModelMutation` has always stamped. Without it the field
+  opted out of the re-fork and every schema built with `registries=` shared the
+  payload instance pinned at class-definition time. The field now records its
+  source class, so a forked schema compiles its own payload; args, resolver,
+  permissions and field shape are unchanged.
 
 ### Documentation
 

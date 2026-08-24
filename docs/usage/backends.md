@@ -107,6 +107,10 @@ class UserType(DjangoModelType):
   `non_field_errors`.
 - `self` is the **type/mutation class** (no DRF `self.context`/`self.instance`).
 - A `validate_<x>` that matches no model field emits a `UserWarning` at startup.
+- Only hooks **you declare** — on the class or on your own base classes — are
+  collected. The framework bases a host inherits are not scanned, so
+  `pydantic.BaseModel`'s deprecated `validate` classmethod is never mistaken for
+  your object-level hook.
 
 Under the hood these compile to Pydantic `field_validator` / `model_validator`, so
 they also work on `DjangoModelMutation` and **compose** with `Meta.pydantic_model`.

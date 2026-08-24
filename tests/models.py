@@ -1205,3 +1205,83 @@ class AuditArticle(DummyModel):
     updated_by = models.ForeignKey(
         AuditEditor, related_name="updated_articles", on_delete=models.CASCADE
     )
+
+
+# --- multi-table-inheritance models ---------------------------------------- #
+class MtiPlace(DummyModel):
+    """A CONCRETE parent for multi-table inheritance.
+
+    Concrete (not abstract), so a subclass gets its own table plus an implicit
+    "place_ptr" parent link instead of copied columns. Also the target of
+    "MtiReview.place", which gives the parent a reverse to-many relation the
+    child inherits.
+    """
+
+    name = models.CharField(max_length=100)
+    address = models.CharField(max_length=200, blank=True)
+
+
+class MtiRestaurant(MtiPlace):
+    """A multi-table-inheritance child of "MtiPlace".
+
+    Its own table holds only "serves_pizza" and the "place_ptr" primary key,
+    so every other readable field ("id", "name", "address", "reviews") comes
+    from the parent table.
+    """
+
+    serves_pizza = models.BooleanField(default=False)
+
+
+class MtiReview(DummyModel):
+    """A review pointing at the MTI PARENT model.
+
+    The reverse accessor "reviews" lives on "MtiPlace" and is inherited by
+    "MtiRestaurant", which is what makes the parent's to-many relation
+    reachable from the child type.
+    """
+
+    place = models.ForeignKey(
+        MtiPlace, related_name="reviews", on_delete=models.CASCADE
+    )
+    rating = models.IntegerField(default=0)
+
+
+# --- non-editable relation models ------------------------------------------ #
+class NonEditableOwner(DummyModel):
+    """Target of a server-managed, "editable=False" foreign key.
+
+    Only referenced through "NonEditableThing.owner", so it stays minimal.
+    """
+
+    name = models.CharField(max_length=100)
+
+
+class NonEditableTag(DummyModel):
+    """Target of a server-managed, "editable=False" many-to-many.
+
+    Only referenced through "NonEditableThing.tags", so it stays minimal.
+    """
+
+    name = models.CharField(max_length=100)
+
+
+class NonEditableThing(DummyModel):
+    """A model whose relations are set by the server, never by the client.
+
+    "owner" and "tags" carry "editable=False" exactly like a "created_by" or
+    "tenant" column populated in "save()"; "audit_note" is the scalar control
+    that was already excluded from mutation input.
+    """
+
+    label = models.CharField(max_length=100)
+    owner = models.ForeignKey(
+        NonEditableOwner,
+        related_name="things",
+        on_delete=models.CASCADE,
+        null=True,
+        editable=False,
+    )
+    tags = models.ManyToManyField(
+        NonEditableTag, related_name="things", blank=True, editable=False
+    )
+    audit_note = models.CharField(max_length=100, blank=True, editable=False)

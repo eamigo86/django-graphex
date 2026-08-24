@@ -158,6 +158,44 @@ The full set of recognised options for `DjangoObjectType.Meta` is:
 Any key not in this table is rejected at startup. Review your `DjangoObjectType`
 and `DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
 
+### Model inheritance { #model-inheritance }
+
+**Abstract base** — Django copies the parent's columns onto the child, so they
+appear on the child's type exactly once. Nothing special to do.
+
+**Multi-table inheritance** — the parent keeps its own table and the child
+holds a parent link. A type over the child picks up everything it inherits: the
+parent's columns render alongside the child's own, and the parent's reverse
+relations render as their usual `<Model>ListType` containers.
+
+```python
+class Place(models.Model):
+    name = models.CharField(max_length=100)
+
+class Review(models.Model):
+    place = models.ForeignKey(Place, related_name="reviews", on_delete=models.CASCADE)
+
+class Restaurant(Place):                 # multi-table inheritance
+    serves_pizza = models.BooleanField(default=False)
+```
+
+```graphql
+type RestaurantType {
+  id: ID!                   # inherited from Place
+  name: String              # inherited from Place
+  servesPizza: Boolean
+  reviews: ReviewListType   # inherited from Place
+}
+```
+
+Before this, an inherited reverse relation had no compiled counterpart and the
+whole schema build failed with `RestaurantType fields cannot be resolved`, while
+the inherited columns — the primary key among them — were absent from the type.
+
+The implicit parent link (`placePtr`) is deliberately not exposed: the child
+already carries every inherited column, so the link would only offer a redundant
+hop back to a copy of the same row.
+
 ## DjangoListObjectType
 
 !!! tip "Recommended for Types"
@@ -781,6 +819,20 @@ class Query(ObjectType):
         description='List users with filtering and pagination'
     )
 ```
+
+!!! info "Generated type names"
+    A `DjangoModelType` mints its types into a `Generic` name-space that no
+    hand-written type claims: the node is `<Model>GenericType`, the mutation
+    inputs are `<Model>CreateGenericType` / `<Model>UpdateGenericType`, and the
+    list container `ListField()` returns is **`<Model>ListGenericType`**.
+
+    That last name changed: the container used to be called `<Model>ListType`,
+    which is exactly the name this guide gives your own
+    `DjangoListObjectType`. Declaring both over one model therefore put two
+    different types with one name into a single schema and the build failed
+    with *"Schema must contain uniquely named types"*. Update any client
+    document that spells the container out (an inline fragment, a
+    `__typename` assertion); field names and shapes are unchanged.
 
 ### Auto-generated Mutation Fields
 

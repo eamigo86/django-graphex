@@ -642,3 +642,218 @@ def test_to_many_pk_lookups_emit_distinct_sql(db: None) -> None:
     )
     assert "DISTINCT" in sql
     assert "JOIN" in sql
+
+
+# --------------------------------------------------------------------------- #
+# Declaration shapes that used to compile fine and then misbehave AT QUERY TIME #
+#                                                                               #
+# The tests above cover happy-path traversal on a schema whose declarations      #
+# never collide, and unit-test "to_q" in isolation.  Three defects lived in the  #
+# gap between those two layers: the compiled input looked right (or the unit     #
+# passed) while the executed query returned the wrong rows or was rejected       #
+# outright.  This schema declares the exact shapes that tripped them and asserts #
+# the RESULTS, not the input types.                                             #
+# --------------------------------------------------------------------------- #
+R2 = Registry()
+
+
+class NarrowRootArticleListType(DjangoListObjectType):
+    """ "Article" list type whose nested request is NARROWER than the root's.
+
+    "author__name" asks for "icontains" while the "Author" root declaration
+    below offers only "exact" — the shape whose canonical short-circuit used to
+    discard the requested lookup and leave the query unusable.
+    """
+
+    class Meta:
+        """Bind the list type to "Article" with a diverging nested declaration.
+
+        The reach-through "author__name" asks for a lookup the "Author" root
+        does not declare.
+        """
+
+        model = Article
+        registry = R2
+        filter_fields = {"title": ("exact",), "author__name": ("icontains",)}
+
+
+class NarrowRootAuthorListType(DjangoListObjectType):
+    """ "Author" list type declaring the narrow canonical root for "name".
+
+    Declares no path back through "articles" on purpose: this schema isolates
+    the root-versus-nested lookup reconciliation.
+    """
+
+    class Meta:
+        """Bind the list type to "Author" with an "exact"-only declaration.
+
+        Deliberately narrower than the nested request made above.
+        """
+
+        model = Author
+        registry = R2
+        filter_fields = {"name": ("exact",)}
+
+
+class NarrowRootQuery(ObjectType):
+    """Root query for the narrow-root reconciliation schema.
+
+    Only the article list is mounted; the "Author" type exists to provide the
+    canonical root declaration.
+    """
+
+    articles = DjangoListObjectField(NarrowRootArticleListType)
+
+
+narrow_root_schema = DjangoGraphQLSchema(
+    query=NarrowRootQuery, registries=isolated_pair(R2)
+)
+
+R3 = Registry()
+
+
+class BothWaysAuthorListType(DjangoListObjectType):
+    """ "Author" list type declaring a relation AND a path through it.
+
+    "articles" (direct, to-many pk lookups) and "articles__title" (nested) land
+    in different compile buckets under the same wire key — the shape whose
+    second compile loop used to overwrite the first and drop the nested input.
+    """
+
+    class Meta:
+        """Bind the list type to "Author" with both relation declaration forms.
+
+        "articles" and "articles__title" compile through different buckets
+        under the same wire key.
+        """
+
+        model = Author
+        registry = R3
+        filter_fields = {
+            "name": ("exact",),
+            "articles": ("in",),
+            "articles__title": ("icontains",),
+        }
+
+
+class BothWaysArticleListType(DjangoListObjectType):
+    """ "Article" list type registering the relation target of the schema above.
+
+    A relation is only filterable when its target model has a registered type,
+    so this exists to make "Author.articles" reachable.
+    """
+
+    class Meta:
+        """Bind the list type to "Article" with a minimal declaration.
+
+        Present only so "Author.articles" has a registered relation target.
+        """
+
+        model = Article
+        registry = R3
+        filter_fields = {"title": ("exact",)}
+
+
+class BothWaysQuery(ObjectType):
+    """Root query for the relation-declared-both-ways schema.
+
+    Only the author list is mounted; the "Article" type exists to provide the
+    relation target.
+    """
+
+    authors = DjangoListObjectField(BothWaysAuthorListType)
+
+
+both_ways_schema = DjangoGraphQLSchema(
+    query=BothWaysQuery, registries=isolated_pair(R3)
+)
+
+
+def _exec_on(schema_obj: Any, query: str) -> dict[str, Any]:
+    """Execute a GraphQL document against one of the declaration-shape schemas.
+
+    Args:
+        schema_obj: The schema to execute against.
+        query: The GraphQL query document to execute.
+
+    Returns:
+        The execution result's "data" mapping.
+    """
+    result = graphql_sync(schema_obj.graphql_schema, query)
+    assert result.errors is None, result.errors
+    return result.data
+
+
+def test_reverse_relation_filter_does_not_duplicate_a_parent_with_two_matches(
+    db: None,
+) -> None:
+    """A parent matching through TWO children must still appear exactly once.
+
+    The reverse-relation test above seeds one matching child per author, so the
+    join never fans out and it passes with or without ".distinct()". Here Ada
+    owns BOTH articles whose title contains "i", which is the shape that
+    duplicates the parent row — in "results" and in "totalCount" alike.
+
+    Args:
+        db: Pytest-django's database-access fixture; grants this test
+            permission to hit the database.
+    """
+    _Seed.seed()
+    data = _exec(
+        '{ authors(filter: { articles: { title: { icontains: "i" } } }) '
+        "{ results { name } totalCount } }"
+    )
+    names = [r["name"] for r in data["authors"]["results"]]
+    assert names == ["Ada Lovelace"], (
+        f"The parent row was duplicated across its matching children: {names}"
+    )
+    assert data["authors"]["totalCount"] == 1, (
+        "totalCount counted the join fan-out instead of the distinct parents: "
+        f"{data['authors']['totalCount']}"
+    )
+
+
+def test_relation_declared_both_ways_still_filters_through_the_nested_input(
+    db: None,
+) -> None:
+    """ "articles" plus "articles__title" must keep the nested filter usable.
+
+    The two declarations compile through different buckets under one wire key.
+    When the direct one overwrote the nested one, "AuthorFilterInput.articles"
+    stopped being a filter input and this query was rejected by validation —
+    a schema-shape defect that only an executed query surfaces.
+
+    Args:
+        db: Pytest-django's database-access fixture; grants this test
+            permission to hit the database.
+    """
+    _Seed.seed()
+    data = _exec_on(
+        both_ways_schema,
+        '{ authors(filter: { articles: { title: { icontains: "graphql" } } }) '
+        "{ results { name } totalCount } }",
+    )
+    names = sorted(r["name"] for r in data["authors"]["results"])
+    assert names == ["Ada Lovelace", "Grace Hopper"]
+    assert data["authors"]["totalCount"] == 2
+
+
+def test_nested_lookup_narrower_at_the_root_is_still_accepted(db: None) -> None:
+    """A nested "icontains" must work even when the root declares only "exact".
+
+    "NarrowRootArticleListType" asks for "author__name": ("icontains",) while the
+    registered "Author" root offers only ("exact",). When the canonical
+    short-circuit returned the root wholesale, the requested lookup vanished
+    and this query failed validation with "Field 'icontains' is not defined".
+
+    Args:
+        db: Pytest-django's database-access fixture; grants this test
+            permission to hit the database.
+    """
+    _Seed.seed()
+    data = _exec_on(
+        narrow_root_schema,
+        '{ articles(filter: { author: { name: { icontains: "ada" } } }) '
+        "{ results { title } } }",
+    )
+    assert _titles(data) == ["Django deep dive", "GraphQL intro"]
