@@ -85,6 +85,36 @@ class IsOwnerOrReadOnly(BasePermission):
     `False` singleton, so this exact one-liner granted every action to an
     anonymous caller.)
 
+### `nested_parent`: telling a nested write apart from a direct one
+
+A child written through a parent's `Meta.nested_fields` runs the **child's own**
+permission checks, and `kwargs` then carries `nested_parent` — the **parent
+model class**. It is absent on the child's own mutation, so a policy can grant a
+write only when it arrives through a parent:
+
+```python
+class OnlyViaParent(BasePermission):
+    def has_create_permission(self, info, model, **kwargs):
+        return kwargs.get("nested_parent") is not None
+```
+
+A model whose rows only ever make sense inside their owner (comment lines of an
+order, addresses of a user) can therefore drop its own `create` root without
+losing the nested surface. See
+[Nested writes](mutations.md#how-nested-writes-work) for the full
+contract, including which paths are gated.
+
+!!! note "Checks with a closed signature never see it"
+    Each extra is only passed to a check that can accept it, so an `authorize`
+    override or a permission class that spells its arguments out
+    (`def authorize(cls, info, action, data=None)`,
+    `def has_permission(self, info, action, model, data=None)`) keeps working
+    unchanged — it simply never receives `nested_parent`, and therefore treats a
+    nested write exactly like a direct one. The narrowing happens at the call
+    that lands on *your* method, so the `**kwargs` on the built-in
+    `has_<action>_permission` in between does not leak the marker through.
+    Accept `**kwargs` to see it.
+
 ## `DjangoModelPermissions`
 
 `DjangoModelPermissions` maps each CRUD action to Django's built-in model

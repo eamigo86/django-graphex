@@ -72,8 +72,8 @@ class NestedInputField:
     Mirrors the legacy graphene nested-converter semantics natively: a
     "Meta.nested_fields" entry becomes either a single object input (forward
     FK / reverse-O2O) or a list of object inputs (M2M / reverse-FK), wrapping
-    the CHILD model's compiled "GraphQLInputObjectType" (its generic input,
-    already registered on demand by "_ensure_child_generic_input").
+    the CHILD model's compiled "GraphQLInputObjectType" as built for THIS parent
+    (see "nested_child_input").
 
     Attributes:
         out_name: snake_case field/accessor name (the "nested_fields" dict key
@@ -84,12 +84,21 @@ class NestedInputField:
             (or a "lambda" thunk returning it, for lazy/forward refs).
         is_list: True -> "[<Child>!]" list input (to-many relation);
             False -> single "<Child>" object input (to-one relation).
+        required_perms: the CHILD model's write permissions, stamped onto the
+            emitted input field as "extensions[gdx_required_perms]" so the
+            permission-scoped-schema pruner removes the nested write surface
+            from a caller who may not write the child directly either. A
+            callable is resolved when the field map is built, which is what the
+            generated specs pass so the label is read from the same host list as
+            the child type beside it. None leaves the field unlabeled (public),
+            which is what every hand-built spec wants.
     """
 
     out_name: str
     alias: str
     child_input_type: Any
     is_list: bool
+    required_perms: Any = None
 
 
 @dataclass(frozen=True)
@@ -507,7 +516,8 @@ def _resolve_child_input_type(child: Any) -> Any:
     ``NestedInputField.child_input_type`` may be a compiled
     ``GraphQLInputObjectType`` directly, or a zero-arg ``lambda`` thunk
     returning one (lazy/forward-ref resolution inside the parent's own field
-    thunk). This normalizes both to the concrete graphql-core type.
+    thunk). This normalizes both to the concrete graphql-core type. A compiled
+    type is an INSTANCE, never a callable, so the two cases cannot be confused.
 
     Args:
         child: The compiled input type or a thunk returning it.
@@ -515,7 +525,7 @@ def _resolve_child_input_type(child: Any) -> Any:
     Returns:
         The resolved graphql-core input type.
     """
-    return child() if callable(child) and not isinstance(child, type) else child
+    return child() if callable(child) else child
 
 
 def compile_input_type(
@@ -768,9 +778,9 @@ def compile_input_type(
         # legacy graphene nested converters: a to-one relation becomes a
         # single ``<Child>`` object input, a to-many relation becomes a
         # ``[<Child>!]`` list input. The child input type is the related
-        # model's compiled generic ``GraphQLInputObjectType`` (ensured on
-        # demand upstream). out_name is the snake accessor so the resolver's
-        # ``data.pop(field)`` matches the Django relation name.
+        # model's ``GraphQLInputObjectType`` as built FOR THIS PARENT (see
+        # ``mutation.nested_child_input``). out_name is the snake accessor so
+        # the resolver's ``data.pop(field)`` matches the Django relation name.
         # ----------------------------------------------------------------
         for nf in nested_fields:
             # issue #65 (audit rank 2): honor Meta only/include/exclude on the
@@ -785,18 +795,20 @@ def compile_input_type(
             if not _forced and _excl is not None and nf.out_name in _excl:
                 continue
             child_type = _resolve_child_input_type(nf.child_input_type)
-            if child_type is None:
-                # Child input unresolved (no registered type) -> skip rather
-                # than emit a broken field; mirrors the legacy converter's
-                # ``if not _type: return`` silent-skip for unresolved children.
-                continue
             if nf.is_list:
                 field_type: Any = GraphQLList(GraphQLNonNull(child_type))
             else:
                 field_type = child_type
+            # Resolved HERE, beside the child type above, because the two are
+            # halves of one host declaration and reading them at different
+            # moments let a host reach only one of them.
+            perms = nf.required_perms
+            if callable(perms):
+                perms = perms()
             fields[nf.alias] = GraphQLInputField(
                 type_=field_type,
                 out_name=nf.out_name,
+                extensions=({"gdx_required_perms": perms} if perms is not None else {}),
             )
 
         return fields

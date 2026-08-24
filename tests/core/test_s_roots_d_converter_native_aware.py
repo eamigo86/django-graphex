@@ -27,6 +27,7 @@ Run: .venv/bin/python -m pytest \
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 import pytest
@@ -46,7 +47,15 @@ _DEAD_SCALAR_DESC_NAMES = {
 }
 
 
+@lru_cache(maxsize=1)
 def _scalar_kinds_meta_fields():
+    # MEMOIZED, because the output registry keys its compiled node by MODEL:
+    # minting a second "_SkType" for "ScalarKindsModel" leaves one class holding
+    # its own compiled node while the registry hands the other's out through the
+    # relation graph, and a schema that reaches both dies with "Schema must
+    # contain uniquely named types but contains multiple types named
+    # '_SkType'" -- order-dependently, so the suite failed under some shuffles
+    # and not others. One class per process, one node.
     from django_graphex.types import DjangoObjectType
     from tests.models import ScalarKindsModel
 

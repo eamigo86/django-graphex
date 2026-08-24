@@ -265,7 +265,17 @@ class UserInput(DjangoInputObjectType):
 | `filter_fields` | `dict` | `None` | Field filtering configuration |
 | `input_for` | `str` | `'create'` | Input purpose: 'create', 'update', or 'delete' |
 | `nested_fields` | `tuple/dict` | `()` | Nested field configuration |
+| `nested_parent_model` | `Model` | `None` | Mark this input as the nested child of that model: its back-reference `ForeignKey` / `OneToOneField` becomes optional |
 | `container` | `type` | Auto-generated | Container class for the input type |
+
+`nested_parent_model` is what makes a nested payload writable without repeating
+the parent's id: the nested writer injects that key at save time, so requiring
+it inline would make every nested create unsatisfiable. It is set automatically
+on the per-parent child input a `Meta.nested_fields` entry builds (see
+[the nested child input type](../usage/mutations.md#the-nested-child-input-type));
+set it by hand only on an input you mount yourself inside another model's input.
+The child's Pydantic validation model still requires the key, so a standalone
+create that omits it fails cleanly.
 
 ### Methods
 
@@ -548,6 +558,32 @@ class UserType(DjangoModelType):
 | `subscription_index_fields` | `tuple/list` | `None` | Model field names used to route notifications to value-scoped subscriber groups |
 | `max_depth` | `int` | `None` | Max nested-object depth below the generated output type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of the generated output type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
+| `model_operations` | `tuple` | `("create", "update", "delete", "list", "retrieve")` | The operations this type serves. Anything left out has its `*Field()` builder raise, and stops counting when a parent nests this model |
+
+!!! tip "`model_operations` — declaring a read-only type"
+    The default is **every** operation, so a type that says nothing behaves
+    exactly as it always has. Narrowing it does two things:
+
+    * the `*Field()` builder for an excluded operation raises `AttributeError`,
+      and `QueryFields()` / `MutationFields()` return only what is enabled —
+      the same contract `DjangoModelMutation.Meta.model_operations` has always
+      had;
+    * the type stops being a **write host** for the operations it dropped. When
+      another model nests this one through `Meta.nested_fields`, a nested write
+      is gated by every declared host of the child (see
+      [Nested writes](../usage/mutations.md#how-nested-writes-work)). A display
+      card declaring `model_operations = ("list", "retrieve")` therefore keeps
+      its `Meta.queryset` and its `only_fields` out of that write path, where
+      they were never meant to be a policy.
+
+    ```python
+    class UserCard(DjangoModelType):
+        class Meta:
+            model = User
+            model_operations = ("list", "retrieve")
+            only_fields = ("id", "username", "avatar")
+            queryset = User.objects.filter(is_active=True)
+    ```
 
 !!! warning "The projection needs an output type this type actually builds"
     A `DjangoModelType` reuses the output type already registered for its model
@@ -567,7 +603,8 @@ class UserType(DjangoModelType):
 
 Generate both single object and list query fields.
 
-**Returns:** Tuple of (`single_field`, `list_field`)
+**Returns:** Tuple of (`single_field`, `list_field`), restricted to the
+operations enabled in `Meta.model_operations`
 
 #### `ListField(**kwargs)` (classmethod)
 
@@ -585,7 +622,8 @@ Create a retrieve field for single objects.
 
 Generate the create, delete and update mutation fields.
 
-**Returns:** Tuple of (`create_field`, `delete_field`, `update_field`)
+**Returns:** Tuple of (`create_field`, `delete_field`, `update_field`), restricted
+to the operations enabled in `Meta.model_operations`
 
 #### `CreateField(**kwargs)` / `DeleteField(**kwargs)` / `UpdateField(**kwargs)` (classmethod)
 

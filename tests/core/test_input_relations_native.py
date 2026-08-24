@@ -698,26 +698,6 @@ def test_relation_input_field_force_included_overrides_only(
 #     via ``exclude_fields`` LEAKED onto the mutation INPUT. The loop must        #
 #     mirror the base/choices gating on ``nf.out_name``.                         #
 # --------------------------------------------------------------------------- #
-def _register_author_create_input(reg: Registry) -> type[DjangoInputObjectType]:
-    """Register an "Author" create input so the nested "author" child thunk
-    resolves (mirrors "_ensure_child_generic_input" the real mutation path runs).
-
-    Args:
-        reg: The registry the create input type is registered against.
-
-    Returns:
-        author_create: The registered "Author" create input type class.
-    """
-
-    class _AuthorCreate(DjangoInputObjectType):
-        class Meta:
-            model = Author
-            registry = reg
-            input_for = "create"
-
-    return _AuthorCreate
-
-
 @pytest.mark.django_db
 def test_nested_input_field_dropped_when_excluded() -> None:
     """Protect exclude_fields gating for nested object-input fields.
@@ -728,7 +708,6 @@ def test_nested_input_field_dropped_when_excluded() -> None:
     mutation input.
     """
     reg = Registry()
-    _register_author_create_input(reg)
 
     class _PostCreate(DjangoInputObjectType):
         class Meta:
@@ -755,7 +734,6 @@ def test_nested_input_field_dropped_when_not_in_only() -> None:
     input, bypassing the field-selection allowlist.
     """
     reg = Registry()
-    _register_author_create_input(reg)
 
     class _PostCreate(DjangoInputObjectType):
         class Meta:
@@ -782,7 +760,6 @@ def test_nested_input_field_force_included_overrides_only() -> None:
     input only_fields would otherwise exclude.
     """
     reg = Registry()
-    _register_author_create_input(reg)
 
     class _PostCreate(DjangoInputObjectType):
         class Meta:
@@ -810,7 +787,6 @@ def test_nested_input_field_present_without_field_selection() -> None:
     when the model author never applied any selection at all.
     """
     reg = Registry()
-    _register_author_create_input(reg)
 
     class _PostCreate(DjangoInputObjectType):
         class Meta:

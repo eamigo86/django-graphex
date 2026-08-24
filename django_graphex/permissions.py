@@ -10,6 +10,8 @@ for create/update.
 
 from __future__ import annotations
 
+import inspect
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -24,11 +26,66 @@ __all__ = (
     "IsAuthenticatedOrReadOnly",
     "IsAdminOrReadOnly",
     "DjangoModelPermissions",
+    "supported_kwargs",
 )
 
 #: The read-only actions (used by the *OrReadOnly variants). Subscribing is an
 #: observe/read operation, so it is treated as read-only.
 READ_ACTIONS = ("retrieve", "list", "subscribe")
+
+
+@lru_cache(maxsize=512)
+def _named_kwargs(func: Any) -> frozenset[str] | None:
+    """Return the keyword names *func* names explicitly, or None for "**kwargs".
+
+    Memoized on the plain FUNCTION, never on a bound method: permission classes
+    are instantiated per check, so caching bound methods would grow without
+    bound.
+
+    Args:
+        func: The plain function to introspect.
+
+    Returns:
+        The accepted keyword names, or None when the callable absorbs any
+        keyword (or cannot be introspected, which is treated the same way).
+    """
+    try:
+        parameters = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):  # pragma: no cover — exotic callables
+        return None
+    names = set()
+    for param in parameters:
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            return None
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            names.add(param.name)
+    return frozenset(names)
+
+
+def supported_kwargs(func: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Return *kwargs* narrowed to what *func* can actually accept.
+
+    The permission plumbing grows extras over time -- "data=" first, then
+    "nested_parent=" for a write arriving through a parent's nested payload --
+    and forwarding one to a check that spells its arguments out raises
+    "TypeError" (an HTTP 500) even when the policy GRANTS the action. Dropping
+    the extra instead is fail-closed: a policy that cannot see "nested_parent"
+    reads a nested write exactly as it reads a direct one.
+
+    Args:
+        func: The callable about to be invoked.
+        kwargs: The keyword arguments the caller wants to pass.
+
+    Returns:
+        The subset "func" accepts (the whole mapping when it takes "**kwargs").
+    """
+    accepted = _named_kwargs(getattr(func, "__func__", func))
+    if accepted is None:
+        return kwargs
+    return {name: value for name, value in kwargs.items() if name in accepted}
 
 
 def _user(info: GraphQLResolveInfo) -> Any | None:
@@ -54,6 +111,14 @@ class BasePermission:
     Override "has_permission" to gate every action the same way, or a single
     "has_<action>_permission" for finer control. Returning False denies the
     action.
+
+    Each per-action method narrows the extras to what the "has_permission" it
+    calls can actually accept. The narrowing has to happen HERE, at the call
+    that lands on the override, and not at the outer call site: the per-action
+    methods take "**kwargs", so narrowing against one of them forwards
+    everything and an override spelling its arguments out
+    ("def has_permission(self, info, action, model, data=None)") turns a GRANT
+    into a "TypeError".
     """
 
     def has_permission(
@@ -90,12 +155,15 @@ class BasePermission:
         Args:
             info: The GraphQL resolve info carrying the request context.
             model: The Django model class the action targets.
-            **kwargs: Action-specific extras, forwarded to "has_permission".
+            **kwargs: Action-specific extras, forwarded to "has_permission"
+                minus any it cannot accept.
 
         Returns:
             allowed: True when the "create" action is permitted.
         """
-        return self.has_permission(info, "create", model, **kwargs)
+        return self.has_permission(
+            info, "create", model, **supported_kwargs(self.has_permission, kwargs)
+        )
 
     def has_update_permission(
         self,
@@ -108,12 +176,15 @@ class BasePermission:
         Args:
             info: The GraphQL resolve info carrying the request context.
             model: The Django model class the action targets.
-            **kwargs: Action-specific extras, forwarded to "has_permission".
+            **kwargs: Action-specific extras, forwarded to "has_permission"
+                minus any it cannot accept.
 
         Returns:
             allowed: True when the "update" action is permitted.
         """
-        return self.has_permission(info, "update", model, **kwargs)
+        return self.has_permission(
+            info, "update", model, **supported_kwargs(self.has_permission, kwargs)
+        )
 
     def has_delete_permission(
         self,
@@ -126,12 +197,15 @@ class BasePermission:
         Args:
             info: The GraphQL resolve info carrying the request context.
             model: The Django model class the action targets.
-            **kwargs: Action-specific extras, forwarded to "has_permission".
+            **kwargs: Action-specific extras, forwarded to "has_permission"
+                minus any it cannot accept.
 
         Returns:
             allowed: True when the "delete" action is permitted.
         """
-        return self.has_permission(info, "delete", model, **kwargs)
+        return self.has_permission(
+            info, "delete", model, **supported_kwargs(self.has_permission, kwargs)
+        )
 
     def has_retrieve_permission(
         self,
@@ -144,12 +218,15 @@ class BasePermission:
         Args:
             info: The GraphQL resolve info carrying the request context.
             model: The Django model class the action targets.
-            **kwargs: Action-specific extras, forwarded to "has_permission".
+            **kwargs: Action-specific extras, forwarded to "has_permission"
+                minus any it cannot accept.
 
         Returns:
             allowed: True when the "retrieve" action is permitted.
         """
-        return self.has_permission(info, "retrieve", model, **kwargs)
+        return self.has_permission(
+            info, "retrieve", model, **supported_kwargs(self.has_permission, kwargs)
+        )
 
     def has_list_permission(
         self,
@@ -162,12 +239,15 @@ class BasePermission:
         Args:
             info: The GraphQL resolve info carrying the request context.
             model: The Django model class the action targets.
-            **kwargs: Action-specific extras, forwarded to "has_permission".
+            **kwargs: Action-specific extras, forwarded to "has_permission"
+                minus any it cannot accept.
 
         Returns:
             allowed: True when the "list" action is permitted.
         """
-        return self.has_permission(info, "list", model, **kwargs)
+        return self.has_permission(
+            info, "list", model, **supported_kwargs(self.has_permission, kwargs)
+        )
 
     def has_subscribe_permission(
         self,
@@ -180,12 +260,15 @@ class BasePermission:
         Args:
             info: The GraphQL resolve info carrying the request context.
             model: The Django model class the action targets.
-            **kwargs: Action-specific extras, forwarded to "has_permission".
+            **kwargs: Action-specific extras, forwarded to "has_permission"
+                minus any it cannot accept.
 
         Returns:
             allowed: True when the "subscribe" action is permitted.
         """
-        return self.has_permission(info, "subscribe", model, **kwargs)
+        return self.has_permission(
+            info, "subscribe", model, **supported_kwargs(self.has_permission, kwargs)
+        )
 
 
 class AllowAny(BasePermission):
@@ -472,7 +555,12 @@ class DjangoModelPermissions(BasePermission):
         action = kwargs.get("subscription_action", kwargs.get("action"))
         if action is None:
             # No action forwarded: fall back to the generic view-only gate.
-            return self.has_permission(info, "subscribe", model, **kwargs)
+            return self.has_permission(
+                info,
+                "subscribe",
+                model,
+                **supported_kwargs(self.has_permission, kwargs),
+            )
         rows = self.subscribe_actions_map.get(action)
         if rows is None:
             # Unknown subscribe action -> fail-closed.

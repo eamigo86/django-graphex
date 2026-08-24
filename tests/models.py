@@ -1285,3 +1285,960 @@ class NonEditableThing(DummyModel):
         NonEditableTag, related_name="things", blank=True, editable=False
     )
     audit_note = models.CharField(max_length=100, blank=True, editable=False)
+
+
+# --- nested child permission models ----------------------------------------- #
+# DEDICATED to "test_nested_child_permissions" and
+# "test_permission_scoped_nested_input". The nested host registry is model-keyed
+# and every declared host must allow a nested write, so sharing a model with
+# another module would make the outcome depend on import order (the suite runs
+# under pytest-randomly).
+class NestedPermCategory(DummyModel):
+    """A shared lookup row a "NestedPermAuthor" points at through a forward FK.
+
+    Its own host denies every write, so it is the forward face of the link-path
+    boundary: attaching an existing row must stay allowed.
+    """
+
+    name = models.CharField(max_length=100)
+
+
+class NestedPermTag(DummyModel):
+    """A shared label many authors may link, the many-to-many link-path face."""
+
+    label = models.CharField(max_length=50)
+
+
+class NestedPermAuthor(DummyModel):
+    """The nesting parent every child in this group is written through."""
+
+    name = models.CharField(max_length=100)
+    category = models.ForeignKey(
+        NestedPermCategory,
+        related_name="authors",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    tags = models.ManyToManyField(NestedPermTag, related_name="authors", blank=True)
+
+
+class NestedPermPost(DummyModel):
+    """A reverse-FK child whose own host denies every write."""
+
+    author = models.ForeignKey(
+        NestedPermAuthor, related_name="posts", on_delete=models.CASCADE
+    )
+    title = models.CharField(max_length=200)
+
+
+class NestedPermNote(DummyModel):
+    """A reverse-FK child whose host declares no "permission_classes" at all.
+
+    The inertness control: the gate must leave it byte-identical to today.
+    """
+
+    author = models.ForeignKey(
+        NestedPermAuthor, related_name="notes", on_delete=models.CASCADE
+    )
+    body = models.CharField(max_length=200)
+
+
+class NestedPermHatchNote(DummyModel):
+    """A reverse-FK child writable ONLY through its parent.
+
+    Drives the "nested_parent" escape hatch: its policy grants "create" exactly
+    when the kwarg is present.
+    """
+
+    author = models.ForeignKey(
+        NestedPermAuthor, related_name="hatch_notes", on_delete=models.CASCADE
+    )
+    body = models.CharField(max_length=200)
+
+
+class NestedPermScopedNote(DummyModel):
+    """A reverse-FK child whose host hides other tenants' rows.
+
+    The "owner" column is what the host's "filter_queryset" scopes on.
+    """
+
+    author = models.ForeignKey(
+        NestedPermAuthor, related_name="scoped_notes", on_delete=models.CASCADE
+    )
+    body = models.CharField(max_length=200)
+    owner = models.CharField(max_length=50, default="")
+
+
+class NestedPermBlog(DummyModel):
+    """The nesting parent of the permission-scoped-schema input-pruning tests."""
+
+    title = models.CharField(max_length=200)
+
+
+class NestedPermEntry(DummyModel):
+    """A child reachable ONLY through "NestedPermBlog.entries".
+
+    It has no root field of its own, so its write label can reach the pruner
+    only if the schema label-set accounts for nested INPUT labels too.
+    """
+
+    blog = models.ForeignKey(
+        NestedPermBlog, related_name="entries", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=200)
+
+
+# --- nested child projection models ----------------------------------------- #
+# DEDICATED to "test_nested_child_projection". The nested child input is derived
+# from the child's DECLARED hosts and the host registry is model-keyed, so
+# sharing a model with another module would make the projection depend on import
+# order (the suite runs under pytest-randomly).
+class NestedProjPost(DummyModel):
+    """The nesting parent of the parent-declared-first fixture."""
+
+    title = models.CharField(max_length=200)
+
+
+class NestedProjEntry(DummyModel):
+    """A reverse-FK child whose own host keeps "secret" off the input surface."""
+
+    post = models.ForeignKey(
+        NestedProjPost, related_name="entries", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=200)
+    secret = models.CharField(max_length=200, blank=True, default="")
+
+
+class NestedProjJournal(DummyModel):
+    """The nesting parent of the child-declared-first fixture."""
+
+    title = models.CharField(max_length=200)
+
+
+class NestedProjNote(DummyModel):
+    """A reverse-FK child declared BEFORE its parent, hiding "private"."""
+
+    journal = models.ForeignKey(
+        NestedProjJournal, related_name="notes", on_delete=models.CASCADE
+    )
+    text = models.CharField(max_length=200)
+    private = models.CharField(max_length=200, blank=True, default="")
+
+
+class NestedProjLeft(DummyModel):
+    """One of the two parents nesting the same child."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedProjRight(DummyModel):
+    """The other parent nesting the same child."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedProjShared(DummyModel):
+    """A child nested under two different parents, with a required FK to each."""
+
+    left = models.ForeignKey(
+        NestedProjLeft, related_name="shared", on_delete=models.CASCADE
+    )
+    right = models.ForeignKey(
+        NestedProjRight, related_name="shared", on_delete=models.CASCADE
+    )
+    label = models.CharField(max_length=100)
+
+
+class NestedProjLoose(DummyModel):
+    """A nesting parent whose child declares no host of its own."""
+
+    title = models.CharField(max_length=200)
+
+
+class NestedProjLooseItem(DummyModel):
+    """A child with NO declared host: the no-regression floor."""
+
+    loose = models.ForeignKey(
+        NestedProjLoose, related_name="items", on_delete=models.CASCADE
+    )
+    text = models.CharField(max_length=200)
+
+
+# --- nested-write hardening models ------------------------------------------ #
+# DEDICATED to "test_nested_child_hardening". Every fixture below turns on a
+# model-keyed global (the nested host list, the materialized-input guard), so
+# sharing a model with another module would make the outcome depend on import
+# order (the suite runs under pytest-randomly).
+class NestedHardDisjointOwner(DummyModel):
+    """The nesting parent of the contradictory-projection fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedHardDisjointKid(DummyModel):
+    """A child whose two hosts project DISJOINT, non-overlapping surfaces."""
+
+    owner = models.ForeignKey(
+        NestedHardDisjointOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    tagline = models.CharField(max_length=100, blank=True, default="")
+    is_staff = models.BooleanField(default=False)
+
+
+class NestedHardNameOwner(DummyModel):
+    """A multi-word parent model name, which the generated type must preserve."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedHardNameKid(DummyModel):
+    """The child whose per-parent input type name is pinned by the tests."""
+
+    owner = models.ForeignKey(
+        NestedHardNameOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedHardVerbBlog(DummyModel):
+    """The nesting parent of the create-through-update stamp fixture."""
+
+    title = models.CharField(max_length=200)
+
+
+class NestedHardVerbEntry(DummyModel):
+    """A child creatable through the PARENT's update payload ("id" is optional)."""
+
+    blog = models.ForeignKey(
+        NestedHardVerbBlog, related_name="entries", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=200)
+
+
+class NestedHardOptOutBlog(DummyModel):
+    """The nesting parent of the "required_perms" opt-out fixture."""
+
+    title = models.CharField(max_length=200)
+
+
+class NestedHardOptOutEntry(DummyModel):
+    """A child whose host opts its nested surface out of the pruner's stamp."""
+
+    blog = models.ForeignKey(
+        NestedHardOptOutBlog, related_name="entries", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=200)
+
+
+class NestedHardOnlyBatch(DummyModel):
+    """A parent whose "Meta.only_fields" names NOTHING but its nested relation."""
+
+    title = models.CharField(max_length=200)
+
+
+class NestedHardOnlyRow(DummyModel):
+    """The child that is the parent's sole writable input field."""
+
+    batch = models.ForeignKey(
+        NestedHardOnlyBatch, related_name="rows", on_delete=models.CASCADE
+    )
+    value = models.CharField(max_length=200)
+
+
+class NestedHardKeeperBatch(DummyModel):
+    """A sibling parent whose root must SURVIVE the empty-input cascade."""
+
+    title = models.CharField(max_length=200)
+
+
+class NestedHardLateOwner(DummyModel):
+    """The nesting parent of the late-host fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedHardLateKid(DummyModel):
+    """A child whose host is declared AFTER its nested input was materialized."""
+
+    owner = models.ForeignKey(
+        NestedHardLateOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedHardSigOwner(DummyModel):
+    """The nesting parent of the closed-signature permission fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedHardSigKid(DummyModel):
+    """A child whose permission class spells its arguments out, no "**kwargs"."""
+
+    owner = models.ForeignKey(
+        NestedHardSigOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedHardQsOwner(DummyModel):
+    """The nesting parent of the "Meta.queryset" scoping fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedHardQsKid(DummyModel):
+    """A child whose host narrows its base queryset through "Meta.queryset"."""
+
+    owner = models.ForeignKey(
+        NestedHardQsOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedHardLatePlainOwner(DummyModel):
+    """The nesting parent of the harmless-late-host fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedHardLatePlainKid(DummyModel):
+    """A child whose late host declares no projection, so nothing is lost."""
+
+    owner = models.ForeignKey(
+        NestedHardLatePlainOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedHardOverlapOwner(DummyModel):
+    """The nesting parent of the overlapping-projection fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedHardOverlapKid(DummyModel):
+    """A child whose two hosts project OVERLAPPING surfaces."""
+
+    owner = models.ForeignKey(
+        NestedHardOverlapOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    tagline = models.CharField(max_length=100, blank=True, default="")
+    extra = models.CharField(max_length=100, blank=True, default="")
+
+
+# --- nested-write round-4 models -------------------------------------------- #
+# DEDICATED to "test_nested_child_round4". Same reason as the groups above: the
+# nested host registry is model-keyed, so sharing a model with another module
+# would make the projection and the permission stamp depend on import order (the
+# suite runs under pytest-randomly).
+class NestedR4ReadOwner(DummyModel):
+    """The nesting parent of the read-host stamp fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR4ReadKid(DummyModel):
+    """A child whose only host is an ordinary READ host with a read label."""
+
+    owner = models.ForeignKey(
+        NestedR4ReadOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR4PkOwner(DummyModel):
+    """The nesting parent of the primary-key-only overlap fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR4PkKid(DummyModel):
+    """A child whose two hosts overlap ONLY on the primary key."""
+
+    owner = models.ForeignKey(
+        NestedR4PkOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    tagline = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR4XOwner(DummyModel):
+    """The nesting parent of the only-fields-versus-exclude-fields fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR4XKid(DummyModel):
+    """A child whose one host exposes the field the other one hides."""
+
+    owner = models.ForeignKey(
+        NestedR4XOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    tagline = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR4OpOwner(DummyModel):
+    """The nesting parent of the split-surface fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR4OpKid(DummyModel):
+    """A child served by a create-only host and an update-only host."""
+
+    owner = models.ForeignKey(
+        NestedR4OpOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    title = models.CharField(max_length=100)
+    body = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR4BuildOwner(DummyModel):
+    """The nesting parent whose schema build must surface the config error."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR4BuildKid(DummyModel):
+    """A child with contradictory projections, reached through a real build."""
+
+    owner = models.ForeignKey(
+        NestedR4BuildOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    alpha = models.CharField(max_length=100)
+    beta = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR4AuthOwner(DummyModel):
+    """The nesting parent of the closed-signature "authorize" fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR4AuthKid(DummyModel):
+    """A child whose "authorize" override spells its arguments out."""
+
+    owner = models.ForeignKey(
+        NestedR4AuthOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR4PolicyOwner(DummyModel):
+    """The nesting parent of the closed-signature "has_permission" fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR4PolicyKid(DummyModel):
+    """A child whose policy overrides "has_permission" with a closed signature."""
+
+    owner = models.ForeignKey(
+        NestedR4PolicyOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR4LabelHost(DummyModel):
+    """A host model for the plain "required_perms" class-attribute fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5StampOwner(DummyModel):
+    """The nesting parent of the host-label union fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5StampKid(DummyModel):
+    """A child whose WRITE host declares a stricter permission label."""
+
+    owner = models.ForeignKey(
+        NestedR5StampOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR5ExcOwner(DummyModel):
+    """The nesting parent of the operation-blind exclusion fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5ExcKid(DummyModel):
+    """A child one of whose hosts forbids a column on its own operation only."""
+
+    owner = models.ForeignKey(
+        NestedR5ExcOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    role = models.CharField(max_length=50, blank=True, default="")
+
+
+class NestedR5ScopeOwner(DummyModel):
+    """The nesting parent of the write-host scoping fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5ScopeKid(DummyModel):
+    """A child whose CREATE-only host narrows a queryset it never updates."""
+
+    owner = models.ForeignKey(
+        NestedR5ScopeOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR5HideOwner(DummyModel):
+    """The nesting parent of the hidden-row disclosure fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5HideKid(DummyModel):
+    """A child whose host hides the rows of every other tenant."""
+
+    owner = models.ForeignKey(
+        NestedR5HideOwner,
+        related_name="kids",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    headline = models.CharField(max_length=100)
+    tenant = models.CharField(max_length=20, blank=True, default="a")
+
+
+class NestedR5RegOwner(DummyModel):
+    """The nesting parent whose child is materialized in ONE registry only."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5RegKid(DummyModel):
+    """A child re-hosted against a SECOND registry after the first froze it."""
+
+    owner = models.ForeignKey(
+        NestedR5RegOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR5TwinOwner(DummyModel):
+    """The nesting parent of the duplicate-projection late-host fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5TwinKid(DummyModel):
+    """A child whose late host repeats a projection already contributing."""
+
+    owner = models.ForeignKey(
+        NestedR5TwinOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR5LateLabelOwner(DummyModel):
+    """The nesting parent of the late "required_perms" fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5LateLabelKid(DummyModel):
+    """A child whose late host declares nothing but a permission label."""
+
+    owner = models.ForeignKey(
+        NestedR5LateLabelOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR5LateOnlyOwner(DummyModel):
+    """The nesting parent of the late "only_fields" fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5LateOnlyKid(DummyModel):
+    """A child whose late host declares nothing but "only_fields"."""
+
+    owner = models.ForeignKey(
+        NestedR5LateOnlyOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    extra = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR5PolicyOwner(DummyModel):
+    """The nesting parent of the closed-signature nested-UPDATE fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR5PolicyKid(DummyModel):
+    """A child UPDATED through its parent under a closed-signature policy."""
+
+    owner = models.ForeignKey(
+        NestedR5PolicyOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR6SplitOwner(DummyModel):
+    """The nesting parent of the read/write projection-split fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR6SplitKid(DummyModel):
+    """A child whose read card and write host project different columns."""
+
+    owner = models.ForeignKey(
+        NestedR6SplitOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    slug = models.CharField(max_length=100, blank=True, default="")
+    extra = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR6IsoOwner(DummyModel):
+    """The nesting parent of the per-registry isolation fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR6IsoKid(DummyModel):
+    """A child hosted twice: once per registry, with opposite narrowing."""
+
+    owner = models.ForeignKey(
+        NestedR6IsoOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR6LateOwner(DummyModel):
+    """The nesting parent DECLARED BEFORE its child's write host."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR6LateKid(DummyModel):
+    """A child whose labelled write host is declared after the parent."""
+
+    owner = models.ForeignKey(
+        NestedR6LateOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR6OpsOwner(DummyModel):
+    """The nesting parent of the operation-scoped label fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR6OpsKid(DummyModel):
+    """A child whose only labelled host serves nothing but "delete"."""
+
+    owner = models.ForeignKey(
+        NestedR6OpsOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR6PinKid(DummyModel):
+    """A tenant-scoped row reached through a forward FK and an M2M."""
+
+    headline = models.CharField(max_length=100)
+    tenant = models.CharField(max_length=20, blank=True, default="a")
+
+
+class NestedR6PinOwner(DummyModel):
+    """A parent already linked to the hidden child on BOTH link relations."""
+
+    name = models.CharField(max_length=100)
+    fwd = models.ForeignKey(
+        NestedR6PinKid,
+        related_name="fwd_owners",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    tags = models.ManyToManyField(NestedR6PinKid, related_name="tag_owners", blank=True)
+
+
+class NestedR6SigOwner(DummyModel):
+    """The nesting parent of the late-twin signature fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR6SigKid(DummyModel):
+    """A child whose late hosts repeat a projection on a DIFFERENT operation."""
+
+    owner = models.ForeignKey(
+        NestedR6SigOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    extra = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR6LabelOwner(DummyModel):
+    """The nesting parent of the late-twin label fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR6LabelKid(DummyModel):
+    """A child whose late host repeats a projection but adds a label."""
+
+    owner = models.ForeignKey(
+        NestedR6LabelOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR6LocalOwner(DummyModel):
+    """A nesting parent bound to a LOCAL registry through "Meta.registry"."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR6LocalKid(DummyModel):
+    """A child whose only host lives in the OTHER (global) registry."""
+
+    owner = models.ForeignKey(
+        NestedR6LocalOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+    tenant = models.CharField(max_length=20, blank=True, default="a")
+
+
+class NestedR7DefaultOwner(DummyModel):
+    """The nesting parent of the declare-nothing default fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7DefaultKid(DummyModel):
+    """A child whose only host declares no "model_operations" at all."""
+
+    owner = models.ForeignKey(
+        NestedR7DefaultOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+    tenant = models.CharField(max_length=20, blank=True, default="a")
+
+
+class NestedR7ReadOwner(DummyModel):
+    """The nesting parent of the declared READ-host fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7ReadKid(DummyModel):
+    """A child hosted by a declared read card and a separate write mutation."""
+
+    owner = models.ForeignKey(
+        NestedR7ReadOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+    tenant = models.CharField(max_length=20, blank=True, default="a")
+
+
+class NestedR7BareOwner(DummyModel):
+    """The nesting parent of the no-host-at-all fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7BareKid(DummyModel):
+    """A plain related model with no declared host of its own."""
+
+    owner = models.ForeignKey(
+        NestedR7BareOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR7NoServeOwner(DummyModel):
+    """The nesting parent of the no-host-serves-this-operation fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7NoServeKid(DummyModel):
+    """A child whose only host serves nothing but "delete"."""
+
+    owner = models.ForeignKey(
+        NestedR7NoServeOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR7LastOwner(DummyModel):
+    """The nesting parent of the prohibition-wins fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7LastKid(DummyModel):
+    """A child one host allows a column of and another host forbids."""
+
+    owner = models.ForeignKey(
+        NestedR7LastOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR7CrossOwner(DummyModel):
+    """A nesting parent bound to a LOCAL registry through "Meta.registry"."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7CrossKid(DummyModel):
+    """A child whose only permission host can only live in the global registry."""
+
+    owner = models.ForeignKey(
+        NestedR7CrossOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR7PkOwner(DummyModel):
+    """The nesting parent of the upsert-by-id fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7PkKid(DummyModel):
+    """A child whose write host projects a column list without the pk."""
+
+    owner = models.ForeignKey(
+        NestedR7PkOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    extra = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR7EmptyOwner(DummyModel):
+    """The nesting parent of the emptied-projection fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7EmptyKid(DummyModel):
+    """A child one host allows exactly the column another host forbids."""
+
+    owner = models.ForeignKey(
+        NestedR7EmptyOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR7ThunkOwner(DummyModel):
+    """A nesting parent whose hosts live in a NON-global registry only."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7ThunkKid(DummyModel):
+    """A child hosted only in the parent's own local registry."""
+
+    owner = models.ForeignKey(
+        NestedR7ThunkOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR7SigOwner(DummyModel):
+    """The nesting parent of the exclusion-signature fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7SigKid(DummyModel):
+    """A child whose two hosts differ ONLY in what they forbid."""
+
+    owner = models.ForeignKey(
+        NestedR7SigOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR7SlotKid(DummyModel):
+    """A model hosted twice, by two mutations projecting different columns."""
+
+    headline = models.CharField(max_length=100)
+    is_admin = models.BooleanField(default=False)
+
+
+class NestedR7KeyOwner(DummyModel):
+    """The nesting parent of the client-supplied primary key fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7KeyKid(DummyModel):
+    """A child whose primary key is supplied by the client, not generated."""
+
+    code = models.CharField(max_length=50, primary_key=True)
+    owner = models.ForeignKey(
+        NestedR7KeyOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+
+
+class NestedR7MatOwner(DummyModel):
+    """A nesting parent on a local registry whose build freezes the surface."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7MatKid(DummyModel):
+    """A child whose global host arrives after a local parent's build."""
+
+    owner = models.ForeignKey(
+        NestedR7MatOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class NestedR7OnlyOwner(DummyModel):
+    """The nesting parent of the allowance-signature fixture."""
+
+    name = models.CharField(max_length=100)
+
+
+class NestedR7OnlyKid(DummyModel):
+    """A child whose two hosts differ ONLY in what they allow."""
+
+    owner = models.ForeignKey(
+        NestedR7OnlyOwner, related_name="kids", on_delete=models.CASCADE
+    )
+    headline = models.CharField(max_length=100)
+    secret = models.CharField(max_length=100, blank=True, default="")

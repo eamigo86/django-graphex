@@ -147,7 +147,7 @@ def test_fk_output_returns_native_marker() -> None:
     fk = Post._meta.get_field("author")
     reg = Registry()
 
-    class _AuthorType(DjangoObjectType):
+    class _RelationAuthorType(DjangoObjectType):
         class Meta:
             model = Author
             registry = reg

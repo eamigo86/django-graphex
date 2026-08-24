@@ -345,12 +345,12 @@ class ComplexityWiringTest(TestCase):
         not be readable off "_meta.complexity".
         """
 
-        class _AuthorType(DjangoObjectType):
+        class _ComplexityAuthorType(DjangoObjectType):
             class Meta:
                 model = Author
                 complexity = 7
 
-        self.assertEqual(_AuthorType._meta.complexity, 7)
+        self.assertEqual(_ComplexityAuthorType._meta.complexity, 7)
 
     def test_list_type_stores_complexity(self) -> None:
         """Assert a "DjangoListObjectType" stores its declared "complexity" option.

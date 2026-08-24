@@ -31,8 +31,252 @@ with the name the guides give your own `DjangoListObjectType`. Field names and
 shapes are unchanged; only a client document that spells the container's type
 name out needs updating.
 
+A second rename is wire-visible for the same reason: the child input a nested
+field exposes is now built per nesting parent and named
+`<Child><Op>In<Parent>Type` (for example `CommentCreateInPostType`) instead of
+borrowing the child's own `<Child><Op>GenericType`. Field names and shapes are
+unchanged apart from the fix below; only a client document that spells the
+nested child input type name out needs updating.
+
+Nested writes now run the child's own permissions, which is a behaviour change
+in two directions. A nested payload that used to be accepted can now be denied —
+that is the fix. And the child's checks are called with a new `nested_parent`
+keyword argument, which is passed only to a check whose signature can absorb it:
+an `authorize` override or a permission class that spells its arguments out
+(`def authorize(cls, info, action, data=None)`) keeps working and simply never
+sees the marker, treating a nested write exactly like a direct one. That holds
+for a `has_permission` override too — the narrowing happens at the call that
+lands on your method, not at the outer call site, so the `**kwargs` on the
+built-in `has_<action>_permission` in between does not leak the marker through.
+Accept `**kwargs` to see it.
+
+Nested pk lookups resolve through `get_queryset`, which folds in `Meta.queryset`
+— but only for the child hosts that **serve the write**. Which hosts those are
+follows from `Meta.model_operations`, which `DjangoModelType` now takes as well
+(see below): a host restricted to `model_operations = ("create",)` has no
+`update` to mirror, so its scope is not applied to a nested update, and a
+`DjangoModelType` declaring `model_operations = ("list", "retrieve")` is a read
+host that leaves the nested write path entirely. Left undeclared, a
+`DjangoModelType` still serves everything, so its `Meta.queryset` — the queryset
+its own `update` and `delete` already resolve through — now gates the nested
+path as well: a row outside it answers *not found*. Check any `DjangoModelType`
+whose `Meta.queryset` is a display default (hiding archived or unpublished rows)
+before upgrading, and declare it a read host if a parent should still be able to
+update those children inline.
+
+One configuration that used to build now raises `ImproperlyConfigured`: a host
+declaring `only_fields` / `exclude_fields` / `required_perms` for a model whose
+nested input has **already** been built. graphql-core caches an input object's
+field map, so such a host could never reach the nested surface, and being
+ignored silently is how the leak used to happen. A late host that only repeats a
+declaration already contributing is accepted, since the merge is idempotent and
+refusing a no-op buys nothing. Otherwise: declare every host for a model before
+the first schema build.
+
+Where a child model has more than one host, the two projection axes merge
+differently, and together they can leave nothing behind. `exclude_fields` is a
+prohibition and is unioned across every declared host; `only_fields` is an
+allowance and is unioned across the hosts serving the operation; the prohibition
+is applied last. A child whose every allowed column is excluded by a sibling host
+would therefore end up with a nested input carrying no field, which graphql-core
+does not accept as a legal schema — so that configuration is now refused at build
+time with an `ImproperlyConfigured` naming the child, the parent and every
+contributing host with both of its axes, rather than returning a schema whose
+every request fails validation. Give such a child at least one column no host
+forbids, or declare the read host with `model_operations = ("list", "retrieve")`.
+
+### Added
+
+- **`Meta.model_operations` on `DjangoModelType`.** It already existed on
+  `DjangoModelMutation`; the type class now takes the same option, widened to
+  the five operations it generates — `("create", "update", "delete", "list",
+  "retrieve")`, which is also the default, so a project that declares nothing
+  behaves exactly as it did before. An operation left out has its `*Field()`
+  builder raise `AttributeError`, and `QueryFields()` / `MutationFields()`
+  return only what is enabled.
+
+    This is the opt-out for the nested-write scoping this release introduces. A
+    `DjangoModelType` is a **write host** for the models a parent nests, so its
+    `Meta.queryset` and its `only_fields` gate a nested write — and in the
+    common read-type-plus-write-mutation split, that queryset is a plain display
+    default, not a policy. Declaring
+    `model_operations = ("list", "retrieve")` says so: the card stops gating the
+    nested write path and stops contributing a write allowance to it, while its
+    read fields work exactly as before. Left undeclared, nothing changes.
+
 ### Fixed
 
+- **`Meta.nested_fields` dropped the child's declared input projection.** The
+  nested child input was never derived from the child's own type — it was
+  whatever object happened to occupy the shared `(child model, operation)`
+  registry slot, so the outcome depended on which class was declared first. With
+  the parent declared first the slot was empty, so an **unprojected** input was
+  minted straight from the Django model: every writable column landed on the
+  parent's nested payload, `exclude_fields` and all. Worse, that minted input was
+  registered in the shared slot, so the child's **own** mutation, declared later,
+  reused it and lost its projection too — the classic
+  `exclude_fields = ("is_staff", "is_superuser")` became settable through both
+  the parent's nested list *and* the child's own root field, and the child's
+  required back-reference `post: ID!` was silently relaxed to `post: ID` on its
+  standalone surface. With the child declared first the projection survived, but
+  the parent reused the child's own input, whose required back-reference foreign
+  key graphql-core rejects before any resolver runs — so that order produced a
+  nested field that could not be used at all. The two orders were not
+  symmetric: one leaked, the other was unusable, which means every project whose
+  nested writes actually worked had landed on the leaking one. Each nesting
+  parent now builds its own copy of the child input, inside the parent's field
+  thunk, from the hosts **declared for the child in that registry**. The two
+  projection axes are merged differently, because they say different things: an
+  `only_fields` is a positive allowance, so the hosts that serve the operation
+  being built **union** theirs — a create-only and an update-only mutation for
+  one child no longer poison each other's nested surface, and neither do a read
+  card and a write mutation projecting different columns — while an
+  `exclude_fields` is a prohibition — *this column is never client-writable* —
+  and is unioned across **every** declared host and applied last, so a create
+  host's exclusion no longer vanishes from the nested update surface and let a
+  client write, on an existing row through the parent, a column the project's
+  own write mutation refuses. The shared registry slot is never written, and
+  only that copy relaxes the back-reference key — per parent, so a child nested
+  under two parents relaxes each parent's own key and nothing else. Both
+  declaration orders now produce the same, working surface. The remaining way
+  that merge could have failed open is closed with it: a host declared after the
+  nested input was already built raises rather than being silently dropped — the
+  memo is not what freezes the surface, graphql-core's own field-map cache is,
+  so no rebuild or cache clear could have recovered it.
+- **A nested write never ran the child's own permissions.** `create` and
+  `update` authorized the parent once and then handed the whole payload —
+  children included — to the nested writer, whose only call was into the child's
+  validation backend, a seam with no permission concept. A caller allowed to
+  write the parent could create and update rows of a child whose own type denied
+  it: `postCreate` answered `PERMISSION_DENIED` and wrote nothing, while the
+  identical write smuggled inside `authorCreate`'s nested list returned
+  `ok: true` and persisted the row. Under `PERMISSION_SCOPED_SCHEMA` this was
+  worse than a plain gap: the pruner correctly removed the child's own
+  `postCreate` root and cloned the parent's input type verbatim, so the feature
+  closed the front door, left the back door open, and granted false confidence
+  while doing it. Every declared host for the child model is now authorized
+  before a nested create or update — all of them, so two hosts for one model
+  fail closed — and the nested input field is pruned by the child's write
+  permissions, whose labels now reach the schema label-set even for a child that
+  has no root field of its own. Those permissions cover what the field can
+  actually do rather than what the parent's verb suggests: a nested payload's
+  `id` is optional on an **update** input, so omitting it creates a row, and the
+  field therefore requires the child's `add` **and** `change` there — otherwise
+  a caller holding `change_child` alone kept, inside the parent's update
+  payload, the exact create the child's own pruned-away root refused. The
+  `required_perms` of every child host that **serves** one of those verbs is
+  then **unioned** onto that default, never substituted for it, so an override
+  can only ever *add* a requirement: a write host declaring something stricter
+  genuinely reaches the nested field — otherwise a caller who has the child's
+  own roots pruned away keeps the identical write inside the parent's payload —
+  while a read label is not silently read as a licence to write. Being a union
+  term is not free, though: a `DjangoModelType` serves every operation unless it
+  says otherwise, so a read card carrying `required_perms` also gates the nested
+  field,
+  and a caller lacking that label loses it even where a differently-hosted
+  `childCreate` still accepts the same write. Declare such a host with
+  `model_operations = ("list", "retrieve")` so its label stays on the read side.
+  And an input object every field of which is pruned is
+  no longer emitted unfiltered — the mutation field that takes it is pruned
+  instead, so a parent whose `Meta.only_fields` names nothing but the nested
+  relation loses the root rather than regaining an ungated write. A denial is
+  the same `PERMISSION_DENIED` / 403 the direct mutation returns and rolls the
+  whole write back. Checks receive `nested_parent`, the parent model class, so a
+  child that must be writable *only* inside its parent is now expressible (under
+  a permission-scoped schema that pattern needs no label of its own — the caller
+  doing the nested write holds the child's write permission, and simply not
+  mounting the child's own root leaves the pruner nothing to prune). The link
+  paths — attaching an
+  existing forward-FK or M2M row by pk — stay ungated by design: they write
+  nothing on the child and offer exactly the reachability the plain
+  `category: ID` surface always had.
+- **A nested upsert could reach a row the child's own host hides.** The nested
+  writer resolved the target row against the bare model while the top-level
+  `update` / `delete` both scope theirs through `get_queryset` /
+  `filter_queryset`. Naming another tenant's primary key in a nested payload
+  therefore rewrote that row in place, because Django's `save()` with a primary
+  key issues an `UPDATE`. Nested pk lookups now resolve through the scope of the
+  child hosts that serve the write, and answer a hidden row with the same *not
+  found* the child's own mutation returns — never a create at that key, never an
+  update of the row the scope was hiding. The scope decision is taken **before**
+  the reverse-ownership guard, which resolves the pk unscoped: a hidden row that
+  happened to belong to another parent used to be answered with *does not belong
+  to this &lt;Parent&gt;*, confirming its existence, while an ownerless hidden row got
+  the not-found. Both now answer identically.
+- **A second registry's host rewrote the first registry's nested surface.** The
+  per-parent input memo and the materialization record that refuses a late host
+  both live on the registry, but the host list they read from did not: it was a
+  process-wide table keyed by model alone. Every nested decision reads that list
+  — the projection merge, the permission stamp, the write-time row scoping and
+  the write-time `authorize` loop — so a host bound to a second registry through
+  `Meta.registry`, the documented multi-schema hatch, silently narrowed the
+  first registry's nested payload, added its own label to it, and applied its
+  `filter_queryset` to writes in a schema it has nothing to do with. Merely
+  importing the other schema's module could turn every nested update in the
+  first into a *not found*. The list now lives on the registry beside the two
+  memos, and dies with it — but it is read as the parent's registry **unioned
+  with the global one**, because `Meta.registry` is an option on
+  `DjangoModelMutation` alone: a `DjangoModelType`, the only host class carrying
+  `permission_classes`, can only ever register globally, so reading the parent's
+  registry by itself left a parent declared with `Meta.registry` finding no
+  hosts at all and the nested permission gate silent — the same front-door /
+  back-door shape, reopened for multi-schema projects. A host bound to a
+  non-global registry still cannot reach any other registry's parents.
+- **A projected `only_fields` on a nested child stripped the pk from the update
+  input.** The nested update input is what makes the documented upsert-by-id
+  work, and a child write host whose `only_fields` did not happen to list the
+  primary key silently removed `id` from it — so the payload the guide's worked
+  example shows was rejected over the wire, and a client that dropped the
+  rejected `id` got a duplicate **create** instead of an update. The same
+  omission reached the host's **own** update root, whose resolver also takes the
+  pk from inside the input — so `only_fields = ("headline",)` shipped an update
+  mutation no client could address at all. The pk is not a projectable column on
+  an update surface — it is how the row is identified — and it now survives both
+  projection axes, on the nested input and on the host's own. The **create**
+  input still carries no pk at all, so creates stay create-only.
+- **A host's `only_fields` was silently dropped when another host had already
+  registered the model's input.** The `(model, operation)` input slot holds one
+  type per model, so the first host to reach it decided the wire surface for
+  every later one: a `DjangoModelMutation` declaring
+  `only_fields = ("headline",)` behind an already-declared display card kept
+  accepting every writable column on its own root — the exact leak `only_fields`
+  is documented to close — and the reverse order narrowed the card's input to
+  the mutation's projection. This lot made it worse by reading the declaration
+  rather than the built type when merging a nested surface, so the nested
+  payload could end up wider than every mutation root in the schema. A host that
+  declares a projection now gets its own input type, named after that projection
+  and memoized so two hosts declaring the same one share it. Hosts that declare
+  no projection keep the shared slot and are unaffected; a projected input's
+  GraphQL type name gains a short `_p<hash>` suffix.
+- **A child host declared after its parent had only half of it honoured.** The
+  nested field's permission stamp was frozen when the parent's input class was
+  defined, while the projection it must match is resolved later, inside the
+  parent's field thunk. A child write host declared after the parent but before
+  the schema build — the ordinary *parent app imports the child app later*
+  order — therefore had its `exclude_fields` applied and its `required_perms`
+  dropped, and the guard that exists to make a too-late host loud never fired,
+  because the record it keys off is only written at thunk time. A caller with
+  the child's own roots pruned away kept the identical write inside the parent's
+  payload. The stamp is now resolved in the same thunk, from the same host list,
+  as the projection. In the same pass it became operation-aware: a host's
+  `required_perms` is read only for the verbs that host serves, so a delete-only
+  host's label no longer removes the nested *create* field.
+- **The comment defending the ungated link paths argued something untrue.** It
+  claimed a linkable row *belongs to nobody, so no scope hid it either*, which
+  is false whenever the child has a host with a `filter_queryset` or
+  `Meta.queryset` scope. The real reason is the one the guide gives: a link
+  writes nothing on the child and offers exactly the reachability the plain
+  `category: ID` relation input already has, unscoped, so gating only the nested
+  spelling would make two surfaces for one operation disagree. Behaviour is
+  unchanged; only the reasoning is now the true one.
+- **`required_perms` could not be written on a `DjangoModelType`.** The guide
+  documents the plain class attribute for the mutation fields a
+  `DjangoModelType` generates, and the field builder reads it — but only
+  `DjangoModelMutation` declared it as a `ClassVar`, and these classes are
+  Pydantic-backed, so the documented form raised `PydanticUserError` at
+  class-definition time. `DjangoModelType` now declares it too, exactly as it
+  already declares `permission_classes` and for the same reason. Nothing changes
+  for a class that spelled the annotation out by hand.
 - **A permission-scoped schema could be served for the wrong schema.** The
   pruned-schema cache keys on `id(full)` and stores a weak reference to detect
   address reuse, but a reference that had gone *dead* — the exact state an
