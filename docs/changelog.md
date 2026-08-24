@@ -12,11 +12,24 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
-## Unreleased
+## 2.2.0 — 2026-08-24
 
-**Correctness and security pass over the 2.1.0 audit backlog.** Confirmed
-defects from the post-release audit, each reproduced before the fix and covered
-by a regression test.
+**Security release. Upgrade if you use `Meta.nested_fields`.**
+
+Two authorization defects let a caller write child rows they were not permitted
+to write, both reproduced over the wire against a real schema before being
+fixed. A nested write never consulted the child's own `permission_classes`, so a
+parent a caller could write was a door into a child they could not; and
+`Meta.nested_fields` derived the child's input from a shared registry slot
+rather than from the child's declared type, so a column hidden with
+`exclude_fields` — the shape the guides teach for `is_staff` and friends —
+stayed writable through the parent, and through the child's own mutation too.
+`PERMISSION_SCOPED_SCHEMA` made the first one worse rather than better: it
+pruned the child's own mutation and left the nested write surface untouched, so
+it granted confidence it had not earned. Details in **Fixed** below.
+
+The rest is a correctness pass over the 2.1.0 audit backlog: confirmed defects,
+each reproduced before the fix and covered by a regression test.
 
 One behaviour change worth calling out before you upgrade: declaring
 `only_fields` / `exclude_fields` / `include_fields` on a type whose output type
@@ -102,7 +115,9 @@ forbids, or declare the read host with `model_operations = ("list", "retrieve")`
     default, not a policy. Declaring
     `model_operations = ("list", "retrieve")` says so: the card stops gating the
     nested write path and stops contributing a write allowance to it, while its
-    read fields work exactly as before. Left undeclared, nothing changes.
+    read fields work exactly as before. Declaring nothing keeps the option
+    itself inert — but note that is also what leaves the card a write host, and
+    therefore what makes its `Meta.queryset` gate nested writes.
 
 ### Fixed
 
