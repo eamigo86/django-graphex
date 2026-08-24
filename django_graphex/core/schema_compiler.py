@@ -292,7 +292,11 @@ def _build_object_field(
 
 
 def _build_scalar_field(
-    field: Any, *, source_cls: type | None = None, field_name: str | None = None
+    field: Any,
+    *,
+    source_cls: type | None = None,
+    field_name: str | None = None,
+    registries: SchemaRegistries | None = None,
 ) -> GraphQLField:
     """Convert a plain graphene scalar field to a graphql-core ``GraphQLField``.
 
@@ -301,6 +305,10 @@ def _build_scalar_field(
         source_cls: The source ObjectType class declaring the field; used to
             recover a ``resolve_<field_name>`` parent resolver (graphene parity).
         field_name: The snake_case field name (for the ``resolve_<name>`` lookup).
+        registries: The ``SchemaRegistries`` pair the current build compiles
+            against, threaded into the wrapped-type compile so an inner
+            django-graphex output type resolves to THIS pair's forked instance;
+            defaults to the global pair (byte-identical, item-b B1).
 
     Returns:
         A graphql-core ``GraphQLField``.
@@ -313,7 +321,13 @@ def _build_scalar_field(
     # shape. Without this, a required scalar root field would raise a ``TypeError``
     # in ``_unwrap_graphql_type`` (which rejects the lazy wrapper). The declared
     # (non-root) field path already routes through ``_compile_wrapped_field_type``.
-    gql_type = _compile_wrapped_field_type(field.type)
+    #
+    # ``registries`` MUST be threaded: this is the arm a WRAPPED native output
+    # type lands on (``field(NativeList(SomeType))`` matches no typed arm of the
+    # root loop), and without the pair the inner type resolves against the
+    # process-global DEFAULT pair — a cross-schema leak ``assert_schema_pair_isolation``
+    # then rejects, making a wrapped native root field unbuildable under ``registries=``.
+    gql_type = _compile_wrapped_field_type(field.type, _resolve_registries(registries))
     args = {}
     if getattr(field, "args", None):
         from django_graphex.core._args import to_graphql_argument
@@ -655,13 +669,19 @@ def _compile_plain_object_fields(
             compilation; defaults to the global pair (byte-identical, item-b B1).
 
     Returns:
-        A ``{camelCase_name: GraphQLField}`` dict.
+        A ``{wire_name: GraphQLField}`` dict, keyed by the explicit ``name=``
+        when one is declared and by the camelCased attribute name otherwise.
     """
     registries = _resolve_registries(registries)
     fields: dict[str, GraphQLField] = {}
     meta_fields = getattr(getattr(graphene_cls, "_meta", None), "fields", None) or {}
     for field_name, field in meta_fields.items():
-        fields[to_camel_case(field_name)] = compile_declared_field(
+        # Honor an explicit ``name=`` exactly as the ROOT loop does. A payload /
+        # nested plain ObjectType used to camelCase the ATTRIBUTE name here, so
+        # the documented keyword-collision escape hatch
+        # (``date_ = field(GdxDate, name="date")``) leaked the trailing
+        # underscore onto the wire everywhere except the root.
+        fields[_rendered_field_name(field, field_name)] = compile_declared_field(
             graphene_cls, field_name, field, registries
         )
     return fields
@@ -1431,7 +1451,10 @@ def compile_native_root(
         else:
             # Plain graphene scalar/enum field (e.g. CustomDateTime).
             fields[wire_name] = _build_scalar_field(
-                field, source_cls=root, field_name=field_name
+                field,
+                source_cls=root,
+                field_name=field_name,
+                registries=registries,
             )
 
         # P0: honor an explicit ``field(required_perms=...)`` override on a

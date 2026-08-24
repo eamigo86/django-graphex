@@ -468,11 +468,15 @@ def _canonical_filter_fields(
 
     root_normalized = _normalize_filter_fields(root)
 
-    # The root covers the requested context when every requested path is present
-    # in the root declaration (lookups need not match exactly — the root's
-    # superset of lookups still serves the narrower nested request: the extra
-    # lookups are valid ORM lookups, and the nested query only uses its own).
-    if all(path in root_normalized for path in requested):
+    # The root covers the requested context only when every requested path is
+    # present AND the root's lookup tuple actually contains the requested
+    # lookups. Testing path membership alone discarded the requested lookups
+    # wholesale, so a nested "author__name": ("icontains",) silently compiled
+    # to the root's "name": ("exact",) and became unusable.
+    if all(
+        path in root_normalized and _lookups_cover(root_normalized[path], lookups)
+        for path, lookups in requested.items()
+    ):
         return root_normalized
 
     # Genuine fork: the model is filtered with paths its root does NOT expose.
@@ -482,6 +486,33 @@ def _canonical_filter_fields(
     merged = dict(root_normalized)
     _union_filter_paths(merged, requested)
     return merged
+
+
+def _lookups_cover(
+    root_lookups: tuple[str, ...] | None,
+    requested_lookups: tuple[str, ...] | None,
+) -> bool:
+    """Report whether a root lookup tuple already serves a requested one.
+
+    A "None" declaration means "the default lookup set for the field's type",
+    which is neither provably wider nor provably narrower than an explicit
+    tuple. Only the "both are None" case is therefore treated as covered; every
+    other mismatch falls through to the union path, which resolves "None" as
+    the widest declaration.
+
+    Args:
+        root_lookups: The lookup tuple the model's root declaration exposes,
+            or "None" for the default set.
+        requested_lookups: The lookup tuple this context asked for, or "None"
+            for the default set.
+
+    Returns:
+        "True" when the root declaration already exposes every requested
+        lookup, so the canonical root shape can be reused verbatim.
+    """
+    if root_lookups is None or requested_lookups is None:
+        return root_lookups is None and requested_lookups is None
+    return set(requested_lookups) <= set(root_lookups)
 
 
 def _union_filter_paths(
@@ -543,7 +574,8 @@ def _split_filter_paths(
         A "(own, relations, relation_direct)" triple: "own" holds this model's
         own leaf lookups, "relations" maps a relation name to the nested
         sub-declaration reached through it, and "relation_direct" holds
-        relations declared without a tail (filtered by primary key).
+        relations declared without a tail (filtered by primary key). The two
+        relation buckets are DISJOINT by construction.
     """
     own: dict[str, tuple[str, ...] | None] = {}
     relations: dict[str, dict[str, tuple[str, ...] | None]] = {}
@@ -563,7 +595,75 @@ def _split_filter_paths(
             else:
                 own[head] = lookups
 
+    # A relation declared BOTH ways ("author" plus "author__name") landed in
+    # both buckets, and the two compile loops write the SAME camelCase key, so
+    # the second one silently dropped the first's field. Fold the plain-pk
+    # declaration into the nested sub-declaration under the related model's own
+    # primary-key name instead: "author__<pk>" is the same ORM lookup, and the
+    # buckets stay disjoint so neither loop can overwrite the other.
+    for head in list(relation_direct):
+        if head not in relations:
+            continue
+        related = _relation_model(model, head)
+        if related is None:  # pragma: no cover - head is a relation by construction
+            continue
+        _union_filter_paths(
+            relations[head], {related._meta.pk.name: relation_direct.pop(head)}
+        )
+
     return own, relations, relation_direct
+
+
+#: Wire keys the field thunk always adds LAST, after the custom "@filter_field"
+#: arguments, so a custom filter named like one of them is silently swallowed.
+_COMBINATOR_KEYS: tuple[str, ...] = ("and", "or", "not")
+
+
+def _assert_no_custom_filter_collision(
+    model: type[models.Model],
+    canonical: dict[str, tuple[str, ...] | None],
+    custom_filters: list | None,
+) -> None:
+    """Refuse a "@filter_field" name that a compiled filter key already owns.
+
+    The field thunk writes every entry under "to_camel_case(...)", and the
+    custom-filter loop runs after the declared ones, so a "@filter_field" named
+    like a "filter_fields" key silently REPLACED that key's
+    "<Model><Field>Lookups" input. The field then became unfilterable both
+    ways, and the only symptom was a raw "AttributeError" out of "to_q" at
+    query time. This mirrors the "RESERVED_FILTER_ARGS" check the type
+    metaclass already performs, but against the keys THIS declaration compiles.
+
+    Called before the type is built, not from inside the field thunk:
+    graphql-core wraps any exception a thunk raises in a "TypeError", which
+    would bury the explanation.
+
+    Args:
+        model: The model the filter input is built for.
+        canonical: The canonical "{path: lookups}" declaration being compiled.
+        custom_filters: The "(arg_name, method, metadata)" triples collected
+            from "@filter_field"-decorated methods, or "None".
+
+    Raises:
+        ImproperlyConfigured: When a custom filter's argument name equals a
+            wire key the declaration already compiles.
+    """
+    if not custom_filters:
+        return
+
+    own, relations, relation_direct = _split_filter_paths(model, canonical)
+    compiled = {
+        to_camel_case(key)
+        for key in (*own, *relations, *relation_direct, *_COMBINATOR_KEYS)
+    }
+    for arg_name, _fn, _meta in custom_filters:
+        if to_camel_case(arg_name) in compiled:
+            raise ImproperlyConfigured(
+                f"{model._meta.object_name}: @filter_field method name "
+                f"{arg_name!r} collides with a filter field compiled from "
+                "Meta.filter_fields (or with an and/or/not combinator). "
+                "Rename the method, or drop the conflicting filter_fields entry."
+            )
 
 
 #: Instance attribute holding a compiled filter input's accumulated
@@ -671,12 +771,16 @@ def build_filter_input_type(
     cached = cache.get(cache_key)
     if cached is not None:
         if _union_filter_paths(_canonical_paths(cached), normalized):
+            _assert_no_custom_filter_collision(
+                model, _canonical_paths(cached), custom_filters
+            )
             _recompile_filter_input(cached)
         return cached
 
     # The accumulated declaration this type compiles from. Mutable and captured
     # by the field thunk below, so a later widening recompiles from it.
     canonical = dict(normalized)
+    _assert_no_custom_filter_collision(model, canonical, custom_filters)
 
     # Build the PascalCase name directly. ``to_camel_case`` is a snake_case →
     # camelCase helper: feeding it the PascalCase compound ``User_FilterInput``
@@ -720,6 +824,9 @@ def build_filter_input_type(
             pk_lookups = _pk_lookups_input_type(model, head, related, lookups)
             out[to_camel_case(head)] = GraphQLInputField(pk_lookups, out_name=head)
 
+        # Collisions with an already-compiled key are refused up front by
+        # ``_assert_no_custom_filter_collision`` (a raise from inside this thunk
+        # would reach the caller wrapped in graphql-core's TypeError).
         for arg_name, _fn, meta in custom_filters or []:
             gql_type = _custom_filter_gql_type(meta)
             out[to_camel_case(arg_name)] = GraphQLInputField(

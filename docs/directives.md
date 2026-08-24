@@ -318,6 +318,15 @@ instead of `+` and `/`), so strings encoded with standard base64 containing
 
 Format numeric values with precision and style:
 
+!!! warning "`@number` and `@currency` only format `String` fields"
+
+    Both produce a formatted **string**, which a field typed `Int` or `Float`
+    cannot serialize. On those fields the raw value is returned unchanged and
+    the formatting is skipped, so the response stays valid instead of nulling
+    the field with an opaque coercion error. Expose the value as a `String`
+    field when you want the formatting to apply. The format-spec
+    width/precision cap still applies on every field type.
+
 ### Basic Number Formatting
 
 The `as` argument accepts any Python numeric format spec. Format specs with
@@ -832,8 +841,9 @@ Directives handle errors gracefully:
     query {
       post {
         invalidDate @date(format: "YYYY-MM-DD")     # Returns "INVALID FORMAT STRING"
-        nullValue @currency                         # Returns "$0.00"
+        nullValue @currency                         # Returns "$0.00" (String field)
         emptyString @default(to: "fallback")        # Returns "fallback"
+        emptyList @default(to: "fallback")          # Returns [] — never replaced
       }
     }
     ```
@@ -852,9 +862,16 @@ an unhandled 500 or an opaque `errors[]` entry):
 | `@center` | `fillchar` length ≠ 1 (empty or multi-char) | `GraphQLError('@center fillchar must be exactly one character; got ...')` |
 
 !!! info "Null and empty values"
-    `@base64` returns `None` on an empty/null input. `@currency` returns `"$0.00"` on
-    a `None` or falsy-but-coercible value. `@floor`, `@ceil`, `@round`, and `@abs`
-    return `None` when the field value is `None`. These are NOT error conditions.
+    `@base64` returns `None` on an empty/null input. On a `String` field
+    `@currency` returns `"$0.00"` for a `None` or falsy-but-coercible value.
+    `@floor`, `@ceil`, `@round`, and `@abs` return `None` when the field value
+    is `None`, and so does every string directive (`@uppercase`, `@slugify`,
+    `@truncate`, …) — a null column is never rendered as the literal text
+    `"None"`. These are NOT error conditions.
+
+!!! info "`@default` substitutes only null and the empty string"
+    Other falsy values are legitimate data and pass through untouched: `0`,
+    `0.0`, `false`, an empty list and an empty object keep their value.
 
 !!! tip "Numeric string fields"
     `@floor`, `@ceil`, `@round`, and `@abs` work on `String` fields that contain a

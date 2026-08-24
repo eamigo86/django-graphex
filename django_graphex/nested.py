@@ -13,6 +13,10 @@ previously carried duplicate, buggy copies) and makes it:
 * upsert-capable -- a child payload carrying its pk updates that row (partial),
   otherwise a new row is created (the nested input only exposes the pk on the
   parent's update, so creates stay create-only),
+* link-not-rewrite -- on a relation whose rows the parent does not own (forward
+  FK/O2O and M2M) a pk the parent is not already attached to only LINKS that
+  row; its other fields are ignored, so no client can edit an arbitrary row of
+  the related table by naming its pk,
 * safe by default -- additive M2M/reverse semantics (existing links are never
   removed) and empty "[]" / "{}" payloads are a no-op.
 
@@ -92,6 +96,16 @@ class NestedFieldsMixin:
         rollback and suppresses all pending broadcast callbacks, eliminating
         phantom notifications for non-existent rows.
 
+        A child is validated by the backend of a host that declared custom
+        validation for its model when one exists (see "backend_for_nested"), so
+        a nested write applies the same rules the child's own mutation does.
+
+        A forward payload carrying a pk the parent is not already linked to
+        LINKS that row rather than writing it; the M2M branch applies the same
+        rule (see "_attach_children"). Both relations point at rows the parent
+        does not own, so without the rule a client could rewrite any row of the
+        related table by naming its pk.
+
         Every internal validation failure is raised as a private "_NestedError"
         and caught here, so this method never propagates it; it always returns a
         result tuple instead.
@@ -160,6 +174,24 @@ class NestedFieldsMixin:
                             item = sub_data[0]
                         else:
                             item = sub_data
+                        # Forward link rule: a payload carrying a pk updates that
+                        # row ONLY when the parent is already linked to it;
+                        # any other pk is a LINK -- the row is attached and its
+                        # remaining fields are ignored.  A forward target is not
+                        # owned by the parent, so the reverse ownership guard
+                        # cannot apply, and without this rule a client could
+                        # rewrite ANY row of the related table by naming its pk
+                        # (a shared lookup row belongs to nobody, so no scope
+                        # hid it either).
+                        item_pk = cls._child_pk(child_model, item)
+                        current_pk = (
+                            getattr(instance, relation.attname, None)
+                            if instance is not None
+                            else None
+                        )
+                        if item_pk is not None and str(item_pk) != str(current_pk):
+                            data[field] = item_pk  # link only, no child write
+                            continue
                         child = cls._persist_child(field, child_model, item, info)
                         data[field] = child.pk
                     elif kind is None:
@@ -220,6 +252,29 @@ class NestedFieldsMixin:
             return "m2m", relation
         return None, relation
 
+    @staticmethod
+    def _child_pk(child_model: Any, item: Any) -> Any:
+        """Read the primary key a nested child payload carries, if any.
+
+        Explicit None checks are used throughout so a falsy-but-valid pk (0 or
+        an empty string) counts as present. The model's own pk name is tried
+        first and "id" second, because the generated input always exposes the
+        key as "id" even when the model names it differently.
+
+        Args:
+            child_model: The Django model class for the child.
+            item: The child payload; a non-mapping yields None.
+
+        Returns:
+            The primary key carried by the payload, or None when absent.
+        """
+        if not hasattr(item, "get"):
+            return None
+        pk = item.get(child_model._meta.pk.name)
+        if pk is None:
+            pk = item.get("id")
+        return pk
+
     # -- child persistence -----------------------------------------------------
 
     @classmethod
@@ -271,12 +326,11 @@ class NestedFieldsMixin:
                 # (steal) a row that belongs to a different owner.  It covers
                 # BOTH reverse kinds -- reverse FK and reverse O2O -- because
                 # in both the child carries a single key naming its owner.
-                pk_name = child_model._meta.pk.name
-                child_pk = item.get(pk_name) if hasattr(item, "get") else None
-                if child_pk is None and hasattr(item, "get"):
-                    child_pk = item.get("id")
+                child_pk = cls._child_pk(child_model, item)
                 if child_pk is not None:
-                    existing = child_model._default_manager.filter(pk=child_pk).first()
+                    # Through the shared lookup helper, so a pk the field cannot
+                    # parse is "no row" here too instead of a raw ORM error.
+                    existing = get_Object_or_None(child_model, pk=child_pk)
                     if existing is not None:
                         current_owner_id = getattr(existing, f"{fk_name}_id", None)
                         if (
@@ -302,10 +356,30 @@ class NestedFieldsMixin:
                 )
         elif kind == "m2m":
             items = sub_data if isinstance(sub_data, list) else [sub_data]
-            children = [
-                cls._persist_child(field, child_model, item, info) for item in items
-            ]
-            getattr(parent, field).add(*children)  # additive: never removes
+            manager = getattr(parent, field)
+            children = []
+            for item in items:
+                # Same link rule as the forward branch of "save_with_nested":
+                # an M2M row is shared by every parent that links it, so a
+                # payload naming a row this parent is NOT already linked to may
+                # only ATTACH it -- writing its fields would let a client edit
+                # an arbitrary row of the related table by naming its pk. A pk
+                # that matches no row falls through to the writer, which creates,
+                # exactly as it did before.
+                #
+                # The row is resolved FIRST, through the lookup helper that
+                # reports an uncoercible pk as "no row", so a malformed pk never
+                # reaches the linkage query as a raw ORM error.
+                item_pk = cls._child_pk(child_model, item)
+                linked = None
+                if item_pk is not None:
+                    existing = get_Object_or_None(child_model, pk=item_pk)
+                    if existing is not None and not manager.filter(pk=item_pk).exists():
+                        linked = existing
+                if linked is None:
+                    linked = cls._persist_child(field, child_model, item, info)
+                children.append(linked)
+            manager.add(*children)  # additive: never removes
 
     @classmethod
     def _persist_child(
@@ -335,13 +409,7 @@ class NestedFieldsMixin:
         item = cls._unwrap_enums(dict(item))
         child_backend = backend_for_nested(child_spec)
         model = child_backend.get_model()
-        # Use explicit None checks so that a falsy-but-valid pk (e.g. 0 or "")
-        # is recognised as a present key and triggers an UPDATE instead of a
-        # CREATE.  The old `or` / `if pk` guards collapsed pk=0 to None.
-        pk_name = model._meta.pk.name
-        pk = item.get(pk_name)
-        if pk is None:
-            pk = item.get("id")
+        pk = cls._child_pk(model, item)
         instance = get_Object_or_None(model, pk=pk) if pk is not None else None
 
         ok, result = child_backend.save_object(

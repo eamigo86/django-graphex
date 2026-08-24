@@ -60,7 +60,8 @@ This has two important properties:
 
 ### Post-commit invalidation (TOCTOU safety)
 
-The version bump is deferred via `transaction.on_commit` so it only fires
+The bump is scheduled **after the mutation has been executed**, and deferred
+via `transaction.on_commit` so it only fires
 **after the mutation's database write is durable**.  A concurrent query that
 arrives between the start of the mutation and its commit therefore sees the
 pre-mutation version key and correctly hits (or misses) pre-mutation cache
@@ -73,6 +74,14 @@ the cache.
 When `ATOMIC_MUTATIONS` is off (no open transaction), Django executes
 `on_commit` immediately after the current statement, so behaviour is unchanged
 for non-transactional deployments.
+
+!!! note "Ordering matters"
+
+    `ATOMIC_MUTATIONS` opens its atomic block *inside* the execution of the
+    mutation, so scheduling the bump before running the mutation would find no
+    open transaction and fire it immediately — advancing the counter while the
+    mutation body was still running.  The bump is therefore always scheduled
+    after the mutation has run.
 
 ### Version-counter key TTL
 
@@ -160,6 +169,7 @@ following are always passed through to the underlying view uncached:
 | **Batch requests** | A batch body is a JSON list; individual operations cannot be cached meaningfully. |
 | **Multipart/form-data** | `parse_body` reads `request.POST` for this content type, consuming the WSGI stream. A subsequent read of `request.body` (needed to compute the cache key) raises `RawPostDataException`. Bypassing avoids an HTTP 500. Multipart GraphQL is used almost exclusively for file-upload mutations which are not idempotent queries. |
 | **Mutations** | Mutations advance the version counter instead of being cached. |
+| **GraphiQL renders** | A request the view would answer with the GraphiQL page (`graphiql=True` and the client prefers `text/html`) is never cached. The cache key is built from the request body / query-string parameters, not from content negotiation, so a cached HTML page and the JSON answer for the same query would otherwise share one slot and whoever warmed it would decide what every later client received. The GraphiQL page is a static render, so caching it buys nothing. |
 
 ---
 

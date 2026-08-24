@@ -150,6 +150,25 @@ class UserMutation(DjangoModelMutation):
         return response
 ```
 
+!!! info "`class Arguments` may inherit"
+
+    Shared arguments can be factored into a base class; the compiler walks the
+    whole MRO, so inherited attributes are compiled alongside the ones declared
+    in the class body and the most-derived declaration wins on a name clash.
+
+    ```python
+    class TenantArgs:
+        tenant = CharField(required=True)
+
+    class UserMutation(DjangoModelMutation):
+        class Meta:
+            model = User
+
+        class Arguments(TenantArgs):
+            send_email = BooleanField(default=False)
+    # compiles to: userMutation(tenant: String!, sendEmail: Boolean, ...)
+    ```
+
 ### Nested Fields Support
 
 Handle related models with nested fields:
@@ -168,6 +187,36 @@ class UserMutation(DjangoModelMutation):
 !!! info "Nested Fields Behavior"
     - For single objects: The created object's ID is assigned to the field
     - For lists: Objects are added to the many-to-many relationship
+
+### Row scoping: `get_queryset` / `filter_queryset`
+
+`update` and `delete` resolve their target row through the same two hooks
+`DjangoModelType` uses, with the same names and signatures, so an override
+moves between the two hosts unchanged:
+
+```python
+from django_graphex.mutation import DjangoModelMutation
+
+class DocumentMutation(DjangoModelMutation):
+    class Meta:
+        model = Document
+
+    @classmethod
+    def filter_queryset(cls, qs, info, **kwargs):
+        return qs.filter(tenant=info.context.user.tenant)
+```
+
+A row outside the scope answers exactly as a missing one (`ok: false`,
+`<Model> with id <pk> does not exist.`), so the response cannot be used to probe
+which primary keys exist. `create` has no target row, so nothing is scoped there.
+
+!!! warning "`permission_classes` is `DjangoModelType`-only"
+    The two hosts are **not** symmetric on authorization. `permission_classes` /
+    `authorize` — the per-action checks described under
+    [Permissions](permissions.md) — are honored by `DjangoModelType` only.
+    Declaring `permission_classes` on a `DjangoModelMutation` has **no effect**:
+    the class never reads it. Reach for `DjangoModelType` when you need
+    per-action authorization, or gate the mutation field at the schema root.
 
 ### Automatic multipart uploads
 
@@ -373,7 +422,22 @@ related objects alongside the parent. The same engine backs both
 
 - **Upsert** — a child payload that carries its `id` **updates** that row; without
   an `id` it creates a new one. (The nested input only exposes `id` on the
-  parent's *update* input, so nested **creates** stay create-only.)
+  parent's *update* input, so nested **creates** stay create-only.) On a
+  relation whose rows the parent does not own this is narrowed by the link rule
+  below.
+- **Link, don't rewrite** — on a **forward** `ForeignKey` / `OneToOneField` or a
+  `ManyToManyField`, a payload carrying an `id` the parent is **not already
+  attached to** only **links** that row: it is set on the parent (or `.add()`-ed)
+  and the payload's other fields are **ignored**. The row the parent is already
+  attached to is still updated in place, which is the documented use — *change
+  the category attached to this document*, not *edit any row of the category
+  table*. Without the rule, `{ id: <mine>, category: { id: <any pk>, name: "x" } }`
+  rewrote a shared lookup row that no scope hid and no ownership guard covered.
+- **Child validation** — a nested child is validated with the **same** rules as
+  its own mutation: when a `DjangoModelType` / `DjangoModelMutation` for the
+  child model declares inline `validate_<field>` / `validate` methods or a
+  `Meta.pydantic_model`, the nested write runs them too. (When more than one
+  host declares validation for the same model, the last one defined wins.)
 - **Additive & safe** — M2M/reverse children are only added, never removed; an
   empty `[]` / `{}` payload is a no-op (the relation is left untouched).
 - **Errors are prefixed** — a child error is reported as `field.subfield`
@@ -397,13 +461,30 @@ related objects alongside the parent. The same engine backs both
   It does **not** apply to forward `ForeignKey` / `OneToOneField` or to
   `ManyToManyField` children: those rows are not owned by the parent (many
   parents may legitimately point at the same one), so there is no owner to
-  compare against.
+  compare against. Those two relations are protected by the **link rule**
+  above instead — the row is attached, never rewritten.
 
 !!! warning "Reverse child re-parenting"
     Attempting to assign an existing reverse child (by pk) to a new parent via
     the nested write path will fail with a validation error if the child's FK or
     O2O key already points to a different parent. To genuinely re-parent a row,
     issue a direct update mutation on the child model instead.
+
+!!! warning "Editing a forward FK / M2M row through the parent"
+    A nested payload can only edit the forward-FK or M2M row the parent is
+    **already** attached to. Naming a different row's `id` attaches it and
+    **silently ignores** the rest of the payload — `ok` is still `true` and that
+    row is unchanged. To edit a row the parent is not attached to yet, issue a
+    mutation on the child model directly, or attach it first and edit it in a
+    second call.
+
+!!! danger "Nested writes do not run the child's permissions"
+    `permission_classes` / `authorize` declared on a child's own
+    `DjangoModelType` are **not** consulted when that child is written through a
+    parent's `nested_fields`. Only the parent's permissions are checked. A child
+    type that denies `create` to a caller will still have rows created for that
+    caller through a parent that permits it. Do not use `nested_fields` to reach
+    a model whose write permissions differ from the parent's.
 
 #### Worked examples — UPDATE + nested create and UPDATE + nested update (upsert)
 

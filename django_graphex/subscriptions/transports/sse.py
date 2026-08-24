@@ -35,7 +35,14 @@ driver. The engine does the work:
     "source.aclose()" -> "group_discard" for every joined group (the WU4 sweep
     releases a blocked receive + discards every group), so no ghost subscriber
     survives a teardown. Django>=5.2 guarantees the disconnect cancellation that
-    triggers "GeneratorExit" into the async generator.
+    triggers "GeneratorExit" into the async generator. The SAME teardown is
+    registered on the response ("_resource_closers"), because a response whose
+    body is NEVER iterated — a client that aborts during the subscribe
+    handshake — would otherwise leave its groups joined forever.
+  * A failure DURING delivery is framed in-stream ("next{errors}" then
+    "complete"), never allowed to escape the generator: the 200 is already
+    committed, so an escaping exception would abort the connection with no
+    protocol signal at all.
 
 This module reads "graphql_api_settings.MAX_VALIDATION_ERRORS" (NOT
 "graphene_settings" — the no-graphene-import gate). It imports neither graphene
@@ -46,9 +53,12 @@ the base package never hard-requires the optional "[subscriptions]" extra.
 from __future__ import annotations
 
 import json
+import logging
+from functools import partial
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
+from asgiref.sync import async_to_sync
 from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from graphql import (
@@ -72,6 +82,24 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..source import ChannelLayerSource
 
 __all__ = ["TransportContext", "subscription_sse_view"]
+
+logger = logging.getLogger(__name__)
+
+
+def _close_source_sync(source: "ChannelLayerSource") -> None:
+    """Tear a started source down from a SYNCHRONOUS response-close callback.
+
+    Django closes a response from a worker thread
+    ("await sync_to_async(response.close)()"), so "async_to_sync" is the safe
+    bridge back to the loop. "aclose()" is idempotent, so this is a no-op when
+    the streaming generator already ran its own teardown.
+
+    Args:
+        source: The started source whose joined groups must be discarded.
+    """
+    if source.is_closed:
+        return
+    async_to_sync(source.aclose)()
 
 
 # A generic denial for a subscription-less (fully-pruned) schema. It mirrors the
@@ -122,12 +150,18 @@ class TransportContext:
             'session': request.session}" when available).
         request: The originating "HttpRequest" (transport-specific; not part of
             the neutral contract).
+        context: "self". The subscribe hooks
+            ("authorize_subscription"/"subscription_scope") receive this object
+            as their "info" argument, and every documented hook reads
+            "info.context.user" — the SAME spelling a resolver uses, where
+            "info" is a real "GraphQLResolveInfo" whose ".context" IS this
+            object. The alias makes both spellings resolve to the same user.
         middleware: The connection's "DJANGO_GRAPHEX['MIDDLEWARE']" manager
             (built ONCE per request), read by the subscribe entry and carried
             onto the delivery spec.
     """
 
-    __slots__ = ("user", "scope", "request", "middleware")
+    __slots__ = ("user", "scope", "request", "context", "middleware")
 
     def __init__(self, request: "HttpRequest") -> None:
         """Build the neutral context from an "HttpRequest".
@@ -136,6 +170,9 @@ class TransportContext:
             request: The originating "HttpRequest" the neutral context wraps.
         """
         self.request = request
+        # The hooks receive this object as ``info``; ``info.context`` is how
+        # every documented hook reaches the user, so it must resolve.
+        self.context = self
         self.user = getattr(request, "user", None)
         self.scope: dict[str, Any] = {"user": self.user}
         session = getattr(request, "session", None)
@@ -370,8 +407,22 @@ def subscription_sse_view(
 
             delivery = drive_subscription(started_source, spec, context)
             try:
-                async for result in delivery:
-                    yield _frame_next(result)
+                try:
+                    async for result in delivery:
+                        yield _frame_next(result)
+                except Exception as exc:  # noqa: BLE001 - framed, never escapes
+                    # A delivery failure (e.g. an ORM error raised by a
+                    # server-forced scope lookup) must NOT escape the generator:
+                    # the 200 text/event-stream response is already committed,
+                    # so an escaping exception aborts the connection with no
+                    # protocol signal at all. Frame it exactly like a post-200
+                    # validation error — next{errors} — then complete.
+                    from graphql import GraphQLError
+
+                    logger.exception("Subscription delivery failed; closing stream.")
+                    yield _frame_next(
+                        ExecutionResult(data=None, errors=[GraphQLError(str(exc))])
+                    )
                 # The source completed (out-of-band close) → terminal frame.
                 yield _COMPLETE_FRAME
             finally:
@@ -387,6 +438,17 @@ def subscription_sse_view(
         # are flushed promptly.
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
+        if started_source is not None:
+            # The group join happens BEFORE this response is returned, while
+            # teardown lives in the generator's ``finally`` — so a response that
+            # is never iterated (a client that aborts during the handshake; the
+            # ASGI handler closes a response whose body it never pulled) would
+            # leave a ghost group member every future broadcast fans out to.
+            # ``close()`` is the one callback Django guarantees for a response
+            # it is finished with, iterated or not.
+            response._resource_closers.append(
+                partial(_close_source_sync, started_source)
+            )
         # Record the live source so callers/tests can observe + assert teardown.
         _STARTED_SOURCES[response] = started_source
         return response

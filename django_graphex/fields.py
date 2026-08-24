@@ -28,6 +28,7 @@ from .paginations.pagination import BaseDjangoGraphqlPagination, _split_ordering
 from .utils import (
     _apply_field_hook,
     _compute_child_only,
+    _get_field_optimize_hook,
     apply_object_type_get_queryset,
     find_field,
     get_extra_filters,
@@ -791,6 +792,36 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # Skip DjangoListObjectField.__init__ (it would always build the arg).
         NativeMountedField.__init__(self, _type, **kwargs)
 
+    def apply_filters(
+        self,
+        qs: Any,
+        filter_backend: Any,
+        filter_value: Any,
+        info: Any,
+    ) -> Any:
+        """Apply the standard lookups AND the custom "@filter_field" methods.
+
+        The single choke point for filtering on the nested path. The nested
+        "<Model>FilterInput" is the SAME input type the top-level list mounts,
+        so it advertises the node type's "@filter_field" arguments too; running
+        only the backend lookups here made every one of those arguments a
+        silent no-op on the nested path (wrong rows, and a hole when a custom
+        filter is used for scoping). Composition order matches the top-level
+        list resolvers: standard lookups first, custom methods after, in
+        declaration order.
+
+        Args:
+            qs: The base queryset for the related set.
+            filter_backend: The filter backend applied to the queryset.
+            filter_value: The filter input value, or None.
+            info: The GraphQL resolve info, forwarded to the custom methods.
+
+        Returns:
+            The queryset after both filter stages.
+        """
+        qs = filter_backend.apply(qs, filter_value)
+        return apply_custom_filters(qs, self.custom_filters, info, filter_value)
+
     def build_prefetch(
         self, lookup: str, filter_value: Any, info: ResolveInfo
     ) -> Prefetch:
@@ -811,7 +842,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         """
         model = self.type._meta.model
         qs = model._default_manager.all()
-        qs = self.filter_backend.apply(qs, filter_value)
+        qs = self.apply_filters(qs, self.filter_backend, filter_value, info)
         return Prefetch(lookup, queryset=qs)
 
     def build_window_prefetch(
@@ -934,7 +965,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         # --- Build the window queryset -----------------------------------------
         qs = child._default_manager.all()
-        qs = self.filter_backend.apply(qs, filter_value)
+        qs = self.apply_filters(qs, self.filter_backend, filter_value, info)
 
         # --- Phase E (AC1): apply optimize_<field> hook on filter-applied base qs
         # BEFORE pre-check 7 so a hook adding .distinct() triggers the clean
@@ -947,6 +978,13 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # Re-run on hook-modified qs (AC5): a hook adding .distinct() falls back.
         if getattr(getattr(qs, "query", None), "distinct", False):
             return None
+
+        # Snapshot the queryset the window page is computed from, BEFORE the
+        # window expressions: it is exactly the row set the empty-page count
+        # must report.  Rebuilding it from the default manager (as this used to)
+        # dropped both the custom filters and the optimize_<field> hook, so the
+        # overshoot page reported a different — and unscoped — total.
+        _cnt_base_qs = qs
 
         # Build order expressions for the window ORDER BY.
         order_exprs = [
@@ -998,10 +1036,9 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # the Subquery is freshly constructed per request when needed.  The
         # factory captures the FK-attname and filter-applied queryset; the
         # caller (_apply_optimizations) supplies OuterRef('pk') at annotation time.
-        # The filter-applied base queryset (before window exprs) is stored on
-        # the Prefetch so the annotation uses the SAME filter as the window path.
-        _cnt_base_qs = child._default_manager.all()
-        _cnt_base_qs = self.filter_backend.apply(_cnt_base_qs, filter_value)
+        # The base queryset snapshotted above (filters + hook applied, window
+        # exprs not yet) is stored on the Prefetch so the annotation counts
+        # EXACTLY the rows the window path pages over.
         pf._gqx_cnt_qs = _cnt_base_qs
         pf._gqx_cnt_fk_attname = fk_attname
         pf._gqx_cnt_attr = _GQX_CNT_ATTR_PREFIX + self.accessor
@@ -1072,11 +1109,32 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                     count = int(annotated_cnt) if annotated_cnt is not None else 0
                 else:
                     # Fallback: issue a count() for backwards compatibility when
-                    # the annotation is absent (e.g. OPTIMIZE_QUERYSET=False,
-                    # custom resolver that bypassed _apply_optimizations).
-                    # MUST apply the same user filter that build_window_prefetch used.
+                    # the annotation is absent (e.g. a deeper nested list whose
+                    # window Prefetch was re-rooted, OPTIMIZE_QUERYSET=False, a
+                    # custom resolver that bypassed _apply_optimizations, or a
+                    # degraded annotation).  MUST reproduce the row set
+                    # build_window_prefetch paged over: the same user filter,
+                    # the same custom @filter_field methods, AND the same
+                    # optimize_<field> hook -- otherwise the overshoot page
+                    # reports a different (and unscoped) total than page one.
                     manager_qs = getattr(root, self.accessor).all()
-                    filtered_qs = filter_backend.apply(manager_qs, filter_value)
+                    filtered_qs = self.apply_filters(
+                        manager_qs, filter_backend, filter_value, info
+                    )
+                    # info is the resolve info of THIS field, so its parent type
+                    # is the level-local owner of the optimize_<field> hook.
+                    # Read defensively: direct list_resolver callers may pass a
+                    # bare stub (or None) for info.
+                    filtered_qs = _apply_field_hook(
+                        filtered_qs,
+                        _get_field_optimize_hook(
+                            getattr(info, "parent_type", None),
+                            getattr(info, "field_name", "") or "",
+                        ),
+                        info,
+                        filter_value=filter_value,
+                        is_window=True,
+                    )
                     count = filtered_qs.count()
             return DjangoListObjectBase(
                 count=count,
@@ -1099,7 +1157,9 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         related_manager = getattr(root, self.accessor)
 
         if filter_value:
-            qs = filter_backend.apply(related_manager.all(), filter_value)
+            qs = self.apply_filters(
+                related_manager.all(), filter_backend, filter_value, info
+            )
             # LAZY totalCount: defer the COUNT to first .count access (only when
             # totalCount is selected). count() clones qs, safe post-iteration.
             return DjangoListObjectBase(

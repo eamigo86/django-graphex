@@ -188,6 +188,18 @@ class CostEngineTest(TestCase):
             _cost(schema, "{ companies { properties { owner { name } } } }")
 
     @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
+    def test_negative_page_size_clamped_to_zero(self) -> None:
+        """Assert a negative page size never produces a negative multiplier.
+
+        If this fails, a negative limit would multiply a subtree by a
+        negative number, letting the query subtract cost from the total.
+        """
+        schema = _build_schema()
+        q = "{ companies(limit: -1000) { properties(limit: 1) { owner { name } } } }"
+        # own(companies)=1 + 0 * properties -> 1, never negative.
+        self.assertEqual(_cost(schema, q), 1)
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
     def test_type_complexity_overrides_default_weight(self) -> None:
         """Assert a type's declared complexity overrides the default field weight.
 
@@ -267,6 +279,40 @@ class CostRuleTest(TestCase):
             ),
             [],
         )
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 50, "MAX_PAGE_SIZE": 1000})
+    def test_negative_limit_cannot_cancel_a_sibling_field(self) -> None:
+        """Assert a negative limit cannot buy budget for an expensive sibling.
+
+        If this fails, an aliased field with a negative page size would
+        subtract cost from the operation total and let an over-budget
+        sibling through the DoS gate.
+        """
+        schema = _build_schema()
+        errors = self._errors(
+            schema,
+            "{ a: companies(limit: -1000) { properties(limit: 1) { owner { name } } } "
+            "  b: companies(limit: 1000) { properties(limit: 1) { owner { name } } } }",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("exceeds the maximum of 50", errors[0])
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 50, "MAX_PAGE_SIZE": 1000})
+    def test_variable_default_is_not_trusted_for_enforcement(self) -> None:
+        """Assert a document-declared variable default cannot lower the estimate.
+
+        If this fails, a client could declare a small default for a page-size
+        variable, pass a large value at execution time, and bypass
+        MAX_QUERY_COST entirely.
+        """
+        schema = _build_schema()
+        errors = self._errors(
+            schema,
+            "query Q($n: Int = 1) { companies(limit: $n) "
+            "{ properties(limit: 1) { owner { name } } } }",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("exceeds the maximum of 50", errors[0])
 
     @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
     def test_no_budget_is_noop(self) -> None:

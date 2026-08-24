@@ -10,7 +10,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterator
 
 from django.apps import apps
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.models import (
     NOT_PROVIDED,
     Manager,
@@ -430,19 +430,26 @@ def is_required(field: Field) -> bool:
 
 
 def _get_queryset(klass: Any) -> QuerySet:
-    """Return a QuerySet from a Model, Manager, or QuerySet.
+    """Return a fresh QuerySet from a Model, Manager, or QuerySet.
+
+    An already-built queryset is CLONED (".all()") instead of returned verbatim.
+    A "Meta.queryset" is evaluated once at class-definition time and bound as
+    the resolver base for the whole process; handing that exact instance back
+    let the first request fill its "_result_cache" and every later request
+    replay it, so rows created afterwards stayed invisible until a restart.
+    The clone is the single choke point that keeps every binding site fresh.
 
     Args:
         klass: A Django model, manager, or queryset.
 
     Returns:
-        A queryset derived from "klass".
+        A queryset derived from "klass", never the caller's own instance.
 
     Raises:
         ValueError: If "klass" is not a valid type.
     """
     if isinstance(klass, QuerySet):
-        return klass
+        return klass.all()
     elif isinstance(klass, Manager):
         manager = klass
     elif isinstance(klass, ModelBase):
@@ -634,13 +641,21 @@ def get_Object_or_None(klass: Any, *args: Any, **kwargs: Any) -> Model | None:
     get(), a MultipleObjectsReturned error is raised if more than one object
     is found.
 
+    A lookup value the field cannot even parse is reported as "does not
+    exist" rather than propagating: Django raises "ValueError" for an
+    unparseable integer pk and "ValidationError" for a malformed UUID one, and
+    both escaped every caller as a raw Django message instead of the mutation
+    error envelope. A value no row can hold matches no row, so the answer is
+    the same as for a pk that is merely absent.
+
     Args:
         klass: A Django model, manager, or queryset.
         *args: When given, the first value selects the database alias.
         **kwargs: The lookup arguments for the get() query.
 
     Returns:
-        The matched object, or None if it does not exist.
+        The matched object, or None if it does not exist or the lookup value
+        cannot be coerced to the field's type.
     """
     queryset = _get_queryset(klass)
     try:
@@ -648,26 +663,56 @@ def get_Object_or_None(klass: Any, *args: Any, **kwargs: Any) -> Model | None:
             return queryset.using(args[0]).get(**kwargs)
         else:
             return queryset.get(*args, **kwargs)
-    except queryset.model.DoesNotExist:
+    except (queryset.model.DoesNotExist, ValueError, TypeError, ValidationError):
         return None
 
 
 def get_extra_filters(root: Model, model: type[Model]) -> dict[str, Any]:
-    """Build extra filters tying a model to its parent "root" relations.
+    """Build the filter that scopes "model" rows to their parent "root".
+
+    Exactly ONE relation may do the scoping. Every relation pointing back at
+    the parent used to be collected into the same mapping, and a mapping is
+    applied as a conjunction: a child with two foreign keys to the same parent
+    (the ordinary "created_by" / "updated_by" audit pair, or a foreign key
+    alongside a many-to-many) was then scoped to the rows matching BOTH, which
+    is the empty set for any parent that is not on both sides of every row.
+    Nested lists silently resolved to "[]" with no error.
+
+    Which of several relations is meant cannot be guessed, so an ambiguous
+    child is refused instead. Name the nested field after the relation
+    accessor (or its "related_name") so the resolver reads that relation
+    directly, or declare the accessor explicitly on the field.
 
     Args:
         root: The parent model instance to filter against.
         model: The Django model class being filtered.
 
     Returns:
-        A mapping of relation field names to the "root" instance.
-    """
-    extra_filters = {}
-    for field in model._meta.get_fields():
-        if field.is_relation and field.related_model == root._meta.model:
-            extra_filters.update({field.name: root})
+        A mapping of the single relation field name to the "root" instance, or
+        an empty mapping when "model" has no relation to the parent.
 
-    return extra_filters
+    Raises:
+        ImproperlyConfigured: If "model" has more than one relation back to the
+            parent model, so the scoping relation is ambiguous.
+    """
+    relations = [
+        field
+        for field in model._meta.get_fields()
+        if field.is_relation and field.related_model == root._meta.model
+    ]
+    if not relations:
+        return {}
+    if len(relations) > 1:
+        names = ", ".join(sorted(field.name for field in relations))
+        raise ImproperlyConfigured(
+            f"{model.__name__} has more than one relation back to "
+            f"{root._meta.model.__name__} ({names}), so django-graphex cannot "
+            "tell which one scopes this nested list. Name the field after the "
+            "relation accessor (or its related_name) so it resolves through "
+            "that relation, or pass the accessor explicitly."
+        )
+
+    return {relations[0].name: root}
 
 
 def get_related_fields(model: type[Model]) -> dict[str, Any]:
@@ -896,6 +941,51 @@ def _resolve_fragment_target(
     # cross-check is needed here.  The caller (``_collect_gfk_union_buckets``) is
     # what restricts routing to genuine union members, via ``_inline_fragment_applies``.
     return (model, gql, graphene_type)
+
+
+def _gql_source_class(gql_type: Any) -> Any:
+    """Return the source class a compiled ``GraphQLObjectType`` was built from.
+
+    A natively compiled type NEVER carries a plain ``graphene_type`` attribute:
+    the source class lives under ``extensions['gdx']._meta.graphene_type``,
+    which is what ``_gdx_graphene_type`` reads.  Reading the attribute directly
+    silently yields ``None``, and every consumer that needs ``_meta.interfaces``
+    (the inline-fragment guard) is then inert.
+
+    Args:
+        gql_type: The ``GraphQLObjectType`` to resolve, or None.
+
+    Returns:
+        The source class, or None when it cannot be resolved.
+    """
+    if gql_type is None:
+        return None
+    from django_graphex.core.compat import _gdx_graphene_type  # noqa: PLC0415
+
+    return _gdx_graphene_type(gql_type)
+
+
+def _inner_object_type(gql_type: Any, field_name: str) -> Any:
+    """Resolve the object type wrapped by ``field_name`` on ``gql_type``.
+
+    Used for transparent wrapper descent: a ``DjangoListObjectType`` container
+    exposes the row type under ``results``, and selections written inside that
+    field belong to the ROW type, not to the container.
+
+    Args:
+        gql_type: The ``GraphQLObjectType`` owning the field, or None.
+        field_name: The GraphQL field name to look through.
+
+    Returns:
+        The wrapped ``GraphQLObjectType``, or None when it cannot be resolved.
+    """
+    if gql_type is None:
+        return None
+    field_def = getattr(gql_type, "fields", {}).get(field_name)
+    if field_def is None:
+        return None
+    inner = get_named_type(field_def.type)
+    return inner if isinstance(inner, GraphQLObjectType) else None
 
 
 # GraphQL/relay plumbing leaf names that never map to a model column and must not
@@ -1193,6 +1283,7 @@ def _collect_only_fields(
     current_type_name: str | None = None,
     variable_values: dict[str, Any] | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
+    current_gql_type: Any = None,
 ) -> list[str]:
     """Collect a safe ".only()" field set across the select_related span.
 
@@ -1222,6 +1313,17 @@ def _collect_only_fields(
         variable_values: The currently bound GraphQL variables, used to resolve
             ``@skip`` / ``@include`` on each selection. ``None`` falls back to
             the conservative "never skip" policy (same as passing ``{}``).
+        _fmap_cache: Optional request-scoped memoization dict (see
+            ``_relation_field_map``).
+        current_gql_type: The ``GraphQLObjectType`` being walked, if known.
+            Two things depend on it that a bare type NAME cannot supply: the
+            source class (``_meta.interfaces``, without which the guard cannot
+            recognise an ``... on <Interface>`` condition) and the wrapper
+            descent (a ``DjangoListObjectType`` container's ``results`` field
+            re-points the identity at the inner ROW type).  Passing the
+            container alone made every fragment inside ``results`` be judged
+            against the container, so its columns were dropped from the
+            ``.only()`` projection and reloaded one query per row.
 
     Returns:
         A sorted list of dotted "only" paths.
@@ -1229,6 +1331,7 @@ def _collect_only_fields(
     if _only is None:
         _only = set()
 
+    current_graphene_type = _gql_source_class(current_gql_type)
     rel_map = _relation_field_map(model, _fmap_cache)
     concrete_map = _concrete_field_map(model, _fmap_cache)
     concrete_attnames = {field.attname for field in model._meta.concrete_fields}
@@ -1267,6 +1370,7 @@ def _collect_only_fields(
                     current_type_name=current_type_name,
                     variable_values=variable_values,
                     _fmap_cache=_fmap_cache,
+                    current_gql_type=current_gql_type,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -1275,6 +1379,7 @@ def _collect_only_fields(
                 field,
                 current_type_name=current_type_name,
                 current_model=model,
+                current_graphene_type=current_graphene_type,
             ):
                 continue
             _collect_only_fields(
@@ -1287,6 +1392,7 @@ def _collect_only_fields(
                 current_type_name=current_type_name,
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
+                current_gql_type=current_gql_type,
             )
             continue
 
@@ -1332,6 +1438,7 @@ def _collect_only_fields(
                         current_type_name=None,
                         variable_values=variable_values,
                         _fmap_cache=_fmap_cache,
+                        current_gql_type=None,
                     )
             # prefetch branches use separate querysets -> not narrowed here.
             continue
@@ -1345,7 +1452,11 @@ def _collect_only_fields(
             continue
 
         if sub_selection is not None:
-            # Wrapper field (e.g. `results`, or a renamed results field).
+            # Wrapper field (e.g. `results`, or a renamed results field).  The
+            # identity moves to the wrapped ROW type when it can be resolved:
+            # fragments inside ``results`` are written against the row type, not
+            # against the list container.
+            inner_gql = _inner_object_type(current_gql_type, name)
             _collect_only_fields(
                 model,
                 sub_selection,
@@ -1353,9 +1464,12 @@ def _collect_only_fields(
                 _prefix,
                 _only,
                 annotated_names=annotated_names,
-                current_type_name=current_type_name,
+                current_type_name=(
+                    inner_gql.name if inner_gql is not None else current_type_name
+                ),
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
+                current_gql_type=inner_gql or current_gql_type,
             )
             continue
 
@@ -1383,6 +1497,7 @@ def _collect_only_fields_is_full_load(
     current_type_name: str | None = None,
     variable_values: dict[str, Any] | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
+    current_gql_type: Any = None,
 ) -> bool:
     """Return True when ``_collect_only_fields`` would trigger the full-load path.
 
@@ -1418,10 +1533,16 @@ def _collect_only_fields_is_full_load(
             conservative "never skip" policy (same as passing ``{}``).
         _fmap_cache: Optional request-scoped memoization dict (see
             ``_relation_field_map``).
+        current_gql_type: The ``GraphQLObjectType`` being walked, if known.
+            Supplies the source class (``_meta.interfaces``) and the wrapper
+            descent to the inner ROW type, exactly as in
+            ``_collect_only_fields``; threaded for the same walkers-must-agree
+            reason as ``current_type_name``.
 
     Returns:
         True if any unknown leaf would trigger full-load for ``model``.
     """
+    current_graphene_type = _gql_source_class(current_gql_type)
     rel_map = _relation_field_map(model, _fmap_cache)
     concrete_map = _concrete_field_map(model, _fmap_cache)
     _vars: dict[str, Any] = variable_values or {}
@@ -1443,6 +1564,7 @@ def _collect_only_fields_is_full_load(
                     current_type_name=current_type_name,
                     variable_values=variable_values,
                     _fmap_cache=_fmap_cache,
+                    current_gql_type=current_gql_type,
                 ):
                     return True
             continue
@@ -1456,6 +1578,7 @@ def _collect_only_fields_is_full_load(
                 field,
                 current_type_name=current_type_name,
                 current_model=model,
+                current_graphene_type=current_graphene_type,
             ):
                 continue
             if _collect_only_fields_is_full_load(
@@ -1466,6 +1589,7 @@ def _collect_only_fields_is_full_load(
                 current_type_name=current_type_name,
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
+                current_gql_type=current_gql_type,
             ):
                 return True
             continue
@@ -1486,14 +1610,20 @@ def _collect_only_fields_is_full_load(
 
         if sub_selection is not None:
             # Wrapper field — recurse but it doesn't trigger full-load by itself.
+            # The identity follows the wrapped ROW type, mirroring
+            # ``_collect_only_fields`` so the two walkers never disagree.
+            inner_gql = _inner_object_type(current_gql_type, name)
             if _collect_only_fields_is_full_load(
                 model,
                 sub_selection,
                 fragments,
                 annotated_names=annotated_names,
-                current_type_name=current_type_name,
+                current_type_name=(
+                    inner_gql.name if inner_gql is not None else current_type_name
+                ),
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
+                current_gql_type=inner_gql or current_gql_type,
             ):
                 return True
             continue
@@ -1660,6 +1790,7 @@ def _compute_child_only(
         annotated_names=child_ann_names,
         current_type_name=child_type_name,
         _fmap_cache=fmap_cache,
+        current_gql_type=child_gql_type,
     ):
         # Even on full-load, if we have annotations, return a plan without .only().
         # S3 GUARD: This annotate-only fallback (empty only_cols) masks a missing
@@ -1691,6 +1822,7 @@ def _compute_child_only(
         annotated_names=child_ann_names,
         current_type_name=child_type_name,
         _fmap_cache=fmap_cache,
+        current_gql_type=child_gql_type,
     )
 
     # Split raw_cols into dotted FK heads (-> child_select) and flat attnames
@@ -1825,8 +1957,19 @@ def _collect_gfk_union_buckets(
     # GenericPrefetch (and per-CT narrowing) requires Django 5.0+.
     # Floor is >=5.2, so this path is always reachable.
     buckets: dict[type[Model], PrefetchPlan] = {}
-    for frag in sub_selection.selections:
-        if not isinstance(frag, InlineFragmentNode):
+    for node in sub_selection.selections:
+        frag = node
+        if isinstance(frag, FragmentSpreadNode):
+            # A NAMED fragment on a union member carries the same
+            # ``type_condition`` and selection set as the equivalent inline
+            # fragment, so it must feed the SAME bucket.  Skipping it built the
+            # member queryset from the inline fragment's columns alone, and a
+            # selection MIXING both forms then deferred the named fragment's
+            # columns into one extra query per row.
+            frag = (fragments or {}).get(frag.name.value)
+            if frag is None:
+                continue
+        elif not isinstance(frag, InlineFragmentNode):
             continue
         # FILTER first (the shipped boolean guard), then RESOLVE.  At a union we
         # pass NO current identity, so the guard descends every typed fragment;
@@ -1966,20 +2109,20 @@ def _collect_prefetch_only_sets(
         if isinstance(field, InlineFragmentNode):
             # GAP-5 guard: skip inline fragments targeting a different concrete
             # type than the model being walked.  Thread the FULL GraphQL identity
-            # (type name + source class) exactly as ``_walk_filtered_prefetches``
-            # does — passing only ``current_model`` leaves the guard INERT
-            # (a model name alone can never trigger a SKIP).
+            # (type name + source class); passing only ``current_model`` leaves
+            # the guard INERT (a model name alone can never trigger a SKIP).
+            # The source class MUST be read via ``_gql_source_class``: a natively
+            # compiled type has no ``graphene_type`` attribute, so the direct
+            # ``getattr`` always yielded None and the interface branch of the
+            # guard never fired — every ``... on <Interface>`` fragment was
+            # skipped and the relations it selected lost their column plan.
             if not _inline_fragment_applies(
                 field,
                 current_type_name=(
                     getattr(gql_type, "name", None) if gql_type is not None else None
                 ),
                 current_model=model,
-                current_graphene_type=(
-                    getattr(gql_type, "graphene_type", None)
-                    if gql_type is not None
-                    else None
-                ),
+                current_graphene_type=_gql_source_class(gql_type),
             ):
                 continue
             _collect_prefetch_only_sets(
@@ -2506,18 +2649,16 @@ def _walk_filtered_prefetches(
             continue
         if isinstance(field, InlineFragmentNode):
             # GAP-5 guard: skip foreign-typed inline fragments.  Identity comes
-            # from the current model and/or the GraphQL object type name.
+            # from the current model, the GraphQL object type name and its source
+            # class — the last one resolved via ``_gql_source_class`` because a
+            # natively compiled type carries no ``graphene_type`` attribute.
             if not _inline_fragment_applies(
                 field,
                 current_type_name=(
                     getattr(gql_type, "name", None) if gql_type is not None else None
                 ),
                 current_model=model,
-                current_graphene_type=(
-                    getattr(gql_type, "graphene_type", None)
-                    if gql_type is not None
-                    else None
-                ),
+                current_graphene_type=_gql_source_class(gql_type),
             ):
                 continue
             _walk_filtered_prefetches(
@@ -3130,6 +3271,57 @@ def _merge_filtered_prefetches(
     return top_plain, top_filtered
 
 
+def _prefetch_through(lookup: Any) -> str:
+    """Return the relation path a prefetch lookup traverses.
+
+    Args:
+        lookup: A prefetch lookup: a dotted string or a "Prefetch" object.
+
+    Returns:
+        The dotted relation path, identical for the string and "Prefetch"
+        spellings of the same lookup.
+    """
+    return getattr(lookup, "prefetch_through", lookup)
+
+
+def _drop_superseded_prefetches(base: QuerySet, incoming: list[Any]) -> QuerySet:
+    """Strip prefetch lookups from "base" that the optimizer is about to redo.
+
+    A "get_queryset" hook (or a "Meta.queryset") may already prefetch a relation
+    the optimizer derives for itself. Appending both left two lookups on the
+    same path, and Django refuses that outright with "'<lookup>' lookup was
+    already seen with a different queryset" — the whole field then resolved to
+    null. The documented contract is that the optimizer REPLACES a manual
+    prefetch of the same relation, so the manual one is dropped here, at the
+    single point where the derived lookups are attached.
+
+    A lookup the optimizer is not touching is left alone, and a queryset with
+    no manual prefetches is returned unchanged (no clone).
+
+    Args:
+        base: The queryset the derived prefetches are about to be applied to.
+        incoming: The derived lookups (strings and/or "Prefetch" objects).
+
+    Returns:
+        The queryset with the superseded manual lookups removed.
+    """
+    existing = getattr(base, "_prefetch_related_lookups", ())
+    if not existing or not incoming:
+        return base
+
+    superseded = {_prefetch_through(lookup) for lookup in incoming}
+    kept = [
+        lookup for lookup in existing if _prefetch_through(lookup) not in superseded
+    ]
+    if len(kept) == len(existing):
+        return base
+
+    # ``prefetch_related(None)`` is Django's own way to clear the list; the
+    # survivors are then re-attached in their original order.
+    base = base.prefetch_related(None)
+    return base.prefetch_related(*kept) if kept else base
+
+
 def _apply_optimizations(
     base: QuerySet,
     model: type[Model],
@@ -3283,8 +3475,16 @@ def _apply_optimizations(
                 graphene_t: Any,
                 sel_set: Any,
                 depth: int = 0,
+                prefix: str = "",
             ) -> None:
-                """Detect select_related paths that have an AnnotatedField child."""
+                """Detect select_related paths that have an AnnotatedField child.
+
+                Recurses into every select_related sub-selection, carrying the
+                dotted ORM ``prefix`` so a deeper hop is matched against the
+                SAME lookup ``recursive_params`` emitted (e.g. ``post__author``,
+                not ``author``).  Without the descent an AnnotatedField two or
+                more forward-FK hops down is never promoted and resolves null.
+                """
                 if sel_set is None or depth > 3:
                     return
                 from .fields import AnnotatedField  # noqa: PLC0415
@@ -3315,9 +3515,11 @@ def _apply_optimizations(
                     opt = _relation_optimization(rel_f)
                     if opt is None or opt[0] != "select":
                         continue
-                    orm_name = opt[1]
+                    lookup = prefix + opt[1]
                     # Check if sub-selection has any AnnotatedField.
                     sub_meta_fields: dict = {}
+                    sub_gql = None
+                    sub_graphene = None
                     if gql_t is not None:
                         fdef = gql_t.fields.get(fname)
                         if fdef is not None:
@@ -3350,9 +3552,20 @@ def _apply_optimizations(
                             sub_meta_fields.get(sname) or sub_meta_fields.get(ssnake),
                             AnnotatedField,
                         ):
-                            if orm_name in select_related:
-                                annotated_promotions.add(orm_name)
+                            if lookup in select_related:
+                                annotated_promotions.add(lookup)
                             break
+
+                    # Descend: the AnnotatedField may sit further down the
+                    # select_related chain (e.g. "post { author { count } }").
+                    if sub_graphene is not None:
+                        _detect_promotions(
+                            sub_gql,
+                            sub_graphene,
+                            fsub,
+                            depth + 1,
+                            lookup + LOOKUP_SEP,
+                        )
 
             # Walk the root selection set for promotion detection.
             root_graphene_type = _gdx_graphene_type(return_type)
@@ -3481,6 +3694,10 @@ def _apply_optimizations(
 
     if select_related:
         base = base.select_related(*select_related)
+    if prefetch_related or filtered_prefetches:
+        base = _drop_superseded_prefetches(
+            base, [*prefetch_related, *filtered_prefetches]
+        )
     if prefetch_related:
         base = base.prefetch_related(*prefetch_related)
     if filtered_prefetches:

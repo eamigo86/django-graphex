@@ -226,6 +226,11 @@ scope excludes is reported as missing — the ID comes straight from the caller.
             return queryset.select_related('profile').prefetch_related('posts')
     ```
 
+    A prefetch here for a relation the optimizer also derives from the selection
+    is **replaced** by the derived (narrowed, filtered) version rather than
+    colliding with it; prefetches of other relations are kept. See
+    [Query Optimization](../usage/query-optimization.md#custom-resolvers).
+
 ---
 
 ## DjangoInputObjectType
@@ -294,6 +299,19 @@ Get the type when the unmounted type is mounted.
             exclude_fields = ('password', 'date_joined')
     ```
 
+=== "Delete Input"
+
+    ```python
+    class UserDeleteInput(DjangoInputObjectType):
+        class Meta:
+            model = User
+            input_for = 'delete'
+    ```
+
+    A delete input is keyed on the model's **real** primary key, so a model
+    whose pk is a `UUIDField`, a `SlugField` or any other renamed field works
+    exactly like one using the default `id`.
+
 === "With Nested Fields"
 
     ```python
@@ -304,6 +322,19 @@ Get the type when the unmounted type is mounted.
             # field names to expand as nested input objects
             nested_fields = ('profile', 'addresses')
     ```
+
+!!! note "Pydantic defaults on a hand-authored `InputType`"
+
+    A field declared on an `InputType` with a plain default (`limit: int = 10`)
+    or a `default_factory` (`Field(default_factory=list)`) surfaces that value as
+    the SDL default (`limit: Int = 10`); the factory runs **once**, at compile
+    time.
+
+    The one exception is Pydantic 2.10+'s **validated-data** factory
+    (`Field(default_factory=lambda data: data["a"] + 1)`): it needs the
+    partially validated instance, so it has no compile-time value and the field
+    renders with **no** `= …` marker. Pydantic still applies it per instance
+    when the input is validated.
 
 ---
 
@@ -335,7 +366,7 @@ class UserListType(DjangoListObjectType):
 | `only_fields` | `tuple/list` | `()` | Include only specified fields |
 | `exclude_fields` | `tuple/list` | `()` | Exclude specified fields |
 | `include_fields` | `tuple/list` | `()` | Additional fields to include |
-| `queryset` | `QuerySet` | `None` | Base queryset for the list |
+| `queryset` | `QuerySet` | `None` | Base queryset for the list; used as a template — every request runs a fresh clone, so it never caches rows |
 | `description` | `str` | Auto-generated | Type description |
 | `results_field_name` | `str` | `'results'` | Name of results field |
 | `pagination` | `BaseDjangoGraphqlPagination` | `None` | Pagination configuration |

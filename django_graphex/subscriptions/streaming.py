@@ -257,6 +257,45 @@ def _lookup_names(model: Any, root: str) -> "set[str]":
     return set((field or Field()).get_lookups())
 
 
+def _assert_orm_accepts(model: Any, client_filters: "Mapping[str, Any]") -> None:
+    """Raise when the ORM itself refuses to build a query from "client_filters".
+
+    The registry check above reads the lookups a field DECLARES, which is not
+    the same set the query compiler ACCEPTS after a join. A to-many field is the
+    gap: "Post._meta.get_field('tags').get_lookups()" returns the base "Field"
+    registry (it carries "iexact"), while resolving "tags__iexact" raises
+    "FieldError" because the join lands on the related model's primary key.
+
+    Delivery evaluates the merged filters as
+    ".filter(pk=..., **remaining).exists()", so anything the ORM refuses used to
+    raise DEEP inside the delivery loop — after the SSE 200 was committed, or
+    with no protocol frame at all on WebSocket. Building the same query here
+    moves that failure to subscribe time, where the transports already turn an
+    error into a clean denial and no group has been joined yet.
+
+    Only the query is BUILT — "filter" resolves every lookup eagerly and issues
+    no SQL — so this stays safe to call from the async subscribe path.
+
+    Args:
+        model: The subscribed Django model, or "None" when the spec carries no
+            model (a bare driver spec) — the check is then skipped.
+        client_filters: The raw filters supplied by the subscriber.
+
+    Raises:
+        ValueError: When the ORM cannot build a query from the filters.
+    """
+    if model is None or not client_filters:
+        return
+    try:
+        model._default_manager.filter(**client_filters)
+    except Exception as exc:  # noqa: BLE001 - re-raised as the module's own error
+        raise ValueError(
+            "Subscription filter {} is not a valid database lookup on {}: {}.".format(
+                ", ".join(sorted(client_filters)), model.__name__, exc
+            )
+        ) from exc
+
+
 def _validate_client_filters(
     client_filters: "Mapping[str, Any]",
     declared: set[str],
@@ -271,7 +310,11 @@ def _validate_client_filters(
       * every remaining segment must be a Django lookup or transform registered
         on that field (so relation traversal is rejected);
       * every remaining segment must ALSO be in the equality/membership allow
-        list, because delivery turns the key into a boolean oracle.
+        list, because delivery turns the key into a boolean oracle;
+      * the WHOLE mapping must build a real ORM query ("_assert_orm_accepts"),
+        because a field's declared lookup registry is wider than what the query
+        compiler accepts after a join (a to-many field declares "iexact" and
+        then refuses it).
 
     Relation traversal into another model's columns ("groups__name__startswith")
     is REJECTED: "name" is not a lookup registered on the "groups" field.
@@ -300,10 +343,11 @@ def _validate_client_filters(
 
     Raises:
         ValueError: When a filter key roots on an undeclared field, carries a
-            segment that is not a registered lookup, or carries a lookup outside
-            the equality/membership allow list. (A plain exception keeps this
-            module free of any graphene/graphql error coupling; the transport
-            layer translates it into an error frame.)
+            segment that is not a registered lookup, carries a lookup outside
+            the equality/membership allow list, or the mapping as a whole is not
+            a query the ORM can build. (A plain exception keeps this module free
+            of any graphene/graphql error coupling; the transport layer
+            translates it into an error frame.)
     """
     if not client_filters:
         return
@@ -336,6 +380,7 @@ def _validate_client_filters(
                         key, segment, ", ".join(sorted(_ALLOWED_LOOKUPS))
                     )
                 )
+    _assert_orm_accepts(model, client_filters)
 
 
 async def _maybe_await(value: Any) -> Any:

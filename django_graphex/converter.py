@@ -422,10 +422,12 @@ def construct_fields(
     fields = OrderedDict()
 
     if input_flag == "delete":
-        converted = convert_django_field_with_choices(
-            dict(_model_fields)["id"], registry
-        )
-        fields["id"] = converted
+        # Read the REAL primary key instead of a hardcoded "id": a model on a
+        # UUID / slug / otherwise renamed pk has no "id" entry at all, so the
+        # lookup raised KeyError at CLASS-DEFINITION time and made any module
+        # declaring such a delete input unimportable.
+        pk_field = model._meta.pk
+        fields[pk_field.name] = convert_django_field_with_choices(pk_field, registry)
     else:
         for name, field in _model_fields:
             if input_flag == "create" and name == "id":

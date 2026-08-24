@@ -21,6 +21,8 @@ No Django settings required for the scalar/descriptor tier.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from graphql import (
     GraphQLError,
@@ -321,6 +323,63 @@ class TestGdxJSONParseLiteral:
         assert GdxJSON.parse_literal(node, {}) is Undefined
         # variable_values is None (validation-time) -> Undefined.
         assert GdxJSON.parse_literal(node, None) is Undefined
+
+    def test_missing_variable_in_object_literal_drops_key(self) -> None:
+        """Assert that an omitted variable inside an object literal drops its key.
+
+        If this fails, the "Undefined" sentinel is embedded in the parsed
+        dict, which is not JSON-serializable — matching graphql-core's own
+        "value_from_ast", an unavailable variable must OMIT the field
+        instead.
+        """
+        from django_graphex.core.scalars import GdxJSON
+
+        node = _obj_node(
+            {
+                "a": VariableNode(name=_NameNode(value="absent")),
+                "b": IntValueNode(value="1"),
+            }
+        )
+        assert GdxJSON.parse_literal(node, {}) == {"b": 1}
+        assert GdxJSON.parse_literal(node, None) == {"b": 1}
+
+    def test_omitted_variable_in_json_argument_executes(self) -> None:
+        """Assert that an unset variable nested in a JSON argument does not abort.
+
+        If this fails, a client leaving an optional variable unset inside a
+        JSON literal gets "Object of type UndefinedType is not JSON
+        serializable" and the whole operation aborts.
+        """
+        from graphql import (
+            GraphQLArgument,
+            GraphQLField,
+            GraphQLObjectType,
+            GraphQLSchema,
+            GraphQLString,
+            graphql_sync,
+        )
+
+        from django_graphex.core.scalars import GdxJSON
+
+        schema = GraphQLSchema(
+            query=GraphQLObjectType(
+                "Query",
+                {
+                    "echo": GraphQLField(
+                        GraphQLString,
+                        args={"payload": GraphQLArgument(GdxJSON)},
+                        resolve=lambda root, info, payload=None: json.dumps(payload),
+                    )
+                },
+            )
+        )
+        result = graphql_sync(
+            schema,
+            "query($v: String){ echo(payload: {a: $v, b: 1}) }",
+            variable_values={},
+        )
+        assert result.errors is None
+        assert result.data == {"echo": '{"b": 1}'}
 
 
 # ===========================================================================

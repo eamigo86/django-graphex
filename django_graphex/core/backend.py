@@ -9,6 +9,7 @@ persists scalars plus FK plus M2M, and serializes output.
 
 from __future__ import annotations
 
+import base64
 import enum
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
@@ -34,6 +35,32 @@ def _errors_to_type(errors: dict[str, list[str]]) -> list[ErrorType]:
 # include_url=False). The alias below keeps internal callers working without
 # changing every call site in this file.
 _translate = translate_validation_error
+
+
+def _json_safe(field: models.Field, value: Any) -> Any:
+    """Coerce a concrete field's Python value into a JSON-encodable one.
+
+    Only the two field kinds whose value is NOT JSON-encodable are touched; every
+    other value is returned unchanged (dates and decimals are normalized further
+    downstream by "DjangoJSONEncoder").
+
+    Args:
+        field: The concrete model field the value was read from.
+        value: The raw attribute value read off the instance.
+
+    Returns:
+        The storage name for a file field, the base64 text for a binary field,
+        or "value" unchanged.
+    """
+    if isinstance(field, models.FileField):
+        # ``FieldFile`` is not JSON-encodable; ``.name`` is the stored path and
+        # matches the field's ``String`` output.
+        return value.name if value is not None else None
+    if isinstance(field, models.BinaryField):
+        if value is None:
+            return None
+        return base64.b64encode(bytes(value)).decode("ascii")
+    return value
 
 
 class PydanticBackend(SerializerBackend):
@@ -412,8 +439,19 @@ class PydanticBackend(SerializerBackend):
         """Serialize an instance to a JSON-safe dict.
 
         Foreign keys are emitted as their primary-key value and many-to-many
-        relations as a list of primary keys; concrete scalar fields are copied
-        as-is.
+        relations as a list of primary keys. Concrete scalar fields are copied
+        as-is EXCEPT the two whose Python value is not JSON-encodable:
+
+          * a "FileField"/"ImageField" yields a "FieldFile", so its storage
+            NAME is emitted (the same string the field's GraphQL "String"
+            output carries);
+          * a "BinaryField" yields "bytes" (or a "memoryview" once reloaded
+            from some backends), so it is base64-encoded into an ASCII string.
+
+        Without those two, a subscription on a model carrying either column
+        crashed on EVERY save with "Object of type FieldFile is not JSON
+        serializable" — the payload is JSON-encoded before it crosses the
+        channel layer.
 
         Args:
             instance: The model instance to serialize.
@@ -430,7 +468,7 @@ class PydanticBackend(SerializerBackend):
             elif isinstance(field, (models.ForeignKey, models.OneToOneField)):
                 data[field.name] = getattr(instance, f"{field.name}_id")
             else:
-                data[field.name] = getattr(instance, field.name)
+                data[field.name] = _json_safe(field, getattr(instance, field.name))
         return data
 
     def output_field_names(self) -> list[str]:

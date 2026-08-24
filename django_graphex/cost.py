@@ -225,6 +225,9 @@ class _CostAnalyzer:
 
         size = self._page_size_argument(node)
         if size is not None:
+            # A negative page size is invalid at runtime; clamp it so it can
+            # never become a negative multiplier that subtracts sibling cost.
+            size = max(size, 0)
             return min(size, max_page_size) if max_page_size else size
 
         if not self._is_list_field(field_def):
@@ -350,8 +353,11 @@ class CostLimitValidationRule(ValidationRule):
     """Reject queries whose estimated cost exceeds "MAX_QUERY_COST".
 
     A no-op unless "MAX_QUERY_COST" is set. Added to "GraphQLView" by default.
-    Variables aren't bound during validation, so page sizes fall back to
-    variable defaults and the "MAX_PAGE_SIZE" cap (a conservative estimate).
+    Variables aren't bound during validation, so a variabled page size is
+    costed with the conservative fallback ("MAX_PAGE_SIZE", else
+    "DEFAULT_PAGE_SIZE" / "DEFAULT_LIST_MULTIPLIER") and NOT with the default
+    declared in the document: that default is written by the same client that
+    sends the real, possibly much larger, variable values at execution time.
     """
 
     def enter_operation_definition(
@@ -369,7 +375,7 @@ class CostLimitValidationRule(ValidationRule):
             self.context.schema,
             self.context.get_fragment,
             {},
-            _variable_defaults(node),
+            {},  # document-declared defaults are client-controlled: don't trust them
         )
         total = analyzer.operation_cost(node)
         if total > max_cost:

@@ -91,6 +91,258 @@ that stops building was silently exposing a field it was told to hide.
   unbounded lists alike, across `DjangoListObjectField`,
   `DjangoFilterPaginateListField` and nested lists. Explicitly configured
   paginators are unchanged.
+- **An unset variable inside a `JSON` literal aborted the whole operation.**
+  `createOdd(newOdd: {payload: {a: $v, b: 1}})` sent without `$v` embedded the
+  `Undefined` sentinel in the parsed value and failed with `Object of type
+  UndefinedType is not JSON serializable` — so leaving an optional variable
+  unset broke the request instead of omitting the key. The literal parser now
+  drops such a field, exactly as graphql-core does for input-object fields. See
+  [Types › `JSONField` → `JSON`](usage/types.md#jsonfield-json).
+- **A `JSONString` value could not be read back by its own scalar.** A resolver
+  returning a plain string (`"hello"`) put it on the wire verbatim, which is not
+  valid JSON, so sending the same value back raised `JSONString cannot parse`.
+  Anything that is not already valid JSON text is now `json.dumps`-encoded;
+  text that already parses as JSON is still passed through unchanged. See
+  [Types › `JSONField` → `JSON`](usage/types.md#jsonfield-json).
+- **An input model using a Pydantic 2.10+ validated-data `default_factory`
+  could not build a schema at all.** `Field(default_factory=lambda data: ...)`
+  was invoked with no argument at compile time, so the type died with `<Input>
+  fields cannot be resolved`. Such a factory has no compile-time value: the
+  field now renders without an SDL default and Pydantic applies it per
+  instance. See [Types API › `DjangoInputObjectType`](api/types.md#djangoinputobjecttype).
+- **A wrapped root field made a per-schema registry pair unbuildable.** A root
+  declaring `field(NativeList(SomeType))` or `field(NativeNonNull(SomeType))`
+  fell through to the scalar branch of the root compiler, and that branch was
+  the only one that did not carry the schema's registry pair — so the inner type
+  resolved against the process-global one and the build aborted with
+  `assert_schema_pair_isolation`. A bare `field(SomeType)` was unaffected, which
+  is why the wrapper looked like the culprit.
+- **A type implementing an interface could not be used in a second schema.** The
+  per-schema copy of the type kept the interface instance compiled for the
+  default schema, while a root `field(SomeInterface)` compiled a fresh one, so
+  two same-named interfaces reached one schema and it failed to build with
+  `Schema must contain uniquely named types`. Interfaces are now recompiled
+  against the schema that owns the type.
+- **`name=` was honoured on the root only.** A field declared as
+  `date_ = field(GdxDate, name="date")` rendered `date` on the root and `date_`
+  everywhere else — mutation payloads and nested object types camelCased the
+  attribute name instead, leaking the keyword-dodging underscore onto the wire.
+  See [Fields › The unified `Field`](usage/fields.md#the-unified-field).
+- **A nested list ignored the `@filter_field` filters it advertised.** The
+  nested `filter:` argument mounts the same `<Model>FilterInput` as the root
+  list, custom filters included, but every nested path applied only the
+  standard lookups — so `posts(filter: {search: "…"})` returned the unfiltered
+  set (and an unfiltered `totalCount`) while the identical root query filtered
+  correctly. All the nested paths — the plain prefetch, the DB-side window, its
+  count subquery, and the resolver's own branches — now run both filter stages
+  through one choke point. See
+  [Nested Lists](usage/nested-lists.md) and
+  [Filtering › Composition order](usage/filtering.md#composition-order).
+- **A nested list reported a different `totalCount` on its last page.** The
+  count for an empty or past-the-end window page was rebuilt from the child's
+  default manager, dropping the `optimize_<field>` hook that had scoped the
+  page itself: a pagination UI reading the total off the overshoot page saw the
+  *unscoped* row count. The count now reuses the queryset the page was computed
+  from, and the per-parent fallback re-applies the hook. See
+  [Nested Lists › Per-field optimize hook](usage/nested-lists.md#per-field-optimize-hook).
+- **A declared `Meta.queryset` could freeze at the first request.** The queryset
+  is built once at class definition and bound as the resolver base; it was
+  handed to the resolver verbatim, so with `OPTIMIZE_QUERYSET = False` (nothing
+  else clones it) the first request filled its result cache and every later
+  request in that process replayed it — rows created afterwards stayed invisible
+  until a restart. The base queryset is now cloned per request. See
+  [Types](usage/types.md) and the
+  [`DjangoListObjectType` options](api/types.md).
+- **With `CACHE_ACTIVE` and `ATOMIC_MUTATIONS`, the cache-invalidation bump
+  fired *before* the mutation ran.** It was scheduled through
+  `transaction.on_commit` from the pre-dispatch preamble, but the atomic block
+  `ATOMIC_MUTATIONS` opens lives inside the execution of the mutation — so at
+  scheduling time there was no open transaction and Django ran the bump
+  immediately, leaving the TOCTOU window it was written to close wide open: a
+  concurrent reader could cache pre-mutation data under the post-mutation
+  version. The bump is now scheduled after the mutation has run. See
+  [Caching › Post-commit invalidation](usage/caching.md#post-commit-invalidation-toctou-safety).
+- **With `CACHE_ACTIVE`, a cached GraphiQL page was served to API clients.** The
+  response-cache key ignores content negotiation, so the HTML render and the
+  JSON answer for the same query shared one slot: whichever arrived first
+  decided what everyone else received — a browser could warm the page and the
+  next `Accept: application/json` request got `text/html` back. A request that
+  would render GraphiQL now bypasses the cache entirely. See
+  [Caching › Requests that bypass the cache](usage/caching.md#requests-that-bypass-the-cache).
+- **A batch endpoint answered HTTP 500 for any non-JSON body.** Only an
+  `application/json` body was checked for being a list; `application/graphql`,
+  form-encoded and multipart bodies were iterated as-is and died with
+  `AttributeError: 'str' object has no attribute 'get'`. Every batch request now
+  goes through one non-list guard and gets the documented HTTP 400. See
+  [Views › Batch endpoints](usage/views.md#batch-endpoints).
+- **A quality value written with a space (`Accept: text/html; q=0.1`) was
+  ignored**, and the entry was ranked as `q=1` — so a JSON client that
+  de-prioritised HTML the perfectly legal way was served the GraphiQL page.
+  Whitespace after the semicolon is now tolerated. See
+  [Views › GraphiQL](usage/views.md#graphiql).
+- **A nested write skipped the child type's own validation.** The nested path
+  built its child validator from the child MODEL alone, so the inline
+  `validate_<field>` / `validate` methods and the `Meta.pydantic_model` declared
+  on that child's own `DjangoModelType` / `DjangoModelMutation` never ran: the
+  exact payload the child's own mutation rejected was accepted — and written —
+  through a parent's `nested_fields`. A rule expressed once, in the documented
+  place, was enforced on one of the two routes to the same table. The nested
+  path now reuses the child host's backend, so both routes run the same
+  validator. See [Mutations](usage/mutations.md#how-nested-writes-work).
+- **A malformed primary key answered with Django's internals instead of the
+  error envelope.** `update` and `delete` on both `DjangoModelType` and
+  `DjangoModelMutation` passed the client's `id` straight to the ORM, so
+  `id: "abc"` surfaced `Field 'id' expected a number but got 'abc'.` (and a
+  malformed UUID surfaced a `ValidationError`) rather than the documented
+  `ok: false` / `<Model> with id <pk> does not exist.`. A value no row can hold
+  matches no row, so it is now reported exactly as an absent one, at the single
+  lookup helper all four resolvers share.
+- **A delete input could not be declared for a model whose primary key is not
+  named `id`.** `input_for = "delete"` looked the pk up under the literal key
+  `"id"`, so a model on a `UUIDField`, a `SlugField` or any renamed pk raised
+  `KeyError: 'id'` at class-definition time — the module simply would not
+  import, with no workaround. The delete branch now reads `model._meta.pk` and
+  keys the field on the real primary-key name. See
+  [Types API › `DjangoInputObjectType`](api/types.md#djangoinputobjecttype).
+- **An inherited `class Arguments` lost every inherited argument.** The helper
+  behind the mutation argument compiler read only the class body, so factoring
+  shared arguments into a base class (`class Arguments(CommonArgs)`) dropped
+  them from the compiled SDL with no error at all — a required `tenant: String!`
+  scope key simply disappeared. The whole MRO is now read, base classes first,
+  with the most-derived declaration winning a name clash. See
+  [Mutations › Custom Arguments](usage/mutations.md#custom-arguments-with-field).
+- **A `@filter_field` named after a `filter_fields` key silently ate that
+  field's lookups.** The custom-filter loop ran last and overwrote the compiled
+  `<Model><Field>Lookups` entry, so the field became unfilterable in *both*
+  shapes and the only symptom was a raw `'str' object has no attribute 'items'`
+  from the query-time `Q` builder. Such a collision — including one with an
+  `and` / `or` / `not` combinator — now raises `ImproperlyConfigured` when the
+  filter input is built, mirroring the existing reserved-name check. See
+  [Filtering › Reserved argument names](usage/filtering.md#reserved-argument-names).
+- **Declaring a relation *and* a path through it dropped the nested filter.**
+  `{"author": ("exact",), "author__name": ("icontains",)}` put `author` in both
+  the relation and the plain-pk bucket, and the two compile loops wrote the same
+  wire key, so the `AuthorFilterInput` never mounted and the declared nested
+  filter vanished from the schema. The plain-pk lookups now fold onto the nested
+  input under the related model's primary-key name, keeping both halves. See
+  [Filtering › Filtering across relations](usage/filtering.md#filtering-across-relations).
+- **An explicit nested lookup was replaced wholesale by the related type's
+  own.** The canonical-shape check tested only whether the requested *path*
+  existed on the related model's root declaration, then returned that root and
+  discarded the requested lookups — so `PostType.filter_fields =
+  {"author__name": ("icontains",)}` compiled to the root's `("exact",)` and
+  `{author: {name: {icontains: "…"}}}` was rejected by validation. The
+  short-circuit now requires the root's lookups to actually cover the request;
+  otherwise the two are unioned, as they already were for divergent paths. See
+  [Filtering › Filtering across relations](usage/filtering.md#filtering-across-relations).
+- **Every string directive rendered a null field as the literal text `"None"`.**
+  `@uppercase` answered `"NONE"`, `@slugify` answered `"none"`, and so on for
+  the whole family, because the shared coercion helper called `str(value)`
+  unconditionally — while the numeric directives already returned `null`. All of
+  them now pass `null` straight through. See
+  [Directives API › String Directives](api/directives.md#string-directives).
+- **`@default` replaced any falsy value, not just null and the empty string.** A
+  legitimate `0`, `false` or `[]` was substituted with the `to` **string** and
+  then failed serialization outright (`Expected Iterable, but did not find one`,
+  `Int cannot represent non-integer value`). Only `null` and `""` are
+  substituted now. See
+  [Directives API › `DefaultGraphQLDirective`](api/directives.md#defaultgraphqldirective).
+- **`@number` and `@currency` nulled the very fields they are documented for.**
+  Both always returned a formatted string, so `viewCount @number(as: ",.0f")` on
+  an `Int` field and `price @currency` on a `Float` field answered `null` plus
+  an opaque `Int cannot represent non-integer value: '1,234'`. On a field that
+  cannot serialize a string the raw value is now returned unchanged; the
+  format-spec width/precision cap still applies on every field type. See
+  [Directives](directives.md#number-directives).
+- **A subscription filter the schema accepted could crash the live stream.** A
+  to-many field declares lookups the ORM then refuses across the join
+  (`filter: { tags: { iexact: 3 } }`), so the key passed the subscribe gate and
+  raised `FieldError` at delivery — escaping the SSE generator *after* the `200`
+  was committed, and killing the WebSocket operation task with no frame at all.
+  Client filters are now validated against the ORM itself at subscribe time, and
+  a delivery-time failure on either transport is framed as `next{errors}`
+  followed by `complete` instead of tearing the connection down silently. See
+  [Subscriptions › Filter key validation](usage/subscriptions.md#filter-key-validation).
+- **One malformed WebSocket frame leaked every live subscription on the socket.**
+  A body that is not valid JSON, or a non-string operation `id`, raised out of
+  the consumer, so Channels never ran `disconnect()` and every running
+  operation kept its task *and* its channel-layer group. Any frame the consumer
+  cannot dispatch now closes with `4400` after the full teardown.
+- **An SSE response that was never iterated leaked its groups permanently.**
+  The groups are joined before the response is returned, but teardown lived only
+  in the streaming generator's `finally` — so a client that aborts during the
+  subscribe handshake left a ghost group member every future broadcast fanned
+  out to. Teardown is now registered on the response, which Django closes
+  whether or not the body was read.
+- **Two subscriptions on the same model cross-delivered each other's events.**
+  Group names carried the model and the action but not `Meta.stream`, while the
+  signal bindings registered per stream — so both fanned out into the identical
+  groups and a `full`-payload subscriber received a duplicate, all-null event
+  from the `id_only` one on every change. `Meta.stream` is now part of the group
+  name.
+- **`subscription_scope` and `authorize_subscription` were dead on both
+  transports.** The subscribe hooks receive the transport context as their
+  `info`, and it had no `.context` attribute — so the documented
+  `info.context.user` raised `AttributeError` and the subscribe failed closed,
+  with no source started. The transport contexts now expose `.context` alongside
+  `.user`, so both spellings resolve. See
+  [Subscriptions › Authorization and row-scoping](usage/subscriptions.md#authorization-and-row-scoping).
+- **A subscription on a model with a `FileField` or `BinaryField` crashed on
+  every save.** The broadcast payload is JSON-encoded, and the serializer handed
+  it a raw `FieldFile` / `bytes`. File fields now serialize as their storage
+  name and binary fields as base64 — matching the `String` both already render
+  as on the event type.
+- **The bundled subscription client pointed its SSE field at the JSON
+  endpoint.** There was no `sse_path`, so the SSE input was seeded from
+  `http_path`; the first-run playground POSTed a subscription to `GraphQLView`,
+  got a `200 application/json` body with no `event:` line, and showed a
+  connected stream with zero data and zero errors. `SubscriptionClientView` now
+  has an `sse_path` (default `/graphql/stream`), and a frame the client cannot
+  recognise is logged as an error instead of discarded. See
+  [Subscriptions › Browser client view](usage/subscriptions.md#browser-client-view).
+- **An `AnnotatedField` reached through two chained forward foreign keys
+  resolved to `null`.** The select→prefetch promotion pass never recursed, so it
+  only ever saw the first hop from the root: `{ comments { post { author {
+  postCount } } } }` left `post__author` in `select_related`, where the
+  annotation cannot ride along, and the field came back empty with no error. The
+  pass now descends the whole chain carrying the dotted lookup, so the hop that
+  actually owns the annotated child is the one promoted. See
+  [Query Optimization › Selection-driven annotations](usage/query-optimization.md#selection-driven-annotations-annotatedfield).
+- **An `... on <Interface>` fragment inside a prefetched child cost one query
+  per row.** The `.only()` walkers were given the list *container*'s identity
+  and no source class at all, so the guard could neither match the interface
+  (only the source class carries `Meta.interfaces`) nor recognise the row type —
+  every interface fragment was dropped from the projection and its columns were
+  reloaded row by row. Both walkers now carry the GraphQL type through the
+  `results` wrapper down to the row type. Two further walk sites read the source
+  class off a `graphene_type` attribute that a natively compiled type never
+  has, which silently made the same guard inert there; both now resolve it
+  properly.
+- **A named fragment spread on a `GenericForeignKey` union member was ignored.**
+  The per-content-type bucket collector only looked at inline fragments, so a
+  selection mixing `... on AccountType { balance }` with `...Money` narrowed the
+  member queryset to the inline fragment's columns and fetched the rest one
+  query per row. Spreads are now resolved against the document's fragments and
+  merged into the same bucket. See
+  [Query Optimization › Typed GenericForeignKey unions](usage/query-optimization.md#typed-genericforeignkey-unions-per-content-type-narrowing).
+- **A nested list on a child with two relations back to its parent always
+  resolved empty.** Every relation pointing at the parent was collected into one
+  filter mapping, and a mapping is a conjunction — so a child with `created_by`
+  *and* `updated_by` foreign keys (or a foreign key beside a many-to-many) was
+  scoped to the rows matching both, which is nothing. Which relation is meant
+  cannot be inferred, so the ambiguity now raises `ImproperlyConfigured` naming
+  the relations instead of silently returning `[]`; mount such a list through
+  its relation accessor. See
+  [Fields › DjangoFilterPaginateListField](usage/fields.md#djangofilterpaginatelistfield).
+- **A manual `prefetch_related` in `get_queryset` collided with the optimizer's
+  own.** The derived lookups were appended without checking what the base
+  queryset already carried, and Django rejects two lookups on the same path — so
+  the documented `return queryset.prefetch_related('posts')` failed the whole
+  field with `'posts' lookup was already seen with a different queryset`. A
+  manual lookup the optimizer is about to re-derive is now dropped first, which
+  is the "replaced" behaviour the docs already promised; manual prefetches of
+  other relations are untouched. See
+  [Query Optimization › Custom resolvers](usage/query-optimization.md#custom-resolvers).
 
 ### Security
 
@@ -189,6 +441,81 @@ that stops building was silently exposing a field it was told to hide.
   `NoteModelType` now denies the anonymous `subscribe` in `authorize` (before
   any Channels group is joined) and fails closed in `subscription_scope`. See
   [Subscriptions](usage/subscriptions.md#authorization-and-row-scoping).
+- **A negative page size bought budget for a sibling field, bypassing
+  `MAX_QUERY_COST`.** The cost estimator used a list's page size as its
+  multiplier verbatim, so `limit: -1000` multiplied that subtree by a negative
+  number and *subtracted* from the operation total: a query rejected on its own
+  (`requestedCost 1001` against a budget of `50`) sailed through with one extra
+  aliased field whose limit was negative, and the expensive sibling executed in
+  full. Page sizes are now clamped to `0` before the `MAX_PAGE_SIZE` cap, so a
+  field can only ever add cost. See
+  [Query limits › Query cost analysis](usage/query-limits.md#query-cost-analysis).
+- **A variable default declared in the document defeated `MAX_QUERY_COST`.**
+  Variables are not bound during validation, so the enforcing rule fell back to
+  the operation's own `$n: Int = 1` default — a value written by the same client
+  that then sends `{"n": 1000}` at execution time. The query executed, and with
+  `EXPOSE_QUERY_COST` the response even reported the real
+  `requestedCost` over its `maxCost`. The rule no longer reads document
+  defaults: a variabled page size is costed at `MAX_PAGE_SIZE` (else
+  `DEFAULT_PAGE_SIZE` / `DEFAULT_LIST_MULTIPLIER`), the same conservative
+  fallback an unknown variable already used. The reporting path, which does
+  receive the request's real variables, is unchanged. See
+  [Query limits › Query cost analysis](usage/query-limits.md#query-cost-analysis).
+- **A customized `perms_map` was ignored for subscriptions.**
+  `DjangoModelPermissions.has_subscribe_permission` resolved a forwarded
+  subscribe action against the library's hardcoded permission table instead of
+  the class's own `perms_map`, and the generated subscription always forwards
+  one. A subclass tightening the `subscribe` row (`"subscribe":
+  ("{app_label}.stream_{model_name}",)`) was silently not enforced — a user
+  without that codename could still subscribe — and a loosened row was silently
+  denied. Both halves of the composite check now resolve through
+  `get_required_permissions`, so the required codenames are the union of the
+  `subscribe` row and the row the action maps to. The default mapping is
+  unchanged: `view` plus the action's write verb. See
+  [Permissions › Customizing the codenames](usage/permissions.md#customizing-the-codenames).
+- **A per-request `validation_rules=` could be skipped entirely.** The
+  validation cache keyed its verdicts on `id(rules)`, and an address is unique
+  only while the object is alive: once a rules tuple built for one request was
+  freed, CPython handed the same address to the next one, and the *previous*
+  rule set's verdict was replayed — a stricter rule set silently never ran. The
+  key is now derived from the rules themselves (their dotted names, in order).
+  Views using the shipped class-attribute tuple were never affected.
+- **`extensions.cost` was a schema-existence oracle.** With
+  `EXPOSE_QUERY_COST`, the cost payload was computed against the FULL schema and
+  attached even to a failed validation — so under
+  `PERMISSION_SCOPED_SCHEMA` a caller could tell a field pruned out of their
+  schema (`requestedCost: 1`) from one that does not exist (`requestedCost: 0`),
+  although both answer with the same `Cannot query field` error. That undoes the
+  point of the pruned schema. The cost is now computed against the schema the
+  request is actually served, and is not attached to a response that carries
+  errors and no data. See
+  [Query limits › Query cost analysis](usage/query-limits.md#query-cost-analysis).
+- **A nested forward FK or M2M payload could rewrite any row of the related
+  table.** Declaring `nested_fields = {"category": Category}` was read by the
+  writer as *clients may edit any row of the Category table*: naming a pk in the
+  nested payload updated that row, whatever it was. The ownership guard did not
+  apply (a forward or M2M target is not owned by the parent) and no scope did
+  either — a shared lookup row belongs to nobody, so nothing hid it. Updating
+  your own document with `{ id: <yours>, category: { id: <any pk>, name: "x" } }`
+  returned `ok: true` and renamed a category every tenant reads, while the same
+  payload on a reverse FK was correctly rejected. A pk the parent is **not
+  already attached to** is now a **link**: the row is set on the parent (or
+  `.add()`-ed) and the payload's other fields are ignored. The row the parent is
+  already attached to is still updated in place, so the documented use —
+  *change the category attached to this document* — is unchanged, as is
+  attaching an existing row. See
+  [Mutations](usage/mutations.md#how-nested-writes-work).
+- **`DjangoModelMutation` had no row-scoping hook at all.** Its sibling
+  `DjangoModelType` resolves `update` and `delete` through
+  `get_queryset` → `filter_queryset`; the mutation host went straight to the
+  bare model and had no such hook to override, so a `filter_queryset` written on
+  it — spelled exactly as the documented one, with no error, no warning — was
+  never called and every row stayed writable by any caller. Both hooks now exist
+  on `DjangoModelMutation` with the same names and signatures, and its `update`
+  and `delete` resolve through them. Authorization stays asymmetric and is now
+  documented as such: `permission_classes` / `authorize` remain
+  `DjangoModelType`-only. See
+  [Mutations › Row scoping](usage/mutations.md#row-scoping-get_queryset-filter_queryset).
 
 ### Documentation
 

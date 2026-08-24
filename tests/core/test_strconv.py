@@ -262,3 +262,61 @@ def test_warn_deprecation_message_content() -> None:
         warnings.simplefilter("always")
         warn_deprecation(msg)
         assert msg in str(w[0].message)
+
+
+def test_props_includes_inherited_public_attrs() -> None:
+    """Ships broken if props(cls) stops walking the MRO.
+
+    A "class Arguments(CommonArgs)" that factors shared mutation arguments
+    into a base class must still expose the inherited attributes: the
+    "vars(cls)"-based implementation dropped every one of them SILENTLY, so a
+    required "tenant: String!" argument simply vanished from the compiled SDL.
+    """
+    from django_graphex._strconv import props
+
+    class CommonArgs:
+        tenant = "tenant-arg"
+        _private = "hidden"
+
+    class Arguments(CommonArgs):
+        name = "name-arg"
+
+    assert props(Arguments) == {"tenant": "tenant-arg", "name": "name-arg"}
+
+
+def test_props_subclass_overrides_base_attr() -> None:
+    """Ships broken if a subclass attribute stops shadowing the base one.
+
+    Most-derived wins is the only sane precedence for an inherited
+    "class Arguments" declaration.
+    """
+    from django_graphex._strconv import props
+
+    class Base:
+        shared = "base"
+
+    class Child(Base):
+        shared = "child"
+
+    assert props(Child) == {"shared": "child"}
+
+
+def test_props_inherited_arguments_compile_into_mutation_args() -> None:
+    """Ships broken if inherited "class Arguments" attributes stop compiling.
+
+    This is the user-visible half of the same defect: "_compile_args" reads
+    "props", so an inherited required argument disappeared from the mutation's
+    GraphQL signature with no error at all.
+    """
+    from graphql import GraphQLArgument, GraphQLNonNull, GraphQLString
+
+    from django_graphex.core.mutation import _compile_args
+
+    class CommonArgs:
+        tenant = GraphQLArgument(GraphQLNonNull(GraphQLString))
+
+    class Arguments(CommonArgs):
+        name = GraphQLArgument(GraphQLString)
+
+    compiled = _compile_args(Arguments)
+    assert set(compiled) == {"tenant", "name"}

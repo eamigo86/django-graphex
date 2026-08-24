@@ -97,7 +97,10 @@ cost(field) = own_cost + multiplier × Σ cost(children)
 - **`own_cost`** — `0` for scalar leaves, `1` for object/list fields, or the
   type's `Meta.complexity` when declared.
 - **`multiplier`** — a list field's page size (the `limit` / `page_size` /
-  `first` / `last` argument), capped at `MAX_PAGE_SIZE`; `1` otherwise.
+  `first` / `last` argument), clamped to `0` at the low end and capped at
+  `MAX_PAGE_SIZE`; `1` otherwise. A zero or negative page size is rejected at
+  runtime, so it contributes no children — and it can never *subtract* cost
+  from a sibling field.
 
 It follows fragments, so they can't be used to under-count.
 
@@ -167,6 +170,14 @@ When exposed, responses carry:
 { "data": { ... }, "extensions": { "cost": { "requestedCost": 411, "maxCost": 1000 } } }
 ```
 
+`extensions.cost` is attached only to a **successful** response, and it is
+computed against the schema *that request* is served — the pruned one when
+[`PERMISSION_SCOPED_SCHEMA`](permission-scoped-schema.md) is active. A request
+that fails validation (HTTP 400) carries no cost payload: the estimate is
+derived from the fields the document *names*, so reporting it next to a
+`Cannot query field` error would tell the caller whether the field exists in
+the full schema.
+
 Observation mode (`MAX_QUERY_COST=None`, `EXPOSE_QUERY_COST=True`) is the safe way
 to roll this out: watch real costs in production, calibrate `complexity` weights
 and the budget, then set `MAX_QUERY_COST` to start enforcing.
@@ -179,6 +190,17 @@ and the budget, then set `MAX_QUERY_COST` to start enforcing.
     `RuntimeWarning`. Set `MAX_PAGE_SIZE` so unbounded lists are costed at the
     ceiling the server actually enforces — this also closes the `limit: $var`
     bypass, since an unknown variable page size is costed at the cap.
+
+!!! warning "Variable defaults are not trusted for enforcement"
+
+    A default declared in the document (`query Q($n: Int = 1)`) is written by
+    the same client that sends the real variable values, so the enforcing rule
+    ignores it: a variabled page size is always costed at the cap
+    (`MAX_PAGE_SIZE`, else `DEFAULT_PAGE_SIZE` / `DEFAULT_LIST_MULTIPLIER`).
+    The reporting path (`EXPOSE_QUERY_COST`, or `analyze_cost(...,
+    variable_values=...)`) does receive the request's real variables and uses
+    the declared default when a variable is left unbound, so a reported cost
+    can be lower than the cost the rule enforced.
 
 !!! note "Per-type only (for now)"
 
@@ -256,8 +278,10 @@ def test_dashboard_query_stays_within_budget(schema):
     `analyze_cost()` shares the estimator with `CostLimitValidationRule`, so a
     `report.total` over `report.max_cost` is exactly what the view would reject at
     runtime. During validation the rule has no bound variables, so it costs
-    variabled page sizes at the `MAX_PAGE_SIZE` cap — pass `variable_values` to
-    `analyze_cost()` to mirror a specific request precisely.
+    variabled page sizes at the `MAX_PAGE_SIZE` cap — ignoring any default the
+    document declares for them. Pass `variable_values` to `analyze_cost()` to
+    mirror a specific request precisely; only then is a variable's declared
+    default used for the variables the request left unbound.
 
 ## Error codes
 

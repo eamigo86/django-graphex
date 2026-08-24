@@ -8,6 +8,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import Manager
 from graphql import GraphQLBoolean
 
 from ._strconv import to_camel_case
@@ -25,6 +26,7 @@ from .types import DjangoInputObjectType, DjangoObjectType
 from .utils import get_Object_or_None, not_found_error
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
     from graphql import GraphQLField, GraphQLResolveInfo
 
 # ---------------------------------------------------------------------------
@@ -630,6 +632,49 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         return cls.perform_mutate(obj, info)
 
     @classmethod
+    def get_queryset(
+        cls, manager: Manager | QuerySet, info: GraphQLResolveInfo, **kwargs: Any
+    ) -> QuerySet:
+        """Return the base queryset "update" and "delete" resolve their row from.
+
+        Override to customize the base queryset. "info.context" is the request.
+        The default takes the manager it is handed and applies
+        "filter_queryset". Same name and signature as the
+        "DjangoModelType" hook, so an override moves between the two hosts
+        unchanged.
+
+        Args:
+            manager: Default manager or queryset to scope.
+            info: The GraphQL resolve info for the current request.
+            **kwargs: Extra arguments forwarded to "filter_queryset".
+
+        Returns:
+            The scoped queryset to resolve the target row from.
+        """
+        qs = manager.all() if isinstance(manager, Manager) else manager
+        return cls.filter_queryset(qs, info, **kwargs)
+
+    @classmethod
+    def filter_queryset(
+        cls, qs: QuerySet, info: GraphQLResolveInfo, **kwargs: Any
+    ) -> QuerySet:
+        """Scope the queryset per request.
+
+        This is a hook meant to be overridden. The default returns "qs"
+        unchanged. Unlike "DjangoModelType" this host has no read
+        operations, so the scope applies to "update" and "delete" only.
+
+        Args:
+            qs: Queryset to scope.
+            info: The GraphQL resolve info for the current request.
+            **kwargs: Extra arguments available for scoping.
+
+        Returns:
+            The (optionally) scoped queryset.
+        """
+        return qs
+
+    @classmethod
     def delete(
         cls, root: Any, info: GraphQLResolveInfo, **kwargs: Any
     ) -> DjangoModelMutation:
@@ -645,7 +690,13 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         """
         pk = kwargs.get("id")
 
-        old_obj = get_Object_or_None(cls._meta.model, pk=pk)
+        # SECURITY: resolve the target row through "get_queryset" ->
+        # "filter_queryset", never the bare model, so a declared scope hides a
+        # row from a write exactly as it does on "DjangoModelType". A row
+        # outside the scope answers as missing, so the response cannot be used
+        # to probe another tenant's primary keys.
+        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             old_obj.delete()
             setattr(old_obj, old_obj._meta.pk.attname, pk)
@@ -686,7 +737,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         # (never a 500). NOTE: nested (``Meta.nested_fields``) inputs treat
         # ``null``/``[]``/``{}`` as a NO-OP (see ``NestedMutationMixin`` in
         # ``nested.py``); that asymmetry is deliberate and documented there.
-        old_obj = get_Object_or_None(cls._meta.model, pk=pk)
+        # SECURITY: same scoped lookup as ``delete`` -- see the comment there.
+        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(
                 root,

@@ -404,6 +404,11 @@ def _default_value_for(field_info: Any) -> Any:
       default (e.g. ``list``) yields one shared default instance baked into the
       SDL — this matches graphql-core's static-default model and never re-runs
       the factory per request.
+    - a Pydantic 2.10+ VALIDATED-DATA factory (``default_factory=lambda data:
+      ...``) -> graphql-core ``Undefined``. Such a factory needs the partially
+      validated instance data, so it has no compile-time value and cannot be a
+      static SDL default; Pydantic still applies it per instance at validation
+      time.
 
     Returns:
         The graphql-core ``default_value`` (``Undefined`` when there is none).
@@ -411,6 +416,9 @@ def _default_value_for(field_info: Any) -> Any:
     from pydantic_core import PydanticUndefined
 
     if field_info.default_factory is not None:
+        if getattr(field_info, "default_factory_takes_validated_data", False):
+            # Needs the validated data -> no compile-time value exists.
+            return Undefined
         # Single evaluation: call the factory exactly once at compile time.
         return field_info.default_factory()
     if field_info.default is PydanticUndefined:

@@ -1163,3 +1163,45 @@ class CrudNodeDoc(DummyModel):
 
     title = models.CharField(max_length=100)
     is_public = models.BooleanField(default=True)
+
+
+class BinaryDoc(DummyModel):
+    """Row carrying the field types whose Python value is not JSON-safe.
+
+    "attachment" yields a "FieldFile" and "blob" yields "bytes" (or "memoryview"
+    once reloaded), so it pins the subscription serializer against the model
+    kinds that used to crash every broadcast.
+    """
+
+    label = models.CharField(max_length=100)
+    attachment = models.FileField(upload_to="docs/", blank=True)
+    blob = models.BinaryField(default=b"")
+
+
+# --- audit-FK ambiguity models (nested-list relation scoping) -------------- #
+class AuditEditor(DummyModel):
+    """A parent model reached by TWO distinct foreign keys from one child.
+
+    Paired with "AuditArticle" so the nested-list relation scoping can be
+    proven against a child that points back at the same parent more than once
+    ("created_by" and "updated_by"), the audit-column shape that made
+    "get_extra_filters" AND every relation together.
+    """
+
+    name = models.CharField(max_length=100)
+
+
+class AuditArticle(DummyModel):
+    """A child carrying two foreign keys to the SAME parent model.
+
+    "created_by" and "updated_by" both target "AuditEditor", so scoping a
+    nested list on one of them must not also require the other to match.
+    """
+
+    title = models.CharField(max_length=100)
+    created_by = models.ForeignKey(
+        AuditEditor, related_name="created_articles", on_delete=models.CASCADE
+    )
+    updated_by = models.ForeignKey(
+        AuditEditor, related_name="updated_articles", on_delete=models.CASCADE
+    )

@@ -541,4 +541,9 @@ class Query(ObjectType):
     users = DjangoListObjectField(UserListType)
 ```
 
+A prefetch declared here for a relation the optimizer also derives from the
+selection is **replaced** by the derived (narrowed, filtered) version rather than
+colliding with it; prefetches of other relations are kept. See
+[Query Optimization](../usage/query-optimization.md#custom-resolvers).
+
 This API reference provides comprehensive documentation for all field classes in `django-graphex`, enabling developers to effectively use and customize GraphQL fields for their Django applications.

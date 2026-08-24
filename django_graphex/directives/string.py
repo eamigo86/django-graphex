@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import base64
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from django.utils.text import slugify
 from graphql import (
     GraphQLArgument,
     GraphQLBoolean,
     GraphQLError,
+    GraphQLFloat,
     GraphQLInt,
     GraphQLNonNull,
     GraphQLString,
+    get_named_type,
 )
 
 from django_graphex._strconv import to_camel_case, to_snake_case
@@ -128,12 +130,56 @@ def _as_str(value: Any) -> str:
     return value if isinstance(value, str) else str(value)
 
 
+def _apply_str(value: Any, transform: Callable[[str], Any]) -> Any:
+    """Apply "transform" to the stringified value, passing NULL through.
+
+    The single null policy for the whole string-directive family. Without it
+    every directive stringified "None" and answered with the literal text
+    "None" ("@uppercase" -> "NONE", "@slugify" -> "none"), which reads as data
+    corruption on the client side and contradicts the numeric family, whose
+    directives already return None for a None value.
+
+    Args:
+        value: The resolved field value.
+        transform: The callable applied to the stringified value.
+
+    Returns:
+        The transformed value, or None when the field value is None.
+    """
+    if value is None:
+        return None
+    return transform(_as_str(value))
+
+
+def _serializes_string(info: GraphQLResolveInfo) -> bool:
+    """Report whether the field can serialize a formatted string.
+
+    "@number" and "@currency" always produce a formatted string, which the
+    "Int" and "Float" fields they are documented for can never serialize:
+    graphql-core rejects the value and the field nulls with an opaque coercion
+    error. Detecting that lets the directives hand the raw numeric value back
+    instead of destroying the response.
+
+    Args:
+        info: The GraphQL resolve info for the field.
+
+    Returns:
+        False when the field's unwrapped return type is "Int" or "Float", True
+        otherwise (including when the return type is unknown).
+    """
+    return get_named_type(getattr(info, "return_type", None)) not in (
+        GraphQLInt,
+        GraphQLFloat,
+    )
+
+
 class DefaultGraphQLDirective(BaseExtraGraphQLDirective):
-    """Substitute a fallback value when the field is None or empty.
+    """Substitute a fallback value when the field is None or an empty string.
 
     The required "to" argument supplies the replacement, returned whenever the
-    field value is falsy (None or an empty string); otherwise the original value
-    is passed through.
+    field value is None or the empty string; otherwise the original value is
+    passed through. Other falsy values (0, False, an empty list) are legitimate
+    data and are NEVER substituted.
     """
 
     @staticmethod
@@ -168,9 +214,14 @@ class DefaultGraphQLDirective(BaseExtraGraphQLDirective):
             info: The GraphQL resolve info for the field.
 
         Returns:
-            The "to" argument when the value is empty, else the value.
+            The "to" argument when the value is None or the empty string, else
+            the value unchanged.
         """
-        if not value:
+        # Test for None / "" explicitly: a bare falsiness test also caught 0,
+        # False and [], replacing legitimate data with the fallback STRING and
+        # then hard-failing serialization ("Expected Iterable, but did not find
+        # one", "Int cannot represent non-integer value").
+        if value is None or value == "":
             return args.get("to")
         return value
 
@@ -243,6 +294,11 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
     ".2f"). The value is coerced to float first, then formatted. The spec's
     width and precision are bounded to guard against memory exhaustion from
     hostile client-supplied specs.
+
+    The result is a string, so the directive only applies on fields that can
+    serialize one. On an "Int" or "Float" field the raw value is returned
+    unchanged instead: handing those a formatted string nulls the field with an
+    opaque graphql-core coercion error.
     """
 
     @staticmethod
@@ -278,7 +334,8 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
             info: The GraphQL resolve info for the field.
 
         Returns:
-            The value formatted with the given Python format spec.
+            The value formatted with the given Python format spec, or the value
+            unchanged when the field cannot serialize a string.
 
         Raises:
             GraphQLError: When the format spec's width or precision exceeds
@@ -294,6 +351,10 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
                 f"@number format spec width/precision must not exceed "
                 f"{_NUMBER_FORMAT_MAX_WIDTH}; got {spec!r}"
             )
+        # The spec cap above still applies on every field type; only the
+        # formatting itself is skipped where the result could not serialize.
+        if not _serializes_string(info):
+            return value
         # Coerce the value to float first; blame the VALUE on failure.
         try:
             float_value = float(value or 0)
@@ -313,6 +374,11 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
 
     The value is rendered with thousands separators and two decimal places,
     prefixed by the optional "symbol" argument (defaulting to "$").
+
+    The result is a string, so the directive only applies on fields that can
+    serialize one. On an "Int" or "Float" field the raw value is returned
+    unchanged instead: handing those a formatted string nulls the field with an
+    opaque graphql-core coercion error.
     """
 
     @staticmethod
@@ -347,11 +413,14 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
             info: The GraphQL resolve info for the field.
 
         Returns:
-            The value formatted as currency prefixed with the symbol.
+            The value formatted as currency prefixed with the symbol, or the
+            value unchanged when the field cannot serialize a string.
 
         Raises:
             GraphQLError: When the value cannot be interpreted as a number.
         """
+        if not _serializes_string(info):
+            return value
         symbol = args.get("symbol") or "$"
         try:
             return symbol + format(float(value or 0), ",.2f")
@@ -388,7 +457,7 @@ class LowercaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The lowercased string.
         """
-        return _as_str(value).lower()
+        return _apply_str(value, str.lower)
 
 
 class UppercaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -418,7 +487,7 @@ class UppercaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The uppercased string.
         """
-        return _as_str(value).upper()
+        return _apply_str(value, str.upper)
 
 
 class CapitalizeGraphQLDirective(BaseExtraGraphQLDirective):
@@ -449,7 +518,7 @@ class CapitalizeGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The capitalized string.
         """
-        return _as_str(value).capitalize()
+        return _apply_str(value, str.capitalize)
 
 
 class CamelCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -479,7 +548,7 @@ class CamelCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The camelCased string.
         """
-        return to_camel_case(_as_str(value))
+        return _apply_str(value, to_camel_case)
 
 
 class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -509,7 +578,9 @@ class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The snake_cased string.
         """
-        return to_snake_case(_as_str(value).title().replace(" ", ""))
+        return _apply_str(
+            value, lambda text: to_snake_case(text.title().replace(" ", ""))
+        )
 
 
 class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -539,7 +610,7 @@ class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The kebab-cased string.
         """
-        return to_kebab_case(_as_str(value))
+        return _apply_str(value, to_kebab_case)
 
 
 class SwapCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -569,7 +640,7 @@ class SwapCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The string with swapped character cases.
         """
-        return _as_str(value).swapcase()
+        return _apply_str(value, str.swapcase)
 
 
 class StripGraphQLDirective(BaseExtraGraphQLDirective):
@@ -615,7 +686,7 @@ class StripGraphQLDirective(BaseExtraGraphQLDirective):
             The string with the requested characters stripped.
         """
         # chars=None -> str.strip() removes all whitespace (spaces, tabs, ...).
-        return _as_str(value).strip(args.get("chars"))
+        return _apply_str(value, lambda text: text.strip(args.get("chars")))
 
 
 class TitleCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -645,7 +716,7 @@ class TitleCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The titlecased string.
         """
-        return _as_str(value).title()
+        return _apply_str(value, str.title)
 
 
 class CenterGraphQLDirective(BaseExtraGraphQLDirective):
@@ -690,13 +761,16 @@ class CenterGraphQLDirective(BaseExtraGraphQLDirective):
             info: The GraphQL resolve info for the field.
 
         Returns:
-            The centered string padded to the requested width.
+            The centered string padded to the requested width, or None when the
+            field value is None.
 
         Raises:
             GraphQLError: When the requested width exceeds "_CENTER_MAX_WIDTH"
                 (this cap prevents a single field from allocating a huge string),
                 or when "fillchar" is not exactly one character.
         """
+        if value is None:
+            return None
         value = _as_str(value)
         width = args.get("width")
         if width is None:
@@ -765,12 +839,15 @@ class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):
             info: The GraphQL resolve info for the field.
 
         Returns:
-            The string with occurrences of "old" replaced by "new". When
-            "count" is given only the first "count" occurrences are replaced.
+            The string with occurrences of "old" replaced by "new", or None
+            when the field value is None. When "count" is given only the first
+            "count" occurrences are replaced.
         """
         count = args.get("count")
         count = -1 if count is None else int(count)
-        return _as_str(value).replace(args.get("old"), args.get("new"), count)
+        return _apply_str(
+            value, lambda text: text.replace(args.get("old"), args.get("new"), count)
+        )
 
 
 class TruncateGraphQLDirective(BaseExtraGraphQLDirective):
@@ -820,10 +897,12 @@ class TruncateGraphQLDirective(BaseExtraGraphQLDirective):
             info: The GraphQL resolve info for the field.
 
         Returns:
-            The string shortened to "length" characters with "end" appended, or
-            the original text when it already fits. Unless "killwords" is true,
-            the cut falls on a word boundary.
+            The string shortened to "length" characters with "end" appended, the
+            original text when it already fits, or None when the field value is
+            None. Unless "killwords" is true, the cut falls on a word boundary.
         """
+        if value is None:
+            return None
         text = _as_str(value)
         length = args.get("length")
         if length is None or len(text) <= length:
@@ -865,4 +944,4 @@ class SlugifyGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The URL-safe slug produced by Django's "slugify".
         """
-        return slugify(_as_str(value))
+        return _apply_str(value, slugify)

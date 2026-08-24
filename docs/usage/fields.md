@@ -120,7 +120,7 @@ position:
 | `type` | both | The field's type — a graphql-core type, a `DjangoObjectType` reference (output), or an `InputType` reference (input). |
 | `required` | both | Wraps the type in non-null (`T!`). |
 | `description` | both | Field / argument description. |
-| `name` | both | Explicit wire name (skips camelCase on output; drives `out_name` on input). |
+| `name` | both | Explicit wire name (skips camelCase on output — in *every* output position, root or nested; drives `out_name` on input). |
 | `deprecation_reason` | both | Marks the field / argument `@deprecated(reason: ...)`. |
 | `source` | output only | Resolve by reading an attribute off the root. |
 | `resolver` | output only | Field-level resolver (wins over the parent resolver). |
@@ -133,6 +133,15 @@ offending kwarg. Setting `default=` on a `Field` used in an `ObjectType` body
 raises a `TypeError` at output compile time. There is no separate
 `InputField` — the same `Field` (and the same typed shortcuts) work on both
 sides.
+
+`name=` is the escape hatch for an attribute name that collides with a Python
+keyword. It is honoured wherever the field is declared — on a root, on a
+mutation payload, and on any nested `ObjectType`:
+
+```python
+class Booking(ObjectType):
+    date_ = field(GdxDate, name="date")   # renders `date`, not `date_`
+```
 
 ## Django mounting fields
 
@@ -255,6 +264,23 @@ class Query(ObjectType):
     arguments and the pagination/ordering arguments (`limit`, `offset`,
     `ordering`) live directly on the list field. There is no `results` /
     `totalCount` wrapper — for that, use `DjangoListObjectField`.
+
+!!! warning "Mounted on a type: one relation must scope the list"
+    Mounted on a `DjangoObjectType` (rather than on `Query`), the field scopes
+    its rows to the parent row through the relation that points back at the
+    parent. That works only while **exactly one** relation does: a child with
+    `created_by` *and* `updated_by` foreign keys to the same parent — or a
+    foreign key alongside a many-to-many — is ambiguous, and the library now
+    refuses it with `ImproperlyConfigured` naming both relations rather than
+    guessing. It used to apply *all* of them at once, which is a conjunction:
+    the list silently resolved to `[]` for every parent that was not on both
+    sides of every row.
+
+    For an ambiguous child, mount the nested list through its **relation
+    accessor** instead — the auto-generated nested list field, or an explicit
+    `DjangoNestedListObjectField(ArticleListType, accessor="created_articles")`.
+    Reading the accessor names the relation outright, so nothing has to be
+    inferred.
 
 ## DjangoListObjectField
 

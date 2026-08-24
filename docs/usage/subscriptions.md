@@ -51,6 +51,12 @@ The data path:
    and broadcasts the payload to the group. Every subscriber receives the
    notification, projected to the fields it requested.
 
+Broadcast groups are named after the model, the subscription's `Meta.stream` and
+the action, so two subscriptions on the **same model** under different streams
+never receive each other's events — including when they disagree on
+`payload_mode`. Group names are an internal detail; nothing in your code should
+depend on their spelling.
+
 A cross-process channel layer (Redis) is required when the producer (the process
 running model writes) and the subscriber processes are separate; the in-memory
 layer is fine for development.
@@ -297,8 +303,13 @@ The generated subscription honors the type's authorization and scoping:
   (`CREATE` / `UPDATE` / `DELETE` / `ALL_ACTIONS`) is forwarded to the permission
   check, so a class can gate each action independently. Because a subscription
   payload returns instance data, `DjangoModelPermissions` treats a subscribe
-  action as **composite**: it requires the model's `view` permission **plus** the
-  action's write verb (`ALL_ACTIONS` requires every write verb). A user permitted
+  action as **composite**: it requires the codenames of its `perms_map`
+  `subscribe` row **plus** those of the row the action maps to — with the
+  default mapping, the model's `view` permission plus the action's write verb
+  (`ALL_ACTIONS` requires every write verb). Because both halves are resolved
+  through `get_required_permissions`, a subclass that customizes `perms_map`
+  for `subscribe` (or for `create` / `update` / `delete`) is honored here too.
+  A user permitted
   only `CREATE` is therefore denied a `subscribe` for `UPDATE` at **runtime**,
   even if the request reaches the full schema — this is the runtime half of the
   same model that [`PERMISSION_SCOPED_SCHEMA`](settings.md) enforces at the schema
@@ -306,7 +317,10 @@ The generated subscription honors the type's authorization and scoping:
   the action via `has_subscribe_permission(info, model, **kwargs)` (the action
   arrives under `kwargs["subscription_action"]`).
 - **`subscription_scope(info, **kwargs)`** returns a server-forced filter mapping
-  (e.g. `{"owner": info.context.user.pk}`). It is evaluated at subscribe time and
+  (e.g. `{"owner": info.context.user.pk}`). The `info` a subscribe hook receives
+  is the transport's own context object, and it exposes **both** `info.user` and
+  `info.context.user` — the second is the spelling a resolver uses, so hook code
+  reads the same either way. It is evaluated at subscribe time and
   enforced **per event at delivery**, merged over the client `filter` with
   server precedence — the client can neither widen nor drop it. Equality scopes
   on a serialized field (like `owner`) are decided **in memory**, so there is no
@@ -421,14 +435,28 @@ autocomplete** — it introspects the configured endpoint and suggests types,
 fields, arguments and enum values as you type (Ctrl+Space to trigger, Enter/Tab to
 accept). If introspection is disabled on the server, autocomplete falls back to
 GraphQL keywords only. The endpoints default to the page's own origin with the
-routes `/ws/graphql/` (WS) and `/graphql` (HTTP); override them if yours differ:
+routes `/ws/graphql/` (WS), `/graphql/stream` (SSE) and `/graphql/` (HTTP);
+override them if yours differ:
 
 ```python
 path(
     "graphql/client/",
-    SubscriptionClientView.as_view(ws_path="/ws/graphql/", http_path="/graphql"),
+    SubscriptionClientView.as_view(
+        ws_path="/ws/graphql/",
+        sse_path="/graphql/stream",
+        http_path="/graphql/",
+    ),
 ),
 ```
+
+!!! warning "`sse_path` is a separate route from `http_path`"
+    The SSE transport is its own view (`subscription_sse_view`) returning
+    `text/event-stream`; `http_path` is the JSON `GraphQLView`. They are
+    different URLs, so the client has a **`sse_path`** of its own. Point it at
+    the JSON endpoint and the POST still returns `200 application/json` — the
+    client shows a connected stream and no data at all, because the body carries
+    no `event:` line. A frame the client cannot recognise is now logged as an
+    error instead of being dropped, so that misconfiguration is visible.
 
 ## 5. Subscribe from a client
 
@@ -551,7 +579,18 @@ speaks this protocol out of the box.
 Protocol violations close the socket with the spec's codes: `4400` malformed
 message, `4401` `subscribe` before the ack, `4408` no `connection_init` within
 the init timeout, `4409` duplicate operation `id`, `4429` a second
-`connection_init`.
+`connection_init`. `4400` covers **any** frame the consumer cannot dispatch —
+including a body that is not valid JSON and a non-string `id` — and the close
+tears down every live operation on that socket first, so a malformed frame can
+never leave a task or a joined group behind.
+
+A failure that happens **after** delivery started is not a close and not an
+`error` frame: it arrives as `{"type": "next", "payload": {"errors": [...]}}`
+followed by the terminal `complete`, so the client always gets a protocol signal
+instead of a stream that goes quiet forever. The SSE transport does the same
+thing with its own framing (`event: next` carrying `errors`, then
+`event: complete`) — once the `200 text/event-stream` response is committed an
+HTTP error is impossible.
 
 ### Unsubscribing
 
@@ -575,7 +614,10 @@ group.
 connection: abort the `fetch()` (`AbortController.abort()`), dispose the
 `graphql-sse` client subscription, or `Ctrl-C` the `curl`. Django ≥ 5.2
 guarantees the disconnect cancels the streaming generator, and the transport's
-cleanup then leaves every joined group — no ghost subscribers.
+cleanup then leaves every joined group — no ghost subscribers. Teardown is also
+registered on the **response** itself, so a client that aborts during the
+subscribe handshake — before the response body is ever read — releases its
+groups too.
 
 ### Filtering notifications
 
@@ -733,6 +775,17 @@ class UserSubscription(Subscription):
         payload_mode = "full"   # full payload for this one; "full"/"id_only"/None
 ```
 
+!!! note "File and binary columns"
+
+    The payload is JSON-encoded before it crosses the channel layer, so the two
+    field kinds whose Python value is not JSON-encodable are converted: a
+    `FileField` / `ImageField` is delivered as its **storage name** (the string
+    its GraphQL `String` output already carries) and a `BinaryField` as
+    **base64** text. Both render as `String` on the event type. Before this,
+    `payload_mode = "full"` on a model carrying either column raised
+    `TypeError: Object of type FieldFile is not JSON serializable` on **every**
+    save.
+
 !!! warning "id-only is the default"
 
     `graphene-django-subscriptions` always sent the full serialized instance.
@@ -856,7 +909,8 @@ engine without going through schema coercion:
 2. every **remaining segment** must be a Django lookup or transform registered
    on that field;
 3. every **remaining segment** must also be one of the four allowed lookups:
-   `exact`, `iexact`, `in`, `isnull`.
+   `exact`, `iexact`, `in`, `isnull`;
+4. the whole mapping must be a query the **ORM itself** can build.
 
 | Filter | Verdict |
 |--------|---------|
@@ -870,10 +924,19 @@ engine without going through schema coercion:
 | `{ created: { gte: "2024-01-01" } }` | rejected — ordered lookup, not declared |
 | `{ created: { year: { gte: 2024 } } }` | rejected — date-part transform, not declared |
 | `{ text: { icontains: "urgent" } }` | rejected — pattern lookup, not declared |
+| `{ tags: { iexact: 3 } }` | rejected — the ORM refuses `iexact` across a to-many join |
 
 Schema rejections arrive as a normal GraphQL validation error and **no** group
 is joined; a runtime rejection likewise raises **before** any group is joined,
 and its message names the offending lookup alongside the allowed ones.
+
+Step 4 exists because a Django field's declared lookup registry is **wider** than
+what the query compiler accepts once a join is involved. A to-many field
+(`tags`) declares `iexact` and then refuses it, so `{ tags: { iexact: 3 } }`
+passed steps 1–3 and blew up at delivery instead — deep inside the stream, after
+the SSE `200` was already committed. The engine now builds the same query at
+subscribe time (no SQL is issued, only the lookup resolution), so an
+unsatisfiable filter is a clean denial with no group joined.
 
 **Why:** the `filter` argument executes as ORM lookups at event-delivery time
 and delivery is observable, so a filter key is a boolean oracle. Rooting it on a

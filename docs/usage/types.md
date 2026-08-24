@@ -595,16 +595,23 @@ class UserModelType(DjangoModelType):
     (e.g. `queryset = User.objects.filter(is_active=True)`). It is honored by the
     generated `RetrieveField()` / `ListField()`.
 
+    The declared queryset is a **template**: it is evaluated once, at class
+    definition, and every request runs a fresh clone of it. It never
+    accumulates a result cache, so it cannot serve stale rows — regardless of
+    the [`OPTIMIZE_QUERYSET`](query-optimization.md) setting.
+
 !!! tip "Optimizer and `Meta.queryset` interplay"
 
     The query optimizer applies `select_related` / `prefetch_related` / `.only()`
     **on top of** the `Meta.queryset` (or the value returned by `get_queryset`).
-    Any manual `select_related`/`prefetch_related` you add in `Meta.queryset` may
-    be *replaced* by the optimizer's own derived version — this is intentional and
-    typically reduces queries further. If you rely on specific prefetch options
-    (e.g. a custom `Prefetch` queryset), use a `per-field optimize_<field>` hook
-    on the parent type instead of embedding them in `Meta.queryset`. See
-    [Query Optimization](query-optimization.md).
+    A manual `prefetch_related` for a relation the optimizer also derives is
+    *replaced* by the derived version — this is intentional and typically reduces
+    queries further; manual prefetches of other relations are kept as they are.
+    (The replacement is what keeps the two from colliding: Django rejects two
+    lookups on the same path, so the query used to fail outright.) If you rely on
+    specific prefetch options (e.g. a custom `Prefetch` queryset), use a
+    `per-field optimize_<field>` hook on the parent type instead of embedding them
+    in `Meta.queryset`. See [Query Optimization](query-optimization.md).
 
 ### Custom queryset & per-request filtering
 
@@ -1229,6 +1236,12 @@ Omitting `specs` leaves the column untouched; passing `specs: null` writes SQL
             return {"theme": "dark"}   # serialized to a JSON string
     ```
 
+    A `JSONString` value is always **valid JSON on the wire**: a resolver
+    returning text that already parses as JSON (`'{"theme": "dark"}'`) is sent
+    verbatim, while any other Python value — including a plain string such as
+    `"dark"` — is `json.dumps`-encoded (`"\"dark\""`), so every value the field
+    emits round-trips back through the same scalar on input.
+
     **Which one do I use?** Reach for the default `JSONField()` (raw `JSON`)
     unless a client specifically expects a JSON **string** — e.g. it stores the
     value verbatim, or you need wire parity with a legacy graphene-django schema
@@ -1253,6 +1266,11 @@ Omitting `specs` leaves the column untouched; passing `specs: null` writes SQL
     query Echo($d: JSON) { echo(data: $d) }
     # variables: { "d": { "a": [1, 2] } }
     ```
+
+    A variable used **inside** an object literal that the request leaves unset
+    simply **drops its key** — `echo(data: { a: $unset, b: 1 })` reaches the
+    resolver as `{"b": 1}` (the same rule graphql-core applies to input-object
+    fields), not as an error.
 
 ## Type Comparison
 

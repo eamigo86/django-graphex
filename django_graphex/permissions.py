@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from .core.perm_labels import required_perms_for
-
 if TYPE_CHECKING:
     from django.db.models import Model
     from graphql import GraphQLResolveInfo
@@ -339,6 +337,11 @@ class DjangoModelPermissions(BasePermission):
     a write-only inbox that maps "create" to "add" alone, dropping the "view"
     requirement).
 
+    A subscribe request that forwards the action it observes ("create" /
+    "update" / "delete" / "all_actions") is gated by the UNION of the
+    "subscribe" row and every write row that action maps to (see
+    "subscribe_actions_map"), so a customized row is honored on both paths.
+
     This class is fail-closed: an unauthenticated user, a missing "model"
     context, or an unknown action is denied. Because it denies when "model" is
     None, it is intended for "DjangoModelType.permission_classes" (where a
@@ -358,6 +361,16 @@ class DjangoModelPermissions(BasePermission):
         "retrieve": ("{app_label}.view_{model_name}",),
         "list": ("{app_label}.view_{model_name}",),
         "subscribe": ("{app_label}.view_{model_name}",),
+    }
+
+    #: Subscription action-value -> the "perms_map" write rows it composes on
+    #: top of the "subscribe" row. Override alongside "perms_map" to support
+    #: extra action-values.
+    subscribe_actions_map: ClassVar[dict[str, tuple[str, ...]]] = {
+        "create": ("create",),
+        "update": ("update",),
+        "delete": ("delete",),
+        "all_actions": ("create", "update", "delete"),
     }
 
     def get_required_permissions(
@@ -423,11 +436,15 @@ class DjangoModelPermissions(BasePermission):
 
         When the native subscribe entry forwards the requested action
         ("create" / "update" / "delete" / "all_actions"), the check is
-        composite: subscribing to a write action requires BOTH "view" AND that
-        action's write verb (a payload returns instance data), mirroring the P0
-        table. Without an action (a caller that never forwards one), it falls
-        back to the generic view-only "subscribe" gate, preserving the
-        pre-change contract.
+        composite: the codenames of the "subscribe" row of "perms_map" PLUS
+        those of every write row the action maps to via
+        "subscribe_actions_map" (a payload returns instance data). With the
+        default "perms_map" that is "view" plus the action's write verb,
+        mirroring the P0 table; a subclass that customizes either mapping is
+        honored, because every codename is resolved through
+        "get_required_permissions". Without an action (a caller that never
+        forwards one), it falls back to the generic view-only "subscribe"
+        gate, preserving the pre-change contract.
 
         This is the RUNTIME half of the defense-in-depth model: even against the
         FULL schema (a bypass of the pruned action enum), a user lacking the
@@ -445,7 +462,8 @@ class DjangoModelPermissions(BasePermission):
 
         Returns:
             allowed: True only when an authenticated user holds every codename
-                the resolved subscribe action requires on "model".
+                the resolved subscribe action requires on "model"; False when
+                the action is unknown or a required "perms_map" row is missing.
         """
         if not _is_authenticated(info):
             return False
@@ -455,9 +473,15 @@ class DjangoModelPermissions(BasePermission):
         if action is None:
             # No action forwarded: fall back to the generic view-only gate.
             return self.has_permission(info, "subscribe", model, **kwargs)
-        try:
-            perms = required_perms_for(model, "subscribe", subaction=action)
-        except KeyError:
+        rows = self.subscribe_actions_map.get(action)
+        if rows is None:
             # Unknown subscribe action -> fail-closed.
             return False
+        perms: set[str] = set()
+        for row in ("subscribe", *rows):
+            required = self.get_required_permissions(row, model)
+            if required is None:
+                # A row the mapping does not cover -> fail-closed.
+                return False
+            perms.update(required)
         return bool(_user(info).has_perms(sorted(perms)))

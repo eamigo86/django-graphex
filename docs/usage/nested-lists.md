@@ -39,6 +39,15 @@ As at the root, **pagination and ordering arguments live on `results`**, while
 }
 ```
 
+!!! note "Custom `@filter_field` filters work here too"
+
+    The nested `filter:` argument uses the **same** `<Model>FilterInput` the
+    root list mounts, so any [`@filter_field`](filtering.md#custom-per-field-filters-filter_field)
+    the node type declares is available on the nested field — and runs, in the
+    same [three-stage order](filtering.md#composition-order) as the root: base
+    scope, then the standard `filter_fields` lookups, then the custom methods.
+    Both `results` and `totalCount` reflect them.
+
 ## Worked example (2 models)
 
 `Author (1) ─→ (N) Post`:
@@ -299,6 +308,9 @@ class AuthorType(DjangoObjectType):
   - `is_window` — `True` when the DB-side window-slice path is taken (i.e.
     `OPTIMIZE_NESTED_PAGINATION=True` and the field is windowed); `False` on all
     plain prefetch paths, including the fallback after a window opt-out.
+- It scopes the **whole** field, not just the rows on screen: `totalCount`
+  counts the hook's row set on every page, including an empty or
+  past-the-end one.
 - When **no** `optimize_<field>` method is declared the optimizer behaves
   byte-identically to the pre-hook baseline — purely additive, zero overhead.
 

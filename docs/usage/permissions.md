@@ -113,7 +113,7 @@ observe actions stay view-only:
 | `delete` | `{app_label}.delete_{model_name}` **and** `{app_label}.view_{model_name}` |
 | `retrieve` | `{app_label}.view_{model_name}` |
 | `list` | `{app_label}.view_{model_name}` |
-| `subscribe` | `{app_label}.view_{model_name}` |
+| `subscribe` | `{app_label}.view_{model_name}` (plus the requested action's row — see below) |
 
 > **Changed in 2.0.0** — write actions (`create` / `update` / `delete`) now also
 > require the `view` permission. A user who could previously write with only the
@@ -174,6 +174,25 @@ class WriteOnlyInbox(DjangoModelPermissions):
 For finer control, override `get_required_permissions(self, action, model)`,
 which returns the list of codenames an action requires (or `None` for an unknown
 action).
+
+A subscribe that forwards the action it observes (`CREATE` / `UPDATE` /
+`DELETE` / `ALL_ACTIONS`, see [Subscriptions](subscriptions.md)) is gated by the
+**union** of the `subscribe` row and every write row that action maps to via
+`subscribe_actions_map` (`"all_actions"` maps to all three). Both halves go
+through `get_required_permissions`, so a customized row applies on this path as
+well:
+
+```python
+class StreamModelPermissions(DjangoModelPermissions):
+    perms_map = {
+        **DjangoModelPermissions.perms_map,
+        # subscribing needs a dedicated codename instead of plain `view`.
+        "subscribe": ("{app_label}.stream_{model_name}",),
+    }
+
+# subscribe(action: CREATE) now requires:
+#   {app}.stream_{model} + {app}.add_{model} + {app}.view_{model}
+```
 
 !!! tip "See the whole permission stack in action"
 

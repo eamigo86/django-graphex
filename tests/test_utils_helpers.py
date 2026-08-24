@@ -25,7 +25,7 @@ from django_graphex.utils import (
     parse_validation_exc,
 )
 
-from .models import Author, BasicModel, Post
+from .models import Author, BasicModel, Comment, Post
 
 
 # --------------------------------------------------------------------------- #
@@ -106,10 +106,16 @@ class RelationHelpersTest(TestCase):
     def test_get_extra_filters_maps_relation_to_root(self) -> None:
         """Ship-broken contract: "get_extra_filters" must map a related
         instance to the foreign-key field that points at it.
+
+        "Comment" is used rather than "Post" because "Post" reaches "Author"
+        through BOTH "author" and "co_authors": that pair is ambiguous and is
+        now refused outright (see the audit regression suite), where before it
+        produced a conjunction that scoped every nested list to the empty set.
         """
         author = Author.objects.create(name="A")
-        filters = get_extra_filters(author, Post)
-        self.assertEqual(filters.get("author"), author)
+        post = Post.objects.create(title="T", author=author)
+        filters = get_extra_filters(post, Comment)
+        self.assertEqual(filters, {"post": post})
 
     def test_get_extra_filters_empty_when_unrelated(self) -> None:
         """Ship-broken contract: "get_extra_filters" must return an empty
@@ -187,14 +193,17 @@ def test_get_type_unwraps_list_and_nonnull() -> None:
 def test_get_queryset_from_model_manager_queryset() -> None:
     """Ship-broken contract: "_get_queryset" must accept a model class, a
     manager, or an existing queryset, always returning a queryset for the
-    right model (and the same object when already a queryset).
+    right model -- and a CLONE, never the caller's own instance, so a
+    long-lived "Meta.queryset" can never accumulate a result cache.
     """
     from_model = _get_queryset(Author)
     assert from_model.model is Author
     from_manager = _get_queryset(Author.objects)
     assert from_manager.model is Author
     qs = Author.objects.all()
-    assert _get_queryset(qs) is qs
+    from_queryset = _get_queryset(qs)
+    assert from_queryset is not qs
+    assert from_queryset.model is Author
 
 
 def test_get_queryset_invalid_raises() -> None:

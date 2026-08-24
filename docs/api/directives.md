@@ -155,6 +155,14 @@ Provides default values for null or empty strings.
 @default(to: "fallback value")
 ```
 
+!!! warning "Only `null` and `""` are substituted"
+
+    Other falsy values are legitimate data and pass through untouched: `0`,
+    `0.0`, `false`, an empty list and an empty object all keep their value.
+    Substituting them would replace a real value with the `to` **string** and
+    then fail serialization (`Int cannot represent non-integer value`,
+    `Expected Iterable, but did not find one`).
+
 #### Arguments
 
 | Argument | Type | Required | Description |
@@ -170,6 +178,14 @@ query {
   }
 }
 ```
+
+!!! info "String directives pass `null` through"
+
+    Every string directive (`@uppercase`, `@lowercase`, `@capitalize`,
+    `@camelCase`, `@snakeCase`, `@kebabCase`, `@swapCase`, `@strip`,
+    `@titleCase`, `@center`, `@replace`, `@truncate`, `@slugify`) returns
+    `null` for a `null` field value instead of rendering the literal text
+    `"None"`. This matches `@floor`, `@ceil`, `@round` and `@abs`.
 
 ### Base64GraphQLDirective
 
@@ -437,6 +453,15 @@ query {
   }
 }
 ```
+
+!!! warning "`@number` and `@currency` only format `String` fields"
+
+    Both directives produce a formatted **string**. A field typed `Int` or
+    `Float` cannot serialize one, so on those fields the raw value is returned
+    unchanged and the formatting is skipped. Expose the value as a `String`
+    field (or a resolver returning a string) when you want the formatting to
+    apply. The format-spec width/precision cap still applies on every field
+    type.
 
 ### Mathematical Directives
 

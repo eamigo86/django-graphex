@@ -83,19 +83,31 @@ def to_snake_case(value: str) -> str:
 
 
 def props(cls: type) -> dict[str, object]:
-    """Return only the non-underscore attributes of "cls".
+    """Return the non-underscore attributes of "cls", INHERITED ones included.
 
-    Equivalent to graphene's "props" helper, i.e. a comprehension keeping only
-    the "vars(cls)" entries whose name does not start with an underscore.
+    Like graphene's "props" helper, the whole class hierarchy is read, not just
+    the class body: graphene resolves attributes through "dir(cls)". A
+    "vars(cls)"-only comprehension SILENTLY drops every inherited attribute, so
+    factoring shared mutation arguments into a base class
+    ("class Arguments(CommonArgs)") shipped a schema missing them, with no error
+    anywhere.
+
+    The MRO is walked in reverse (base classes first) rather than through
+    "dir(cls)" so declaration order survives and the most-derived class wins on
+    a name collision; "dir" sorts alphabetically, which would reshuffle the
+    compiled argument order in the SDL.
 
     Args:
         cls: Any class object.
 
     Returns:
-        attrs: A dict of "{attr_name: attr_value}" for attrs whose name does
-            NOT start with "_".
+        attrs: A dict of "{attr_name: attr_value}" for every attribute of the
+            class and its bases whose name does NOT start with "_".
     """
-    return {k: v for k, v in vars(cls).items() if not k.startswith("_")}
+    attrs: dict[str, object] = {}
+    for klass in reversed(cls.__mro__):
+        attrs.update((k, v) for k, v in vars(klass).items() if not k.startswith("_"))
+    return attrs
 
 
 # ---------------------------------------------------------------------------
