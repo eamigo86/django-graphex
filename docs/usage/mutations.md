@@ -246,16 +246,54 @@ which primary keys exist. `create` has no target row, so nothing is scoped there
 
 ### Automatic multipart uploads
 
-The mutation automatically handles file uploads when the request content type is `multipart/form-data`:
+When the request content type is `multipart/form-data`, a part named after a
+`FileField` / `ImageField` the mutation input **exposes** is merged into the
+payload and saved to that field. Both hosts do it, on create and on update, and
+no extra configuration is needed:
 
 ```python
 from .models import Profile
 
-# The mutation will automatically handle avatar uploads (ImageField on the model)
+# A multipart part named "avatar" lands on Profile.avatar (an ImageField).
 class ProfileMutation(DjangoModelMutation):
     class Meta:
         model = Profile
 ```
+
+The GraphQL input field stays `String` — the file itself never travels through
+the GraphQL variables. Send the operation and the file in one
+`multipart/form-data` request: the part carrying the JSON body under whatever
+key your view reads, plus one part per file named after the model field. The
+same field also accepts a plain **storage path string**, which is what a query
+returns for it, so a value read back can be written back unchanged. Anything
+else — a number, a list, an object — comes back as a normal validation error,
+and a path longer than the column's `max_length` is rejected before it reaches
+the database.
+
+!!! important "Name the part after the model attribute"
+
+    The part name is matched against the model's **snake_case** attribute, not
+    the camelCase alias the field is published under: `profile_photo`, never
+    `profilePhoto`. A part matching no exposed input field is ignored — the
+    mutation still answers `ok: true` and simply saves no file — so a
+    misspelled or camelCased part name looks like success with nothing written.
+
+    A field the type projects away with `Meta.exclude_fields`, or leaves out of
+    `Meta.only_fields`, is not an exposed input field: a part named after it is
+    ignored like any other, so a projection cannot be walked around through the
+    multipart body.
+
+!!! warning "Top-level fields only"
+
+    The merge is flat and keyed by the bare form-field name, so it can only
+    address a field on the model the mutation is bound to. A file field on a
+    child declared in [`Meta.nested_fields`](#nested-fields-support) is **not**
+    reachable: no part name addresses one. Naming a part after the relation
+    itself is worse than useless — the upload replaces the nested payload and
+    the nested handler then fails on it, so do not do it. Write the child first
+    through its own mutation, or use the
+    [base64 upload input](#file-upload-support) below, which travels inside the
+    GraphQL variables and therefore nests.
 
 ### Error Handling
 

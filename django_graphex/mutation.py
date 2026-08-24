@@ -29,6 +29,7 @@ from .nested import (
 )
 from .registry import get_global_registry
 from .types import DjangoInputObjectType, DjangoObjectType
+from .uploads import merge_uploaded_files
 from .utils import get_Object_or_None, not_found_error
 
 if TYPE_CHECKING:
@@ -862,9 +863,11 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             A mutation response carrying the created object or errors.
         """
         data = kwargs.get(cls._meta.input_field_name)
-        request_type = info.context.META.get("CONTENT_TYPE", "")
-        if "multipart/form-data" in request_type:
-            data.update({name: value for name, value in info.context.FILES.items()})
+        merge_uploaded_files(
+            data,
+            info,
+            cls._meta.arguments["create"][cls._meta.input_field_name].type,
+        )
 
         ok, obj = cls.save_with_nested(
             root,
@@ -964,9 +967,11 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             A mutation response carrying the updated object or errors.
         """
         data = kwargs.get(cls._meta.input_field_name)
-        request_type = info.context.META.get("CONTENT_TYPE", "")
-        if "multipart/form-data" in request_type:
-            data.update({name: value for name, value in info.context.FILES.items()})
+        merge_uploaded_files(
+            data,
+            info,
+            cls._meta.arguments["update"][cls._meta.input_field_name].type,
+        )
 
         # Use .pop('id', None) so that an update input where 'id' was excluded
         # via only_fields/exclude_fields does not raise KeyError.  A None pk

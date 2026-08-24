@@ -213,22 +213,13 @@ def _upload() -> SimpleUploadedFile:
     return SimpleUploadedFile("hello.txt", b"hello-bytes", content_type="text/plain")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN DEFECT: the pydantic schema types a FileField as str "
-        "(core/fields.py _STR), so the UploadedFile merged from "
-        "info.context.FILES is rejected with 'Input should be a valid string' "
-        "and no multipart upload can ever be saved."
-    ),
-)
 @pytest.mark.django_db
 def test_create_saves_a_real_uploaded_file_to_a_file_field() -> None:
     """Assert "create" stores an uploaded file's bytes on the model's FileField.
 
-    Marked strict-xfail while the defect stands: the day the write path accepts
-    an "UploadedFile" this test starts passing and strict mode turns that
-    unexpected pass into a failure, so the guard cannot rot.
+    This test breaks if the derived Pydantic schema stops accepting a file
+    object on a file field -- the defect that typed it as "str" and rejected
+    every multipart upload with "Input should be a valid string".
     """
     info = _info("multipart/form-data; boundary=x", {"attachment": _upload()})
     with tempfile.TemporaryDirectory() as media, override_settings(MEDIA_ROOT=media):
@@ -246,22 +237,13 @@ def test_create_saves_a_real_uploaded_file_to_a_file_field() -> None:
             )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN DEFECT: the pydantic schema types a FileField as str "
-        "(core/fields.py _STR), so the UploadedFile merged from "
-        "info.context.FILES is rejected with 'Input should be a valid string' "
-        "and no multipart upload can ever be saved."
-    ),
-)
 @pytest.mark.django_db
 def test_update_saves_a_real_uploaded_file_to_a_file_field() -> None:
     """Assert "update" stores an uploaded file's bytes on the model's FileField.
 
-    Marked strict-xfail while the defect stands: the day the write path accepts
-    an "UploadedFile" this test starts passing and strict mode turns that
-    unexpected pass into a failure, so the guard cannot rot.
+    This test breaks if the derived partial schema stops accepting a file
+    object on a file field, which sent every multipart update back as a
+    validation error.
     """
     doc = BinaryDoc.objects.create(label="orig")
     info = _info("multipart/form-data; boundary=x", {"attachment": _upload()})

@@ -1153,7 +1153,8 @@ How Django model fields map to GraphQL **output** types:
 | `*RangeField` (Integer/BigInteger/Decimal/Date/DateTime) | a `{ lower, upper }` composite typed by the bound scalar |
 | `JSONField` | the `JSON` scalar — **raw** structured JSON on the wire (see [below](#jsonfield-json)) |
 | `GenericForeignKey` | a typed union when declared in `Meta.unions`, otherwise a flat `GenericForeignKeyType` |
-| File/image, `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
+| `FileField` / `ImageField` | `String` — the storage name on output; on input, a storage path **or** the file a multipart part carries (see [Mutations › Automatic multipart uploads](mutations.md#automatic-multipart-uploads)) |
+| `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
 
 Worked example — `ArrayField` (incl. a `choices` base) and a range field:
 

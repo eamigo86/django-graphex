@@ -1178,6 +1178,31 @@ class BinaryDoc(DummyModel):
     blob = models.BinaryField(default=b"")
 
 
+class UploadDoc(DummyModel):
+    """Row dedicated to the multipart upload path on both mutation hosts.
+
+    Its "attachment" carries a deliberately SHORT "max_length" so the storage
+    path branch of the file scalar can be proven to still enforce the column
+    width -- a plain string longer than the column would otherwise reach the
+    database.
+    """
+
+    label = models.CharField(max_length=50)
+    attachment = models.FileField(upload_to="uploads/", max_length=40, blank=True)
+
+
+class ProjectedUploadDoc(DummyModel):
+    """Row for the host that projects its file column off the mutation input.
+
+    Dedicated rather than shared with "UploadDoc": the output-type reuse guard
+    refuses a projection on a model another host already registered, so the
+    projected host needs a model nobody else claims.
+    """
+
+    label = models.CharField(max_length=50)
+    attachment = models.FileField(upload_to="uploads/", max_length=40, blank=True)
+
+
 # --- audit-FK ambiguity models (nested-list relation scoping) -------------- #
 class AuditEditor(DummyModel):
     """A parent model reached by TWO distinct foreign keys from one child.

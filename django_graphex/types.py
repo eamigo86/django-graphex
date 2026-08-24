@@ -31,6 +31,7 @@ from .paginations.pagination import BaseDjangoGraphqlPagination
 from .permissions import supported_kwargs
 from .registry import Registry, get_global_registry
 from .settings import graphql_api_settings
+from .uploads import merge_uploaded_files
 from .utils import (
     _apply_optimizations,
     apply_object_type_get_queryset,
@@ -3035,9 +3036,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         """
         data = kwargs.get(cls._meta.input_field_name)
         cls.authorize(info, "create", data=data)
-        request_type = info.context.META.get("CONTENT_TYPE", "")
-        if "multipart/form-data" in request_type:
-            data.update({name: value for name, value in info.context.FILES.items()})
+        merge_uploaded_files(
+            data,
+            info,
+            cls._meta.arguments["create"][cls._meta.input_field_name].type,
+        )
 
         ok, obj = cls.save_with_nested(root, info, data, instance=None)
         if not ok:
@@ -3091,9 +3094,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         """
         data = kwargs.get(cls._meta.input_field_name)
         cls.authorize(info, "update", data=data)
-        request_type = info.context.META.get("CONTENT_TYPE", "")
-        if "multipart/form-data" in request_type:
-            data.update({name: value for name, value in info.context.FILES.items()})
+        merge_uploaded_files(
+            data,
+            info,
+            cls._meta.arguments["update"][cls._meta.input_field_name].type,
+        )
 
         # Use .pop('id', None) so that an update input where 'id' was excluded
         # via only_fields/exclude_fields does not raise KeyError.  A None pk

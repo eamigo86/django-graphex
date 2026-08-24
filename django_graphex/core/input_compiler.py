@@ -298,6 +298,16 @@ def _python_type_to_gql(py_type: Any) -> Any:
     if py_type in native_map:
         return native_map[py_type]
 
+    # FileField/ImageField -> the ``FileScalar`` marker. Matched by ``issubclass``
+    # (not the identity lookup above) because the type resolver mints a per-column
+    # -width SUBCLASS. The wire type stays ``String``: a client writes a storage
+    # path, and a real upload arrives out of band in the multipart body, so
+    # introducing an ``Upload`` scalar here would be a breaking wire change.
+    from django_graphex.core.fields import FileScalar
+
+    if isinstance(py_type, type) and issubclass(py_type, FileScalar):
+        return GraphQLString
+
     # Nested input model (InputType / BaseModel subclass) -> its compiled input.
     nested = _resolve_input_model_type(py_type)
     if nested is not None:

@@ -106,6 +106,36 @@ forbids, or declare the read host with `model_operations = ("list", "retrieve")`
 
 ### Fixed
 
+- **A multipart upload to a `FileField` / `ImageField` could never be saved.**
+  The merge that folds `request.FILES` into the input payload has been there
+  since the first release, but the derived validation schema typed a file column
+  as a plain string, so the uploaded file it merged came straight back as
+  `{ ok: false, errors: [{ field: "attachment", messages: ["Input should be a
+  valid string"] }] }` — on create and on update, on both mutation hosts, with
+  no way to opt out, since the derived annotation overrides whatever a
+  `Meta.pydantic_model` base declares. A file column is now typed with a marker
+  that accepts exactly the two shapes it can hold: an uploaded file object, and
+  the storage path string a query reads back. Every other shape is still a
+  structured validation error rather than a crash at save time, and the column's
+  `max_length` still constrains the string branch. Nothing moves on the wire —
+  the field is `String` on input and on output, as before.
+
+    The merge now honours the input projection, which matters precisely because
+    the value validates: while a file could never be saved, a part named after a
+    column the type hides with `Meta.exclude_fields` was merged and then thrown
+    out by validation, so nothing landed. Making the value valid would have
+    turned that same merge into a live write reaching a column the wire surface
+    deliberately does not expose. Only a part naming a field the input actually
+    publishes is merged; anything else is ignored, and the part must carry the
+    model's snake_case attribute name rather than its camelCase alias.
+
+    The merge is flat, so it still reaches only the model the mutation is bound
+    to. A file field on a child declared in `Meta.nested_fields` remains
+    unreachable, and naming a multipart part after a nested relation still
+    replaces the nested payload and fails in the nested handler. That gap is
+    unchanged by this fix and is now documented where the feature is described;
+    for nested uploads use the base64 input.
+
 - **`Meta.nested_fields` dropped the child's declared input projection.** The
   nested child input was never derived from the child's own type — it was
   whatever object happened to occupy the shared `(child model, operation)`

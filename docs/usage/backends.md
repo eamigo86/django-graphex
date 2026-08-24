@@ -147,9 +147,9 @@ class UserType(DjangoModelType):
 
 ### Exotic field types fall back to a permissive scalar
 
-File/image fields, `HStoreField`, GIS geometry fields, and `GenericForeignKey`
-are not natively modeled by the Pydantic schema the backend derives. They are
-accepted as-is (permissive scalar) without type or length validation.
+`HStoreField`, GIS geometry fields, and `GenericForeignKey` are not natively
+modeled by the Pydantic schema the backend derives. They are accepted as-is
+(permissive scalar) without type or length validation.
 
 `ArrayField` and range fields ARE natively modeled in v2.0 output:
 `ArrayField(CharField())` renders as `[String]` (nested arrays as `[[…]]`, a
@@ -158,9 +158,15 @@ composite typed by its bound scalar (e.g. `IntegerRangeField` → `{ lower: Int,
 upper: Int }`). See the field-type conversion reference in
 [Types](types.md).
 
-**In practice:** a file upload is handled by the multipart middleware, not
-Pydantic; the remaining exotic fields above pass through without constraint
-checks. If you need validation on these, use a `validate_<field>()` method.
+**In practice:** the fields above pass through without constraint checks. If you
+need validation on these, use a `validate_<field>()` method.
+
+`FileField` and `ImageField` are **not** in that list: the derived schema types
+them with a dedicated marker that accepts exactly two shapes — an uploaded file
+object (what Django's multipart parser puts in `request.FILES`) and a storage
+path string — and rejects anything else with a structured error. The column's
+`max_length` still constrains the string branch. See
+[Automatic multipart uploads](mutations.md#automatic-multipart-uploads).
 
 ### Conditional and expression-based `UniqueConstraint` entries are DB-enforced only
 
