@@ -107,12 +107,12 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DjangoInputObjectType` on hand-written mutation | ✅ | `CategoryInput` / `createCategory` |
 | Nested writes (`nested_fields` — reverse FK) | ✅ | `PostWithCommentsMutation` → `postWithCommentsCreate` |
 | **Permissions** | | |
-| `BasePermission` (custom subclass) | ✅ | `schema.py` — `IsOwnerOrReadOnly` |
-| `AllowAny` | ✅ | imported; available for `permission_classes` |
-| `IsAuthenticated` | ✅ | imported; available for `permission_classes` |
-| `IsAuthenticatedOrReadOnly` | ✅ | `NoteModelType.permission_classes` |
-| `IsAdmin` | ✅ | imported; available for `permission_classes` |
-| `IsAdminOrReadOnly` | ✅ | imported; available for `permission_classes` |
+| `BasePermission` (custom subclass) | declared only | `schema.py` — `IsOwnerOrReadOnly` shows the per-action `has_<action>_permission` pattern, but no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
+| `AllowAny` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
+| `IsAuthenticated` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
+| `IsAuthenticatedOrReadOnly` | ✅ | `NoteModelType.permission_classes` — the only permission class this playground actually enforces |
+| `IsAdmin` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
+| `IsAdminOrReadOnly` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
 | **Security / middleware** | | |
 | `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
 | `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE |
@@ -145,7 +145,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | Per-content-type `GenericPrefetch` narrowing (Django 5.0+) | ✅ | One `.only()`-narrowed queryset per content type (`AccountType.balance`, `InvoiceType.amount`), batched across all attachments |
 | `GenericForeignKey` / `GenericRelation` prefetch | ✅ / wired | `Attachment.target` (GFK) exercised by the seed; `Post.attachments` (reverse `GenericRelation`) is wired but left empty so the GFK-union demo stays runnable |
 | **File uploads (v1.3.0)** | | |
-| `Base64FileInput` (opt-in) | ✅ | `schema.py` — `UploadDocument` mutation; `Document` model has a `FileField`. Try: `mutation { uploadDocument(name: "readme" file: {filename: "readme.txt" data: "<base64>" contentType: "text/plain"}) { ok name } }` |
+| `Base64FileInput` (opt-in) | ✅ | `schema.py` — `UploadDocument` mutation; `Document` model has a `FileField`. Try: `mutation { uploadDocument(name: "readme" file: {filename: "readme.txt" data: "<base64>" contentType: "text/plain"}) { ok name document { id name created } } }` — the `document` payload field is what mounts `DocumentType` on the schema |
 | `MAX_UPLOAD_SIZE` | ✅ | `config/settings.py` — `5 * 1024 * 1024` (5 MB) |
 | `MAX_REQUEST_BODY_SIZE` | ✅ | `config/settings.py` — `20 * 1024 * 1024` (20 MB body guard, fires before JSON parse) |
 | **Response caching** | | |
@@ -591,7 +591,7 @@ every user's notes.
 
 ```graphql
 subscription {
-  noteSubscription(action: ALL_ACTIONS) { id text }
+  noteSubscription(action: ALL_ACTIONS) { id title }
 }
 ```
 

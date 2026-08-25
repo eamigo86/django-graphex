@@ -20,20 +20,16 @@ class BaseDjangoGraphqlPagination(object)
 
 These methods must be implemented by subclasses:
 
-#### `get_pagination_field(type)`
+#### `to_graphql_fields(*, native=True)`
 
-Get a pagination field for the given GraphQL type.
+Convert pagination parameters to graphql-core field arguments — the arguments
+the paginator adds to the `results(...)` subfield.
 
 **Parameters:**
-- `type` (`ObjectType`): GraphQL type to paginate
+- `native` (`bool`): accepted for signature compatibility and ignored; the
+  build path is native-only
 
-**Returns:** `GenericPaginationField` instance
-
-#### `to_graphql_fields()`
-
-Convert pagination parameters to GraphQL field arguments.
-
-**Returns:** `dict` of GraphQL field arguments
+**Returns:** `dict` of `graphql.GraphQLArgument`
 
 #### `to_dict()`
 
@@ -50,6 +46,37 @@ Paginate the given queryset with the provided parameters.
 - `**kwargs`: Pagination parameters from GraphQL query
 
 **Returns:** Paginated `QuerySet`
+
+### Optional Hooks
+
+These have a working base implementation; override only when the paginator
+exposes page metadata.
+
+#### `get_native_page_info_field(node_type)`
+
+Return the native (graphql-core) `pageInfo` field this paginator exposes
+alongside `results`, or `None` when it exposes no metadata. The base
+implementation returns `None`; `CursorGraphqlPagination` overrides it to expose
+its `CursorPageInfo` field. The list-type compiler calls this hook while
+building the list container, so a custom paginator adds its own `pageInfo`
+purely by overriding it.
+
+**Parameters:**
+- `node_type` (`GraphQLObjectType`): the compiled element (node) type the list
+  paginates
+
+**Returns:** `graphql.GraphQLField`, or `None`
+
+#### `get_page_info_field(type)`
+
+Legacy sibling of the hook above, kept for signature compatibility. It always
+returns `None` on the native build path — override
+`get_native_page_info_field` instead.
+
+**Parameters:**
+- `type` (`ObjectType`): the GraphQL list type the field belongs to
+
+**Returns:** `None`
 
 ---
 
@@ -576,37 +603,22 @@ query Events($first: Int!, $cursor: String) {
 
 ## Pagination Utilities
 
-### GenericPaginationField
+### NativePaginationField
 
-Internal field class used by pagination implementations.
+Internal field descriptor used by the list-type compiler, defined in
+`django_graphex.paginations.utils` (not part of the public export surface).
 
 ```python
-class GenericPaginationField(Field)
+@dataclass
+class NativePaginationField:
+    type: Any            # the element (node) type the list paginates
+    paginator: Any = None
 ```
 
-This class is used internally by pagination classes and typically doesn't need to be used directly.
-
-### Utility Functions
-
-#### `_get_count(qs)`
-
-Get the count of a queryset efficiently.
-
-**Parameters:**
-- `qs` (`QuerySet`): Django queryset
-
-**Returns:** `int` - Count of objects
-
-#### `_nonzero_int(value, strict=False, cutoff=None)`
-
-Validate and convert value to non-zero integer.
-
-**Parameters:**
-- `value` (`Any`): Value to convert
-- `strict` (`bool`): Whether to enforce strict validation
-- `cutoff` (`int`): Maximum allowed value
-
-**Returns:** `int` or `None`
+A plain dataclass carrying `(type, paginator)`; its `wrap_resolve` wraps the
+`results` resolver so the paginator slices the page. Built for you when a list
+type declares `Meta.pagination` — it typically doesn't need to be used
+directly.
 
 ---
 

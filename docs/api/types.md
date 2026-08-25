@@ -264,7 +264,8 @@ class UserInput(DjangoInputObjectType):
 | `exclude_fields` | `tuple/list` | `()` | Exclude specified fields |
 | `filter_fields` | `dict` | `None` | Field filtering configuration |
 | `input_for` | `str` | `'create'` | Input purpose: 'create', 'update', or 'delete' |
-| `nested_fields` | `tuple/dict` | `()` | Nested field configuration |
+| `include_fields` | `tuple/list` | `()` | Additional fields to include |
+| `nested_fields` | `dict` | `()` | Nested field configuration: `{accessor_name: ChildModel}`. Anything that is not a `dict` is ignored |
 | `nested_parent_model` | `Model` | `None` | Mark this input as the nested child of that model: its back-reference `ForeignKey` / `OneToOneField` becomes optional |
 | `container` | `type` | Auto-generated | Container class for the input type |
 
@@ -329,9 +330,15 @@ Get the type when the unmounted type is mounted.
         class Meta:
             model = User
             input_for = 'create'
-            # field names to expand as nested input objects
-            nested_fields = ('profile', 'addresses')
+            # {accessor name: child model} — the relations to expand
+            # into nested input objects
+            nested_fields = {'profile': Profile, 'addresses': Address}
     ```
+
+    `nested_fields` must be a **`dict`**: the accessor alone does not say which
+    model the child input is built from, so a tuple such as
+    `('profile', 'addresses')` is ignored and the relations keep their plain
+    `ID` / `[ID!]` surface.
 
 !!! note "Pydantic defaults on a hand-authored `InputType`"
 
@@ -550,7 +557,7 @@ class UserType(DjangoModelType):
 | `input_field_name` | `str` | `new_{model_name}` | Name of the mutation input argument |
 | `output_field_name` | `str` | `{model_name}` | Name of the mutation output field |
 | `results_field_name` | `str` | `'results'` | Name of the results field |
-| `nested_fields` | `tuple/dict` | `()` | Nested field configuration |
+| `nested_fields` | `dict` | `()` | Nested field configuration: `{accessor_name: ChildModel}`. Anything that is not a `dict` is ignored |
 | `filter_fields` | `dict` | `None` | Field filtering configuration |
 | `description` | `str` | Auto-generated | Type description |
 | `stream` | `str` | `None` | Subscription stream name; required to expose a subscription field |
@@ -589,13 +596,13 @@ class UserType(DjangoModelType):
     A `DjangoModelType` reuses the output type already registered for its model
     — a `DjangoObjectType` you declared for the same model — and that type was
     built from **its own** `Meta`. Declaring `only_fields`, `include_fields` or
-    `exclude_fields` here in that situation now raises `ImproperlyConfigured` at
+    `exclude_fields` here in that situation raises `ImproperlyConfigured` at
     class definition, naming the option, the model and the type that registered
     the output type. Move the projection to that `DjangoObjectType` (or drop the
     option); it is honored as usual when no other type registered the model.
 
-    (Fixed in the next release: the option used to be dropped silently, so a
-    column excluded here stayed queryable.)
+    (Fixed in 2.2.0: 2.1.0 and earlier dropped the option silently, so a column
+    excluded here stayed queryable.)
 
 ### Generated Methods
 
@@ -654,9 +661,9 @@ Per-request scoping hook. The default returns `qs` unchanged.
     standard `<Model> with id <pk> does not exist.` error — so the response
     cannot be used to probe which primary keys exist outside the scope.
 
-    (Fixed in the next release: 2.1.0 and earlier resolved the write target
-    from the bare model, so a scope enforced on the read path left `update` and
-    `delete` open to any row in the table.)
+    (Fixed in 2.2.0: 2.1.0 and earlier resolved the write target from the bare
+    model, so a scope enforced on the read path left `update` and `delete` open
+    to any row in the table.)
 
 #### `authorize(info, action, **kwargs)` (classmethod)
 

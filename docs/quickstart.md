@@ -171,12 +171,11 @@ field classes (each offering a different mix of filtering / pagination /
 single-object lookup), a `Mutation` root mounts the mutations, and
 `DjangoGraphQLSchema` compiles both into the executable GraphQL schema.
 
-`UserListType` (a hand-declared `DjangoListObjectType`) and `UserModelType`
-(a `DjangoModelType`) both generate a GraphQL type for the **same** model —
-mounting both in one schema raises a duplicate-type error at schema-build
-time, since a `DjangoModelType` already auto-generates its own
-`<Model>ListType` internally. Pick **one** approach per model; the tabs below
-show each as a self-contained alternative:
+There are two ways to reach that surface. `UserListType` (a hand-declared
+`DjangoListObjectType`) gives you full control over the container; `UserModelType`
+(a `DjangoModelType`) generates the equivalent surface — including its own
+`UserListGenericType` container — from a single declaration. The tabs below show
+each on its own, but a project can use both, even over the same model:
 
 === "Manual types (UserType / UserListType)"
 
@@ -222,8 +221,8 @@ show each as a self-contained alternative:
     from .mutations import CreateUser
 
     class Query(ObjectType):
-        # QueryFields() returns (retrieve, list) — the list type
-        # (UserModelType's own <Model>ListType) is generated automatically.
+        # QueryFields() returns (retrieve, list) — the list container
+        # (UserListGenericType) is generated automatically.
         user_retrieve, user_list = UserModelType.QueryFields(
             description='User queries with model type'
         )

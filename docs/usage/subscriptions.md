@@ -682,10 +682,12 @@ Filters are evaluated **per connection at delivery time**:
     Equality and membership only answer "is it exactly this value?", which
     forces a whole-value guess.
 
-    2.0.0 documented `text__icontains` as usable; 2.1.0 started rejecting it at
-    subscribe time and 2.1.0 makes it unexpressible in the schema. Move the
-    substring match to `subscription_scope` (server code, exempt from this
-    check) or filter client-side on the delivered payload.
+    2.0.0 documented `text__icontains` as usable. 2.1.0 closed it twice over:
+    the runtime gate rejects the lookup at subscribe time, and the generated
+    input type does not declare it, so it fails schema validation before the
+    runtime ever sees it. Move the substring match to `subscription_scope`
+    (server code, exempt from this check) or filter client-side on the
+    delivered payload.
 
 !!! note "Delete + lookup filters"
     On a `delete` the row no longer exists, so only the in-memory (equality)

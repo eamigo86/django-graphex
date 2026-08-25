@@ -638,13 +638,14 @@ class NestedFieldsMixin:
         primary key issues an UPDATE, so the row the scope was hiding would be
         rewritten in place.
 
-        Only the hosts SERVING the operation are consulted: a
-        "DjangoModelMutation" narrowed to "model_operations = ("create",)" has
-        no "update" to mirror, and applying its scope refused nested updates the
-        child's own update accepts. A "DjangoModelType" has no way to narrow
-        that option, so its "Meta.queryset" -- which its own generated "update"
-        and "delete" already apply -- gates the nested path as well, even when
-        the project meant it as a display default.
+        Only the hosts SERVING the operation are consulted: a host narrowed to
+        "model_operations = ("create",)" has no "update" to mirror, and applying
+        its scope refused nested updates the child's own update accepts. BOTH
+        host classes take "Meta.model_operations" -- "DjangoModelMutation" over
+        ("create", "update", "delete") and "DjangoModelType" over those plus
+        ("list", "retrieve") -- so a read-only "DjangoModelType" opts its
+        "Meta.queryset" out of gating the nested path, which is what a project
+        wants when that queryset is a display default rather than a policy.
 
         Args:
             field: The nested field name (used to prefix error fields).

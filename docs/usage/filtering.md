@@ -559,11 +559,12 @@ has no read operations, so there the scope governs `update` and `delete` only.
     `permission_classes` on one has no effect. Use `DjangoModelType` when you
     need per-action authorization, or gate the mutation at the schema root.
 
-!!! danger "Upgrade note"
+!!! danger "Upgrade note — fixed in 2.2.0"
     2.1.0 and earlier applied this scope on the read path only: `update` and
     `delete` looked their target up on the bare model, so the snippet above
     protected reads while leaving every row in the table writable by any
-    caller. Fixed in the next release.
+    caller. Both write methods resolve through the scoped queryset from 2.2.0
+    on; if you are still on 2.1.0 or earlier, upgrade.
 
 See [Permissions & hooks](permissions.md) for `get_queryset` / `filter_queryset`.
 

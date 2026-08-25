@@ -81,9 +81,9 @@ class IsOwnerOrReadOnly(BasePermission):
         return user and user.is_staff   # -> None for an anonymous caller: DENIED
     ```
 
-    (Fixed in the next release: 2.1.0 and earlier compared the result with the
-    `False` singleton, so this exact one-liner granted every action to an
-    anonymous caller.)
+    (Fixed in 2.2.0: 2.1.0 and earlier compared the result with the `False`
+    singleton, so this exact one-liner granted every action to an anonymous
+    caller.)
 
 ### `nested_parent`: telling a nested write apart from a direct one
 

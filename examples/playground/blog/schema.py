@@ -456,10 +456,20 @@ class AttachmentType(DjangoObjectType):
         through a GenericPrefetch with one ".only()"-narrowed queryset per
         content type (Account fetches "balance", Invoice fetches "amount"),
         batched across all attachments, with no N+1.
+
+        "content_type" and "object_id" are excluded on purpose. They are the
+        two raw columns the GenericForeignKey is built from, and "target"
+        already exposes what they point at, typed. Leaving "content_type" in
+        would also make the compiler log a warning on every management command:
+        its target model "ContentType" has no registered DjangoObjectType, so
+        the relation is dropped from the type anyway. Excluding it keeps the
+        output identical and the log quiet. The columns stay on the model, so
+        the GenericPrefetch above is unaffected.
         """
 
         model = Attachment
         unions = {"target": AttachmentTargetUnion}
+        exclude_fields = ("content_type", "object_id")
 
 
 class AttachmentListType(DjangoListObjectType):
@@ -991,13 +1001,16 @@ class CreateCategory(Mutation):
 #       uploadDocument(                                                        #
 #           name: "readme.txt"                                                 #
 #           file: {filename: "readme.txt", data: "<data>", contentType: "text/plain"} #
-#       ) { ok name }                                                          #
+#       ) { ok name document { id name created } }                            #
 #   }                                                                          #
 # --------------------------------------------------------------------------- #
 class DocumentType(DjangoObjectType):
     """GraphQL type for an uploaded document.
 
-    Read back after an "uploadDocument" mutation stores the decoded file.
+    Read back through the "document" field of the "uploadDocument" payload,
+    which is what mounts this type on the schema. A "DjangoObjectType" that no
+    field ever returns is registered but never reaches the schema type map, so
+    it cannot be queried or introspected.
     """
 
     class Meta:
@@ -1029,7 +1042,9 @@ class UploadDocument(Mutation):
       "Base64FileInput" instance ("Base64FileInput(**file)") before calling
       ".to_uploaded_file()".
     - Output payload fields use the same "BooleanField" / "CharField" scalar
-      shortcuts.
+      shortcuts, plus "Field(DocumentType)" for the stored record — the same
+      object-ref idiom "CreateCategory" uses, and what puts "DocumentType" on
+      the schema.
     """
 
     class Arguments:
@@ -1043,6 +1058,7 @@ class UploadDocument(Mutation):
 
     ok = BooleanField()
     name = CharField()
+    document = Field(DocumentType)
     error = CharField()
 
     @classmethod
@@ -1058,8 +1074,9 @@ class UploadDocument(Mutation):
                 "file" is the base64 file input dict.
 
         Returns:
-            payload: A payload with "ok=True" and the saved document name, or
-                "ok=False" and the error message when decoding or saving fails.
+            payload: A payload with "ok=True", the saved document name and the
+                stored record, or "ok=False" and the error message when
+                decoding or saving fails.
         """
         name = kwargs["name"]
         file = kwargs["file"]
@@ -1075,23 +1092,34 @@ class UploadDocument(Mutation):
             doc.file.save(uploaded.name, uploaded, save=True)
             # Pass every payload field explicitly (incl. error=None): native does
             # not auto-default unset payload fields.
-            return cls(ok=True, name=doc.name, error=None)
+            return cls(ok=True, name=doc.name, document=doc, error=None)
         except Exception as exc:  # noqa: BLE001
-            return cls(ok=False, name=name, error=str(exc))
+            return cls(ok=False, name=name, document=None, error=str(exc))
 
 
 # --------------------------------------------------------------------------- #
 # Native compile trigger (native backend only).                                 #
 #                                                                              #
-# Hand-written ``Mutation`` arguments below reference a COMPILED                #
-# ``GraphQLInputObjectType`` (``CategoryInput`` / ``Base64FileInput``).  Those  #
-# input types — and every ``DjangoObjectType`` output type — are compiled by    #
-# ``compile_all_inputs`` / ``compile_all_outputs``.  In a project that lists     #
-# ``django_graphex`` in ``INSTALLED_APPS`` its ``AppConfig.ready()`` runs these  #
-# automatically at startup; this playground triggers them explicitly here,       #
-# AFTER all type declarations and BEFORE ``RootMutation`` calls ``.Field()`` (so #
-# the argument-position ``Field`` descriptors resolve to real compiled input      #
-# types, not ``None``).                                                           #
+# Hand-written "Mutation" arguments below reference a COMPILED                 #
+# "GraphQLInputObjectType" ("CategoryInput" / "Base64FileInput"). Those input  #
+# types — and every "DjangoObjectType" output type — are compiled by           #
+# "compile_all_inputs" / "compile_all_outputs".                                #
+#                                                                              #
+# These two calls are MANDATORY, not a convenience. "django_graphex" IS in     #
+# this project's INSTALLED_APPS (see "config/settings.py"), and its            #
+# "AppConfig.ready()" does call both — but "ready()" runs BEFORE this module   #
+# is imported, so it can only compile what was already imported by then.       #
+# Every type declared in this file, plus "Base64FileInput" (the package never  #
+# imports "django_graphex.uploads" itself), is compiled only here. Delete      #
+# these calls and "RootMutation" raises at import time:                        #
+#                                                                              #
+#   TypeError: Can only create a wrapper for a GraphQLType, but got:           #
+#   <class 'django_graphex.uploads.Base64FileInput'>                           #
+#                                                                              #
+# Placement is load-bearing too: AFTER all type declarations and BEFORE        #
+# "RootMutation" calls ".Field()", so the argument-position "Field"            #
+# descriptors resolve to real compiled input types, not "None". See            #
+# "docs/usage/mutations.md" for the full rule.                                 #
 # --------------------------------------------------------------------------- #
 from django_graphex.core.base import compile_all_inputs  # noqa: E402
 from django_graphex.core.registry_compiler import (  # noqa: E402

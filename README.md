@@ -99,7 +99,7 @@ Query it with the nested `filter:` argument (`and` / `or` / `not`):
 
 ```graphql
 {
-  users(filter: { is_active: { exact: true }, username: { icontains: "jo" } }) {
+  users(filter: { isActive: { exact: true }, username: { icontains: "jo" } }) {
     results(limit: 10, ordering: "-date_joined") { id username }
     totalCount
   }

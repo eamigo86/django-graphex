@@ -166,7 +166,7 @@ codegen, `__schema` queries — reflects **their** schema. Side by side
     ```graphql
     type Query {
       post(id: ID!): PostGenericType
-      allPosts: PostListType
+      allPosts: PostListGenericType
     }
 
     type PostGenericType {
@@ -190,7 +190,7 @@ codegen, `__schema` queries — reflects **their** schema. Side by side
     ```graphql
     type Query {
       post(id: ID!): PostGenericType
-      allPosts: PostListType
+      allPosts: PostListGenericType
     }
 
     type Mutation {
@@ -215,9 +215,9 @@ codegen, `__schema` queries — reflects **their** schema. Side by side
     ```graphql
     type Query {
       post(id: ID!): PostGenericType
-      allPosts: PostListType
+      allPosts: PostListGenericType
       comment(id: ID!): CommentGenericType
-      allComments: CommentListType
+      allComments: CommentListGenericType
     }
 
     type Mutation {
@@ -327,9 +327,9 @@ the runtime layer passes too.
 
 Pruning is **not** limited to the root fields. Every generated field whose
 output type is a model type — a forward `ForeignKey`/`OneToOneField` object
-field, and the `<Model>ListType` container a `ManyToManyField` or a reverse FK
-renders as — requires the **target** model's read permission (`view_M`), the
-same one its own `retrieve`/`list` roots require.
+field, and the list container a `ManyToManyField` or a reverse FK renders as
+(`CommentListGenericType` here) — requires the **target** model's read
+permission (`view_M`), the same one its own `retrieve`/`list` roots require.
 
 So ana, holding only `blog.view_post`, cannot reach comments the long way
 round:

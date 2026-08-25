@@ -538,8 +538,9 @@ class Query(ObjectType):
 
     def resolve_my_posts(self, info, **kwargs):
         # Return a queryset — the optimizer still adds select_related / prefetch_related
-        # on top of this base. Use filter_queryset on the type for per-request scoping
-        # when you also want pagination and filtering to compose cleanly.
+        # on top of this base. For per-request scoping that composes cleanly with
+        # pagination and filtering, use get_queryset on the NODE type (PostType) or
+        # Meta.queryset on the list type — a list type has no scoping hook of its own.
         return Post.objects.filter(author=info.context.user)
 ```
 

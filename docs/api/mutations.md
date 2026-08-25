@@ -33,8 +33,9 @@ class UserMutation(DjangoModelMutation):
 | `input_field_name` | `str` | `'new_{model}'` | Name of input argument |
 | `output_field_name` | `str` | `'{model}'` | Name of output field |
 | `description` | `str` | Auto-generated | Mutation description |
-| `nested_fields` | `dict` | `{}` | Nested field configuration |
+| `nested_fields` | `dict` | `()` | Nested field configuration — a `{field_name: Model}` mapping. The empty default means no nested writes. |
 | `model_operations` | `tuple` | `("create", "update", "delete")` | Which CRUD operations to generate; any subset of `("create", "update", "delete")`. Calling the `*Field()` builder for an excluded operation raises `AttributeError`. |
+| `registry` | `Registry` | Global registry | Type registry the mutation's output node and input type resolve against. A custom registry scopes the whole mutation subgraph to one schema's own pair, so a forked `DjangoGraphQLSchema` re-forks the payload's output node into its own namespace instead of reaching the process-global node. |
 
 ### Fields
 
@@ -62,6 +63,8 @@ Initialize the mutation subclass with meta configuration.
 - `output_field_name` (`str`): Output field name
 - `description` (`str`): Mutation description
 - `nested_fields` (`dict`): Nested field configuration
+- `model_operations` (`tuple`): CRUD operations to generate
+- `registry` (`Registry`): Type registry the output node and input type resolve against
 
 #### `get_errors(errors)` (classmethod)
 

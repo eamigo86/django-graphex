@@ -792,6 +792,40 @@ class InvoiceType(TimestampedType):
     the registered type. A silent no-op there would leave a column you excluded
     for security reasons queryable.
 
+### Limiting the generated operations — `model_operations` { #model-operations }
+
+A `DjangoModelType` serves all five operations it can generate, so a type that
+declares nothing behaves exactly as it always has. Narrow that with
+`Meta.model_operations`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `model_operations` | `("create", "update", "delete", "list", "retrieve")` | The operations this type serves; any subset of the default. The `*Field()` builder of an excluded operation raises `AttributeError`, and `QueryFields()` / `MutationFields()` return only what is enabled. An excluded write also stops this type counting as a **write host** for the model it is bound to. |
+
+That last clause is the opt-out for nested-write scoping: a `DjangoModelType`
+is a write host for the models a parent nests through
+[`Meta.nested_fields`](mutations.md#how-nested-writes-work), so its
+`Meta.queryset` and its `only_fields` gate that nested write. In the common
+read-type-plus-write-mutation split that queryset is a display default, not a
+policy — declaring the type a read host says so:
+
+```python
+class UserCard(DjangoModelType):
+    class Meta:
+        model = User
+        # A display default, NOT a policy: hide deactivated users from the card.
+        queryset = User.objects.filter(is_active=True)
+        model_operations = ("list", "retrieve")
+
+class Query(ObjectType):
+    user_retrieve, user_list = UserCard.QueryFields()   # both still generated
+```
+
+`UserCard.CreateField()` now raises `AttributeError`, `MutationFields()` returns
+an empty tuple, and the card's queryset no longer decides whether a parent may
+write a `User` inline. Its read fields are unchanged. See the
+[`Meta` reference](../api/types.md#djangomodeltype) for the full option table.
+
 ### Auto-generated Query Fields
 
 A `DjangoModelType` builds its read operations for you: `RetrieveField()`
@@ -840,7 +874,7 @@ The write side is generated the same way: `CreateField()`, `DeleteField()` and
 `UpdateField()` each return a complete mutation — input type derived from the
 model, validation and DB integrity checks included — whose payload carries the
 mutated object plus `ok` / `errors`. `MutationFields()` is the shorthand that
-returns all three in **create, delete, update** order:
+returns them in **create, delete, update** order:
 
 ```python
 from django_graphex.core import ObjectType
@@ -856,6 +890,15 @@ class Mutation(ObjectType):
     delete_user = UserModelType.DeleteField(description='Delete user')
     update_user = UserModelType.UpdateField(description='Update user')
 ```
+
+Both shorthands return **only the operations
+[`Meta.model_operations`](#model-operations) enables**, so the three-name unpack
+above is what the default — every operation — produces. Narrow the option and
+the tuple shrinks with it: a type declaring
+`model_operations = ("list", "retrieve")` returns an **empty** tuple from
+`MutationFields()`, and the unpack raises `ValueError: not enough values to
+unpack`. Unpack as many names as the type serves, or call the individual
+`*Field()` builders.
 
 ### Custom mutation arguments — `class Arguments`
 

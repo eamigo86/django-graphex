@@ -123,27 +123,27 @@ class UserMutation(DjangoModelMutation):
 
 A model field declared `editable=False` is server-managed, so it is left out of
 the generated create and update inputs — you do not have to list it in
-`exclude_fields`. This covers relations too: a `created_by` / `tenant`
-`ForeignKey` or `OneToOneField` set inside `save()` no longer advertises itself
-as writable.
+`exclude_fields`. This covers **every** concrete field, relations included: a
+`created_by` / `tenant` `ForeignKey`, a `OneToOneField` or a `ManyToManyField`
+set inside `save()` no longer advertises itself as writable.
 
 ```python
 class Document(models.Model):
     title = models.CharField(max_length=200)
     owner = models.ForeignKey(User, on_delete=models.CASCADE, editable=False)
+    reviewers = models.ManyToManyField(User, related_name="reviews", editable=False)
 ```
 
 ```graphql
 input DocumentCreateGenericType {
   title: String!
-  # no "owner" — the server owns it
+  # no "owner", no "reviewers" — the server owns them
 }
 ```
 
-!!! warning "Known gap"
-    A non-editable `ManyToManyField` still appears in the input, now as a raw
-    list of primary keys rather than `[ID!]`. List it in `exclude_fields` if
-    you need it gone today.
+Reverse relations are untouched by this: Django sets `editable = False` on every
+reverse relation object, so honoring it there would delete the reverse-relation
+input surface wholesale.
 
 ### Custom Arguments with `Field`
 
@@ -282,6 +282,11 @@ the database.
     `Meta.only_fields`, is not an exposed input field: a part named after it is
     ignored like any other, so a projection cannot be walked around through the
     multipart body.
+
+    The match is against **every** field the input exposes, not only its file
+    columns. A part sharing a name with an ordinary column replaces that
+    column's JSON value with the upload, which then fails that column's
+    validation — name parts after file fields only.
 
 !!! warning "Top-level fields only"
 
@@ -826,9 +831,10 @@ are not yet unified:
 top-level mutation instead (send `tags: []` or `tags: null` to clear), or issue a separate mutation
 that clears and re-adds.
 
-!!! note "Not yet implemented as of v2.0"
-    A per-field `m2m_behavior = "set" | "add"` option will let you choose the semantics on the
-    nested path and align the default to `.set` (matching top-level behavior).
+!!! note "Not implemented"
+    There is no per-field `m2m_behavior = "set" | "add"` option to pick the semantics on the
+    nested path, and none is scheduled. The nested path is additive; reach for the top-level
+    path when you need `.set`.
 
 ### Explicit-null semantics in update mutations
 

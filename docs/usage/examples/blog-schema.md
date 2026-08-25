@@ -209,21 +209,18 @@ Let's start with a blog application to demonstrate the features:
 
 === "types_modeltype.py"
 
-    !!! danger "Keep this module out of the same process as `types.py`"
-        A `DjangoModelType` registers its own generated `<Model>ListType` as
-        soon as the **class is declared** — not when you mount it. So importing
-        this module *and* `types.py` above in the same process registers two
-        different types named `PostListType` (and `UserListType`), and the very
-        next `DjangoGraphQLSchema(...)` call fails with:
+    !!! info "This module and `types.py` can live side by side"
+        A `DjangoModelType` generates its own list container, and since **2.2.0**
+        that container is named `<Model>ListGenericType` — `PostListGenericType`,
+        `UserListGenericType`. The hand-declared containers in `types.py` keep the
+        `<Model>ListType` name, so the two never collide and both modules can be
+        imported, and mounted, in the same schema.
 
-        ```
-        TypeError: Schema must contain uniquely named types but contains
-        multiple types named 'PostListType'.
-        ```
-
-        This bites even if the schema mounts **none** of the types below.
-        Pick one approach per model: use `types.py` for Variant A, or this
-        module for Variant B (both in the `schema.py` tab) — never both.
+        If you remember the old rule ("never declare both"), it applied to 2.1.x
+        and earlier, where the generated container was also called
+        `<Model>ListType` and the schema build failed with *"Schema must contain
+        uniquely named types"*. See the
+        [type-name reference](../types.md#auto-generated-query-fields).
 
     ```python
     from django_graphex.types import DjangoModelType
@@ -232,7 +229,7 @@ Let's start with a blog application to demonstrate the features:
     from .models import Post
 
     # Model Types for CRUD Operations — each generates its own
-    # UserListType / PostListType internally.
+    # UserListGenericType / PostListGenericType internally.
     class UserModelType(DjangoModelType):
         class Meta:
             model = User
@@ -332,18 +329,27 @@ Let's start with a blog application to demonstrate the features:
 
 === "schema.py"
 
-    !!! warning "Don't mix `<Model>ListType` with `DjangoModelType` for the same model"
-        A `DjangoModelType` auto-generates its own `<Model>ListType` internally
-        (e.g. `PostModelType` generates a `PostListType`, `UserModelType`
-        generates a `UserListType`), and registers it **when the class is
-        declared** — so merely *importing* both `types.py` and
-        `types_modeltype.py` in the same process is enough to break the next
-        schema build with `TypeError: Schema must contain uniquely named types
-        but contains multiple types named 'PostListType'` (or `'UserListType'`).
-        Mounting is irrelevant; declaration is what registers.
+    !!! tip "Two approaches, not an either-or"
+        Variant A wires each type by hand: you declare the node, the container
+        and the mutation, and mount them on exactly the fields you want. Variant B
+        lets a `DjangoModelType` generate the same surface from one declaration.
+        Both are shown below as self-contained schemas so each reads on its own,
+        but nothing stops a project from using them together — hand-written types
+        for the models that need bespoke wiring, `DjangoModelType` for the
+        boilerplate ones.
 
-        Pick **one** approach per model, and import only that module. The two
-        variants below show each as a self-contained schema.
+        Per model, still pick one. Two hosts over one model is allowed only while
+        neither declares a projection: the moment a `DjangoModelType` adds
+        `only_fields` / `exclude_fields` / `include_fields` for a model a
+        `DjangoObjectType` already registered, the build stops with
+        `ImproperlyConfigured` — because the projection would otherwise be
+        dropped and the field it hides would stay exposed.
+
+        Since **2.2.0** the generated container is named `<Model>ListGenericType`,
+        so it no longer collides with the `<Model>ListType` you declare yourself.
+        On 2.1.x and earlier both carried the same name and the schema build
+        failed with *"Schema must contain uniquely named types"* — that
+        restriction is gone.
 
     ```python title="Variant A — manual types (UserListType / PostListType)"
     from django_graphex.directives import all_directives
@@ -414,13 +420,13 @@ Let's start with a blog application to demonstrate the features:
     from django_graphex.fields import DjangoObjectField, DjangoFilterListField, DjangoListObjectField
     from django_graphex.core import ObjectType
     from django_graphex.schema import DjangoGraphQLSchema
-    # NOTE: Variant B must NOT import `.types` — see the warning above.
-    # Move CategoryType / TagType / CommentType / CommentListType into
-    # `types_modeltype.py` (or a shared module that `types.py` does not import).
-    from .types_modeltype import (
-        CategoryType, TagType, CommentType, CommentListType,
-        UserModelType, PostModelType
-    )
+    # This variant is the mixed shape the tip above describes: `DjangoModelType`
+    # for User and Post, Variant A's hand-written types for the models that are
+    # mounted as-is. Importing both modules is safe — the generated container is
+    # `<Model>ListGenericType`, so it never collides with a hand-written
+    # `<Model>ListType`.
+    from .types import CategoryType, TagType, CommentType, CommentListType
+    from .types_modeltype import UserModelType, PostModelType
     from .mutations import CategoryMutation, TagMutation, CommentMutation
 
     class Query(ObjectType):
@@ -435,7 +441,7 @@ Let's start with a blog application to demonstrate the features:
         all_comments = DjangoListObjectField(CommentListType, description="All comments with pagination")
 
         # DjangoModelType-driven queries — retrieve + list generated together
-        # (each call also generates that model's own <Model>ListType internally)
+        # (each type also generates its own <Model>ListGenericType container)
         user_retrieve, user_list = UserModelType.QueryFields()
         post_retrieve, post_list = PostModelType.QueryFields()
 

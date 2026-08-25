@@ -23,7 +23,7 @@ class DjangoGraphexConfig(AppConfig):
     verbose_name = "Django GraphEx"
 
     def ready(self) -> None:
-        """Compile all registered InputType and OutputType subclasses into GraphQL types.
+        """Compile all registered InputType and DjangoObjectType subclasses into GraphQL types.
 
         Also registers the contenttypes (GenericForeignKey / GenericRel /
         GenericRelation) field converters now that the app registry is ready.

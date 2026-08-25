@@ -643,10 +643,10 @@ query Events($first: Int!, $cursor: String) {
     lexicographic `WHERE` chains (the general `(a, b, ...) > (x, y, ...)`
     row-comparison expansion for an arbitrary number of ordering fields), which
     is substantially more machinery than the current single-field-plus-pk
-    boundary. That work is planned for a future release (it is on the 2.1
-    backlog). Until then, cursor pagination is `first` + `cursor` only, and
-    `ordering` must be a single field (a leading `-` selects descending order)
-    — order by a stable, indexed column such as the primary key.
+    boundary. That work is not scheduled: cursor pagination is `first` +
+    `cursor` only, and `ordering` must be a single field (a leading `-` selects
+    descending order) — order by a stable, indexed column such as the primary
+    key.
 
     **If you need backward navigation today:** `LimitOffsetGraphqlPagination`
     has no backward mode either (a negative `offset` raises a clean
