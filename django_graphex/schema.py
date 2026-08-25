@@ -409,7 +409,7 @@ class DjangoGraphQLSchema:
         from graphql import GraphQLObjectType, GraphQLSchema
 
         from django_graphex.core.base import default_schema_registries
-        from django_graphex.core.perm_labels import implicit_label_set
+        from django_graphex.core.perm_labels import implicit_label_set, input_label_set
         from django_graphex.core.schema_compiler import compile_native_root
 
         # item-b (B3): resolve the pair this build compiles against. ``None`` ->
@@ -487,14 +487,27 @@ class DjangoGraphQLSchema:
             kwargs.get("types"), registries
         )
 
-        schema = GraphQLSchema(
-            query=native_query,
-            mutation=native_mutation,
-            subscription=native_subscription,
-            directives=directives,
-            types=native_types,
-            extensions=extensions,
-        )
+        # graphql-core resolves an input object's field map inside a thunk and
+        # re-raises ANY exception it throws as a bare ``TypeError`` whose
+        # message buries the cause. The nested child input is built in exactly
+        # such a thunk, and it REFUSES an emptied projection (see
+        # ``mutation.nested_child_input``), so the project's own configuration
+        # error has to be dug back out or it surfaces as an unactionable
+        # ``TypeError`` naming a generated type.
+        try:
+            schema = GraphQLSchema(
+                query=native_query,
+                mutation=native_mutation,
+                subscription=native_subscription,
+                directives=directives,
+                types=native_types,
+                extensions=extensions,
+            )
+        except TypeError as error:
+            buried = DjangoGraphQLSchema._buried_config_error(error)
+            if buried is None:
+                raise
+            raise buried from None
 
         # P0 (relation coverage): widen the label-set with the IMPLICIT read
         # permission of every generated model-backed type in the BUILT type map.
@@ -504,10 +517,36 @@ class DjangoGraphQLSchema:
         # missing here would be stripped and the relation would disappear for
         # everyone. The roots alone cannot supply it: a model exposed ONLY
         # through a relation has no root field to read a stamp from.
-        schema.extensions["gdx_label_set"] = extensions[
-            "gdx_label_set"
-        ] | implicit_label_set(schema)
+        #
+        # The same argument applies to the nested INPUT fields: a child writable
+        # only through its parent's payload has no root field either, so its
+        # write label has to be collected from the built input types.
+        schema.extensions["gdx_label_set"] = (
+            extensions["gdx_label_set"]
+            | implicit_label_set(schema)
+            | input_label_set(schema)
+        )
         return schema
+
+    @staticmethod
+    def _buried_config_error(error: BaseException) -> Exception | None:
+        """Dig a configuration error out of a graphql-core thunk wrapper.
+
+        Args:
+            error: The exception graphql-core raised.
+
+        Returns:
+            The "ImproperlyConfigured" somewhere in the cause chain, or None
+            when the failure is genuinely a graphql-core type error.
+        """
+        from django.core.exceptions import ImproperlyConfigured
+
+        cause: BaseException | None = error
+        while cause is not None:
+            if isinstance(cause, ImproperlyConfigured):
+                return cause
+            cause = cause.__cause__
+        return None
 
     @staticmethod
     def _compute_label_set(*roots: Any) -> frozenset[str]:

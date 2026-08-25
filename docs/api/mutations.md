@@ -87,8 +87,10 @@ Create successful mutation response.
 Validate and persist the parent plus any `Meta.nested_fields` children
 **atomically** (provided by `NestedFieldsMixin`). Forward FK/O2O children are
 written before the parent and their pk injected; reverse FK/O2O and M2M children
-are written after and linked to it. Any validation failure rolls the whole
-transaction back. See [How nested writes work](../usage/mutations.md#how-nested-writes-work).
+are written after and linked to it. A reverse child (FK **or** O2O) supplied by
+pk is rejected when it currently belongs to a different parent. Any validation
+failure rolls the whole transaction back.
+See [How nested writes work](../usage/mutations.md#how-nested-writes-work).
 
 **Parameters:**
 - `root` (`Any`): Root object
@@ -390,14 +392,17 @@ mutation DeleteUser($id: ID!) {
 
 ### File Upload Support
 
-The mutation automatically handles file uploads when the request content type is `multipart/form-data`:
+When the request content type is `multipart/form-data`, every entry in
+`request.FILES` is merged into the input payload under its own form-field name,
+so a part named after a `FileField` / `ImageField` **on the mutation's own
+model** is saved to that field on create and on update:
 
 ```python
 class ProfileMutation(DjangoModelMutation):
     class Meta:
-        model = Profile  # model has an ImageField
+        model = Profile  # model has an ImageField named "avatar"
 
-# The mutation will automatically handle file uploads
+# A multipart part named "avatar" lands on Profile.avatar.
 ```
 
 ```graphql
@@ -406,7 +411,7 @@ mutation UpdateProfile($profileData: ProfileInput!) {
     ok
     profile {
       id
-      avatar  # File upload handled automatically
+      avatar  # reads back as the storage path (String)
       bio
     }
     errors {
@@ -416,6 +421,18 @@ mutation UpdateProfile($profileData: ProfileInput!) {
   }
 }
 ```
+
+The GraphQL input field stays `String`: the file travels in the multipart body,
+never in the GraphQL variables. That field also accepts a plain storage path
+string, and rejects any other shape with a structured error.
+
+!!! warning "Top-level fields only"
+
+    The merge is keyed by the bare form-field name, so a file field on a child
+    declared in `Meta.nested_fields` cannot be addressed — and naming a part
+    after the relation itself overwrites the nested payload and raises an
+    uncaught `ValueError` (an HTTP 500). For nested uploads, use the base64
+    input described in [Mutations](../usage/mutations.md#file-upload-support).
 
 ### Authentication & Authorization
 

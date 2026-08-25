@@ -188,10 +188,42 @@ uploads and error handling. For a complete runnable project see
 
 ### File Uploads
 
+There is no `Upload` scalar. A file column is published as `String`, and the
+file itself rides in the `multipart/form-data` body as a part named after the
+model's snake_case attribute — see
+[Automatic multipart uploads](../mutations.md#automatic-multipart-uploads).
+
+The part can only address a field on the model the mutation is bound to, so an
+avatar living on a nested `Profile` is **not** reachable this way. Update the
+child through its own mutation:
+
 === "Update User Avatar"
 
     ```graphql
-    mutation UpdateUserAvatar($userId: ID!, $avatar: Upload!) {
+    # POST multipart/form-data
+    #   part "operations": this document plus its variables
+    #   part "avatar":     the image bytes
+    mutation UpdateProfileAvatar($profileId: ID!) {
+      updateProfile(newProfile: {id: $profileId}) {
+        ok
+        profile {
+          id
+          avatar
+        }
+        errors {
+          field
+          messages
+        }
+      }
+    }
+    ```
+
+=== "Nested, via base64"
+
+    ```graphql
+    # Base64FileInput travels inside the GraphQL variables, so it nests.
+    # It is opt-in: see Mutations -> File upload support.
+    mutation UpdateUserAvatar($userId: ID!, $avatar: Base64FileInput!) {
       updateUser(newUser: {id: $userId, profile: {avatar: $avatar}}) {
         ok
         user {
@@ -200,10 +232,6 @@ uploads and error handling. For a complete runnable project see
           profile {
             avatar
           }
-        }
-        errors {
-          field
-          messages
         }
       }
     }

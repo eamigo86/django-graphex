@@ -363,6 +363,68 @@ still gated by `blog.view_comment`.
     only for the generated relation fields nothing else labels. A field
     returning a plain (non-model) type stays untagged and therefore public.
 
+### Nested write inputs are covered too
+
+The same argument runs on the input side. A parent declaring
+`Meta.nested_fields = {"comments": Comment}` exposes
+`comments: [CommentCreateInPostType!]` inside its own mutation input, and that
+field **is** a way to create and update comments. It therefore requires the
+child's write permissions, exactly like `commentCreate` / `commentUpdate`.
+
+Which verbs, exactly, follows from what the nested payload can do. The child's
+`id` is absent from a **create** input, so that field can only create:
+`add_M` + `view_M`. On an **update** input the `id` is *optional*, and omitting
+it creates a row — so that field requires `add_M` + `change_M` + `view_M`. A
+caller holding `change_comment` but not `add_comment` would otherwise have
+`commentCreate` pruned away while the identical create stayed reachable inside
+`postUpdate`'s payload.
+
+A caller who lacks them keeps `postCreate` but the `comments` field is **absent**
+from its input type, so the nested write is rejected at validation — the same
+not-found shape as a pruned root. And when the nested field was the input's
+**only** field, the input object would be left empty (which is not a legal
+schema), so the mutation field that takes it is pruned instead: `postCreate`
+disappears rather than reappearing ungated. Without this, pruning
+`commentCreate` away would have removed the front door and left the back door
+open.
+
+Write labels of a **nesting-only** child (one with no mutation root of its own)
+enter the schema label-set from the input types, so a caller who holds them
+keeps the nested field. Every other input field is unlabeled and therefore
+untouched.
+
+!!! warning "`required_perms` on the child host can only ADD to this field"
+
+    [`required_perms`](#labeling-custom-fields-and-mutations-required_perms)
+    labels every operation field *the class it is declared on generates* — the
+    child's own roots. The nested field belongs to the **parent's** input, so it
+    starts from the composite table above and the override of every child host
+    **that serves one of the verbs the nested field enables** is **unioned** on
+    top. It is never a substitute: a child host is very often an ordinary read
+    host carrying a read label, and letting that label stand in for the write
+    one would hand a caller holding nothing but `view_comment` a working write
+    of comments through their post. As a union term a write host declaring
+    something stricter (say `required_perms = ["blog.publish_comment"]`)
+    genuinely reaches the nested field, so a caller who has `commentCreate`
+    pruned away does not keep the identical write inside `postCreate`'s payload.
+
+    A label you did not mean as a write gate still costs you the field. A
+    `DjangoModelType` serves every operation unless it says otherwise, so a read
+    card labelled `required_perms = ["blog.read_comment_card"]` also labels the
+    nested `comments` field, and a caller who holds every write permission on
+    `Comment` but not that label loses it — while a differently-hosted
+    `commentCreate` stays reachable. Fail-closed, and consistent with what the
+    same label does to the card's own create/update roots, but say what the host
+    is for: `model_operations = ("list", "retrieve")` on the card keeps its
+    label off the nested create and update entirely, exactly as a
+    `model_operations = ("delete",)` mutation's does.
+
+    A child that is
+    [writable only through its parent](mutations.md#writable-only-through-its-parent)
+    needs no opt-out at all. The caller performing that write holds
+    `add_comment`; what the pattern withholds is `commentCreate`, and a root you
+    never mount gives the pruner nothing to prune.
+
 ## Layer 1: runtime enforcement with `DjangoModelPermissions`
 
 `permission_classes = [DjangoModelPermissions]` on a `DjangoModelType` checks

@@ -86,12 +86,30 @@ class SerializerBackend:
         raise NotImplementedError
 
 
+#: Model -> the backend of the last host that declared CUSTOM validation, that
+#: is inline "validate_*" methods or a "Meta.pydantic_model" (both reach
+#: "resolve_backend" as a non-None "pydantic_model"). "backend_for_nested"
+#: consults it so a nested write validates a child with the SAME rules the
+#: child's own mutation applies; without it the nested path validated from the
+#: child MODEL alone and the child type's rules never ran.
+#:
+#: A host with no custom validation is NOT recorded, so a plain child keeps the
+#: previous path unchanged. Two hosts declaring custom validation for the SAME
+#: model resolve last-defined-wins, matching every other model-keyed registry in
+#: the package.
+_VALIDATED_BACKENDS: dict[Any, SerializerBackend] = {}
+
+
 def resolve_backend(
     model: Any | None = None,
     *,
     pydantic_model: Any | None = None,
 ) -> SerializerBackend:
     """Build the serializer backend for a type's "Meta.model".
+
+    A backend carrying custom validation is also recorded under its model so
+    "backend_for_nested" can reuse it, keeping a nested write and the child's
+    own mutation on one validator.
 
     Args:
         model: The "Meta.model" the type is backed by.
@@ -110,11 +128,19 @@ def resolve_backend(
 
     from .core.backend import PydanticBackend
 
-    return PydanticBackend(model, pydantic_model)
+    backend = PydanticBackend(model, pydantic_model)
+    if pydantic_model is not None:
+        _VALIDATED_BACKENDS[model] = backend
+    return backend
 
 
 def backend_for_nested(spec: Any) -> SerializerBackend:
     """Resolve the backend for a "Meta.nested_fields" child spec.
+
+    When a host for the child model declared custom validation (inline
+    "validate_*" methods or a "Meta.pydantic_model"), its backend is reused so
+    the nested write runs the child's own rules instead of validating from the
+    bare model.
 
     Args:
         spec: The nested-field value — a Django model class.
@@ -132,6 +158,10 @@ def backend_for_nested(spec: Any) -> SerializerBackend:
         raise ImproperlyConfigured(
             f"nested_fields values must be Django model classes, received {spec!r}."
         )
+
+    validated = _VALIDATED_BACKENDS.get(spec)
+    if validated is not None:
+        return validated
 
     from .core.backend import PydanticBackend
 

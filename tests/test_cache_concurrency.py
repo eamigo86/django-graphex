@@ -31,16 +31,31 @@ non-deterministic and flaky).  Instead this module:
    Because the in-process SQLite test DB serialises writes, the test asserts
    the *ordering* property rather than attempting to reproduce a timing fault.
    A comment explains why and documents the invariant being tested.
+
+3. Asserts the invariant **end to end through the view**, on a
+   "TransactionTestCase" so "on_commit" keeps its production semantics: a
+   probe mutation records the version token as of its own commit point, which
+   catches a bump scheduled at the wrong place in "dispatch" (the historic
+   defect: scheduling it before "super_call" made the deferral inert).
 """
 
 import threading
+from typing import Any
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import transaction
-from django.test import RequestFactory, TestCase, override_settings
+from django.test import (
+    RequestFactory,
+    TestCase,
+    TransactionTestCase,
+    override_settings,
+)
+from graphql import GraphQLBoolean, GraphQLResolveInfo, GraphQLString
 
+from django_graphex.core import Mutation, ObjectType, field
+from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.views import GraphQLView
 from tests.cache_helpers import CACHE_ON, graphql_post, minimal_cache_schema
 
@@ -84,46 +99,34 @@ class OnCommitOrderingTest(TestCase):
         to on_commit closes this window: the version only advances after the
         mutation's DB write is durable.
 
-        We intercept transaction.on_commit and assert it is called exactly once
-        (with a callable), proving the bump is deferred.  We also verify the
-        counter has NOT advanced before on_commit fires.
+        The bump runs inside a REAL "transaction.atomic()" block (the one
+        "captureOnCommitCallbacks" opens); nothing is patched, so the deferral
+        itself — not merely the registration call — is what is observed.
         """
         view_instance = GraphQLView(schema=minimal_cache_schema)
         identity = "race_ordering_user"
         # Seed the version so incr has an integer to work with.
         version_before = view_instance._get_cache_version(cache, identity)
 
-        on_commit_received = []
-        immediate_bump_detected = []
-
-        def capturing_on_commit(func, using=None):
-            # Record but do NOT execute the callback — simulates a pending tx.
-            on_commit_received.append(func)
-
-        # Patch on_commit so callbacks are held, not flushed.
-        with patch(
-            "django_graphex.views.transaction.on_commit",
-            side_effect=capturing_on_commit,
-        ):
+        # Real atomic block: callbacks are captured by Django itself, so a bump
+        # that ran inline would be visible in the counter immediately.
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
             view_instance._bump_cache_version(cache, identity)
 
-        # The version must NOT have changed (on_commit was not flushed).
+        # The version must NOT have changed (the transaction has not committed).
         version_mid = view_instance._get_cache_version(cache, identity)
-        if version_mid != version_before:
-            immediate_bump_detected.append(True)
-
-        assert not immediate_bump_detected, (
-            "Version advanced BEFORE on_commit fired — bump-before-commit TOCTOU bug present: "
+        assert version_mid == version_before, (
+            "Version advanced BEFORE commit — bump-before-commit TOCTOU bug present: "
             f"before={version_before!r}, mid={version_mid!r}"
         )
 
         # Exactly one on_commit callback was registered.
-        assert len(on_commit_received) == 1, (
-            f"Expected 1 on_commit registration, got {len(on_commit_received)}"
+        assert len(callbacks) == 1, (
+            f"Expected 1 on_commit registration, got {len(callbacks)}"
         )
 
         # Flushing the callback must advance the counter.
-        on_commit_received[0]()
+        callbacks[0]()
         version_after = view_instance._get_cache_version(cache, identity)
         assert int(version_after) > int(version_before), (
             "Version did not advance after flushing on_commit callback: "
@@ -313,4 +316,140 @@ class BumpVsServeOrderingTest(TestCase):
             "Thread B was served stale data from the cache after the version was bumped "
             "(the on_commit ordering invariant is violated — version was not visible "
             "to thread B after thread A's bump completed).",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 3. End-to-end deferral: the bump must land AFTER the mutation's own
+#    transaction commits, not before it.
+#
+# The two tests above exercise "_bump_cache_version" in isolation, so they stay
+# green even when "dispatch" schedules the bump at the wrong moment.  The
+# historic defect lived at the CALL SITE: the bump was scheduled before
+# "super_call", and the atomic block that "ATOMIC_MUTATIONS" opens lives inside
+# "super_call", so "on_commit" found no open transaction and fired inline —
+# before the mutation had even run.
+#
+# This test observes the real ordering end to end.  The probe mutation registers
+# its own "on_commit" callback, which therefore fires exactly when the mutation's
+# transaction commits; that callback records the version token it sees at that
+# instant.  A bump that fires before the commit is visible as an already-advanced
+# token in the recording.  TransactionTestCase is required: inside a plain
+# TestCase every callback is captured by the test's own outer atomic block, which
+# makes both the correct and the broken scheduling indistinguishable.
+# ---------------------------------------------------------------------------
+
+#: Version tokens observed at the exact moment the mutation transaction commits.
+_COMMIT_TIME_VERSIONS: list[Any] = []
+
+#: The version-counter cache key for a fully anonymous request ("anon").
+_ANON_VERSION_KEY = GraphQLView._CACHE_VERSION_KEY_TEMPLATE.format(identity="anon")
+
+
+class _ProbeQ(ObjectType):
+    """Query root for the commit-ordering probe schema."""
+
+    hello = field(GraphQLString)
+
+    def resolve_hello(root: Any, info: GraphQLResolveInfo) -> str:  # noqa: N805
+        """Resolve the "hello" field to a constant greeting.
+
+        Args:
+            root: The unused parent resolver value.
+            info: The GraphQL execution info for the current field.
+
+        Returns:
+            The literal string "world".
+        """
+        return "world"
+
+
+class _ProbeMut(Mutation):
+    """Mutation that records the version token at its own commit point."""
+
+    class Arguments:
+        """No arguments are accepted by this mutation."""
+
+    ok = field(GraphQLBoolean)
+
+    @classmethod
+    def mutate(cls, root: Any, info: GraphQLResolveInfo) -> "_ProbeMut":
+        """Register a commit probe and report success.
+
+        The registered callback runs when the transaction this resolver is
+        executing in commits, so the token it reads is the version as of the
+        moment the mutation's write became durable.
+
+        Args:
+            root: The unused parent resolver value.
+            info: The GraphQL execution info for the current field.
+
+        Returns:
+            A new instance with "ok" set to True.
+        """
+        transaction.on_commit(
+            lambda: _COMMIT_TIME_VERSIONS.append(cache.get(_ANON_VERSION_KEY))
+        )
+        return cls(ok=True)
+
+
+class _ProbeMutationRoot(ObjectType):
+    """Mutation root exposing the commit-ordering probe mutation."""
+
+    do_thing = _ProbeMut.Field()
+
+
+#: Schema whose mutation records the cache version at its commit point.
+_probe_schema = DjangoGraphQLSchema(query=_ProbeQ, mutation=_ProbeMutationRoot)
+
+
+@override_settings(
+    DJANGO_GRAPHEX={
+        "CACHE_ACTIVE": True,
+        "CACHE_TIMEOUT": 60,
+        "ATOMIC_MUTATIONS": True,
+    }
+)
+class BumpLandsAfterMutationCommitTest(TransactionTestCase):
+    """The version bump MUST NOT be visible before the mutation commits.
+
+    Uses TransactionTestCase so "on_commit" keeps its production semantics: a
+    TestCase wraps every test in an atomic block that would defer both the
+    correct and the mis-scheduled bump to the same point, hiding the defect.
+    """
+
+    def setUp(self) -> None:
+        """Reset the cache and the commit-time recording before each test.
+
+        Prevents version counters and probe records from a prior test from
+        leaking into this test's assertions.
+        """
+        cache.clear()
+        _COMMIT_TIME_VERSIONS.clear()
+
+    def test_version_is_unchanged_at_the_mutation_commit_point(self) -> None:
+        """The counter must still hold the old token when the mutation commits.
+
+        Ordering invariant:
+
+            mutation commit -> version bump -> next query reads the new version
+
+        A bump scheduled before "super_call" fires inline (no transaction is open
+        at that point), so the probe would observe the ALREADY advanced token —
+        the bump-before-commit TOCTOU window of issue #60a.
+        """
+        cache.set(_ANON_VERSION_KEY, 5, timeout=None)
+        view = GraphQLView.as_view(schema=_probe_schema)
+
+        response = view(graphql_post(RequestFactory(), "mutation { doThing { ok } }"))
+
+        assert response.status_code == 200, response.content
+        assert _COMMIT_TIME_VERSIONS == [5], (
+            "Version was already bumped when the mutation transaction committed "
+            "— the bump is not deferred past the commit (issue #60a TOCTOU "
+            f"window): observed {_COMMIT_TIME_VERSIONS!r}, expected [5]"
+        )
+        assert cache.get(_ANON_VERSION_KEY) == 6, (
+            "The mutation did not invalidate the cache namespace: version is "
+            f"{cache.get(_ANON_VERSION_KEY)!r}, expected 6"
         )

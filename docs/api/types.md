@@ -152,7 +152,8 @@ Check if the root object is of this type.
 
 #### `get_queryset(queryset, info)` (classmethod)
 
-Override to customize the queryset used for this type.
+Override to customize the queryset used for this type. Applied wherever the type
+is mounted — at the root and through a parent relation alike.
 
 **Parameters:**
 - `queryset` (`QuerySet`): Base queryset
@@ -160,9 +161,14 @@ Override to customize the queryset used for this type.
 
 **Returns:** Modified `QuerySet`
 
+**Raises:** `TypeError` if the override returns anything other than a `QuerySet`
+(the scope cannot be honoured, so the request is denied instead of serving
+unscoped rows)
+
 #### `get_node(info, id)` (classmethod)
 
-Get a single node by ID.
+Get a single node by ID. The lookup runs through `get_queryset`, so a row the
+scope excludes is reported as missing — the ID comes straight from the caller.
 
 **Parameters:**
 - `info` (`ResolveInfo`): GraphQL resolve info
@@ -220,6 +226,11 @@ Get a single node by ID.
             return queryset.select_related('profile').prefetch_related('posts')
     ```
 
+    A prefetch here for a relation the optimizer also derives from the selection
+    is **replaced** by the derived (narrowed, filtered) version rather than
+    colliding with it; prefetches of other relations are kept. See
+    [Query Optimization](../usage/query-optimization.md#custom-resolvers).
+
 ---
 
 ## DjangoInputObjectType
@@ -254,7 +265,17 @@ class UserInput(DjangoInputObjectType):
 | `filter_fields` | `dict` | `None` | Field filtering configuration |
 | `input_for` | `str` | `'create'` | Input purpose: 'create', 'update', or 'delete' |
 | `nested_fields` | `tuple/dict` | `()` | Nested field configuration |
+| `nested_parent_model` | `Model` | `None` | Mark this input as the nested child of that model: its back-reference `ForeignKey` / `OneToOneField` becomes optional |
 | `container` | `type` | Auto-generated | Container class for the input type |
+
+`nested_parent_model` is what makes a nested payload writable without repeating
+the parent's id: the nested writer injects that key at save time, so requiring
+it inline would make every nested create unsatisfiable. It is set automatically
+on the per-parent child input a `Meta.nested_fields` entry builds (see
+[the nested child input type](../usage/mutations.md#the-nested-child-input-type));
+set it by hand only on an input you mount yourself inside another model's input.
+The child's Pydantic validation model still requires the key, so a standalone
+create that omits it fails cleanly.
 
 ### Methods
 
@@ -288,6 +309,19 @@ Get the type when the unmounted type is mounted.
             exclude_fields = ('password', 'date_joined')
     ```
 
+=== "Delete Input"
+
+    ```python
+    class UserDeleteInput(DjangoInputObjectType):
+        class Meta:
+            model = User
+            input_for = 'delete'
+    ```
+
+    A delete input is keyed on the model's **real** primary key, so a model
+    whose pk is a `UUIDField`, a `SlugField` or any other renamed field works
+    exactly like one using the default `id`.
+
 === "With Nested Fields"
 
     ```python
@@ -298,6 +332,19 @@ Get the type when the unmounted type is mounted.
             # field names to expand as nested input objects
             nested_fields = ('profile', 'addresses')
     ```
+
+!!! note "Pydantic defaults on a hand-authored `InputType`"
+
+    A field declared on an `InputType` with a plain default (`limit: int = 10`)
+    or a `default_factory` (`Field(default_factory=list)`) surfaces that value as
+    the SDL default (`limit: Int = 10`); the factory runs **once**, at compile
+    time.
+
+    The one exception is Pydantic 2.10+'s **validated-data** factory
+    (`Field(default_factory=lambda data: data["a"] + 1)`): it needs the
+    partially validated instance, so it has no compile-time value and the field
+    renders with **no** `= …` marker. Pydantic still applies it per instance
+    when the input is validated.
 
 ---
 
@@ -329,7 +376,7 @@ class UserListType(DjangoListObjectType):
 | `only_fields` | `tuple/list` | `()` | Include only specified fields |
 | `exclude_fields` | `tuple/list` | `()` | Exclude specified fields |
 | `include_fields` | `tuple/list` | `()` | Additional fields to include |
-| `queryset` | `QuerySet` | `None` | Base queryset for the list |
+| `queryset` | `QuerySet` | `None` | Base queryset for the list; used as a template — every request runs a fresh clone, so it never caches rows |
 | `description` | `str` | Auto-generated | Type description |
 | `results_field_name` | `str` | `'results'` | Name of results field |
 | `pagination` | `BaseDjangoGraphqlPagination` | `None` | Pagination configuration |
@@ -511,6 +558,44 @@ class UserType(DjangoModelType):
 | `subscription_index_fields` | `tuple/list` | `None` | Model field names used to route notifications to value-scoped subscriber groups |
 | `max_depth` | `int` | `None` | Max nested-object depth below the generated output type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of the generated output type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
+| `model_operations` | `tuple` | `("create", "update", "delete", "list", "retrieve")` | The operations this type serves. Anything left out has its `*Field()` builder raise, and stops counting when a parent nests this model |
+
+!!! tip "`model_operations` — declaring a read-only type"
+    The default is **every** operation, so a type that says nothing behaves
+    exactly as it always has. Narrowing it does two things:
+
+    * the `*Field()` builder for an excluded operation raises `AttributeError`,
+      and `QueryFields()` / `MutationFields()` return only what is enabled —
+      the same contract `DjangoModelMutation.Meta.model_operations` has always
+      had;
+    * the type stops being a **write host** for the operations it dropped. When
+      another model nests this one through `Meta.nested_fields`, a nested write
+      is gated by every declared host of the child (see
+      [Nested writes](../usage/mutations.md#how-nested-writes-work)). A display
+      card declaring `model_operations = ("list", "retrieve")` therefore keeps
+      its `Meta.queryset` and its `only_fields` out of that write path, where
+      they were never meant to be a policy.
+
+    ```python
+    class UserCard(DjangoModelType):
+        class Meta:
+            model = User
+            model_operations = ("list", "retrieve")
+            only_fields = ("id", "username", "avatar")
+            queryset = User.objects.filter(is_active=True)
+    ```
+
+!!! warning "The projection needs an output type this type actually builds"
+    A `DjangoModelType` reuses the output type already registered for its model
+    — a `DjangoObjectType` you declared for the same model — and that type was
+    built from **its own** `Meta`. Declaring `only_fields`, `include_fields` or
+    `exclude_fields` here in that situation now raises `ImproperlyConfigured` at
+    class definition, naming the option, the model and the type that registered
+    the output type. Move the projection to that `DjangoObjectType` (or drop the
+    option); it is honored as usual when no other type registered the model.
+
+    (Fixed in the next release: the option used to be dropped silently, so a
+    column excluded here stayed queryable.)
 
 ### Generated Methods
 
@@ -518,7 +603,8 @@ class UserType(DjangoModelType):
 
 Generate both single object and list query fields.
 
-**Returns:** Tuple of (`single_field`, `list_field`)
+**Returns:** Tuple of (`single_field`, `list_field`), restricted to the
+operations enabled in `Meta.model_operations`
 
 #### `ListField(**kwargs)` (classmethod)
 
@@ -536,7 +622,8 @@ Create a retrieve field for single objects.
 
 Generate the create, delete and update mutation fields.
 
-**Returns:** Tuple of (`create_field`, `delete_field`, `update_field`)
+**Returns:** Tuple of (`create_field`, `delete_field`, `update_field`), restricted
+to the operations enabled in `Meta.model_operations`
 
 #### `CreateField(**kwargs)` / `DeleteField(**kwargs)` / `UpdateField(**kwargs)` (classmethod)
 
@@ -560,6 +647,17 @@ uses `Meta.queryset` (falling back to the model's default manager) and applies
 
 Per-request scoping hook. The default returns `qs` unchanged.
 
+!!! warning "The scope covers writes, not only reads"
+    `retrieve`, `list`, **`update` and `delete`** all resolve their target rows
+    through `get_queryset` → `filter_queryset`. A row outside the scope answers
+    an `update`/`delete` exactly as a missing row does — `ok: false` with the
+    standard `<Model> with id <pk> does not exist.` error — so the response
+    cannot be used to probe which primary keys exist outside the scope.
+
+    (Fixed in the next release: 2.1.0 and earlier resolved the write target
+    from the bare model, so a scope enforced on the read path left `update` and
+    `delete` open to any row in the table.)
+
 #### `authorize(info, action, **kwargs)` (classmethod)
 
 Authorization hook called by every CRUD method before it runs. The default
@@ -569,7 +667,9 @@ raising `GraphQLError` when denied. Override to customize.
 #### `permission_classes` (class attribute)
 
 Tuple of permission classes checked per action. Empty (the default) means no
-checks. See `django_graphex.permissions`.
+checks. A permission denies on **any falsy return value** (`False`, `None`,
+`0`, `""`), so `return user and user.is_staff` is safe. See
+`django_graphex.permissions`.
 
 ### Example Usage
 

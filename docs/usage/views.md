@@ -153,6 +153,27 @@ path("graphql", GraphQLView.as_view(
 The template is rendered with a small context: `endpoint` (the request path) and
 `subscription_path`; `request` is available via the usual context processors.
 
+The page is served when the client prefers `text/html` over `application/json`
+in its `Accept` header. Quality values are honoured, with or without whitespace
+after the semicolon — `Accept: text/html; q=0.1, application/json` and
+`Accept: text/html;q=0.1, application/json` both get JSON. A client can also
+force JSON with a `raw` query-string parameter (or a `raw` key in the body).
+
+## Batch endpoints
+
+With `batch=True` the endpoint expects a **JSON list of operations**, sent as
+`Content-Type: application/json`:
+
+```python
+path("graphql/batch", GraphQLView.as_view(batch=True)),
+```
+
+Any other body shape — a bare object, `application/graphql`, form-encoded or
+multipart — is rejected with **HTTP 400** and the message
+`Batch requests should receive a list, but received ...`. See
+[`MAX_BATCH_SIZE`](settings.md#http-view-hardening) for the per-request
+operation cap.
+
 ## Subscriptions
 
 GraphQL subscriptions are served by a dedicated view (over Channels) — see the

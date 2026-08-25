@@ -37,26 +37,38 @@ pagination and complex filtering.
           description
         }
         tags {
-          id
-          name
-          color
+          results {
+            id
+            name
+            color
+          }
         }
         comments {
-          id
-          content
-          author {
-            username
-          }
-          createdAt
-          isApproved
-          parent {
+          results {
             id
             content
+            author {
+              username
+            }
+            createdAt
+            isApproved
+            parent {
+              id
+              content
+            }
           }
+          totalCount
         }
       }
     }
     ```
+
+    !!! tip "To-many relations are list types, not plain lists"
+        `tags` and `comments` compile to `TagListType` / `CommentListType`, so
+        the sub-selection goes through `results` (which itself accepts `limit`,
+        `offset` and `ordering`) plus an optional `totalCount`. Only to-one
+        relations — `author`, `category`, `profile`, `parent` — are selected
+        directly.
 
 === "Response"
 
@@ -88,30 +100,35 @@ pagination and complex filtering.
             "slug": "technology",
             "description": "Latest in tech trends and tutorials"
           },
-          "tags": [
-            {
-              "id": "1",
-              "name": "GraphQL",
-              "color": "#e10098"
-            },
-            {
-              "id": "2",
-              "name": "Django",
-              "color": "#092e20"
-            }
-          ],
-          "comments": [
-            {
-              "id": "1",
-              "content": "Great tutorial! Very helpful.",
-              "author": {
-                "username": "reader1"
+          "tags": {
+            "results": [
+              {
+                "id": "1",
+                "name": "GraphQL",
+                "color": "#e10098"
               },
-              "createdAt": "2023-12-01T14:20:00",
-              "isApproved": true,
-              "parent": null
-            }
-          ]
+              {
+                "id": "2",
+                "name": "Django",
+                "color": "#092e20"
+              }
+            ]
+          },
+          "comments": {
+            "results": [
+              {
+                "id": "1",
+                "content": "Great tutorial! Very helpful.",
+                "author": {
+                  "username": "reader1"
+                },
+                "createdAt": "2023-12-01T14:20:00",
+                "isApproved": true,
+                "parent": null
+              }
+            ],
+            "totalCount": 1
+          }
         }
       }
     }
@@ -167,15 +184,19 @@ pagination and complex filtering.
     ```graphql
     query GetPostsByTags {
       allPosts(filter: {
-        tags: { in: [1, 3, 5] }   # GraphQL, React, Python (by tag pk)
+        # Relation filters nest into the related type's own filter input,
+        # so the pk lookup lives under `id`, not directly on `tags`.
+        tags: { id: { in: ["1", "3", "5"] } }   # GraphQL, React, Python
         status: { exact: PUBLISHED }
       }) {
         results(limit: 20) {
           id
           title
           tags {
-            name
-            color
+            results {
+              name
+              color
+            }
           }
         }
         totalCount
@@ -244,12 +265,12 @@ pagination and complex filtering.
       $tags: [ID!],
       $authorName: String,
       $minViews: Int,
-      $publishedAfter: Date,
-      $publishedBefore: Date
+      $publishedAfter: DateTime,
+      $publishedBefore: DateTime
     ) {
       allPosts(filter: {
-        category: { in: $categories }
-        tags: { in: $tags }
+        category: { id: { in: $categories } }
+        tags: { id: { in: $tags } }
         author: { username: { icontains: $authorName } }
         viewCount: { gte: $minViews }
         publishedAt: { range: [$publishedAfter, $publishedBefore] }
@@ -271,8 +292,10 @@ pagination and complex filtering.
             slug
           }
           tags {
-            name
-            color
+            results {
+              name
+              color
+            }
           }
         }
         totalCount
@@ -288,8 +311,8 @@ pagination and complex filtering.
       "tags": ["1", "3"],
       "authorName": "john",
       "minViews": 100,
-      "publishedAfter": "2023-01-01",
-      "publishedBefore": "2023-12-31"
+      "publishedAfter": "2023-01-01T00:00:00Z",
+      "publishedBefore": "2023-12-31T23:59:59Z"
     }
     ```
 

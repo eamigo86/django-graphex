@@ -108,7 +108,7 @@ from graphql import GraphQLError
 from .core.base import InputType
 from .settings import graphql_api_settings
 
-__all__ = ["Base64FileInput", "decode_base64_file"]
+__all__ = ["Base64FileInput", "decode_base64_file", "merge_uploaded_files"]
 
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
@@ -363,3 +363,52 @@ class Base64FileInput(InputType):
             },
             max_size=max_size,
         )
+
+
+def _input_field_names(input_type: Any) -> frozenset[str]:
+    """Return the model field names a compiled input object accepts.
+
+    Args:
+        input_type: The compiled "GraphQLInputObjectType", possibly wrapped in
+            "GraphQLNonNull".
+
+    Returns:
+        The "out_name" of every field the input exposes, which is the snake_case
+        model attribute the multipart part must be named after.
+    """
+    from graphql import get_named_type
+
+    named = get_named_type(input_type)
+    fields = getattr(named, "fields", None) or {}
+    return frozenset(
+        getattr(field, "out_name", None) or name for name, field in fields.items()
+    )
+
+
+def merge_uploaded_files(data: dict[str, Any], info: Any, input_type: Any) -> None:
+    """Fold a multipart request's files into a mutation payload, in place.
+
+    Only a part named after a field the input actually EXPOSES is merged. The
+    filter is the point of this helper: a file column a type projects away with
+    "Meta.exclude_fields" (or leaves out of "Meta.only_fields") has no input
+    field, and a raw merge wrote it to the row anyway -- the payload reached the
+    ORM without ever passing the wire surface that was supposed to bound it. An
+    unrecognised part is ignored rather than rejected, because projecting a
+    column away means the server does not accept it, not that the request is
+    malformed.
+
+    The part must carry the model's snake_case attribute name, NOT the camelCase
+    alias the field is published under.
+
+    Args:
+        data: The mutation input payload, mutated in place.
+        info: GraphQL resolve info for the current request.
+        input_type: The compiled input object the payload was validated against.
+    """
+    if "multipart/form-data" not in info.context.META.get("CONTENT_TYPE", ""):
+        return
+    files = getattr(info.context, "FILES", None)
+    if not files:
+        return
+    allowed = _input_field_names(input_type)
+    data.update({name: value for name, value in files.items() if name in allowed})

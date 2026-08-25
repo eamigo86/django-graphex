@@ -237,7 +237,10 @@ class SubscriptionBinding:
         if data_snapshot is not None:
             data: dict[str, Any] = data_snapshot
         else:
-            data = {"id": pk_snapshot}
+            # Key by the model's REAL primary-key field name: the event type
+            # declares the pk under that name (a "slug" pk renders "slug: String!"),
+            # so a hardcoded "id" would deliver a null on a non-nullable field.
+            data = {self.model._meta.pk.name: pk_snapshot}
 
         payload = {
             "action": "delete",
@@ -291,7 +294,9 @@ class SubscriptionBinding:
         if self.subscription_cls._payload_is_full():
             data = self.subscription_cls._serialize_payload(instance)
         else:
-            data = {"id": instance.pk}
+            # Same as "_broadcast_delete": the payload key is the model's real
+            # primary-key field name, not the literal "id".
+            data = {self.model._meta.pk.name: instance.pk}
 
         payload = {
             "action": action,

@@ -25,7 +25,9 @@ Design contracts:
 
 from __future__ import annotations
 
+import base64
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from graphql import (
@@ -737,6 +739,57 @@ def _to_graphql_field(
 
         return {camel_name: GraphQLField(type_=GdxJSON, resolve=_hstore_resolver)}
 
+    # --- DurationField (audit B7: every populated read returned null) ---------
+    # The SDL scalar stays ``Float`` (graphene-django parity, see the
+    # DJANGO_TO_GQL comment above), but the column value is a ``timedelta``, and
+    # ``Float`` cannot serialize one — a populated row yielded ``null`` plus a
+    # "Float cannot represent non numeric value" field error. Resolve through
+    # ``total_seconds()`` so the Float surface actually carries the value; the
+    # INPUT side maps ``timedelta`` to the SAME ``Float`` (seconds), which
+    # pydantic coerces straight back, so the round-trip closes.
+    if field.get_internal_type() == "DurationField":
+
+        def _duration_resolver(
+            root: Any, _info: Any, *, _name: str = field_name
+        ) -> Any:
+            value = (
+                root.get(_name)
+                if isinstance(root, dict)
+                else getattr(root, _name, None)
+            )
+            return value.total_seconds() if isinstance(value, timedelta) else value
+
+        return {
+            camel_name: GraphQLField(type_=GraphQLFloat, resolve=_duration_resolver)
+        }
+
+    # ``BinaryField`` has the same shape of defect as ``DurationField`` above:
+    # the SDL surface is ``String`` (graphene parity), but the column yields
+    # ``bytes`` (or a ``memoryview`` on some backends), which ``String`` cannot
+    # serialize — every populated read answered ``null`` plus a field error.
+    # Encoding is ALWAYS base64, never "UTF-8 when it happens to decode": a
+    # column holding arbitrary bytes would otherwise change representation the
+    # moment one byte stopped being valid UTF-8, leaving the client no way to
+    # tell which of the two it received. Base64 also matches what the
+    # subscription payload encoder already sends for the same column.
+    if field.get_internal_type() == "BinaryField":
+
+        def _binary_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
+            value = (
+                root.get(_name)
+                if isinstance(root, dict)
+                else getattr(root, _name, None)
+            )
+            if value is None or isinstance(value, str):
+                return value
+            if isinstance(value, memoryview):
+                value = value.tobytes()
+            if isinstance(value, (bytes, bytearray)):
+                return base64.b64encode(bytes(value)).decode("ascii")
+            return value
+
+        return {camel_name: GraphQLField(type_=GraphQLString, resolve=_binary_resolver)}
+
     # --- Scalar fields: map via DJANGO_TO_GQL --------------------------------
     django_to_gql = _get_django_to_gql()
     gql_scalar = None
@@ -824,10 +877,14 @@ def compile_output_fields(
     """
     fields: dict[str, GraphQLField] = {}
 
-    # get_fields() returns concrete + relation fields
-    # include_parents=False avoids duplicating parent-model fields
+    # get_fields() returns concrete + relation fields, parents included.
+    # Parents must be included: for a multi-table-inherited child every
+    # inherited column (its pk included) lives on the parent, so excluding them
+    # produced a type missing even "id". An abstract base contributes its fields
+    # to the child directly, so nothing is duplicated there either — get_fields
+    # cannot return two entries under one name.
     try:
-        all_fields = model._meta.get_fields(include_parents=False)
+        all_fields = model._meta.get_fields()
     except Exception:
         all_fields = model._meta.concrete_fields
 
@@ -836,6 +893,13 @@ def compile_output_fields(
         # unless explicitly in only_fields
         field_name = getattr(field, "name", getattr(field, "attname", None))
         if field_name is None:
+            continue
+
+        # The implicit parent link of a multi-table-inherited child ("<parent>_ptr")
+        # is Django's join plumbing, not data: the child now exposes every
+        # inherited column directly, so the link would only offer a redundant hop
+        # back to a copy of the same row.
+        if getattr(getattr(field, "remote_field", None), "parent_link", False):
             continue
 
         # ``include_fields`` force-includes a field even when only/exclude would

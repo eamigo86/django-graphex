@@ -364,6 +364,14 @@ class Subscription(NativeObjectType):
     ) -> str:
         """Build the Channels group name for an action (optionally per-object).
 
+        The name is scoped by "Meta.stream" as well as the model label. Two
+        subscriptions on the SAME model with different streams both register
+        their signal receivers (the binding's "dispatch_uid" already carries the
+        stream), so without the stream in the group name both would fan out into
+        the identical groups and every subscriber would receive the other
+        stream's payload — an id-only broadcast delivering nulls for every field
+        a full-payload subscriber selected.
+
         When an "index" mapping is given, a canonical ":k=v&..." suffix
         (keys sorted) is appended so that subscribers scoped to those values land
         in their own group. The subscribe side and the broadcast side build the
@@ -378,10 +386,11 @@ class Subscription(NativeObjectType):
         Returns:
             The Channels-safe group name.
         """
+        base = "{}.{}".format(cls.model_label(), cls._meta.stream)
         if id:
-            name = f"{cls.model_label()}-{action}-{id}"
+            name = f"{base}-{action}-{id}"
         else:
-            name = f"{cls.model_label()}-{action}"
+            name = f"{base}-{action}"
         if index:
             # Percent-encode keys and values so that delimiter characters
             # ('=', '&') inside field values cannot produce ambiguous names.
@@ -715,7 +724,10 @@ class Subscription(NativeObjectType):
 
         def _authorize(context: Any, **kwargs: Any) -> None:
             # The kept classmethod takes (info, **kwargs); pass the
-            # transport-neutral context as ``info`` (it exposes .user/.context).
+            # transport-neutral context as ``info``. Both transports' contexts
+            # expose ``.user`` AND a ``.context`` self-alias, so the documented
+            # ``info.context.user`` spelling resolves here exactly as it does in
+            # a resolver (where ``info`` is a real GraphQLResolveInfo).
             cls.authorize_subscription(context, **kwargs)
 
         def _scope(context: Any, **kwargs: Any) -> dict[str, Any] | None:
@@ -765,7 +777,9 @@ class Subscription(NativeObjectType):
             An awaitable resolving to "True" when the changed row matches every
             remaining lookup.
         """
-        pk = event.get("id")
+        # The flat payload keys the primary key by its real field name (a "slug"
+        # pk lands under "slug"), in both "id_only" and "full" payload modes.
+        pk = event.get(cls._meta.model._meta.pk.name)
         if pk is None:
             return sync_to_async(lambda: False)()
 

@@ -97,15 +97,35 @@ the already-narrowed queryset — the same interplay described for
 Both `results` **and** `totalCount` reflect the hook — the hook is applied
 before the `COUNT` query is issued.
 
-!!! note "Remaining boundary: nested-relation fields"
-    Relation fields on a **parent** type that auto-expand to a nested list
+The hook applies **wherever the field is mounted**, root or nested: a
+`DjangoFilterListField` you mount by hand on a parent type (e.g.
+`created_posts = DjangoFilterListField(PostType)` on `AuthorType`) scopes its
+rows even when it is reached through the parent's relation, not only at the top
+level.
+
+!!! warning "The hook must return a `QuerySet`"
+    Returning anything else (most often a missing `return`, so `None`) raises
+    `TypeError`.  The request is denied rather than served with the scope
+    silently skipped.
+
+!!! note "Cost of scoping a hand-mounted relation field"
+    A `DjangoFilterListField` mounted on a parent type normally reads the rows
+    straight out of the parent's prefetch cache.  When the child type declares a
+    `get_queryset` scope, that scope has to be applied to the relation, which
+    issues one query per parent instead.  Types that declare no scope keep the
+    cache and the single query.
+
+!!! note "Remaining boundary: auto-expanded nested-relation fields"
+    Relation fields that django-graphex **auto-expands** to a nested list
     (e.g. a `ForeignKey` reverse relation exposed as
-    `allAuthors { results { posts { results { title } } } }`) use the parent's
-    prefetch cache and do **not** call the child type's `get_queryset`.  This is
-    intentional: wiring the hook there would require rebuilding the prefetch
-    queryset inside the resolver, which conflicts with the window-pagination and
-    prefetch optimizations.  If you need per-relation row scoping, add a
-    `resolve_<relation>` method on the parent type.
+    `allAuthors { results { posts { results { title } } } }`, resolved by
+    `DjangoNestedListObjectField`) use the parent's prefetch cache and do
+    **not** call the child type's `get_queryset`.  This is intentional: wiring
+    the hook there would require rebuilding the prefetch queryset inside the
+    resolver, which conflicts with the window-pagination and prefetch
+    optimizations.  If you need per-relation row scoping there, either mount the
+    relation explicitly as a `DjangoFilterListField` (which does apply the hook)
+    or add a `resolve_<relation>` method on the parent type.
 
 !!! note "DjangoModelType uses a different hook"
     `DjangoModelType` has its own queryset-scoping API (`get_queryset` +
@@ -137,6 +157,44 @@ The full set of recognised options for `DjangoObjectType.Meta` is:
 
 Any key not in this table is rejected at startup. Review your `DjangoObjectType`
 and `DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
+
+### Model inheritance { #model-inheritance }
+
+**Abstract base** — Django copies the parent's columns onto the child, so they
+appear on the child's type exactly once. Nothing special to do.
+
+**Multi-table inheritance** — the parent keeps its own table and the child
+holds a parent link. A type over the child picks up everything it inherits: the
+parent's columns render alongside the child's own, and the parent's reverse
+relations render as their usual `<Model>ListType` containers.
+
+```python
+class Place(models.Model):
+    name = models.CharField(max_length=100)
+
+class Review(models.Model):
+    place = models.ForeignKey(Place, related_name="reviews", on_delete=models.CASCADE)
+
+class Restaurant(Place):                 # multi-table inheritance
+    serves_pizza = models.BooleanField(default=False)
+```
+
+```graphql
+type RestaurantType {
+  id: ID!                   # inherited from Place
+  name: String              # inherited from Place
+  servesPizza: Boolean
+  reviews: ReviewListType   # inherited from Place
+}
+```
+
+Before this, an inherited reverse relation had no compiled counterpart and the
+whole schema build failed with `RestaurantType fields cannot be resolved`, while
+the inherited columns — the primary key among them — were absent from the type.
+
+The implicit parent link (`placePtr`) is deliberately not exposed: the child
+already carries every inherited column, so the link would only offer a redundant
+hop back to a copy of the same row.
 
 ## DjangoListObjectType
 
@@ -575,16 +633,23 @@ class UserModelType(DjangoModelType):
     (e.g. `queryset = User.objects.filter(is_active=True)`). It is honored by the
     generated `RetrieveField()` / `ListField()`.
 
+    The declared queryset is a **template**: it is evaluated once, at class
+    definition, and every request runs a fresh clone of it. It never
+    accumulates a result cache, so it cannot serve stale rows — regardless of
+    the [`OPTIMIZE_QUERYSET`](query-optimization.md) setting.
+
 !!! tip "Optimizer and `Meta.queryset` interplay"
 
     The query optimizer applies `select_related` / `prefetch_related` / `.only()`
     **on top of** the `Meta.queryset` (or the value returned by `get_queryset`).
-    Any manual `select_related`/`prefetch_related` you add in `Meta.queryset` may
-    be *replaced* by the optimizer's own derived version — this is intentional and
-    typically reduces queries further. If you rely on specific prefetch options
-    (e.g. a custom `Prefetch` queryset), use a `per-field optimize_<field>` hook
-    on the parent type instead of embedding them in `Meta.queryset`. See
-    [Query Optimization](query-optimization.md).
+    A manual `prefetch_related` for a relation the optimizer also derives is
+    *replaced* by the derived version — this is intentional and typically reduces
+    queries further; manual prefetches of other relations are kept as they are.
+    (The replacement is what keeps the two from colliding: Django rejects two
+    lookups on the same path, so the query used to fail outright.) If you rely on
+    specific prefetch options (e.g. a custom `Prefetch` queryset), use a
+    `per-field optimize_<field>` hook on the parent type instead of embedding them
+    in `Meta.queryset`. See [Query Optimization](query-optimization.md).
 
 ### Custom queryset & per-request filtering
 
@@ -620,7 +685,9 @@ class AuthorType(DjangoModelType):
   applies `filter_queryset`; the default uses `Meta.queryset` (else the model
   manager).
 - `filter_queryset(cls, qs, info, **kwargs)` is the scoping hook; the default is a
-  no-op.
+  no-op. It scopes **every** CRUD operation: `update` and `delete` resolve the
+  row they are about to write through it too, and a row outside the scope is
+  reported as not found instead of being written.
 
 !!! note "Mutation responses"
 
@@ -718,6 +785,13 @@ class InvoiceType(TimestampedType):
     declared here are **ignored with a warning** — put them on that
     `DjangoObjectType` instead.
 
+    The same applies to the projection, but it **fails the build** rather than
+    warning: `only_fields` / `include_fields` / `exclude_fields` declared on a
+    `DjangoModelType` whose output type comes from the registry raise
+    `ImproperlyConfigured` at class definition, naming the option, the model and
+    the registered type. A silent no-op there would leave a column you excluded
+    for security reasons queryable.
+
 ### Auto-generated Query Fields
 
 A `DjangoModelType` builds its read operations for you: `RetrieveField()`
@@ -745,6 +819,20 @@ class Query(ObjectType):
         description='List users with filtering and pagination'
     )
 ```
+
+!!! info "Generated type names"
+    A `DjangoModelType` mints its types into a `Generic` name-space that no
+    hand-written type claims: the node is `<Model>GenericType`, the mutation
+    inputs are `<Model>CreateGenericType` / `<Model>UpdateGenericType`, and the
+    list container `ListField()` returns is **`<Model>ListGenericType`**.
+
+    That last name changed: the container used to be called `<Model>ListType`,
+    which is exactly the name this guide gives your own
+    `DjangoListObjectType`. Declaring both over one model therefore put two
+    different types with one name into a single schema and the build failed
+    with *"Schema must contain uniquely named types"*. Update any client
+    document that spells the container out (an inline fragment, a
+    `__typename` assertion); field names and shapes are unchanged.
 
 ### Auto-generated Mutation Fields
 
@@ -1065,7 +1153,8 @@ How Django model fields map to GraphQL **output** types:
 | `*RangeField` (Integer/BigInteger/Decimal/Date/DateTime) | a `{ lower, upper }` composite typed by the bound scalar |
 | `JSONField` | the `JSON` scalar — **raw** structured JSON on the wire (see [below](#jsonfield-json)) |
 | `GenericForeignKey` | a typed union when declared in `Meta.unions`, otherwise a flat `GenericForeignKeyType` |
-| File/image, `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
+| `FileField` / `ImageField` | `String` — the storage name on output; on input, a storage path **or** the file a multipart part carries (see [Mutations › Automatic multipart uploads](mutations.md#automatic-multipart-uploads)) |
+| `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
 
 Worked example — `ArrayField` (incl. a `choices` base) and a range field:
 
@@ -1200,6 +1289,12 @@ Omitting `specs` leaves the column untouched; passing `specs: null` writes SQL
             return {"theme": "dark"}   # serialized to a JSON string
     ```
 
+    A `JSONString` value is always **valid JSON on the wire**: a resolver
+    returning text that already parses as JSON (`'{"theme": "dark"}'`) is sent
+    verbatim, while any other Python value — including a plain string such as
+    `"dark"` — is `json.dumps`-encoded (`"\"dark\""`), so every value the field
+    emits round-trips back through the same scalar on input.
+
     **Which one do I use?** Reach for the default `JSONField()` (raw `JSON`)
     unless a client specifically expects a JSON **string** — e.g. it stores the
     value verbatim, or you need wire parity with a legacy graphene-django schema
@@ -1224,6 +1319,11 @@ Omitting `specs` leaves the column untouched; passing `specs: null` writes SQL
     query Echo($d: JSON) { echo(data: $d) }
     # variables: { "d": { "a": [1, 2] } }
     ```
+
+    A variable used **inside** an object literal that the request leaves unset
+    simply **drops its key** — `echo(data: { a: $unset, b: 1 })` reaches the
+    resolver as `{"b": 1}` (the same rule graphql-core applies to input-object
+    fields), not as an error.
 
 ## Type Comparison
 

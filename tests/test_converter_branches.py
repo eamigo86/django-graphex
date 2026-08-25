@@ -650,3 +650,48 @@ def test_gfk_with_unresolvable_ct_fk_fields_still_builds() -> None:
     gfk.fk_field = "missing_fk"
     out = _resolve(gfk, registry=Registry())
     assert out is not None
+
+
+def test_delete_input_uses_the_real_primary_key_not_a_hardcoded_id() -> None:
+    """A delete input over a model whose pk is not "id" must still build.
+
+    "construct_fields" used to look the delete field up as
+    "dict(get_model_fields(model))["id"]", so any model on a UUID / slug /
+    otherwise renamed primary key raised "KeyError: 'id'" at CLASS-DEFINITION
+    time — an unimportable module with no workaround. Ships broken if the
+    delete branch stops reading "model._meta.pk".
+    """
+    from django_graphex.types import DjangoInputObjectType
+
+    from .models import CustomPKProduct
+
+    class _DeleteCustomPKProductInput(DjangoInputObjectType):
+        """Delete input for a model whose primary key is the "slug" field."""
+
+        class Meta:
+            """Bind the input to "CustomPKProduct" for the delete operation."""
+
+            model = CustomPKProduct
+            input_for = "delete"
+            skip_registry = True
+
+    assert _DeleteCustomPKProductInput._meta.input_for == "delete"
+
+
+def test_construct_fields_delete_keys_on_the_model_primary_key() -> None:
+    """The delete branch must emit exactly one field named after the real pk.
+
+    Ships broken if "construct_fields" goes back to hardcoding the "id" key
+    instead of reading "model._meta.pk".
+    """
+    from .models import BasicModel, CustomPKProduct
+
+    slug_pk = construct_fields(
+        CustomPKProduct, Registry(), None, None, None, input_flag="delete"
+    )
+    assert list(slug_pk) == ["slug"]
+
+    auto_pk = construct_fields(
+        BasicModel, Registry(), None, None, None, input_flag="delete"
+    )
+    assert list(auto_pk) == ["id"]

@@ -7,13 +7,16 @@ not-found paths, and the update save-failure path.
 
 from __future__ import annotations
 
+import tempfile
 from types import SimpleNamespace
 from typing import Any
 
-from django.test import TestCase
+import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 
 from django_graphex.types import DjangoModelType
-from tests.models import Author
+from tests.models import Author, BinaryDoc
 
 
 class AuthorModelType(DjangoModelType):
@@ -62,17 +65,35 @@ def _kwargs(data: dict[str, Any]) -> dict[str, Any]:
     return {AuthorModelType._meta.input_field_name: data}
 
 
+def _error_pairs(result: Any) -> list[tuple[Any, Any]]:
+    """Flatten a mutation result's errors into readable (field, messages) pairs.
+
+    Args:
+        result: The mutation result whose "errors" list is unpacked.
+
+    Returns:
+        pairs: One "(field, messages)" tuple per reported error.
+    """
+    return [
+        (getattr(err, "field", None), getattr(err, "messages", None))
+        for err in (getattr(result, "errors", None) or [])
+    ]
+
+
 class CreateUpdateMultipartTest(TestCase):
     """Tests for the multipart file-merge branch of create/update.
 
-    Verifies that uploaded files are merged into the input data before the
-    serializer validates and saves the object.
+    Covers the MERGE ONLY: that "info.context.FILES" entries are folded into
+    the input payload keyed by field name.  The values used here are plain
+    strings landing on a "CharField", so nothing about actual file storage is
+    exercised — that is covered by the upload tests at the bottom of this
+    module.
     """
 
     def test_create_merges_uploaded_files(self) -> None:
-        """Assert "create" merges uploaded files into a multipart request's data.
+        """Assert "create" merges "context.FILES" entries into a multipart payload.
 
-        If this fails, a file uploaded via multipart/form-data would not
+        If this fails, a value supplied via multipart/form-data would not
         reach the saved object's fields on create.
         """
         info = _info("multipart/form-data; boundary=x", {"name": "FromFile"})
@@ -81,9 +102,9 @@ class CreateUpdateMultipartTest(TestCase):
         assert Author.objects.get().name == "FromFile"
 
     def test_update_merges_uploaded_files(self) -> None:
-        """Assert "update" merges uploaded files into a multipart request's data.
+        """Assert "update" merges "context.FILES" entries into a multipart payload.
 
-        If this fails, a file uploaded via multipart/form-data would not
+        If this fails, a value supplied via multipart/form-data would not
         reach the saved object's fields on update.
         """
         author = Author.objects.create(name="orig")
@@ -154,3 +175,88 @@ class SaveFailureTest(TestCase):
         result = AuthorModelType.create(None, _info(), **_kwargs({"name": "x" * 500}))
         assert not result.ok
         assert result.errors
+
+
+# ---------------------------------------------------------------------------
+# Real multipart upload: an uploaded FILE against a real FileField
+#
+# The two merge tests above hand a plain "str" to a "CharField", so they only
+# pin the "dict.update" that folds "info.context.FILES" into the payload — they
+# stay green while the upload path itself is broken end to end.  The tests below
+# post a real "UploadedFile" at a real "FileField" and assert the bytes land in
+# storage.
+# ---------------------------------------------------------------------------
+
+
+class BinaryDocModelType(DjangoModelType):
+    """Model type over the file-carrying model.
+
+    Backed by "BinaryDoc", whose "attachment" column is a real "FileField", so
+    the multipart branch can be exercised with a real upload.
+    """
+
+    class Meta:
+        """Configuration for "BinaryDocModelType".
+
+        Declares the backing model with no further options.
+        """
+
+        model = BinaryDoc
+
+
+def _upload() -> SimpleUploadedFile:
+    """Build a small in-memory upload.
+
+    Returns:
+        upload: A text upload named "hello.txt" carrying "hello-bytes".
+    """
+    return SimpleUploadedFile("hello.txt", b"hello-bytes", content_type="text/plain")
+
+
+@pytest.mark.django_db
+def test_create_saves_a_real_uploaded_file_to_a_file_field() -> None:
+    """Assert "create" stores an uploaded file's bytes on the model's FileField.
+
+    This test breaks if the derived Pydantic schema stops accepting a file
+    object on a file field -- the defect that typed it as "str" and rejected
+    every multipart upload with "Input should be a valid string".
+    """
+    info = _info("multipart/form-data; boundary=x", {"attachment": _upload()})
+    with tempfile.TemporaryDirectory() as media, override_settings(MEDIA_ROOT=media):
+        result = BinaryDocModelType.create(
+            None,
+            info,
+            **{BinaryDocModelType._meta.input_field_name: {"label": "L"}},
+        )
+        assert result.ok, _error_pairs(result)
+        doc = BinaryDoc.objects.get()
+        assert doc.attachment, "The uploaded file was not attached to the row"
+        with doc.attachment.open("rb") as stored:
+            assert stored.read() == b"hello-bytes", (
+                "The stored file does not carry the uploaded bytes"
+            )
+
+
+@pytest.mark.django_db
+def test_update_saves_a_real_uploaded_file_to_a_file_field() -> None:
+    """Assert "update" stores an uploaded file's bytes on the model's FileField.
+
+    This test breaks if the derived partial schema stops accepting a file
+    object on a file field, which sent every multipart update back as a
+    validation error.
+    """
+    doc = BinaryDoc.objects.create(label="orig")
+    info = _info("multipart/form-data; boundary=x", {"attachment": _upload()})
+    with tempfile.TemporaryDirectory() as media, override_settings(MEDIA_ROOT=media):
+        result = BinaryDocModelType.update(
+            None,
+            info,
+            **{BinaryDocModelType._meta.input_field_name: {"id": doc.pk}},
+        )
+        assert result.ok, _error_pairs(result)
+        doc.refresh_from_db()
+        assert doc.attachment, "The uploaded file was not attached to the row"
+        with doc.attachment.open("rb") as stored:
+            assert stored.read() == b"hello-bytes", (
+                "The stored file does not carry the uploaded bytes"
+            )

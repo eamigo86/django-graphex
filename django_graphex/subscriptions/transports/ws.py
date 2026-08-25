@@ -33,8 +33,13 @@ Protocol (graphql-transport-ws, primary subprotocol only; the legacy
     server "complete" is the stream-ended signal).
   * Disconnect cancels ALL operation tasks and "group_discard"s every joined
     group (full source teardown), so no ghost subscriber survives.
-  * A malformed message (non-mapping, or an unknown "type") closes with 4400
-    (Bad Request).
+  * A malformed message closes with 4400 (Bad Request): a non-mapping payload,
+    an unknown "type", an undecodable JSON body, or a non-hashable "id". The
+    close runs the FULL teardown first, so no frame can leave a task or a
+    joined group behind.
+  * A failure DURING delivery (after the first event) is not a close: it is
+    delivered as "next{id, payload:{errors}}" followed by the terminal
+    "complete{id}", so the client never waits on a silently dead stream.
 
 Per-task cleanup uses "add_done_callback" (the strawberry.channels hardening):
 the operation is removed from the registry the instant its task ends — normal
@@ -59,6 +64,7 @@ https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
@@ -86,6 +92,22 @@ __all__ = [
     "get_live_consumer",
     "subscription_ws_consumer",
 ]
+
+logger = logging.getLogger(__name__)
+
+
+def _as_error(exc: BaseException) -> Any:
+    """Wrap an exception as a "GraphQLError" for a "next{errors}" frame.
+
+    Args:
+        exc: The exception raised while delivering the subscription.
+
+    Returns:
+        A "GraphQLError" carrying the exception message.
+    """
+    from graphql import GraphQLError
+
+    return GraphQLError(str(exc))
 
 
 # graphql-transport-ws close codes.
@@ -155,12 +177,18 @@ class TransportContext:
     Attributes:
         user: The authenticated (or anonymous) user from "scope['user']".
         scope: The Channels scope mapping (carries "user"/"session"/etc.).
+        context: "self". The subscribe hooks
+            ("authorize_subscription"/"subscription_scope") receive this object
+            as their "info" argument, and every documented hook reads
+            "info.context.user" — the SAME spelling a resolver uses, where
+            "info" is a real "GraphQLResolveInfo" whose ".context" IS this
+            object. The alias makes both spellings resolve to the same user.
         middleware: The connection's "DJANGO_GRAPHEX['MIDDLEWARE']" manager
             (built ONCE per operation), read by the subscribe entry and carried
             onto the delivery spec.
     """
 
-    __slots__ = ("user", "scope", "middleware")
+    __slots__ = ("user", "scope", "context", "middleware")
 
     def __init__(self, scope: "Mapping[str, Any]") -> None:
         """Build the neutral context from a Channels "scope" mapping.
@@ -169,6 +197,9 @@ class TransportContext:
             scope: The Channels ASGI scope mapping the connection was opened with.
         """
         self.scope = scope
+        # The hooks receive this object as ``info``; ``info.context`` is how
+        # every documented hook reaches the user, so it must resolve.
+        self.context = self
         self.user = scope.get("user") if scope else None
         # SECURITY (2.0.1): subscriptions are served ONLY by this transport and
         # the SSE one, and neither used to build a MiddlewareManager — so every
@@ -182,12 +213,15 @@ def _make_spec(
     schema: "GraphQLSchema",
     document: "DocumentNode",
     middleware: Any = None,
+    variable_values: "Mapping[str, Any] | None" = None,
+    operation_name: str | None = None,
 ) -> SubscriptionSpec:
     """Build the minimal driver spec carrying the live schema + parsed document.
 
-    "drive_subscription" reads ONLY "spec.schema", "spec.document" and
-    "spec.middleware" (the per-event "execute" inputs); every other spec field is
-    the subscribe-time concern already handled by "create_source_event_stream"
+    "drive_subscription" reads ONLY the per-event "execute" inputs
+    ("spec.schema", "spec.document", "spec.variable_values",
+    "spec.operation_name" and "spec.middleware"); every other spec field is the
+    subscribe-time concern already handled by "create_source_event_stream"
     (which ran the field's own native subscribe entry). Mirrors the SSE
     transport's "_make_spec".
 
@@ -195,9 +229,12 @@ def _make_spec(
         schema: The live native "GraphQLSchema".
         document: The parsed subscription "DocumentNode".
         middleware: The connection's "MiddlewareManager" (or "None").
+        variable_values: The operation's GraphQL variables (or "None") — the
+            SAME ones passed to "create_source_event_stream".
+        operation_name: The operation's name (or "None").
 
     Returns:
-        A "SubscriptionSpec" carrying schema + document + middleware for delivery.
+        A "SubscriptionSpec" carrying every per-event "execute" input.
     """
     return SubscriptionSpec(
         model_label="",
@@ -205,6 +242,8 @@ def _make_spec(
         schema=schema,
         document=document,
         middleware=middleware,
+        variable_values=variable_values,
+        operation_name=operation_name,
     )
 
 
@@ -289,6 +328,43 @@ def subscription_ws_consumer(
             if not self._acked and not self._closing:
                 await self._close(_CODE_CONNECTION_INIT_TIMEOUT)
 
+        async def receive(
+            self,
+            text_data: str | None = None,
+            bytes_data: bytes | None = None,
+            **kwargs: Any,
+        ) -> None:
+            """Dispatch one inbound frame, closing with 4400 if it cannot be.
+
+            This is the ONE choke point every inbound frame routes through, and
+            the only place an inbound-frame failure can be contained. Channels
+            does NOT invoke "disconnect()" when a message handler raises: the
+            exception propagates out of the consumer and the socket dies with
+            every live operation's task still running and every joined group
+            still registered — a ghost subscriber per malformed frame.
+
+            Two client inputs used to escape here: an undecodable JSON body
+            (raised by "decode_json" BEFORE "receive_json" is even called) and a
+            non-hashable "id" (raised by the duplicate-id registry lookup). Both
+            are a Bad Request, and "_close" runs the full cancel-all +
+            "group_discard" teardown before closing the socket.
+
+            Args:
+                text_data: The inbound text frame, when the client sent one.
+                bytes_data: The inbound binary frame, when the client sent one.
+                **kwargs: Extra dispatch kwargs forwarded to the base consumer.
+            """
+            try:
+                await super().receive(
+                    text_data=text_data, bytes_data=bytes_data, **kwargs
+                )
+            except Exception:  # noqa: BLE001 - a bad frame must not kill the socket
+                logger.exception(
+                    "Malformed graphql-transport-ws frame; closing with %s.",
+                    _CODE_BAD_REQUEST,
+                )
+                await self._close(_CODE_BAD_REQUEST)
+
         async def receive_json(self, content: Any, **kwargs: Any) -> None:
             """Dispatch one decoded graphql-transport-ws message.
 
@@ -363,9 +439,30 @@ def subscription_ws_consumer(
             # strawberry.channels hardening: drop the id the instant its task ends
             # (normal completion, error, OR abnormal cancel) so the registry never
             # leaks a dead operation.
-            task.add_done_callback(
-                lambda _t, _id=op_id: self._operations.pop(_id, None)
-            )
+            task.add_done_callback(lambda _t, _id=op_id: self._operation_done(_id, _t))
+
+        def _operation_done(self, op_id: str, task: asyncio.Task) -> None:
+            """Drop a finished operation and RETRIEVE its exception.
+
+            Popping alone left an unretrieved task exception behind, so a
+            delivery crash surfaced only as asyncio's "Task exception was never
+            retrieved" warning at garbage-collection time. Reading it here logs
+            it against this module instead.
+
+            Args:
+                op_id: The operation id whose task ended.
+                task: The finished operation task.
+            """
+            self._operations.pop(op_id, None)
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.error(
+                    "Subscription operation %r ended with an unhandled error.",
+                    op_id,
+                    exc_info=exc,
+                )
 
         def _resolve_schema(self) -> "GraphQLSchema":
             """Return the schema for THIS connection (provider wins, cached once).
@@ -474,11 +571,35 @@ def subscription_ws_consumer(
 
             source: "ChannelLayerSource" = source_or_result  # type: ignore[assignment]
             self._sources[op_id] = source
-            spec = _make_spec(conn_schema, document, context.middleware)
+            spec = _make_spec(
+                conn_schema,
+                document,
+                context.middleware,
+                variable_values=payload.get("variables"),
+                operation_name=payload.get("operationName"),
+            )
             delivery = drive_subscription(source, spec, context)
             try:
-                async for result in delivery:
-                    await self._send_next(op_id, result)
+                try:
+                    async for result in delivery:
+                        await self._send_next(op_id, result)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - framed, never escapes
+                    # A delivery failure (e.g. an ORM error raised by a
+                    # server-forced scope lookup) must NOT kill the task
+                    # silently: the client would wait forever on a dead
+                    # subscription with no protocol signal at all, and the
+                    # exception would surface only as an asyncio warning. Frame
+                    # it as ``next{errors}`` — matching the SSE transport and
+                    # the spec's "errors after execution started" shape — and
+                    # fall through to the terminal ``complete``.
+                    logger.exception(
+                        "Subscription delivery failed for operation %r.", op_id
+                    )
+                    await self._send_next(
+                        op_id, ExecutionResult(data=None, errors=[_as_error(exc)])
+                    )
                 # The source ended (out-of-band close) → the terminal complete.
                 # A client-initiated complete cancels this task before this point,
                 # so it never reaches the server ``complete`` (per the spec).

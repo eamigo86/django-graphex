@@ -1434,7 +1434,9 @@ class MergeFilteredPrefetchesTest(TestCase):
         parent = self._pf("posts")
         # child.queryset must be a real queryset: it is wrapped in a Prefetch().
         child = mock.MagicMock(
-            prefetch_through="posts__co_authors", queryset=Author.objects.all()
+            prefetch_through="posts__co_authors",
+            queryset=Author.objects.all(),
+            to_attr=None,
         )
         out_plain, out_filtered = _merge_filtered_prefetches([], [parent, child])
         self.assertEqual(out_plain, [])
@@ -1455,11 +1457,14 @@ class MergeFilteredPrefetchesTest(TestCase):
         breaks if the non-improving-candidate rejection regresses.
         """
         mid = mock.MagicMock(
-            prefetch_through="posts__co_authors", queryset=Author.objects.all()
+            prefetch_through="posts__co_authors",
+            queryset=Author.objects.all(),
+            to_attr=None,
         )
         grandchild = mock.MagicMock(
             prefetch_through="posts__co_authors__tags",
             queryset=Author.objects.all(),
+            to_attr=None,
         )
         parent = self._pf("posts")
         out_plain, out_filtered = _merge_filtered_prefetches(
@@ -1666,7 +1671,7 @@ class BuildFilteredPrefetchesGuardTest(TestCase):
     """
 
     def test_no_field_nodes_yields_no_prefetches(self) -> None:
-        """With no field_nodes or a non-object return type, "build_filtered_prefetches" returns ([], {}).
+        """With no field_nodes or a non-object return type, "build_filtered_prefetches" returns ([], {}, set()).
 
         This test breaks if that early-return guard regresses.
         """
@@ -1678,12 +1683,13 @@ class BuildFilteredPrefetchesGuardTest(TestCase):
             fragments = {}
             variable_values = {}
 
-        filtered, hook_map = build_filtered_prefetches(_Info())
+        filtered, hook_map, unsafe = build_filtered_prefetches(_Info())
         self.assertEqual(filtered, [])
         self.assertEqual(hook_map, {})
+        self.assertEqual(unsafe, set())
 
     def test_object_return_type_without_selection_set(self) -> None:
-        """An object return type whose field node carries no selection set yields ([], {}).
+        """An object return type whose field node carries no selection set yields ([], {}, set()).
 
         This test breaks if the no-selection-set guard regresses.
         """
@@ -1705,9 +1711,10 @@ class BuildFilteredPrefetchesGuardTest(TestCase):
 
         info = _Info()
         info.return_type = return_type
-        filtered, hook_map = build_filtered_prefetches(info)
+        filtered, hook_map, unsafe = build_filtered_prefetches(info)
         self.assertEqual(filtered, [])
         self.assertEqual(hook_map, {})
+        self.assertEqual(unsafe, set())
 
 
 # =========================================================================== #

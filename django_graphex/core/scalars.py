@@ -324,7 +324,15 @@ GdxUUID = GraphQLScalarType(
 
 def _json_serialize(value: Any) -> str:
     if isinstance(value, str):
-        return value
+        # Passthrough ONLY for text that is already valid JSON; a plain string
+        # ("hello") must be encoded, otherwise the scalar emits something its
+        # own ``parse_value`` cannot decode.
+        try:
+            json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        else:
+            return value
     try:
         return json.dumps(value)
     except (TypeError, ValueError) as exc:
@@ -386,14 +394,18 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
     variables; raising there would reject a valid document. At execution time the
     real variables are supplied and substitution happens.
 
+    Inside an object literal such a field is OMITTED from the resulting dict
+    (again matching "value_from_ast"), so the "Undefined" sentinel — which is
+    not JSON-serializable — never reaches a resolver.
+
     Args:
         ast: The GraphQL literal AST node to convert.
         variable_values: Mapping of variable name to value, or None when the
             caller (e.g. validation) has no variables available.
 
     Returns:
-        The raw Python JSON value for "ast", or graphql "Undefined" for a nested
-        variable whose value is unavailable.
+        The raw Python JSON value for "ast", or graphql "Undefined" when "ast"
+        is itself a variable whose value is unavailable.
 
     Raises:
         GraphQLError: If "ast" is not a JSON-representable literal node.
@@ -411,10 +423,14 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
     if isinstance(ast, ListValueNode):
         return [_json_raw_parse_literal(item, variable_values) for item in ast.values]
     if isinstance(ast, ObjectValueNode):
-        return {
-            field.name.value: _json_raw_parse_literal(field.value, variable_values)
+        # An unavailable variable OMITS its field (graphql-core's own
+        # ``value_from_ast`` does the same), so the ``Undefined`` sentinel never
+        # reaches a resolver or the JSON encoder.
+        parsed = (
+            (field.name.value, _json_raw_parse_literal(field.value, variable_values))
             for field in ast.fields
-        }
+        )
+        return {key: value for key, value in parsed if value is not Undefined}
     if isinstance(ast, VariableNode):
         name = ast.name.value
         if variable_values is None or name not in variable_values:

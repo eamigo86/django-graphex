@@ -98,6 +98,17 @@ LimitOffsetGraphqlPagination(
     `max_page_size` is silently clamped, and an omitted `pageSize` resolves as
     `page_size` → `max_page_size`.
 
+!!! info "`ordering` applies even when the list is unbounded"
+
+    The last row of the table above is the **shipped default**: with no
+    `pagination=` on the list type and no `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE`
+    in your settings, the default `LimitOffsetGraphqlPagination` is unbounded and
+    returns the whole set. `ordering` is **not** part of that page-size decision —
+    it is applied (and validated) on every request, bounded or not. So
+    `results(ordering: "username")` sorts correctly on a list that has no page
+    size configured, and `results(ordering: "nonexistent")` is rejected there with
+    the same `Invalid ordering field` error a bounded paginator raises.
+
 ### Query Examples
 
 !!! note "Argument placement"

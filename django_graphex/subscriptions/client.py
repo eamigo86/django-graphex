@@ -10,10 +10,14 @@ the subscription engine, served from your own origin (so there is no CORS issue)
         path("graphql/client/", SubscriptionClientView.as_view()),
     ]
 
-The endpoints default to the page's own origin; override "ws_path" / "http_path"
-if your routes differ::
+The endpoints default to the page's own origin; override "ws_path" / "sse_path"
+/ "http_path" if your routes differ::
 
-    SubscriptionClientView.as_view(ws_path="/ws/graphql/", http_path="/graphql/")
+    SubscriptionClientView.as_view(
+        ws_path="/ws/graphql/",
+        sse_path="/graphql/stream",
+        http_path="/graphql/",
+    )
 """
 
 from __future__ import annotations
@@ -41,13 +45,22 @@ def _template() -> str:
 class SubscriptionClientView(View):
     """Serve the standalone HTML WebSocket + GraphQL subscriptions client.
 
-    Override "ws_path" / "http_path" (as class attributes or via "as_view") to
-    point the client at your WebSocket and GraphQL routes; they are combined with
-    the request's own host in the browser.
+    Override "ws_path" / "sse_path" / "http_path" (as class attributes or via
+    "as_view") to point the client at your WebSocket, SSE and GraphQL routes;
+    they are combined with the request's own host in the browser.
     """
 
     #: WebSocket route the client connects to (combined with the page host).
     ws_path: str = "/ws/graphql/"
+    #: SSE route the client streams subscriptions from (combined with the page
+    #: host). This is a SEPARATE endpoint from ``http_path``: the SSE transport
+    #: is its own view (``subscription_sse_view``) returning
+    #: ``text/event-stream``, while ``http_path`` serves ``application/json``.
+    #: Seeding both fields from ``http_path`` produced a "connected" SSE client
+    #: whose stream carried a JSON body with no ``event:`` line — zero data and
+    #: zero errors. The default matches the route ``examples/playground``
+    #: mounts (no trailing slash: the SSE view is mounted at ``graphql/stream``).
+    sse_path: str = "/graphql/stream"
     #: HTTP GraphQL route the client posts subscriptions to. Trailing slash is
     #: intentional: Django's ``APPEND_SLASH`` 301-redirects ``POST /graphql`` ->
     #: ``/graphql/``, but the bundled ``fetch`` POST client does not follow the
@@ -75,6 +88,7 @@ class SubscriptionClientView(View):
         html = (
             _template()
             .replace("__WS_PATH__", self._escape_for_script(self.ws_path))
+            .replace("__SSE_PATH__", self._escape_for_script(self.sse_path))
             .replace("__HTTP_PATH__", self._escape_for_script(self.http_path))
         )
         return HttpResponse(html, content_type="text/html; charset=utf-8")

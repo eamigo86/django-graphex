@@ -324,6 +324,28 @@ def test_default_factory_evaluated_once_and_present() -> None:
     assert calls["n"] == 1, f"default_factory must be evaluated ONCE, ran {calls['n']}x"
 
 
+def test_validated_data_default_factory_compiles() -> None:
+    """Protect schema building for a validated-data default_factory (pydantic 2.10+).
+
+    If this regresses, a factory declared as "lambda data: ..." is called
+    with no argument at compile time and the whole type blows up with
+    "<Type> fields cannot be resolved", so the schema cannot be built at
+    all. Such a default is per-instance and cannot be a static SDL default,
+    so the field must simply render without a "= ..." marker.
+    """
+
+    class M(BaseModel):
+        a: int = 1
+        b: int = Field(default_factory=lambda data: data["a"] + 1)
+
+    sdl = _sdl(M, name="ValidatedFactoryInput", emit_defaults=True)
+    assert "a: Int = 1" in sdl, sdl
+    assert "b: Int\n" in sdl, sdl
+    assert "b: Int =" not in sdl, sdl
+    # The model itself still resolves the factory at validation time.
+    assert M(a=4).b == 5
+
+
 def test_default_factory_list_default_is_nullable_list() -> None:
     """Protect that a default_factory list field is nullable (it has a default).
 

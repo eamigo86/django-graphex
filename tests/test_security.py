@@ -108,9 +108,19 @@ def _ctx(user: Any) -> types.SimpleNamespace:
     return types.SimpleNamespace(user=user)
 
 
-_anon = types.SimpleNamespace(is_authenticated=False, is_superuser=False)
-_authed = types.SimpleNamespace(is_authenticated=True, is_superuser=False)
-_superuser = types.SimpleNamespace(is_authenticated=True, is_superuser=True)
+_anon = types.SimpleNamespace(
+    is_authenticated=False, is_superuser=False, is_active=False
+)
+_authed = types.SimpleNamespace(
+    is_authenticated=True, is_superuser=False, is_active=True
+)
+_superuser = types.SimpleNamespace(
+    is_authenticated=True, is_superuser=True, is_active=True
+)
+#: A superuser whose account has been deactivated (is_active=False).
+_inactive_superuser = types.SimpleNamespace(
+    is_authenticated=True, is_superuser=True, is_active=False
+)
 
 
 def _run(
@@ -194,6 +204,26 @@ def test_superuser_can_introspect() -> None:
     assert res.errors is None
 
 
+def test_deactivated_superuser_cannot_introspect() -> None:
+    """Assert a DEACTIVATED superuser does not get the introspection bypass.
+
+    Regression for the 2.1.0 defect: the bypass tested "is_superuser" only,
+    so a user whose account had been deactivated kept full "__schema" access
+    on any backend that does not run Django's "user_can_authenticate" check
+    (token / JWT), unlike every sibling superuser check in the package.
+
+    If this fails, deactivating a compromised or off-boarded superuser would
+    not revoke its ability to dump the schema.
+    """
+    res = _run(
+        "{ __schema { queryType { name } } }",
+        [DisableIntrospectionMiddleware()],
+        user=_inactive_superuser,
+    )
+    assert res.errors and "introspection is disabled" in str(res.errors[0])
+    assert res.errors[0].extensions.get("code") == "INTROSPECTION_DISABLED"
+
+
 def test_superuser_blocked_when_bypass_off(monkeypatch: MonkeyPatch) -> None:
     """Assert disabling INTROSPECTION_ALLOW_SUPERUSER blocks superusers too.
 
@@ -275,6 +305,104 @@ def test_nested_field_not_gated() -> None:
     """
     res = _run("{ publicNested { me } }", [AuthenticatedFieldsMiddleware()], user=_anon)
     assert res.errors is None and res.data["publicNested"]["me"] == "nested-me"
+
+
+def test_root_value_does_not_disable_field_auth() -> None:
+    """Assert a configured "root_value" does not switch field auth off.
+
+    Regression for the 2.1.0 defect: the middleware used "root is not None"
+    as a proxy for "nested field", but "root_value" is a public, documented
+    seam (a "GraphQLView" kwarg, a class attribute and an overridable
+    "get_root_value"). Setting it made EVERY protected top-level field
+    resolve for anonymous callers.
+
+    If this fails, any project passing a root value loses private-field
+    protection entirely on the HTTP view and on both subscription
+    transports.
+    """
+    import json
+
+    from django.contrib.auth.models import AnonymousUser
+    from django.test import RequestFactory
+
+    from django_graphex.views import GraphQLView
+
+    def _post(**view_kwargs: Any) -> dict[str, Any]:
+        view = GraphQLView.as_view(
+            schema=_schema, middleware=[AuthenticatedFieldsMiddleware()], **view_kwargs
+        )
+        request = RequestFactory().post(
+            "/graphql",
+            data=json.dumps({"query": "{ me }"}),
+            content_type="application/json",
+        )
+        request.user = AnonymousUser()
+        return json.loads(view(request).content)
+
+    # Control: the default view (no root value) denies the anonymous caller.
+    assert _post()["errors"][0]["extensions"]["code"] == "UNAUTHENTICATED"
+    # The seam must not change that.
+    seamed = _post(root_value={"x": 1})
+    assert seamed["errors"][0]["extensions"]["code"] == "UNAUTHENTICATED"
+    assert seamed["data"] == {"me": None}
+
+
+def test_top_level_is_detected_from_the_resolve_path(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Assert the top-level predicate reads the resolve path, not the root value.
+
+    Exercises the four path shapes with a non-None root value in play: a
+    top-level field ("me"), a nested field, a field inside a list element
+    (the path carries an integer index) and a top-level field reached
+    through an inline fragment.
+
+    If this fails, the middleware either misses a genuine top-level field
+    (a leak) or gates a nested one (a false denial) once a root value is
+    configured.
+
+    Args:
+        monkeypatch: Used to set PROTECTED_FIELDS on the settings instance
+            for the duration of the test.
+    """
+    from graphql import GraphQLField, GraphQLList, GraphQLObjectType, GraphQLSchema
+
+    item = GraphQLObjectType(
+        "Item", {"me": GraphQLField(GraphQLString, resolve=lambda *_: "nested-me")}
+    )
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "Query",
+            {
+                "me": GraphQLField(GraphQLString, resolve=lambda *_: "me"),
+                "nested": GraphQLField(item, resolve=lambda *_: object()),
+                "items": GraphQLField(
+                    GraphQLList(item), resolve=lambda *_: [object(), object()]
+                ),
+            },
+        )
+    )
+    monkeypatch.setattr(security.graphql_api_settings, "PROTECTED_FIELDS", ("me",))
+
+    def _exec(query: str) -> ExecutionResult:
+        return graphql_sync(
+            schema,
+            query,
+            middleware=[AuthenticatedFieldsMiddleware()],
+            context_value=_ctx(_anon),
+            root_value={"x": 1},
+        )
+
+    # Top level, plain and through an inline fragment: both gated.
+    for query in ("{ me }", "{ ... on Query { me } }"):
+        res = _exec(query)
+        assert res.errors and "Authentication required" in str(res.errors[0]), query
+
+    # Nested, and nested inside a list element (path = ['items', 0, 'me']).
+    assert _exec("{ nested { me } }").data == {"nested": {"me": "nested-me"}}
+    assert _exec("{ items { me } }").data == {
+        "items": [{"me": "nested-me"}, {"me": "nested-me"}]
+    }
 
 
 def test_private_mutation_requires_auth() -> None:

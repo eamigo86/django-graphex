@@ -45,6 +45,42 @@ class Registry:
         self._interface_types: dict[str, Any] = {}
         #: interface GraphQL name -> list of implementor DjangoObjectTypes.
         self._interface_implementors: dict[str, list] = {}
+        #: child_model -> every host class declared for it IN THIS REGISTRY, in
+        #: declaration order. It drives the nested projection merge, the nested
+        #: permission stamp, the write-time row scoping and the write-time
+        #: authorize loop, so it has to die with the registry exactly like the
+        #: two memos below: a host bound to a second registry through
+        #: ``Meta.registry`` describes THAT schema's surface, and must not
+        #: rewrite this one's.
+        #:
+        #: A LIST, not a last-wins slot, so two hosts for one model fail CLOSED:
+        #: every declared host must allow a nested write. A last-wins slot would
+        #: let a permissive sibling shadow a restrictive one, which is the
+        #: failure mode the model-keyed field registry
+        #: (``_NATIVE_FIELD_REGISTRY``) already documents.
+        self.nested_hosts: dict[Any, list[Any]] = {}
+        #: (child_model, op, parent_model) -> the child's input type as built for
+        #: THAT parent's nested surface. Lives here, not in a module global, so
+        #: it dies with the registry; the memo is load-bearing, since two parents
+        #: nesting one child (or one parent's create and update) must not mint
+        #: two identically named types.
+        self.nested_input_cache: dict[tuple, Any] = {}
+        #: child_model -> the parent models its nested input has been built for
+        #: IN THIS REGISTRY. Read only to refuse a host declared too late to
+        #: reach that surface (see ``nested.register_nested_host``), never to
+        #: change what gets built. Lives beside the memo it shadows, and dies
+        #: with it: a second registry has frozen nothing, so a host bound to one
+        #: through ``Meta.registry`` must not be refused for the first's build.
+        self.nested_materialized: dict[Any, list[Any]] = {}
+        #: (model, op, projection signature) -> the input type a host declaring
+        #: THAT projection uses. The shared ``(model, op)`` slot below holds one
+        #: input per model, so a projection declared behind an already-registered
+        #: host was silently dropped and its root accepted every writable column;
+        #: a projected input therefore gets its own memoized type instead (see
+        #: ``mutation.generic_input_type``). Keyed by the projection so two hosts
+        #: declaring the same one SHARE a type rather than minting two under one
+        #: name, which graphql-core refuses.
+        self.projected_input_cache: dict[tuple, Any] = {}
         #: Companion NativeOutputRegistry holding this registry's compiled output
         #: nodes (get_compiled/set_compiled), keyed by model. Lazily created by
         #: output_registry(). For the global registry this is bound to the

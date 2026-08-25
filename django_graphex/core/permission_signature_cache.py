@@ -217,8 +217,12 @@ class _SignatureSchemaCache:
         """Return the entry for *key* only if it truly belongs to *full*.
 
         Guards against ``id`` recycling: an entry whose stored weak reference no
-        longer resolves to *full* (its source schema was garbage-collected and a
-        new object took the same address) is treated as a miss and dropped.
+        longer resolves to *full* is treated as a miss and dropped. That covers
+        both a reference pointing at a different live schema and a DEAD one —
+        the source was garbage-collected and a new object took its address,
+        which is the shape an actual recycle takes. Only an entry stored without
+        a reference at all (a schema that cannot be weakly referenced) keeps the
+        pre-weakref behaviour of trusting the key.
 
         Args:
             key: The composite ``(id(full), signature)`` cache key.
@@ -233,8 +237,11 @@ class _SignatureSchemaCache:
             return None
         ref, pruned = entry
         source = ref() if ref is not None else None
-        if source is not None and source is not full:
-            # ``id`` was recycled onto a different live schema — stale entry.
+        if ref is not None and source is not full:
+            # The source is either a DIFFERENT live schema or already collected
+            # (``source is None``). Both mean this ``id`` now belongs to another
+            # object, so the entry is stale — and the collected case is the one
+            # an id recycle actually produces.
             del self._entries[key]
             return None
         return pruned

@@ -572,6 +572,14 @@ class TestGdxJSONString:
         result = GdxJSONString.serialize(s)
         assert result == s
 
+    def test_serialize_plain_string_round_trips(self) -> None:
+        """Ships broken if GdxJSONString.serialize emits a plain (non-JSON)
+        string verbatim, so the scalar's own parse_value can no longer decode
+        what it wrote.
+        """
+        result = GdxJSONString.serialize("hello")
+        assert GdxJSONString.parse_value(result) == "hello"
+
     def test_serialize_invalid_raises_graphql_error(self) -> None:
         """Ships broken if GdxJSONString.serialize stops raising GraphQLError
         for a value that cannot be JSON-encoded.

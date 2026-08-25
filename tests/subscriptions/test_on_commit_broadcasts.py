@@ -156,8 +156,12 @@ def test_committed_save_broadcasts_exactly_once(
 
     # We expect two groups: the coarse create group and the per-pk group.
     groups = {group for group, _ in captured_group_sends}
-    assert "auth.user-create" in groups, f"Expected auth.user-create group in {groups}"
-    assert f"auth.user-create-{user.pk}" in groups, f"Expected per-pk group in {groups}"
+    assert "auth.user.users-create" in groups, (
+        f"Expected auth.user.users-create group in {groups}"
+    )
+    assert f"auth.user.users-create-{user.pk}" in groups, (
+        f"Expected per-pk group in {groups}"
+    )
 
     # Exactly two messages (coarse + per-pk — no extras).
     assert len(captured_group_sends) == 2, (
@@ -227,7 +231,7 @@ def test_committed_delete_idonly_carries_real_pk(
 
     # (ii) The per-pk group must be present (id-only mode uses id to build group).
     groups = {g for g, _ in sends}
-    per_pk_group = f"tests.basicmodel-delete-{real_pk}"
+    per_pk_group = _IdOnlyDeleteSubscription._group_name("delete", id=real_pk)
     assert per_pk_group in groups, (
         f"Per-pk group {per_pk_group!r} not in {groups!r}.  "
         "When pk=None the group collapses to the coarse group — that is the #69 bug."

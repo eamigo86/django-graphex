@@ -376,6 +376,12 @@ optimizer routes the union GFK through a `GenericPrefetch` that builds **one
 (no N+1). On **Django < 5.0** it degrades gracefully to a single bare full-load
 `Prefetch` (it never imports `GenericPrefetch` and never narrows columns).
 
+Named **fragment spreads** are equivalent to the inline form here: a document
+that declares `fragment Money on AccountType { balance }` and spreads it under
+`target` narrows the `Account` queryset exactly as `... on AccountType
+{ balance }` would, and a selection that *mixes* both forms merges them into a
+single per-member queryset instead of deferring the spread's columns.
+
 !!! note "Inline-fragment type-condition guard"
     This routing relies on a correctness guard: the optimizer never descends
     into an inline fragment whose `type_condition` names a *different* concrete
@@ -383,6 +389,10 @@ optimizer routes the union GFK through a `GenericPrefetch` that builds **one
     mis-attributed against the `Account` relation map (which would yield wrong
     `.only()` columns and a Django `FieldError`). See the
     [1.2.0 changelog](../changelog.md).
+
+    A condition naming an **interface the walked type implements** does apply,
+    so `... on Titled { title }` is descended into and its columns are narrowed
+    like any other selection.
 
 The type-side declaration order is **load-bearing** (members → union → owner
 LAST). See [Types → DjangoUnionType](types.md#djangouniontype-typed-genericforeignkey-targets)
@@ -401,6 +411,12 @@ A forward-FK relation that the optimizer placed in `select_related` is
 **auto-promoted** to `prefetch_related` when its child sub-selection contains an
 `AnnotatedField` — DB annotations cannot be pushed through a SQL `JOIN`, so the
 child annotation rides on the promoted `Prefetch`'s queryset instead.
+
+The promotion follows the whole forward-FK chain, not just its first hop: in
+`{ comments { post { author { postCount } } } }` it is `post__author` that gets
+promoted, so an `AnnotatedField` several hops down resolves like any other. (It
+used to be detected only one hop from the root, which left the deeper field
+resolving to `null` with no error.)
 
 Declare it on the type and let the selection drive it (`Author (1) ─→ (N) Post`):
 
@@ -531,6 +547,23 @@ The resolver returns a `QuerySet`, so the optimizer picks it up and adds
 `select_related("author")` / `prefetch_related("tags")` etc. based on the
 GraphQL selection. If the resolver returned a plain list, the optimizer would
 leave it untouched (no queryset to decorate).
+
+!!! note "A manual prefetch of the same relation is replaced"
+    A base queryset — from a resolver, from `Meta.queryset`, or from a type's
+    `get_queryset` hook — may already carry `prefetch_related("posts")` for a
+    relation the optimizer derives for itself. The optimizer's own lookup
+    **replaces** the manual one: the derived version is narrowed with `.only()`
+    and, for a nested list, filtered and windowed, so it is the one to keep.
+    Manual prefetches of relations the optimizer is *not* touching are left
+    alone.
+
+    Django refuses two lookups on the same path outright, so this used to fail
+    the whole field with `'posts' lookup was already seen with a different
+    queryset`. If you need specific prefetch options (a custom `Prefetch`
+    queryset, say), declare an
+    [`optimize_<field>` hook](nested-lists.md#per-field-optimize-hook) on the parent type
+    instead of prefetching in the base queryset — the optimizer applies the
+    hook to the queryset it builds.
 
 ## Optimized mutation re-read
 

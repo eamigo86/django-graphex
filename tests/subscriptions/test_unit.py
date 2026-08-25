@@ -37,8 +37,8 @@ def test_group_name_with_and_without_id() -> None:
     Contract: broadcasts route to the wrong subscribers if the group name
     format for either the bare action or the id-scoped variant changes.
     """
-    assert UserSubscription._group_name("create") == "auth.user-create"
-    assert UserSubscription._group_name("update", id=5) == "auth.user-update-5"
+    assert UserSubscription._group_name("create") == "auth.user.users-create"
+    assert UserSubscription._group_name("update", id=5) == "auth.user.users-update-5"
 
 
 def test_safe_group_name_passthrough() -> None:

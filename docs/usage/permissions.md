@@ -59,7 +59,7 @@ Multiple classes are combined with **AND** — every class must allow the action
 Subclass `BasePermission` and override either `has_permission(self, info, action,
 model, **kwargs)` (applies to every action) or a single `has_<action>_permission(
 self, info, model, **kwargs)`. `info.context` is the request, and `kwargs` carries
-`data=` for `create`/`update`. Return `False` to deny.
+`data=` for `create`/`update`. Return a **falsy** value to deny.
 
 ```python
 from django_graphex.permissions import BasePermission
@@ -70,6 +70,50 @@ class IsOwnerOrReadOnly(BasePermission):
             return True
         return info.context.user.is_authenticated
 ```
+
+!!! warning "Any falsy value denies — you do not have to return `False`"
+    The check fails closed on `False`, `None`, `0` and `""` alike, so the
+    idiomatic one-liner is safe:
+
+    ```python
+    def has_permission(self, info, action, model, **kwargs):
+        user = getattr(info.context, "user", None)
+        return user and user.is_staff   # -> None for an anonymous caller: DENIED
+    ```
+
+    (Fixed in the next release: 2.1.0 and earlier compared the result with the
+    `False` singleton, so this exact one-liner granted every action to an
+    anonymous caller.)
+
+### `nested_parent`: telling a nested write apart from a direct one
+
+A child written through a parent's `Meta.nested_fields` runs the **child's own**
+permission checks, and `kwargs` then carries `nested_parent` — the **parent
+model class**. It is absent on the child's own mutation, so a policy can grant a
+write only when it arrives through a parent:
+
+```python
+class OnlyViaParent(BasePermission):
+    def has_create_permission(self, info, model, **kwargs):
+        return kwargs.get("nested_parent") is not None
+```
+
+A model whose rows only ever make sense inside their owner (comment lines of an
+order, addresses of a user) can therefore drop its own `create` root without
+losing the nested surface. See
+[Nested writes](mutations.md#how-nested-writes-work) for the full
+contract, including which paths are gated.
+
+!!! note "Checks with a closed signature never see it"
+    Each extra is only passed to a check that can accept it, so an `authorize`
+    override or a permission class that spells its arguments out
+    (`def authorize(cls, info, action, data=None)`,
+    `def has_permission(self, info, action, model, data=None)`) keeps working
+    unchanged — it simply never receives `nested_parent`, and therefore treats a
+    nested write exactly like a direct one. The narrowing happens at the call
+    that lands on *your* method, so the `**kwargs` on the built-in
+    `has_<action>_permission` in between does not leak the marker through.
+    Accept `**kwargs` to see it.
 
 ## `DjangoModelPermissions`
 
@@ -99,7 +143,7 @@ observe actions stay view-only:
 | `delete` | `{app_label}.delete_{model_name}` **and** `{app_label}.view_{model_name}` |
 | `retrieve` | `{app_label}.view_{model_name}` |
 | `list` | `{app_label}.view_{model_name}` |
-| `subscribe` | `{app_label}.view_{model_name}` |
+| `subscribe` | `{app_label}.view_{model_name}` (plus the requested action's row — see below) |
 
 > **Changed in 2.0.0** — write actions (`create` / `update` / `delete`) now also
 > require the `view` permission. A user who could previously write with only the
@@ -161,6 +205,25 @@ For finer control, override `get_required_permissions(self, action, model)`,
 which returns the list of codenames an action requires (or `None` for an unknown
 action).
 
+A subscribe that forwards the action it observes (`CREATE` / `UPDATE` /
+`DELETE` / `ALL_ACTIONS`, see [Subscriptions](subscriptions.md)) is gated by the
+**union** of the `subscribe` row and every write row that action maps to via
+`subscribe_actions_map` (`"all_actions"` maps to all three). Both halves go
+through `get_required_permissions`, so a customized row applies on this path as
+well:
+
+```python
+class StreamModelPermissions(DjangoModelPermissions):
+    perms_map = {
+        **DjangoModelPermissions.perms_map,
+        # subscribing needs a dedicated codename instead of plain `view`.
+        "subscribe": ("{app_label}.stream_{model_name}",),
+    }
+
+# subscribe(action: CREATE) now requires:
+#   {app}.stream_{model} + {app}.add_{model} + {app}.view_{model}
+```
+
 !!! tip "See the whole permission stack in action"
 
     `DjangoModelPermissions` is the **runtime** half of a larger model: the same
@@ -196,3 +259,6 @@ class OrderType(DjangoModelType):
     Permissions answer *"may this action run at all?"*. To **scope the rows** a
     user can see (row-level filtering), use
     [`filter_queryset`](types.md#custom-queryset-per-request-filtering) instead.
+    That scope covers the rows a user can **write** too: `update` and `delete`
+    resolve their target through the same hook, and a row outside the scope is
+    reported as not found.

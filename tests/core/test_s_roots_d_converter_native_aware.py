@@ -27,6 +27,11 @@ Run: .venv/bin/python -m pytest \
 
 from __future__ import annotations
 
+from functools import lru_cache
+from typing import Any
+
+import pytest
+
 # The graphene scalar descriptor types converter builds for scalar field kinds.
 _DEAD_SCALAR_DESC_NAMES = {
     "String",
@@ -42,7 +47,15 @@ _DEAD_SCALAR_DESC_NAMES = {
 }
 
 
+@lru_cache(maxsize=1)
 def _scalar_kinds_meta_fields():
+    # MEMOIZED, because the output registry keys its compiled node by MODEL:
+    # minting a second "_SkType" for "ScalarKindsModel" leaves one class holding
+    # its own compiled node while the registry hands the other's out through the
+    # relation graph, and a schema that reaches both dies with "Schema must
+    # contain uniquely named types but contains multiple types named
+    # '_SkType'" -- order-dependently, so the suite failed under some shuffles
+    # and not others. One class per process, one node.
     from django_graphex.types import DjangoObjectType
     from tests.models import ScalarKindsModel
 
@@ -305,3 +318,105 @@ def test_base_types_scalar_classes_kept_documented() -> None:
         assert hasattr(base_types, name), (
             f"base_types.{name} must be KEPT — still LIVE on the graphene path."
         )
+
+
+# ---------------------------------------------------------------------------
+# RED 6: Duration / Binary carry a VALUE, not just an SDL line
+#
+# The SDL-parity assertions above only pin the printed scalar name
+# ("duration: Float", "binary: String"). A column whose value cannot be
+# serialized at all still prints exactly that line, so the parity test stays
+# green while every populated read answers null plus a field error — which is
+# what "DurationField" did before it grew a resolver (audit B7). These tests
+# populate the columns and assert the value survives the round trip.
+# ---------------------------------------------------------------------------
+
+
+def _sk_row_schema(row: Any) -> Any:
+    """Build a one-field GraphQL schema serving "row" through the native type.
+
+    Registry-free on purpose: the output type is compiled from a locally
+    declared "DjangoObjectType" and wired into a bare "GraphQLSchema", so
+    nothing is published to the process-wide output registry.
+
+    Args:
+        row: The model instance the single "sk" field resolves to.
+
+    Returns:
+        A schema whose "Query.sk" field serves "row" through the compiled
+        native output type of "ScalarKindsModel".
+    """
+    from graphql import GraphQLField, GraphQLObjectType, GraphQLSchema
+
+    output_type = _scalar_kinds_meta_fields()._meta.graphql_output_type
+    return GraphQLSchema(
+        query=GraphQLObjectType(
+            name="Query",
+            fields={"sk": GraphQLField(output_type, resolve=lambda *_a, **_kw: row)},
+        )
+    )
+
+
+@pytest.mark.django_db
+def test_duration_column_round_trips_through_write_and_read() -> None:
+    """A "DurationField" must survive the write path and read back as seconds.
+
+    Write: the input surface takes "Float" SECONDS, which must land in the
+    column as a "timedelta". Read: the "Float" output surface must carry
+    "total_seconds()". Ships broken (audit B7) if the output side hands the raw
+    "timedelta" to "Float": the SDL line is unchanged, but every populated read
+    answers null with a "Float cannot represent non numeric value" error.
+    """
+    import datetime
+    from types import SimpleNamespace
+
+    from graphql import graphql_sync
+
+    from django_graphex.core.backend import PydanticBackend
+    from tests.models import ScalarKindsModel
+
+    info = SimpleNamespace(context=SimpleNamespace(META={}, FILES={}))
+    ok, obj = PydanticBackend(ScalarKindsModel).save_object(
+        None, None, info, {"char": "c", "duration": 90.0}
+    )
+    assert ok, obj
+    obj.refresh_from_db()
+    assert obj.duration == datetime.timedelta(seconds=90), (
+        f"Float SECONDS did not land in the DurationField column: {obj.duration!r}"
+    )
+
+    result = graphql_sync(_sk_row_schema(obj), "{ sk { duration } }")
+    assert not result.errors, (
+        f"Reading a populated DurationField errored: {result.errors}"
+    )
+    assert result.data == {"sk": {"duration": 90.0}}, (
+        f"A populated DurationField did not read back as Float seconds: {result.data!r}"
+    )
+
+
+@pytest.mark.django_db
+def test_binary_column_round_trips_through_read() -> None:
+    """A populated "BinaryField" must read back as base64, not as null.
+
+    The SDL prints "binary: String" either way, so only a populated read can
+    tell the two apart. The encoding is asserted exactly: base64 unconditionally,
+    so a client never has to guess whether the bytes came back as text.
+    """
+    import base64
+
+    from graphql import graphql_sync
+
+    from tests.models import ScalarKindsModel
+
+    # Valid UTF-8 on purpose: a "decode as text when it happens to work"
+    # encoder would answer "\x00\x01hi" here and base64 for the same column one
+    # byte later, which is the ambiguity this asserts against.
+    raw = b"\x00\x01hi"
+    row = ScalarKindsModel.objects.create(char="c", binary=raw)
+    result = graphql_sync(_sk_row_schema(row), "{ sk { binary } }")
+    assert not result.errors, (
+        f"Reading a populated BinaryField errored: {result.errors}"
+    )
+    assert result.data["sk"]["binary"] == base64.b64encode(raw).decode("ascii"), (
+        "A populated BinaryField must read back base64-encoded"
+    )

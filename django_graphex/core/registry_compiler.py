@@ -484,6 +484,51 @@ def compile_all_outputs() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _forked_interfaces_thunk(meta: Any, class_inst: Any, registries: Any) -> Any:
+    """Return the ``interfaces=`` value a forked object type must carry.
+
+    A class-def ``GraphQLObjectType`` compiles its implemented interfaces against
+    the DEFAULT interface cache (the class body cannot know which pair a later
+    schema will use). Copying that compiled list onto the fork mixes namespaces:
+    a root ``field(SomeInterface)`` in the SAME forked schema compiles a SECOND,
+    pair-local ``GraphQLInterfaceType`` with the same name, and graphql-core
+    rejects the schema with "Schema must contain uniquely named types".
+
+    So the declared interface CLASSES are re-compiled through the pair's own
+    cache. The result is a THUNK (never an eager list) so a self-referential
+    interface field still terminates, mirroring the class-def contract.
+
+    Args:
+        meta: The output class' ``_meta`` (carries the declared ``interfaces``).
+        class_inst: The class-def ``GraphQLObjectType`` used as the fallback when
+            nothing interface-shaped was declared.
+        registries: The ``SchemaRegistries`` pair the fork belongs to.
+
+    Returns:
+        A zero-argument thunk returning this pair's compiled interfaces, or the
+        class-def interface list (possibly ``None``) when none were declared.
+    """
+    declared = tuple(getattr(meta, "interfaces", None) or ())
+    if not declared:
+        return getattr(class_inst, "interfaces", None) or None
+
+    def _interfaces(
+        _declared: tuple[Any, ...] = declared, _registries: Any = registries
+    ) -> list[Any]:
+        from django_graphex.core.polymorphic_compiler import (
+            compile_interface_type,
+            is_interface_type,
+        )
+
+        return [
+            compile_interface_type(iface, _registries)
+            for iface in _declared
+            if is_interface_type(iface)
+        ]
+
+    return _interfaces
+
+
 def _fork_output_class(
     cls: Any, entry: Any, registries: Any, output_registry: Any, graphene_registry: Any
 ) -> GraphQLObjectType:
@@ -549,7 +594,7 @@ def _fork_output_class(
     forked = GraphQLObjectType(
         name=entry.gql_name,
         fields=thunk,
-        interfaces=getattr(class_inst, "interfaces", None) or None,
+        interfaces=_forked_interfaces_thunk(meta, class_inst, registries),
         extensions=extensions,
     )
     # Register BEFORE returning so a self-referential / mutually-recursive

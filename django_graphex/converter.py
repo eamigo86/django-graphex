@@ -206,22 +206,33 @@ def _normalize_choices(choices: Any) -> Any:
     return choices
 
 
-def get_choices(choices: Any) -> Iterator[tuple[str, Any, Any]]:
+def get_choices(
+    choices: Any, converted_names: list[str] | None = None
+) -> Iterator[tuple[str, Any, Any]]:
     """Extract choices from Django field choices recursively.
+
+    The de-duplication state is threaded through the recursion so a label
+    repeated across two option groups ("Other", "None", "Unknown" are routine)
+    gets the same numeric suffix a repeated label inside ONE group would get,
+    instead of collapsing into a single enum member bound to the last value.
+    Names that do not collide are never suffixed, so existing SDL is untouched.
 
     Args:
         choices: Django field choices in any supported form (an iterable of
             pairs, a mapping, a callable, or an enumeration type), possibly
             nested for grouped choices.
+        converted_names: Names already emitted by an enclosing call, or None to
+            start a fresh de-duplication scope. Internal to the recursion.
 
     Yields:
         Tuples of (name, value, description) for each leaf choice.
     """
     choices = _normalize_choices(choices)
-    converted_names = []
+    if converted_names is None:
+        converted_names = []
     for value, help_text in choices:
         if isinstance(help_text, (tuple, list)):
-            yield from get_choices(help_text)
+            yield from get_choices(help_text, converted_names)
         else:
             name = choice_enum_name(value, help_text)
             while name in converted_names:
@@ -411,10 +422,12 @@ def construct_fields(
     fields = OrderedDict()
 
     if input_flag == "delete":
-        converted = convert_django_field_with_choices(
-            dict(_model_fields)["id"], registry
-        )
-        fields["id"] = converted
+        # Read the REAL primary key instead of a hardcoded "id": a model on a
+        # UUID / slug / otherwise renamed pk has no "id" entry at all, so the
+        # lookup raised KeyError at CLASS-DEFINITION time and made any module
+        # declaring such a delete input unimportable.
+        pk_field = model._meta.pk
+        fields[pk_field.name] = convert_django_field_with_choices(pk_field, registry)
     else:
         for name, field in _model_fields:
             if input_flag == "create" and name == "id":

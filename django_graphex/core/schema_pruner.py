@@ -107,6 +107,8 @@ class _Pruner:
         # Named object / interface type -> its field map AFTER per-field perm
         # filtering (before the survivor fixpoint drops dangling-type fields).
         self._filtered_fields: dict[str, dict[str, GraphQLField]] = {}
+        # Named input object type -> its field map after the same filtering.
+        self._filtered_input_fields: dict[str, dict[str, Any]] = {}
         # Named types that survive the fixpoint.
         self._survivors: set[str] = set()
         # Memoized clones, keyed by type name, so shared references stay shared
@@ -184,6 +186,12 @@ class _Pruner:
                     field_name: gql_field
                     for field_name, gql_field in gtype.fields.items()
                     if self._field_permitted(gql_field)
+                }
+            elif is_input_object_type(gtype):
+                self._filtered_input_fields[name] = {
+                    field_name: ifield
+                    for field_name, ifield in gtype.fields.items()
+                    if self._input_field_permitted(ifield)
                 }
 
     def _field_permitted(self, gql_field: GraphQLField) -> bool:
@@ -272,18 +280,48 @@ class _Pruner:
         gtype = self._full.type_map[name]
         if is_object_type(gtype) or is_interface_type(gtype):
             return not any(
-                self._output_survives(gql_field.type, candidates)
+                self._field_survives(gql_field, candidates)
                 for gql_field in self._filtered_fields[name].values()
             )
         if is_union_type(gtype):
             return not any(m.name in candidates for m in gtype.types)
+        if is_input_object_type(gtype):
+            return not any(
+                self._input_survives(ifield.type, candidates)
+                for ifield in self._filtered_input_fields[name].values()
+            )
         return False
+
+    def _field_survives(self, gql_field: GraphQLField, candidates: set[str]) -> bool:
+        """Return whether a permitted field is still usable at all.
+
+        A field needs BOTH a surviving output type and surviving ARGUMENT types.
+        The argument half is what propagates an emptied input object upward: an
+        input the caller may not fill a single field of cannot be emitted (a
+        zero-field input object is an invalid schema), so the field that takes
+        it goes instead — the mutation root disappears exactly as it would had
+        its own stamp been unheld.
+        """
+        return self._output_survives(gql_field.type, candidates) and all(
+            self._input_survives(arg.type, candidates)
+            for arg in gql_field.args.values()
+        )
+
+    def _input_survives(self, gtype: Any, candidates: set[str]) -> bool:
+        """Return whether an input position's unwrapped type is still a candidate.
+
+        Scalars and enums are always live; only input OBJECT types can be pruned
+        to empty.
+        """
+        named = get_named_type(gtype)
+        return named.name in candidates if is_input_object_type(named) else True
 
     def _output_survives(self, gtype: Any, candidates: set[str]) -> bool:
         """Return whether a field's unwrapped output type is still a candidate.
 
-        Leaf types (scalars / enums / input objects) are always live — only
-        composite object / interface / union types can be pruned to empty. A
+        Leaf types (scalars / enums) are always live — only composite object /
+        interface / union types can be pruned to empty in an OUTPUT position
+        (the input side has its own emptiness rule, ``_input_survives``). A
         field's output type is always a named (possibly wrapped) type, so
         ``get_named_type`` never yields ``None`` here.
         """
@@ -344,16 +382,45 @@ class _Pruner:
         return GraphQLUnionType(**kwargs)
 
     def _clone_input(self, gtype: Any) -> Any:
-        """Clone an input object type verbatim, remapping its field types.
+        """Clone an input object type, dropping the fields the caller may not use.
 
-        Input types (mutation payloads) carry no ``gdx_required_perms`` and are
-        retained for any surviving mutation field that references them.
+        Only NESTED-object input fields carry an explicit
+        ``gdx_required_perms`` stamp, so every input field that exists today is
+        unaffected. Dropping one is safe: a nested input field is never NonNull
+        at the parent level.
+
+        A type that loses EVERY field is not cloned at all — the fixpoint has
+        already dropped it from the survivors, and ``_field_survives`` has
+        already removed the argument (and with it the root field) that referenced
+        it. This method is therefore only ever reached for a type with at least
+        one surviving field, and it needs no per-field survivor filter of its
+        own: the only stamped input fields are the nested-child ones, and a
+        nested child input is built with ``nested_fields={}``, so it carries no
+        stamp and can never itself be pruned to empty. No input object in the
+        generated universe references an emptied input object.
         """
         kwargs = gtype.to_kwargs()
         kwargs["fields"] = lambda g=gtype: {
-            fname: self._clone_input_field(ifield) for fname, ifield in g.fields.items()
+            fname: self._clone_input_field(ifield)
+            for fname, ifield in self._filtered_input_fields[g.name].items()
         }
         return type(gtype)(**kwargs)
+
+    def _input_field_permitted(self, ifield: Any) -> bool:
+        """Return whether an input field clears the caller's permissions.
+
+        Only the EXPLICIT stamp is tested -- never the output-type implicit
+        fallback ``_field_permitted`` applies -- so an unlabeled input field
+        stays exactly as public as it is today.
+
+        Args:
+            ifield: The input field to test.
+
+        Returns:
+            True when the field carries no stamp or the caller holds it.
+        """
+        perms = (ifield.extensions or {}).get("gdx_required_perms")
+        return perms is None or frozenset(perms) <= self._granted
 
     def _clone_input_field(self, ifield: Any) -> Any:
         """Clone a single input field, remapping its type."""
@@ -366,7 +433,7 @@ class _Pruner:
         return {
             fname: self._rebuild_field(gql_field)
             for fname, gql_field in self._filtered_fields[type_name].items()
-            if self._output_survives(gql_field.type, self._survivors)
+            if self._field_survives(gql_field, self._survivors)
         }
 
     def _rebuild_field(self, gql_field: GraphQLField) -> GraphQLField:

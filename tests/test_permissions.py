@@ -489,6 +489,103 @@ def test_django_model_permissions_perms_map_subclass_override() -> None:
     assert perms == ["tests.publish_hookmodel"]
 
 
+def _holder(*codenames: str) -> _types.SimpleNamespace:
+    """Build an authenticated user holding exactly "codenames".
+
+    Args:
+        *codenames: The permission strings the user is considered to hold.
+
+    Returns:
+        user: A duck-typed user whose "has_perms" is a subset check against
+            the held codenames.
+    """
+    held = set(codenames)
+    return _fake_user(authenticated=True, has_perms=lambda perms: set(perms) <= held)
+
+
+def test_subscribe_honors_tightened_perms_map_override() -> None:
+    """Assert a tightened subscribe "perms_map" row is enforced, not ignored.
+
+    If this fails, a subclass that requires a custom subscribe codename
+    would be bypassed: a user without it could still open a subscription.
+    """
+    from django_graphex.permissions import DjangoModelPermissions
+
+    class StreamPermissions(DjangoModelPermissions):
+        perms_map = {
+            **DjangoModelPermissions.perms_map,
+            "subscribe": ("{app_label}.stream_{model_name}",),
+        }
+
+    perm = StreamPermissions()
+    assert perm.get_required_permissions("subscribe", HookModel) == [
+        "tests.stream_hookmodel"
+    ]
+    # Holds the composite create verbs but NOT the custom stream codename.
+    info = _info_for(_holder("tests.view_hookmodel", "tests.add_hookmodel"))
+    assert (
+        perm.has_subscribe_permission(info, HookModel, subscription_action="create")
+        is False
+    )
+
+
+def test_subscribe_honors_loosened_perms_map_override() -> None:
+    """Assert a loosened "perms_map" is honored instead of the hardcoded table.
+
+    If this fails, a subclass that drops the "view" requirement for
+    subscribe and create would still be denied for a user holding exactly
+    the codenames its own mapping asks for.
+    """
+    from django_graphex.permissions import DjangoModelPermissions
+
+    class StreamPermissions(DjangoModelPermissions):
+        perms_map = {
+            **DjangoModelPermissions.perms_map,
+            "subscribe": ("{app_label}.stream_{model_name}",),
+            "create": ("{app_label}.add_{model_name}",),
+        }
+
+    info = _info_for(_holder("tests.stream_hookmodel", "tests.add_hookmodel"))
+    assert (
+        StreamPermissions().has_subscribe_permission(
+            info, HookModel, subscription_action="create"
+        )
+        is True
+    )
+
+
+def test_subscribe_fails_closed_on_unmapped_action_or_row() -> None:
+    """Assert an unknown action, or a "perms_map" missing a row, is denied.
+
+    If this fails, a subscribe whose action (or whose composed write row)
+    has no mapping would be allowed instead of failing closed.
+    """
+    from django_graphex.permissions import DjangoModelPermissions
+
+    class NoCreateRow(DjangoModelPermissions):
+        perms_map = {
+            key: value
+            for key, value in DjangoModelPermissions.perms_map.items()
+            if key != "create"
+        }
+
+    info = _info_for(_holder("tests.view_hookmodel", "tests.add_hookmodel"))
+    # Unknown subscription action-value.
+    assert (
+        DjangoModelPermissions().has_subscribe_permission(
+            info, HookModel, subscription_action="publish"
+        )
+        is False
+    )
+    # Known action, but the row it composes was removed from the mapping.
+    assert (
+        NoCreateRow().has_subscribe_permission(
+            info, HookModel, subscription_action="create"
+        )
+        is False
+    )
+
+
 # -- Integration with real Django permissions -------------------------------- #
 def _get_perm(codename: str, name: str) -> Permission:
     """Fetch-or-create a Permission on HookModel's ContentType.

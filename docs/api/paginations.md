@@ -136,7 +136,10 @@ Paginate queryset using limit and offset parameters.
 - `qs` (`QuerySet`): Django queryset to paginate
 - `**kwargs`: Query parameters including `limit`, `offset`, and `ordering`
 
-**Returns:** Sliced `QuerySet`
+**Returns:** Sliced `QuerySet`. When neither `default_limit` nor `max_limit` is
+configured the paginator is unbounded and returns the whole set — still
+**ordered** by `ordering`, which is applied and validated independently of the
+page-size resolution.
 
 **Raises:**
 - `GraphQLError` — negative `offset` (`"Invalid offset: {offset}. Offset must be a non-negative integer."`).

@@ -161,7 +161,7 @@
   var loc=window.location;
   var wsProto=loc.protocol==="https:"?"wss:":"ws:";
   $("gdsx-ws").value=wsProto+"//"+loc.host+"__WS_PATH__";
-  $("gdsx-sse").value=loc.protocol+"//"+loc.host+"__HTTP_PATH__";
+  $("gdsx-sse").value=loc.protocol+"//"+loc.host+"__SSE_PATH__";
   $("gdsx-http").value=loc.protocol+"//"+loc.host+"__HTTP_PATH__";
 
   // ---- Utilities -------------------------------------------------------------
@@ -415,6 +415,13 @@
         log("complete","complete","Stream complete.");
         runBtn.disabled=false;
         setStatus("open","Connected (SSE)");
+      } else {
+        // Anything else is a server that is NOT speaking graphql-sse on this
+        // endpoint (typically the JSON GraphQL view answering a subscription
+        // POST). Surface it instead of dropping it silently.
+        log("error","Unexpected SSE frame ("+eventType+")",raw||frame);
+        runBtn.disabled=false;
+        setStatus("closed","Connection Error");
       }
     }
 

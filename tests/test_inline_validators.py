@@ -302,10 +302,29 @@ class UnknownFieldTest(TestCase):
                     return value
 
 
+class PlainWidgetType(DjangoModelType):
+    """A REAL host that declares no inline validators at all.
+
+    "ObjectLevelTest" (a "django.test.TestCase") is not a substitute: its MRO
+    carries none of the framework bases a production host inherits, so it
+    cannot exercise what the collector sees on a real type.
+    """
+
+    class Meta:
+        """Bind "PlainWidgetType" to "Widget" with no validator declarations.
+
+        The host is deliberately empty: the passthrough contract is about a
+        class that declares nothing at all.
+        """
+
+        model = Widget
+
+
 class HelperPassthroughTest(TestCase):
     """Passthrough behavior of "build_validator_model" with no inline validators.
 
-    Covers both a non-None base model and a None base model.
+    Covers both a non-None base model and a None base model, on a REAL
+    "DjangoModelType" host.
     """
 
     def test_no_inline_validators_returns_pydantic_model_unchanged(self) -> None:
@@ -313,10 +332,16 @@ class HelperPassthroughTest(TestCase):
 
         Also covers the "None" base case, which must return None rather than
         raising or fabricating a model.
+
+        The host is a real "DjangoModelType": it inherits "pydantic.BaseModel",
+        whose deprecated "validate" classmethod the collector used to mistake
+        for a user-declared object-level hook — so every passthrough host got a
+        synthetic validator model that ran pydantic's deprecated entry point on
+        every save.
         """
         sentinel = _SlugRules
         # a host with no validate_* methods -> helper returns the base unchanged
         self.assertIs(
-            build_validator_model(ObjectLevelTest, Widget, sentinel), sentinel
+            build_validator_model(PlainWidgetType, Widget, sentinel), sentinel
         )
-        self.assertIsNone(build_validator_model(ObjectLevelTest, Widget, None))
+        self.assertIsNone(build_validator_model(PlainWidgetType, Widget, None))

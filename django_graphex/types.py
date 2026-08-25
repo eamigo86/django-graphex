@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager, QuerySet
@@ -26,12 +26,15 @@ from .filtering.filter_field import (
     RESERVED_FILTER_ARGS,
     collect_custom_filters,
 )
-from .nested import NestedFieldsMixin
+from .nested import NestedFieldsMixin, hosts_serving, register_nested_host
 from .paginations.pagination import BaseDjangoGraphqlPagination
+from .permissions import supported_kwargs
 from .registry import Registry, get_global_registry
 from .settings import graphql_api_settings
+from .uploads import merge_uploaded_files
 from .utils import (
     _apply_optimizations,
+    apply_object_type_get_queryset,
     get_Object_or_None,
     is_valid_django_model,
     maybe_queryset,
@@ -51,6 +54,11 @@ __all__ = (
     "DjangoUnionType",
     "DjangoInterfaceType",
 )
+
+#: Every operation a "DjangoModelType" generates, and its "Meta.model_operations"
+#: default. A "DjangoModelMutation" generates the three write verbs only; this
+#: type bundles the query fields as well, so its option covers all five.
+MODEL_TYPE_OPERATIONS = ("create", "update", "delete", "list", "retrieve")
 
 
 def _yank_fields(attrs: dict[str, Any], _as: Any, sort: bool = True) -> dict[str, Any]:
@@ -169,6 +177,33 @@ def _compile_declared_list_fields(
     return out
 
 
+def _model_derived_fields(model: type) -> list[Any]:
+    """Return every field Django derives for "model", PARENTS INCLUDED.
+
+    The single choke point every native compiler in this module goes through to
+    enumerate a model's fields. It deliberately uses the DEFAULT
+    "include_parents=True": passing "include_parents=False" is a no-op for an
+    ABSTRACT base (Django copies those columns onto the child) but silently
+    drops everything a MULTI-TABLE-INHERITANCE child inherits -- its "id", the
+    parent's own columns, and the parent's reverse relations -- which left MTI
+    child types carrying nothing but their own table's columns.
+
+    The parent link itself is NOT filtered out here; each caller already
+    discriminates on the field kind it cares about.
+
+    Args:
+        model: The Django model to enumerate.
+
+    Returns:
+        The derived fields, or the concrete fields when "_meta.get_fields" is
+        unavailable.
+    """
+    try:
+        return list(model._meta.get_fields())
+    except Exception:  # pragma: no cover — defensive
+        return list(model._meta.concrete_fields)
+
+
 def _model_field_names(model: type) -> set[str]:
     """Return the set of names Django derives for *model* (Slice D/E helper).
 
@@ -178,11 +213,7 @@ def _model_field_names(model: type) -> set[str]:
     relation-list injection) when scanning ``_meta.fields`` for declared fields.
     """
     names: set[str] = set()
-    try:
-        all_fields = model._meta.get_fields(include_parents=False)
-    except Exception:  # pragma: no cover — defensive
-        all_fields = model._meta.concrete_fields
-    for f in all_fields:
+    for f in _model_derived_fields(model):
         name = getattr(f, "name", None) or getattr(f, "attname", None)
         if name:
             names.add(name)
@@ -413,10 +444,7 @@ def _compile_relation_list_fields(
     only_set = set(only_fields) if only_fields else None
     exclude_set = set(exclude_fields) if exclude_fields else None
 
-    try:
-        all_fields = model._meta.get_fields(include_parents=False)
-    except Exception:  # pragma: no cover — defensive
-        all_fields = model._meta.concrete_fields
+    all_fields = _model_derived_fields(model)
 
     out: dict[str, Any] = {}
     for field in all_fields:
@@ -516,10 +544,7 @@ def _compile_reverse_o2o_fields(
     only_set = set(only_fields) if only_fields else None
     exclude_set = set(exclude_fields) if exclude_fields else None
 
-    try:
-        all_fields = model._meta.get_fields(include_parents=False)
-    except Exception:  # pragma: no cover — defensive
-        all_fields = model._meta.concrete_fields
+    all_fields = _model_derived_fields(model)
 
     out: dict[str, Any] = {}
     for field in all_fields:
@@ -1167,10 +1192,18 @@ class DjangoObjectType(NativeObjectType):
             id: Primary key of the object to fetch.
 
         Returns:
-            The matching model instance, or None if it does not exist.
+            The matching model instance, or None if it does not exist or the
+            "get_queryset" scope excludes it.
         """
+        # SECURITY: the primary key comes straight from the caller, so this
+        # lookup goes through the same "get_queryset" choke point every other
+        # row-serving path uses -- resolving it on the bare manager would hand
+        # back exactly the rows the scope exists to hide.
         try:
-            return cls._meta.model.objects.get(pk=id)
+            scoped = apply_object_type_get_queryset(
+                cls._meta.model._default_manager.all(), cls, info
+            )
+            return scoped.get(pk=id)
         except cls._meta.model.DoesNotExist:
             return None
 
@@ -1443,6 +1476,71 @@ class DjangoInterfaceType(NativeObjectType):
         return _resolve_polymorphic_type(cls, instance, info)
 
 
+def _nested_input_perms(
+    child_model: type[Model], input_for: str, registry: Registry
+) -> frozenset[str]:
+    """Return the permissions a parent's nested input field for a child requires.
+
+    It is the composite default for the verbs the nested surface actually
+    enables, and NOT simply ``required_perms_for(child, input_for)``: a nested
+    payload's ``id`` is OPTIONAL on an UPDATE input, so omitting it CREATES a
+    child row. Stamping the parent's verb alone left a caller who holds
+    ``change_child`` but not ``add_child`` with the child's own create root
+    pruned away while the identical create stayed reachable through the parent's
+    update payload -- the same front-door / back-door shape the stamp exists to
+    close. The CREATE input carries no ``id`` at all, so it stays a create
+    surface only.
+
+    The ``required_perms`` of every host that SERVES one of those verbs is then
+    UNIONED onto that default, never substituted for it. The override can
+    therefore only ever ADD a requirement, which is what makes it safe in both
+    directions. Honouring it as a REPLACEMENT read a READ label as a licence to
+    WRITE: an ordinary read host declaring ``required_perms =
+    ["app.view_child"]``, the most common shape there is, collapsed the nested
+    write stamp to a view permission. Ignoring it outright was the mirror image:
+    a WRITE host declaring a stricter label (say ``["app.manage_child"]``) never
+    reached the nested surface, so a caller holding only ``add_child`` wrote
+    child rows through the parent that the child's own root -- pruned away from
+    that caller's schema -- refuses.
+
+    The label follows the same operation rule the allowance axis follows (see
+    ``nested.hosts_serving``): a host that does not generate the verb the nested
+    field enables has no say over it, so a delete-only host's destructive label
+    no longer deletes the nested CREATE field for a caller who may legitimately
+    write the child.
+
+    This runs LAZILY, in the parent input's field thunk, from the same host list
+    and at the same moment as the projection in ``nested_child_input``. Resolved
+    eagerly at the parent's class-definition time it read a DIFFERENT host list
+    than the projection did: a child host declared after the parent had its
+    ``exclude_fields`` honoured and its ``required_perms`` silently dropped,
+    and the late-host guard -- which keys off the thunk-time watermark -- never
+    fired for it.
+
+    A child writable only through its parent needs no override at all: the
+    caller doing that write holds the child's write label, and what the project
+    withholds is the child's own root -- which, never mounted, gives the pruner
+    nothing to prune.
+
+    Args:
+        child_model: The nested child's Django model.
+        input_for: The PARENT's operation ("create" or "update").
+        registry: The registry whose declared hosts the stamp is read from.
+
+    Returns:
+        The permission codenames the nested input field is stamped with.
+    """
+    from django_graphex.core.perm_labels import required_perms_for
+
+    perms: frozenset[str] = frozenset()
+    verbs = ("create", "update") if input_for == "update" else ("create",)
+    for verb in verbs:
+        perms |= required_perms_for(child_model, verb)
+        for host in hosts_serving(registry, child_model, verb):
+            perms |= frozenset(getattr(host, "required_perms", None) or ())
+    return perms
+
+
 def _resolve_native_nested_input_fields(
     model: type[Model],
     registry: Registry,
@@ -1454,22 +1552,22 @@ def _resolve_native_nested_input_fields(
     Mirrors the legacy graphene nested converters (``convert_*`` with
     ``nested_field=True``) on the native input path: each ``{field: ChildModel}``
     entry becomes a ``NestedInputField`` wrapping the CHILD model's compiled
-    generic ``GraphQLInputObjectType`` (already ensured on demand by
-    ``_ensure_child_generic_input`` before this type is built). Relation kind
-    decides the shape exactly as graphene did:
+    ``GraphQLInputObjectType`` as built FOR THIS PARENT (see
+    ``nested_child_input``). Relation kind decides the shape exactly as graphene
+    did:
 
     * forward FK / reverse-O2O (to-one) -> single ``<Child>`` object input,
     * M2M / reverse-FK (to-many) -> ``[<Child>!]`` list input.
 
-    The child input type is resolved LAZILY (via a thunk) inside the parent's
-    own ``fields`` thunk, so a self-referential nested model
-    (``nested_fields={"children": Self}``) terminates: the on-demand generic
-    child is built with EMPTY ``nested_fields`` (its own relation stays the
-    scalar ``[ID!]`` surface), so no unbounded recursion.
+    The child input type is BUILT LAZILY (via a thunk) inside the parent's own
+    ``fields`` thunk, so a self-referential nested model
+    (``nested_fields={"children": Self}``) terminates: the child is built with
+    EMPTY ``nested_fields`` (its own relation stays the scalar ``[ID!]``
+    surface), so no unbounded recursion.
 
     Args:
         model: The Django model the parent input is built for.
-        registry: The active type registry (child input lookups read it).
+        registry: The active type registry (it owns the child-input memo).
         input_for: The operation ("create" or "update"); the child input is
             looked up for the same operation.
         nested_fields: The ``Meta.nested_fields`` mapping (or empty/falsy).
@@ -1508,11 +1606,16 @@ def _resolve_native_nested_input_fields(
             continue
 
         def _child_thunk(_child_model: type[Model] = child_model) -> Any:
-            """Resolve the child's compiled input type lazily (self-ref safe)."""
-            child_type = registry.get_type_for_model(_child_model, for_input=input_for)
-            if child_type is None:
-                return None
-            return child_type._meta.graphql_input_type
+            """Build the child's input for THIS parent lazily (self-ref safe)."""
+            from .mutation import nested_child_input
+
+            return nested_child_input(
+                _child_model, input_for, registry, model
+            )._meta.graphql_input_type
+
+        def _stamp_thunk(_child_model: type[Model] = child_model) -> frozenset[str]:
+            """Read the child's nested write label lazily (host-order safe)."""
+            return _nested_input_perms(_child_model, input_for, registry)
 
         specs.append(
             NestedInputField(
@@ -1520,6 +1623,18 @@ def _resolve_native_nested_input_fields(
                 alias=to_camel_case(accessor),
                 child_input_type=_child_thunk,
                 is_list=is_list,
+                # SECURITY: the nested field IS a write surface for the child,
+                # so it carries the child's write label. Without it the pruner
+                # removed the child's own mutation root and cloned the parent's
+                # input verbatim, leaving the same write reachable through the
+                # parent -- worse than no feature, because it grants false
+                # confidence.
+                #
+                # A THUNK, resolved by the input compiler in the same field-map
+                # pass that calls "_child_thunk" above, so the stamp and the
+                # projection are read from one host list at one moment. Frozen
+                # here instead, it lost every host declared after the parent.
+                required_perms=_stamp_thunk,
             )
         )
     return tuple(specs)
@@ -1571,6 +1686,16 @@ def _resolve_native_relation_input_fields(
     for field in model._meta.get_fields():
         # Skip the model's own primary key and plain concrete scalars.
         if getattr(field, "primary_key", False):
+            continue
+
+        # Server-managed relations are not client input. "construct_fields" and
+        # "_resolve_native_choices_input_fields" already honour "editable", so a
+        # non-editable SCALAR was excluded while a non-editable FK / O2O / M2M
+        # was still advertised as writable and then silently dropped on save.
+        # The guard is deliberately restricted to CONCRETE fields: Django sets
+        # "editable = False" on every "ForeignObjectRel", so applying it to the
+        # reverse branches below would delete the reverse-relation injection.
+        if isinstance(field, _dj_models.Field) and not field.editable:
             continue
 
         # Forward FK / O2O (concrete, holds the key on this model).
@@ -2274,6 +2399,14 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
     #: field.
     permission_classes: ClassVar[tuple[Any, ...]] = ()
 
+    #: Opt-in override (P0) for the permissions the CRUD fields this class
+    #: generates require; it REPLACES the composite-table default on each of
+    #: them. Read at field-build time whether or not it is declared here, but
+    #: declared for the same reason ``permission_classes`` is: without a base
+    #: ``ClassVar``, the plain assignment the guides spell out raises
+    #: ``PydanticUserError`` at class-definition time.
+    required_perms: ClassVar[Optional[Sequence[str]]] = None
+
     class Meta:
         """Meta configuration for DjangoModelType.
 
@@ -2304,6 +2437,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         subscription_index_fields: tuple[str, ...] | list[str] | None = None,
         max_depth: int | None = None,
         complexity: int | None = None,
+        model_operations: Any = MODEL_TYPE_OPERATIONS,
         **options,
     ) -> None:
         """Initialize the subclass with meta options for a model type.
@@ -2330,11 +2464,21 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                 type, enforced by "DepthLimitValidationRule"; "None" = no limit.
             complexity: Cost weight of a field returning this type's output type,
                 used by "CostLimitValidationRule"; "None" = default weight (1).
+            model_operations: The operations this type serves; any subset of
+                ("create", "update", "delete", "list", "retrieve"). The default
+                is ALL of them, so a type that declares nothing behaves exactly
+                as it did before the option existed. Operations left out have
+                their "*Field()" builder raise, and -- the reason the option is
+                here -- the type stops counting as a host for them when a PARENT
+                nests this model: a type declared ("list", "retrieve") is a READ
+                host, so its "Meta.queryset" and its "only_fields" no longer
+                reach the nested write path.
             **options: Extra options forwarded to the parent implementation.
 
         Raises:
-            ImproperlyConfigured: If "Meta.model" is not provided, or if any
-                unknown Meta option is supplied.
+            ImproperlyConfigured: If "Meta.model" is not provided, if any
+                unknown Meta option is supplied, or if "model_operations"
+                contains an unknown operation.
         """
         # HARD rename guard (v2.0): the legacy ``Meta.serialize_data`` key is
         # caught in ``**options`` — fail loudly with the new spelling before the
@@ -2395,6 +2539,18 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         registry = get_global_registry()
 
+        model_operations = tuple(op.lower() for op in model_operations)
+        unknown = set(model_operations) - set(MODEL_TYPE_OPERATIONS)
+        if unknown:
+            raise ImproperlyConfigured(
+                "Meta.model_operations of {} contains unknown operation(s) {}; "
+                "only {} are valid.".format(
+                    cls.__name__,
+                    sorted(unknown),
+                    ", ".join('"{}"'.format(op) for op in MODEL_TYPE_OPERATIONS),
+                )
+            )
+
         # Custom graphene fields declared on this DjangoModelType -- or on
         # any of its bases up to (but excluding) DjangoModelType, e.g. an
         # abstract mixin -- are collected and added to the generated output type,
@@ -2445,17 +2601,68 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         if not output_type:
             output_type = factory_type("output", DjangoObjectType, **factory_kwargs)
-        elif extra_fields:
-            warnings.warn(
-                "{name}: custom fields declared on the type are ignored because a "
-                "DjangoObjectType is already registered for {model}; declare them on "
-                "that DjangoObjectType instead.".format(
-                    name=cls.__name__, model=model.__name__
-                ),
-                stacklevel=2,
-            )
+        else:
+            # SECURITY: the reused output type was built from ITS OWN Meta, so a
+            # projection declared here would be dropped and the column it was
+            # meant to hide would stay queryable. "exclude_fields" is documented
+            # as THE way to keep a sensitive column out (docs/api/types.md), so
+            # this fails the schema build instead of warning: a warning is
+            # filterable and would leave the leak live in production. Only the
+            # already-leaking configuration is affected -- move the projection to
+            # the registered type, or drop the option.
+            dropped = [
+                option
+                for option, value in (
+                    ("only_fields", only_fields),
+                    ("include_fields", include_fields),
+                    ("exclude_fields", exclude_fields),
+                )
+                if value
+            ]
+            if dropped:
+                raise ImproperlyConfigured(
+                    "{name}.Meta.{options} cannot be honored: the output type for "
+                    "{model} is reused from {registered}, which was built from its "
+                    "own Meta, so the projection would be silently dropped and any "
+                    "field it hides would stay exposed. Declare {options} on "
+                    "{registered} instead, or remove the option.".format(
+                        name=cls.__name__,
+                        options="/".join(dropped),
+                        model=model.__name__,
+                        registered=output_type.__name__,
+                    )
+                )
+            if extra_fields:
+                warnings.warn(
+                    "{name}: custom fields declared on the type are ignored because a "
+                    "DjangoObjectType is already registered for {model}; declare them "
+                    "on that DjangoObjectType instead.".format(
+                        name=cls.__name__, model=model.__name__
+                    ),
+                    stacklevel=2,
+                )
 
-        output_list_type = factory_type("list", DjangoListObjectType, **factory_kwargs)
+        # The container MUST NOT be minted as "<Model>ListType": that is exactly
+        # the name the docs teach users to give their own
+        # "DjangoListObjectType", so declaring both put two distinct classes
+        # with one name into the same schema and graphql-core refused to build
+        # it ("Schema must contain uniquely named types"). Reusing the
+        # registered container instead was rejected: a "DjangoModelType" carries
+        # its OWN "pagination" / "results_field_name" / projection, and a
+        # user-declared container built from its own Meta would silently discard
+        # them. So the generated container takes the "Generic" name-space this
+        # type already mints its output ("<Model>GenericType") and input
+        # ("<Model>CreateGenericType") into, which no user convention claims.
+        from ._strconv import to_camel_case
+
+        output_list_type = factory_type(
+            "list",
+            DjangoListObjectType,
+            **{
+                **factory_kwargs,
+                "name": to_camel_case("{}_List_Generic_Type".format(model.__name__)),
+            },
+        )
 
         django_fields = OrderedDict(
             {output_field_name: NativeMountedField(output_type)}
@@ -2463,6 +2670,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         global_arguments = {}
         for operation in ("create", "delete", "update"):
+            # A declared READ host builds no write argument at all -- and, more
+            # to the point, registers no input into the shared "(model,
+            # operation)" slot, so the project's real write host still owns it.
+            if operation not in model_operations:
+                continue
             global_arguments.update({operation: OrderedDict()})
 
             if operation != "delete":
@@ -2472,18 +2684,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                     # a nested ``DjangoModelType`` builds a DISTINCT input with
                     # ``skip_registry=True`` so the generic ``(model, operation)``
                     # slot stays pristine for plain hosts and the converter's
-                    # child lookups. The helpers live in mutation.py; importing
-                    # them lazily here avoids the module-load circular import
+                    # child lookups. The helper lives in mutation.py; importing
+                    # it lazily here avoids the module-load circular import
                     # (mutation.py imports this module).
-                    from .mutation import (
-                        _ensure_child_generic_input,
-                        _nested_input_name,
-                    )
+                    from .mutation import _nested_input_name
 
-                    for child_model in nested_map.values():
-                        _ensure_child_generic_input(
-                            child_model, operation, registry, parent_model=model
-                        )
                     input_type = factory_type(
                         "input",
                         DjangoInputObjectType,
@@ -2502,12 +2707,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                         },
                     )
                 else:
-                    input_type = registry.get_type_for_model(model, for_input=operation)
+                    from .mutation import generic_input_type
 
-                    if not input_type:
-                        input_type = factory_type(
-                            "input", DjangoInputObjectType, operation, **factory_kwargs
-                        )
+                    input_type = generic_input_type(
+                        registry, model, operation, factory_kwargs
+                    )
 
                 # S6c: DjangoModelType is NATIVE-ONLY (parented on
                 # ``native.base.ObjectType``). The input argument is wrapped in a
@@ -2565,10 +2769,20 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         _meta.exclude_fields = tuple(exclude_fields or ())
         _meta.max_depth = max_depth
         _meta.complexity = complexity
+        # Read by "nested.hosts_serving" as well as by this type's own field
+        # builders: a project that declares itself a READ host takes its
+        # "Meta.queryset" and its "only_fields" out of the nested WRITE path.
+        _meta.model_operations = model_operations
 
         super().__init_subclass_with_meta__(
             _meta=_meta, description=description, **options
         )
+
+        # Declared here, not on demand: a child writable ONLY through its parent
+        # never mounts a field of its own, so any registry filled by field
+        # construction would be EMPTY for exactly the configuration the nested
+        # gate has to cover, and would fail open.
+        register_nested_host(model, cls, registry)
 
         # The custom fields belong on the generated output type, not on this
         # wrapper. graphene's ObjectType base re-collects them from the class
@@ -2769,16 +2983,20 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         Args:
             info: GraphQL resolve info for the current request.
             action: Action name being checked (e.g. "create", "list").
-            **kwargs: Extra arguments passed to each permission check.
+            **kwargs: Extra arguments passed to each permission check. Any a
+                given check cannot accept are dropped for that check.
 
         Raises:
             GraphQLError: If any permission denies the action.
         """
         method_name = f"has_{action}_permission"
         for permission in cls.get_permissions():
-            if getattr(permission, method_name)(info, cls._meta.model, **kwargs) is (
-                False
-            ):
+            check = getattr(permission, method_name)
+            # SECURITY: fail closed on ANY falsy result, not just the "False"
+            # singleton. "return user and user.is_staff" -- the idiomatic
+            # one-liner -- yields None/an empty value for an anonymous caller,
+            # and an identity check would have granted the action.
+            if not check(info, cls._meta.model, **supported_kwargs(check, kwargs)):
                 raise GraphQLError(
                     "You do not have permission to perform this action.",
                     extensions={"code": "PERMISSION_DENIED", "status_code": 403},
@@ -2818,9 +3036,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         """
         data = kwargs.get(cls._meta.input_field_name)
         cls.authorize(info, "create", data=data)
-        request_type = info.context.META.get("CONTENT_TYPE", "")
-        if "multipart/form-data" in request_type:
-            data.update({name: value for name, value in info.context.FILES.items()})
+        merge_uploaded_files(
+            data,
+            info,
+            cls._meta.arguments["create"][cls._meta.input_field_name].type,
+        )
 
         ok, obj = cls.save_with_nested(root, info, data, instance=None)
         if not ok:
@@ -2838,12 +3058,19 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A success response with the deleted object, or an error response
-            when no matching object exists.
+            when no matching object exists or it falls outside the scoped
+            queryset.
         """
         cls.authorize(info, "delete", data=kwargs)
         pk = kwargs.get("id")
 
-        old_obj = get_Object_or_None(cls._meta.model, pk=pk)
+        # SECURITY: resolve the target row through the SAME scoped queryset the
+        # read path uses ("get_queryset" -> "filter_queryset"), never the bare
+        # model. A row outside the caller's scope must be "not found" for a
+        # write exactly as it already is for a read, so the response cannot be
+        # used to probe another tenant's primary keys.
+        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             old_obj.delete()
             setattr(old_obj, old_obj._meta.pk.attname, pk)
@@ -2862,20 +3089,25 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A success response with the updated object, or an error response
-            when no matching object exists.
+            when no matching object exists or it falls outside the scoped
+            queryset.
         """
         data = kwargs.get(cls._meta.input_field_name)
         cls.authorize(info, "update", data=data)
-        request_type = info.context.META.get("CONTENT_TYPE", "")
-        if "multipart/form-data" in request_type:
-            data.update({name: value for name, value in info.context.FILES.items()})
+        merge_uploaded_files(
+            data,
+            info,
+            cls._meta.arguments["update"][cls._meta.input_field_name].type,
+        )
 
         # Use .pop('id', None) so that an update input where 'id' was excluded
         # via only_fields/exclude_fields does not raise KeyError.  A None pk
         # means no object can be found, so old_obj will be None and the resolver
         # returns a clean "not found" error rather than a 500.
         pk = data.pop("id", None)
-        old_obj = get_Object_or_None(cls._meta.model, pk=pk)
+        # SECURITY: same scoped lookup as "delete" -- see the comment there.
+        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(
                 root,
@@ -2962,6 +3194,28 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         )
 
     @classmethod
+    def _assert_operation(cls, operation: str) -> None:
+        """Ensure "operation" is enabled in Meta.model_operations.
+
+        Mirrors the twin on "DjangoModelMutation". It is what keeps the
+        declaration honest in both directions: a type that says it serves reads
+        only -- and is therefore skipped by the nested WRITE path -- must not
+        quietly mount a write root of its own.
+
+        Args:
+            operation: The operation whose field is being built.
+
+        Raises:
+            AttributeError: If the operation was excluded from model_operations.
+        """
+        if operation not in cls._meta.model_operations:
+            raise AttributeError(
+                '"{}" is not enabled on {}; Meta.model_operations is {}.'.format(
+                    operation, cls.__name__, cls._meta.model_operations
+                )
+            )
+
+    @classmethod
     def RetrieveField(cls, *args: Any, **kwargs: Any) -> DjangoObjectField:
         """Create a field for retrieving a single object.
 
@@ -2971,7 +3225,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A field that resolves a single object via "retrieve".
+
+        Raises:
+            AttributeError: If "retrieve" is not in Meta.model_operations.
         """
+        cls._assert_operation("retrieve")
         return DjangoObjectField(cls._meta.output_type, resolver=cls.retrieve, **kwargs)
 
     @classmethod
@@ -2984,7 +3242,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A field that resolves a list of objects via "list".
+
+        Raises:
+            AttributeError: If "list" is not in Meta.model_operations.
         """
+        cls._assert_operation("list")
         return DjangoListObjectField(
             cls._meta.output_list_type, resolver=cls.list, **kwargs
         )
@@ -3108,6 +3370,15 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         )
         _gql_field.extensions = {
             **(_gql_field.extensions or {}),
+            # item-b (B6), same contract as DjangoModelMutation: the payload
+            # above was compiled ONCE against the pair this class was DEFINED
+            # under, pinning its output field (e.g. "post: PostGenericType") to
+            # the GLOBAL node. "schema_compiler._maybe_refork_mutation_field"
+            # re-compiles that payload for a FORKED schema, but it keys off THIS
+            # extension -- without it the field kept the global node and mixing
+            # the mutation into a "registries=" schema died on a duplicate type
+            # name / "assert_schema_pair_isolation".
+            "gdx_mutation_source": cls,
             "gdx_required_perms": _perms,
         }
         _cache[operation] = _gql_field
@@ -3163,7 +3434,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A mutation field wired to the "create" resolver.
+
+        Raises:
+            AttributeError: If "create" is not in Meta.model_operations.
         """
+        cls._assert_operation("create")
         return cls._with_deprecation(
             cls._build_native_mutation_field("create"), deprecation_reason
         )
@@ -3184,7 +3459,11 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A mutation field wired to the "delete" resolver.
+
+        Raises:
+            AttributeError: If "delete" is not in Meta.model_operations.
         """
+        cls._assert_operation("delete")
         return cls._with_deprecation(
             cls._build_native_mutation_field("delete"), deprecation_reason
         )
@@ -3205,43 +3484,56 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A mutation field wired to the "update" resolver.
+
+        Raises:
+            AttributeError: If "update" is not in Meta.model_operations.
         """
+        cls._assert_operation("update")
         return cls._with_deprecation(
             cls._build_native_mutation_field("update"), deprecation_reason
         )
 
     @classmethod
-    def QueryFields(cls, *args: Any, **kwargs: Any) -> tuple[Any, Any]:
-        """Return retrieve and list fields for GraphQL queries.
+    def QueryFields(cls, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        """Return the query fields enabled by Meta.model_operations.
 
         Args:
             *args: Positional arguments forwarded to the field builders.
             **kwargs: Keyword arguments forwarded to the field builders.
 
         Returns:
-            A tuple of the retrieve field and the list field.
+            The retrieve field and the list field (in that order) for every
+            operation enabled in "Meta.model_operations".
         """
-        retrieve_field = cls.RetrieveField(*args, **kwargs)
-        list_field = cls.ListField(*args, **kwargs)
-
-        return retrieve_field, list_field
+        builders = (("retrieve", cls.RetrieveField), ("list", cls.ListField))
+        return tuple(
+            build(*args, **kwargs)
+            for operation, build in builders
+            if operation in cls._meta.model_operations
+        )
 
     @classmethod
-    def MutationFields(cls, *args: Any, **kwargs: Any) -> tuple[Any, Any, Any]:
-        """Return create, delete and update fields for GraphQL mutations.
+    def MutationFields(cls, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        """Return the mutation fields enabled by Meta.model_operations.
 
         Args:
             *args: Positional arguments forwarded to the field builders.
             **kwargs: Keyword arguments forwarded to the field builders.
 
         Returns:
-            A tuple of the create, delete and update fields.
+            The create, delete and update fields (in that order) for every
+            operation enabled in "Meta.model_operations".
         """
-        create_field = cls.CreateField(*args, **kwargs)
-        delete_field = cls.DeleteField(*args, **kwargs)
-        update_field = cls.UpdateField(*args, **kwargs)
-
-        return create_field, delete_field, update_field
+        builders = (
+            ("create", cls.CreateField),
+            ("delete", cls.DeleteField),
+            ("update", cls.UpdateField),
+        )
+        return tuple(
+            build(*args, **kwargs)
+            for operation, build in builders
+            if operation in cls._meta.model_operations
+        )
 
     @classmethod
     def subscription_type(cls) -> Any:

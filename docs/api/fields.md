@@ -220,7 +220,7 @@ Static method that resolves a filtered list of objects.
 - `manager` (`Manager`): Django model manager
 - `filter_backend` (`object`): native filter backend; apply with `filter_backend.apply(qs, kwargs.get("filter"))`
 - `custom_filters` (`list`): list of `(arg_name, method, metadata)` triples from `@filter_field`-decorated methods on the output type
-- `output_type` (`type`): the `DjangoObjectType` subclass for this field, forwarded to `queryset_factory` so its `get_queryset` hook is applied
+- `output_type` (`type`): the `DjangoObjectType` subclass for this field; its `get_queryset` hook is applied on both resolution paths — inside `queryset_factory` for a fresh queryset, and directly on the relation when the field is reached through a parent object
 - `root` (`Any`): Parent object in GraphQL resolution
 - `info` (`ResolveInfo`): GraphQL resolve info
 - `**kwargs`: Query arguments including the `filter` value
@@ -540,5 +540,10 @@ class UserListType(DjangoListObjectType):
 class Query(ObjectType):
     users = DjangoListObjectField(UserListType)
 ```
+
+A prefetch declared here for a relation the optimizer also derives from the
+selection is **replaced** by the derived (narrowed, filtered) version rather than
+colliding with it; prefetches of other relations are kept. See
+[Query Optimization](../usage/query-optimization.md#custom-resolvers).
 
 This API reference provides comprehensive documentation for all field classes in `django-graphex`, enabling developers to effectively use and customize GraphQL fields for their Django applications.

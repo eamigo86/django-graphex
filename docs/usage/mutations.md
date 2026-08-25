@@ -119,6 +119,32 @@ class UserMutation(DjangoModelMutation):
             exclude_fields = ('password', 'is_staff', 'is_superuser')
     ```
 
+#### `editable=False` fields are never input
+
+A model field declared `editable=False` is server-managed, so it is left out of
+the generated create and update inputs — you do not have to list it in
+`exclude_fields`. This covers relations too: a `created_by` / `tenant`
+`ForeignKey` or `OneToOneField` set inside `save()` no longer advertises itself
+as writable.
+
+```python
+class Document(models.Model):
+    title = models.CharField(max_length=200)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, editable=False)
+```
+
+```graphql
+input DocumentCreateGenericType {
+  title: String!
+  # no "owner" — the server owns it
+}
+```
+
+!!! warning "Known gap"
+    A non-editable `ManyToManyField` still appears in the input, now as a raw
+    list of primary keys rather than `[ID!]`. List it in `exclude_fields` if
+    you need it gone today.
+
 ### Custom Arguments with `Field`
 
 You can add custom arguments to your mutations. Declare them in a nested
@@ -150,6 +176,25 @@ class UserMutation(DjangoModelMutation):
         return response
 ```
 
+!!! info "`class Arguments` may inherit"
+
+    Shared arguments can be factored into a base class; the compiler walks the
+    whole MRO, so inherited attributes are compiled alongside the ones declared
+    in the class body and the most-derived declaration wins on a name clash.
+
+    ```python
+    class TenantArgs:
+        tenant = CharField(required=True)
+
+    class UserMutation(DjangoModelMutation):
+        class Meta:
+            model = User
+
+        class Arguments(TenantArgs):
+            send_email = BooleanField(default=False)
+    # compiles to: userMutation(tenant: String!, sendEmail: Boolean, ...)
+    ```
+
 ### Nested Fields Support
 
 Handle related models with nested fields:
@@ -169,18 +214,86 @@ class UserMutation(DjangoModelMutation):
     - For single objects: The created object's ID is assigned to the field
     - For lists: Objects are added to the many-to-many relationship
 
+### Row scoping: `get_queryset` / `filter_queryset`
+
+`update` and `delete` resolve their target row through the same two hooks
+`DjangoModelType` uses, with the same names and signatures, so an override
+moves between the two hosts unchanged:
+
+```python
+from django_graphex.mutation import DjangoModelMutation
+
+class DocumentMutation(DjangoModelMutation):
+    class Meta:
+        model = Document
+
+    @classmethod
+    def filter_queryset(cls, qs, info, **kwargs):
+        return qs.filter(tenant=info.context.user.tenant)
+```
+
+A row outside the scope answers exactly as a missing one (`ok: false`,
+`<Model> with id <pk> does not exist.`), so the response cannot be used to probe
+which primary keys exist. `create` has no target row, so nothing is scoped there.
+
+!!! warning "`permission_classes` is `DjangoModelType`-only"
+    The two hosts are **not** symmetric on authorization. `permission_classes` /
+    `authorize` — the per-action checks described under
+    [Permissions](permissions.md) — are honored by `DjangoModelType` only.
+    Declaring `permission_classes` on a `DjangoModelMutation` has **no effect**:
+    the class never reads it. Reach for `DjangoModelType` when you need
+    per-action authorization, or gate the mutation field at the schema root.
+
 ### Automatic multipart uploads
 
-The mutation automatically handles file uploads when the request content type is `multipart/form-data`:
+When the request content type is `multipart/form-data`, a part named after a
+`FileField` / `ImageField` the mutation input **exposes** is merged into the
+payload and saved to that field. Both hosts do it, on create and on update, and
+no extra configuration is needed:
 
 ```python
 from .models import Profile
 
-# The mutation will automatically handle avatar uploads (ImageField on the model)
+# A multipart part named "avatar" lands on Profile.avatar (an ImageField).
 class ProfileMutation(DjangoModelMutation):
     class Meta:
         model = Profile
 ```
+
+The GraphQL input field stays `String` — the file itself never travels through
+the GraphQL variables. Send the operation and the file in one
+`multipart/form-data` request: the part carrying the JSON body under whatever
+key your view reads, plus one part per file named after the model field. The
+same field also accepts a plain **storage path string**, which is what a query
+returns for it, so a value read back can be written back unchanged. Anything
+else — a number, a list, an object — comes back as a normal validation error,
+and a path longer than the column's `max_length` is rejected before it reaches
+the database.
+
+!!! important "Name the part after the model attribute"
+
+    The part name is matched against the model's **snake_case** attribute, not
+    the camelCase alias the field is published under: `profile_photo`, never
+    `profilePhoto`. A part matching no exposed input field is ignored — the
+    mutation still answers `ok: true` and simply saves no file — so a
+    misspelled or camelCased part name looks like success with nothing written.
+
+    A field the type projects away with `Meta.exclude_fields`, or leaves out of
+    `Meta.only_fields`, is not an exposed input field: a part named after it is
+    ignored like any other, so a projection cannot be walked around through the
+    multipart body.
+
+!!! warning "Top-level fields only"
+
+    The merge is flat and keyed by the bare form-field name, so it can only
+    address a field on the model the mutation is bound to. A file field on a
+    child declared in [`Meta.nested_fields`](#nested-fields-support) is **not**
+    reachable: no part name addresses one. Naming a part after the relation
+    itself is worse than useless — the upload replaces the nested payload and
+    the nested handler then fails on it, so do not do it. Write the child first
+    through its own mutation, or use the
+    [base64 upload input](#file-upload-support) below, which travels inside the
+    GraphQL variables and therefore nests.
 
 ### Error Handling
 
@@ -373,7 +486,109 @@ related objects alongside the parent. The same engine backs both
 
 - **Upsert** — a child payload that carries its `id` **updates** that row; without
   an `id` it creates a new one. (The nested input only exposes `id` on the
-  parent's *update* input, so nested **creates** stay create-only.)
+  parent's *update* input, so nested **creates** stay create-only.) On a
+  relation whose rows the parent does not own this is narrowed by the link rule
+  below.
+- **Link, don't rewrite** — on a **forward** `ForeignKey` / `OneToOneField` or a
+  `ManyToManyField`, a payload carrying an `id` the parent is **not already
+  attached to** only **links** that row: it is set on the parent (or `.add()`-ed)
+  and the payload's other fields are **ignored**. The row the parent is already
+  attached to is still updated in place, which is the documented use — *change
+  the category attached to this document*, not *edit any row of the category
+  table*. Without the rule, `{ id: <mine>, category: { id: <any pk>, name: "x" } }`
+  rewrote a shared lookup row that no scope hid and no ownership guard covered.
+- **Child validation** — a nested child is validated with the **same** rules as
+  its own mutation: when a `DjangoModelType` / `DjangoModelMutation` for the
+  child model declares inline `validate_<field>` / `validate` methods or a
+  `Meta.pydantic_model`, the nested write runs them too. (When more than one
+  host declares validation for the same model, the last one defined wins.)
+- **Child projection** — the nested child input is derived from the child's own
+  hosts: `only_fields` / `exclude_fields` on a `DjangoModelType` /
+  `DjangoModelMutation` for the child model apply to the parent's nested payload
+  too. The two axes are merged differently, because they say different things.
+
+    An `exclude_fields` is a **prohibition** — *this column is never
+    client-writable* — so every declared host's exclusions are **unioned**,
+    whether or not that host serves the operation being built, and they are
+    applied **last**. Otherwise a create-only mutation's exclusion would vanish
+    from the nested *update* surface, and a client would write, on an existing
+    row through the parent, a column the project's own write mutation refuses.
+
+    An `only_fields` is a positive **allowance**, so only the hosts that **serve
+    the operation** union theirs: the result is what some declared host would
+    permit, and it is meaningful only for that operation (a host declaring
+    `model_operations = ("update",)` does not narrow the nested *create*, just
+    as it does not narrow the child's own). Splitting the read and write
+    surfaces — a display card projecting `("id", "slug")` and a write mutation
+    projecting `("name",)` — is an ordinary configuration, not a contradiction,
+    and both columns reach the nested input.
+
+    No allowance restriction is applied when that union comes out **empty**, and
+    there are exactly two ways to get there. The child may have **no declared
+    host at all** — the ordinary `nested_fields` case, where it is a plain
+    related model — and then the nested input is the unprojected surface minus
+    the prohibitions, which is what the library has always built. Or the child's
+    hosts may all have declared, through `Meta.model_operations`, that they do
+    not serve this operation; both host classes default that option to **every**
+    operation they can generate, so the branch cannot be reached without the
+    project saying so.
+
+    The primary key is **not** subject to either axis on the *update* surface.
+    It is not a projectable column there — it is how the row is identified — so
+    a write host projecting `only_fields = ("headline",)` still leaves `id` on
+    the nested update input and the documented upsert-by-id keeps working.
+
+    A projection whose every allowed column is excluded by a sibling would leave
+    the nested input with **no field at all**, which graphql-core does not
+    consider a legal schema. That is refused at build time with an
+    `ImproperlyConfigured` naming the child model, the parent, and every
+    contributing host with both of its projection axes — shipping a schema whose
+    every request fails validation is worse than a build error. Widen one of the
+    two declarations, or mark the read host with
+    `model_operations = ("list", "retrieve")` so its allowance leaves the write
+    path.
+
+    Declare every host for a model **before** the first schema build:
+    graphql-core caches an input object's field map, so a projection (or a
+    `required_perms`) declared afterwards can never reach an already-built
+    nested surface, and the library refuses it rather than ignore it. A late
+    host that merely repeats a declaration already contributing is accepted:
+    the merge is idempotent, so refusing a no-op would buy nothing.
+- **Child permissions** — a nested create or update runs the child's own
+  `permission_classes` / `authorize`, exactly as the child's own mutation does.
+  A denial is the same `PERMISSION_DENIED` / HTTP 403 the direct mutation
+  returns, and it rolls the **whole** write back — parent included, no orphan
+  rows. Every `DjangoModelType` / `DjangoModelMutation` declared for the child
+  model is consulted, so two hosts for one model fail **closed**: all of them
+  must allow the write. A `DjangoModelMutation` has no `permission_classes` at
+  all, so a `DjangoModelMutation`-only child gets the scoping below and nothing
+  else.
+
+    The hosts are read from the **parent's registry unioned with the global
+    one**. `Meta.registry` is an option on `DjangoModelMutation` only, so a
+    child's `permission_classes` can only ever live in the global registry;
+    reading the parent's registry alone left a parent declared with
+    `Meta.registry` finding no hosts for its children and the gate went silent.
+    A host bound to a *non-global* registry still describes that schema's
+    surface alone and cannot reach another registry's parents.
+- **Child scoping** — a nested upsert naming a pk resolves it through the
+  `get_queryset` / `filter_queryset` (and `Meta.queryset`) of the child hosts
+  that **serve the write**, so it mirrors what those hosts' own `update` /
+  `delete` do. A row they hide is a clean *not found*, never a silent update of
+  the hidden row nor a create at that key — and it is the same *not found*
+  whether or not the hidden row happens to belong to another parent, so the
+  answer never confirms that a row you cannot see exists.
+
+    Which hosts serve a write follows from `Meta.model_operations`, and **both**
+    host classes take it: a mutation narrowed to `model_operations =
+    ("create",)` has no `update` to mirror, so its scope is never applied to a
+    nested update, and a `DjangoModelType` declaring
+    `model_operations = ("list", "retrieve")` is a read host whose
+    `Meta.queryset` leaves the nested write path entirely. That option is the
+    remedy to reach for before narrowing `Meta.queryset` on a display type
+    (hiding archived or unpublished rows): without it, that display default also
+    stops the parent updating those children inline, because the type's own
+    `update` and `delete` apply the same scope.
 - **Additive & safe** — M2M/reverse children are only added, never removed; an
   empty `[]` / `{}` payload is a no-op (the relation is left untouched).
 - **Errors are prefixed** — a child error is reported as `field.subfield`
@@ -388,16 +603,137 @@ related objects alongside the parent. The same engine backs both
 - **Reverse-O2O list guard** — supplying a list of more than one item to a
   reverse `OneToOneField` nested field raises a clean error instead of hitting
   the DB UNIQUE constraint.
-- **Reverse-FK ownership guard** — upsert of a reverse-FK child by pk is
-  rejected if that child currently belongs to a *different* parent. This
-  prevents a client from silently re-parenting (stealing) rows owned by another
-  object. The error message is `"Object <pk> does not belong to this <Model>."`.
+- **Reverse ownership guard** — upsert of a reverse child by pk is rejected if
+  that child currently belongs to a *different* parent. This prevents a client
+  from silently re-parenting (stealing) rows owned by another object. The error
+  message is `"Object <pk> does not belong to this <Model>."`. The guard covers
+  **both** reverse kinds — reverse `ForeignKey` **and** reverse
+  `OneToOneField` — identically, so the two are indistinguishable to a client.
+  It does **not** apply to forward `ForeignKey` / `OneToOneField` or to
+  `ManyToManyField` children: those rows are not owned by the parent (many
+  parents may legitimately point at the same one), so there is no owner to
+  compare against. Those two relations are protected by the **link rule**
+  above instead — the row is attached, never rewritten.
 
-!!! warning "Reverse-FK child re-parenting"
-    Attempting to assign an existing child (by pk) to a new parent via the
-    nested write path will fail with a validation error if the child's FK already
-    points to a different parent. To genuinely re-parent a row, issue a direct
-    update mutation on the child model instead.
+!!! warning "Reverse child re-parenting"
+    Attempting to assign an existing reverse child (by pk) to a new parent via
+    the nested write path will fail with a validation error if the child's FK or
+    O2O key already points to a different parent. To genuinely re-parent a row,
+    issue a direct update mutation on the child model instead.
+
+!!! warning "Editing a forward FK / M2M row through the parent"
+    A nested payload can only edit the forward-FK or M2M row the parent is
+    **already** attached to. Naming a different row's `id` attaches it and
+    **silently ignores** the rest of the payload — `ok` is still `true` and that
+    row is unchanged. To edit a row the parent is not attached to yet, issue a
+    mutation on the child model directly, or attach it first and edit it in a
+    second call.
+
+!!! info "The link paths are deliberately not gated"
+    Attaching an existing row through a **forward** `ForeignKey` /
+    `OneToOneField` or a `ManyToManyField` by pk (the **link rule** above) is
+    not a write on the child, so it does not run the child's permissions or
+    scoping. It is the same reachability the plain `category: ID` surface has
+    always offered — a nested payload cannot do anything there that a plain id
+    reference could not.
+
+#### The nested child input type
+
+Each nesting parent gets its **own** copy of the child's input, named
+`<Child><Op>In<Parent>Type` (e.g. `CommentCreateInPostType`). It is never
+registered as the child's canonical input, so declaring a parent that nests a
+model can no longer change what that model's own mutation accepts, and the order
+in which you declare the two makes no difference to either surface.
+
+The one difference from the child's own input is the **back-reference foreign
+key**. Inside a nested payload the parent does not exist yet (or is already
+known), and the writer injects the key at save time, so the parent's own column
+is optional on this copy:
+
+```graphql
+input CommentCreateGenericType {   # the child's own mutation
+  post: ID!
+  body: String!
+}
+
+input CommentCreateInPostType {    # the copy inside postCreate
+  post: ID                         # injected by the writer
+  body: String!
+}
+```
+
+A child nested under two parents gets one copy per parent, each relaxing its
+*own* foreign key and nothing else. The child's Pydantic validation model still
+requires the key, so a standalone create that genuinely omits it fails cleanly.
+
+!!! note "Type names in client documents"
+    Only a client document that spells the nested child input type name out (an
+    explicit variable declaration, for instance) is affected by this naming.
+    Field names and shapes are unchanged.
+
+#### Writable only through its parent
+
+The child's permission checks receive a `nested_parent` keyword argument: the
+**parent model class** when the write arrives through a nested payload, and
+nothing at all on the child's own mutation. That is enough to express *this
+model may only be written inside its parent*:
+
+```python
+from django_graphex.permissions import BasePermission
+
+
+class OnlyViaParent(BasePermission):
+    """Allow creates only when they arrive through a nesting parent."""
+
+    def has_create_permission(self, info, model, **kwargs):
+        return kwargs.get("nested_parent") is not None
+```
+
+```python
+class CommentType(DjangoModelType):
+    permission_classes = (OnlyViaParent,)
+
+    class Meta:
+        model = Comment
+```
+
+`commentCreate` now answers `PERMISSION_DENIED`, while
+`postCreate(newPost: { title: "...", comments: [{ body: "..." }] })` succeeds.
+
+!!! note "Under a permission-scoped schema, don't mount the child's root"
+    A `permission_classes` policy runs at **write** time; the
+    [permission-scoped schema](permission-scoped-schema.md) prunes at **build**
+    time and cannot evaluate one. It labels the `comments` field with the
+    child's write permissions — and that is exactly right: the caller writing
+    a comment through its post genuinely holds `add_comment`. What the hatch
+    withholds is the child's **own** root, so simply leave `commentCreate`
+    off your `Mutation`; a root that is never mounted gives the pruner nothing
+    to prune, and the nested field survives for every caller who may write the
+    child.
+
+    `required_perms` on a child host can only **add** to the nested field's
+    label, never replace it: the field always requires the child's composite
+    write permissions, and the override of every host that **serves** one of
+    the verbs the nested field enables is unioned on top. A write host's
+    stricter label therefore genuinely reaches the nested surface, and a
+    delete-only host's label stays off a nested *create*.
+
+    It is an extra requirement, not a free one. A `DjangoModelType` serves every
+    operation unless it says otherwise, so a read card labelled
+    `required_perms = ["blog.read_comment_card"]` labels the nested field too,
+    and a caller without that label loses `comments` from the parent's payload —
+    even though another host's `commentCreate` still accepts the same write.
+    That is fail-closed and matches what the label does to the card's *own*
+    create/update roots, but if you meant the label as a read gate only, declare
+    the card with `model_operations = ("list", "retrieve")`, or drop the label
+    and gate reads with `permission_classes`.
+
+!!! note "Permission checks with a closed signature"
+    `nested_parent` is only passed to a check that can accept it. A policy or
+    an `authorize` override that spells its arguments out
+    (`def has_create_permission(self, info, model, data=None)`) keeps working —
+    it simply never sees the marker, and therefore reads a nested write exactly
+    as it reads a direct one. Accept `**kwargs` to see it.
 
 #### Worked examples — UPDATE + nested create and UPDATE + nested update (upsert)
 
@@ -825,13 +1161,16 @@ input Base64FileInput {
 
 ```python
 from django_graphex.core import BooleanField, Field, Mutation
+from django_graphex.core.base import compile_all_inputs
 from django_graphex.uploads import Base64FileInput
+
+# Compile the imported InputType subclasses before any Field(...) reads them.
+# See the note below for why importing the module is not enough on its own.
+compile_all_inputs()
 
 class UploadAvatarMutation(Mutation):
     class Arguments:
-        # Pass the input-object CLASS directly. Field resolves the compiled
-        # GraphQLInputObjectType LAZILY at schema-build time, so there is no thunk
-        # boilerplate and no `_meta.graphql_input_type` reference at class scope.
+        # Pass the input-object CLASS directly — no thunk boilerplate.
         avatar = Field(Base64FileInput, required=True)
 
     ok = BooleanField()
@@ -843,6 +1182,7 @@ class UploadAvatarMutation(Mutation):
         avatar = Base64FileInput(**kwargs["avatar"])
         # Pass max_size to override the global MAX_UPLOAD_SIZE for this field:
         uploaded = avatar.to_uploaded_file(max_size=512 * 1024)  # 512 KB cap
+        profile = info.context.user.profile
         profile.avatar.save(uploaded.name, uploaded, save=True)
         return cls(ok=True)
 ```
@@ -852,14 +1192,40 @@ fields; rehydrate it with `Base64FileInput(**kwargs["avatar"])` to get a validat
 instance with `.filename`, `.data`, `.content_type` attributes **and** a
 `.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
 
-!!! note "How `Field` resolves the input type"
-    `Base64FileInput._meta.graphql_input_type` is compiled at schema-build time.
-    Listing `django_graphex` in `INSTALLED_APPS` triggers that compilation from
-    `AppConfig.ready()`, so `Field(Base64FileInput, ...)` resolves the class
-    to the real compiled input type when the schema mounts the field — lazily,
-    never reading the attribute (which would be `None`) at class-definition time.
+!!! warning "Compile the input type before you declare the mutation"
+    `Field(Base64FileInput, ...)` needs `Base64FileInput._meta.graphql_input_type`
+    to be compiled **already** — it is read when `YourMutation.Field()` is
+    evaluated in the surrounding `ObjectType` body, not lazily at schema-build
+    time. If it is still `None`, that line raises:
+
+    ```
+    TypeError: Can only create a wrapper for a GraphQLType, but got:
+    <class 'django_graphex.uploads.Base64FileInput'>
+    ```
+
+    `AppConfig.ready()` does call `compile_all_inputs()`, but it can only compile
+    the `InputType` subclasses that have been **imported** by then — and the
+    package never imports `django_graphex.uploads` itself. Listing
+    `django_graphex` in `INSTALLED_APPS` is therefore *not* sufficient on its own.
+
+    Do one of these:
+
+    ```python
+    # Option A — compile explicitly, right after the import. Works anywhere.
+    from django_graphex.core.base import compile_all_inputs
+    from django_graphex.uploads import Base64FileInput
+
+    compile_all_inputs()
+    ```
+
+    ```python
+    # Option B — import it from a module Django loads during app population
+    # (e.g. your app's models.py), so AppConfig.ready() picks it up.
+    from django_graphex.uploads import Base64FileInput  # noqa: F401
+    ```
+
     The older `lambda: GraphQLArgument(GraphQLNonNull(...))` thunk still works as
-    the low-level substrate.
+    the low-level substrate, and defers the lookup to schema-build time.
 
 You can also call the module-level helper directly if you hold the raw dict:
 

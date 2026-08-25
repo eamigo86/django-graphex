@@ -148,7 +148,9 @@ def get_accepted_content_types(request: Any) -> list[str]:
     """Return the request's accepted content types, most-preferred first.
 
     Parses the "Accept" header, honoring each entry's optional "q=" quality
-    value, and orders the media types from highest to lowest preference.
+    value, and orders the media types from highest to lowest preference. The
+    quality value is read with or without whitespace after the semicolon
+    ("text/html; q=0.1" and "text/html;q=0.1" are equivalent, as HTTP requires).
 
     Args:
         request: The incoming HTTP request whose "Accept" header is read.
@@ -160,7 +162,11 @@ def get_accepted_content_types(request: Any) -> list[str]:
     def qualify(value: str) -> tuple[str, float]:
         parts = value.split(";", 1)
         if len(parts) == 2:
-            match = re.match(r"(^|;)q=(0(\.\d{,3})?|1(\.0{,3})?)(;|$)", parts[1])
+            # HTTP allows whitespace around the parameter separator, so
+            # "text/html; q=0.1" must be read exactly like "text/html;q=0.1".
+            match = re.match(
+                r"(^|;)q=(0(\.\d{,3})?|1(\.0{,3})?)(;|$)", parts[1].strip()
+            )
             if match:
                 return parts[0].strip(), float(match.group(2))
         return parts[0].strip(), 1
@@ -286,6 +292,30 @@ def _dynamic_limits_key() -> tuple:
     )
 
 
+def _rules_key(rules: Any) -> Any:
+    """Return a content token identifying a validation-rules collection.
+
+    Each rule contributes its dotted "module.qualname" so the token depends on
+    WHICH rules run, never on where the collection happens to live in memory.
+    Order is preserved because it decides the order of the reported errors.
+
+    Args:
+        rules: The validation-rules collection passed to "validate" (None means
+            graphql-core's default rules).
+
+    Returns:
+        None when "rules" is None, otherwise a tuple of one name per rule.
+    """
+    if rules is None:
+        return None
+    return tuple(
+        f"{getattr(rule, '__module__', '')}.{rule.__qualname__}"
+        if isinstance(rule, type)
+        else repr(rule)
+        for rule in rules
+    )
+
+
 def cached_parse(query: str) -> Any:
     """Return the parsed "DocumentNode" for the query, memoized in a bounded LRU.
 
@@ -357,10 +387,13 @@ def cached_validate(
     if maxsize <= 0:
         return tuple(validate(schema, document, rules, max_errors))
 
-    # Rules identity: the rules collection is a stable class attribute per view
-    # (specified_rules + depth/cost), request-invariant. id() is a safe token for
-    # its lifetime because the view class holds a strong reference to it; folding
-    # max_errors in keeps two different caps from sharing a truncated verdict.
+    # Rules identity: a CONTENT token (the dotted name of every rule, in order),
+    # never id(rules). An address is only unique while the object is alive: a
+    # per-request `validation_rules=` tuple is freed as soon as the request ends
+    # and CPython hands the same address to the next tuple, so an id()-keyed
+    # verdict computed under one rule set was served to a DIFFERENT one — a
+    # stricter rule set silently never ran. Folding max_errors in keeps two
+    # different caps from sharing a truncated verdict.
     #
     # The depth/cost rules read their limits from graphql_api_settings DYNAMICALLY
     # at validation time (not from `rules`), so those runtime values must be part
@@ -368,7 +401,7 @@ def cached_validate(
     # limit would survive a limit tightening and silently bypass the guard until
     # eviction/restart. `_dynamic_limits_key` folds in every setting that can flip
     # a verdict (kept cheap: plain ints/None and a small tuple).
-    key = (query, id(rules), max_errors, _dynamic_limits_key())
+    key = (query, _rules_key(rules), max_errors, _dynamic_limits_key())
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)
@@ -569,9 +602,11 @@ class BaseGraphQLView(View):
             response).
 
         Raises:
-            HttpError: When the method is unsupported or the body exceeds
-                "MAX_REQUEST_BODY_SIZE"; caught internally and serialized into the
-                GraphQL error envelope before the response is returned.
+            HttpError: When the method is unsupported, the body exceeds
+                "MAX_REQUEST_BODY_SIZE", or a batch endpoint receives a body that
+                is not a list (any content type); caught internally and
+                serialized into the GraphQL error envelope before the response is
+                returned.
         """
         try:
             if request.method.lower() not in ("get", "post"):
@@ -648,6 +683,20 @@ class BaseGraphQLView(View):
                 return self.render_graphiql(request)
 
             if self.batch:
+                # "parse_body" only list-checks an application/json body; every
+                # other content type yields a string or a QueryDict, which the
+                # loop below would iterate into an AttributeError (HTTP 500).
+                # Reject any non-list body here — the single point every batch
+                # request routes through, whatever its content type.
+                if not isinstance(data, list):
+                    raise HttpError(
+                        HttpResponseBadRequest(),
+                        message=(
+                            "Batch requests should receive a list, but received {}.".format(
+                                repr(data)
+                            )
+                        ),
+                    )
                 max_batch = graphql_api_settings.MAX_BATCH_SIZE
                 if max_batch is not None and len(data) > max_batch:
                     # Pass `message=` explicitly so the `except HttpError` handler
@@ -1099,16 +1148,26 @@ class GraphQLView(BaseGraphQLView):
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.
 
-        Returns None when there is no query or when the query is syntactically
+        Returns None when there is no query, when the query is syntactically
         invalid (a malformed document must not raise here; "dispatch" falls
-        through to "super_call" which returns a 400).
+        through to "super_call" which returns a 400), or when the document
+        declares several operations and the request does not name one — the
+        caller must then treat the operation as undeterminable.
+
+        The operation name is read through "get_graphql_params", the same
+        helper the execution path uses, so the operation classified here is the
+        operation actually executed. Passing None instead would make
+        graphql-core give up on ANY multi-operation document.
 
         Args:
             request: The incoming HTTP request.
 
         Returns:
-            The operation AST node, or None when there is no query or the
-            query cannot be parsed.
+            The operation AST node, or None when there is no query, the query
+            cannot be parsed, or the operation cannot be determined.
+
+        Raises:
+            HttpError: When the body or the "variables" parameter is malformed.
         """
         data = self.parse_body(request)
         query = request.GET.get("query") or data.get("query")
@@ -1126,7 +1185,8 @@ class GraphQLView(BaseGraphQLView):
         except GraphQLSyntaxError:
             return None
 
-        operation_ast = get_operation_ast(document_ast, None)
+        _, _, operation_name, _ = self.get_graphql_params(request, data)
+        operation_ast = get_operation_ast(document_ast, operation_name)
 
         return operation_ast
 
@@ -1252,6 +1312,12 @@ class GraphQLView(BaseGraphQLView):
     def _bump_cache_version(self, _cache: Any, identity: str) -> None:
         """Invalidate the issuing user's cached responses by advancing their version token.
 
+        Callers MUST invoke this AFTER the mutation has been executed (see
+        ``dispatch``): scheduling it beforehand made the deferral below inert,
+        because ``ATOMIC_MUTATIONS`` opens its atomic block inside
+        ``execute_graphql_request`` — later than this call — so ``on_commit``
+        found no open transaction and ran the bump immediately.
+
         The bump is deferred via ``transaction.on_commit`` so it only fires once
         the mutation's database write is durable.  This eliminates the
         bump-before-commit TOCTOU window (issue #60a) where a concurrent query
@@ -1344,7 +1410,12 @@ class GraphQLView(BaseGraphQLView):
           one user's cached response is never served to another user.
         * Mutations advance a global namespace version counter instead of calling
           "cache.clear()", which would flush unrelated cache entries shared by
-          other users or other cache clients.
+          other users or other cache clients. The counter is advanced AFTER the
+          mutation has run, so a concurrent reader can never cache pre-mutation
+          data under the new version (issue #60a).
+        * A request that would render GraphiQL (the view serves it and the client
+          prefers HTML) bypasses the cache entirely, so an HTML page and the JSON
+          answer for the same query never share a cache slot.
         * A sentinel object detects cache misses so a legitimately cached falsy or
           empty body is not re-executed on every request.
         * A malformed GraphQL document ("GraphQLSyntaxError" during
@@ -1391,16 +1462,46 @@ class GraphQLView(BaseGraphQLView):
         if content_type == "multipart/form-data":
             return self.super_call(request, *args, **kwargs)
 
+        # A request that may render GraphiQL bypasses the cache entirely: the
+        # cache key is content-negotiation blind, so an HTML render and the JSON
+        # answer for the same query share one slot and whoever warms it decides
+        # what everybody else receives.  A GraphiQL render is a static page —
+        # caching it buys nothing.
+        if self.graphiql and self.request_wants_html(request):
+            return self.super_call(request, *args, **kwargs)
+
         _cache = caches["default"]
         identity = self.cache_key_prefix(request)
-        operation_ast = self.get_operation_ast(request)
+        try:
+            operation_ast = self.get_operation_ast(request)
+        except HttpError:
+            # Malformed body / parameters: the base dispatch already turns this
+            # into the clean 400 envelope.  Raising here would turn ordinary bad
+            # client input into an unhandled 500.
+            return self.super_call(request, *args, **kwargs)
         # ``operation`` is a graphql-core ``OperationType`` enum; compare its
         # ``.value`` string — a bare ``== "mutation"`` is always ``False``
         # because the enum instance is never equal to the plain string.
         operation = getattr(getattr(operation_ast, "operation", None), "value", None)
-        if operation == "mutation":
-            self._bump_cache_version(_cache, identity)
+        if operation is None:
+            # Fail closed: no query, an unparsable document, or a multi-operation
+            # document with no operationName.  The request could be a mutation,
+            # so it must never be answered from — or stored in — the cache.
             return self.super_call(request, *args, **kwargs)
+        if operation == "mutation":
+            try:
+                return self.super_call(request, *args, **kwargs)
+            finally:
+                # Scheduled AFTER the mutation has run.  Scheduling it before
+                # made the ``transaction.on_commit`` deferral inert: the atomic
+                # block ``ATOMIC_MUTATIONS`` opens lives INSIDE ``super_call``
+                # (see ``execute_graphql_request``), so at that point there was
+                # no open transaction and Django ran the bump immediately —
+                # re-opening the very #60a TOCTOU window it was meant to close.
+                # Here the mutation's own transaction has already committed, and
+                # under ``ATOMIC_REQUESTS`` the request-level block is still
+                # open so the bump remains deferred to its commit.
+                self._bump_cache_version(_cache, identity)
 
         version = self._get_cache_version(_cache, identity)
         # ``_cache_key_signature`` is empty on the base view (byte-identical to
@@ -1575,12 +1676,28 @@ class GraphQLView(BaseGraphQLView):
                 if response.get("data", None):
                     response["data"] = clean_dict(response["data"])
 
-            if _settings.graphql_api_settings.EXPOSE_QUERY_COST and query:
+            if (
+                _settings.graphql_api_settings.EXPOSE_QUERY_COST
+                and query
+                and status_code == 200
+            ):
                 # Reuse the already-parsed document to avoid a second parse()
                 # call. Fall back to string-based parsing only when
                 # parsed_document is None (malformed query — cost is skipped).
+                #
+                # Skipped entirely when the request produced errors and no data
+                # (status 400): the cost of a document that never validated is
+                # computed from the fields it NAMES, so attaching it to a
+                # "Cannot query field" error turns the payload into a
+                # schema-existence oracle — a field pruned out of the caller's
+                # permission-scoped schema costs more than one that never
+                # existed.
                 cost = self.get_query_cost(
-                    query, variables, operation_name, document=parsed_document
+                    query,
+                    variables,
+                    operation_name,
+                    document=parsed_document,
+                    request=request,
                 )
                 if cost is not None:
                     response.setdefault("extensions", {})["cost"] = cost
@@ -1597,8 +1714,14 @@ class GraphQLView(BaseGraphQLView):
         variables: Any,
         operation_name: str | None,
         document: Any = None,
+        request: HttpRequest | None = None,
     ) -> dict[str, Any] | None:
         """Estimate the query's cost for the "extensions.cost" payload.
+
+        The estimate is computed against the schema the REQUEST is served (see
+        "_graphql_schema_for"), so a caller whose schema is permission-pruned is
+        never costed against fields their schema does not contain. When no
+        request is given the full configured schema is used.
 
         Args:
             query: The raw GraphQL query string (used as fallback when the
@@ -1608,6 +1731,8 @@ class GraphQLView(BaseGraphQLView):
             document: An already-parsed "DocumentNode". When provided, "parse()"
                 is not called again (avoids a double-parse per request when
                 "EXPOSE_QUERY_COST" is True).
+            request: The incoming HTTP request, used to select the per-request
+                schema; None falls back to the full configured schema.
 
         Returns:
             A "{'requestedCost': int, 'maxCost': int | None}" mapping, or None
@@ -1615,8 +1740,13 @@ class GraphQLView(BaseGraphQLView):
         """
         try:
             doc = document if document is not None else parse(query)
+            schema = (
+                self.schema.graphql_schema
+                if request is None
+                else self._graphql_schema_for(request)
+            )
             report = analyze_cost(
-                self.schema.graphql_schema,
+                schema,
                 doc,
                 operation_name,
                 variables if isinstance(variables, dict) else None,

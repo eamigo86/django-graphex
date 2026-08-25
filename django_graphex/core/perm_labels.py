@@ -31,7 +31,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from django.db.models import Model
 
-__all__ = ("implicit_perms_for_type", "implicit_label_set", "required_perms_for")
+__all__ = (
+    "implicit_perms_for_type",
+    "implicit_label_set",
+    "input_label_set",
+    "required_perms_for",
+)
 
 #: CRUD action -> the codename verbs it requires (``view`` is always included
 #: for write verbs because the payload returns instance data).
@@ -133,4 +138,32 @@ def implicit_label_set(schema: Any) -> frozenset[str]:
         perms = implicit_perms_for_type(gtype)
         if perms is not None:
             labels.update(perms)
+    return frozenset(labels)
+
+
+def input_label_set(schema: Any) -> frozenset[str]:
+    """Return every permission label stamped on an INPUT field of a schema.
+
+    The input-side twin of "implicit_label_set", and needed for the same
+    reason: a nested-write label the root fields never mention would be
+    stripped from the caller's granted set before the pruner runs, so the
+    nested field would disappear for everyone -- including the callers who
+    hold the permission.
+
+    Args:
+        schema: The built "GraphQLSchema" whose type map is scanned.
+
+    Returns:
+        The union of every input field's "gdx_required_perms".
+    """
+    from graphql import is_input_object_type
+
+    labels: set[str] = set()
+    for name, gtype in schema.type_map.items():
+        if name.startswith("__") or not is_input_object_type(gtype):
+            continue
+        for ifield in gtype.fields.values():
+            perms = (ifield.extensions or {}).get("gdx_required_perms")
+            if perms is not None:
+                labels.update(perms)
     return frozenset(labels)

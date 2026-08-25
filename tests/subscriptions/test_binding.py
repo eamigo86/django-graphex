@@ -43,7 +43,10 @@ def test_save_broadcasts_to_action_and_pk_groups(
     user = django_user_model.objects.create(username="alice", email="a@example.com")
 
     groups = {group for group, _ in captured_group_sends}
-    assert groups == {"auth.user-create", "auth.user-create-{}".format(user.pk)}
+    assert groups == {
+        "auth.user.users-create",
+        "auth.user.users-create-{}".format(user.pk),
+    }
 
     _, message = captured_group_sends[0]
     assert message["type"] == "subscription.notify"

@@ -450,14 +450,35 @@ def test_declared_name_that_is_not_a_model_field_falls_back_to_base_lookups() ->
     """A declared name with no matching model field must not blow up the validator.
 
     The base "Field" lookup registry is the conservative fallback, so an allowed
-    suffix is accepted and a relation-style segment is still rejected.
+    suffix passes the registry gate and a relation-style segment is still
+    rejected there. Without a model to check against, that is the whole check.
     """
     from django_graphex.subscriptions.streaming import _validate_client_filters
 
     declared = {"computed"}
-    _validate_client_filters({"computed__iexact": "x"}, declared, model=Post)
+    _validate_client_filters({"computed__iexact": "x"}, declared)
     with pytest.raises(ValueError, match="not a valid Django lookup"):
         _validate_client_filters({"computed__label": "x"}, declared, model=Post)
+
+
+def test_a_key_the_orm_cannot_resolve_is_rejected_at_subscribe() -> None:
+    """A key the ORM refuses must be rejected at subscribe, not at delivery.
+
+    Contract: this test ships broken if the validator stops at the field's
+    DECLARED lookup registry. That registry is wider than what the query
+    compiler accepts: a to-many field declares "iexact" and then refuses it, and
+    a declared name with no model field behind it resolves to nothing at all.
+    Delivery runs ".filter(pk=..., **filters).exists()", so anything the ORM
+    refuses used to raise inside the delivery loop — after the SSE 200 was
+    committed, and with no frame at all on WebSocket.
+    """
+    from django_graphex.subscriptions.streaming import _validate_client_filters
+
+    declared = _declared(_PostSubscription)
+    with pytest.raises(ValueError, match="not a valid database lookup"):
+        _validate_client_filters({"tags__iexact": 1}, declared, model=Post)
+    with pytest.raises(ValueError, match="not a valid database lookup"):
+        _validate_client_filters({"computed__iexact": "x"}, {"computed"}, model=Post)
 
 
 # ---------------------------------------------------------------------------

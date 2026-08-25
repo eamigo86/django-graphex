@@ -8,22 +8,56 @@ below for Django-model-backed queries.
 ## Typed scalar descriptors
 
 For a plain scalar field or argument, the capitalized shortcuts are the
-quickest idiom — one shortcut per scalar, usable in **both** an `ObjectType`
-body (output) and a `class Arguments` body (input):
+quickest idiom — one shortcut per scalar, usable in **both** an output
+position (an `ObjectType` body) and an input position (a `Mutation`'s
+`class Arguments` body, or a `Field(args=...)` mapping).
+
+In an `ObjectType`, arguments belong on the field descriptor itself, via
+`Field(args=...)`:
 
 ```python
-from django_graphex.core import ObjectType, CharField, IntField, JSONField
+from django_graphex.core import ObjectType, Field, CharField, IntField
+from graphql import GraphQLString
 
 class Query(ObjectType):
-    greeting = CharField(description="a greeting")
-
-    class Arguments:
-        name = CharField(default="world")
-        loud = IntField(default=0)
+    greeting = Field(
+        GraphQLString,
+        description="a greeting",
+        args={"name": CharField(default="world"), "loud": IntField(default=0)},
+    )
 
     def resolve_greeting(self, info, **kwargs):
         return f"hello {kwargs['name']}" + ("!" if kwargs["loud"] else "")
 ```
+
+```graphql
+{ greeting(name: "ada", loud: 1) }   # -> "hello ada!"
+```
+
+In a `Mutation`, the same shortcuts go in a `class Arguments` body:
+
+```python
+from django_graphex.core import BooleanField, CharField, IntField, Mutation
+
+class Shout(Mutation):
+    class Arguments:
+        name = CharField(default="world")
+        loud = IntField(default=0)
+
+    ok = BooleanField()
+    message = CharField()
+
+    @classmethod
+    def mutate(cls, root, info, **kwargs):
+        text = f"hello {kwargs['name']}" + ("!" if kwargs["loud"] else "")
+        return cls(ok=True, message=text)
+```
+
+!!! warning "`class Arguments` only works inside a `Mutation`"
+    A `class Arguments` block nested in a plain `ObjectType` is **silently
+    ignored** — the field compiles with no arguments at all, and the resolver
+    then fails with `KeyError` on the argument it expected. Use
+    `Field(args=...)` for query arguments.
 
 | Shortcut | GraphQL type |
 |----------|--------------|
@@ -86,7 +120,7 @@ position:
 | `type` | both | The field's type — a graphql-core type, a `DjangoObjectType` reference (output), or an `InputType` reference (input). |
 | `required` | both | Wraps the type in non-null (`T!`). |
 | `description` | both | Field / argument description. |
-| `name` | both | Explicit wire name (skips camelCase on output; drives `out_name` on input). |
+| `name` | both | Explicit wire name (skips camelCase on output — in *every* output position, root or nested; drives `out_name` on input). |
 | `deprecation_reason` | both | Marks the field / argument `@deprecated(reason: ...)`. |
 | `source` | output only | Resolve by reading an attribute off the root. |
 | `resolver` | output only | Field-level resolver (wins over the parent resolver). |
@@ -99,6 +133,15 @@ offending kwarg. Setting `default=` on a `Field` used in an `ObjectType` body
 raises a `TypeError` at output compile time. There is no separate
 `InputField` — the same `Field` (and the same typed shortcuts) work on both
 sides.
+
+`name=` is the escape hatch for an attribute name that collides with a Python
+keyword. It is honoured wherever the field is declared — on a root, on a
+mutation payload, and on any nested `ObjectType`:
+
+```python
+class Booking(ObjectType):
+    date_ = field(GdxDate, name="date")   # renders `date`, not `date_`
+```
 
 ## Django mounting fields
 
@@ -221,6 +264,23 @@ class Query(ObjectType):
     arguments and the pagination/ordering arguments (`limit`, `offset`,
     `ordering`) live directly on the list field. There is no `results` /
     `totalCount` wrapper — for that, use `DjangoListObjectField`.
+
+!!! warning "Mounted on a type: one relation must scope the list"
+    Mounted on a `DjangoObjectType` (rather than on `Query`), the field scopes
+    its rows to the parent row through the relation that points back at the
+    parent. That works only while **exactly one** relation does: a child with
+    `created_by` *and* `updated_by` foreign keys to the same parent — or a
+    foreign key alongside a many-to-many — is ambiguous, and the library now
+    refuses it with `ImproperlyConfigured` naming both relations rather than
+    guessing. It used to apply *all* of them at once, which is a conjunction:
+    the list silently resolved to `[]` for every parent that was not on both
+    sides of every row.
+
+    For an ambiguous child, mount the nested list through its **relation
+    accessor** instead — the auto-generated nested list field, or an explicit
+    `DjangoNestedListObjectField(ArticleListType, accessor="created_articles")`.
+    Reading the accessor names the relation outright, so nothing has to be
+    inferred.
 
 ## DjangoListObjectField
 

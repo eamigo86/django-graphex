@@ -13,7 +13,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.db.models import Count, Model, QuerySet
 from django.utils import timezone
-from graphql import GraphQLInt, GraphQLResolveInfo, GraphQLString
+from graphql import GraphQLError, GraphQLInt, GraphQLResolveInfo, GraphQLString
 
 from django_graphex.core import (
     BooleanField,
@@ -596,12 +596,61 @@ class NoteModelType(DjangoModelType):
         return qs.none()
 
     @classmethod
+    def _subscriber(cls, info: GraphQLResolveInfo) -> Any:
+        """Return the subscribing user, denying the subscribe when anonymous.
+
+        The auth gate for "noteSubscription". Both subscribe hooks route
+        through here so the gate cannot be half-applied: a scope with no user
+        to scope by would otherwise mean NO scope at all, i.e. every user's
+        notes.
+
+        Args:
+            info: The GraphQL resolve info for the subscribe request.
+
+        Returns:
+            user: The authenticated subscriber.
+
+        Raises:
+            GraphQLError: If the request carries no authenticated user.
+        """
+        user = getattr(info.context, "user", None)
+        if user is None or not user.is_authenticated:
+            raise GraphQLError(
+                "Authentication required.",
+                extensions={"code": "UNAUTHENTICATED", "status_code": 401},
+            )
+        return user
+
+    @classmethod
+    def authorize(cls, info: GraphQLResolveInfo, action: str, **kwargs: Any) -> None:
+        """Authorize a CRUD action, requiring auth for "subscribe".
+
+        "permission_classes" alone is not enough here: "subscribe" is a READ
+        action, so "IsAuthenticatedOrReadOnly" lets anonymous callers through.
+        The generated subscription's "authorize_subscription" hook calls this
+        method, and it runs BEFORE any Channels group is joined.
+
+        Args:
+            info: The GraphQL resolve info for the current request.
+            action: The action being authorized (e.g. "create", "subscribe").
+            **kwargs: Extra arguments passed to the permission checks.
+
+        Raises:
+            GraphQLError: If the action is not allowed.
+        """
+        if action == "subscribe":
+            cls._subscriber(info)
+        super().authorize(info, action, **kwargs)
+
+    @classmethod
     def subscription_scope(cls, info: GraphQLResolveInfo, **kwargs: Any) -> dict | None:
         """Server-forced scope: only this user's note notifications.
 
         Evaluated at subscribe time; enforced per event at delivery (in memory,
         since "owner" is in the serialized payload). The client cannot widen or
-        drop it.
+        drop it. Fails closed like the sibling "filter_queryset": with no
+        authenticated user there is no scope to force, so the subscribe is
+        denied rather than served unscoped.
 
         Args:
             info: The GraphQL resolve info for the subscribe request.
@@ -609,12 +658,12 @@ class NoteModelType(DjangoModelType):
 
         Returns:
             scope: A filter mapping restricting notifications to this user's
-                notes when authenticated, otherwise None (no scoping).
+                notes.
+
+        Raises:
+            GraphQLError: If the request carries no authenticated user.
         """
-        user = getattr(info.context, "user", None)
-        if user is not None and user.is_authenticated:
-            return {"owner": user.pk}
-        return None
+        return {"owner": cls._subscriber(info).pk}
 
     @classmethod
     def create(

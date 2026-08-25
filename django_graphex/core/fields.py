@@ -11,11 +11,13 @@ from __future__ import annotations
 import datetime
 import decimal
 import enum
+import functools
 import ipaddress
 import uuid
 import warnings
 from typing import Any
 
+from django.core.files.base import File
 from django.db import models
 from django.utils.functional import Promise
 from pydantic import Field, create_model
@@ -42,6 +44,90 @@ class JSONScalar:
         return core_schema.any_schema()
 
 
+class IDScalar:
+    """Marker annotation for the synthetic primary key on an update input.
+
+    GraphQL serializes every pk on OUTPUT as the "ID" scalar (a JSON string),
+    and the sibling delete mutation declares "id: ID!". Typing the update
+    input's "id" from the model's pk Python type instead made the two ends
+    disagree: an integer pk rendered "id: Int", so echoing back the string a
+    query returned raised 'Int cannot represent non-integer value'.
+
+    This marker keeps the annotation a DISTINCT, keyable type the input
+    compiler renders as "ID", and validates permissively (the resolver pops
+    "id" before validation and hands it to the ORM, which coerces the wire
+    string to the model's own pk type).
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+        """Return a permissive ``any`` core schema (accept string or numeric ids)."""
+        return core_schema.any_schema()
+
+
+class FileScalar:
+    """Marker annotation for a Django "FileField" (and "ImageField").
+
+    A file column accepts TWO shapes and typing it "str" only ever admitted
+    one: the storage-path string a query hands back, and the "UploadedFile"
+    the multipart merge folds in from "info.context.FILES". The "str" mapping
+    rejected every upload with 'Input should be a valid string', so no
+    multipart write could ever be saved.
+
+    Validation admits EXACTLY those two shapes, NOT the permissive "any" schema
+    the sibling markers use: an int, list or dict would otherwise pass
+    validation and blow up at "setattr"/"save()" as a raw Django exception --
+    a 500 instead of a structured "errors[]" entry.
+
+    Shaped as a wrap validator over the string schema rather than a
+    "union_schema" of the two branches, because a union appends its branch tag
+    to the error location ("attachment.constrained-str") and
+    "translate_validation_error" keys the response envelope off that location:
+    the union broke every file-field error key on the wire. Wrapping keeps the
+    error at the field's own location with Pydantic's own message.
+
+    "max_length" is read off the CLASS so the string branch keeps the column
+    width constraint the "str" mapping carried; "_file_scalar" mints the
+    per-width subclass. Consumers must therefore match with "issubclass",
+    never identity.
+    """
+
+    #: Column width applied to the storage-path branch (None -> unconstrained).
+    max_length: int | None = None
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+        """Accept a ``File`` instance, else validate as a constrained storage path."""
+
+        def validate(value: Any, next_: Any) -> Any:
+            if isinstance(value, File):
+                return value
+            return next_(value)
+
+        return core_schema.no_info_wrap_validator_function(
+            validate,
+            core_schema.str_schema(max_length=cls.max_length),
+            # ``model_dump`` hands the value straight to ``setattr``; without an
+            # ``any`` serializer Pydantic measures the accepted ``File`` against
+            # the ``str`` branch and warns on every successful upload.
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda value: value, return_schema=core_schema.any_schema()
+            ),
+        )
+
+
+@functools.lru_cache(maxsize=None)
+def _file_scalar(max_length: int | None) -> type[FileScalar]:
+    """Return the ``FileScalar`` subclass carrying this column width.
+
+    Cached so the same width always yields the SAME class object, keeping the
+    derived Pydantic schemas comparable and the schema cache effective.
+    """
+    if max_length is None:
+        return FileScalar
+    return type(f"FileScalar{max_length}", (FileScalar,), {"max_length": max_length})
+
+
 # -- Django internal type -> Python type -------------------------------------- #
 _INT = (
     "AutoField",
@@ -61,8 +147,6 @@ _STR = (
     "URLField",
     "SlugField",
     "FilePathField",
-    "FileField",
-    "ImageField",
 )
 
 #: internal type name -> Python type. Postgres/GIS classes are referenced only by
@@ -87,6 +171,11 @@ FIELD_TYPES: dict[str, Any] = {
     # produced (which double-encoded the value on save). See #JSONField.
     "JSONField": JSONScalar,
     "HStoreField": dict,
+    # FileField/ImageField -> a dedicated marker (NOT ``str``) so the multipart
+    # ``UploadedFile`` merged from ``context.FILES`` validates instead of being
+    # rejected as a non-string. The wire type stays ``String``. See #FileField.
+    "FileField": FileScalar,
+    "ImageField": FileScalar,
 }
 
 
@@ -94,7 +183,13 @@ def _scalar_type(field: models.Field) -> Any:
     """Map a non-relational field to a Python type, with an MRO fallback."""
     internal = field.get_internal_type()
     if internal in FIELD_TYPES:
-        return FIELD_TYPES[internal]
+        mapped = FIELD_TYPES[internal]
+        # A file field's constraint rides on the marker CLASS: ``_field_def``
+        # only attaches ``max_length`` to a bare ``str``, so resolving to the
+        # per-width subclass here is what keeps the column width enforced.
+        if mapped is FileScalar:
+            return _file_scalar(getattr(field, "max_length", None))
+        return mapped
     # Postgres ArrayField: type the inner item.
     if internal == "ArrayField" and getattr(field, "base_field", None) is not None:
         return list[_scalar_type(field.base_field)]  # type: ignore[misc]
@@ -198,16 +293,22 @@ def writable_fields(model: type[models.Model]) -> list[models.Field]:
 
 
 def m2m_fields(model: type[models.Model]) -> list[models.ManyToManyField]:
-    """Return the model's forward many-to-many fields.
+    """Return the model's forward, editable many-to-many fields.
+
+    Non-editable relations are excluded for the same reason "writable_fields"
+    excludes them: a field the model refuses to write must not be advertised as
+    writable, or the input accepts a value and silently discards it.
 
     Args:
         model: The Django model class to inspect.
 
     Returns:
-        fields: The forward many-to-many fields declared on the model.
+        fields: The forward, editable many-to-many fields declared on the model.
     """
     return [
-        f for f in model._meta.get_fields() if isinstance(f, models.ManyToManyField)
+        f
+        for f in model._meta.get_fields()
+        if isinstance(f, models.ManyToManyField) and f.editable
     ]
 
 
@@ -271,8 +372,11 @@ def build_model_schema(
     # excluded from ``writable_fields`` (it is not editable), so add it back here
     # for the partial case only.  The create input never carries ``id``.
     if partial and "id" not in exclude:
-        pk_field = model._meta.pk
-        pk_py_type = _scalar_type(pk_field)
+        # The pk is annotated with the ``IDScalar`` marker, NOT the pk's own
+        # Python type: graphene's contract (and this library's OUTPUT type and
+        # delete mutation) is ``id: ID``, and a pk-typed input (``Int`` for an
+        # ``AutoField``) rejected the very string a query hands back. The ORM
+        # coerces the wire value to the real pk type at lookup time.
         # ``id`` is OPTIONAL in the validation model: the resolver pops it from the
         # payload (``data.pop("id", None)``) to locate the row BEFORE the
         # remaining data is validated, so requiring it here would fail validation
@@ -280,7 +384,7 @@ def build_model_schema(
         # update input exposes ``id``); a missing pk simply yields a clean
         # "not found" error in the resolver rather than a validation error.
         definitions["id"] = (
-            pk_py_type | None,
+            IDScalar | None,
             Field(
                 default=None,
                 description="Django object unique identification field",

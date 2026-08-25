@@ -78,7 +78,10 @@ Let's start with a blog application to demonstrate the features:
             return f"Comment by {self.author.username} on {self.post.title}"
 
     class UserProfile(models.Model):
-        user = models.OneToOneField(User, on_delete=models.CASCADE)
+        # related_name="profile" is what exposes `UserType.profile` and what
+        # makes UserMutation's nested_fields={'profile': UserProfile} match.
+        # Without it the accessor is `userprofile` and both silently change shape.
+        user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
         bio = models.TextField(blank=True)
         avatar = models.ImageField(upload_to='avatars/', blank=True)
         website = models.URLField(blank=True)
@@ -93,7 +96,7 @@ Let's start with a blog application to demonstrate the features:
 === "types.py"
 
     ```python
-    from django_graphex.types import DjangoObjectType, DjangoListObjectType, DjangoModelType
+    from django_graphex.types import DjangoObjectType, DjangoListObjectType
     from django_graphex.paginations import (
         LimitOffsetGraphqlPagination, PageGraphqlPagination
     )
@@ -119,6 +122,7 @@ Let's start with a blog application to demonstrate the features:
             model = Category
             description = "Blog category"
             filter_fields = {
+                'id': ('exact', 'in'),
                 'name': ('exact', 'icontains'),
                 'slug': ('exact',),
             }
@@ -127,7 +131,11 @@ Let's start with a blog application to demonstrate the features:
         class Meta:
             model = Tag
             description = "Post tag"
-            filter_fields = ['name', 'color']
+            filter_fields = {
+                'id': ('exact', 'in'),
+                'name': ('exact', 'icontains'),
+                'color': ('exact',),
+            }
 
     class UserProfileType(DjangoObjectType):
         class Meta:
@@ -144,19 +152,26 @@ Let's start with a blog application to demonstrate the features:
                 'created_at': ('exact', 'gte', 'lte'),
             }
 
+    # Every type registered for a model contributes to that model's single
+    # `<Model>FilterInput`, so keep the filter_fields of PostType and
+    # PostListType identical — otherwise the compiled input silently offers
+    # the union of both and the two lists filter differently than they read.
+    POST_FILTER_FIELDS = {
+        'title': ('exact', 'icontains'),
+        'status': ('exact',),
+        'author__username': ('exact', 'icontains'),
+        'category__name': ('exact', 'icontains'),
+        'tags__name': ('exact', 'icontains'),
+        'created_at': ('exact', 'gte', 'lte'),
+        'published_at': ('exact', 'gte', 'lte', 'range'),
+        'view_count': ('exact', 'gte', 'lte'),
+    }
+
     class PostType(DjangoObjectType):
         class Meta:
             model = Post
             description = "Blog post with full content and metadata"
-            filter_fields = {
-                'title': ('exact', 'icontains'),
-                'status': ('exact',),
-                'author__username': ('exact', 'icontains'),
-                'category__name': ('exact', 'icontains'),
-                'tags__name': ('exact', 'icontains'),
-                'created_at': ('exact', 'gte', 'lte'),
-                'published_at': ('exact', 'gte', 'lte'),
-            }
+            filter_fields = POST_FILTER_FIELDS
 
     # List Object Types with Pagination
     class PostListType(DjangoListObjectType):
@@ -168,15 +183,7 @@ Let's start with a blog application to demonstrate the features:
                 max_limit=50,
                 ordering="-published_at"
             )
-            filter_fields = {
-                'title': ('exact', 'icontains'),
-                'status': ('exact',),
-                'author__username': ('exact', 'icontains'),
-                'category__name': ('exact', 'icontains'),
-                'created_at': ('exact', 'gte', 'lte'),
-                'published_at': ('exact', 'gte', 'lte'),
-                'view_count': ('exact', 'gte', 'lte'),
-            }
+            filter_fields = POST_FILTER_FIELDS
 
     class UserListType(DjangoListObjectType):
         class Meta:
@@ -198,8 +205,34 @@ Let's start with a blog application to demonstrate the features:
             model = Comment
             description = "Paginated list of comments"
             pagination = LimitOffsetGraphqlPagination(default_limit=25)
+    ```
 
-    # Model Types for CRUD Operations
+=== "types_modeltype.py"
+
+    !!! danger "Keep this module out of the same process as `types.py`"
+        A `DjangoModelType` registers its own generated `<Model>ListType` as
+        soon as the **class is declared** — not when you mount it. So importing
+        this module *and* `types.py` above in the same process registers two
+        different types named `PostListType` (and `UserListType`), and the very
+        next `DjangoGraphQLSchema(...)` call fails with:
+
+        ```
+        TypeError: Schema must contain uniquely named types but contains
+        multiple types named 'PostListType'.
+        ```
+
+        This bites even if the schema mounts **none** of the types below.
+        Pick one approach per model: use `types.py` for Variant A, or this
+        module for Variant B (both in the `schema.py` tab) — never both.
+
+    ```python
+    from django_graphex.types import DjangoModelType
+    from django_graphex.paginations import LimitOffsetGraphqlPagination
+    from django.contrib.auth.models import User
+    from .models import Post
+
+    # Model Types for CRUD Operations — each generates its own
+    # UserListType / PostListType internally.
     class UserModelType(DjangoModelType):
         class Meta:
             model = User
@@ -299,16 +332,18 @@ Let's start with a blog application to demonstrate the features:
 
 === "schema.py"
 
-    !!! warning "Don't mix `<Model>ListType` with `DjangoModelType.QueryFields()` for the same model"
+    !!! warning "Don't mix `<Model>ListType` with `DjangoModelType` for the same model"
         A `DjangoModelType` auto-generates its own `<Model>ListType` internally
         (e.g. `PostModelType` generates a `PostListType`, `UserModelType`
-        generates a `UserListType`). Mounting a **hand-declared** `PostListType`
-        / `UserListType` (from the `types.py` tab above) *alongside*
-        `PostModelType.QueryFields()` / `UserModelType.QueryFields()` in the same
-        schema raises `TypeError: Schema must contain uniquely named types but
-        contains multiple types named 'PostListType'` (or `'UserListType'`) at
-        schema-build time — pick **one** approach per model. The two variants
-        below show each as a self-contained schema.
+        generates a `UserListType`), and registers it **when the class is
+        declared** — so merely *importing* both `types.py` and
+        `types_modeltype.py` in the same process is enough to break the next
+        schema build with `TypeError: Schema must contain uniquely named types
+        but contains multiple types named 'PostListType'` (or `'UserListType'`).
+        Mounting is irrelevant; declaration is what registers.
+
+        Pick **one** approach per model, and import only that module. The two
+        variants below show each as a self-contained schema.
 
     ```python title="Variant A — manual types (UserListType / PostListType)"
     from django_graphex.directives import all_directives
@@ -379,7 +414,10 @@ Let's start with a blog application to demonstrate the features:
     from django_graphex.fields import DjangoObjectField, DjangoFilterListField, DjangoListObjectField
     from django_graphex.core import ObjectType
     from django_graphex.schema import DjangoGraphQLSchema
-    from .types import (
+    # NOTE: Variant B must NOT import `.types` — see the warning above.
+    # Move CategoryType / TagType / CommentType / CommentListType into
+    # `types_modeltype.py` (or a shared module that `types.py` does not import).
+    from .types_modeltype import (
         CategoryType, TagType, CommentType, CommentListType,
         UserModelType, PostModelType
     )

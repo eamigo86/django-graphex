@@ -8,6 +8,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import Manager
 from graphql import GraphQLBoolean
 
 from ._strconv import to_camel_case
@@ -19,12 +20,20 @@ from .core.descriptors import NativeList, NativeMountedField
 from .core.descriptors import field as native_field
 from .core.validators import build_validator_model
 from .errors import ErrorType
-from .nested import NestedFieldsMixin
+from .nested import (
+    NestedFieldsMixin,
+    hosts_for_nested,
+    hosts_serving,
+    record_nested_input,
+    register_nested_host,
+)
 from .registry import get_global_registry
 from .types import DjangoInputObjectType, DjangoObjectType
+from .uploads import merge_uploaded_files
 from .utils import get_Object_or_None, not_found_error
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
     from graphql import GraphQLField, GraphQLResolveInfo
 
 # ---------------------------------------------------------------------------
@@ -49,6 +58,13 @@ _NATIVE_FIELD_REGISTRY: dict[tuple, Any] = {}
 # ``isinstance(value, GraphQLField)`` scan) keeps the gate: an unrelated
 # user-declared raw GraphQLField is never silently mounted onto the native root.
 _NATIVE_FIELD_IDENTITIES: set[int] = set()
+
+#: The wire name of the identity field a generated UPDATE input exposes. It is
+#: the literal ``id`` whatever the model's primary-key column is called, because
+#: ``core.fields.build_model_schema`` adds it under that name for the partial
+#: (update) case only -- the pk COLUMN is never client-writable on either
+#: surface.
+IDENTITY_FIELD = "id"
 
 
 def _projection_signature(
@@ -173,52 +189,278 @@ def _nested_input_name(
     return name
 
 
-def _ensure_child_generic_input(
-    child_model: Any, op: str, registry: Any, parent_model: Any = None
-) -> None:
-    """Ensure the GENERIC "(child_model, op)" input type exists.
+def _keep_identity_field(factory_kwargs: dict[str, Any], op: str) -> dict[str, Any]:
+    """Return the factory kwargs with "id" restored on an update projection.
 
-    The converter resolves each nested child lazily via
-    "registry.get_type_for_model(child_model, for_input=op)"; when no explicit
-    child mutation/type was declared that lookup would return None and the
-    converter would silently drop the field. Building the child's GENERIC input
-    on demand (with EMPTY "nested_fields" and "skip_registry=False" so it
-    self-registers at "(child_model, op)") makes that lookup succeed.
+    Args:
+        factory_kwargs: The host's "factory_type" keyword arguments.
+        op: The operation the input is built for.
 
-    The empty "nested_fields" guarantees termination: a self-referential model
-    produces a generic child whose own nested relation is "[ID!]" -- no
-    recursion. Already-registered children are a no-op.
+    Returns:
+        The kwargs unchanged for any operation but "update", and otherwise a
+        copy whose projection cannot drop the identity field.
+    """
+    if op != "update":
+        return factory_kwargs
+    only_fields = factory_kwargs.get("only_fields")
+    exclude_fields = factory_kwargs.get("exclude_fields")
+    if not only_fields and not exclude_fields:
+        return factory_kwargs
+    patched = dict(factory_kwargs)
+    if only_fields:
+        patched["only_fields"] = tuple(sorted({*only_fields, IDENTITY_FIELD}))
+    if exclude_fields:
+        patched["exclude_fields"] = tuple(
+            name for name in exclude_fields if name != IDENTITY_FIELD
+        )
+    return patched
 
-    "parent_model" (the nesting host) makes the child's back-reference FK
-    OPTIONAL on the INPUT surface: a reverse-FK / M2M child is linked to the
-    parent AFTER it saves ("NestedFieldsMixin._attach_children" injects the FK
-    via "save_kwargs", and "save_object" excludes those keys from
-    validation), so the client must NOT be forced to supply the parent id
-    inline. The child's pydantic VALIDATION model still requires the FK, so a
-    STANDALONE child create that genuinely omits it still fails cleanly -- only
-    the inline nested path is relaxed.
+
+def generic_input_type(
+    registry: Any, model: Any, op: str, factory_kwargs: dict[str, Any]
+) -> Any:
+    """Build (memoized) a host's own create/update input for a model.
+
+    The shared "(model, operation)" registry slot holds ONE input per model, so
+    the first host to reach it decided the wire surface for every later one: a
+    "DjangoModelMutation" declaring "only_fields" behind an already-registered
+    display card had its projection silently dropped and its own root accepted
+    every writable column -- the exact leak "only_fields" is documented to
+    close. A projection therefore does NOT go in the shared slot: it gets its
+    own type, named after the projection so two hosts declaring the same one
+    share it and two declaring different ones never collide.
+
+    Args:
+        registry: The registry owning the shared slot and the projection memo.
+        model: The Django model the input is built for.
+        op: The operation ("create" or "update").
+        factory_kwargs: The host's "factory_type" keyword arguments, carrying
+            the "only_fields" / "exclude_fields" this input must honour.
+
+    Returns:
+        The "DjangoInputObjectType" subclass for this host's projection.
+    """
+    # "only_fields" projects the writable COLUMNS of a surface. On an UPDATE it
+    # cannot project away the identity field: "id" is how the resolver finds the
+    # row, not something the client writes. A host declaring
+    # ``only_fields = ("headline",)`` was shipping an update root no client could
+    # address. The nested child input exempts it for the same reason, and the
+    # two surfaces have to agree. Create is untouched -- an identity field there
+    # would be a client-supplied primary key.
+    factory_kwargs = _keep_identity_field(factory_kwargs, op)
+
+    # Keyed on the two axes an input actually honours. "include_fields" is not
+    # forwarded to an input type at all, so splitting on it would mint a second,
+    # byte-identical type under a second name for no gain.
+    projection = _projection_signature(
+        factory_kwargs.get("only_fields"),
+        factory_kwargs.get("exclude_fields"),
+        None,
+    )
+    if not any(component is not None for component in projection):
+        # No opinion: the shared slot is exactly right, and keeping the
+        # unprojected input there is what every plain host and the converter's
+        # child lookups already rely on.
+        input_type = registry.get_type_for_model(model, for_input=op)
+        if not input_type:
+            input_type = factory_type(
+                "input", DjangoInputObjectType, op, **factory_kwargs
+            )
+        return input_type
+
+    key = (model, op, projection)
+    built = registry.projected_input_cache.get(key)
+    if built is None:
+        built = factory_type(
+            "input",
+            DjangoInputObjectType,
+            op,
+            **{
+                **factory_kwargs,
+                "name": "{}_p{}".format(
+                    to_camel_case(f"{model.__name__}_{op}_Generic_Type"),
+                    _short_hash(repr(projection)),
+                ),
+                "skip_registry": True,
+            },
+        )
+        registry.projected_input_cache[key] = built
+    return built
+
+
+def _empty_projection_message(
+    child_model: Any, parent_model: Any, op: str, hosts: tuple[Any, ...]
+) -> str:
+    """Describe an emptied nested projection in terms of what declared it.
+
+    Args:
+        child_model: The nested child's Django model.
+        parent_model: The nesting parent's Django model.
+        op: The operation the input was being built for.
+        hosts: Every host that contributed to the merge.
+
+    Returns:
+        The "ImproperlyConfigured" message, naming each contributing host with
+        both of its projection axes.
+    """
+    declarations = "; ".join(
+        "{} only_fields={} exclude_fields={}".format(
+            host.__name__,
+            tuple(getattr(host._meta, "only_fields", ()) or ()),
+            tuple(getattr(host._meta, "exclude_fields", ()) or ()),
+        )
+        for host in hosts
+    )
+    return (
+        "The nested {op} input for {child} inside {parent} would carry no "
+        "field at all, which graphql-core rejects as an invalid schema. The "
+        'hosts declared for {child} are: {declarations}. An "only_fields" is an '
+        'allowance and an "exclude_fields" is a prohibition applied last, so a '
+        "column one host allows and another forbids is not writable; widen one "
+        "of them, or declare the read host with "
+        'model_operations = ("list", "retrieve").'
+    ).format(
+        op=op,
+        child=child_model.__name__,
+        parent=parent_model.__name__,
+        declarations=declarations or "none",
+    )
+
+
+def nested_child_input(
+    child_model: Any, op: str, registry: Any, parent_model: Any
+) -> Any:
+    """Build (memoized) the child's input type for ONE parent's nested surface.
+
+    The nested child input used to be whatever object occupied the shared
+    "(child_model, op)" registry slot, which made the result depend on
+    declaration order: a parent declared first minted an UNPROJECTED input from
+    the bare Django model and parked it in that slot, so the child's own
+    "exclude_fields" was dropped from BOTH surfaces; a child declared first kept
+    its projection but handed the parent an input whose back-reference foreign
+    key is still required, which graphql-core rejects before a resolver runs.
+
+    Building it here, per parent, removes the shared slot from the picture:
+
+    * the projection comes from the child's hosts (see "hosts_for_nested"), on
+      two axes that say different things. An "exclude_fields" is a PROHIBITION
+      -- "this column is never client-writable" -- so EVERY declared host's
+      exclusions apply, whatever operation that host happens to serve, and they
+      are applied LAST. An "only_fields" is an ALLOWANCE, so only the hosts that
+      SERVE this operation (see "hosts_serving") UNION theirs: the union of
+      allowances is what some declared host would permit, and the prohibition
+      axis still subtracts from it afterwards, so a column any host hid stays
+      unwritable. Intersecting instead turned an ordinary read-projection /
+      write-projection split -- a display card and a write mutation naming
+      different columns, neither escalating anything -- into an import-time
+      "ImproperlyConfigured" that killed the whole schema,
+    * NO allowance restriction is applied when the union is empty, and that is
+      correct on both of the branches that reach it. With no host declared at
+      all the child is a plain related model and the unprojected surface minus
+      the prohibitions is what the library has always built. With hosts declared
+      but none serving this operation, the project has EXPLICITLY said so: both
+      host classes default "Meta.model_operations" to every operation they can
+      generate, so a host that declares nothing serves this one and the branch
+      cannot be reached by accident,
+    * "skip_registry=True" means the shared slot is NEVER written, so the
+      child's own mutation keeps building its own input from its own Meta,
+    * "nested_parent_model" makes the child's back-reference foreign key
+      OPTIONAL on this surface only: a reverse-FK / M2M child is linked to the
+      parent AFTER it saves ("NestedFieldsMixin._attach_children" injects the FK
+      via "save_kwargs"), so the client must not be forced to supply the parent
+      id inline. The child's own standalone input keeps it required,
+    * the primary key always survives on the UPDATE surface. It is not a
+      projectable column there -- it is how the row is identified, and the
+      nested writer reads it to decide upsert-vs-create and to run the child's
+      scope check. A host's "only_fields" that happens not to list it silently
+      broke the documented upsert-by-id, and a client dropping the rejected
+      "id" got a duplicate CREATE instead of an update,
+    * the EMPTY "nested_fields" guarantees termination: a self-referential model
+      produces a child whose own nested relation stays the scalar "[ID!]".
+
+    "include_fields" is deliberately NOT forwarded: it force-includes, so
+    honouring it here could only WIDEN the nested write surface.
 
     Args:
         child_model: The related Django model to build the input for.
         op: The parent's operation ("create" or "update"); the child input is
             built for the same operation.
-        registry: The active type registry.
-        parent_model: The nesting parent model; its back-reference FK on the
-            child is rendered optional on the input surface (or None for a
-            plain ensure with no relaxation).
+        registry: The active type registry (owns the memo).
+        parent_model: The nesting parent model.
+
+    Returns:
+        The child's "DjangoInputObjectType" subclass for this parent and
+        operation.
+
+    Raises:
+        ImproperlyConfigured: If the merged projection leaves the child input
+            with no field at all. graphql-core treats a zero-field input object
+            as an INVALID schema, so every request through the built schema
+            would fail validation -- not just the nested field.
     """
-    if registry.get_type_for_model(child_model, for_input=op) is not None:
-        return
-    factory_type(
-        "input",
-        DjangoInputObjectType,
-        op,
-        model=child_model,
-        nested_fields={},
-        registry=registry,
-        skip_registry=False,
-        nested_parent_model=parent_model,
-    )
+    cache = registry.nested_input_cache
+    key = (child_model, op, parent_model)
+    built = cache.get(key)
+    if built is None:
+        hosts = hosts_for_nested(registry, child_model)
+        # An exclusion is a PROHIBITION, so it is not scoped to the operation
+        # its host happens to serve. Filtering it dropped a create host's
+        # exclusion from the nested UPDATE surface, and a client then wrote, on
+        # an EXISTING row through the parent, a column the project's only write
+        # mutation refuses.
+        excluded = {
+            name
+            for host in hosts
+            for name in getattr(host._meta, "exclude_fields", ()) or ()
+        }
+        # An allowance, unioned across the hosts that serve the operation. An
+        # empty union is "no host has an opinion here", not "nothing writable";
+        # see the docstring for why both branches that produce one are safe.
+        allowed: set[str] = set()
+        for host in hosts_serving(registry, child_model, op):
+            allowed |= set(getattr(host._meta, "only_fields", ()) or ())
+        if op == "update":
+            # Exempt from BOTH axes: an update payload without its identity
+            # field cannot name a row. The name is the literal "id" and not the
+            # model's pk column: the generated update input exposes the pk as
+            # "id: ID" whatever the column is called (see
+            # "core.fields.build_model_schema"), and the pk COLUMN itself is
+            # never client-writable on either surface.
+            excluded.discard(IDENTITY_FIELD)
+            if allowed:
+                allowed.add(IDENTITY_FIELD)
+        only_fields = tuple(sorted(allowed))
+        built = factory_type(
+            "input",
+            DjangoInputObjectType,
+            op,
+            model=child_model,
+            nested_fields={},
+            registry=registry,
+            skip_registry=True,
+            nested_parent_model=parent_model,
+            only_fields=only_fields,
+            exclude_fields=tuple(excluded),
+            # Assembled by hand rather than through "to_camel_case": that helper
+            # "str.capitalize()"-s every component after the first, which would
+            # flatten a multi-word parent ("NestedTeam" -> "Nestedteam") into a
+            # wire-visible name no documentation mentions.
+            name=(
+                f"{child_model.__name__}{op.capitalize()}In{parent_model.__name__}Type"
+            ),
+        )
+        if not built._meta.graphql_input_type.fields:
+            raise ImproperlyConfigured(
+                _empty_projection_message(child_model, parent_model, op, hosts)
+            )
+        cache[key] = built
+        # The surface is now frozen: graphql-core caches the parent input's
+        # resolved field map, so a host declared from here on could never
+        # contribute to it. Recorded so that host is REFUSED rather than
+        # silently ignored (see "register_nested_host"). Recorded on THIS
+        # registry, like the memo above: another registry has frozen nothing.
+        record_nested_input(registry, child_model, parent_model)
+    return built
 
 
 class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
@@ -379,13 +621,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                     # lookups and every plain mutation rely on that slot holding
                     # the generic. Build a DISTINCT, collision-free input with
                     # ``skip_registry=True`` so it never touches ``_types``, and
-                    # reference it directly. Each nested child's GENERIC input is
-                    # ensured up front so the converter never silently drops the
-                    # field (see ``_ensure_child_generic_input``).
-                    for child_model in nested_map.values():
-                        _ensure_child_generic_input(
-                            child_model, operation, registry, parent_model=model
-                        )
+                    # reference it directly. Each nested CHILD's input is built
+                    # per parent, inside the parent's own fields thunk (see
+                    # ``nested_child_input``), so it too stays out of ``_types``.
                     input_type = factory_type(
                         "input",
                         DjangoInputObjectType,
@@ -404,12 +642,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                         },
                     )
                 else:
-                    input_type = registry.get_type_for_model(model, for_input=operation)
-
-                    if not input_type:
-                        input_type = factory_type(
-                            "input", DjangoInputObjectType, operation, **factory_kwargs
-                        )
+                    input_type = generic_input_type(
+                        registry, model, operation, factory_kwargs
+                    )
 
                 # S6c: DjangoModelMutation is NATIVE-ONLY (parented on
                 # ``native.base.ObjectType``). The input argument is wrapped in a
@@ -454,10 +689,23 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         _meta.input_field_name = input_field_name
         _meta.output_field_name = output_field_name
         _meta.nested_fields = nested_fields
+        # Stored so a PARENT nesting this model reads the projection this host
+        # declared instead of minting an unprojected input from the bare model
+        # (see "nested_child_input"). "DjangoModelType" already carries both.
+        _meta.only_fields = tuple(only_fields or ())
+        _meta.exclude_fields = tuple(exclude_fields or ())
+        # The nested writer reads it back at REQUEST time, to decide which
+        # registry's hosts scope and authorize a nested child write.
+        _meta.registry = registry
 
         super().__init_subclass_with_meta__(
             _meta=_meta, description=description, **options
         )
+
+        # Declared here, not on demand: see the twin call in "DjangoModelType".
+        # This host carries no "permission_classes", so it contributes the
+        # queryset-scoping half of the nested gate only.
+        register_nested_host(model, cls, registry)
 
         # ---------------------------------------------------------------------------
         # Native field construction (WU-3): build GraphQLField per operation and
@@ -615,9 +863,11 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             A mutation response carrying the created object or errors.
         """
         data = kwargs.get(cls._meta.input_field_name)
-        request_type = info.context.META.get("CONTENT_TYPE", "")
-        if "multipart/form-data" in request_type:
-            data.update({name: value for name, value in info.context.FILES.items()})
+        merge_uploaded_files(
+            data,
+            info,
+            cls._meta.arguments["create"][cls._meta.input_field_name].type,
+        )
 
         ok, obj = cls.save_with_nested(
             root,
@@ -628,6 +878,49 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         if not ok:
             return cls.get_errors(obj)
         return cls.perform_mutate(obj, info)
+
+    @classmethod
+    def get_queryset(
+        cls, manager: Manager | QuerySet, info: GraphQLResolveInfo, **kwargs: Any
+    ) -> QuerySet:
+        """Return the base queryset "update" and "delete" resolve their row from.
+
+        Override to customize the base queryset. "info.context" is the request.
+        The default takes the manager it is handed and applies
+        "filter_queryset". Same name and signature as the
+        "DjangoModelType" hook, so an override moves between the two hosts
+        unchanged.
+
+        Args:
+            manager: Default manager or queryset to scope.
+            info: The GraphQL resolve info for the current request.
+            **kwargs: Extra arguments forwarded to "filter_queryset".
+
+        Returns:
+            The scoped queryset to resolve the target row from.
+        """
+        qs = manager.all() if isinstance(manager, Manager) else manager
+        return cls.filter_queryset(qs, info, **kwargs)
+
+    @classmethod
+    def filter_queryset(
+        cls, qs: QuerySet, info: GraphQLResolveInfo, **kwargs: Any
+    ) -> QuerySet:
+        """Scope the queryset per request.
+
+        This is a hook meant to be overridden. The default returns "qs"
+        unchanged. Unlike "DjangoModelType" this host has no read
+        operations, so the scope applies to "update" and "delete" only.
+
+        Args:
+            qs: Queryset to scope.
+            info: The GraphQL resolve info for the current request.
+            **kwargs: Extra arguments available for scoping.
+
+        Returns:
+            The (optionally) scoped queryset.
+        """
+        return qs
 
     @classmethod
     def delete(
@@ -645,7 +938,13 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         """
         pk = kwargs.get("id")
 
-        old_obj = get_Object_or_None(cls._meta.model, pk=pk)
+        # SECURITY: resolve the target row through "get_queryset" ->
+        # "filter_queryset", never the bare model, so a declared scope hides a
+        # row from a write exactly as it does on "DjangoModelType". A row
+        # outside the scope answers as missing, so the response cannot be used
+        # to probe another tenant's primary keys.
+        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             old_obj.delete()
             setattr(old_obj, old_obj._meta.pk.attname, pk)
@@ -668,9 +967,11 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             A mutation response carrying the updated object or errors.
         """
         data = kwargs.get(cls._meta.input_field_name)
-        request_type = info.context.META.get("CONTENT_TYPE", "")
-        if "multipart/form-data" in request_type:
-            data.update({name: value for name, value in info.context.FILES.items()})
+        merge_uploaded_files(
+            data,
+            info,
+            cls._meta.arguments["update"][cls._meta.input_field_name].type,
+        )
 
         # Use .pop('id', None) so that an update input where 'id' was excluded
         # via only_fields/exclude_fields does not raise KeyError.  A None pk
@@ -686,7 +987,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         # (never a 500). NOTE: nested (``Meta.nested_fields``) inputs treat
         # ``null``/``[]``/``{}`` as a NO-OP (see ``NestedMutationMixin`` in
         # ``nested.py``); that asymmetry is deliberate and documented there.
-        old_obj = get_Object_or_None(cls._meta.model, pk=pk)
+        # SECURITY: same scoped lookup as ``delete`` -- see the comment there.
+        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(
                 root,

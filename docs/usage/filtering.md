@@ -237,6 +237,27 @@ the related model, which recurses (and supports its own `and`/`or`/`not`):
 A filter that traverses a **to-many** relation (reverse FK / M2M) automatically
 applies `.distinct()` so join fan-out doesn't duplicate rows.
 
+!!! info "Declaring a relation **and** a path through it"
+
+    `{"author": ("exact",), "author__name": ("icontains",)}` declares the same
+    relation twice. Both halves are kept: the nested `AuthorFilterInput` mounts
+    as usual, and the plain-pk lookups move **onto** it under the related
+    model's primary-key name.
+
+    ```graphql
+    { posts(filter: { author: { id: { exact: 5 }, name: { icontains: "ada" } } }) { results { title } } }
+    ```
+
+!!! info "Nested lookups are unioned with the related type's own declaration"
+
+    When the related model has its own root `filter_fields`, a nested request
+    that asks for a lookup the root does not declare **widens** the generated
+    `<Related>FilterInput` instead of being dropped. Declaring
+    `AuthorType.filter_fields = {"name": ("exact",)}` and
+    `PostType.filter_fields = {"author__name": ("icontains",)}` yields
+    `AuthorNameLookups { exact, icontains }`, so both contexts work off one
+    canonical type.
+
 ## Filtering by id / pk (incl. `UUIDField`)
 
 Declare the `id` field — or a relation field **directly** (not a `__` path) — with
@@ -358,6 +379,12 @@ At query time, the list resolvers compose the queryset in this order:
 3. **Custom `@filter_field` methods** — chained one by one, in declaration
    order.
 
+The order is the same wherever the list appears. A
+[nested list](nested-lists.md) mounts the *same* `<Model>FilterInput`, so it
+runs the custom methods too — on its rows **and** on its `totalCount`,
+whichever internal path serves the page (prefetch, DB-side window, or the
+per-parent fallback).
+
 **Why this order?** Server-forced scoping goes first so no client-supplied
 filter can ever widen the visible rows. The standard lookups are
 *declarative*, so the engine can merge them into a single `WHERE` clause and
@@ -475,6 +502,25 @@ def limit(cls, queryset, info, value):   # ← name conflict!
     ...
 ```
 
+A `@filter_field` method must also not be named after a filter argument the
+`Meta.filter_fields` declaration already compiles, nor after an `and` / `or` /
+`not` combinator. Such a collision raises `ImproperlyConfigured` when the
+filter input is built:
+
+```python
+class PostType(DjangoObjectType):
+    class Meta:
+        model = Post
+        filter_fields = {"title": ("exact", "icontains")}
+
+    @filter_field(GraphQLString)
+    def title(cls, queryset, info, value):   # ← shadows the compiled `title`
+        ...
+```
+
+Previously the custom filter silently replaced the generated
+`PostTitleLookups` input, leaving the field unfilterable in both shapes.
+
 ### `filter_queryset` — scope the base queryset
 
 For server-side scoping that applies on every request (not client-visible
@@ -494,6 +540,30 @@ class UserType(DjangoModelType):
         # e.g. always scope to the current user's tenant
         return qs.filter(tenant=info.context.user.tenant)
 ```
+
+The scope applies to **every** CRUD operation on the type, writes included:
+`retrieve` and `list` narrow their results, and `update` and `delete` resolve
+their target row through the same hook, so a row belonging to another tenant
+answers exactly as a missing one (`ok: false`, `<Model> with id <pk> does not
+exist.`) instead of being written.
+
+`DjangoModelMutation` carries the **same two hooks**, with the same names and
+the same signatures, so an override moves between the two hosts unchanged. It
+has no read operations, so there the scope governs `update` and `delete` only.
+
+!!! warning "`permission_classes` is `DjangoModelType`-only"
+    `get_queryset` / `filter_queryset` answer *which rows exist for this
+    caller*. `permission_classes` / `authorize` answer *may this caller perform
+    this action* — and those live on `DjangoModelType` alone.
+    `DjangoModelMutation` does **not** check them; declaring
+    `permission_classes` on one has no effect. Use `DjangoModelType` when you
+    need per-action authorization, or gate the mutation at the schema root.
+
+!!! danger "Upgrade note"
+    2.1.0 and earlier applied this scope on the read path only: `update` and
+    `delete` looked their target up on the bare model, so the snippet above
+    protected reads while leaving every row in the table writable by any
+    caller. Fixed in the next release.
 
 See [Permissions & hooks](permissions.md) for `get_queryset` / `filter_queryset`.
 

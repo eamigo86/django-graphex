@@ -34,6 +34,12 @@ def _collect(host_cls: type) -> tuple[dict[str, Callable], Callable | None]:
     """Collect ``validate_<field>`` and ``validate`` callables down the MRO.
 
     The most-derived definition of each name wins (subclasses override bases).
+    The walk stops at ``BaseModel``: every host inherits it, and its deprecated
+    ``validate`` classmethod is pydantic's own entry point, not a user hook.
+    Collecting it gave every validator-free host a synthetic validator model
+    that called ``BaseModel.validate`` on each save — a deprecation warning per
+    write, and a re-validation of the payload against the HOST type that a host
+    with required fields would reject outright.
 
     Returns:
         A ``({field: fn}, object_fn_or_None)`` tuple.
@@ -42,6 +48,8 @@ def _collect(host_cls: type) -> tuple[dict[str, Callable], Callable | None]:
     object_fn: Callable | None = None
     seen: set[str] = set()
     for klass in host_cls.__mro__:
+        if klass is BaseModel:
+            break
         for name, attr in vars(klass).items():
             if name in seen:
                 continue
