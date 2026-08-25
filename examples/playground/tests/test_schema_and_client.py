@@ -74,9 +74,8 @@ def test_readme_nested_comments_query_validates() -> None:
     that does, or the nested "comments" list loses the "pageInfo" every README
     query selects.
     """
-    from graphql import parse, validate
-
     from blog.schema import schema
+    from graphql import parse, validate
 
     query = (
         "{ posts { results { id comments { results { id }"
