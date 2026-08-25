@@ -167,6 +167,22 @@ class ApiAccessGroupTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)["data"]["hello"], "world")
 
+    # 5b. The bypass is for an ACTIVE superuser only: a DEACTIVATED one outside
+    #     the group is just another non-member and gets the same generic 403.
+    @override_settings(DJANGO_GRAPHEX={"API_ACCESS_GROUP": "api-users"})
+    def test_deactivated_superuser_does_not_bypass_group(self) -> None:
+        """Ship-broken contract: a deactivated superuser outside the group must
+        not bypass the gate, otherwise an offboarded account keeps endpoint
+        access purely on its superuser bit.
+        """
+        superuser = self._superuser()
+        superuser.is_active = False
+        superuser.save()
+        view = AuthenticatedGraphQLView.as_view(schema=_schema)
+        response = view(_post(user=superuser))
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn("data", json.loads(response.content))
+
     # 6. The PUBLIC GraphQLView is unaffected: an anonymous request still serves.
     @override_settings(DJANGO_GRAPHEX={"API_ACCESS_GROUP": "api-users"})
     def test_public_view_unaffected(self) -> None:

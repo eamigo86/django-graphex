@@ -12,6 +12,50 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## Unreleased
+
+### Fixed
+
+- **`totalCount` was counted whether or not the client asked for it.** A list
+  served by `DjangoModelType` issued its `COUNT(*)` eagerly, so a query
+  selecting only `results` paid for two round trips where the
+  `DjangoListObjectField` path paid for one — while
+  [Pagination](usage/pagination.md) states the count is "only issued when the
+  client actually **selects** `totalCount`". The count is now deferred to first
+  access, matching the sibling path and the documented behaviour. A client that
+  does select it sees the same number as before, including under a filter or a
+  page limit, because the deferred call still closes over the unsliced queryset.
+- **A nested child was fetched and authorized twice on every write.** The
+  reverse-relation and many-to-many paths resolved the child by primary key,
+  ran the ownership and scope checks, and then handed the raw payload to the
+  writer, which resolved the same row again and repeated the same checks — two
+  lookups plus two scope queries per host, per child, growing linearly with the
+  payload. The already-resolved row is now passed through. Every check still
+  runs, and runs against the same row: the authorization outcome is unchanged
+  for every relation kind, for a permitted and a denied caller alike.
+
+### Removed
+
+- Six internal names that nothing in the package reached, each confirmed
+  callerless before deletion. None was exported or documented, so no import you
+  can write today breaks:
+  `paginations.utils._nonzero_int` (which also still carried the zero
+  passthrough its sibling `_positive_int` documents fixing — `_nonzero_int(0,
+  strict=True)` returned `0` instead of raising, and it accepted negatives);
+  `Registry._interface_implementors` (never written and never read —
+  `get_member_models` derives implementors from `_types` on demand, so the
+  second store could only go stale); `utils.get_obj` and `utils.create_obj`
+  (test-only, and `get_obj`'s whole `except` chain was unreachable because
+  `get_Object_or_None` already swallows those exceptions); and
+  `converter.assert_valid_name` / `converter.convert_choice_name`, superseded by
+  `_is_valid_name` and `choice_enum_name`.
+- The `NullBooleanField` key from the two internal-type-keyed field maps
+  (`core.fields.FIELD_TYPES` and the filter-schema scalar map). Django reports
+  `"BooleanField"` from `get_internal_type()` for a `NullBooleanField`, so the
+  key was unreachable in both — and the package's third field map had already
+  dropped it, leaving the three to drift apart. A `NullBooleanField` resolves to
+  a boolean exactly as before, now through one key in all three.
+
 ## 2.2.0 — 2026-08-24
 
 **Security release. Upgrade if you use `Meta.nested_fields`.**

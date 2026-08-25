@@ -107,36 +107,9 @@ NAME_PATTERN = r"^[_a-zA-Z][_a-zA-Z0-9]*$"
 COMPILED_NAME_PATTERN = re.compile(NAME_PATTERN)
 
 
-def assert_valid_name(name: str) -> None:
-    """Assert that the provided name is valid for GraphQL.
-
-    Args:
-        name: the candidate name to validate.
-
-    Raises:
-        AssertionError: if "name" does not match the GraphQL name pattern.
-    """
-    assert COMPILED_NAME_PATTERN.match(name), (
-        f'Names must match /{NAME_PATTERN}/ but "{name}" does not.'
-    )
-
-
 def _is_valid_name(name: str) -> bool:
     """Return whether ``name`` is a usable, non-empty GraphQL enum name."""
     return bool(name) and bool(COMPILED_NAME_PATTERN.match(name))
-
-
-def convert_choice_name(name: Any) -> str:
-    """Convert a Django choice value to a valid GraphQL enum name.
-
-    Args:
-        name: the raw choice value to convert.
-
-    Returns:
-        A GraphQL-safe enum name, prefixed when otherwise invalid.
-    """
-    const = to_const(force_str(name))
-    return const if _is_valid_name(const) else f"A_{const}"
 
 
 def choice_enum_name(value: Any, label: Any) -> str:

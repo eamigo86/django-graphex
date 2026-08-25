@@ -17,9 +17,9 @@ RELATION conversion (FK / M2M / reverse) is performed by "convert_django_field",
 which now returns a graphene-free "NativeRelationField" presence/ordering marker
 that the native output thunk consumes (the marker keeps the field in
 "_meta.fields" so the native compiler can build the output field from
-"model._meta" directly). The pure helpers "convert_choice_name" /
-"choice_enum_name" / "get_choices" and the choices->enum conversion are
-backend-independent and are exercised through their original entry points.
+"model._meta" directly). The pure helpers "choice_enum_name" / "get_choices"
+and the choices->enum conversion are backend-independent and are exercised
+through their original entry points.
 
 Run: .venv/bin/python -m pytest tests/test_converter.py -q -o addopts=""
 """
@@ -37,7 +37,7 @@ from graphql import (
 )
 
 from django_graphex.converter import (
-    convert_choice_name,
+    choice_enum_name,
     convert_django_field,
     convert_django_field_with_choices,
     get_choices,
@@ -331,19 +331,19 @@ class ConverterTest(TestCase):
         # ``Dynamic`` was dead weight that only pinned graphene).
         self.assertIsInstance(graphql_field, NativeRelationField)
 
-    def test_convert_choice_name(self) -> None:
-        """convert_choice_name must uppercase and normalize dashes/spaces to underscores.
+    def test_choice_enum_name(self) -> None:
+        """choice_enum_name must uppercase and normalize dashes/spaces to underscores.
 
         Ships broken if generated enum value names stop matching GraphQL's
         allowed identifier charset or lose their uppercase convention.
         """
         # Test various choice name conversions
-        self.assertEqual(convert_choice_name("CHOICE_A"), "CHOICE_A")
+        self.assertEqual(choice_enum_name("CHOICE_A", None), "CHOICE_A")
         self.assertEqual(
-            convert_choice_name("choice-with-dashes"), "CHOICE_WITH_DASHES"
+            choice_enum_name("choice-with-dashes", None), "CHOICE_WITH_DASHES"
         )
         self.assertEqual(
-            convert_choice_name("choice with spaces"), "CHOICE_WITH_SPACES"
+            choice_enum_name("choice with spaces", None), "CHOICE_WITH_SPACES"
         )
 
     def test_get_choices(self) -> None:
@@ -473,11 +473,13 @@ class ConverterUtilsTest(TestCase):
         normalizing to valid upper-snake-case GraphQL enum value names.
         """
         # Test various name formats
-        self.assertEqual(convert_choice_name("simple"), "SIMPLE")
-        self.assertEqual(convert_choice_name("ALREADY_UPPER"), "ALREADY_UPPER")
-        self.assertEqual(convert_choice_name("with-dashes"), "WITH_DASHES")
-        self.assertEqual(convert_choice_name("with spaces"), "WITH_SPACES")
-        self.assertEqual(convert_choice_name("mixed_Case-Format"), "MIXED_CASE_FORMAT")
+        self.assertEqual(choice_enum_name("simple", None), "SIMPLE")
+        self.assertEqual(choice_enum_name("ALREADY_UPPER", None), "ALREADY_UPPER")
+        self.assertEqual(choice_enum_name("with-dashes", None), "WITH_DASHES")
+        self.assertEqual(choice_enum_name("with spaces", None), "WITH_SPACES")
+        self.assertEqual(
+            choice_enum_name("mixed_Case-Format", None), "MIXED_CASE_FORMAT"
+        )
 
 
 class FieldConversionIntegrationTest(TestCase):

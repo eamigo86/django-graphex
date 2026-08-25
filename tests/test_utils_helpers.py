@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Coverage for the standalone helpers in "django_graphex.utils".
 
-These hit the "get_obj" / "create_obj" error paths,
-"get_extra_filters", "get_related_fields", "get_reverse_fields",
+These hit "get_extra_filters", "get_related_fields", "get_reverse_fields",
 "is_required", "get_type", "_get_queryset" and "parse_validation_exc"
 that the end-to-end query/optimization suites do not directly exercise.
 """
@@ -14,9 +13,7 @@ from graphql import GraphQLList, GraphQLNonNull, GraphQLString
 
 from django_graphex.utils import (
     _get_queryset,
-    create_obj,
     get_extra_filters,
-    get_obj,
     get_related_fields,
     get_reverse_fields,
     get_type,
@@ -26,72 +23,6 @@ from django_graphex.utils import (
 )
 
 from .models import Author, BasicModel, Comment, Post
-
-
-# --------------------------------------------------------------------------- #
-# get_obj / create_obj                                                         #
-# --------------------------------------------------------------------------- #
-class GetCreateObjTest(TestCase):
-    """Behavior of "get_obj" and "create_obj" across success and error paths.
-
-    Covers found/missing/unknown-model lookups and creation success/failure.
-    """
-
-    def test_get_obj_returns_instance(self) -> None:
-        """Ship-broken contract: an existing primary key must resolve to the
-        matching model instance.
-        """
-        obj = BasicModel.objects.create(text="hi")
-        self.assertEqual(get_obj("tests", "BasicModel", obj.pk), obj)
-
-    def test_get_obj_missing_returns_none(self) -> None:
-        """Ship-broken contract: a primary key with no matching row must
-        resolve to None, not raise.
-        """
-        self.assertIsNone(get_obj("tests", "BasicModel", 999999))
-
-    def test_get_obj_unknown_model_returns_none(self) -> None:
-        """Ship-broken contract: an unknown app label or model name must
-        resolve to None instead of crashing.
-
-        Regression: an unknown app/model raised LookupError, and the unbound
-        "model" name in the "except model.DoesNotExist" clause then crashed
-        with UnboundLocalError instead of returning None.
-        """
-        self.assertIsNone(get_obj("tests", "NoSuchModel", 1))
-        self.assertIsNone(get_obj("no_such_app", "Whatever", 1))
-
-    def test_create_obj_creates_and_saves(self) -> None:
-        """Ship-broken contract: "create_obj" must persist a new instance
-        with the given field values.
-        """
-        obj = create_obj(BasicModel, text="made")
-        self.assertEqual(obj.text, "made")
-        self.assertTrue(BasicModel.objects.filter(pk=obj.pk).exists())
-
-    def test_create_obj_from_string_model(self) -> None:
-        """Ship-broken contract: "create_obj" must accept a dotted
-        "app_label.ModelName" string in place of the model class.
-        """
-        obj = create_obj("tests.BasicModel", text="strmade")
-        self.assertEqual(obj.text, "strmade")
-
-    def test_create_obj_invalid_model_returns_assert_message(self) -> None:
-        """Ship-broken contract: passing a non-Django-model class must make
-        "create_obj" return the assertion message as a string, not raise.
-        """
-        # The assert fires inside the try; the broad except returns its message.
-        result = create_obj(object)
-        self.assertIsInstance(result, str)
-        self.assertIn("valid Django Model", result)
-
-    def test_create_obj_validation_failure_reraises(self) -> None:
-        """Ship-broken contract: a model-validation failure during
-        "create_obj" must propagate as "ValidationError", not be swallowed.
-        """
-        # BasicModel.text is required (no blank) -> full_clean raises, re-raised.
-        with self.assertRaises(ValidationError):
-            create_obj(BasicModel, text="")
 
 
 # --------------------------------------------------------------------------- #

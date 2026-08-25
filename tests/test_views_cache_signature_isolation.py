@@ -392,3 +392,39 @@ class ResponseCacheSignatureIsolationTest(TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(calls, [], "A signature was computed for an active superuser")
+
+    # 6. The no-signature bypass belongs to an ACTIVE superuser only. A
+    #    DEACTIVATED one is pruned like anybody else, so it MUST fold a
+    #    signature: skipping it would hand it the active superuser's cache slot.
+    @override_settings(**_CACHE_AND_SCOPED)
+    def test_deactivated_superuser_never_reads_active_superuser_cached_body(
+        self,
+    ) -> None:
+        """Ship-broken contract: a deactivated superuser must not be served an
+        active superuser's cached response body; it is pruned to a narrower
+        schema, so its cache key must carry its own permission signature.
+        """
+        root = User.objects.create_superuser(
+            username="root", email="root@example.com", password="x"
+        )
+        dormant = User.objects.create_superuser(
+            username="dormant", email="dormant@example.com", password="x"
+        )
+        dormant.is_active = False
+        dormant.save()
+        query = "{ public }"
+
+        resp_root = self.view(_post(query, user=root))
+        self.assertEqual(resp_root.status_code, 200)
+        self.assertEqual(
+            json.loads(resp_root.content)["data"]["public"], "public-for-root"
+        )
+
+        resp_dormant = self.view(_post(query, user=dormant))
+        self.assertEqual(resp_dormant.status_code, 200)
+        self.assertEqual(
+            json.loads(resp_dormant.content)["data"]["public"],
+            "public-for-dormant",
+            "Deactivated superuser was served the active superuser's cached "
+            "response (no signature folded for a caller that gets a pruned schema)",
+        )

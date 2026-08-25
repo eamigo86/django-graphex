@@ -57,6 +57,12 @@ __all__ = (
 _NESTED_OPS = frozenset({"create", "update"})
 
 
+#: Default for "_persist_child(instance=...)". "None" already means "the payload
+#: names no row I could find", so it cannot double as "I did not look" -- the
+#: two must stay distinguishable for the caller to hand its own lookup over.
+_UNRESOLVED: Any = object()
+
+
 def host_registries(registry: Any) -> tuple[Any, ...]:
     """Return the registries a parent's child hosts may legitimately live in.
 
@@ -562,39 +568,51 @@ class NestedFieldsMixin:
                 # BOTH reverse kinds -- reverse FK and reverse O2O -- because
                 # in both the child carries a single key naming its owner.
                 child_pk = cls._child_pk(child_model, item)
-                if child_pk is not None:
-                    # Through the shared lookup helper, so a pk the field cannot
-                    # parse is "no row" here too instead of a raw ORM error.
-                    existing = get_Object_or_None(child_model, pk=child_pk)
-                    if existing is not None:
-                        # SECURITY: BEFORE the ownership guard, which resolves
-                        # the pk unscoped and would answer a hidden row with
-                        # "does not belong to this <Parent>" -- disclosing that
-                        # the row exists. Deciding scope first makes every
-                        # hidden row answer the same not-found, whether or not
-                        # it happens to have an owner.
-                        cls._reject_hidden_row(field, child_model, child_pk, info)
-                        current_owner_id = getattr(existing, f"{fk_name}_id", None)
-                        if (
-                            current_owner_id is not None
-                            and current_owner_id != parent.pk
-                        ):
-                            parent_model_name = parent.__class__.__name__
-                            raise _NestedError(
-                                [
-                                    ErrorType(
-                                        field=field,
-                                        messages=[
-                                            f"Object {child_pk} does not "
-                                            f"belong to this "
-                                            f"{parent_model_name}."
-                                        ],
-                                    )
-                                ]
-                            )
+                # Through the shared lookup helper, so a pk the field cannot
+                # parse is "no row" here too instead of a raw ORM error.
+                existing = (
+                    get_Object_or_None(child_model, pk=child_pk)
+                    if child_pk is not None
+                    else None
+                )
+                if existing is not None:
+                    # SECURITY: BEFORE the ownership guard, which resolves
+                    # the pk unscoped and would answer a hidden row with
+                    # "does not belong to this <Parent>" -- disclosing that
+                    # the row exists. Deciding scope first makes every
+                    # hidden row answer the same not-found, whether or not
+                    # it happens to have an owner.
+                    cls._reject_hidden_row(field, child_model, child_pk, info)
+                    current_owner_id = getattr(existing, f"{fk_name}_id", None)
+                    if current_owner_id is not None and current_owner_id != parent.pk:
+                        parent_model_name = parent.__class__.__name__
+                        raise _NestedError(
+                            [
+                                ErrorType(
+                                    field=field,
+                                    messages=[
+                                        f"Object {child_pk} does not "
+                                        f"belong to this "
+                                        f"{parent_model_name}."
+                                    ],
+                                )
+                            ]
+                        )
 
+                # The writer resolves the same model on the same pk and applies
+                # the same scope, so both are handed over rather than paid for
+                # twice -- 2x(1 + H) SELECTs per child, H being the hosts that
+                # serve the child's update. "scope_checked" is true exactly when
+                # the guard above ran, which is exactly when there is a row for
+                # it to have checked.
                 cls._persist_child(
-                    field, child_model, item, info, save_kwargs={fk_name: parent}
+                    field,
+                    child_model,
+                    item,
+                    info,
+                    save_kwargs={fk_name: parent},
+                    instance=existing,
+                    scope_checked=existing is not None,
                 )
         elif kind == "m2m":
             items = sub_data if isinstance(sub_data, list) else [sub_data]
@@ -616,13 +634,22 @@ class NestedFieldsMixin:
                 # reports an uncoercible pk as "no row", so a malformed pk never
                 # reaches the linkage query as a raw ORM error.
                 item_pk = cls._child_pk(child_model, item)
+                existing = (
+                    get_Object_or_None(child_model, pk=item_pk)
+                    if item_pk is not None
+                    else None
+                )
                 linked = None
-                if item_pk is not None:
-                    existing = get_Object_or_None(child_model, pk=item_pk)
-                    if existing is not None and not manager.filter(pk=item_pk).exists():
-                        linked = existing
+                if existing is not None and not manager.filter(pk=item_pk).exists():
+                    linked = existing
                 if linked is None:
-                    linked = cls._persist_child(field, child_model, item, info)
+                    # Same de-duplication as the reverse branch, and NO
+                    # "scope_checked": nothing above consulted the child's hosts,
+                    # so the writer must still apply their scope to the row it is
+                    # about to write.
+                    linked = cls._persist_child(
+                        field, child_model, item, info, instance=existing
+                    )
                 children.append(linked)
             manager.add(*children)  # additive: never removes
 
@@ -671,6 +698,8 @@ class NestedFieldsMixin:
         item: dict[str, Any],
         info: GraphQLResolveInfo,
         save_kwargs: dict[str, Any] | None = None,
+        instance: Model | None = _UNRESOLVED,
+        scope_checked: bool = False,
     ) -> Model:
         """Upsert a single nested child, raising on validation failure.
 
@@ -681,6 +710,17 @@ class NestedFieldsMixin:
             info: GraphQL resolve info for the current request.
             save_kwargs: Extra attributes injected at save time (e.g. the reverse
                 FK pointing back at the parent).
+            instance: The row the payload names, when the caller already looked
+                it up on the SAME model and pk this method would use -- "None"
+                meaning it found none. Left at the "_UNRESOLVED" sentinel, the
+                lookup is done here as before. It is a pure de-duplication: the
+                branches that pass it resolve through "get_Object_or_None" too,
+                so what is saved is a SELECT, never a decision.
+            scope_checked: True when the caller already ran "_reject_hidden_row"
+                for that row. It only ever suppresses a REPEAT of the check the
+                caller just ran and passed; a caller that resolved the row
+                WITHOUT checking its scope leaves this False and the check runs
+                here, which is why the many-to-many branch does exactly that.
 
         Returns:
             The saved child instance.
@@ -694,9 +734,10 @@ class NestedFieldsMixin:
         model = child_backend.get_model()
         hosts = hosts_for_nested(cls._meta.registry, model)
         pk = cls._child_pk(model, item)
-        instance = get_Object_or_None(model, pk=pk) if pk is not None else None
+        if instance is _UNRESOLVED:
+            instance = get_Object_or_None(model, pk=pk) if pk is not None else None
 
-        if instance is not None:
+        if instance is not None and not scope_checked:
             cls._reject_hidden_row(field, model, pk, info)
 
         # SECURITY: the child's OWN permissions, which the parent's single

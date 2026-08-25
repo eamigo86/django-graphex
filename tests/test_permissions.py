@@ -97,6 +97,19 @@ _authed = _types.SimpleNamespace(
 _admin = _types.SimpleNamespace(
     is_authenticated=True, is_active=True, is_staff=True, is_superuser=True
 )
+# One user per flag the admin predicate ANDs together, each holding the other
+# two: they are what makes every flag load-bearing. With only "_anon" (all
+# False) and "_admin" (all True) around, dropping any single flag from
+# "_is_admin" is invisible to the suite.
+_dormant_admin = _types.SimpleNamespace(  # deactivated staff superuser
+    is_authenticated=True, is_active=False, is_staff=True, is_superuser=True
+)
+_bare_superuser = _types.SimpleNamespace(  # superuser without the staff bit
+    is_authenticated=True, is_active=True, is_staff=False, is_superuser=True
+)
+_staff_only = _types.SimpleNamespace(  # staff member who is not a superuser
+    is_authenticated=True, is_active=True, is_staff=True, is_superuser=False
+)
 
 
 def _denied(result: ExecutionResult) -> bool:
@@ -262,6 +275,27 @@ def test_all_per_action_methods_delegate_to_has_permission() -> None:
     assert IsAdminOrReadOnly().has_update_permission(admin, HookModel) is True
     assert IsAdminOrReadOnly().has_delete_permission(authed, HookModel) is False
     assert IsAdminOrReadOnly().has_retrieve_permission(anon, HookModel) is True
+
+
+def test_is_admin_requires_every_flag() -> None:
+    """Assert "IsAdmin" denies a caller missing any one of the three flags.
+
+    If this fails, the admin predicate would grant on a subset of
+    "is_active" / "is_staff" / "is_superuser" — a deactivated superuser
+    (an offboarded account) or a plain staff member would gain admin writes.
+    """
+    from django_graphex.permissions import IsAdmin
+
+    perm = IsAdmin()
+    # Each caller holds two of the three flags, so a denial can only come from
+    # the one it is missing: drop that flag from the predicate and this fails.
+    for user in (_dormant_admin, _bare_superuser, _staff_only):
+        info = _types.SimpleNamespace(context=_types.SimpleNamespace(user=user))
+        assert perm.has_create_permission(info, HookModel) is False
+        assert IsAdminOrReadOnly().has_update_permission(info, HookModel) is False
+    # The control: all three flags together still grant.
+    admin = _types.SimpleNamespace(context=_types.SimpleNamespace(user=_admin))
+    assert perm.has_create_permission(admin, HookModel) is True
 
 
 # --------------------------------------------------------------------------- #

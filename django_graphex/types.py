@@ -3185,10 +3185,16 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         custom_filters = getattr(cls, "_dgx_custom_filters", None) or []
         qs = apply_custom_filters(qs, custom_filters, info, filter_value)
 
-        count = qs.count()
-
+        # LAZY totalCount, exactly as the "DjangoListObjectField" path does it
+        # (fields.py): the COUNT is deferred to first access of
+        # "DjangoListObjectBase.count", so a client that never selects
+        # "totalCount" never pays for it. Deferring is safe because the closure
+        # holds the UNSLICED queryset -- the page the client reads is sliced
+        # downstream, so the count still answers for the whole set. When the
+        # results were already iterated and no slice narrowed them, "count()"
+        # reads the result cache instead of issuing a second query.
         return DjangoListObjectBase(
-            count=count,
+            count=lambda qs=qs: qs.count(),
             results=maybe_queryset(qs),
             results_field_name=cls.list_object_type()._meta.results_field_name,
         )

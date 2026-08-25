@@ -9,7 +9,7 @@ GenericForeignKey ct/fk-field resolution, and the ArrayField/RangeField
 list-base branches.
 
 Phase 7 graphene-removal: the relation / GFK / ArrayField / RangeField branches
-and the pure "choice_enum_name" / "assert_valid_name" / "construct_fields"
+and the pure "choice_enum_name" / "_is_valid_name" / "construct_fields"
 sorting paths are KEPT/backend-independent and unchanged. The graphene SCALAR
 converters (boolean / nullboolean / binary / decimal / uuid) are dead on native
 (the native output compiler derives the scalar from "model._meta" directly), so
@@ -31,7 +31,7 @@ from graphql import (
 )
 
 from django_graphex.converter import (
-    assert_valid_name,
+    _is_valid_name,
     choice_enum_name,
     construct_fields,
     convert_django_field,
@@ -535,20 +535,18 @@ def test_reverse_relation_nested_input_registered_returns_list() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# assert_valid_name                                                             #
+# _is_valid_name                                                                #
 # --------------------------------------------------------------------------- #
-def test_assert_valid_name_rejects_bad_name() -> None:
-    """A name starting with a digit or containing a space must raise AssertionError.
+def test_is_valid_name_rejects_bad_name() -> None:
+    """A name starting with a digit, containing a space or empty must be rejected.
 
     Ships broken if invalid GraphQL identifiers stop being rejected, letting
-    an unusable name reach schema construction, or if a valid name starts
-    raising unexpectedly.
+    an unusable name reach schema construction through the "choice_enum_name"
+    cascade, or if a valid name starts being refused.
     """
-    import pytest
-
-    with pytest.raises(AssertionError):
-        assert_valid_name("1bad name")
-    assert_valid_name("good_name")  # no raise
+    assert _is_valid_name("1bad name") is False
+    assert _is_valid_name("") is False
+    assert _is_valid_name("good_name") is True
 
 
 # --------------------------------------------------------------------------- #

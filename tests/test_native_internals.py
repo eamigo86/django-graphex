@@ -16,6 +16,7 @@ import pytest
 from django.db import models
 from django.test import TestCase
 from django.utils.translation import gettext_lazy as _
+from graphql import GraphQLBoolean
 
 from django_graphex.core.backend import (
     PydanticBackend,
@@ -23,6 +24,7 @@ from django_graphex.core.backend import (
     _translate,
 )
 from django_graphex.core.fields import (
+    FIELD_TYPES,
     _choices_enum,
     _python_type,
     _scalar_type,
@@ -31,6 +33,7 @@ from django_graphex.core.fields import (
     writable_fields,
 )
 from django_graphex.core.validators import _collect, build_validator_model
+from django_graphex.filtering.native_schema import _field_scalar, _scalar_by_internal
 from tests.models import DummyModel, Tag
 
 
@@ -104,6 +107,23 @@ def test_scalar_type_unknown_warns_and_returns_str() -> None:
 
     with pytest.warns(RuntimeWarning, match="No native type mapping"):
         assert _scalar_type(_MysteryStub()) is str
+
+
+def test_nullbooleanfield_resolves_through_the_booleanfield_key() -> None:
+    """A "NullBooleanField" reaches the boolean mapping under the "BooleanField" key.
+
+    Django reports "BooleanField" from "get_internal_type()" for a
+    "NullBooleanField", so a "NullBooleanField" key in an internal-type-keyed
+    map is unreachable and can only drift away from its siblings. This test
+    breaks if the deprecated field stops resolving to a boolean on either the
+    input-schema path or the filter path, or if the dead key comes back.
+    """
+    field = models.NullBooleanField()
+    assert field.get_internal_type() == "BooleanField"
+    assert _scalar_type(field) is bool
+    assert _field_scalar(field) is GraphQLBoolean
+    assert "NullBooleanField" not in FIELD_TYPES
+    assert "NullBooleanField" not in _scalar_by_internal()
 
 
 def test_choices_enum_resolves_lazy_label_and_dedupes() -> None:

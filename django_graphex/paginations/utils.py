@@ -163,33 +163,6 @@ def _positive_int(
     return ret
 
 
-def _nonzero_int(
-    integer_string: Any, strict: bool = False, cutoff: int | None = None
-) -> Any:
-    """Cast a string to a strictly non-zero integer.
-
-    Args:
-        integer_string: The value to cast to an integer.
-        strict: If "True", treat zero as invalid.
-        cutoff: An optional maximum value to clamp the result to.
-
-    Returns:
-        The parsed integer, clamped to "cutoff" when provided.
-
-    Raises:
-        ValueError: If the value is zero while strict.
-    """
-    if integer_string:
-        ret = int(integer_string)
-    else:
-        return integer_string
-    if ret == 0 and strict:
-        raise ValueError()
-    if cutoff:
-        return min(ret, cutoff)
-    return ret
-
-
 def _get_count(queryset: Any) -> int:
     """Determine an object count, supporting either querysets or regular lists.
 

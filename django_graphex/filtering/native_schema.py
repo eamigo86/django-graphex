@@ -181,8 +181,9 @@ def _scalar_by_internal() -> dict[str, GraphQLScalarType]:
         "FileField": GraphQLString,
         "ImageField": GraphQLString,
         "GenericIPAddressField": GraphQLString,
+        # ``NullBooleanField`` reports "BooleanField" from
+        # ``get_internal_type()``, so this single key covers it too.
         "BooleanField": GraphQLBoolean,
-        "NullBooleanField": GraphQLBoolean,
         "FloatField": GraphQLFloat,
         "DecimalField": GdxDecimal,
         # Date/DateTime/Time use PLAIN-named filter-input scalars (Date /
