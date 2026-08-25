@@ -14,6 +14,107 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+### Security
+
+- **One WebSocket socket could open unbounded subscriptions.** The
+  `graphql-transport-ws` consumer registered every accepted `subscribe` with no
+  ceiling, and each live operation joins its own channel-layer group — so a
+  single client turned one connection into hundreds of subscribers (500
+  concurrent operations on one socket was reproduced) while the HTTP side had
+  bounded its analogous surface with `MAX_BATCH_SIZE` since 1.2.1. The new
+  **`MAX_SUBSCRIPTIONS_PER_CONNECTION`** setting (default `50`) caps the
+  concurrent operations one socket may hold. **This rejects subscriptions that
+  used to be accepted**, but only past 50 concurrent operations on a *single*
+  connection; a `subscribe` past the cap is answered with the transport's own
+  `error` frame naming the limit, and the socket plus every subscription
+  already running on it survive untouched. A slot frees itself the moment its
+  operation ends (client `complete`, stream end, or disconnect). Set
+  `MAX_SUBSCRIPTIONS_PER_CONNECTION = None` to restore the previous unbounded
+  behaviour. The SSE transport is unaffected: one request carries exactly one
+  subscription. See
+  [Subscriptions › Per-connection subscription cap](usage/subscriptions.md#per-connection-subscription-cap).
+- **A cross-site form could execute mutations under the victim's session.** The
+  endpoint is `csrf_exempt` and `parse_body` accepts
+  `application/x-www-form-urlencoded` and `multipart/form-data`. Both are
+  CORS-*simple* content types, so a `<form>` on any origin posted straight
+  through with no preflight and the browser attached the victim's session
+  cookie — a plain CSRF hole on every mutation. The same hole was open on the
+  **SSE subscription endpoint**, which is `csrf_exempt` too and reads a
+  form-encoded `query` straight out of `request.POST`. The new
+  **`REQUIRE_CSRF_HEADER`** setting (default **`True`**) now demands the
+  **`X-Requested-With`** header on the CORS-simple set — form-encoded,
+  multipart, `text/plain`, and a body-less POST carrying no content type at all
+  — and answers HTTP 403 before the body is read otherwise, on the HTTP views
+  **and** on the SSE endpoint (whose refusal is a plain body, not a JSON
+  envelope, because an `EventSource` client does not parse one). The header is
+  not CORS-safelisted, so requiring it forces back the preflight the attacker
+  page cannot pass; the value itself is never inspected. The check runs **ahead
+  of every dispatch**, wrapped around the view callable, because
+  `GraphQLView.dispatch` owns the whole response-cache interaction and reaches
+  the shared dispatch only through `super_call`: a guard behind it is bypassed
+  by a warm cache entry, has its own 403 stored and replayed to legitimate
+  callers, and still lets a rejected mutation flush the caller's cache
+  namespace. **`application/json` and `application/graphql` clients change
+  nothing**: neither is simple, so both already required a preflight. See
+  [Security › Cross-site POST protection](usage/security.md#cross-site-post-protection).
+
+    !!! warning "This is a breaking change for two kinds of client, on by default"
+
+        **Who breaks.** Anyone POSTing `query=` as
+        `application/x-www-form-urlencoded`, and **anyone using the multipart
+        file upload shipped in 2.2.0** — that feature works in the published
+        release, so upload clients written against 2.2.0 do break here.
+
+        **What they see.** HTTP 403 with
+        `This content type requires the X-Requested-With header. …`, before the
+        body is read. The message names the header; there is no silent failure
+        and no partial execution.
+
+        **The fix, one line.** Add the header to the request:
+        `headers={"X-Requested-With": "XMLHttpRequest"}` (`requests`),
+        `xhr.setRequestHeader(...)`, or the equivalent. The value is never
+        inspected. Nothing else about the request changes.
+
+        **The opt-out.** `REQUIRE_CSRF_HEADER = False` restores the previous
+        behaviour wholesale. Use it only if a client genuinely cannot set a
+        header **and** the endpoint is protected another way.
+
+        **Why multipart is not exempted.** `multipart/form-data` is itself a
+        CORS-simple content type, so a cross-site `<form enctype="multipart…">`
+        posts to the endpoint with no preflight at all. Exempting it to spare
+        the upload clients would reopen exactly the hole this closes — and
+        would leave the *upload* mutations, the ones that write files, as the
+        only unprotected surface.
+
+- **Disabling introspection still leaked the schema, one guess at a time.**
+  `format_error` returned graphql-core's `formatted` mapping verbatim, so the
+  `Did you mean 'email'?` suggestion appended to an unknown field, type or
+  argument rode out even with `DisableIntrospectionMiddleware` installed —
+  probing with invented names rebuilt much of a schema the operator believed
+  was hidden. The WS and SSE transports leaked it by the same route, serializing
+  raw `error.formatted` of their own, so any deployment exposing subscriptions
+  kept the oracle open on a `subscribe` frame or a direct POST to the SSE
+  endpoint. The trailing suggestion sentence is now stripped whenever
+  introspection is **actually** disabled (the middleware installed *and*
+  `ALLOW_INTROSPECTION=False`), through **one shared formatter**
+  (`django_graphex.security.format_graphql_error`) that the HTTP view and both
+  transports call — WS covers its validation errors, its subscribe-entry
+  failures and its in-stream `next{errors}` frames. The strip is keyed on the
+  **rules that actually leak** — `FieldsOnCorrectTypeRule`,
+  `KnownTypeNamesRule`, `KnownArgumentNames*Rule`, `ValuesOfCorrectTypeRule` /
+  `coerce_input_value` and enum-value coercion — by matching the message each
+  one writes ahead of its suggestion, not by matching the shape of a trailing
+  `Did you mean …?` sentence. Nothing else changes: the rest of the message, the
+  `locations` and the `path` all survive; `ScalarLeafsRule`'s
+  `Did you mean 'field { … }'?` guidance (built from the name the *client*
+  typed, not from the schema) and a resolver-raised application error that
+  happens to end in a question keep every word; and with introspection allowed
+  the suggestion is kept because the same names are public anyway. The strip is
+  request-independent by design, so the `INTROSPECTION_ALLOW_SUPERUSER` bypass
+  does not restore it — an error body reaches the response cache, where a
+  per-user decision would serve one caller's body to another. See
+  [Security › "Did you mean" suggestions are stripped too](usage/security.md#did-you-mean-suggestions-are-stripped-too).
+
 ### Changed
 
 - **Subscriptions are now measured against `MAX_QUERY_DEPTH` and
@@ -30,6 +131,18 @@ All notable changes to this library are documented here. The format is based on
   query, not less. A project that relied on the gap must raise
   `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` far enough to cover its subscription
   documents.
+- **`BaseGraphQLView.format_error` is now an instance method taking the
+  request** — `format_error(self, error, request=None)`, previously
+  `@staticmethod format_error(error)`. It has to be: the formatter decides
+  whether to strip the schema suggestion by looking at the middleware chain, and
+  the chain that actually ran comes from `get_middleware(request)`, the same
+  per-request hook execution asks. A static, request-less formatter could reach
+  neither, and a subclass that resolves middleware per request got a formatter
+  whose verdict disagreed with the chain that ran. **Migration:** a subclass
+  overriding it as `def format_error(error)` (or a caller invoking
+  `MyView.format_error(err)` on the class) must become
+  `def format_error(self, error, request=None)`. Calls through an instance —
+  `self.format_error(err)` — are unaffected.
 
 ### Fixed
 
@@ -164,6 +277,16 @@ All notable changes to this library are documented here. The format is based on
   claimed its table was the whole list while the graphene base still accepts
   `name`, `_meta`, `interfaces`, `possible_types`, `default_resolver` and
   `container`. All four now say what the code does.
+- **The multipart upload pages never named the part that carries the document.**
+  Both the guide and the API reference described "the part carrying the JSON
+  body under whatever key your view reads", which sent readers looking for the
+  `operations` / `map` envelope of the graphql-multipart-request spec — an
+  envelope this library does not implement. A multipart body is read straight
+  out of `request.POST`, so the parts are **`query`** and (optionally)
+  **`variables`**; anything else answers `Must provide query string.` with HTTP
+  400. Both pages now name them, show a working `requests.post` call, and carry
+  the `X-Requested-With` requirement (the API reference had neither). See
+  [Mutations › Automatic multipart uploads](usage/mutations.md#automatic-multipart-uploads).
 
 ## 2.2.0 — 2026-08-24
 

@@ -443,6 +443,33 @@ The GraphQL input field stays `String`: the file travels in the multipart body,
 never in the GraphQL variables. That field also accepts a plain storage path
 string, and rejects any other shape with a structured error.
 
+The request carries a **`query`** part with the document, an optional
+**`variables`** part with its variables as JSON, and one part per file named
+after the model field — the view reads a multipart body straight out of
+`request.POST`, so there is no `operations` / `map` envelope:
+
+```python
+requests.post(
+    "https://app.example.com/graphql/",
+    files={"avatar": open("avatar.png", "rb")},
+    data={
+        "query": "mutation UpdateProfile($profileData: ProfileInput!) { … }",
+        "variables": json.dumps({"profileData": {"bio": "hi"}}),
+    },
+    headers={"X-Requested-With": "XMLHttpRequest"},   # <- required
+)
+```
+
+!!! warning "A multipart POST must carry `X-Requested-With`"
+
+    `multipart/form-data` is a CORS-*simple* content type, so a browser posts it
+    cross-site with no preflight and the `csrf_exempt` endpoint would otherwise
+    execute a forged `<form>` submit under the victim's session cookie. A
+    multipart request without the header is refused with HTTP 403 before its
+    body is read. See
+    [Security → Cross-site POST protection](../usage/security.md#cross-site-post-protection)
+    for the `REQUIRE_CSRF_HEADER` opt-out.
+
 !!! warning "Top-level fields only"
 
     The merge is keyed by the bare form-field name, so a file field on a child

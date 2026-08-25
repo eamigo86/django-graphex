@@ -26,6 +26,20 @@ automatically (no-ops until `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` are set — see
 [Query depth & cost limits](query-limits.md)) and response caching when
 `CACHE_ACTIVE` is on (see [Settings](settings.md)).
 
+### Cross-site POST protection
+
+`GraphQLView` and `AuthenticatedGraphQLView` are `csrf_exempt` (`BaseGraphQLView`
+is not — mount it behind Django's own CSRF middleware, or exempt it yourself).
+On all three, a POST whose content type a browser can send cross-site **without
+a CORS preflight** must carry the `X-Requested-With` header or it is refused
+with HTTP 403 before its body is read. That set is
+`application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`, and a
+body-less POST with no content type at all. `application/json` and
+`application/graphql` already force a preflight and are never asked for it, so
+JSON clients change nothing. The SSE subscription endpoint is guarded by the
+same setting. Turn it off with `REQUIRE_CSRF_HEADER=False` — see
+[Security → Cross-site POST protection](security.md#cross-site-post-protection).
+
 ## Endpoint-level auth: `AuthenticatedGraphQLView`
 
 A coarse gate that requires every request to satisfy the view's

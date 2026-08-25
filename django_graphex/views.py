@@ -23,6 +23,7 @@ import re
 import threading
 import weakref
 from collections import OrderedDict
+from functools import wraps
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -42,7 +43,7 @@ from graphql import (
     parse,
     validate_schema,
 )
-from graphql.error import GraphQLError, GraphQLSyntaxError
+from graphql.error import GraphQLSyntaxError
 from graphql.execution.middleware import MiddlewareManager
 from graphql.validation import specified_rules, validate
 
@@ -50,6 +51,7 @@ from . import settings as _settings
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
+from .security import format_graphql_error
 from .settings import graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule
@@ -60,6 +62,71 @@ if TYPE_CHECKING:
 #: Request attribute set when a model mutation reported errors, so the
 #: response can roll back an ATOMIC_MUTATIONS transaction.
 MUTATION_ERRORS_FLAG = "graphene_mutation_has_errors"
+
+#: Header a caller must send to POST one of the CORS-simple content types. The
+#: name is not on the CORS-safelist, so a cross-origin request carrying it is
+#: forced through a preflight — which is what actually stops the attack; the
+#: value is never inspected. "X-Requested-With" is preferred over a
+#: library-specific name because many HTTP clients already set it.
+CSRF_GUARD_HEADER = "X-Requested-With"
+
+#: The WSGI META key for that header, derived so the two can never drift apart.
+_CSRF_GUARD_META_KEY = "HTTP_" + CSRF_GUARD_HEADER.upper().replace("-", "_")
+
+#: Content types a browser can POST cross-site with NO preflight (the CORS
+#: "simple request" set). The empty string is in the set on purpose: a body-less
+#: cross-site POST carries no Content-Type at all and can still execute a query
+#: taken from the query string. Everything else (notably "application/json" and
+#: "application/graphql") already forces a preflight and is left alone.
+_CORS_SIMPLE_CONTENT_TYPES = frozenset(
+    {
+        "",
+        "application/x-www-form-urlencoded",
+        "multipart/form-data",
+        "text/plain",
+    }
+)
+
+#: Body of the 403 the cross-site POST guard returns. Constant on purpose: a
+#: caller must not be able to learn from it whether the query it sent would
+#: have been valid. Shared with the SSE subscription transport, which is
+#: csrf_exempt and reads form-encoded bodies out of "request.POST" too.
+CSRF_GUARD_MESSAGE = (
+    f"This content type requires the {CSRF_GUARD_HEADER} header. A browser can "
+    "POST it cross-site without a CORS preflight, so the header is what proves "
+    f"the request was not forged. Send '{CSRF_GUARD_HEADER}: XMLHttpRequest', "
+    "post 'application/json' instead, or set REQUIRE_CSRF_HEADER=False to opt "
+    "out."
+)
+
+
+def csrf_header_missing(request: Any, content_type: str) -> bool:
+    """Return whether this POST must be refused for lacking the guard header.
+
+    The verdict, without the response: the HTTP views answer it with a JSON
+    "errors" envelope while the SSE transport answers it with the plain text
+    every other rejection on that endpoint uses, so only the decision is shared.
+
+    Args:
+        request: The incoming HTTP request.
+        content_type: The request's normalized content type, as
+            "BaseGraphQLView.get_content_type" returns it.
+
+    Returns:
+        True when "REQUIRE_CSRF_HEADER" is on, the request is a POST of a
+        CORS-simple content type, and the header is absent.
+    """
+    # PRESENCE, not truthiness: an empty value is still a non-safelisted header,
+    # so carrying it cross-origin forces the same preflight a filled one does.
+    # Refusing it would buy no security and would contradict the contract the
+    # docs state -- that the value is never inspected.
+    return (
+        (request.method or "").upper() == "POST"
+        and bool(graphql_api_settings.REQUIRE_CSRF_HEADER)
+        and content_type in _CORS_SIMPLE_CONTENT_TYPES
+        and _CSRF_GUARD_META_KEY not in request.META
+    )
+
 
 #: Self-contained GraphiQL page (CDN). Avoids depending on graphene-django's
 #: bundled template + static assets. Override per view with ``graphiql_template``.
@@ -571,9 +638,74 @@ class BaseGraphQLView(View):
         """
         return request
 
+    @classmethod
+    def as_view(cls, *args: Any, **kwargs: Any) -> Any:
+        """Build the view callable, fronted by the cross-site POST guard.
+
+        The guard lives HERE, not in "dispatch", because "dispatch" is not the
+        choke point: "GraphQLView.dispatch" overrides it and performs the whole
+        response-cache interaction — the "cache.get", the version bump, the
+        "cache.set" — reaching "BaseGraphQLView.dispatch" only through
+        "super_call", at several different points. A guard behind that is
+        bypassed by a warm cache entry, has its own 403 stored and replayed to
+        legitimate callers, and still lets a rejected mutation flush the
+        identity's cache namespace. Wrapping the view callable puts the check
+        ahead of every dispatch on every subclass, and its response is built
+        here so nothing can cache it.
+
+        Args:
+            *args: Positional arguments forwarded to Django's "View.as_view".
+            **kwargs: Keyword arguments forwarded to Django's "View.as_view".
+
+        Returns:
+            The guarded view callable.
+        """
+        view = super().as_view(*args, **kwargs)
+
+        @wraps(view)
+        def guarded(request: Any, *inner: Any, **kw: Any) -> HttpResponse:
+            refusal = cls.csrf_header_guard(request)
+            return view(request, *inner, **kw) if refusal is None else refusal
+
+        return guarded
+
+    @classmethod
+    def csrf_header_guard(cls, request: Any) -> HttpResponse | None:
+        """Return the 403 for a forgeable header-less POST, or None to continue.
+
+        The endpoint is "csrf_exempt", and a POST of one of the CORS-simple
+        content types needs no preflight, so a cross-site form submit reaches it
+        with the victim's session cookie attached. Demanding a header the CORS
+        safelist does not cover forces that preflight back into existence — the
+        attacker page cannot pass it. The header is only required where the
+        preflight is missing, so "application/json" and "application/graphql"
+        clients change nothing. The header VALUE is never inspected.
+
+        The decision itself lives in "csrf_header_missing", which the SSE
+        subscription transport shares; only the refusal shape differs.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            The HTTP 403 response when the request must be refused, otherwise
+            None.
+        """
+        if not csrf_header_missing(request, cls.get_content_type(request)):
+            return None
+        # Built here rather than raised as an HttpError: the refusal must reach
+        # the client without passing through any dispatch that could store it.
+        return HttpResponseForbidden(
+            json.dumps({"errors": [{"message": CSRF_GUARD_MESSAGE}]}),
+            content_type="application/json",
+        )
+
     @method_decorator(ensure_csrf_cookie)
     def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
         """Handle a GraphQL GET/POST request (and GraphiQL/batch).
+
+        The cross-site POST guard runs BEFORE this method, in "as_view" — see
+        "csrf_header_guard" for why it cannot live here.
 
         Body-size guard: when "MAX_REQUEST_BODY_SIZE" is configured (not None)
         and the request body length exceeds the limit, the request is rejected
@@ -725,7 +857,7 @@ class BaseGraphQLView(View):
             response = e.response
             response["Content-Type"] = "application/json"
             response.content = self.json_encode(
-                request, {"errors": [self.format_error(e)]}
+                request, {"errors": [self.format_error(e, request)]}
             )
             return response
 
@@ -759,7 +891,7 @@ class BaseGraphQLView(View):
             if execution_result.errors:
                 set_rollback()
                 response["errors"] = [
-                    self.format_error(e) for e in execution_result.errors
+                    self.format_error(e, request) for e in execution_result.errors
                 ]
 
             if execution_result.errors and any(
@@ -1106,29 +1238,37 @@ class BaseGraphQLView(View):
             operation_name = None
         return query, variables, operation_name, id
 
-    @staticmethod
-    def format_error(error: Any) -> dict:
+    def format_error(self, error: Any, request: Any = None) -> dict:
         """Format an error for the response "errors" list.
 
-        A "GraphQLError" is serialized via its "formatted" mapping; any other
-        exception is wrapped as a "{'message': str(error)}" entry.
+        Delegates to "security.format_graphql_error", the single formatter the
+        HTTP view and both subscription transports share, so the "Did you
+        mean ...?" schema oracle is closed on every surface at once.
+
+        The chain comes from "get_middleware(request)" — the same hook
+        execution asks — so a subclass that resolves its middleware per request
+        gets a formatter whose introspection verdict matches the chain that
+        actually ran.
 
         Args:
             error: The error (or exception) to format.
+            request: The request being answered, used to resolve the middleware
+                chain. None falls back to the view's configured chain.
 
         Returns:
             The error mapping suitable for the response "errors" list.
         """
-        if isinstance(error, GraphQLError):
-            return error.formatted
-        return {"message": str(error)}
+        return format_graphql_error(error, self.get_middleware(request))
 
     @staticmethod
     def get_content_type(request: Any) -> str:
         """Return the request content type without parameters.
 
-        Reads "CONTENT_TYPE" (falling back to "HTTP_CONTENT_TYPE"), strips any
-        trailing parameters (e.g. "; charset=utf-8") and lower-cases the result.
+        Reads "CONTENT_TYPE" (falling back to "HTTP_CONTENT_TYPE"), drops any
+        trailing parameters (e.g. "; charset=utf-8"), trims surrounding
+        whitespace and lower-cases the result. The trim matters: the value is
+        compared against a frozenset by the cross-site POST guard, where a
+        padded content type would be a silent miss instead of a visible error.
 
         Args:
             request: The incoming HTTP request.
@@ -1138,7 +1278,7 @@ class BaseGraphQLView(View):
         """
         meta = request.META
         content_type = meta.get("CONTENT_TYPE", meta.get("HTTP_CONTENT_TYPE", ""))
-        return content_type.split(";", 1)[0].lower()
+        return content_type.split(";", 1)[0].strip().lower()
 
 
 #: Standard validation plus query-depth limiting ("Meta.max_depth" /
@@ -1577,7 +1717,10 @@ class GraphQLView(BaseGraphQLView):
         """Create the view with CSRF exemption.
 
         The GraphQL endpoint is CSRF-exempt because it authenticates each request
-        explicitly rather than relying on session-cookie CSRF protection.
+        explicitly rather than relying on session-cookie CSRF protection. The
+        cross-site POST guard the base "as_view" wraps around the view is what
+        replaces the token for the content types a browser can post cross-site
+        with no preflight.
 
         Args:
             *args: Positional arguments forwarded to Django's "View.as_view".
@@ -1674,7 +1817,7 @@ class GraphQLView(BaseGraphQLView):
 
             if execution_result.errors:
                 response["errors"] = [
-                    self.format_error(e) for e in execution_result.errors
+                    self.format_error(e, request) for e in execution_result.errors
                 ]
 
             if execution_result.errors and not execution_result.data:

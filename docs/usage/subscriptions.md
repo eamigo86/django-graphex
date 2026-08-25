@@ -511,6 +511,15 @@ event: complete
 data: 
 ```
 
+!!! info "Posting the document form-encoded needs `X-Requested-With`"
+
+    The endpoint also accepts `query` as `application/x-www-form-urlencoded` or
+    `multipart/form-data`. Both are CORS-*simple*, and the endpoint is
+    `csrf_exempt`, so such a POST must carry the `X-Requested-With` header or it
+    is answered with **HTTP 403** before the stream starts — see
+    [Security → Cross-site POST protection](security.md#cross-site-post-protection).
+    The JSON POST above (and the bundled client) is unaffected.
+
 !!! warning "The browser `EventSource` API cannot start a subscription"
 
     The limitation is in the **`EventSource` JavaScript API**, not the wire
@@ -570,7 +579,8 @@ multiplexes any number of operations, each identified by a client-chosen `id`:
 
 The `subscribe` payload carries the same `query` / `variables` /
 `operationName` keys as an HTTP POST. A subscribe-time failure (parse error,
-validation error, authorize-deny) is answered with
+validation error, authorize-deny, or the
+[per-connection cap](#per-connection-subscription-cap)) is answered with
 `{"type": "error", "id": "1", "payload": [...]}` instead of `next` frames, and
 the server answers a client `{"type": "ping"}` with `{"type": "pong"}`. The
 [`graphql-ws`](https://github.com/enisdenjo/graphql-ws) JavaScript client
@@ -880,6 +890,35 @@ setting) was removed. Authentication is now the transport's own request/scope:
 The subscription's `authorize_subscription` / `permission_classes` hooks run
 **before** any `group_add`, so a denial short-circuits before the source is
 created — there is no window where an unauthorized subscriber is joined.
+
+### Per-connection subscription cap
+
+One `graphql-transport-ws` socket multiplexes any number of operations, and every
+live operation joins its own channel-layer group — so an unbounded socket lets a
+single client amplify one connection into hundreds of subscribers.
+`MAX_SUBSCRIPTIONS_PER_CONNECTION` (default `50`) bounds it, the same way
+[`MAX_BATCH_SIZE`](settings.md#http-view-hardening) bounds a batch request:
+
+```python
+DJANGO_GRAPHEX = {
+    "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,  # None disables the cap
+}
+```
+
+A `subscribe` past the cap is **rejected, not fatal**: the server answers that
+operation id with an `error` frame naming the limit, and every subscription
+already running on the socket keeps streaming. The slot frees itself as soon as
+an operation ends — a client `complete`, a stream that ends on its own, or a
+disconnect — so a client that stays under the cap never notices it.
+
+!!! warning "`None` removes the protection"
+    `MAX_SUBSCRIPTIONS_PER_CONNECTION = None` allows any number of concurrent
+    subscriptions per socket. Use it only when every client is trusted and you
+    bound connections elsewhere (gateway/proxy rate limiting).
+
+The SSE transport needs no equivalent: one `text/event-stream` request carries
+exactly one subscription, so its concurrency is bounded by your server's
+connection limits rather than by an in-process registry.
 
 ### GraphQL execution middleware
 

@@ -41,9 +41,11 @@ DJANGO_GRAPHEX = {
 
     # --- Subscriptions ----------------------------------------------------- #
     "SUBSCRIPTION_PAYLOAD_MODE": "id_only",
+    "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,  # concurrent operations per WS socket (None = unlimited)
 
     # --- HTTP / view hardening --------------------------------------------- #
     "MAX_BATCH_SIZE": 10,            # max operations per batch request (None = unlimited)
+    "REQUIRE_CSRF_HEADER": True,     # demand X-Requested-With on CORS-simple POSTs
 
     # --- Security ---------------------------------------------------------- #
     "ALLOW_INTROSPECTION": False,
@@ -186,12 +188,14 @@ entirely (e.g. while debugging a parse/validation-related issue).
 | Setting | Default | Description |
 |---|---|---|
 | `SUBSCRIPTION_PAYLOAD_MODE` | `"id_only"` | When `"id_only"`, change notifications carry only `{"id": <pk>}`; `"full"` serializes the full instance through the subscription's backend. Per-subscription override: `Meta.payload_mode`. See [Subscriptions](subscriptions.md). |
+| `MAX_SUBSCRIPTIONS_PER_CONNECTION` | `50` | Maximum number of **concurrent** operations one `graphql-transport-ws` socket may hold. Every live operation joins its own channel-layer group, so an unbounded socket is a cheap amplification vector. A `subscribe` past the cap is answered with the transport's own `error` frame naming the limit — the socket and every subscription already running on it survive — and a slot frees itself as soon as an operation ends. Set to `None` to allow any number (use only when all clients are trusted). The SSE transport needs no equivalent: one request carries exactly one subscription. See [Subscriptions → Per-connection subscription cap](subscriptions.md#per-connection-subscription-cap). |
 
 ## HTTP / view hardening
 
 | Setting | Default | Description |
 |---|---|---|
 | `MAX_BATCH_SIZE` | `10` | Maximum number of operations allowed in a single [batch request](https://www.apollographql.com/blog/apollo-client/performance/batching-client-graphql-queries/). Requests exceeding this limit receive **HTTP 400**. Set to `None` to allow batches of any length (disables the guard — use only when all clients are trusted and independent rate limiting is in place). |
+| `REQUIRE_CSRF_HEADER` | `True` | Demand the **`X-Requested-With`** header on a POST whose content type a browser can send cross-site with **no CORS preflight** — `application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`, or no content type at all. The endpoint is `csrf_exempt`, so without it a cross-site `<form>` submit executes under the victim's session cookie; the header is not CORS-safelisted, so demanding it forces the preflight a forged request cannot pass. The value is never inspected. **This changes behaviour for existing form-encoded and multipart clients**, which must add the header or get **HTTP 403** before the body is read. `application/json` and `application/graphql` already force a preflight and are never asked for it. Set to `False` only if a client cannot add the header **and** the endpoint is protected another way. See [Security → Cross-site POST protection](security.md#cross-site-post-protection). |
 
 ### Choosing a `MAX_BATCH_SIZE` value
 

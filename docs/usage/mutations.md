@@ -279,13 +279,42 @@ class ProfileMutation(DjangoModelMutation):
 
 The GraphQL input field stays `String` — the file itself never travels through
 the GraphQL variables. Send the operation and the file in one
-`multipart/form-data` request: the part carrying the JSON body under whatever
-key your view reads, plus one part per file named after the model field. The
+`multipart/form-data` request: a **`query`** part carrying the document, an
+optional **`variables`** part carrying its variables as JSON, plus one part per
+file named after the model field. (The view reads a multipart body straight out
+of `request.POST`, so those are the two part names it looks for — there is no
+`operations` / `map` envelope.) The
 same field also accepts a plain **storage path string**, which is what a query
 returns for it, so a value read back can be written back unchanged. Anything
 else — a number, a list, an object — comes back as a normal validation error,
 and a path longer than the column's `max_length` is rejected before it reaches
 the database.
+
+!!! warning "A multipart POST must carry `X-Requested-With`"
+
+    `multipart/form-data` is a CORS-*simple* content type: a browser posts it
+    cross-site with no preflight, so the endpoint — which is `csrf_exempt` —
+    would otherwise execute a forged `<form>` submit under the victim's session
+    cookie. Every multipart (and form-encoded) request therefore has to send the
+    **`X-Requested-With`** header, or it is refused with HTTP 403 before the body
+    is read. The value is not inspected; `XMLHttpRequest` is the conventional
+    one.
+
+    ```python
+    requests.post(
+        "https://app.example.com/graphql/",
+        files={"avatar": open("avatar.png", "rb")},
+        data={
+            "query": "mutation Create($doc: ProfileCreateGenericType!) { … }",
+            "variables": json.dumps({"doc": {"bio": "hi"}}),
+        },
+        headers={"X-Requested-With": "XMLHttpRequest"},   # <- required
+    )
+    ```
+
+    JSON clients are unaffected. See
+    [Security → Cross-site POST protection](security.md#cross-site-post-protection)
+    for the `REQUIRE_CSRF_HEADER` opt-out.
 
 !!! important "Either spelling of the field name works"
 

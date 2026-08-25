@@ -70,8 +70,14 @@ from graphql import (
 )
 from graphql.utilities import get_operation_ast
 
+from ...security import format_graphql_error
 from ...settings import graphql_api_settings
-from ...views import DEFAULT_VALIDATION_RULES
+from ...views import (
+    CSRF_GUARD_MESSAGE,
+    DEFAULT_VALIDATION_RULES,
+    BaseGraphQLView,
+    csrf_header_missing,
+)
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -224,7 +230,7 @@ def _frame_next(result: ExecutionResult) -> bytes:
     if result.data is not None:
         payload["data"] = result.data
     if result.errors:
-        payload["errors"] = [error.formatted for error in result.errors]
+        payload["errors"] = [format_graphql_error(error) for error in result.errors]
     body = json.dumps(payload)
     return f"event: next\ndata: {body}\n\n".encode("utf-8")
 
@@ -310,7 +316,16 @@ def subscription_sse_view(
         )
 
     async def _view(request: "HttpRequest", *args: Any, **kwargs: Any) -> Any:
-        from django.http import HttpResponseBadRequest
+        from django.http import HttpResponseBadRequest, HttpResponseForbidden
+
+        # Same hole as the HTTP views, same guard: this endpoint is csrf_exempt
+        # and reads a form-encoded "query" straight out of "request.POST", and
+        # form-encoded / multipart / text/plain are CORS-simple, so a cross-site
+        # <form> submit reaches it with the victim's session cookie. Refused in
+        # PLAIN TEXT, like every other pre-200 rejection below: an EventSource
+        # client never parses a JSON "errors" envelope.
+        if csrf_header_missing(request, BaseGraphQLView.get_content_type(request)):
+            return HttpResponseForbidden(CSRF_GUARD_MESSAGE)
 
         # Per-connection schema resolution: the provider (when given) wins and is
         # resolved with the request user, matching the HTTP pruned schema.
@@ -466,5 +481,8 @@ def subscription_sse_view(
     # protection to a same-origin JSON POST. Without this, a real browser/curl
     # POST (which carries no CSRF token) is rejected with 403 by
     # ``CsrfViewMiddleware`` before the view ever runs — the bundled client's
-    # ``fetch`` POST sends no token, so it would never reach the stream.
+    # ``fetch`` POST sends no token, so it would never reach the stream. What
+    # replaces the token for the content types a browser CAN post cross-site
+    # without a preflight is the ``REQUIRE_CSRF_HEADER`` guard at the top of
+    # ``_view``, shared with the HTTP views.
     return csrf_exempt(_view)

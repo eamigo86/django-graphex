@@ -67,6 +67,16 @@ DEFAULTS = {
     # not recommended for public APIs — use only when you control all clients
     # and have independent rate limiting at the gateway/proxy level).
     "MAX_BATCH_SIZE": 10,
+    # Require the "X-Requested-With" header on a POST whose content type a
+    # browser can send cross-site with NO CORS preflight (form-urlencoded,
+    # multipart, text/plain, or no content type at all). The endpoint is
+    # csrf_exempt, so without this a cross-site <form> submit executes with the
+    # victim's session cookie. The header is not CORS-safelisted, so demanding
+    # it forces the preflight a forged request cannot pass. Requests sent as
+    # "application/json" / "application/graphql" already require a preflight and
+    # are never asked for it. Set to False only if a client cannot add the
+    # header AND the endpoint is protected some other way.
+    "REQUIRE_CSRF_HEADER": True,
     # Security middlewares
     # Allow __schema/__type introspection (DisableIntrospectionMiddleware).
     "ALLOW_INTROSPECTION": False,
@@ -171,6 +181,15 @@ DEFAULTS = {
     # ``connection_init`` after the socket opens before closing with 4408
     # (``connectionInitWaitTimeout``). The transport factory may override it.
     "SUBSCRIPTION_CONNECTION_INIT_TIMEOUT": 3.0,
+    # Maximum number of concurrent subscriptions ONE graphql-transport-ws socket
+    # may hold. A subscribe past the limit is rejected with an "error" frame;
+    # the socket and its running operations survive. Default 50 is a pragmatic
+    # safety cap: every live operation joins its own channel-layer group, so an
+    # unbounded socket is a cheap amplification vector, and 50 concurrent
+    # subscriptions on a SINGLE connection is already pathological.
+    # Set to None to allow any number (pre-cap behavior, not recommended for
+    # public endpoints — use only when you control all clients).
+    "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,
 }
 
 
