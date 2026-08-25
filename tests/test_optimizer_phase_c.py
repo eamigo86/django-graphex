@@ -249,14 +249,16 @@ class TestG3WindowOnlySpike(TestCase):
 # Phase 4: build_window_prefetch — pre-checks + window construction
 # ---------------------------------------------------------------------------
 
-# Module-level type registry to avoid inner-class scoping issues.
-_REG_BWP = {}
-
 
 def _make_test_nested_field():
     """Build a minimal DjangoNestedListObjectField for Post (author.posts).
 
-    Uses a module-level registry to avoid Python inner-class scoping issues.
+    Builds a private "Registry" per call. A plain dict is NOT a registry: it is
+    falsy while empty, so "Meta.registry" falls back to the global registry and
+    every type declared here would publish itself under the process-wide
+    "_PostListType" / "_AuthorType" names, colliding with the same names
+    declared by other test modules.
+
     Returns the DjangoNestedListObjectField instance.
     """
     from django_graphex.fields import DjangoNestedListObjectField
@@ -264,7 +266,7 @@ def _make_test_nested_field():
     from django_graphex.types import DjangoListObjectType, DjangoObjectType
     from tests.models import Author, Post
 
-    _REG_BWP.clear()
+    _REG_BWP = Registry()
 
     # Use type() to define inner classes so the registry variable is captured
     # via closure in the Meta namespace correctly.
@@ -1450,7 +1452,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
         from tests.models import Author, Post
 
-        _REG = {}
+        _REG = Registry()
         _PostType = _gtype(
             "_7P",
             (DjangoObjectType,),
@@ -1513,7 +1515,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
         from tests.models import Author, Post
 
-        _REG = {}
+        _REG = Registry()
         _PostType = _gtype(
             "_72P",
             (DjangoObjectType,),

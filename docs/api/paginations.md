@@ -593,9 +593,11 @@ query Events($first: Int!, $cursor: String) {
     given the same values so both describe the same page. Backward pagination
     (`last`/`before`) is intentionally out of scope: each page is a single
     compound `(field, pk)` boundary filter, and true backward/multi-field
-    paging requires additional lexicographic `WHERE` chains — see the
-    [design rationale](../usage/pagination.md#cursorgraphqlpagination) (planned
-    for a future release). `PageGraphqlPagination` supports backward navigation
+    paging requires additional lexicographic `WHERE` chains. That work is
+    **not scheduled** — `CursorGraphqlPagination` is `first` + `cursor` only,
+    and `__init__` takes no `last` / `before` parameter. See the
+    [design rationale](../usage/pagination.md#cursorgraphqlpagination).
+    `PageGraphqlPagination` supports backward navigation
     today — see its
     [Backward pagination](../usage/pagination.md#backward-pagination) section.
 

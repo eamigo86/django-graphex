@@ -1,6 +1,6 @@
 # Frontend Integration Examples
 
-> **Illustrative tutorial** — the models here (`Post`, `Category`, `Tag`, `UserProfile`) are a self-contained example used throughout these docs. For a complete, runnable project see [`examples/playground/`](../../../../examples/playground/) in the repo.
+> **Illustrative tutorial** — the models here (`Post`, `Category`, `Tag`, `UserProfile`) are a self-contained example used throughout these docs. For a complete, runnable project see [`examples/playground/`](https://github.com/eamigo86/django-graphex/tree/main/examples/playground) in the repo.
 
 ### React with Apollo Client
 
@@ -15,7 +15,9 @@
         $limit: Int!,
         $offset: Int!,
         $category: String,
-        $status: String
+        # a field with "choices" compiles to an enum named
+        # "<app_label><Model><field>Enum" — here the blog app's Post.status
+        $status: blogPostStatusEnum
       ) {
         allPosts(filter: {
           category: { name: { exact: $category } }
@@ -41,9 +43,11 @@
               name
               slug
             }
-            tags {
-              name
-              color
+            tags {          # M2M -> list container, so select through results
+              results {
+                name
+                color
+              }
             }
           }
           totalCount
@@ -55,7 +59,7 @@
       const [filters, setFilters] = useState({
         search: '',
         category: '',
-        status: 'published'
+        status: 'PUBLISHED'   // enum VALUE name, not the model's stored 'published'
       });
       const [pagination, setPagination] = useState({
         page: 0,
@@ -121,7 +125,7 @@
                   <span>{post.viewCount} views</span>
                 </div>
                 <div className="post-tags">
-                  {post.tags.map(tag => (
+                  {post.tags.results.map(tag => (
                     <span
                       key={tag.name}
                       style={{ color: tag.color }}
@@ -167,6 +171,11 @@
     import React, { useState } from 'react';
     import { gql, useMutation, useQuery } from '@apollo/client';
 
+    // The input type name is generated. It is `<Model>CreateGenericType` for a
+    // mutation with no projection, and carries a short hash suffix
+    // (`PostCreateGenericType_ab12cd`) when `Meta` declares
+    // `only_fields` / `exclude_fields` / `include_fields` — read the exact name
+    // off your own schema instead of assuming it.
     const CREATE_POST = gql`
       mutation CreatePost($postData: PostCreateGenericType!) {
         createPost(newPost: $postData) {
@@ -205,7 +214,7 @@
         slug: '',
         content: '',
         excerpt: '',
-        status: 'draft',
+        status: 'DRAFT',      // enum VALUE name, not the stored 'draft'
         category: '',
         tags: []
       });
@@ -303,8 +312,8 @@
                 status: e.target.value
               }))}
             >
-              <option value="draft">Draft</option>
-              <option value="published">Published</option>
+              <option value="DRAFT">Draft</option>
+              <option value="PUBLISHED">Published</option>
             </select>
           </div>
 

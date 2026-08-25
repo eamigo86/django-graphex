@@ -22,71 +22,20 @@ from typing import Any
 
 import pytest
 from django.test import override_settings
-from graphql import GraphQLSchema
 
 pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
 from channels.testing import WebsocketCommunicator  # noqa: E402
 
-from tests.models import Post  # noqa: E402
-
 # A Channels consumer touches the DB connection registry on every dispatched
 # message; transaction=True is required (the consumer runs off the test txn).
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-from django_graphex.types import DjangoObjectType as _DOT  # noqa: E402
-
-
-class _TagT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Tag"]).Tag
-
-
-class _CategoryT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Category"]).Category
-
-
-class _AuthorT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Author"]).Author
-
-
-class _PostT(_DOT):
-    class Meta:
-        model = Post
-
-
-def _build_native_schema() -> GraphQLSchema:
-    """Assemble a native subscription schema (PostModelType.SubscriptionField).
-
-    Returns:
-        schema: The assembled GraphQLSchema with a "post" subscription field.
-    """
-    from graphql import GraphQLBoolean
-
-    from django_graphex.core import ObjectType, field
-    from django_graphex.core.registry_compiler import compile_all_outputs
-    from django_graphex.schema import DjangoGraphQLSchema
-    from django_graphex.types import DjangoModelType
-
-    class PostModelType(DjangoModelType):
-        class Meta:
-            model = Post
-            stream = "posts"
-            payload_mode = "full"
-
-    class Query(ObjectType):
-        ok = field(GraphQLBoolean)
-
-    class SubscriptionRoot(ObjectType):
-        post = PostModelType.SubscriptionField()
-
-    compile_all_outputs()
-    schema = DjangoGraphQLSchema(query=Query, subscription=SubscriptionRoot)
-    return schema.graphql_schema
+# The node types Post's relation graph needs, and the assembled schema, are
+# built ONCE process-wide by the shared module (see its docstring).
+from tests.subscriptions._transport_schema import build_native_schema  # noqa: E402
 
 
 class _User:
@@ -185,7 +134,7 @@ def _app(layer: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     from django_graphex.subscriptions.transports import ws
 
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
-    return ws.subscription_ws_consumer(schema=_build_native_schema())
+    return ws.subscription_ws_consumer(schema=build_native_schema())
 
 
 async def _subscribe_and_wait(

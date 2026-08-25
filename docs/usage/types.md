@@ -153,10 +153,21 @@ The full set of recognised options for `DjangoObjectType.Meta` is:
 | `interfaces` | GraphQL interfaces to implement |
 | `max_depth` | Max nested-object depth below this type |
 | `complexity` | Cost weight for query cost analysis |
+| `unions` | Mapping of `GenericForeignKey` field name to a `DjangoUnionType` |
+| `name` | Type name in the schema; defaults to the class name |
 | `description` | Type description exposed in the schema |
 
-Any key not in this table is rejected at startup. Review your `DjangoObjectType`
-and `DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
+Graphene's own base options ride along on top of that list and are accepted
+too: `possible_types`, `default_resolver` and `container`. Every other public
+key is rejected at startup. Review your `DjangoObjectType` and
+`DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
+
+!!! note "Underscore-prefixed names are not checked"
+    The unknown-option check skips a key starting with `_`: an
+    `from app.models import Foo as _Foo` inside the `Meta` body leaks as a class
+    attribute, and rejecting it would fail a build for an import alias. This is
+    not a promise that every underscored key is harmless — `_meta`, for
+    instance, is consumed elsewhere and raises on its own.
 
 ### Model inheritance { #model-inheritance }
 
@@ -1110,10 +1121,12 @@ class CategoryType(DjangoModelType):
 ```
 
 ```graphql
-category {
-  posts {                # level 1 ✅
-    comments {           # level 2 ✅
-      author { username }  # level 3 ❌ "Query exceeds the maximum nesting depth of 2 ..."
+{
+  category(id: 1) {
+    posts {                # level 1 ✅
+      comments {           # level 2 ✅
+        author { username }  # level 3 ❌ "Query exceeds the maximum nesting depth of 2 ..."
+      }
     }
   }
 }

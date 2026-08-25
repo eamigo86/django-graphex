@@ -14,7 +14,7 @@ from graphql import (
     validate,
 )
 
-from django_graphex.registry import get_global_registry
+from django_graphex.registry import Registry, get_global_registry
 from django_graphex.types import DjangoListObjectType, DjangoModelType, DjangoObjectType
 from django_graphex.validation import DepthLimitValidationRule
 from django_graphex.views import GraphQLView
@@ -208,6 +208,10 @@ class MaxDeepWiringTest(TestCase):
 
                 model = Author
                 max_depth = 3
+                # Private registry: this test only reads "_meta", so the type must
+                # not claim the model's canonical slot on the global registry --
+                # a schema built later would resolve the relation through it.
+                registry = Registry()
 
         self.assertEqual(_AuthorType._meta.max_depth, 3)
 
@@ -226,6 +230,10 @@ class MaxDeepWiringTest(TestCase):
 
                 model = Author
                 max_depth = 4
+                # Private registry: this test only reads "_meta", so the type must
+                # not claim the model's canonical slot on the global registry --
+                # a schema built later would resolve the relation through it.
+                registry = Registry()
 
         self.assertEqual(_AuthorList._meta.max_depth, 4)
 

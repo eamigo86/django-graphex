@@ -32,14 +32,11 @@ import asyncio
 from typing import Any
 
 import pytest
-from graphql import GraphQLSchema
 
 pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
 from channels.testing import WebsocketCommunicator  # noqa: E402
-
-from tests.models import Post  # noqa: E402
 
 # A Channels AsyncJsonWebsocketConsumer touches the DB connection registry on
 # EVERY dispatched message (``aclose_old_connections`` in ``dispatch``), so every
@@ -49,64 +46,9 @@ from tests.models import Post  # noqa: E402
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-# ---------------------------------------------------------------------------
-# Helpers — node types + a native subscription schema mounting a PostModelType
-# SubscriptionField (mirrors test_transport_sse's module-scope registration; a
-# DjangoObjectType is identity-stable, per-test registration pollutes the shared
-# output registry).
-# ---------------------------------------------------------------------------
-
-from django_graphex.types import DjangoObjectType as _DOT  # noqa: E402
-
-
-class _TagT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Tag"]).Tag
-
-
-class _CategoryT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Category"]).Category
-
-
-class _AuthorT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Author"]).Author
-
-
-class _PostT(_DOT):
-    class Meta:
-        model = Post
-
-
-def _build_native_schema() -> GraphQLSchema:
-    """Assemble a native subscription schema (PostModelType.SubscriptionField).
-
-    Returns:
-        schema: The assembled GraphQLSchema with a "post" subscription field.
-    """
-    from graphql import GraphQLBoolean
-
-    from django_graphex.core import ObjectType, field
-    from django_graphex.core.registry_compiler import compile_all_outputs
-    from django_graphex.schema import DjangoGraphQLSchema
-    from django_graphex.types import DjangoModelType
-
-    class PostModelType(DjangoModelType):
-        class Meta:
-            model = Post
-            stream = "posts"
-            payload_mode = "full"
-
-    class Query(ObjectType):
-        ok = field(GraphQLBoolean)
-
-    class SubscriptionRoot(ObjectType):
-        post = PostModelType.SubscriptionField()
-
-    compile_all_outputs()
-    schema = DjangoGraphQLSchema(query=Query, subscription=SubscriptionRoot)
-    return schema.graphql_schema
+# The node types Post's relation graph needs, and the assembled schema, are
+# built ONCE process-wide by the shared module (see its docstring).
+from tests.subscriptions._transport_schema import build_native_schema  # noqa: E402
 
 
 def _notify(
@@ -307,7 +249,7 @@ async def test_handshake_connection_init_ack(monkeypatch: pytest.MonkeyPatch) ->
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     connected, subprotocol = await communicator.connect()
     assert connected
@@ -340,7 +282,7 @@ async def test_subscribe_next_then_complete(monkeypatch: pytest.MonkeyPatch) -> 
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -394,7 +336,7 @@ async def test_multiplex_two_independent_operations(
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -452,7 +394,7 @@ async def test_client_complete_cancels_only_that_id(
     layer = _RecordingLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -512,7 +454,7 @@ async def test_disconnect_cancels_all_and_discards_all(
     layer = _RecordingLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -553,7 +495,7 @@ async def test_ping_pong(monkeypatch: pytest.MonkeyPatch) -> None:
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -581,7 +523,7 @@ async def test_connection_init_timeout_4408(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
     # A tiny init timeout so the test does not wait 3 seconds.
-    app = ws.subscription_ws_consumer(schema=_build_native_schema(), init_timeout=0.1)
+    app = ws.subscription_ws_consumer(schema=build_native_schema(), init_timeout=0.1)
     communicator = _make_communicator(app, layer=layer)
     connected, _ = await communicator.connect()
     assert connected
@@ -608,7 +550,7 @@ async def test_duplicate_subscribe_id_4409(monkeypatch: pytest.MonkeyPatch) -> N
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -641,7 +583,7 @@ async def test_subscribe_before_ack_4401(monkeypatch: pytest.MonkeyPatch) -> Non
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     connected, _ = await communicator.connect()
     assert connected
@@ -666,7 +608,7 @@ async def test_too_many_init_requests_4429(monkeypatch: pytest.MonkeyPatch) -> N
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -687,7 +629,7 @@ async def test_malformed_message_4400(monkeypatch: pytest.MonkeyPatch) -> None:
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -750,7 +692,7 @@ async def test_server_close_4409_tears_down_live_op(
     layer = _RecordingLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -809,7 +751,7 @@ async def test_server_close_4429_tears_down_live_op(
     layer = _RecordingLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -860,7 +802,7 @@ async def test_server_close_4400_midstream_tears_down_live_op(
     layer = _RecordingLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 
@@ -917,7 +859,7 @@ async def test_ws_delivery_path_is_zero_queries(
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    app = ws.subscription_ws_consumer(schema=_build_native_schema())
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
     communicator = _make_communicator(app, layer=layer)
     await _connect_and_ack(communicator)
 

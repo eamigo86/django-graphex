@@ -297,7 +297,7 @@ Let's start with a blog application to demonstrate the features:
     nested `filter:` argument — no `FilterSet` classes. For bespoke logic such as
     a free-text search across several columns, override `filter_queryset` /
     `get_queryset` on a `DjangoModelType` (see
-    [Permissions & hooks](permissions.md)):
+    [Custom queryset & per-request filtering](../types.md#custom-queryset-per-request-filtering)):
 
     ```python
     from django.db.models import Q

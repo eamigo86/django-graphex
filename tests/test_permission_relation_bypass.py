@@ -68,7 +68,7 @@ class _CommentType(DjangoModelType):
         model = PermRelComment
 
 
-class _PostType(DjangoModelType):
+class _PermRelPostType(DjangoModelType):
     """Model type for "PermRelPost", gated by "DjangoModelPermissions"."""
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
@@ -82,8 +82,8 @@ class _PostType(DjangoModelType):
 class _Query(ObjectType):
     """Root exposing BOTH models directly — the exact reproduction schema."""
 
-    post_retrieve = _PostType.RetrieveField()
-    post_list = _PostType.ListField()
+    post_retrieve = _PermRelPostType.RetrieveField()
+    post_list = _PermRelPostType.ListField()
     comment_retrieve = _CommentType.RetrieveField()
     comment_list = _CommentType.ListField()
 
@@ -95,13 +95,13 @@ class _ParentOnlyQuery(ObjectType):
     the pruner if the schema label-set accounts for relation labels too.
     """
 
-    post_retrieve = _PostType.RetrieveField()
+    post_retrieve = _PermRelPostType.RetrieveField()
 
 
 # --------------------------------------------------------------------------- #
 # Ungated pair: no "permission_classes" anywhere (the "unaffected" baseline).
 # --------------------------------------------------------------------------- #
-class _AuthorType(DjangoModelType):
+class _PermRelAuthorType(DjangoModelType):
     """Model type for "PermRelAuthor" declaring NO "permission_classes"."""
 
     class Meta:
@@ -123,7 +123,7 @@ class _OpenQuery(ObjectType):
     """Root for the permission-class-free project baseline."""
 
     article_retrieve = _ArticleType.RetrieveField()
-    author_retrieve = _AuthorType.RetrieveField()
+    author_retrieve = _PermRelAuthorType.RetrieveField()
 
 
 compile_all_outputs()

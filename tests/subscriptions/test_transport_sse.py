@@ -37,70 +37,16 @@ import json
 from typing import Any
 
 import pytest
-from graphql import GraphQLSchema
 
 pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
 
-# ---------------------------------------------------------------------------
-# Helpers — node types + a native subscription schema mounting a PostModelType
-# SubscriptionField, mirroring test_capability_parity's module-scope registration
-# (a DjangoObjectType is identity-stable; per-test registration pollutes the
-# shared output registry).
-# ---------------------------------------------------------------------------
-from django_graphex.types import DjangoObjectType as _DOT
 from tests.models import Post  # noqa: E402
 
-
-class _TagT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Tag"]).Tag
-
-
-class _CategoryT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Category"]).Category
-
-
-class _AuthorT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Author"]).Author
-
-
-class _PostT(_DOT):
-    class Meta:
-        model = Post
-
-
-def _build_native_schema() -> GraphQLSchema:
-    """Assemble a native subscription schema (PostModelType.SubscriptionField).
-
-    Returns:
-        schema: The assembled GraphQLSchema with a "post" subscription field.
-    """
-    from graphql import GraphQLBoolean
-
-    from django_graphex.core import ObjectType, field
-    from django_graphex.core.registry_compiler import compile_all_outputs
-    from django_graphex.schema import DjangoGraphQLSchema
-    from django_graphex.types import DjangoModelType
-
-    class PostModelType(DjangoModelType):
-        class Meta:
-            model = Post
-            stream = "posts"
-            payload_mode = "full"
-
-    class Query(ObjectType):
-        ok = field(GraphQLBoolean)
-
-    class SubscriptionRoot(ObjectType):
-        post = PostModelType.SubscriptionField()
-
-    compile_all_outputs()
-    schema = DjangoGraphQLSchema(query=Query, subscription=SubscriptionRoot)
-    return schema.graphql_schema
+# The node types Post's relation graph needs, and the assembled schema, are
+# built ONCE process-wide by the shared module (see its docstring).
+from tests.subscriptions._transport_schema import build_native_schema  # noqa: E402
 
 
 def _notify(
@@ -226,7 +172,7 @@ async def test_sse_next_frame_then_complete_with_flat_pk_data(
     # The view also imports get_channel_layer lazily; patch the source too.
     assert get_channel_layer  # referenced for clarity
 
-    schema = _build_native_schema()
+    schema = build_native_schema()
     view = sse.subscription_sse_view(schema=schema)
 
     query = "subscription { post(action: CREATE) { id title author tags } }"
@@ -314,7 +260,7 @@ async def test_post_200_validation_error_is_in_stream_not_http_4xx(
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    schema = _build_native_schema()
+    schema = build_native_schema()
     view = sse.subscription_sse_view(schema=schema)
 
     # ``nope`` is not a field on the Post event type → a validation error.
@@ -463,7 +409,7 @@ async def test_client_disconnect_acloses_source_and_discards_groups(
     layer = _RecordingLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    schema = _build_native_schema()
+    schema = build_native_schema()
     view = sse.subscription_sse_view(schema=schema)
     request = _make_request("subscription { post(action: CREATE) { id title } }")
 
@@ -524,7 +470,7 @@ async def test_delivery_path_is_zero_queries(monkeypatch: pytest.MonkeyPatch) ->
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    schema = _build_native_schema()
+    schema = build_native_schema()
     view = sse.subscription_sse_view(schema=schema)
     response = await view(
         _make_request("subscription { post(action: CREATE) { id title author tags } }")

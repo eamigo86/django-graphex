@@ -72,12 +72,6 @@ from graphql.utilities import get_operation_ast
 
 from ...security import format_graphql_error
 from ...settings import graphql_api_settings
-from ...views import (
-    CSRF_GUARD_MESSAGE,
-    DEFAULT_VALIDATION_RULES,
-    BaseGraphQLView,
-    csrf_header_missing,
-)
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -317,6 +311,20 @@ def subscription_sse_view(
 
     async def _view(request: "HttpRequest", *args: Any, **kwargs: Any) -> Any:
         from django.http import HttpResponseBadRequest, HttpResponseForbidden
+
+        # Imported HERE, not at module level: "views" reaches
+        # "core.permission_signature_cache", which reads "DJANGO_GRAPHEX" while it
+        # is being imported. A module-level import would therefore make this
+        # transport unimportable until Django settings are configured -- a
+        # dependency it did not have before it started sharing the HTTP view's
+        # CSRF guard and rule tuple, and one that bites any entrypoint importing
+        # the view builder before it points at a settings module.
+        from ...views import (
+            CSRF_GUARD_MESSAGE,
+            DEFAULT_VALIDATION_RULES,
+            BaseGraphQLView,
+            csrf_header_missing,
+        )
 
         # Same hole as the HTTP views, same guard: this endpoint is csrf_exempt
         # and reads a form-encoded "query" straight out of "request.POST", and

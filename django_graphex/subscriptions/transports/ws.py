@@ -82,7 +82,6 @@ from graphql.utilities import get_operation_ast
 
 from ...security import format_graphql_error
 from ...settings import graphql_api_settings
-from ...views import DEFAULT_VALIDATION_RULES
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -573,6 +572,16 @@ def subscription_ws_consumer(
             # re-executed for EVERY delivered event, so an over-deep or over-costly
             # document is paid for repeatedly — the depth/cost guards matter more
             # here than on a one-shot query, not less.
+            #
+            # Imported HERE, not at module level: "views" reaches
+            # "core.permission_signature_cache", which reads "DJANGO_GRAPHEX" while
+            # it is being imported. A module-level import would therefore make this
+            # transport unimportable until Django settings are configured -- a
+            # dependency it did not have before the shared rule tuple, and one that
+            # bites any ASGI entrypoint that routes the consumer before it points
+            # at a settings module.
+            from ...views import DEFAULT_VALIDATION_RULES
+
             validation_errors = validate(
                 conn_schema,
                 document,
@@ -599,15 +608,20 @@ def subscription_ws_consumer(
                 )
             except Exception as exc:
                 # NOT the authorize-deny path: graphql-core funnels everything
-                # the subscribe resolver raises into an ExecutionResult below
+                # the subscribe resolver RAISES into an ExecutionResult below
                 # (execute_subscription re-raises through located_error, which
                 # always yields a GraphQLError, and create_source_event_stream
-                # catches GraphQLError). What lands HERE is what escapes
-                # assert_valid_execution_arguments, which runs before that try
-                # block — a client sending "variables" as an unparsed JSON
-                # string gets a plain TypeError. Frame it: an escaping
-                # exception kills the consumer task and every OTHER
-                # subscription multiplexed on this socket with it.
+                # catches GraphQLError). Two things escape that funnel instead.
+                # The client-reachable one is assert_valid_execution_arguments,
+                # which runs before that try block — a client sending
+                # "variables" as an unparsed JSON string gets a plain TypeError
+                # (this is the branch the tests drive). The other is
+                # create_source_event_stream's own "Subscription field must
+                # return AsyncIterable" TypeError, raised INSIDE the try but not
+                # caught there: a subscribe entry that RETURNS the wrong kind of
+                # object lands here rather than in the ExecutionResult path.
+                # Frame both: an escaping exception kills the consumer task and
+                # every OTHER subscription multiplexed on this socket with it.
                 await self._send_error(op_id, [format_graphql_error(exc)])
                 return
 

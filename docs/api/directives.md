@@ -741,8 +741,8 @@ class MaskGraphQLDirective(BaseExtraGraphQLDirective):
 from django_graphex.directives import all_directives
 from django_graphex.schema import DjangoGraphQLSchema
 
-# Add custom directive to the list (all_directives already includes the
-# built-in @skip / @include / @deprecated directives).
+# Add custom directive to the list (all_directives already bundles the five
+# spec directives along with this library's own).
 custom_directives = [
     *all_directives,
     MaskGraphQLDirective()

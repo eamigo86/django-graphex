@@ -2823,9 +2823,20 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         # Hand the slot back to the incumbent. Minting is still unconditional so
         # "_meta.output_list_type" (read by "list_object_type()" and
-        # "ListField()") is never None, and an EMPTY slot is still filled so a
-        # project with a single write-only host keeps getting that host's own
-        # pagination on nested relations instead of a default-paginated stand-in.
+        # "ListField()") is never None, and an EMPTY slot is still filled so the
+        # FIRST write-only host declared over a model still puts its own
+        # pagination on that model's nested relations instead of leaving a
+        # default-paginated stand-in.
+        #
+        # Two write-only hosts over one model therefore resolve to the one
+        # declared FIRST: the second finds a non-empty slot and yields it, where
+        # last-write-wins used to hand the slot to the second. Neither
+        # declaration claims "list", so nothing in either ranks them; first-wins
+        # is kept because it is the choice that does NOT move a model's read
+        # shape when a second write concern is added later. Nothing is dropped
+        # by it either -- the loser's container is still on its own "_meta", and
+        # it cannot reach a schema, because a write-only host's "ListField()"
+        # raises. See "tests/test_write_host_two_write_only_hosts.py".
         if "list" not in model_operations and incumbent_list_type is not None:
             registry.register_list_type(model, incumbent_list_type)
 

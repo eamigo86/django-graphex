@@ -225,6 +225,49 @@ All notable changes to this library are documented here. The format is based on
   pagination. A host that *does* serve `list` is unchanged, and
   `_meta.output_list_type` is still populated on every host, so
   `list_object_type()` and `ListField()` are unaffected.
+- **Both subscription transports stopped importing without configured Django
+  settings.** Sharing the HTTP view's validation-rule tuple — and, for SSE, its
+  CSRF guard — put a module-level `from ...views import ...` in each transport,
+  and `views` reaches `core.permission_signature_cache`, which reads
+  `DJANGO_GRAPHEX` *while it is being imported*. So
+  `import django_graphex.subscriptions.transports.ws` raised
+  `ImproperlyConfigured` on the import alone, breaking any ASGI entrypoint that
+  reaches the consumer (directly or through a routing module) before it points
+  the process at a settings module — a dependency neither transport had before.
+  Both imports are deferred into the request/operation path, so the shared rule
+  tuple and the shared CSRF guard are unchanged and the transports import
+  settings-free again.
+- **Two write-only hosts over one model resolve to the first one declared.** The
+  container-slot fix above reverses the old outcome for this case: the first
+  host fills the empty slot, so the second finds it taken and hands it back,
+  where last-write-wins used to give the slot to the second. Neither declaration
+  claims `list`, so nothing in either ranks them; first-wins is kept because it
+  is the choice that does not move a model's read shape when a second write
+  concern is added later, and it drops nothing — the losing container is still
+  on its own `_meta`, and a write-only host's `ListField()` raises, so it can
+  never reach a schema. Only a project declaring **two** write-only hosts for
+  one model is affected; one host, or any host that serves `list`, is unchanged.
+- **The test suite was order-dependent: some shuffles died with `Schema must
+  contain uniquely named types`.** No library behaviour changed — the defect was
+  test hygiene. The output registry is keyed by **model**, so when two unrelated
+  test modules declared a class under the *same* GraphQL type name for the same
+  model on the **global** registry, one module kept its own compiled node while
+  the registry handed the other's out through the relation graph, and any schema
+  reaching both died. Nine such names were reachable from a real schema
+  (`_PostListType`, `_PostType`, `_PostT`, `_TagT`, `_AuthorT`, `_AuthorType`,
+  `_AuthorList`, `HookType`, `ScopedDocType`); each is now module-unique. The
+  four node types the six subscription-transport modules each re-declared, and
+  the subscription schema each of them rebuilt on every call, now live once in
+  `tests/subscriptions/_transport_schema.py`. The root cause behind two of the
+  names was `tests/test_optimizer_phase_c.py` passing `{}` as `Meta.registry`:
+  an empty dict is falsy, so `Meta.registry` fell back to the global registry
+  and every type built there published itself process-wide. Two further modules
+  now keep the throwaway types they declare only to read `_meta` off the global
+  registry entirely, and the two `ScalarKindsModel` round-trip tests mount only
+  the scalar field they assert instead of the whole compiled type, so neither
+  drags the shared relation graph into a schema. Verified with the full suite
+  under 150 distinct `--randomly-seed` values, including the seeds that used to
+  fail.
 
 ### Removed
 
@@ -287,6 +330,29 @@ All notable changes to this library are documented here. The format is based on
   400. Both pages now name them, show a working `requests.post` call, and carry
   the `X-Requested-With` requirement (the API reference had neither). See
   [Mutations › Automatic multipart uploads](usage/mutations.md#automatic-multipart-uploads).
+- **Three more pages contradicted the code, and one contradicted another page.**
+  The directives guide still called the spec bundle three directives in three
+  places — it is five of thirty (`@skip`, `@include`, `@deprecated`,
+  `@specifiedBy`, `@oneOf`), which the API reference already said; the
+  pagination API reference still promised backward cursor pagination "for a
+  future release" while the guide it links to says the work is **not
+  scheduled**, and `CursorGraphqlPagination.__init__` takes no `last` /
+  `before`; the `DjangoObjectType` `Meta` table was billed as the full set yet
+  omitted `unions` and `name`, so its "every other key is rejected at startup"
+  was false; and the nested-list example named a `Group.users` accessor Django
+  does not create (`user_set`, compiled as `userSet`) while promising a
+  `DjangoListObjectType` the example never declared. All four now say what the
+  code does.
+- **Two links 404'd and three snippets could not have run.** A relative link in
+  the blog-schema tutorial resolved to a `permissions.md` that does not exist
+  beside it, and the frontend guide reached four directories above the site root
+  for `examples/playground/`. Building both tutorial schemas and validating the
+  guides' queries against them also caught three snippets that fail before the
+  server sees them: a nested M2M selected as `tags { name }` when a nested list
+  is a container (`tags { results { name } }`), a `status` variable typed
+  `String` where a field with `choices` compiles to `<app_label><Model><field>Enum`,
+  and enum values sent as the model's stored `'draft'` / `'published'` instead
+  of the schema's `DRAFT` / `PUBLISHED`.
 
 ## 2.2.0 — 2026-08-24
 

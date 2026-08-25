@@ -49,12 +49,12 @@ from tests.models import (  # noqa: E402
 # shared slot for whatever test runs next). "SubFilterPost"/"SubFilterTag" exist
 # so the "post" relation actually renders on the event type instead of being
 # dropped as an unregistered target.
-class _TagT(_DOT):
+class _SubFilterTagT(_DOT):
     class Meta:
         model = SubFilterTag
 
 
-class _PostT(_DOT):
+class _SubFilterPostT(_DOT):
     class Meta:
         model = SubFilterPost
 

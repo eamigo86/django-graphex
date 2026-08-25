@@ -30,60 +30,10 @@ import pytest
 pytest.importorskip("channels")
 
 from channels.layers import InMemoryChannelLayer  # noqa: E402
-from graphql import GraphQLSchema  # noqa: E402
 
-from django_graphex.types import DjangoObjectType as _DOT
-from tests.models import Post  # noqa: E402
-
-
-class _TagT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Tag"]).Tag
-
-
-class _CategoryT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Category"]).Category
-
-
-class _AuthorT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Author"]).Author
-
-
-class _PostT(_DOT):
-    class Meta:
-        model = Post
-
-
-def _build_native_schema() -> GraphQLSchema:
-    """Assemble a native subscription schema (PostModelType.SubscriptionField).
-
-    Returns:
-        schema: The assembled GraphQLSchema with a "post" subscription field.
-    """
-    from graphql import GraphQLBoolean
-
-    from django_graphex.core import ObjectType, field
-    from django_graphex.core.registry_compiler import compile_all_outputs
-    from django_graphex.schema import DjangoGraphQLSchema
-    from django_graphex.types import DjangoModelType
-
-    class PostModelType(DjangoModelType):
-        class Meta:
-            model = Post
-            stream = "posts"
-            payload_mode = "full"
-
-    class Query(ObjectType):
-        ok = field(GraphQLBoolean)
-
-    class SubscriptionRoot(ObjectType):
-        post = PostModelType.SubscriptionField()
-
-    compile_all_outputs()
-    schema = DjangoGraphQLSchema(query=Query, subscription=SubscriptionRoot)
-    return schema.graphql_schema
+# The node types Post's relation graph needs, and the assembled schema, are
+# built ONCE process-wide by the shared module (see its docstring).
+from tests.subscriptions._transport_schema import build_native_schema  # noqa: E402
 
 
 class _User:
@@ -242,7 +192,7 @@ async def test_no_query_is_pre_200_bad_request(monkeypatch: pytest.MonkeyPatch) 
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    view = sse.subscription_sse_view(schema=_build_native_schema())
+    view = sse.subscription_sse_view(schema=build_native_schema())
     response = await view(_json_request(""))
     assert isinstance(response, HttpResponseBadRequest)
     assert response.status_code == 400
@@ -274,7 +224,7 @@ async def test_syntax_error_is_pre_200_bad_request(
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    view = sse.subscription_sse_view(schema=_build_native_schema())
+    view = sse.subscription_sse_view(schema=build_native_schema())
     response = await view(_json_request("subscription {{{"))
     assert isinstance(response, HttpResponseBadRequest)
     assert response.status_code == 400
@@ -307,7 +257,7 @@ async def test_non_subscription_operation_is_pre_200_bad_request(
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    view = sse.subscription_sse_view(schema=_build_native_schema())
+    view = sse.subscription_sse_view(schema=build_native_schema())
     response = await view(_json_request("query { ok }"))
     assert isinstance(response, HttpResponseBadRequest)
     assert response.status_code == 400
@@ -334,7 +284,7 @@ async def test_unknown_operation_name_is_pre_200_bad_request(
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    view = sse.subscription_sse_view(schema=_build_native_schema())
+    view = sse.subscription_sse_view(schema=build_native_schema())
     response = await view(
         _json_request(
             "subscription Sub { post(action: CREATE) { id } }",
@@ -377,7 +327,7 @@ async def test_no_source_no_pre_result_streams_complete_only(
 
     monkeypatch.setattr(sse, "create_source_event_stream", _none_source)
 
-    view = sse.subscription_sse_view(schema=_build_native_schema())
+    view = sse.subscription_sse_view(schema=build_native_schema())
     query = "subscription { post(action: CREATE) { id title } }"
     response = await view(_json_request(query))
     assert response.status_code == 200
@@ -416,7 +366,7 @@ async def test_no_source_with_pre_result_streams_next_then_complete(
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
 
-    view = sse.subscription_sse_view(schema=_build_native_schema())
+    view = sse.subscription_sse_view(schema=build_native_schema())
     # An undeclared field → a validation error → a pre-stream result, no source.
     query = "subscription { post(action: CREATE) { id nope } }"
     response = await view(_json_request(query))

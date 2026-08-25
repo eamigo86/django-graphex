@@ -48,6 +48,32 @@ _DEAD_SCALAR_DESC_NAMES = {
 
 
 @lru_cache(maxsize=1)
+def _register_author_node():
+    """Register the node type "ScalarKindsModel.author" points at.
+
+    The FK is only compiled when a type is registered for its target: without
+    one the output compiler drops the relation with a warning, and the
+    silent-drop guard below loses the very field it exists to watch. This test
+    module used to pass only because an unrelated module leaked an "Author" type
+    into the global registry, so it failed whenever it ran without that module —
+    including on its own. Registering here makes the guard answer for itself.
+
+    Returns:
+        The registered node type for "Author".
+    """
+    from django_graphex.types import DjangoObjectType
+    from tests.models import Author
+
+    class _SkAuthorType(DjangoObjectType):
+        class Meta:
+            """Bind the node to "Author" so the scalar model's FK compiles."""
+
+            model = Author
+
+    return _SkAuthorType
+
+
+@lru_cache(maxsize=1)
 def _scalar_kinds_meta_fields():
     # MEMOIZED, because the output registry keys its compiled node by MODEL:
     # minting a second "_SkType" for "ScalarKindsModel" leaves one class holding
@@ -58,6 +84,8 @@ def _scalar_kinds_meta_fields():
     # and not others. One class per process, one node.
     from django_graphex.types import DjangoObjectType
     from tests.models import ScalarKindsModel
+
+    _register_author_node()
 
     class _SkType(DjangoObjectType):
         class Meta:
@@ -332,23 +360,35 @@ def test_base_types_scalar_classes_kept_documented() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _sk_row_schema(row: Any) -> Any:
-    """Build a one-field GraphQL schema serving "row" through the native type.
+def _sk_row_schema(row: Any, field_name: str) -> Any:
+    """Build a one-field GraphQL schema serving "row" through the native field.
 
-    Registry-free on purpose: the output type is compiled from a locally
-    declared "DjangoObjectType" and wired into a bare "GraphQLSchema", so
-    nothing is published to the process-wide output registry.
+    Mounts ONLY the scalar field under test, lifted straight off the compiled
+    native output type, so the schema carries the exact resolver and scalar the
+    assertions are about and nothing else.
+
+    Mounting the whole compiled type instead would drag the model's RELATION
+    fields in, and those resolve through the process-wide output registry whose
+    canonical node for a model moves as other test modules register their own.
+    A schema built at an arbitrary point in the run can therefore reach two
+    snapshots of that graph at once and die with "Schema must contain uniquely
+    named types" -- order-dependently, over a contract these tests never assert.
 
     Args:
         row: The model instance the single "sk" field resolves to.
+        field_name: The compiled output field to mount under "sk".
 
     Returns:
         A schema whose "Query.sk" field serves "row" through the compiled
-        native output type of "ScalarKindsModel".
+        native output field of "ScalarKindsModel".
     """
     from graphql import GraphQLField, GraphQLObjectType, GraphQLSchema
 
-    output_type = _scalar_kinds_meta_fields()._meta.graphql_output_type
+    compiled = _scalar_kinds_meta_fields()._meta.graphql_output_type
+    output_type = GraphQLObjectType(
+        name="_SkRow",
+        fields={field_name: compiled.fields[field_name]},
+    )
     return GraphQLSchema(
         query=GraphQLObjectType(
             name="Query",
@@ -385,7 +425,7 @@ def test_duration_column_round_trips_through_write_and_read() -> None:
         f"Float SECONDS did not land in the DurationField column: {obj.duration!r}"
     )
 
-    result = graphql_sync(_sk_row_schema(obj), "{ sk { duration } }")
+    result = graphql_sync(_sk_row_schema(obj, "duration"), "{ sk { duration } }")
     assert not result.errors, (
         f"Reading a populated DurationField errored: {result.errors}"
     )
@@ -413,7 +453,7 @@ def test_binary_column_round_trips_through_read() -> None:
     # byte later, which is the ambiguity this asserts against.
     raw = b"\x00\x01hi"
     row = ScalarKindsModel.objects.create(char="c", binary=raw)
-    result = graphql_sync(_sk_row_schema(row), "{ sk { binary } }")
+    result = graphql_sync(_sk_row_schema(row, "binary"), "{ sk { binary } }")
     assert not result.errors, (
         f"Reading a populated BinaryField errored: {result.errors}"
     )

@@ -154,16 +154,18 @@ before; now it is a list type):
 
 ## Which list type / paginator is used
 
-The nested field reuses the related model's **registered** `DjangoListObjectType`
-when there is one — so its `pagination` and `filter_fields` are honored even when
-the model appears nested under a different model:
+The nested field reuses the related model's **registered** list container when
+there is one — a `DjangoListObjectType` you declared yourself, or the
+`<Model>ListGenericType` a `DjangoModelType` mints for the model. Either way its
+`pagination` and `filter_fields` are honored even when the model appears nested
+under a different model:
 
 ```python
 from django.contrib.auth.models import Group, User
 from django_graphex.paginations import PageGraphqlPagination
 from django_graphex.types import DjangoModelType, DjangoObjectType
 
-class UserListType(DjangoModelType):
+class UserModelType(DjangoModelType):
     class Meta:
         model = User
         pagination = PageGraphqlPagination(page_size=25)   # User's list paginator
@@ -173,8 +175,10 @@ class UserListType(DjangoModelType):
 class GroupType(DjangoObjectType):
     class Meta:
         model = Group
-# Group.users (M2M -> User) nested list reuses UserListType: it paginates with
-# PageGraphqlPagination and filters with the declared filter_fields.
+# Group.user_set (the reverse of User.groups) compiles to a `userSet` field
+# returning UserListGenericType — the container UserModelType registered. It
+# paginates with PageGraphqlPagination and filters with the declared
+# filter_fields.
 ```
 
 When a model has **no** registered list type, one is **auto-generated** using the

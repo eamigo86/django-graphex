@@ -132,7 +132,7 @@ class ParityTagDocType(DjangoModelType):
         nested_fields = {"tags": ParityTag}
 
 
-class ScopedDocType(DjangoModelType):
+class ParityScopedDocType(DjangoModelType):
     """A document type scoped to a single tenant through "filter_queryset".
 
     Used as the reference behaviour the "DjangoModelMutation" sibling is
@@ -297,7 +297,7 @@ class MutationScopingTest(TestCase):
         This test breaks if the already-shipped scoping of the type's write
         path regresses.
         """
-        result = _update(ScopedDocType, {"id": self.theirs.id, "title": "PWNED"})
+        result = _update(ParityScopedDocType, {"id": self.theirs.id, "title": "PWNED"})
         self.assertFalse(result.ok)
         self.theirs.refresh_from_db()
         self.assertEqual(self.theirs.title, "theirs")
@@ -376,7 +376,7 @@ class MalformedPrimaryKeyTest(TestCase):
         The sibling call site of the two above; it breaks if only the mutation
         host was patched.
         """
-        result = ScopedDocType.delete(None, _info(), id="not-a-number")
+        result = ParityScopedDocType.delete(None, _info(), id="not-a-number")
         self.assertFalse(result.ok)
         self.assertEqual(result.errors[0].field, "id")
 
@@ -386,7 +386,7 @@ class MalformedPrimaryKeyTest(TestCase):
         The sibling call site of the two above; it breaks if only the mutation
         host was patched.
         """
-        result = _update(ScopedDocType, {"id": "not-a-number", "title": "x"})
+        result = _update(ParityScopedDocType, {"id": "not-a-number", "title": "x"})
         self.assertFalse(result.ok)
         self.assertEqual(result.errors[0].field, "id")
 

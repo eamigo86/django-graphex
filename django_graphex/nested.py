@@ -435,12 +435,18 @@ class NestedFieldsMixin:
                             continue
                         child = cls._persist_child(field, child_model, item, info)
                         data[field] = child.pk
-                    elif kind is None:
-                        # Not an introspectable relation: leave it for the
-                        # parent backend to handle.
-                        data[field] = sub_data
                     else:
                         # Reverse/M2M children need the parent pk: defer them.
+                        #
+                        # "kind" cannot be None here, so there is no
+                        # pass-through branch to fall into: every
+                        # "Meta.nested_fields" KEY is checked against the
+                        # model's relations at class definition
+                        # ("types._check_nested_field_keys", run by both hosts
+                        # that own a "_meta.nested_fields"), and it accepts
+                        # exactly the four relation flags "_relation_kind"
+                        # classifies. A key naming no relation never reaches a
+                        # write -- the class raises ImproperlyConfigured.
                         deferred.append((field, child_model, kind, relation, sub_data))
 
                 ok, obj = cls._meta.backend.save_object(
