@@ -110,7 +110,11 @@ def _nested_field_names(*granted: str) -> set[str]:
 
 
 class TestPermissionScopedNestedInput:
-    """The nested input field is gated by the CHILD's write permission."""
+    """The nested input field is gated by the CHILD's write permission.
+
+    Both directions are asserted on purpose: a pruner that simply deletes the
+    nested field for everybody would satisfy the denial case alone.
+    """
 
     def test_nested_input_pruned_without_the_childs_write_perm(self) -> None:
         """A caller who may not create the child must not see the nested field.

@@ -74,30 +74,55 @@ _OPS_LABEL = "tests.purge_nestedr6opskid"
 # An "only_fields" is an ALLOWANCE: the hosts serving the operation union it.  #
 # --------------------------------------------------------------------------- #
 class NestedR6SplitKidCard(DjangoModelType):
-    """The READ surface, projecting the columns a card displays."""
+    """The READ surface, projecting the columns a card displays.
+
+    A read projection and a write projection sharing nothing is an ordinary
+    configuration, not a contradiction -- intersecting the two killed schemas that used
+    to build.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6SplitKid", showing "slug"."""
+        """Bind the type to "NestedR6SplitKid", showing "slug".
+
+        The allowance names "id" and "slug" only, so its union with the write host's
+        "headline" is observable in a single input type.
+        """
 
         model = NestedR6SplitKid
         only_fields = ("id", "slug")
 
 
 class NestedR6SplitKidMutation(DjangoModelMutation):
-    """The WRITE surface, projecting the columns a client may set."""
+    """The WRITE surface, projecting the columns a client may set.
+
+    It allows "headline", which the read card never mentions; a nested input missing it
+    would refuse a write the child's own mutation accepts.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR6SplitKid", writing "headline"."""
+        """Bind the mutation to "NestedR6SplitKid", writing "headline".
+
+        Declares no "model_operations", so this host serves both write verbs and the
+        operation filter cannot quietly drop it from the merge.
+        """
 
         model = NestedR6SplitKid
         only_fields = ("headline",)
 
 
 class NestedR6SplitOwnerType(DjangoModelType):
-    """The parent nesting the split-projection child."""
+    """The parent nesting the split-projection child.
+
+    The nesting scope the merged child input is built for; the tests read that input
+    directly rather than through an assembled schema.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6SplitOwner" with "kids" nested."""
+        """Bind the type to "NestedR6SplitOwner" with "kids" nested.
+
+        The parent's own surface is deliberately unprojected, so every field the tests
+        see on the child input arrived from the child's hosts.
+        """
 
         model = NestedR6SplitOwner
         nested_fields = {"kids": NestedR6SplitKid}
@@ -110,12 +135,21 @@ _ISO_REGISTRY = Registry()
 
 
 class NestedR6IsoKidOtherMutation(DjangoModelMutation):
-    """A host bound to a SECOND registry, narrowing on every axis it can."""
+    """A host bound to a SECOND registry, narrowing on every axis it can.
+
+    Projection, permission label and row scope at once, because the isolation rule has
+    to hold on all three: a leak on any one of them is a different bug with the same
+    cause.
+    """
 
     required_perms: ClassVar[tuple[str, ...]] = (_ISO_LABEL,)
 
     class Meta:
-        """Bind the mutation to "NestedR6IsoKid" on its own registry."""
+        """Bind the mutation to "NestedR6IsoKid" on its own registry.
+
+        "Meta.registry" is the documented multi-schema option, so merely importing this
+        module must not change what the global registry builds.
+        """
 
         model = NestedR6IsoKid
         registry = _ISO_REGISTRY
@@ -137,10 +171,18 @@ class NestedR6IsoKidOtherMutation(DjangoModelMutation):
 
 
 class NestedR6IsoKidType(DjangoModelType):
-    """The FIRST registry's host: no projection, no scope, no label."""
+    """The FIRST registry's host: no projection, no scope, no label.
+
+    Contributing nothing is the point: any narrowing the tests observe on this
+    registry's surface could only have come from the other registry's host.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6IsoKid" on the global registry."""
+        """Bind the type to "NestedR6IsoKid" on the global registry.
+
+        Naming no registry is what puts a host in the global one, which is the registry
+        every assertion here builds against.
+        """
 
         model = NestedR6IsoKid
 
@@ -154,7 +196,11 @@ class NestedR6IsoOwnerType(DjangoModelType):
     """
 
     class Meta:
-        """Bind the type to "NestedR6IsoOwner" with "kids" nested."""
+        """Bind the type to "NestedR6IsoOwner" with "kids" nested.
+
+        The nested entry the writer follows at runtime; with the parent ungated, any
+        denial observed can only have come from a child host.
+        """
 
         model = NestedR6IsoOwner
         nested_fields = {"kids": NestedR6IsoKid}
@@ -164,24 +210,41 @@ class NestedR6IsoOwnerType(DjangoModelType):
 # The stamp resolves at the same moment as the projection it must match.      #
 # --------------------------------------------------------------------------- #
 class NestedR6LateOwnerType(DjangoModelType):
-    """The parent, declared BEFORE the child's own write host."""
+    """The parent, declared BEFORE the child's own write host.
+
+    A parent app importing a child app later is the ordinary order, so a stamp frozen
+    eagerly misses the label on the most common layout there is.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedR6LateOwner" with "kids" nested."""
+        """Bind the type to "NestedR6LateOwner" with "kids" nested.
+
+        This declaration is what used to freeze the stamp: the nested field existed
+        before the child's write host had even been imported.
+        """
 
         model = NestedR6LateOwner
         nested_fields = {"kids": NestedR6LateKid}
 
 
 class NestedR6LateKidMutation(DjangoModelMutation):
-    """The child's own write host, declared after the parent but before build."""
+    """The child's own write host, declared after the parent but before build.
+
+    Late, but still in time for the build, so both halves of its declaration are
+    reachable -- the projection always was, and the label is the half that used to be
+    missed.
+    """
 
     required_perms: ClassVar[tuple[str, ...]] = (_LATE_LABEL,)
 
     class Meta:
-        """Bind the mutation to "NestedR6LateKid" for both write verbs."""
+        """Bind the mutation to "NestedR6LateKid" for both write verbs.
+
+        Serving create and update puts the label on both of this host's roots, so a
+        caller lacking it loses them and must lose the nested field with them.
+        """
 
         model = NestedR6LateKid
         model_operations = ("create", "update")
@@ -191,24 +254,41 @@ class NestedR6LateKidMutation(DjangoModelMutation):
 # A label is read only for the operations its host serves.                    #
 # --------------------------------------------------------------------------- #
 class NestedR6OpsKidDeleteMutation(DjangoModelMutation):
-    """A delete-only host carrying a destructive project-specific label."""
+    """A delete-only host carrying a destructive project-specific label.
+
+    A purge permission says nothing about creating a child through its parent, so
+    unioning it into the nested create stamp locks out callers who may legitimately
+    write.
+    """
 
     required_perms: ClassVar[tuple[str, ...]] = (_OPS_LABEL,)
 
     class Meta:
-        """Bind the mutation to "NestedR6OpsKid" for "delete" only."""
+        """Bind the mutation to "NestedR6OpsKid" for "delete" only.
+
+        "model_operations" is what scopes the label; without the narrowing this fixture
+        would be indistinguishable from an ordinary write host.
+        """
 
         model = NestedR6OpsKid
         model_operations = ("delete",)
 
 
 class NestedR6OpsOwnerType(DjangoModelType):
-    """The parent nesting the delete-labelled child."""
+    """The parent nesting the delete-labelled child.
+
+    Model-permission gated so the test can grant the full composite write set and still
+    observe whether the delete label crept into the stamp.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedR6OpsOwner" with "kids" nested."""
+        """Bind the type to "NestedR6OpsOwner" with "kids" nested.
+
+        The nested CREATE surface is the one the pruner is asked about -- an operation
+        the labelled host does not serve at all.
+        """
 
         model = NestedR6OpsOwner
         nested_fields = {"kids": NestedR6OpsKid}
@@ -218,20 +298,36 @@ class NestedR6OpsOwnerType(DjangoModelType):
 # The two link branches that reach "_persist_child" with an existing row.     #
 # --------------------------------------------------------------------------- #
 class NestedR6PinKidType(DjangoModelType):
-    """A tenant-scoped host: rows of any other tenant are invisible."""
+    """A tenant-scoped host: rows of any other tenant are invisible.
+
+    Both link branches below resolve to a row this scope hides, which is the only reason
+    attaching a row can be a disclosure.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6PinKid", scoped to one tenant."""
+        """Bind the type to "NestedR6PinKid", scoped to one tenant.
+
+        Scoped through "Meta.queryset", so the hiding is declarative and applies to
+        every operation the host serves.
+        """
 
         model = NestedR6PinKid
         queryset = NestedR6PinKid.objects.filter(tenant="a")
 
 
 class NestedR6PinOwnerType(DjangoModelType):
-    """The parent nesting the same child through a forward FK and an M2M."""
+    """The parent nesting the same child through a forward FK and an M2M.
+
+    One child model on two relation kinds, so the two "_persist_child" branches no other
+    test reaches are both driven from a single fixture.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6PinOwner" with both links nested."""
+        """Bind the type to "NestedR6PinOwner" with both links nested.
+
+        Nesting "fwd" and "tags" is what turns an "id"-carrying payload into a write
+        path rather than a plain link.
+        """
 
         model = NestedR6PinOwner
         nested_fields = {"fwd": NestedR6PinKid, "tags": NestedR6PinKid}
@@ -241,10 +337,18 @@ class NestedR6PinOwnerType(DjangoModelType):
 # The late-twin escape hatch compares EVERYTHING a host contributes.          #
 # --------------------------------------------------------------------------- #
 class NestedR6SigKidCreateMutation(DjangoModelMutation):
-    """A create-only host allowing exactly one column."""
+    """A create-only host allowing exactly one column.
+
+    The peer a late update-only host would claim to repeat -- and the repeat is only a
+    no-op if the operations match as well as the columns.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR6SigKid" for "create" only."""
+        """Bind the mutation to "NestedR6SigKid" for "create" only.
+
+        The operation narrowing is half the no-op signature: the same "only_fields" on
+        another verb narrows a surface this host never touched.
+        """
 
         model = NestedR6SigKid
         model_operations = ("create",)
@@ -252,30 +356,54 @@ class NestedR6SigKidCreateMutation(DjangoModelMutation):
 
 
 class NestedR6SigOwnerType(DjangoModelType):
-    """The parent nesting the operation-split child."""
+    """The parent nesting the operation-split child.
+
+    The test materializes this parent's nested UPDATE input first, which is the surface
+    a late host would otherwise have narrowed in silence.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6SigOwner" with "kids" nested."""
+        """Bind the type to "NestedR6SigOwner" with "kids" nested.
+
+        This parent's name appears in the guard's error message, which is what proves
+        the refusal came from the late-host check and not another guard.
+        """
 
         model = NestedR6SigOwner
         nested_fields = {"kids": NestedR6SigKid}
 
 
 class NestedR6LabelKidTypeA(DjangoModelType):
-    """The early host of the late-twin label fixture, hiding one column."""
+    """The early host of the late-twin label fixture, hiding one column.
+
+    Its exclusion is the projection the late twin repeats verbatim, leaving the
+    permission label as the only thing that differs between them.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6LabelKid", hiding "secret"."""
+        """Bind the type to "NestedR6LabelKid", hiding "secret".
+
+        Exactly the declaration the late twin repeats: if the label were not part of the
+        no-op signature, that twin would be waved straight through.
+        """
 
         model = NestedR6LabelKid
         exclude_fields = ("secret",)
 
 
 class NestedR6LabelOwnerType(DjangoModelType):
-    """The parent nesting the late-twin label child."""
+    """The parent nesting the late-twin label child.
+
+    Materializing through this parent freezes the nested input, after which no newly
+    declared label can ever reach it.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6LabelOwner" with "kids" nested."""
+        """Bind the type to "NestedR6LabelOwner" with "kids" nested.
+
+        Its name appears only in the late-host refusal, so asserting on it rules out a
+        different guard raising the same exception type.
+        """
 
         model = NestedR6LabelOwner
         nested_fields = {"kids": NestedR6LabelKid}
@@ -289,10 +417,18 @@ _LOCAL_REGISTRY = Registry()
 
 
 class NestedR6LocalKidType(DjangoModelType):
-    """The GLOBAL registry's host: the only place a type host can live."""
+    """The GLOBAL registry's host: the only place a type host can live.
+
+    "Meta.registry" is not an option on "DjangoModelType", which is exactly why scoping
+    the lookup to the parent's registry alone left this child with no host at all.
+    """
 
     class Meta:
-        """Bind the type to "NestedR6LocalKid", hiding "secret" and scoping."""
+        """Bind the type to "NestedR6LocalKid", hiding "secret" and scoping.
+
+        It declares both a projection and a queryset, so the build side and the runtime
+        side of the host lookup can be checked against the same host.
+        """
 
         model = NestedR6LocalKid
         exclude_fields = ("secret",)
@@ -300,10 +436,18 @@ class NestedR6LocalKidType(DjangoModelType):
 
 
 class NestedR6LocalOwnerMutation(DjangoModelMutation):
-    """A parent bound to its own registry, nesting the globally-hosted child."""
+    """A parent bound to its own registry, nesting the globally-hosted child.
+
+    The multi-schema shape that must still see the global hosts: missing them costs
+    projection, scope, label and permission gate in one go.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR6LocalOwner" on a local registry."""
+        """Bind the mutation to "NestedR6LocalOwner" on a local registry.
+
+        "registry" is what makes this parent's lookup non-trivial -- the child's only
+        host lives somewhere else entirely.
+        """
 
         model = NestedR6LocalOwner
         registry = _LOCAL_REGISTRY
@@ -384,7 +528,12 @@ def _update(host: Any, data: dict[str, Any]) -> Any:
 
 
 class TestOnlyFieldsUnionAcrossHosts:
-    """A read projection and a write projection must not annihilate each other."""
+    """A read projection and a write projection must not annihilate each other.
+
+    The union has to widen without granting amnesty: a column no host allows must still
+    stay out, or a failed merge quietly degrades into "no projection declared" and mints
+    every writable column.
+    """
 
     def test_a_read_card_and_a_write_host_both_reach_the_nested_input(self) -> None:
         """Splitting the read and write surfaces is an ORDINARY configuration.
@@ -412,7 +561,12 @@ class TestOnlyFieldsUnionAcrossHosts:
 
 @pytest.mark.django_db()
 class TestHostsAreScopedToTheirRegistry:
-    """A second registry's host must not reach the first registry's surface."""
+    """A second registry's host must not reach the first registry's surface.
+
+    All three axes are asserted because a process-wide host list leaks on all three:
+    importing another schema's module would narrow this one's projection, gate its
+    nested field, and turn its updates into not-founds.
+    """
 
     def test_another_registrys_exclusion_does_not_narrow_the_projection(self) -> None:
         """The projection merge reads the hosts of the registry it builds for.
@@ -460,7 +614,12 @@ class TestHostsAreScopedToTheirRegistry:
 
 
 class TestTheStampResolvesWithTheProjection:
-    """The two halves of a host declaration must be read at the same moment."""
+    """The two halves of a host declaration must be read at the same moment.
+
+    Reading them at different times is what let a late host's projection land while its
+    label did not: the child's own roots were pruned away and the very same write
+    survived inside the parent's payload.
+    """
 
     def test_a_write_host_declared_after_the_parent_still_reaches_the_stamp(
         self,
@@ -494,7 +653,11 @@ class TestTheStampResolvesWithTheProjection:
 
 
 class TestALabelIsReadPerOperation:
-    """A host has no say over an operation it does not generate."""
+    """A host has no say over an operation it does not generate.
+
+    The label axis has to follow the allowance axis, or a delete permission declared
+    once removes the nested create field from every caller entitled to use it.
+    """
 
     def test_a_delete_only_hosts_label_does_not_gate_a_nested_create(self) -> None:
         """The label axis follows the same rule the allowance axis follows.
@@ -512,7 +675,12 @@ class TestALabelIsReadPerOperation:
 
 @pytest.mark.django_db()
 class TestPersistChildScopeOnTheLinkBranches:
-    """The scope check in "_persist_child" is load-bearing on two more paths."""
+    """The scope check in "_persist_child" is load-bearing on two more paths.
+
+    Every other scope test drives the reverse path, where the row is rejected earlier,
+    so deleting this check left the whole suite green while both link branches happily
+    rewrote a hidden row.
+    """
 
     def test_a_forward_fk_already_linked_to_a_hidden_row_is_refused(self) -> None:
         """The forward branch reaches "_persist_child" for the CURRENT target.
@@ -557,7 +725,12 @@ class TestPersistChildScopeOnTheLinkBranches:
 
 
 class TestTheLateTwinHatchComparesEverything:
-    """A late host is a no-op only when it contributes exactly what a peer does."""
+    """A late host is a no-op only when it contributes exactly what a peer does.
+
+    Operations and labels are contributions too. Comparing projections alone waves
+    through a host that narrows a different operation, or one that adds a permission the
+    frozen stamp can never carry.
+    """
 
     def test_a_twin_projection_on_another_operation_is_refused(self) -> None:
         """The same "only_fields" for a DIFFERENT operation is not a repeat.

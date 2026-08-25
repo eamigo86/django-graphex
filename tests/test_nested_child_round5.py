@@ -68,24 +68,40 @@ _PUBLISH = "tests.publish_nestedr5stampkid"
 # The stamp UNIONS the host overrides onto the composite default.             #
 # --------------------------------------------------------------------------- #
 class NestedR5StampKidMutation(DjangoModelMutation):
-    """The child's own write host, labelled with a project-specific verb."""
+    """The child's own write host, labelled with a project-specific verb.
+
+    The label is not a verb the composite table ever produces, so finding it on the
+    nested stamp can only mean the host override was read.
+    """
 
     required_perms: ClassVar[tuple[str, ...]] = (_PUBLISH,)
 
     class Meta:
-        """Bind the mutation to "NestedR5StampKid" for both write verbs."""
+        """Bind the mutation to "NestedR5StampKid" for both write verbs.
+
+        Serving create and update means both of this host's roots carry the label, so a
+        caller missing it loses the front door and must lose the nested one too.
+        """
 
         model = NestedR5StampKid
         model_operations = ("create", "update")
 
 
 class NestedR5StampOwnerType(DjangoModelType):
-    """The parent nesting the strictly-labelled child."""
+    """The parent nesting the strictly-labelled child.
+
+    Gated by model permissions so a caller can be handed the parent's grants exactly and
+    still be measured on the child's label alone.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedR5StampOwner" with "kids" nested."""
+        """Bind the type to "NestedR5StampOwner" with "kids" nested.
+
+        "kids" is the entire surface under test: the pruner is asked about it three
+        times below, with three different permission sets.
+        """
 
         model = NestedR5StampOwner
         nested_fields = {"kids": NestedR5StampKid}
@@ -138,7 +154,12 @@ def _input_fields(granted: set[str], root: str) -> set[str]:
 
 
 class TestNestedStampUnionsHostOverrides:
-    """An override may ADD a requirement to the nested field, never remove one."""
+    """An override may ADD a requirement to the nested field, never remove one.
+
+    Three cases because this seam has already been swung twice: honouring the override
+    alone widened the nested surface, ignoring it narrowed nothing, and only the union
+    is both safe and satisfiable.
+    """
 
     def test_a_write_hosts_stricter_label_reaches_the_nested_field(self) -> None:
         """The child's declared label must gate the parent's nested surface too.
@@ -183,10 +204,18 @@ class TestNestedStampUnionsHostOverrides:
 # An allowance is operation-scoped; a prohibition is not.                     #
 # --------------------------------------------------------------------------- #
 class NestedR5ExcKidCreateMutation(DjangoModelMutation):
-    """A create-only host declaring a column is never client-writable."""
+    """A create-only host declaring a column is never client-writable.
+
+    It is the project's ONLY write mutation for this model, so a nested update accepting
+    "role" writes a column no other surface would.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR5ExcKid" for "create" only."""
+        """Bind the mutation to "NestedR5ExcKid" for "create" only.
+
+        The narrow "model_operations" is the trap: filtering the exclusion by it drops
+        the prohibition from every other operation's nested surface.
+        """
 
         model = NestedR5ExcKid
         model_operations = ("create",)
@@ -194,26 +223,46 @@ class NestedR5ExcKidCreateMutation(DjangoModelMutation):
 
 
 class NestedR5ExcKidType(DjangoModelType):
-    """An ordinary read host for the same child, declaring no projection."""
+    """An ordinary read host for the same child, declaring no projection.
+
+    It supplies the update side of the merge, forbidding nothing, so anything missing
+    from the nested update surface must have come from its create-only sibling.
+    """
 
     class Meta:
-        """Bind the type to "NestedR5ExcKid"."""
+        """Bind the type to "NestedR5ExcKid".
+
+        No projection at all, so this host is a neutral contributor and can never be
+        mistaken for the source of the prohibition.
+        """
 
         model = NestedR5ExcKid
 
 
 class NestedR5ExcOwnerType(DjangoModelType):
-    """The parent nesting the partly-excluded child."""
+    """The parent nesting the partly-excluded child.
+
+    Only its nested entry matters here; the assertions read the built child input
+    directly instead of going through a schema.
+    """
 
     class Meta:
-        """Bind the type to "NestedR5ExcOwner" with "kids" nested."""
+        """Bind the type to "NestedR5ExcOwner" with "kids" nested.
+
+        The nested child input is keyed by the nesting parent, so this declaration is
+        what the test's direct build call scopes to.
+        """
 
         model = NestedR5ExcOwner
         nested_fields = {"kids": NestedR5ExcKid}
 
 
 class TestExclusionsAreNotOperationScoped:
-    """An "exclude_fields" entry is a prohibition, not a per-operation opinion."""
+    """An "exclude_fields" entry is a prohibition, not a per-operation opinion.
+
+    Both halves are asserted: the column has to go, and nothing else may go with it. A
+    fix that stripped the whole nested update input would satisfy the first on its own.
+    """
 
     def test_a_create_hosts_exclusion_also_hides_the_column_on_update(self) -> None:
         """The nested UPDATE surface must honour every declared exclusion.
@@ -244,10 +293,18 @@ class TestExclusionsAreNotOperationScoped:
 # The nested pk scope comes from the hosts that serve the WRITE.              #
 # --------------------------------------------------------------------------- #
 class NestedR5ScopeKidCreateMutation(DjangoModelMutation):
-    """A create-only host whose scope hides every existing row."""
+    """A create-only host whose scope hides every existing row.
+
+    A create host has no rows to scope, so this is harmless -- right up until a nested
+    UPDATE consults it and refuses a row the child's own update accepts.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR5ScopeKid" for "create" only."""
+        """Bind the mutation to "NestedR5ScopeKid" for "create" only.
+
+        The declaration that should keep this host's scope out of the nested update path
+        entirely.
+        """
 
         model = NestedR5ScopeKid
         model_operations = ("create",)
@@ -268,20 +325,37 @@ class NestedR5ScopeKidCreateMutation(DjangoModelMutation):
 
 
 class NestedR5ScopeKidUpdateMutation(DjangoModelMutation):
-    """The host that actually serves "update", scoping nothing."""
+    """The host that actually serves "update", scoping nothing.
+
+    Splitting a child into a create host and an update host is the library's own
+    documented idiom, which is what makes an over-broad scope collateral damage on
+    projects that were never exposed.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR5ScopeKid" for "update" only."""
+        """Bind the mutation to "NestedR5ScopeKid" for "update" only.
+
+        No scoping hook of its own, so a nested update through this host is expected to
+        see every row.
+        """
 
         model = NestedR5ScopeKid
         model_operations = ("update",)
 
 
 class NestedR5ScopeOwnerType(DjangoModelType):
-    """The parent nesting the split-surface child."""
+    """The parent nesting the split-surface child.
+
+    Its nested update payload is the exact call that used to land on the create host's
+    empty queryset.
+    """
 
     class Meta:
-        """Bind the type to "NestedR5ScopeOwner" with "kids" nested."""
+        """Bind the type to "NestedR5ScopeOwner" with "kids" nested.
+
+        Serves every operation, so the nested update surface exists and can be exercised
+        end to end rather than inspected.
+        """
 
         model = NestedR5ScopeOwner
         nested_fields = {"kids": NestedR5ScopeKid}
@@ -291,20 +365,36 @@ class NestedR5ScopeOwnerType(DjangoModelType):
 # A scope-hidden row is not disclosed by the reverse-ownership guard.         #
 # --------------------------------------------------------------------------- #
 class NestedR5HideKidType(DjangoModelType):
-    """A tenant-scoped host: rows of any other tenant are invisible."""
+    """A tenant-scoped host: rows of any other tenant are invisible.
+
+    Scoping through "Meta.queryset" keeps the fixture declarative, and the rows it hides
+    are the ones the ownership guard used to disclose.
+    """
 
     class Meta:
-        """Bind the type to "NestedR5HideKid", scoped to one tenant."""
+        """Bind the type to "NestedR5HideKid", scoped to one tenant.
+
+        The queryset narrowing is the only thing hiding the row: this child declares no
+        permission code at all, so nothing else can produce a denial.
+        """
 
         model = NestedR5HideKid
         queryset = NestedR5HideKid.objects.filter(tenant="a")
 
 
 class NestedR5HideOwnerType(DjangoModelType):
-    """The parent nesting the tenant-scoped child."""
+    """The parent nesting the tenant-scoped child.
+
+    The tests create two parent rows so a hidden child can belong to the OTHER one --
+    the case where the ownership guard answers first and says too much.
+    """
 
     class Meta:
-        """Bind the type to "NestedR5HideOwner" with "kids" nested."""
+        """Bind the type to "NestedR5HideOwner" with "kids" nested.
+
+        The nested entry through which a foreign primary key reaches the child's scope
+        check.
+        """
 
         model = NestedR5HideOwner
         nested_fields = {"kids": NestedR5HideKid}
@@ -335,7 +425,11 @@ def _update(host: Any, data: dict[str, Any]) -> Any:
 
 @pytest.mark.django_db()
 class TestNestedScopeUsesTheWritingHosts:
-    """A host that serves no write has no say over a nested update's scope."""
+    """A host that serves no write has no say over a nested update's scope.
+
+    Over-scoping is an availability bug rather than a security one: it refuses a write
+    the child's own update accepts, on a project that was never vulnerable.
+    """
 
     def test_a_create_only_hosts_scope_does_not_gate_a_nested_update(self) -> None:
         """Only the hosts serving the operation may hide the row.
@@ -360,7 +454,12 @@ class TestNestedScopeUsesTheWritingHosts:
 
 @pytest.mark.django_db()
 class TestHiddenRowIsNotDisclosed:
-    """Two scope-hidden rows must produce the SAME error shape."""
+    """Two scope-hidden rows must produce the SAME error shape.
+
+    The difference IS the disclosure: one shape confirms the row exists and names the
+    parent it belongs to, the other does not. The ownerless control is what makes the
+    pair meaningful.
+    """
 
     def test_a_hidden_row_owned_elsewhere_answers_not_found(self) -> None:
         """The scope decision must come before the ownership guard.
@@ -411,27 +510,48 @@ class TestHiddenRowIsNotDisclosed:
 # The materialization record dies with the registry that made it.             #
 # --------------------------------------------------------------------------- #
 class NestedR5TwinKidTypeA(DjangoModelType):
-    """The early host whose projection the late twin repeats verbatim."""
+    """The early host whose projection the late twin repeats verbatim.
+
+    It materializes the nested surface first, which is what makes the twin declared
+    later a genuine no-op rather than a lost narrowing.
+    """
 
     class Meta:
-        """Bind the type to "NestedR5TwinKid", hiding "secret"."""
+        """Bind the type to "NestedR5TwinKid", hiding "secret".
+
+        The exclusion the late twin repeats; excludes are unioned, so repeating one
+        cannot move the built surface by even a field.
+        """
 
         model = NestedR5TwinKid
         exclude_fields = ("secret",)
 
 
 class NestedR5TwinOwnerType(DjangoModelType):
-    """The parent nesting the duplicate-projection child."""
+    """The parent nesting the duplicate-projection child.
+
+    Building through this parent is what freezes the child's nested input and arms the
+    late-host guard the tests then poke.
+    """
 
     class Meta:
-        """Bind the type to "NestedR5TwinOwner" with "kids" nested."""
+        """Bind the type to "NestedR5TwinOwner" with "kids" nested.
+
+        The materialization record is keyed by this nesting parent together with the
+        child model and the registry, which is the whole point of the group.
+        """
 
         model = NestedR5TwinOwner
         nested_fields = {"kids": NestedR5TwinKid}
 
 
 class TestLateHostIsRefusedPerRegistry:
-    """The guard fires for the registry that froze the surface, and no other."""
+    """The guard fires for the registry that froze the surface, and no other.
+
+    The record was a process global while the memo it shadows is per registry, so a
+    second schema's host was refused for a surface that schema never built -- and the
+    axes that genuinely DO narrow had no coverage at all.
+    """
 
     def test_a_second_registrys_host_is_accepted_and_stays_there(self) -> None:
         """A registry whose memo is empty has frozen nothing -- and owns nothing.
@@ -611,7 +731,12 @@ def _authenticated_info() -> SimpleNamespace:
 
 
 class TestEverySupportedKwargsForward:
-    """Each per-action forward must narrow the extras to what lands on it."""
+    """Each per-action forward must narrow the extras to what lands on it.
+
+    Only the create forward was pinned, so reverting any of the other six left the suite
+    green while an override the guides document raised an uncaught "TypeError" for that
+    action.
+    """
 
     @pytest.mark.parametrize(
         "action", ["create", "update", "delete", "retrieve", "list", "subscribe"]
@@ -648,21 +773,36 @@ class TestEverySupportedKwargsForward:
 
 
 class NestedR5PolicyKidType(DjangoModelType):
-    """The child whose policy cannot absorb an unknown keyword."""
+    """The child whose policy cannot absorb an unknown keyword.
+
+    The policy grants everything, so the nested update below can only fail one way: by
+    crashing at the forward.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (_ClosedHasPermission,)
 
     class Meta:
-        """Bind the type to "NestedR5PolicyKid"."""
+        """Bind the type to "NestedR5PolicyKid".
+
+        The policy above needs no projection or operation narrowing to do its job, so
+        the binding stands alone.
+        """
 
         model = NestedR5PolicyKid
 
 
 class NestedR5PolicyOwnerType(DjangoModelType):
-    """The parent driving the closed-"has_permission" child."""
+    """The parent driving the closed-"has_permission" child.
+
+    Ungated itself, so the only permission code a nested write runs is the child's.
+    """
 
     class Meta:
-        """Bind the type to "NestedR5PolicyOwner" with "kids" nested."""
+        """Bind the type to "NestedR5PolicyOwner" with "kids" nested.
+
+        Serves update as well as create, which is the forward this whole fixture exists
+        to cross.
+        """
 
         model = NestedR5PolicyOwner
         nested_fields = {"kids": NestedR5PolicyKid}
@@ -670,7 +810,12 @@ class NestedR5PolicyOwnerType(DjangoModelType):
 
 @pytest.mark.django_db()
 class TestNestedUpdateCrossesTheUpdateForward:
-    """The seam the lot's own "nested_parent" extra actually crosses."""
+    """The seam the lot's own "nested_parent" extra actually crosses.
+
+    Every earlier test of this contract drove a nested CREATE, so the update forward
+    carried the new extra with nothing pinning it -- and a nested update is the one path
+    that takes it.
+    """
 
     def test_a_nested_update_still_grants_through_a_closed_policy(self) -> None:
         """The nested UPDATE lands on "has_update_permission", not "create".

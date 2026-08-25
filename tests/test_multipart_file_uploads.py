@@ -41,19 +41,35 @@ from tests.models import ProjectedUploadDoc, UploadDoc
 
 
 class UploadDocMutation(DjangoModelMutation):
-    """The "DjangoModelMutation" host over the upload model."""
+    """The "DjangoModelMutation" host over the upload model.
+
+    Every top-level upload case runs against this host; the "DjangoModelType" twin is
+    pinned in "test_serializer_crud_edges", so nothing here repeats it.
+    """
 
     class Meta:
-        """Bind the mutation to "UploadDoc"."""
+        """Bind the mutation to "UploadDoc".
+
+        No projection is declared, so "attachment" stays on the input surface and the
+        multipart merge has a field to land on.
+        """
 
         model = UploadDoc
 
 
 class UploadDocSchemaType(DjangoModelType):
-    """The "DjangoModelType" host, mounted only to render an SDL."""
+    """The "DjangoModelType" host, mounted only to render an SDL.
+
+    The wire-type assertions need real query and mutation roots to print; this host
+    writes nothing itself.
+    """
 
     class Meta:
-        """Bind the type to "UploadDoc"."""
+        """Bind the type to "UploadDoc".
+
+        Deliberately the same model as the mutation host: the SDL check has to prove
+        both ends of ONE file column stay "String".
+        """
 
         model = UploadDoc
 
@@ -261,7 +277,12 @@ class TestTheMergeHonoursTheInputProjection:
 
     @pytest.mark.django_db
     def test_an_excluded_file_column_is_not_written_by_a_multipart_part(self) -> None:
-        """Assert a part named after an excluded column leaves the row untouched."""
+        """Assert a part named after an excluded column leaves the row untouched.
+
+        This test breaks if the merge trusts the part name instead of the compiled input
+        surface: the file lands on a column no client could have named, which is a write
+        straight past the projection boundary.
+        """
 
         class _ProjectedDocType(DjangoModelType):
             """A host that deliberately keeps its file column off the input."""
@@ -298,7 +319,11 @@ class TestTheMergeHonoursTheInputProjection:
 
     @pytest.mark.django_db
     def test_a_part_naming_no_field_at_all_is_ignored(self) -> None:
-        """Assert an unrecognised part neither writes nor fails the mutation."""
+        """Assert an unrecognised part neither writes nor fails the mutation.
+
+        The other half of the projection guard: an unknown part must be dropped quietly,
+        or any stray form field would turn a valid multipart mutation into an error.
+        """
         info = _multipart_info({"not_a_field": _upload()})
         with (
             tempfile.TemporaryDirectory() as media,

@@ -104,58 +104,102 @@ class NestedPermPostType(DjangoModelType):
     permission_classes: ClassVar[tuple[Any, ...]] = (_RecordingDeny,)
 
     class Meta:
-        """Bind the type to "NestedPermPost"."""
+        """Bind the type to "NestedPermPost".
+
+        The nested writer looks a child host up by MODEL, so this line is what makes
+        the denying policy above apply to a write arriving through "author.posts".
+        """
 
         model = NestedPermPost
 
 
 class NestedPermCategoryType(DjangoModelType):
-    """The forward-FK target's own type, denying every write."""
+    """The forward-FK target's own type, denying every write.
+
+    It exists to be ignored: the link path attaches an existing row, so a gate
+    that started consulting the child here would break "category: ID".
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (_RecordingDeny,)
 
     class Meta:
-        """Bind the type to "NestedPermCategory"."""
+        """Bind the type to "NestedPermCategory".
+
+        "NestedPermAuthor.category" resolves to this model, which is how the link
+        path finds the host the test then proves is NOT asked.
+        """
 
         model = NestedPermCategory
 
 
 class NestedPermTagType(DjangoModelType):
-    """The many-to-many target's own type, denying every write."""
+    """The many-to-many target's own type, denying every write.
+
+    The M2M twin of the category host: same denial, different relation kind, so a
+    gate leaking onto link paths fails on both rather than only one.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (_RecordingDeny,)
 
     class Meta:
-        """Bind the type to "NestedPermTag"."""
+        """Bind the type to "NestedPermTag".
+
+        Reached through "NestedPermAuthor.tags", whose rows are shared with every
+        other parent -- writing them from a nested payload would be cross-tenant.
+        """
 
         model = NestedPermTag
 
 
 class NestedPermNoteType(DjangoModelType):
-    """The note's own type, declaring NO permissions -- the inertness control."""
+    """The note's own type, declaring NO permissions -- the inertness control.
+
+    Without a host that consults nothing, a gate denying by default would still
+    look correct on every other case in this module.
+    """
 
     class Meta:
-        """Bind the type to "NestedPermNote"."""
+        """Bind the type to "NestedPermNote".
+
+        The binding and nothing else: no "permission_classes" for the nested gate to
+        find, which is the whole point of the fixture.
+        """
 
         model = NestedPermNote
 
 
 class NestedPermHatchNoteType(DjangoModelType):
-    """The hatch note's own type: creatable only through its parent."""
+    """The hatch note's own type: creatable only through its parent.
+
+    Proves "nested_parent" reaches the child's policy as a usable SIGNAL, not
+    merely as extra noise on a denial.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (_OnlyViaParent,)
 
     class Meta:
-        """Bind the type to "NestedPermHatchNote"."""
+        """Bind the type to "NestedPermHatchNote".
+
+        Bound on its own account too, so the same policy can be shown to keep
+        refusing the direct create while the nested one succeeds.
+        """
 
         model = NestedPermHatchNote
 
 
 class NestedPermScopedNoteType(DjangoModelType):
-    """The scoped note's own type, hiding every row of another tenant."""
+    """The scoped note's own type, hiding every row of another tenant.
+
+    Drives the upsert case: a nested pk must be resolved against this host's
+    scope, never against the bare model manager.
+    """
 
     class Meta:
-        """Bind the type to "NestedPermScopedNote"."""
+        """Bind the type to "NestedPermScopedNote".
+
+        The scoping lives in the "filter_queryset" override below, so the binding is
+        deliberately the only declaration here.
+        """
 
         model = NestedPermScopedNote
 
@@ -181,7 +225,11 @@ class NestedPermAuthorType(DjangoModelType):
     """
 
     class Meta:
-        """Bind the type to "NestedPermAuthor" with all relations nested."""
+        """Bind the type to "NestedPermAuthor" with all relations nested.
+
+        One host covers reverse FK, forward FK and many-to-many, so an implementation
+        that only handled the reverse case cannot pass this module.
+        """
 
         model = NestedPermAuthor
         nested_fields = {
@@ -232,10 +280,19 @@ def _update(host: Any, data: dict[str, Any]) -> Any:
 
 @pytest.mark.django_db()
 class TestNestedChildPermissions:
-    """The child's own gate must run on every nested create and update."""
+    """The child's own gate must run on every nested create and update.
+
+    Authorizing the parent once and trusting the rest of the payload is the
+    defect: it turns any writable parent into a bypass for every child model it
+    nests.
+    """
 
     def setup_method(self) -> None:
-        """Reset the recorded permission calls before each case."""
+        """Reset the recorded permission calls before each case.
+
+        The recorders are module-level lists, so an entry left by an earlier case
+        would satisfy an assertion this one never earned.
+        """
         _CALLS.clear()
         _HATCH_CALLS.clear()
 

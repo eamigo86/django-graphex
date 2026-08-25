@@ -55,20 +55,38 @@ from tests.models import (
 # would make "which host was declared first" a coin flip.                       #
 # --------------------------------------------------------------------------- #
 class NestedProjPostType(DjangoModelType):
-    """PARENT DECLARED FIRST: the nesting host comes before the child's own."""
+    """PARENT DECLARED FIRST: the nesting host comes before the child's own.
+
+    Declaration order is the only variable in this module, and this is the half that
+    poisoned the shared slot: the parent materialised a child input before any child
+    host existed to project it.
+    """
 
     class Meta:
-        """Bind the type to "NestedProjPost" with "entries" nested."""
+        """Bind the type to "NestedProjPost" with "entries" nested.
+
+        The "nested_fields" entry is what mints the child element input; declaring no
+        projection here keeps the child's own host the only source of one.
+        """
 
         model = NestedProjPost
         nested_fields = {"entries": NestedProjEntry}
 
 
 class NestedProjEntryMutation(DjangoModelMutation):
-    """The child's own mutation, declared AFTER its nesting parent."""
+    """The child's own mutation, declared AFTER its nesting parent.
+
+    This is the class that used to inherit the parent's unprojected input out of the
+    shared registry slot, which is how "secret" became writable on the child's own root
+    field.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedProjEntry", hiding "secret"."""
+        """Bind the mutation to "NestedProjEntry", hiding "secret".
+
+        "exclude_fields" is the declaration BOTH surfaces have to honour: the child's
+        own input and the parent's nested element.
+        """
 
         model = NestedProjEntry
         model_operations = ("create",)
@@ -76,20 +94,36 @@ class NestedProjEntryMutation(DjangoModelMutation):
 
 
 class NestedProjNoteType(DjangoModelType):
-    """CHILD DECLARED FIRST: the child's own host comes before the parent."""
+    """CHILD DECLARED FIRST: the child's own host comes before the parent.
+
+    The mirror order, with the opposite failure: the projection survived and it was the
+    required back-reference foreign key the parent inherited with it.
+    """
 
     class Meta:
-        """Bind the type to "NestedProjNote", hiding "private"."""
+        """Bind the type to "NestedProjNote", hiding "private".
+
+        Declared before any parent exists, so the child's input is already in the
+        registry when the nesting host is compiled.
+        """
 
         model = NestedProjNote
         exclude_fields = ("private",)
 
 
 class NestedProjJournalMutation(DjangoModelMutation):
-    """The nesting parent, declared AFTER the child's own host."""
+    """The nesting parent, declared AFTER the child's own host.
+
+    Its element must be DERIVED from the child host rather than reused from it, which is
+    exactly the distinction the child-first order tests.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedProjJournal" with "notes" nested."""
+        """Bind the mutation to "NestedProjJournal" with "notes" nested.
+
+        "model_operations" narrows the host to "create" so the schema carries the one
+        nested surface under test and nothing else.
+        """
 
         model = NestedProjJournal
         model_operations = ("create",)
@@ -97,10 +131,18 @@ class NestedProjJournalMutation(DjangoModelMutation):
 
 
 class NestedProjLeftMutation(DjangoModelMutation):
-    """One of two parents nesting the SAME child model."""
+    """One of two parents nesting the SAME child model.
+
+    "NestedProjShared" carries a required foreign key to each parent, so only a per-
+    parent element type can relax the right one.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedProjLeft" with "shared" nested."""
+        """Bind the mutation to "NestedProjLeft" with "shared" nested.
+
+        Paired with the right-hand host below; both nest the same child, which is what
+        forces two distinct element types out of one model.
+        """
 
         model = NestedProjLeft
         model_operations = ("create",)
@@ -108,10 +150,18 @@ class NestedProjLeftMutation(DjangoModelMutation):
 
 
 class NestedProjRightMutation(DjangoModelMutation):
-    """The other parent nesting the same child model."""
+    """The other parent nesting the same child model.
+
+    Declared second on purpose: if the element type were shared, this is the host that
+    would inherit the wrong parent's relaxation.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedProjRight" with "shared" nested."""
+        """Bind the mutation to "NestedProjRight" with "shared" nested.
+
+        Identical to the left host apart from the model, so any difference the tests
+        observe comes from the nesting parent alone.
+        """
 
         model = NestedProjRight
         model_operations = ("create",)
@@ -119,10 +169,19 @@ class NestedProjRightMutation(DjangoModelMutation):
 
 
 class NestedProjLooseMutation(DjangoModelMutation):
-    """A parent nesting a child that declares no host of its own."""
+    """A parent nesting a child that declares no host of its own.
+
+    With no child host to overwrite the shared slot afterwards, registry pollution
+    leaves no trace in the schema -- it can only be caught by inspecting the registry
+    directly.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedProjLoose" with "items" nested."""
+        """Bind the mutation to "NestedProjLoose" with "items" nested.
+
+        The unprojected half of the memo pair; the sibling host below declares
+        "only_fields" so the two parent inputs keep distinct names.
+        """
 
         model = NestedProjLoose
         model_operations = ("create",)
@@ -137,7 +196,11 @@ class NestedProjLooseProjectedMutation(DjangoModelMutation):
     """
 
     class Meta:
-        """Bind the mutation to "NestedProjLoose", projected, with "items" nested."""
+        """Bind the mutation to "NestedProjLoose", projected, with "items" nested.
+
+        Same model and same nested child as the plain host, so the memo key is exercised
+        by two hosts that agree on everything the child element is derived from.
+        """
 
         model = NestedProjLoose
         model_operations = ("create",)
@@ -223,7 +286,12 @@ def _arg_name(gql_field: GraphQLField) -> str:
 # 1. Parent declared FIRST                                                     #
 # --------------------------------------------------------------------------- #
 class TestParentDeclaredFirst:
-    """The child's declared projection must survive a parent-first declaration."""
+    """The child's declared projection must survive a parent-first declaration.
+
+    This is the order that poisoned the shared registry slot: the parent minted a
+    generic child input first and the child's own mutation reused it, so the excluded
+    column became writable on BOTH surfaces.
+    """
 
     def _schema(self) -> GraphQLSchema:
         """Assemble the parent-first schema.
@@ -306,7 +374,12 @@ class TestParentDeclaredFirst:
 # 2. Child declared FIRST                                                      #
 # --------------------------------------------------------------------------- #
 class TestChildDeclaredFirst:
-    """A child-first declaration must produce a nested surface that WORKS."""
+    """A child-first declaration must produce a nested surface that WORKS.
+
+    The opposite order kept the projection but reused the child's own input verbatim,
+    whose required back-reference foreign key made every nested create unsatisfiable
+    before a resolver could run.
+    """
 
     def _schema(self) -> GraphQLSchema:
         """Assemble the child-first schema.
@@ -373,7 +446,12 @@ class TestChildDeclaredFirst:
 # 3. One child, two parents                                                    #
 # --------------------------------------------------------------------------- #
 class TestOneChildTwoParents:
-    """Each parent's nested element must relax ITS OWN back-reference."""
+    """Each parent's nested element must relax ITS OWN back-reference.
+
+    A single element type shared by two parents can only relax one foreign key, leaving
+    the other parent's nested create demanding a value its writer was going to inject
+    anyway.
+    """
 
     def test_each_parent_relaxes_only_its_own_fk(self) -> None:
         """A child nested under two parents gets one element type per parent.
@@ -403,7 +481,12 @@ class TestOneChildTwoParents:
 # 4. Registry hygiene and the memo key                                         #
 # --------------------------------------------------------------------------- #
 class TestRegistryHygiene:
-    """The nested build must never touch the shared "(child, op)" slot."""
+    """The nested build must never touch the shared "(child, op)" slot.
+
+    Slot pollution is the root cause behind the parent-first failure and it is invisible
+    from the schema: only the registry shows whether a later declaration will inherit a
+    type it never asked for.
+    """
 
     def test_nested_only_parent_leaves_the_childs_slot_empty(self) -> None:
         """Building a nested parent never registers a type for the child model.

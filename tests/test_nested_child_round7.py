@@ -93,10 +93,19 @@ class _DenyEverything(BasePermission):
 # Declaring nothing must behave EXACTLY as it did before the option existed.  #
 # --------------------------------------------------------------------------- #
 class NestedR7DefaultKidCard(DjangoModelType):
-    """A host declaring no "model_operations": it serves every operation."""
+    """A host declaring no "model_operations": it serves every operation.
+
+    The shape every existing project already has, so the new option is a pure opt-out
+    only if this host keeps contributing its projection and its scope to the nested
+    write path.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7DefaultKid", hiding "secret", scoped."""
+        """Bind the type to "NestedR7DefaultKid", hiding "secret", scoped.
+
+        A projection and a queryset together, so both halves of "serves every operation"
+        can be observed on one host.
+        """
 
         model = NestedR7DefaultKid
         exclude_fields = ("secret",)
@@ -104,10 +113,18 @@ class NestedR7DefaultKidCard(DjangoModelType):
 
 
 class NestedR7DefaultOwnerType(DjangoModelType):
-    """The parent nesting the declare-nothing child."""
+    """The parent nesting the declare-nothing child.
+
+    Its nested create input and its nested update path are the two places the old
+    default has to remain visible.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7DefaultOwner" with "kids" nested."""
+        """Bind the type to "NestedR7DefaultOwner" with "kids" nested.
+
+        The parent declares nothing itself, so anything the tests find on the child
+        surface arrived from the child's default-serving host.
+        """
 
         model = NestedR7DefaultOwner
         nested_fields = {"kids": NestedR7DefaultKid}
@@ -117,10 +134,18 @@ class NestedR7DefaultOwnerType(DjangoModelType):
 # A declared READ host stops gating the nested WRITE path.                    #
 # --------------------------------------------------------------------------- #
 class NestedR7ReadKidCard(DjangoModelType):
-    """The read surface, declared as one: it serves the query operations only."""
+    """The read surface, declared as one: it serves the query operations only.
+
+    Its allowance names "secret" and its queryset hides other tenants -- both harmless
+    on a card, both damaging the moment they leak into a write.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7ReadKid" as a read host."""
+        """Bind the type to "NestedR7ReadKid" as a read host.
+
+        "model_operations" naming only the query verbs is the declaration under test;
+        everything else here exists to make its effect observable.
+        """
 
         model = NestedR7ReadKid
         model_operations = ("list", "retrieve")
@@ -129,20 +154,36 @@ class NestedR7ReadKidCard(DjangoModelType):
 
 
 class NestedR7ReadKidMutation(DjangoModelMutation):
-    """The write surface of the same child."""
+    """The write surface of the same child.
+
+    The only host that serves the write verbs, so the nested create allowance must be
+    exactly what this class declares and nothing more.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7ReadKid", writing "headline"."""
+        """Bind the mutation to "NestedR7ReadKid", writing "headline".
+
+        Allows one column the read card never mentions, which is what keeps the two
+        allowances distinguishable in the merged surface.
+        """
 
         model = NestedR7ReadKid
         only_fields = ("headline",)
 
 
 class NestedR7ReadOwnerType(DjangoModelType):
-    """The parent nesting the read/write-split child."""
+    """The parent nesting the read/write-split child.
+
+    Mounted on the module's schema roots, so this fixture is also what forces a real
+    build of the nested input rather than a direct call.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7ReadOwner" with "kids" nested."""
+        """Bind the type to "NestedR7ReadOwner" with "kids" nested.
+
+        The nested entry both halves of the split are observed through: the built create
+        input, and a nested update that must ignore the card's queryset.
+        """
 
         model = NestedR7ReadOwner
         nested_fields = {"kids": NestedR7ReadKid}
@@ -152,20 +193,36 @@ class NestedR7ReadOwnerType(DjangoModelType):
 # The two no-allowance branches of the projection merge.                      #
 # --------------------------------------------------------------------------- #
 class NestedR7BareOwnerType(DjangoModelType):
-    """A parent whose child has no declared host at all."""
+    """A parent whose child has no declared host at all.
+
+    The no-regression floor: with nothing declared anywhere, the nested payload has to
+    keep every writable column, exactly as the library always behaved.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7BareOwner" with "kids" nested."""
+        """Bind the type to "NestedR7BareOwner" with "kids" nested.
+
+        "NestedR7BareKid" has no host of its own, so this parent is the only declaration
+        in the entire fixture.
+        """
 
         model = NestedR7BareOwner
         nested_fields = {"kids": NestedR7BareKid}
 
 
 class NestedR7NoServeKidMutation(DjangoModelMutation):
-    """The child's only host, explicitly declared for "delete" alone."""
+    """The child's only host, explicitly declared for "delete" alone.
+
+    It declares both projection axes, so the merge has to keep one and drop the other:
+    an allowance is operation-scoped, a prohibition is not.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7NoServeKid" for "delete" only."""
+        """Bind the mutation to "NestedR7NoServeKid" for "delete" only.
+
+        An explicit "model_operations" is the only way to reach the no-allowance branch,
+        which is what keeps that branch from failing open by default.
+        """
 
         model = NestedR7NoServeKid
         model_operations = ("delete",)
@@ -174,10 +231,18 @@ class NestedR7NoServeKidMutation(DjangoModelMutation):
 
 
 class NestedR7NoServeOwnerType(DjangoModelType):
-    """The parent nesting the delete-only-hosted child."""
+    """The parent nesting the delete-only-hosted child.
+
+    A nested create through this parent has no serving host at all, which is precisely
+    the state the no-allowance branch describes.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7NoServeOwner" with "kids" nested."""
+        """Bind the type to "NestedR7NoServeOwner" with "kids" nested.
+
+        The nested CREATE surface is what the test builds, while the child's only host
+        serves a different verb entirely.
+        """
 
         model = NestedR7NoServeOwner
         nested_fields = {"kids": NestedR7NoServeKid}
@@ -187,30 +252,54 @@ class NestedR7NoServeOwnerType(DjangoModelType):
 # The prohibition axis is applied LAST.                                       #
 # --------------------------------------------------------------------------- #
 class NestedR7LastKidAllow(DjangoModelType):
-    """A host allowing the very column the other host forbids."""
+    """A host allowing the very column the other host forbids.
+
+    Crossing the two axes on a single column is what makes the merge ORDER observable:
+    whichever axis is applied last decides the outcome.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7LastKid", allowing "secret"."""
+        """Bind the type to "NestedR7LastKid", allowing "secret".
+
+        Naming "secret" in an allowance is the half that must NOT win, because a
+        prohibition elsewhere forbids the column everywhere.
+        """
 
         model = NestedR7LastKid
         only_fields = ("id", "headline", "secret")
 
 
 class NestedR7LastKidDeny(DjangoModelMutation):
-    """A host forbidding that column for every operation."""
+    """A host forbidding that column for every operation.
+
+    Declares no "model_operations", so it serves both write verbs and its prohibition
+    cannot be dismissed as out of scope.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7LastKid", hiding "secret"."""
+        """Bind the mutation to "NestedR7LastKid", hiding "secret".
+
+        The prohibition that has to survive the union: restoring "secret" from the
+        sibling's allowance would be a fail-open.
+        """
 
         model = NestedR7LastKid
         exclude_fields = ("secret",)
 
 
 class NestedR7LastOwnerType(DjangoModelType):
-    """The parent nesting the allow/deny-crossed child."""
+    """The parent nesting the allow/deny-crossed child.
+
+    The nesting scope the crossed projection is merged for, and the surface a client
+    would actually reach the forbidden column through.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7LastOwner" with "kids" nested."""
+        """Bind the type to "NestedR7LastOwner" with "kids" nested.
+
+        Unprojected itself, so the merged child input is the only thing the assertions
+        can be reading.
+        """
 
         model = NestedR7LastOwner
         nested_fields = {"kids": NestedR7LastKid}
@@ -223,22 +312,39 @@ _CROSS_REGISTRY = Registry()
 
 
 class NestedR7CrossKidType(DjangoModelType):
-    """The child's only host: it can only live in the global registry."""
+    """The child's only host: it can only live in the global registry.
+
+    "Meta.registry" is not an option on "DjangoModelType", and this is the only host
+    class carrying "permission_classes" -- so a registry-scoped lookup loses the gate
+    entirely.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (_DenyEverything,)
 
     class Meta:
-        """Bind the type to "NestedR7CrossKid", hiding "secret"."""
+        """Bind the type to "NestedR7CrossKid", hiding "secret".
+
+        The exclusion gives the build side something observable, alongside the deny-
+        everything policy the runtime side is measured on.
+        """
 
         model = NestedR7CrossKid
         exclude_fields = ("secret",)
 
 
 class NestedR7CrossOwnerMutation(DjangoModelMutation):
-    """A parent bound to a local registry, nesting the globally-hosted child."""
+    """A parent bound to a local registry, nesting the globally-hosted child.
+
+    The multi-schema shape where parent and host live in different registries -- the
+    case a registry-scoped lookup turns into an ungated write.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7CrossOwner" on a local registry."""
+        """Bind the mutation to "NestedR7CrossOwner" on a local registry.
+
+        "registry" is what separates the parent from the child's host; without it the
+        lookup would find that host trivially.
+        """
 
         model = NestedR7CrossOwner
         registry = _CROSS_REGISTRY
@@ -249,20 +355,37 @@ class NestedR7CrossOwnerMutation(DjangoModelMutation):
 # The primary key survives a projection on the nested UPDATE surface.         #
 # --------------------------------------------------------------------------- #
 class NestedR7PkKidMutation(DjangoModelMutation):
-    """A write host whose projection does not list the primary key."""
+    """A write host whose projection does not list the primary key.
+
+    An ordinary projection, since a pk is not a column a client writes -- but on an
+    UPDATE surface it is how the row is named, so stripping it makes the documented
+    upsert unreachable.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7PkKid", writing "headline"."""
+        """Bind the mutation to "NestedR7PkKid", writing "headline".
+
+        The allowance deliberately omits "id": that is what a project would actually
+        write, and it must not cost the surface its identity field.
+        """
 
         model = NestedR7PkKid
         only_fields = ("headline",)
 
 
 class NestedR7PkOwnerType(DjangoModelType):
-    """The parent whose nested update payload upserts by id."""
+    """The parent whose nested update payload upserts by id.
+
+    The schema assertions and the end-to-end upsert both run through this parent, so the
+    wire surface and the behaviour are pinned on one fixture.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7PkOwner" with "kids" nested."""
+        """Bind the type to "NestedR7PkOwner" with "kids" nested.
+
+        The nested entry the "id" travels on -- and the create surface built from the
+        same declaration must NOT carry it.
+        """
 
         model = NestedR7PkOwner
         nested_fields = {"kids": NestedR7PkKid}
@@ -272,30 +395,54 @@ class NestedR7PkOwnerType(DjangoModelType):
 # Two legal declarations that leave the child nothing writable.               #
 # --------------------------------------------------------------------------- #
 class NestedR7EmptyKidCard(DjangoModelType):
-    """A read card allowing exactly one column."""
+    """A read card allowing exactly one column.
+
+    Both declarations in this fixture are individually legal; only their combination
+    leaves the child with nothing writable at all.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7EmptyKid", allowing "headline"."""
+        """Bind the type to "NestedR7EmptyKid", allowing "headline".
+
+        The allowance names the single column its sibling host forbids, which is what
+        empties the merged surface.
+        """
 
         model = NestedR7EmptyKid
         only_fields = ("headline",)
 
 
 class NestedR7EmptyKidMutation(DjangoModelMutation):
-    """A write host forbidding that same column."""
+    """A write host forbidding that same column.
+
+    The prohibition is applied last, so it subtracts the only allowance and leaves a
+    zero-field input object graphql-core will not accept.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7EmptyKid", hiding "headline"."""
+        """Bind the mutation to "NestedR7EmptyKid", hiding "headline".
+
+        Nothing about this declaration is wrong on its own -- the guard exists because
+        the pair is only detectable at merge time.
+        """
 
         model = NestedR7EmptyKid
         exclude_fields = ("headline",)
 
 
 class NestedR7EmptyOwnerType(DjangoModelType):
-    """The parent whose nested child input would carry no field at all."""
+    """The parent whose nested child input would carry no field at all.
+
+    Building through this parent is what raises the configuration error, both from a
+    direct call and from inside a graphql-core field thunk.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7EmptyOwner" with "kids" nested."""
+        """Bind the type to "NestedR7EmptyOwner" with "kids" nested.
+
+        Deliberately not mounted on the module's roots: mounting it would make every
+        test in the file fail at import time.
+        """
 
         model = NestedR7EmptyOwner
         nested_fields = {"kids": NestedR7EmptyKid}
@@ -308,12 +455,20 @@ _THUNK_REGISTRY = Registry()
 
 
 class NestedR7ThunkKidMutation(DjangoModelMutation):
-    """The child's only host, declared in a NON-global registry."""
+    """The child's only host, declared in a NON-global registry.
+
+    A thunk falling back to the global registry finds no host here at all, so it mints
+    an unprojected input and an unlabelled field.
+    """
 
     required_perms: ClassVar[tuple[str, ...]] = (_THUNK_LABEL,)
 
     class Meta:
-        """Bind the mutation to "NestedR7ThunkKid" on the local registry."""
+        """Bind the mutation to "NestedR7ThunkKid" on the local registry.
+
+        The exclusion and the label above are the two things the parent's thunks have to
+        carry over; the registry is what makes finding them non-trivial.
+        """
 
         model = NestedR7ThunkKid
         registry = _THUNK_REGISTRY
@@ -321,10 +476,18 @@ class NestedR7ThunkKidMutation(DjangoModelMutation):
 
 
 class NestedR7ThunkOwnerMutation(DjangoModelMutation):
-    """The parent declared in the same local registry."""
+    """The parent declared in the same local registry.
+
+    The tests read its ALREADY-BUILT input argument, which walks the same seam a real
+    request walks instead of calling the builder directly.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7ThunkOwner" on the local registry."""
+        """Bind the mutation to "NestedR7ThunkOwner" on the local registry.
+
+        Parent and child share one non-global registry, so the correct lookup is
+        unambiguous and a global fallback is unmistakable.
+        """
 
         model = NestedR7ThunkOwner
         registry = _THUNK_REGISTRY
@@ -336,30 +499,54 @@ class NestedR7ThunkOwnerMutation(DjangoModelMutation):
 # of the CREATE surface too.                                                   #
 # --------------------------------------------------------------------------- #
 class NestedR7KeyKidAllow(DjangoModelMutation):
-    """A host allowing one non-key column."""
+    """A host allowing one non-key column.
+
+    Paired with a host that forbids "id" outright, so the identity exemption has to
+    survive both projection axes rather than just the allowance.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7KeyKid", writing "headline"."""
+        """Bind the mutation to "NestedR7KeyKid", writing "headline".
+
+        An allowance that never mentions the identity field, which is the ordinary way a
+        projection gets written.
+        """
 
         model = NestedR7KeyKid
         only_fields = ("headline",)
 
 
 class NestedR7KeyKidDeny(DjangoModelMutation):
-    """A host forbidding the identity field itself."""
+    """A host forbidding the identity field itself.
+
+    Exempting "id" from the allowance alone is not enough: this exclusion also reaches
+    the validation model, so a field removed here cannot be put back afterwards.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7KeyKid", hiding "id"."""
+        """Bind the mutation to "NestedR7KeyKid", hiding "id".
+
+        The prohibition the exemption has to outrank, on the one model in the suite
+        whose primary key column is not called "id".
+        """
 
         model = NestedR7KeyKid
         exclude_fields = ("id",)
 
 
 class NestedR7KeyOwnerType(DjangoModelType):
-    """The parent nesting the client-keyed child."""
+    """The parent nesting the client-keyed child.
+
+    "NestedR7KeyKid" keys on "code", so this fixture separates the wire name the
+    exemption must use from the pk column it must not.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7KeyOwner" with "kids" nested."""
+        """Bind the type to "NestedR7KeyOwner" with "kids" nested.
+
+        The nested update surface built here is where "id" has to appear and "code" has
+        to stay out.
+        """
 
         model = NestedR7KeyOwner
         nested_fields = {"kids": NestedR7KeyKid}
@@ -372,10 +559,19 @@ _MAT_REGISTRY = Registry()
 
 
 class NestedR7MatOwnerMutation(DjangoModelMutation):
-    """A parent on its own registry, nesting a globally-hosted child."""
+    """A parent on its own registry, nesting a globally-hosted child.
+
+    Its build writes the materialization record. If that record lands only in the local
+    registry, a late GLOBAL host is accepted in silence even though it can never reach
+    the frozen surface.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7MatOwner" on a local registry."""
+        """Bind the mutation to "NestedR7MatOwner" on a local registry.
+
+        The child is left hostless at declaration time on purpose: the only host for it
+        arrives later, inside the test.
+        """
 
         model = NestedR7MatOwner
         registry = _MAT_REGISTRY
@@ -386,20 +582,37 @@ class NestedR7MatOwnerMutation(DjangoModelMutation):
 # The allowance axis of the late-host no-op signature.                        #
 # --------------------------------------------------------------------------- #
 class NestedR7OnlyKidEarly(DjangoModelType):
-    """The early host, allowing one column."""
+    """The early host, allowing one column.
+
+    The peer a late host claims to repeat. If allowances are missing from the no-op
+    signature, a late host widening this one compares equal and is waved straight
+    through.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7OnlyKid", allowing "headline"."""
+        """Bind the type to "NestedR7OnlyKid", allowing "headline".
+
+        A single column, so a late host adding a second differs on exactly one axis and
+        nothing else can explain the refusal.
+        """
 
         model = NestedR7OnlyKid
         only_fields = ("headline",)
 
 
 class NestedR7OnlyOwnerType(DjangoModelType):
-    """The parent nesting the allowance-signature child."""
+    """The parent nesting the allowance-signature child.
+
+    Building through it freezes the nested input, which is the precondition the late-
+    host guard needs before it can fire at all.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7OnlyOwner" with "kids" nested."""
+        """Bind the type to "NestedR7OnlyOwner" with "kids" nested.
+
+        Its name appears in the refusal message, which is what proves the error came
+        from the late-host guard and not the emptied-projection one.
+        """
 
         model = NestedR7OnlyOwner
         nested_fields = {"kids": NestedR7OnlyKid}
@@ -409,20 +622,36 @@ class NestedR7OnlyOwnerType(DjangoModelType):
 # The exclusion axis of the late-host no-op signature.                        #
 # --------------------------------------------------------------------------- #
 class NestedR7SigKidEarly(DjangoModelType):
-    """The early host, forbidding one column."""
+    """The early host, forbidding one column.
+
+    The exclusion twin of the allowance fixture: the late host differs only in what it
+    forbids, so exclusions have to be part of the signature too.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7SigKid", hiding "headline"."""
+        """Bind the type to "NestedR7SigKid", hiding "headline".
+
+        A single exclusion, so a late host hiding a different column differs on exactly
+        one axis.
+        """
 
         model = NestedR7SigKid
         exclude_fields = ("headline",)
 
 
 class NestedR7SigOwnerType(DjangoModelType):
-    """The parent nesting the exclusion-signature child."""
+    """The parent nesting the exclusion-signature child.
+
+    The parent whose frozen nested input the late host could never have narrowed, and
+    whose name the refusal has to carry.
+    """
 
     class Meta:
-        """Bind the type to "NestedR7SigOwner" with "kids" nested."""
+        """Bind the type to "NestedR7SigOwner" with "kids" nested.
+
+        A parent of its own rather than a shared one: the guard is keyed per parent, so
+        reusing another fixture's parent would arm this one by accident.
+        """
 
         model = NestedR7SigOwner
         nested_fields = {"kids": NestedR7SigKid}
@@ -432,10 +661,18 @@ class NestedR7SigOwnerType(DjangoModelType):
 # Two mutations for one model, projecting different columns.                  #
 # --------------------------------------------------------------------------- #
 class NestedR7SlotKidPublic(DjangoModelMutation):
-    """The first-declared host, which owns the shared generic input slot."""
+    """The first-declared host, which owns the shared generic input slot.
+
+    Whoever reached that slot first used to decide the wire surface for every later host
+    on the same model, which is the asymmetry the tests below break.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR7SlotKid", writing "headline"."""
+        """Bind the mutation to "NestedR7SlotKid", writing "headline".
+
+        The narrower of the two projections; a second host declaring more is what
+        exposes the slot's first-come ownership.
+        """
 
         model = NestedR7SlotKid
         only_fields = ("headline",)
@@ -543,7 +780,12 @@ def _built_nested_field(host: Any, op: str, alias: str) -> Any:
 
 
 class TestDeclaringNothingKeepsEveryOperation:
-    """The new option must be a pure opt-out, not a behaviour change."""
+    """The new option must be a pure opt-out, not a behaviour change.
+
+    Host membership, projection and scope are all asserted, because narrowing the
+    default would quietly drop a declare-nothing host out of the nested write path --
+    the very gate this lot exists to close.
+    """
 
     def test_a_host_that_declares_nothing_serves_every_operation(self) -> None:
         """The default is EVERY operation, so an existing project is untouched.
@@ -570,7 +812,12 @@ class TestDeclaringNothingKeepsEveryOperation:
 
     @pytest.mark.django_db()
     def test_its_queryset_still_gates_a_nested_update(self) -> None:
-        """The scope half of a declare-nothing host is unchanged too."""
+        """The scope half of a declare-nothing host is unchanged too.
+
+        A projection can be read off the built schema, but scoping only shows up at
+        write time, so this drives a real nested update at a row the host's queryset
+        hides.
+        """
         owner = NestedR7DefaultOwner.objects.create(name="o")
         hidden = NestedR7DefaultKid.objects.create(
             owner=owner, headline="hidden", tenant="b"
@@ -587,7 +834,12 @@ class TestDeclaringNothingKeepsEveryOperation:
 
 
 class TestADeclaredReadHostStopsGatingWrites:
-    """A host that says it serves reads only has no say over a nested write."""
+    """A host that says it serves reads only has no say over a nested write.
+
+    The declaration has to bind in both directions: its column list and its display
+    queryset leave the write path, AND its own write roots stop being mounted --
+    otherwise it writes columns it claims not to serve.
+    """
 
     def test_its_allowance_drops_out_of_the_nested_write_surface(self) -> None:
         """A read card's column list is not a write allowance.
@@ -632,7 +884,11 @@ class TestADeclaredReadHostStopsGatingWrites:
         assert "model_operations" in str(excinfo.value)
 
     def test_a_read_hosts_query_field_builders_still_work(self) -> None:
-        """The operations it DID declare stay mounted."""
+        """The operations it DID declare stay mounted.
+
+        The refusal above has to be scoped to the disclaimed verbs; a builder that
+        refused everything would leave a read host with no surface at all.
+        """
         assert NestedR7ReadKidCard.RetrieveField() is not None
         assert NestedR7ReadKidCard.ListField() is not None
 
@@ -661,7 +917,11 @@ class TestADeclaredReadHostStopsGatingWrites:
         assert len(NestedR7DefaultKidCard.QueryFields()) == 2
 
     def test_an_unknown_operation_is_refused(self) -> None:
-        """A typo must not silently turn a host into a read host."""
+        """A typo must not silently turn a host into a read host.
+
+        An unrecognised verb that is merely ignored removes the host from the write
+        path, taking its projection, its scope and its permission gate with it.
+        """
         with pytest.raises(ImproperlyConfigured) as excinfo:
 
             class NestedR7TypoCard(DjangoModelType):
@@ -677,7 +937,12 @@ class TestADeclaredReadHostStopsGatingWrites:
 
 
 class TestTheNoAllowanceBranches:
-    """The two ways an allowance restriction is legitimately absent."""
+    """The two ways an allowance restriction is legitimately absent.
+
+    One is the plain unhosted child, where inventing a projection would delete columns
+    from every existing payload. The other takes an explicit declaration -- and the
+    prohibition still has to survive it.
+    """
 
     def test_a_child_with_no_host_at_all_keeps_every_writable_column(self) -> None:
         """The ordinary "nested_fields" case: the child is a plain model.
@@ -730,7 +995,12 @@ class TestTheNoAllowanceBranches:
 
 @pytest.mark.django_db()
 class TestALocalParentStillFindsTheGlobalHost:
-    """The permission gate must not go quiet for a multi-schema project."""
+    """The permission gate must not go quiet for a multi-schema project.
+
+    A host that never named a registry lives in the global one and is still that model's
+    host, so scoping the lookup to the parent's registry leaves a "Meta.registry" parent
+    with no gate, no projection and no scope.
+    """
 
     def test_the_global_hosts_projection_reaches_the_local_parents_input(
         self,
@@ -775,7 +1045,12 @@ class TestALocalParentStillFindsTheGlobalHost:
 
 @pytest.mark.django_db()
 class TestThePrimaryKeySurvivesOnUpdate:
-    """A projected child must stay upsertable through its parent."""
+    """A projected child must stay upsertable through its parent.
+
+    On an update surface "id" identifies the row rather than being written, so both
+    projection axes have to leave it alone -- and neither may add it to the create
+    surface, which would turn every nested create into an upsert.
+    """
 
     def test_the_nested_update_input_still_exposes_the_pk(self) -> None:
         """The pk is not a projectable column on an update surface.
@@ -821,7 +1096,11 @@ class TestThePrimaryKeySurvivesOnUpdate:
         assert "code" not in fields
 
     def test_an_upsert_by_id_updates_the_row_instead_of_duplicating_it(self) -> None:
-        """The end-to-end behaviour the guide's worked example promises."""
+        """The end-to-end behaviour the guide's worked example promises.
+
+        The schema-level assertions above only prove "id" is present; this one proves
+        the resolver still uses it to find the row instead of minting a second one.
+        """
         owner = NestedR7PkOwner.objects.create(name="o")
         kid = NestedR7PkKid.objects.create(owner=owner, headline="old")
 
@@ -837,7 +1116,12 @@ class TestThePrimaryKeySurvivesOnUpdate:
 
 
 class TestAnEmptiedProjectionIsRefused:
-    """Shipping a schema graphql-core rejects is worse than a build error."""
+    """Shipping a schema graphql-core rejects is worse than a build error.
+
+    A zero-field input object fails validation for the WHOLE schema, not just the nested
+    field, so the guard has to fire at build time and name the hosts a project would
+    have to change.
+    """
 
     def test_the_build_names_every_contributing_host(self) -> None:
         """The error has to be actionable: it names what to change.
@@ -878,7 +1162,12 @@ class TestAnEmptiedProjectionIsRefused:
 
 
 class TestTheBuildSeamReadsTheParentsRegistry:
-    """The thunks that run in production must not fall back to the global."""
+    """The thunks that run in production must not fall back to the global.
+
+    The direct builder is handed a registry; the thunks have to fetch one. A thunk
+    reaching for the global registry loses the child's projection and its label at once,
+    and only an already-built input shows it.
+    """
 
     def test_the_child_thunk_honours_the_parents_registry(self) -> None:
         """The projection half, driven through the parent's own field thunk.
@@ -903,7 +1192,12 @@ class TestTheBuildSeamReadsTheParentsRegistry:
 
 
 class TestTheLateTwinSignatureComparesBothProjectionAxes:
-    """A late host declaring a FRESH projection is a real narrowing."""
+    """A late host declaring a FRESH projection is a real narrowing.
+
+    Whatever is missing from the no-op signature becomes a silent failure: the late host
+    compares equal, is waved through, and its declaration never reaches the frozen
+    surface.
+    """
 
     def test_a_late_host_differing_only_in_allowances_is_refused(self) -> None:
         """The allowance axis is part of what a host contributes.
@@ -987,7 +1281,12 @@ class TestTheLateTwinSignatureComparesBothProjectionAxes:
 
 
 class TestASecondHostCannotLoseItsProjection:
-    """A projection the shared input slot drops is a lie in both directions."""
+    """A projection the shared input slot drops is a lie in both directions.
+
+    The host's own root accepts columns it declared away, while the nested merge --
+    which reads the DECLARATION rather than the slot -- still honours them. One model,
+    two contradictory surfaces.
+    """
 
     def test_each_host_gets_the_projection_it_declared(self) -> None:
         """The shared "(model, operation)" slot must not decide for everyone.
@@ -1049,7 +1348,11 @@ class TestAProjectedUpdateRootKeepsItsIdentityField:
     """
 
     def test_a_projected_update_input_still_exposes_id(self) -> None:
-        """Assert a host projecting one column keeps "id" on its update input."""
+        """Assert a host projecting one column keeps "id" on its update input.
+
+        The nested path already exempts the identity field, so a host's own update root
+        dropping it ships a mutation no client can address a row through.
+        """
 
         class NestedR7IdKidMutation(DjangoModelMutation):
             """A host whose projection deliberately omits the identity field."""

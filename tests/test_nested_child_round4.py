@@ -63,7 +63,11 @@ from tests.models import (
 # The nested stamp is a WRITE stamp, not the host's own root label.            #
 # --------------------------------------------------------------------------- #
 class NestedR4ReadKidType(DjangoModelType):
-    """An ordinary read host for the child, labelled with a READ permission."""
+    """An ordinary read host for the child, labelled with a READ permission.
+
+    The single most common shape in a real project, and the one that used to collapse
+    the nested WRITE stamp down to a view permission.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
     #: What the child's own retrieve root requires. It says nothing about who
@@ -71,18 +75,30 @@ class NestedR4ReadKidType(DjangoModelType):
     required_perms: ClassVar[tuple[str, ...]] = ("tests.view_nestedr4readkid",)
 
     class Meta:
-        """Bind the type to "NestedR4ReadKid"."""
+        """Bind the type to "NestedR4ReadKid".
+
+        No projection and no operations: the label above is the only thing this host
+        contributes, so the stamp has exactly one thing left to get wrong.
+        """
 
         model = NestedR4ReadKid
 
 
 class NestedR4ReadOwnerType(DjangoModelType):
-    """The parent nesting the read-labelled child."""
+    """The parent nesting the read-labelled child.
+
+    Gated by the same model-permission stack, so what the tests read out of the pruned
+    input reflects the child's stamp and not a missing parent grant.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedR4ReadOwner" with "kids" nested."""
+        """Bind the type to "NestedR4ReadOwner" with "kids" nested.
+
+        "kids" is the field the pruner is asked about; the parent's own columns are
+        there so a pruner that deletes everything is still distinguishable.
+        """
 
         model = NestedR4ReadOwner
         nested_fields = {"kids": NestedR4ReadKid}
@@ -135,7 +151,12 @@ def _input_fields(granted: set[str], root: str) -> set[str]:
 
 
 class TestNestedStampIsAWriteStamp:
-    """The child host's "required_perms" must not reach the nested input."""
+    """The child host's "required_perms" must not reach the nested input.
+
+    Both directions are asserted: a stamp that ignores the override could just as easily
+    have been widened into something no caller can hold, which trades a disclosure for
+    an outage.
+    """
 
     def test_read_label_does_not_replace_the_childs_write_stamp(self) -> None:
         """A view-only host label must not open the nested WRITE surface.
@@ -167,20 +188,36 @@ class TestNestedStampIsAWriteStamp:
 # The two projection axes meet on the RESULT, not on either axis alone.       #
 # --------------------------------------------------------------------------- #
 class NestedR4PkKidTypeA(DjangoModelType):
-    """One host of the primary-key-only overlap fixture."""
+    """One host of the primary-key-only overlap fixture.
+
+    It allows the primary key and "headline"; its sibling allows the primary key and
+    "tagline", so an INTERSECTION leaves only a column a create input cannot emit.
+    """
 
     class Meta:
-        """Bind the type to "NestedR4PkKid"."""
+        """Bind the type to "NestedR4PkKid".
+
+        The pk is named in "only_fields" deliberately: it is the one column two
+        otherwise unrelated projections are almost certain to share.
+        """
 
         model = NestedR4PkKid
         only_fields = ("id", "headline")
 
 
 class NestedR4PkKidMutationB(DjangoModelMutation):
-    """The other host: the overlap is the primary key and nothing else."""
+    """The other host: the overlap is the primary key and nothing else.
+
+    Create-only, so both hosts genuinely serve the operation under test and the
+    operation filter cannot be what rescues the result.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR4PkKid"."""
+        """Bind the mutation to "NestedR4PkKid".
+
+        A second declaration for the same "(model, create)" pair as the type host above,
+        which is what makes the projection merge run at all.
+        """
 
         model = NestedR4PkKid
         model_operations = ("create",)
@@ -188,10 +225,18 @@ class NestedR4PkKidMutationB(DjangoModelMutation):
 
 
 class NestedR4PkOwnerMutation(DjangoModelMutation):
-    """The parent nesting the primary-key-only overlap child."""
+    """The parent nesting the primary-key-only overlap child.
+
+    Nothing about the parent matters beyond supplying the nesting context the child
+    input is built for.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR4PkOwner" with "kids" nested."""
+        """Bind the mutation to "NestedR4PkOwner" with "kids" nested.
+
+        Create-only, matching the operation the merge is inspected on, so a stray update
+        surface cannot absorb the failure.
+        """
 
         model = NestedR4PkOwner
         model_operations = ("create",)
@@ -199,20 +244,36 @@ class NestedR4PkOwnerMutation(DjangoModelMutation):
 
 
 class NestedR4XKidType(DjangoModelType):
-    """One host EXPOSING the field its sibling hides, plus one it does not."""
+    """One host EXPOSING the field its sibling hides, plus one it does not.
+
+    Its sibling forbids "headline" outright, so the prohibition has to survive the
+    allowance union or the security half of the merge is lost.
+    """
 
     class Meta:
-        """Bind the type to "NestedR4XKid"."""
+        """Bind the type to "NestedR4XKid".
+
+        Declares the allowance axis only, so the two axes reach the merge from different
+        hosts and cannot cancel out inside a single declaration.
+        """
 
         model = NestedR4XKid
         only_fields = ("headline", "tagline")
 
 
 class NestedR4XKidMutation(DjangoModelMutation):
-    """The other host, HIDING the only field its sibling exposes."""
+    """The other host, HIDING the only field its sibling exposes.
+
+    Its "exclude_fields" is operation-blind by design: a prohibition is a statement
+    about the column, not about this host's create.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR4XKid"."""
+        """Bind the mutation to "NestedR4XKid".
+
+        The prohibition half of the fixture, so the exclusion can be shown to still bind
+        a nested surface whose other host never mentions it.
+        """
 
         model = NestedR4XKid
         model_operations = ("create",)
@@ -220,10 +281,18 @@ class NestedR4XKidMutation(DjangoModelMutation):
 
 
 class NestedR4XOwnerMutation(DjangoModelMutation):
-    """The parent nesting the annihilated-projection child."""
+    """The parent nesting the annihilated-projection child.
+
+    The surviving surface here is a single column; emptying it outright is refused at
+    build time and is pinned in "test_nested_child_round7".
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR4XOwner" with "kids" nested."""
+        """Bind the mutation to "NestedR4XOwner" with "kids" nested.
+
+        Create-only: the merge is asserted on the create surface, the one operation both
+        child hosts have a say over.
+        """
 
         model = NestedR4XOwner
         model_operations = ("create",)
@@ -231,7 +300,12 @@ class NestedR4XOwnerMutation(DjangoModelMutation):
 
 
 class TestTheTwoAxesMeetOnTheResult:
-    """The allowance union and the prohibition union are merged, not checked."""
+    """The allowance union and the prohibition union are merged, not checked.
+
+    The order is asymmetric and load-bearing: allowances widen first and the prohibition
+    subtracts last. Reverse it, or intersect the allowances, and fields the child's own
+    mutation still accepts disappear.
+    """
 
     def test_a_primary_key_only_overlap_is_no_longer_a_dead_end(self) -> None:
         """Unioning the allowance axis removes this road entirely.
@@ -269,10 +343,19 @@ class TestTheTwoAxesMeetOnTheResult:
 # The projection merge respects each host's "model_operations".               #
 # --------------------------------------------------------------------------- #
 class NestedR4OpKidCreateMutation(DjangoModelMutation):
-    """A create-only host for the child."""
+    """A create-only host for the child.
+
+    It projects "title" and "body" while the update-only host below projects less, so an
+    operation-blind merge deletes "title" from a create surface that legitimately
+    carries it.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR4OpKid" for "create" only."""
+        """Bind the mutation to "NestedR4OpKid" for "create" only.
+
+        "model_operations" is the declaration under test: it is what should keep this
+        host out of the update merge entirely.
+        """
 
         model = NestedR4OpKid
         model_operations = ("create",)
@@ -280,10 +363,18 @@ class NestedR4OpKidCreateMutation(DjangoModelMutation):
 
 
 class NestedR4OpKidUpdateMutation(DjangoModelMutation):
-    """An update-only host for the same child, projecting less."""
+    """An update-only host for the same child, projecting less.
+
+    The narrower half of the split. If the operation filter is loose in either
+    direction, one of these two hosts governs a surface it never serves.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR4OpKid" for "update" only."""
+        """Bind the mutation to "NestedR4OpKid" for "update" only.
+
+        The mirror of the create host's declaration, so each operation has exactly one
+        legitimate contributor and any leak is unambiguous.
+        """
 
         model = NestedR4OpKid
         model_operations = ("update",)
@@ -291,17 +382,30 @@ class NestedR4OpKidUpdateMutation(DjangoModelMutation):
 
 
 class NestedR4OpOwnerMutation(DjangoModelMutation):
-    """The parent nesting the split-surface child."""
+    """The parent nesting the split-surface child.
+
+    Declares no "model_operations", so both nested surfaces exist and the create and
+    update merges can be compared against each other.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR4OpOwner" with "kids" nested."""
+        """Bind the mutation to "NestedR4OpOwner" with "kids" nested.
+
+        The only host of its own model, so the parent contributes nothing to the child's
+        projection merge.
+        """
 
         model = NestedR4OpOwner
         nested_fields = {"kids": NestedR4OpKid}
 
 
 class TestProjectionMergeIsOperationAware:
-    """A host that does not serve an operation has no say over it."""
+    """A host that does not serve an operation has no say over it.
+
+    Asserted in both directions, because an operation-blind merge fails in both: it
+    narrows a create the child's own mutation accepts, and it widens an update past what
+    the host serving it allows.
+    """
 
     def test_an_update_only_host_does_not_narrow_the_nested_create(self) -> None:
         """The child's own create accepts "title"; the nested one must too.
@@ -333,20 +437,37 @@ class TestProjectionMergeIsOperationAware:
 # The projection merge must hold on a real schema build.                      #
 # --------------------------------------------------------------------------- #
 class NestedR4BuildKidTypeA(DjangoModelType):
-    """One host of the build-path fixture."""
+    """One host of the build-path fixture.
+
+    Allows "alpha" only. Paired with a sibling allowing "beta" only, the two used to
+    abort the whole schema build instead of producing a two-column input.
+    """
 
     class Meta:
-        """Bind the type to "NestedR4BuildKid"."""
+        """Bind the type to "NestedR4BuildKid".
+
+        A read host as well as a projection source, so the build has both an output type
+        and a nested input to resolve for this model.
+        """
 
         model = NestedR4BuildKid
         only_fields = ("alpha",)
 
 
 class NestedR4BuildKidMutationB(DjangoModelMutation):
-    """The other host, agreeing with the first on nothing."""
+    """The other host, agreeing with the first on nothing.
+
+    The disjoint allowance is what makes the union observable: graphql-core rejects a
+    zero-field input object outright, so the failure was a build crash rather than a
+    quiet narrowing.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedR4BuildKid"."""
+        """Bind the mutation to "NestedR4BuildKid".
+
+        Create-only, matching the operation the parent's nested input is resolved for
+        during the build.
+        """
 
         model = NestedR4BuildKid
         model_operations = ("create",)
@@ -354,17 +475,30 @@ class NestedR4BuildKidMutationB(DjangoModelMutation):
 
 
 class NestedR4BuildOwnerType(DjangoModelType):
-    """The parent nesting the contradictorily projected child."""
+    """The parent nesting the contradictorily projected child.
+
+    Mounted on real query and mutation roots inside the test, so the nested input is
+    resolved through the graphql-core fields thunk rather than by a direct call.
+    """
 
     class Meta:
-        """Bind the type to "NestedR4BuildOwner" with "kids" nested."""
+        """Bind the type to "NestedR4BuildOwner" with "kids" nested.
+
+        The nested entry the thunk has to resolve; the assertion then reads the
+        resulting type straight out of the built schema's type map.
+        """
 
         model = NestedR4BuildOwner
         nested_fields = {"kids": NestedR4BuildKid}
 
 
 class TestSplitProjectionsSurviveTheBuild:
-    """The merge has to hold on the REAL build path, not just the direct call."""
+    """The merge has to hold on the REAL build path, not just the direct call.
+
+    The helper and the build thunk reach the declared hosts by different routes, and a
+    merge that only works through the first ships a library that cannot assemble a
+    schema at all.
+    """
 
     def test_schema_build_carries_the_union(self) -> None:
         """The nested child input is built inside a graphql-core fields thunk.
@@ -423,31 +557,54 @@ class _ClosedHasPermission(BasePermission):
 
 
 class NestedR4PolicyKidType(DjangoModelType):
-    """The child whose policy cannot absorb an unknown keyword."""
+    """The child whose policy cannot absorb an unknown keyword.
+
+    Its policy GRANTS the write, so a failure here can only be a crash: nested extras
+    reaching a closed signature turn a permitted mutation into a 500.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (_ClosedHasPermission,)
 
     class Meta:
-        """Bind the type to "NestedR4PolicyKid"."""
+        """Bind the type to "NestedR4PolicyKid".
+
+        Nothing but the binding -- the closed-signature policy above is the whole
+        fixture.
+        """
 
         model = NestedR4PolicyKid
 
 
 class NestedR4PolicyOwnerType(DjangoModelType):
-    """The parent driving the closed-"has_permission" child."""
+    """The parent driving the closed-"has_permission" child.
+
+    Ungated itself, so the only permission code a nested create runs is the child's.
+    """
 
     class Meta:
-        """Bind the type to "NestedR4PolicyOwner" with "kids" nested."""
+        """Bind the type to "NestedR4PolicyOwner" with "kids" nested.
+
+        The nested entry is what makes the parent's create reach the child's policy in
+        the first place.
+        """
 
         model = NestedR4PolicyOwner
         nested_fields = {"kids": NestedR4PolicyKid}
 
 
 class NestedR4AuthKidType(DjangoModelType):
-    """The child whose "authorize" override spells its arguments out."""
+    """The child whose "authorize" override spells its arguments out.
+
+    The second seam of the same contract: "authorize" is a documented override point, so
+    an override written before "nested_parent" existed has to keep working.
+    """
 
     class Meta:
-        """Bind the type to "NestedR4AuthKid"."""
+        """Bind the type to "NestedR4AuthKid".
+
+        No "permission_classes" here: the override below is the seam under test, not a
+        policy stack.
+        """
 
         model = NestedR4AuthKid
 
@@ -464,10 +621,18 @@ class NestedR4AuthKidType(DjangoModelType):
 
 
 class NestedR4AuthOwnerType(DjangoModelType):
-    """The parent driving the closed-"authorize" child."""
+    """The parent driving the closed-"authorize" child.
+
+    The twin of the policy parent, so both seams are exercised through one nested-create
+    path and neither can pass by accident.
+    """
 
     class Meta:
-        """Bind the type to "NestedR4AuthOwner" with "kids" nested."""
+        """Bind the type to "NestedR4AuthOwner" with "kids" nested.
+
+        The nested entry through which the writer reaches the child's "authorize"
+        override.
+        """
 
         model = NestedR4AuthOwner
         nested_fields = {"kids": NestedR4AuthKid}
@@ -498,7 +663,12 @@ def _create(host: Any, data: dict[str, Any]) -> Any:
 
 @pytest.mark.django_db()
 class TestNestedGateCallingConvention:
-    """Neither seam may turn a GRANT into an uncaught "TypeError"."""
+    """Neither seam may turn a GRANT into an uncaught "TypeError".
+
+    Both fixtures permit the write, so these cases can only fail by crashing -- and
+    crashing on the nested path while the child's own root mutation keeps working is
+    exactly the asymmetry the previous round left behind.
+    """
 
     def test_closed_has_permission_override_still_grants(self) -> None:
         """The extras must be narrowed where the call actually LANDS.
@@ -533,7 +703,12 @@ class TestNestedGateCallingConvention:
 # "required_perms" must be declarable the way the guides spell it.            #
 # --------------------------------------------------------------------------- #
 class TestRequiredPermsOnAModelType:
-    """The documented plain class attribute must survive class creation."""
+    """The documented plain class attribute must survive class creation.
+
+    These classes are pydantic-backed, so an attribute the base never declares raises at
+    class-definition time: the spelling the guides publish worked on
+    "DjangoModelMutation" and raised on "DjangoModelType".
+    """
 
     def test_a_plain_required_perms_class_attribute_is_accepted(self) -> None:
         """ "DjangoModelType" reads the attribute, so it must declare it.

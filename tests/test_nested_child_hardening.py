@@ -69,20 +69,36 @@ from tests.models import (
 # Split projections: two hosts, different non-empty "only_fields".             #
 # --------------------------------------------------------------------------- #
 class NestedHardDisjointKidType(DjangoModelType):
-    """One host, exposing only "headline"."""
+    """One host, exposing only "headline".
+
+    Half of a read/write split that shares no column with its sibling; intersecting the
+    two allowances left nothing at all and took the whole schema down at import.
+    """
 
     class Meta:
-        """Bind the type to "NestedHardDisjointKid"."""
+        """Bind the type to "NestedHardDisjointKid".
+
+        The allowance is declared on a type host rather than a mutation, so the two
+        contributors differ in kind as well as in columns.
+        """
 
         model = NestedHardDisjointKid
         only_fields = ("headline",)
 
 
 class NestedHardDisjointKidMutation(DjangoModelMutation):
-    """The other host, exposing only "tagline" -- no field in common."""
+    """The other host, exposing only "tagline" -- no field in common.
+
+    Create-only, so it genuinely serves the operation the merge is inspected on and
+    cannot be filtered out before the union runs.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedHardDisjointKid"."""
+        """Bind the mutation to "NestedHardDisjointKid".
+
+        The same model as the type host above: two declarations for one model are what
+        make a projection merge happen at all.
+        """
 
         model = NestedHardDisjointKid
         model_operations = ("create",)
@@ -90,10 +106,17 @@ class NestedHardDisjointKidMutation(DjangoModelMutation):
 
 
 class NestedHardDisjointOwnerMutation(DjangoModelMutation):
-    """The parent nesting the contradictorily projected child."""
+    """The parent nesting the contradictorily projected child.
+
+    Supplies the nesting scope the child input is keyed by, which the assertions then
+    build directly rather than through a schema.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedHardDisjointOwner" with "kids" nested."""
+        """Bind the mutation to "NestedHardDisjointOwner" with "kids" nested.
+
+        Create-only, matching the one operation both of the child's hosts serve.
+        """
 
         model = NestedHardDisjointOwner
         model_operations = ("create",)
@@ -101,20 +124,36 @@ class NestedHardDisjointOwnerMutation(DjangoModelMutation):
 
 
 class NestedHardOverlapKidTypeA(DjangoModelType):
-    """One host of the overlapping fixture: "headline" and "tagline"."""
+    """One host of the overlapping fixture: "headline" and "tagline".
+
+    Overlap is interesting for the opposite reason to the disjoint case: an intersection
+    survives here, and quietly drops the columns only one host allows.
+    """
 
     class Meta:
-        """Bind the type to "NestedHardOverlapKid"."""
+        """Bind the type to "NestedHardOverlapKid".
+
+        Allows one shared column and one of its own, so the union is strictly wider than
+        either host's declaration on its own.
+        """
 
         model = NestedHardOverlapKid
         only_fields = ("headline", "tagline")
 
 
 class NestedHardOverlapKidMutationB(DjangoModelMutation):
-    """The other host: "tagline" and "extra" -- "tagline" is the overlap."""
+    """The other host: "tagline" and "extra" -- "tagline" is the overlap.
+
+    "extra" is allowed by this host alone, and it is the column the assertion on the
+    merged surface actually pins.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedHardOverlapKid"."""
+        """Bind the mutation to "NestedHardOverlapKid".
+
+        Create-only, so the merge under test has exactly two contributors and no third
+        surface to blame a surprise on.
+        """
 
         model = NestedHardOverlapKid
         model_operations = ("create",)
@@ -122,10 +161,17 @@ class NestedHardOverlapKidMutationB(DjangoModelMutation):
 
 
 class NestedHardOverlapOwnerMutation(DjangoModelMutation):
-    """The parent nesting the overlapping-projection child."""
+    """The parent nesting the overlapping-projection child.
+
+    A separate parent from the disjoint fixture: the nested input is memoized per
+    parent, so sharing one would blur the two cases together.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedHardOverlapOwner" with "kids" nested."""
+        """Bind the mutation to "NestedHardOverlapOwner" with "kids" nested.
+
+        Create-only, matching the operation the union is asserted on.
+        """
 
         model = NestedHardOverlapOwner
         model_operations = ("create",)
@@ -133,7 +179,11 @@ class NestedHardOverlapOwnerMutation(DjangoModelMutation):
 
 
 class TestChildProjectionAllowancesUnion:
-    """An "only_fields" is an ALLOWANCE, so the serving hosts union theirs."""
+    """An "only_fields" is an ALLOWANCE, so the serving hosts union theirs.
+
+    The disjoint and overlapping cases fail differently under an intersection: the first
+    kills the schema outright at import, the second silently deletes writable columns.
+    """
 
     def test_disjoint_only_fields_union(self) -> None:
         """Two hosts that agree on nothing are an ordinary split surface.
@@ -174,19 +224,34 @@ class TestChildProjectionAllowancesUnion:
 # Generated type name: the parent's capitals must survive.                     #
 # --------------------------------------------------------------------------- #
 class NestedHardNameKidType(DjangoModelType):
-    """The child host of the naming fixture."""
+    """The child host of the naming fixture.
+
+    Its own name is unremarkable on purpose -- the generated input name is assembled
+    from the PARENT's name, which is where the capitals were lost.
+    """
 
     class Meta:
-        """Bind the type to "NestedHardNameKid"."""
+        """Bind the type to "NestedHardNameKid".
+
+        Declares nothing beyond the binding, so the generated type name is the only
+        observable output of the fixture.
+        """
 
         model = NestedHardNameKid
 
 
 class NestedHardNameOwnerMutation(DjangoModelMutation):
-    """The multi-word parent whose name the generated type must preserve."""
+    """The multi-word parent whose name the generated type must preserve.
+
+    The generated input name is wire-visible, so flattening the parent's internal
+    capitals renames a published type no documentation mentions.
+    """
 
     class Meta:
-        """Bind the mutation to "NestedHardNameOwner" with "kids" nested."""
+        """Bind the mutation to "NestedHardNameOwner" with "kids" nested.
+
+        Create-only, so exactly one nested input name exists for the test to assert on.
+        """
 
         model = NestedHardNameOwner
         model_operations = ("create",)
@@ -194,7 +259,11 @@ class NestedHardNameOwnerMutation(DjangoModelMutation):
 
 
 class TestNestedChildInputName:
-    """The per-parent child input is named "<Child><Op>In<Parent>Type"."""
+    """The per-parent child input is named "<Child><Op>In<Parent>Type".
+
+    That name is part of the published schema, so changing it is a breaking change for
+    every client that references the input type by name.
+    """
 
     def test_multi_word_parent_name_is_not_flattened(self) -> None:
         """A CamelCase parent model must not be capitalize()-d to one word.
@@ -220,30 +289,50 @@ class TestNestedChildInputName:
 # The permission stamp on the nested input field.                             #
 # --------------------------------------------------------------------------- #
 class NestedHardVerbEntryType(DjangoModelType):
-    """The child of the create-through-update fixture, model-permission gated."""
+    """The child of the create-through-update fixture, model-permission gated.
+
+    Its "add" permission is the one a caller may lack while still holding "change" --
+    exactly the split the parent's update payload can otherwise route around.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedHardVerbEntry"."""
+        """Bind the type to "NestedHardVerbEntry".
+
+        No projection, so the nested element keeps its optional "id" and the payload
+        really can create as well as update.
+        """
 
         model = NestedHardVerbEntry
 
 
 class NestedHardVerbBlogType(DjangoModelType):
-    """The parent whose UPDATE payload can also CREATE entries."""
+    """The parent whose UPDATE payload can also CREATE entries.
+
+    One root field spanning two operations is what makes stamping it with the parent's
+    verb alone insufficient.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedHardVerbBlog" with "entries" nested."""
+        """Bind the type to "NestedHardVerbBlog" with "entries" nested.
+
+        Only the update root is mounted below, so the create reachable through this
+        parent has no front door of its own for a caller to be refused at.
+        """
 
         model = NestedHardVerbBlog
         nested_fields = {"entries": NestedHardVerbEntry}
 
 
 class NestedHardOptOutEntryType(DjangoModelType):
-    """A child trying to unlabel its nested surface through "required_perms"."""
+    """A child trying to unlabel its nested surface through "required_perms".
+
+    An empty override is a legitimate way to publish a host's OWN roots; the danger is
+    the same declaration reading as publishing someone else's nested write.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
     #: What the host's OWN root fields are labelled with. An empty override
@@ -252,30 +341,50 @@ class NestedHardOptOutEntryType(DjangoModelType):
     required_perms: ClassVar[tuple[str, ...]] = ()
 
     class Meta:
-        """Bind the type to "NestedHardOptOutEntry"."""
+        """Bind the type to "NestedHardOptOutEntry".
+
+        The override above is the whole fixture -- the binding adds nothing else the
+        stamp could consult.
+        """
 
         model = NestedHardOptOutEntry
 
 
 class NestedHardOptOutBlogType(DjangoModelType):
-    """The parent of the "required_perms" override fixture."""
+    """The parent of the "required_perms" override fixture.
+
+    Gated by the same stack, so a caller can be granted the parent's writes exactly and
+    then measured on the child's stamp alone.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedHardOptOutBlog" with "entries" nested."""
+        """Bind the type to "NestedHardOptOutBlog" with "entries" nested.
+
+        The nested entry the override tried to make public; the composite default has to
+        hold it shut regardless of what the child host declares.
+        """
 
         model = NestedHardOptOutBlog
         nested_fields = {"entries": NestedHardOptOutEntry}
 
 
 class NestedHardOnlyRowType(DjangoModelType):
-    """The child that is its parent's ONLY writable input field."""
+    """The child that is its parent's ONLY writable input field.
+
+    Denying a caller the child's write empties the parent's entire input object, which
+    is the state the pruner used to answer with an unfiltered field map.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedHardOnlyRow"."""
+        """Bind the type to "NestedHardOnlyRow".
+
+        Gated but unprojected, so nothing except the permission stamp decides whether
+        the parent's input survives.
+        """
 
         model = NestedHardOnlyRow
 
@@ -290,7 +399,11 @@ class NestedHardOnlyBatchType(DjangoModelType):
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedHardOnlyBatch", exposing only "rows"."""
+        """Bind the type to "NestedHardOnlyBatch", exposing only "rows".
+
+        An "only_fields" naming a single nested relation is an ordinary declaration, and
+        it is all it takes to reach the empty-input state.
+        """
 
         model = NestedHardOnlyBatch
         only_fields = ("rows",)
@@ -298,12 +411,20 @@ class NestedHardOnlyBatchType(DjangoModelType):
 
 
 class NestedHardKeeperBatchType(DjangoModelType):
-    """An unrelated sibling root that must SURVIVE the empty-input cascade."""
+    """An unrelated sibling root that must SURVIVE the empty-input cascade.
+
+    Without it, a cascade that deleted the whole mutation type would look like a
+    perfectly correct fix.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
 
     class Meta:
-        """Bind the type to "NestedHardKeeperBatch"."""
+        """Bind the type to "NestedHardKeeperBatch".
+
+        Deliberately unrelated to the emptied parent: it shares only the mutation root,
+        which is precisely the blast radius under test.
+        """
 
         model = NestedHardKeeperBatch
 
@@ -373,7 +494,12 @@ def _input_fields(granted: set[str], root: str) -> set[str]:
 
 
 class TestNestedInputStampVerb:
-    """A nested input field is a create surface as well as an update one."""
+    """A nested input field is a create surface as well as an update one.
+
+    Stamping it with the parent's verb alone leaves a caller holding "change" but not
+    "add" with a working create through the parent, while the child's own create root is
+    pruned away.
+    """
 
     def test_update_input_requires_the_childs_create_permission(self) -> None:
         """The child's "id" is OPTIONAL on the parent's update payload.
@@ -427,7 +553,12 @@ class TestNestedInputStampVerb:
 
 
 class TestEmptyInputCascade:
-    """An input object with no permitted field must prune its REFERENCING field."""
+    """An input object with no permitted field must prune its REFERENCING field.
+
+    Falling back to the unfiltered field map disables the gate for the whole type;
+    pruning too eagerly takes unrelated sibling roots down with it. Both the cascade and
+    its blast radius are asserted.
+    """
 
     def test_root_disappears_when_its_whole_input_is_denied(self) -> None:
         """Every field of the parent's input carries the child's write stamp.
@@ -468,7 +599,12 @@ class TestEmptyInputCascade:
 # A host declared after its nested input was already materialized.            #
 # --------------------------------------------------------------------------- #
 class TestLateDeclaredHost:
-    """A host that can no longer reach the nested surface must be LOUD."""
+    """A host that can no longer reach the nested surface must be LOUD.
+
+    graphql-core caches the parent input's field map for good, so a late narrowing can
+    never land. Silence bakes the wider surface in, and refusing every late host would
+    turn an ordinary declaration into an import crash.
+    """
 
     def test_host_declared_after_materialization_raises(self) -> None:
         """graphql-core caches the parent input's field map for good.
@@ -556,41 +692,71 @@ class _ClosedSignature(BasePermission):
 
 
 class NestedHardSigKidType(DjangoModelType):
-    """The child whose permission class cannot absorb an unknown keyword."""
+    """The child whose permission class cannot absorb an unknown keyword.
+
+    Its policy grants the write, so this fixture can only fail by crashing -- and only
+    through a parent, since the child's own root never forwards the extra.
+    """
 
     permission_classes: ClassVar[tuple[Any, ...]] = (_ClosedSignature,)
 
     class Meta:
-        """Bind the type to "NestedHardSigKid"."""
+        """Bind the type to "NestedHardSigKid".
+
+        Nothing but the binding: the closed-signature policy above is what the nested
+        writer has to manage to call correctly.
+        """
 
         model = NestedHardSigKid
 
 
 class NestedHardSigOwnerType(DjangoModelType):
-    """The parent driving the closed-signature child."""
+    """The parent driving the closed-signature child.
+
+    Ungated itself, so the only permission code a nested create runs is the child's.
+    """
 
     class Meta:
-        """Bind the type to "NestedHardSigOwner" with "kids" nested."""
+        """Bind the type to "NestedHardSigOwner" with "kids" nested.
+
+        The nested entry through which the writer reaches the closed policy.
+        """
 
         model = NestedHardSigOwner
         nested_fields = {"kids": NestedHardSigKid}
 
 
 class NestedHardQsKidType(DjangoModelType):
-    """A child narrowing its base queryset through "Meta.queryset" alone."""
+    """A child narrowing its base queryset through "Meta.queryset" alone.
+
+    Declarative scoping is easy to miss when the nested lookup only reproduces
+    "filter_queryset", and that split is what this fixture forbids.
+    """
 
     class Meta:
-        """Bind the type to "NestedHardQsKid" with a narrowed base queryset."""
+        """Bind the type to "NestedHardQsKid" with a narrowed base queryset.
+
+        The queryset hides every row whose headline does not start with "ok" -- exactly
+        the rows the child's own update already refuses to touch.
+        """
 
         model = NestedHardQsKid
         queryset = NestedHardQsKid.objects.filter(headline__startswith="ok")
 
 
 class NestedHardQsOwnerType(DjangoModelType):
-    """The parent driving the "Meta.queryset" scoping fixture."""
+    """The parent driving the "Meta.queryset" scoping fixture.
+
+    Its nested update payload is the only route to the hidden row, so a passing test
+    means the two scopes genuinely agree.
+    """
 
     class Meta:
-        """Bind the type to "NestedHardQsOwner" with "kids" nested."""
+        """Bind the type to "NestedHardQsOwner" with "kids" nested.
+
+        The nested entry a foreign primary key travels through on its way to the child's
+        scope check.
+        """
 
         model = NestedHardQsOwner
         nested_fields = {"kids": NestedHardQsKid}
@@ -634,7 +800,12 @@ def _update(host: Any, data: dict[str, Any]) -> Any:
 
 @pytest.mark.django_db()
 class TestNestedGateCallingConvention:
-    """The gate must not break a permission class that grants the write."""
+    """The gate must not break a permission class that grants the write.
+
+    The fixture permits everything, so a failure is an uncaught "TypeError" and an HTTP
+    500 -- visible only through a parent, because the child's own root never forwards
+    the new keyword.
+    """
 
     def test_closed_signature_permission_class_still_grants(self) -> None:
         """A policy without "**kwargs" must not turn a grant into a crash.
@@ -653,7 +824,12 @@ class TestNestedGateCallingConvention:
 
 @pytest.mark.django_db()
 class TestNestedScopeIncludesMetaQueryset:
-    """The nested pk lookup mirrors the child's own top-level scope exactly."""
+    """The nested pk lookup mirrors the child's own top-level scope exactly.
+
+    This pins a decision rather than a fix: honouring "filter_queryset" but not
+    "Meta.queryset" would let a nested payload rewrite a row the child's own update
+    refuses to touch.
+    """
 
     def test_meta_queryset_gates_a_nested_update(self) -> None:
         """A row outside "Meta.queryset" is not found, as it is for "kidUpdate".
