@@ -88,6 +88,24 @@ DJANGO_GRAPHEX = {
     # id-only). Per-subscription Meta.payload_mode can override this.
     "SUBSCRIPTION_PAYLOAD_MODE": "full",
     # ---------------------------------------------------------------------------
+    # Permission-scoped schema (2.2.0). Every request to AuthenticatedGraphQLView
+    # (/graphql/secure/) validates against a schema PRUNED to the caller's Django
+    # model permissions: a field they may not use does not exist for them, so
+    # selecting it is a plain "Cannot query field" — a not-found, never an
+    # authorization error that would confirm it is there. An active superuser (the
+    # seeded `demo` user) always gets the full schema, so the flag is invisible
+    # until you log in as an ordinary user; the public /graphql/ endpoint is never
+    # pruned, which is why the runtime gate (permission_classes) is the half that
+    # must not be skipped. Flip to False to watch the pruned fields come back.
+    #
+    # The subscription transports are NOT pruned here: this playground wires both
+    # of them with `schema=` (config/urls.py for SSE, blog/consumers.py for WS),
+    # and pruning only happens through `schema_provider=`. To scope them too,
+    # pass `schema_provider=lambda user: pruned_schema_for(user, full)` from
+    # django_graphex.core.permission_signature_cache — see
+    # docs/usage/subscriptions.md.
+    "PERMISSION_SCOPED_SCHEMA": True,
+    # ---------------------------------------------------------------------------
     # Base64 file uploads (v1.3.0, opt-in via Base64FileInput).
     #
     # MAX_UPLOAD_SIZE — maximum decoded size (bytes) of a single upload field.

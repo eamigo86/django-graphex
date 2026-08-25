@@ -190,7 +190,8 @@ uploads and error handling. For a complete runnable project see
 
 There is no `Upload` scalar. A file column is published as `String`, and the
 file itself rides in the `multipart/form-data` body as a part named after the
-model's snake_case attribute — see
+field — either the camelCase alias the SDL publishes or the model's snake_case
+attribute, both match — see
 [Automatic multipart uploads](../mutations.md#automatic-multipart-uploads).
 
 The part can only address a field on the model the mutation is bound to, so an

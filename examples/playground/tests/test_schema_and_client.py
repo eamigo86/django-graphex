@@ -65,6 +65,29 @@ def test_playground_schema_builds() -> None:
     assert {"postCreate", "uploadDocument", "createCategory"} <= mfields
 
 
+def test_readme_nested_comments_query_validates() -> None:
+    """Assert the README's flagship nested query still validates.
+
+    "CommentModelType" is a write-only host over the same model as the
+    hand-declared, cursor-paginated "CommentListType". A host that does not
+    serve "list" must not take the model's container slot away from the one
+    that does, or the nested "comments" list loses the "pageInfo" every README
+    query selects.
+    """
+    from graphql import parse, validate
+
+    from blog.schema import schema
+
+    query = (
+        "{ posts { results { id comments { results { id }"
+        " pageInfo { hasNextPage } } } } }"
+    )
+
+    errors = validate(schema.graphql_schema, parse(query))
+
+    assert errors == [], [str(error) for error in errors]
+
+
 # --------------------------------------------------------------------------- #
 # 2) Permission smoke — protected field requires auth (through GraphQLView)    #
 # --------------------------------------------------------------------------- #

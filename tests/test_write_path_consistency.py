@@ -51,11 +51,11 @@ class CustomPKProductMutation(DjangoModelMutation):
     class Meta:
         """Wires the mutation to "CustomPKProduct".
 
-        Looks the target instance up by "slug" instead of the default "id".
+        The model's own primary key is "slug", so the generated "id" argument
+        carries a slug.
         """
 
         model = CustomPKProduct
-        lookup_field = "slug"
 
 
 class CustomPKProductType(DjangoModelType):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
@@ -798,11 +799,156 @@ def _check_unknown_options(cls_name: str, remaining: dict[str, Any]) -> None:
         k for k in set(remaining) - _GRAPHENE_BASE_OPTIONS if not k.startswith("_")
     )
     if unknown:
+        # The typo hint is for a name no class accepts. An option that is merely
+        # on the WRONG class is already explained by the note naming the right
+        # one, and telling that user to look for a misspelling sends them
+        # hunting for a mistake they did not make.
+        hosts = _option_hosts()
+        typo_hint = (
+            ""
+            if all(option in hosts for option in unknown)
+            else " Check for typos — e.g. 'max_dep' instead of 'max_depth'."
+        )
         raise ImproperlyConfigured(
-            "{cls}: unknown Meta option(s) {opts!r}. "
-            "Check for typos — e.g. 'max_dep' instead of 'max_depth'.".format(
+            "{cls}: unknown Meta option(s) {opts!r}.{elsewhere}{typo_hint}".format(
                 cls=cls_name,
                 opts=unknown,
+                elsewhere=_valid_elsewhere_note(unknown),
+                typo_hint=typo_hint,
+            )
+        )
+
+
+#: Memo for "_option_hosts": the signatures it reads never change at runtime,
+#: and it is only ever consulted on the way to raising.
+_OPTION_HOSTS: dict[str, tuple[str, ...]] = {}
+
+
+def _option_hosts() -> dict[str, tuple[str, ...]]:
+    """Map every supported Meta option to the classes that accept it.
+
+    Derived from the "__init_subclass_with_meta__" signatures themselves rather
+    than from a hand-kept list, so a class gaining or losing an option cannot
+    leave this mapping behind.
+
+    Returns:
+        Option name to the names of the classes accepting it, sorted.
+    """
+    if not _OPTION_HOSTS:
+        from .mutation import DjangoModelMutation
+
+        hosts = (
+            DjangoInputObjectType,
+            DjangoListObjectType,
+            DjangoModelMutation,
+            DjangoModelType,
+            DjangoObjectType,
+        )
+        for host in hosts:
+            signature = inspect.signature(host.__init_subclass_with_meta__)
+            for name, parameter in signature.parameters.items():
+                if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+                    continue
+                _OPTION_HOSTS[name] = (*_OPTION_HOSTS.get(name, ()), host.__name__)
+    return _OPTION_HOSTS
+
+
+def _valid_elsewhere_note(unknown: list[str]) -> str:
+    """Build the sentence naming where an unknown option IS supported.
+
+    An option can be spelled perfectly and still be unknown here because it
+    belongs to a sibling class -- "registry" on a "DjangoModelType" is the
+    common one. The caller drops the typo hint whenever every unknown name gets
+    a sentence from here, so that user is told where the option lives instead of
+    being sent hunting for a misspelling.
+
+    Args:
+        unknown: The unknown option names, sorted.
+
+    Returns:
+        A leading-space sentence per option that is valid on another class, or
+        an empty string when every unknown name is unknown everywhere.
+    """
+    hosts = _option_hosts()
+    return "".join(
+        " '{opt}' is a Meta option on {where}, but not on this class.".format(
+            opt=option,
+            where=", ".join(hosts[option]),
+        )
+        for option in unknown
+        if option in hosts
+    )
+
+
+def _nested_relation_names(model: type[Model]) -> tuple[str, ...]:
+    """Return the relation names a "Meta.nested_fields" key may use.
+
+    These are the names the nested input builder resolves a key through, which
+    is the relation's field name -- NOT necessarily its Python accessor. A
+    reverse foreign key declared without "related_name" is reached in Python as
+    "<model>_set" while its field name, and so its valid key here, is "<model>".
+
+    The predicate mirrors the one the nested input builder applies: a relation
+    it cannot classify as to-one or to-many is left out of the nested surface,
+    so naming it would be as ineffective as naming nothing at all.
+
+    Args:
+        model: The Django model the nested fields are declared on.
+
+    Returns:
+        The usable key names, sorted.
+    """
+    return tuple(
+        sorted(
+            field.name
+            for field in model._meta.get_fields()
+            if field.many_to_one
+            or getattr(field, "one_to_one", False)
+            or field.one_to_many
+            or field.many_to_many
+        )
+    )
+
+
+def _check_nested_field_keys(
+    cls_name: str, model: type[Model], nested_fields: Any
+) -> None:
+    """Raise ImproperlyConfigured for a nested_fields key naming no relation.
+
+    Such a key was skipped when the input surface was built and skipped again
+    on the write path, yet the generated input type was still NAMED after it --
+    so a typo minted a type carrying no nested field at all, and the relation
+    the project meant to open stayed closed without a word. The value side has
+    been validated since 2.0 (see "backends.backend_for_nested"); this closes
+    the key side the same way.
+
+    Args:
+        cls_name: The name of the class being constructed (for error messages).
+        model: The "Meta.model" the nested fields are declared on.
+        nested_fields: The "Meta.nested_fields" mapping (or empty/falsy).
+
+    Raises:
+        ImproperlyConfigured: If any key names no usable relation on "model".
+    """
+    nested_map = nested_fields if isinstance(nested_fields, dict) else {}
+    if not nested_map:
+        return
+    relation_names = _nested_relation_names(model)
+    unknown = sorted(set(nested_map) - set(relation_names))
+    if unknown:
+        raise ImproperlyConfigured(
+            "{cls}: Meta.nested_fields key(s) {keys!r} name no relation on "
+            "{model}. {suggestion}".format(
+                cls=cls_name,
+                keys=unknown,
+                model=model.__name__,
+                suggestion=(
+                    "The names that would have worked: {}.".format(
+                        ", ".join(relation_names)
+                    )
+                    if relation_names
+                    else f"{model.__name__} has no relations to nest."
+                ),
             )
         )
 
@@ -2477,8 +2623,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Raises:
             ImproperlyConfigured: If "Meta.model" is not provided, if any
-                unknown Meta option is supplied, or if "model_operations"
-                contains an unknown operation.
+                unknown Meta option is supplied, if a "nested_fields" key names
+                no relation on the model, or if "model_operations" contains an
+                unknown operation.
         """
         # HARD rename guard (v2.0): the legacy ``Meta.serialize_data`` key is
         # caught in ``**options`` — fail loudly with the new spelling before the
@@ -2513,6 +2660,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         pydantic_model = build_validator_model(cls, model, pydantic_model)
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
+        _check_nested_field_keys(cls.__name__, model, nested_fields)
 
         description = description or f"DjangoModelType for {model.__name__} model"
 
@@ -2655,6 +2803,15 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         # ("<Model>CreateGenericType") into, which no user convention claims.
         from ._strconv import to_camel_case
 
+        # Every "DjangoListObjectType" claims the model's canonical container
+        # slot on a last-write-wins basis, and that slot is what the converter
+        # resolves a reverse to-many relation through. A host that declared it
+        # does NOT serve "list" must not take that slot away from whoever does:
+        # otherwise the only way to attach a write-path concern (a permission
+        # lives on "DjangoModelType", not on "DjangoModelMutation") also rewrote
+        # the model's READ shape everywhere it appears nested.
+        incumbent_list_type = registry.get_list_type_for_model(model)
+
         output_list_type = factory_type(
             "list",
             DjangoListObjectType,
@@ -2663,6 +2820,14 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                 "name": to_camel_case("{}_List_Generic_Type".format(model.__name__)),
             },
         )
+
+        # Hand the slot back to the incumbent. Minting is still unconditional so
+        # "_meta.output_list_type" (read by "list_object_type()" and
+        # "ListField()") is never None, and an EMPTY slot is still filled so a
+        # project with a single write-only host keeps getting that host's own
+        # pagination on nested relations instead of a default-paginated stand-in.
+        if "list" not in model_operations and incumbent_list_type is not None:
+            registry.register_list_type(model, incumbent_list_type)
 
         django_fields = OrderedDict(
             {output_field_name: NativeMountedField(output_type)}

@@ -236,13 +236,30 @@ A row outside the scope answers exactly as a missing one (`ok: false`,
 `<Model> with id <pk> does not exist.`), so the response cannot be used to probe
 which primary keys exist. `create` has no target row, so nothing is scoped there.
 
-!!! warning "`permission_classes` is `DjangoModelType`-only"
-    The two hosts are **not** symmetric on authorization. `permission_classes` /
-    `authorize` — the per-action checks described under
-    [Permissions](permissions.md) — are honored by `DjangoModelType` only.
-    Declaring `permission_classes` on a `DjangoModelMutation` has **no effect**:
-    the class never reads it. Reach for `DjangoModelType` when you need
-    per-action authorization, or gate the mutation field at the schema root.
+#### Permissions are `DjangoModelType`-only
+
+The two hosts are **not** symmetric on authorization. `permission_classes` /
+`authorize` — the per-action checks described under
+[Permissions](permissions.md) — are honored by `DjangoModelType` only, because
+`DjangoModelMutation` reads the name nowhere.
+
+Declaring `permission_classes` on a `DjangoModelMutation` therefore raises
+`ImproperlyConfigured` at class definition. It used to be worse than a no-op:
+the plain assignment tripped a raw Pydantic error telling you to annotate the
+attribute `ClassVar`, and taking that advice produced a class that builds fine
+with a permission that never fires. Reach for `DjangoModelType` when you need
+per-action authorization, or gate the mutation field at the schema root.
+
+!!! warning "Unknown `Meta` options are refused too"
+    `DjangoModelMutation` rejects any `Meta` key its signature does not name —
+    the same check `DjangoModelType` has run since 2.0. An `exclude_field` typo
+    used to build a mutation whose input still carried the column the
+    declaration meant to hide, and a `Meta.queryset` was accepted while scoping
+    nothing (this host scopes through `filter_queryset`, above). Both raise now.
+    So does a `nested_fields` key naming no relation on the model: it was
+    skipped when the input was built and skipped again on the write path, while
+    the generated input type was still named after it. The full list of accepted
+    keys is the [Meta options table](../api/mutations.md#meta-options).
 
 ### Automatic multipart uploads
 
@@ -270,18 +287,20 @@ else — a number, a list, an object — comes back as a normal validation error
 and a path longer than the column's `max_length` is rejected before it reaches
 the database.
 
-!!! important "Name the part after the model attribute"
+!!! important "Either spelling of the field name works"
 
-    The part name is matched against the model's **snake_case** attribute, not
-    the camelCase alias the field is published under: `profile_photo`, never
-    `profilePhoto`. A part matching no exposed input field is ignored — the
-    mutation still answers `ok: true` and simply saves no file — so a
-    misspelled or camelCased part name looks like success with nothing written.
+    The part name is matched against **both** spellings of the field: the
+    camelCase alias it is published under — the one the SDL shows — and the
+    model's snake_case attribute. `profilePhoto` and `profile_photo` both land
+    on `Profile.profile_photo`, so there is nothing to remember. A part
+    matching no exposed input field is ignored — the mutation still answers
+    `ok: true` and simply saves no file — so a misspelled part name looks like
+    success with nothing written.
 
     A field the type projects away with `Meta.exclude_fields`, or leaves out of
     `Meta.only_fields`, is not an exposed input field: a part named after it is
-    ignored like any other, so a projection cannot be walked around through the
-    multipart body.
+    ignored under **either** spelling, so a projection cannot be walked around
+    through the multipart body.
 
     The match is against **every** field the input exposes, not only its file
     columns. A part sharing a name with an ordinary column replaces that

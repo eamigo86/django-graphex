@@ -4,6 +4,8 @@
   nested lists (results/totalCount, N+1-safe), directives.
 - Private queries (require auth): "me" and "myNotes" (scoped to the user).
 - Mutations: Note create/update/delete via DjangoModelType + permissions.
+- Nested writes: "postWithCommentsCreate", gated by the child's own permission
+  ("CommentModelType") the way 2.2.0 requires.
 - Subscriptions: public "postSubscription" and private "noteSubscription".
 """
 
@@ -489,7 +491,8 @@ class AttachmentListType(DjangoListObjectType):
 
 
 # --------------------------------------------------------------------------- #
-# Custom permission — demonstrates BasePermission subclassing.               #
+# Custom permission — demonstrates BasePermission subclassing. Assigned on    #
+# "CommentModelType" below, which is what gates the nested write.             #
 # AllowAny, IsAuthenticated, IsAdmin, and IsAdminOrReadOnly are imported      #
 # above so you can assign them on any DjangoModelType.permission_classes      #
 # without adding extra imports yourself.                                      #
@@ -843,20 +846,35 @@ class PostMutation(DjangoModelMutation):
         model = Post
 
 
-class CommentMutation(DjangoModelMutation):
-    """Public Comment CRUD.
+class CommentModelType(DjangoModelType):
+    """Comment CRUD behind a permission — the child host of the nested write.
 
-    Drives "commentSubscription" from "/graphql" the same way PostMutation
-    drives "postSubscription".
+    A "DjangoModelType" rather than a "DjangoModelMutation" because
+    "permission_classes" lives on the type: this class is what makes the
+    comment gate exist at all. It drives "commentSubscription" from "/graphql"
+    the same way PostMutation drives "postSubscription", and reads keep coming
+    from "CommentType" / "CommentListType".
+
+    Since 2.2.0 this gate is also the nested one. "PostWithCommentsMutation"
+    carries no permission of its own, yet a caller denied "commentCreate" here
+    is denied the identical write through "postWithCommentsCreate" too — the
+    nested writer runs the child's own hosts, and the denial rolls the parent
+    Post back with it. Before 2.2.0 the parent was a door into a child the
+    caller could not write directly.
     """
 
-    class Meta:
-        """Bind the mutation to the Comment model.
+    permission_classes = [IsOwnerOrReadOnly]
 
-        All CRUD operations (create, update, delete) are generated.
+    class Meta:
+        """Bind the type to Comment and serve the write operations only.
+
+        "model_operations" leaves out "list" / "retrieve" because the reads are
+        already served by "CommentType" / "CommentListType"; what is declared
+        here is a pure write host.
         """
 
         model = Comment
+        model_operations = ("create", "update", "delete")
 
 
 class PostWithCommentsMutation(DjangoModelMutation):
@@ -875,6 +893,14 @@ class PostWithCommentsMutation(DjangoModelMutation):
     The auto-generated input type for the "create" operation therefore exposes
     "comments" as a list-of-object argument. No hand-written resolver or
     serializer is needed.
+
+    Authorization (2.2.0): this mutation declares no permission of its own, and
+    it does not need one for the children. Each inline comment is authorized by
+    the child's own host — "CommentModelType" and its "IsOwnerOrReadOnly" — so
+    the caller denied "commentCreate" is denied it here too, and the parent Post
+    rolls back with the denial. The nested "comments" input is stamped with the
+    child's permission as well, which is what "PERMISSION_SCOPED_SCHEMA" prunes
+    it by on "/graphql/secure/".
     """
 
     class Meta:
@@ -1142,9 +1168,9 @@ class RootMutation(ObjectType):
     post_create = PostMutation.CreateField()
     post_update = PostMutation.UpdateField()
     post_delete = PostMutation.DeleteField()
-    comment_create = CommentMutation.CreateField()
-    comment_update = CommentMutation.UpdateField()
-    comment_delete = CommentMutation.DeleteField()
+    # Gated by CommentModelType.permission_classes — the same gate the nested
+    # postWithCommentsCreate below now runs for each inline comment.
+    comment_create, comment_delete, comment_update = CommentModelType.MutationFields()
     # Hand-written mutation using an explicit DjangoInputObjectType argument.
     create_category = CreateCategory.Field()
     # Nested-write demo: single operation creates the Post + its Comment(s).

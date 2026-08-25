@@ -33,9 +33,23 @@ class UserMutation(DjangoModelMutation):
 | `input_field_name` | `str` | `'new_{model}'` | Name of input argument |
 | `output_field_name` | `str` | `'{model}'` | Name of output field |
 | `description` | `str` | Auto-generated | Mutation description |
-| `nested_fields` | `dict` | `()` | Nested field configuration — a `{field_name: Model}` mapping. The empty default means no nested writes. |
+| `nested_fields` | `dict` | `()` | Nested field configuration — a `{field_name: Model}` mapping. The empty default means no nested writes. Every key must name a relation accessor on `model`; one that does not raises `ImproperlyConfigured`, listing the accessors that would have worked. |
 | `model_operations` | `tuple` | `("create", "update", "delete")` | Which CRUD operations to generate; any subset of `("create", "update", "delete")`. Calling the `*Field()` builder for an excluded operation raises `AttributeError`. |
 | `registry` | `Registry` | Global registry | Type registry the mutation's output node and input type resolve against. A custom registry scopes the whole mutation subgraph to one schema's own pair, so a forked `DjangoGraphQLSchema` re-forks the payload's output node into its own namespace instead of reaching the process-global node. |
+
+!!! warning "Anything outside this table raises"
+    Every `Meta` key django-graphex itself reads is in the table above; any other
+    key raises `ImproperlyConfigured` at class definition. That covers the typo
+    (`exclude_field` for `exclude_fields`, which used to leave the column it
+    named writable) and the option that belongs to the other host: `queryset` is
+    read by `DjangoModelType`, never here. Declaring `permission_classes` raises
+    for the same reason — see
+    [Mutations](../usage/mutations.md#permissions-are-djangomodeltype-only).
+
+    The one exception is the handful of keys the graphene `ObjectType` base
+    consumes before django-graphex sees them — `name`, `_meta`, `interfaces`,
+    `possible_types`, `default_resolver` and `container`. They are accepted, and
+    only `name` and `description` do anything useful on a mutation.
 
 ### Fields
 

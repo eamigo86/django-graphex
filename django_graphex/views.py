@@ -823,8 +823,8 @@ class BaseGraphQLView(View):
 
         Dispatches on the content type: "application/graphql" yields a
         "{'query': ...}" dict, "application/json" is decoded and (for batch
-        views) required to be a non-empty list, form-encoded/multipart bodies
-        return "request.POST", and any other type yields an empty dict.
+        views) required to be a non-empty list of objects, form-encoded/multipart
+        bodies return "request.POST", and any other type yields an empty dict.
 
         Args:
             request: The incoming HTTP request.
@@ -834,7 +834,8 @@ class BaseGraphQLView(View):
 
         Raises:
             HttpError: When the body is not valid JSON, or when a batch view
-                receives a non-list or empty-list body.
+                receives a non-list body, an empty list, or a list holding an
+                entry that is not a JSON object.
         """
         content_type = self.get_content_type(request)
 
@@ -862,6 +863,19 @@ class BaseGraphQLView(View):
                             HttpResponseBadRequest(),
                             message="Received an empty list in the batch request.",
                         )
+                    # Check every ENTRY, not just the outer list: a non-mapping
+                    # entry reaches "get_graphql_params", where "data.get(...)"
+                    # raises an AttributeError that escapes the "except HttpError"
+                    # handler in "dispatch" and turns a malformed body into a 500.
+                    for entry in request_json:
+                        if not isinstance(entry, dict):
+                            raise HttpError(
+                                HttpResponseBadRequest(),
+                                message=(
+                                    "Batch entries should be JSON objects, but "
+                                    "received {}.".format(repr(entry))
+                                ),
+                            )
                 else:
                     if not isinstance(request_json, dict):
                         raise HttpError(
@@ -1127,6 +1141,21 @@ class BaseGraphQLView(View):
         return content_type.split(";", 1)[0].lower()
 
 
+#: Standard validation plus query-depth limiting ("Meta.max_depth" /
+#: "MAX_QUERY_DEPTH") and cost analysis ("Meta.complexity" / "MAX_QUERY_COST").
+#: Both are no-ops until configured, and both read their limits from
+#: "graphql_api_settings" at validation time, so this tuple stays correct
+#: whatever the settings say — which is why the subscription transports can
+#: share the very same object instead of rebuilding it per transport. Anything
+#: validating a document on behalf of this library MUST use it, or the depth and
+#: cost guards silently do not apply to that surface.
+DEFAULT_VALIDATION_RULES = (
+    *specified_rules,
+    DepthLimitValidationRule,
+    CostLimitValidationRule,
+)
+
+
 class GraphQLView(BaseGraphQLView):
     """Enhanced GraphQL view: response caching + depth/cost rules + cost payload.
 
@@ -1136,14 +1165,7 @@ class GraphQLView(BaseGraphQLView):
     corresponding "DJANGO_GRAPHEX" setting is configured.
     """
 
-    #: Standard validation plus query-depth limiting ("Meta.max_depth" /
-    #: "MAX_QUERY_DEPTH") and cost analysis ("Meta.complexity" / "MAX_QUERY_COST").
-    #: Both are no-ops until configured.
-    validation_rules = (
-        *specified_rules,
-        DepthLimitValidationRule,
-        CostLimitValidationRule,
-    )
+    validation_rules = DEFAULT_VALIDATION_RULES
 
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.

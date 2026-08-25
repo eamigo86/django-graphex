@@ -14,6 +14,23 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+### Changed
+
+- **Subscriptions are now measured against `MAX_QUERY_DEPTH` and
+  `MAX_QUERY_COST`.** Both transports validated with graphql-core's default
+  rules, so the depth and cost guards never saw a subscription document — while
+  [Mutations](usage/mutations.md) says they are enforced on "query, mutation,
+  and subscription selection sets" and
+  [Query optimization](usage/query-optimization.md) says "**all** GraphQL
+  operation types". The WebSocket and SSE transports now validate with the same
+  settings-driven rule tuple the HTTP view uses. **This rejects subscriptions
+  that used to be accepted**: a subscription's selection set is re-executed for
+  every delivered event, so an over-deep or over-costly document was paid for
+  repeatedly rather than once — the guard matters more here than on a one-shot
+  query, not less. A project that relied on the gap must raise
+  `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` far enough to cover its subscription
+  documents.
+
 ### Fixed
 
 - **`totalCount` was counted whether or not the client asked for it.** A list
@@ -33,6 +50,68 @@ All notable changes to this library are documented here. The format is based on
   payload. The already-resolved row is now passed through. Every check still
   runs, and runs against the same row: the authorization outcome is unchanged
   for every relation kind, for a permitted and a denied caller alike.
+- **A multipart part spelled the way the SDL spells it was silently dropped.**
+  The merge that folds an upload into a mutation payload built its allow-list
+  from each input field's snake_case model attribute, so `profilePhoto` — the
+  only spelling a client can discover from the schema — matched nothing: the
+  part was dropped and the mutation still answered `ok: true` with no file
+  written. Both spellings are now accepted, read off the same compiled input
+  field so the pair cannot disagree. The projection guard is unchanged: a part
+  naming a field the input does not publish is still ignored under either name.
+- **A malformed batch entry answered HTTP 500 where the docs promise 400.** A
+  batch body was checked for being a non-empty list but never for what the list
+  held, so an entry that was not a JSON object reached `get_graphql_params`,
+  where `data.get("query")` raised an `AttributeError` that escaped the view's
+  error handler: posting `[1, 2, 3]` returned a 500 while
+  [Views](usage/views.md) documents a 400. Every entry is now checked alongside
+  the outer list and a non-object one is rejected with the documented 400. A
+  well-formed batch executes exactly as before.
+- **A misconfigured write host was accepted in silence, three ways.**
+  `DjangoModelMutation` never ran the unknown-`Meta`-option check its sibling
+  `DjangoModelType` has run since 2.0, so `exclude_field` — a typo for
+  `exclude_fields` — built a mutation whose input still carried the very column
+  the declaration meant to hide, and a `Meta.queryset` was accepted while
+  scoping nothing (this host scopes through `filter_queryset`).
+  `permission_classes` was worse than a no-op: the plain assignment raised a raw
+  Pydantic error telling you to annotate it `ClassVar`, and taking that advice
+  bought a class that builds with a permission that never fires, because the
+  class reads the name nowhere. And a `nested_fields` key naming no relation was
+  skipped when the input surface was built and skipped again on the write path,
+  yet the generated input type was still *named* after it — so `{'bookz': Book}`
+  minted an `AuthorCreateNestedBookzType` carrying no nested field at all, on
+  both hosts. All three now raise `ImproperlyConfigured` at class definition,
+  the nested one listing the accessors that would have worked. A schema that
+  builds today can therefore fail to build after upgrading — which is the point:
+  each of these classes was running a configuration its author had written down
+  and the library had thrown away.
+- **An unknown `Meta` option that is real on a sibling class read as a typo.**
+  `registry` is a supported option on `DjangoModelMutation`, but declared on a
+  `DjangoModelType` it was reported with nothing but "Check for typos", sending
+  you hunting for a misspelling in a word spelled correctly. The message now
+  names the classes that do accept the option, read from their own signatures so
+  the list cannot drift out of date.
+- **…and then told you to look for the typo anyway.** The sentence naming the
+  sibling class was *appended* to the typo hint rather than replacing it, so the
+  user who spelled `registry` correctly still read "Check for typos" and went
+  looking for a misspelling that was not there. The hint is now emitted only
+  when at least one unknown name is a `Meta` option on no class at all. A real
+  typo reads exactly as it did.
+- **A write-only `DjangoModelType` seized the model's read container.** Every
+  generated list container claims the model's canonical registry slot on a
+  last-write-wins basis, and that slot is what a reverse to-many relation
+  resolves through — so a host declaring
+  `Meta.model_operations = ("create", "update", "delete")`, which says in as
+  many words that it does not serve `list`, still displaced the
+  `DjangoListObjectType` the project had declared for its reads. Attaching a
+  permission to a model's write path (`permission_classes` lives on
+  `DjangoModelType`, not on `DjangoModelMutation`) therefore silently rewrote
+  that model's shape everywhere it appears nested, and a query selecting the
+  declared container's `pageInfo` stopped validating. A host that does not serve
+  `list` now hands the slot back to whoever holds it, and still fills an empty
+  one so a project with a single write-only host keeps that host's own
+  pagination. A host that *does* serve `list` is unchanged, and
+  `_meta.output_list_type` is still populated on every host, so
+  `list_object_type()` and `ListField()` are unaffected.
 
 ### Removed
 
@@ -55,6 +134,36 @@ All notable changes to this library are documented here. The format is based on
   key was unreachable in both — and the package's third field map had already
   dropped it, leaving the three to drift apart. A `NullBooleanField` resolves to
   a boolean exactly as before, now through one key in all three.
+
+### Documentation
+
+- **The example project demonstrated none of the 2.2.0 permission story, and its
+  nested mutation was the exact shape those release notes call vulnerable.**
+  `examples/playground` imported five permission classes to assign one, and
+  neither `commentCreate` nor the nested `postWithCommentsCreate` carried any —
+  so an anonymous caller created a `Post` *and* its `Comment` rows through the
+  parent, in a project whose README claimed it showed "every major feature".
+  Comment writes are now served by a `CommentModelType` carrying the
+  `IsOwnerOrReadOnly` the module already defined, which is the same gate the
+  nested write runs: the caller denied the child's own mutation is denied it
+  through the parent, and the parent rolls back with the denial.
+  `PERMISSION_SCOPED_SCHEMA` is switched on so `/graphql/secure/` serves each
+  caller a schema pruned to their model permissions — including the nested
+  `comments` input, which is stamped with the *child's* permission — and the
+  README's coverage matrix now separates what the playground demonstrates from
+  what it merely imports. See
+  [Permission-scoped schema](usage/permission-scoped-schema.md).
+- **Four pages described a codebase that had moved.** The playground schema tour
+  still named a `CommentMutation` that no longer exists and still called
+  `IsOwnerOrReadOnly` a pattern no type assigns; the example project's settings
+  claimed subscription connections validate against a pruned schema, when both
+  transports there are wired with `schema=` and pruning happens only through
+  `schema_provider=`; the mutation examples still said a multipart part must be
+  named after the model's snake_case attribute while the guide it links to now
+  says either spelling works; and the `DjangoModelMutation` `Meta` reference
+  claimed its table was the whole list while the graphene base still accepts
+  `name`, `_meta`, `interfaces`, `possible_types`, `default_resolver` and
+  `container`. All four now say what the code does.
 
 ## 2.2.0 — 2026-08-24
 

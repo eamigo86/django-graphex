@@ -78,6 +78,7 @@ from graphql import (
 from graphql.utilities import get_operation_ast
 
 from ...settings import graphql_api_settings
+from ...views import DEFAULT_VALIDATION_RULES
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -535,9 +536,14 @@ def subscription_ws_consumer(
                 )
                 return
 
+            # Same rule tuple as the HTTP view: a subscription's selection set is
+            # re-executed for EVERY delivered event, so an over-deep or over-costly
+            # document is paid for repeatedly — the depth/cost guards matter more
+            # here than on a one-shot query, not less.
             validation_errors = validate(
                 conn_schema,
                 document,
+                DEFAULT_VALIDATION_RULES,
                 max_errors=graphql_api_settings.MAX_VALIDATION_ERRORS,
             )
             if validation_errors:

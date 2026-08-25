@@ -703,6 +703,20 @@ class NestedFieldsMixin:
     ) -> Model:
         """Upsert a single nested child, raising on validation failure.
 
+        The permission pass below runs over "hosts_for_nested" -- EVERY host of
+        the child model -- and not over "hosts_serving(..., op)" the way its
+        three siblings do. That asymmetry is deliberate. "hosts_serving" exists
+        because a SCOPE and a PROJECTION describe a surface a host offers, and
+        "A host has no say over an operation it does not generate"; a
+        "permission_classes" declaration describes the opposite thing, a
+        PROHIBITION over the model itself, exactly as the exclusion merged in
+        "nested_child_input" is. Narrowing this loop to the serving hosts would
+        REMOVE checks rather than fix a mismatch: a host declared
+        "model_operations = ("create",)" would stop being consulted on the
+        nested UPDATE path, and the project's only stated policy for that child
+        would go unasked precisely where a row already exists to be rewritten.
+        The extra calls are the fail-closed side of the trade, so they stay.
+
         Args:
             field: The nested field name (used to prefix error fields).
             child_spec: The nested-field value -- the child's Django model class.

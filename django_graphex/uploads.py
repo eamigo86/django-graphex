@@ -365,24 +365,32 @@ class Base64FileInput(InputType):
         )
 
 
-def _input_field_names(input_type: Any) -> frozenset[str]:
-    """Return the model field names a compiled input object accepts.
+def _accepted_part_names(input_type: Any) -> dict[str, str]:
+    """Map every part name a compiled input accepts to its model attribute.
+
+    Both spellings of a field are accepted: the camelCase name it is published
+    under -- the only one a client can read off the SDL -- and the snake_case
+    "out_name" the model attribute carries. They are read off the SAME compiled
+    field, so the pair cannot drift apart, and the merged value is always keyed
+    under the "out_name" because that is what the validated payload uses.
 
     Args:
         input_type: The compiled "GraphQLInputObjectType", possibly wrapped in
             "GraphQLNonNull".
 
     Returns:
-        The "out_name" of every field the input exposes, which is the snake_case
-        model attribute the multipart part must be named after.
+        Each accepted part name mapped to the payload key it merges under.
     """
     from graphql import get_named_type
 
     named = get_named_type(input_type)
     fields = getattr(named, "fields", None) or {}
-    return frozenset(
-        getattr(field, "out_name", None) or name for name, field in fields.items()
-    )
+    accepted: dict[str, str] = {}
+    for name, field in fields.items():
+        out_name = getattr(field, "out_name", None) or name
+        accepted[name] = out_name
+        accepted[out_name] = out_name
+    return accepted
 
 
 def merge_uploaded_files(data: dict[str, Any], info: Any, input_type: Any) -> None:
@@ -397,8 +405,9 @@ def merge_uploaded_files(data: dict[str, Any], info: Any, input_type: Any) -> No
     column away means the server does not accept it, not that the request is
     malformed.
 
-    The part must carry the model's snake_case attribute name, NOT the camelCase
-    alias the field is published under.
+    The part may carry either spelling of the field: the camelCase alias it is
+    published under or the model's snake_case attribute. Whichever arrives, the
+    value is merged under the snake_case key the validated payload uses.
 
     Args:
         data: The mutation input payload, mutated in place.
@@ -410,5 +419,7 @@ def merge_uploaded_files(data: dict[str, Any], info: Any, input_type: Any) -> No
     files = getattr(info.context, "FILES", None)
     if not files:
         return
-    allowed = _input_field_names(input_type)
-    data.update({name: value for name, value in files.items() if name in allowed})
+    accepted = _accepted_part_names(input_type)
+    data.update(
+        {accepted[name]: value for name, value in files.items() if name in accepted}
+    )

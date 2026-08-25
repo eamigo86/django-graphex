@@ -28,7 +28,12 @@ from .nested import (
     register_nested_host,
 )
 from .registry import get_global_registry
-from .types import DjangoInputObjectType, DjangoObjectType
+from .types import (
+    DjangoInputObjectType,
+    DjangoObjectType,
+    _check_nested_field_keys,
+    _check_unknown_options,
+)
 from .uploads import merge_uploaded_files
 from .utils import get_Object_or_None, not_found_error
 
@@ -473,6 +478,14 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
     that "CreateField" / "UpdateField" / "DeleteField" expose.
     """
 
+    #: Declared here although this host reads it NOWHERE: without a base
+    #: ``ClassVar``, Pydantic's ``ModelMetaclass`` rejected the plain assignment
+    #: with advice to annotate it ``ClassVar`` — and following that advice bought
+    #: a class that builds and a permission that never fires. With the attribute
+    #: declared, a subclass assigning it reaches this library's own guard in
+    #: ``__init_subclass_with_meta__`` instead.
+    permission_classes: ClassVar[tuple[Any, ...]] = ()
+
     #: Opt-in override (P0) for the permissions this mutation's field requires.
     #: When set (a sequence of codenames), it REPLACES the composite-table
     #: default and is stamped onto the built field's
@@ -541,12 +554,22 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             **options: Additional options forwarded to the base class.
 
         Raises:
-            ImproperlyConfigured: If no "Meta.model" is provided, or if
-                "model_operations" contains an unknown operation.
+            ImproperlyConfigured: If no "Meta.model" is provided, if any unknown
+                Meta option is supplied, if a "nested_fields" key names no
+                relation on the model, if "permission_classes" is declared, or
+                if "model_operations" contains an unknown operation.
         """
+        # The twin of the call "DjangoModelType" has run since 2.0. Without it
+        # an "exclude_field" typo left the column it named writable, and a
+        # "Meta.queryset" was taken and then never consulted -- both in silence.
+        # The known set is this signature: whatever the parameters above did not
+        # claim is what lands in "options".
+        _check_unknown_options(cls.__name__, options)
+
         pydantic_model = build_validator_model(cls, model, pydantic_model)
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
+        _check_nested_field_keys(cls.__name__, model, nested_fields)
 
         description = description or f"DjangoModelMutation for {model.__name__} model"
 
@@ -604,6 +627,21 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                 "Meta.model_operations of {} contains unknown operation(s) {}; "
                 'only "create", "update" and "delete" are valid.'.format(
                     cls.__name__, sorted(unknown)
+                )
+            )
+
+        # A no-op is worse than a refusal here: the declaration reads as a gate
+        # and is not one. Nothing in this class consults "permission_classes" --
+        # the base declares it only so this message is what a subclass meets,
+        # instead of Pydantic's advice to annotate it "ClassVar" (which used to
+        # make the class build with the permission still never firing).
+        if cls.permission_classes:
+            raise ImproperlyConfigured(
+                "{}: permission_classes is not honored by DjangoModelMutation; "
+                "this host reads it nowhere, so the checks would never run. "
+                "Declare the model on a DjangoModelType, which runs them per "
+                "action, or gate the mutation field at the schema root.".format(
+                    cls.__name__
                 )
             )
 

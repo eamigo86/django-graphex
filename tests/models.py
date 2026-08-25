@@ -2712,3 +2712,38 @@ class NestedR7OnlyKid(DummyModel):
     )
     headline = models.CharField(max_length=100)
     secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class WriteHostThread(DummyModel):
+    """The parent of the list-container displacement fixture.
+
+    Its reverse "replies" accessor is what resolves through the registry slot a
+    write-only host used to seize, so the displacement is visible in the schema
+    without mounting the child anywhere.
+    """
+
+    title = models.CharField(max_length=100)
+
+
+class WriteHostReply(DummyModel):
+    """A child whose reads and writes are served by two different classes.
+
+    Dedicated to this fixture because "DjangoModelType" always registers into
+    the GLOBAL registry, so sharing a model with another test module would make
+    the two modules fight over the same slot.
+    """
+
+    thread = models.ForeignKey(
+        WriteHostThread, related_name="replies", on_delete=models.CASCADE
+    )
+    body = models.CharField(max_length=100)
+
+
+class WriteHostAudit(DummyModel):
+    """A model whose host serves "list", proving the unchanged path.
+
+    Kept apart from "WriteHostReply" so the list-serving host and the
+    write-only host never compete for one registry slot.
+    """
+
+    label = models.CharField(max_length=100)

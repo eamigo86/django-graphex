@@ -170,7 +170,10 @@ path("graphql/batch", GraphQLView.as_view(batch=True)),
 
 Any other body shape — a bare object, `application/graphql`, form-encoded or
 multipart — is rejected with **HTTP 400** and the message
-`Batch requests should receive a list, but received ...`. See
+`Batch requests should receive a list, but received ...`. Every entry in the
+list must itself be a JSON object; one that is not (a bare number, string or
+nested list) is rejected with **HTTP 400** and
+`Batch entries should be JSON objects, but received ...`. See
 [`MAX_BATCH_SIZE`](settings.md#http-view-hardening) for the per-request
 operation cap.
 

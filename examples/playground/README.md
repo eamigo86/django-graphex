@@ -1,11 +1,12 @@
 # django-graphex — Playground
 
-> **Targets django-graphex v2.0 — native `graphql-core` backend (no graphene).**
-> Exercises the whole 2.0 surface: query-optimization, typed-GFK unions,
-> `get_queryset` scoping + safe ordering, and native subscriptions (SSE + WS).
+> **Targets django-graphex v2.2 — native `graphql-core` backend (no graphene).**
+> Query-optimization, typed-GFK unions, `get_queryset` scoping + safe ordering,
+> native subscriptions (SSE + WS), and the 2.2 permission story: nested writes
+> authorized by the child, and a schema pruned to the caller.
 
-A small, runnable Django project that exercises **every major feature** of
-`django-graphex` end-to-end: queries, all three paginators, filtering,
+A small, runnable Django project that exercises most of `django-graphex`
+end-to-end: queries, all three paginators, filtering,
 generic single-object fields, nested lists (N+1-safe) with nested
 pagination/filtering, choices→enum, directives, CRUD mutations with
 permissions, query depth/cost limits, response caching, the full
@@ -16,6 +17,12 @@ Channels.
 
 It installs the library from the parent checkout (editable), uses **uv**,
 **SQLite**, and a `Makefile`.
+
+Not everything the library ships is demonstrated here. The [feature coverage
+matrix](#feature-coverage-matrix) marks each entry as demonstrated (✅), merely
+imported so you can swap it in (`import only`), deliberately left out
+(`not used`), or covered only in the docs (`doc` / `note`) — read the row before
+copying the shape.
 
 ### Safe ordering (anti-oracle hardening)
 
@@ -57,8 +64,11 @@ The seed creates superuser **`demo` / `demo12345`**.
 
 ### Authenticating (for private fields)
 
-Private fields (`me`, `myNotes`, write mutations, `noteSubscription`) require
-an authenticated user. Auth here is **Django session-based**:
+Private fields (`me`, `myNotes`, `noteSubscription`), the note and comment
+writes, and `postWithCommentsCreate` **when it carries a `comments` list**
+require an authenticated user. The remaining writes (`postCreate`,
+`createCategory`, `uploadDocument`) are deliberately open, so you can compare a
+gated write against an ungated one. Auth here is **Django session-based**:
 
 1. Open <http://127.0.0.1:8000/admin> and log in as `demo` / `demo12345`.
 2. Return to GraphiQL — it shares the session cookie.
@@ -102,17 +112,21 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | Multi-level nesting | ✅ | `authors → posts → comments` (all paginated independently) |
 | `GenericRelation` reverse list | wired | `Post.attachments` — prefetched + `.only()`-narrowed reverse side of the GFK. Wired on the model + schema; the seed leaves it empty so the `attachments` GFK-union demo stays runnable (a `Post` target is not an `AttachmentTargetUnion` member). Query `posts { results { attachments { results { caption } } } }` runs cleanly and returns rows once you attach an `Attachment` to a `Post` |
 | **Mutations** | | |
-| `DjangoModelMutation` (full CRUD) | ✅ | `PostMutation`, `CommentMutation` → `postCreate/Update/Delete`, `commentCreate/Update/Delete` |
-| `DjangoModelType.MutationFields()` | ✅ | `NoteModelType` → `noteCreate/Update/Delete` |
+| `DjangoModelMutation` (full CRUD) | ✅ | `PostMutation` → `postCreate/Update/Delete` |
+| `DjangoModelType.MutationFields()` | ✅ | `NoteModelType` → `noteCreate/Update/Delete`; `CommentModelType` → `commentCreate/Update/Delete` |
+| `Meta.model_operations` | ✅ | `CommentModelType` (writes only, reads served by `CommentType`), `PostWithCommentsMutation` (`create` only) |
 | `DjangoInputObjectType` on hand-written mutation | ✅ | `CategoryInput` / `createCategory` |
-| Nested writes (`nested_fields` — reverse FK) | ✅ | `PostWithCommentsMutation` → `postWithCommentsCreate` |
+| Nested writes (`nested_fields` — reverse FK) | ✅ | `PostWithCommentsMutation` → `postWithCommentsCreate`, authorized by the child's own permission — see [Nested writes are gated by the child](#nested-writes-are-gated-by-the-child-22) |
 | **Permissions** | | |
-| `BasePermission` (custom subclass) | declared only | `schema.py` — `IsOwnerOrReadOnly` shows the per-action `has_<action>_permission` pattern, but no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
+| `BasePermission` (custom subclass) | ✅ | `schema.py` — `IsOwnerOrReadOnly`, assigned on `CommentModelType.permission_classes`. It gates `commentCreate/Update/Delete` **and** every comment written through `postWithCommentsCreate` |
+| `IsAuthenticatedOrReadOnly` | ✅ | `NoteModelType.permission_classes` |
 | `AllowAny` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
 | `IsAuthenticated` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
-| `IsAuthenticatedOrReadOnly` | ✅ | `NoteModelType.permission_classes` — the only permission class this playground actually enforces |
 | `IsAdmin` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
 | `IsAdminOrReadOnly` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
+| `DjangoModelPermissions` | not used | The playground gates on identity (`IsOwnerOrReadOnly`, `IsAuthenticatedOrReadOnly`), not on Django model permissions. Those still drive `PERMISSION_SCOPED_SCHEMA` below, which reads them straight off the caller |
+| `PERMISSION_SCOPED_SCHEMA` (pruned per-caller schema) | ✅ | `config/settings.py` — active; visible at `/graphql/secure/` — see [A schema pruned to the caller](#a-schema-pruned-to-the-caller-22) |
+| `API_ACCESS_GROUP` | not used | Endpoint-wide group gate; the playground keeps `/graphql/` public on purpose. Set it in `config/settings.py` to lock the endpoint to one Django `Group` |
 | **Security / middleware** | | |
 | `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
 | `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE |
@@ -195,6 +209,11 @@ view (`config/urls.py`):
   frame is delivered.
 - **Schema + permission smoke** — the playground schema builds; a protected
   field (`me`) requires auth through `GraphQLView`/`AuthenticatedFieldsMiddleware`.
+- **Permissions: nested + pruned** (`test_permissions_nested_and_scoped.py`) —
+  the two demos above, over the wire: an anonymous caller denied `commentCreate`
+  is denied the same write through `postWithCommentsCreate` (and the parent
+  `Post` rolls back), while `/graphql/secure/` serves each caller a schema
+  pruned to their Django model permissions.
 - **Subscription client** — `/graphql/client/` serves the HTML client with both
   transports (graphql-transport-ws + graphql-sse) and the playground's WS/HTTP
   endpoints wired. (A full headless-browser round-trip is intentionally deferred
@@ -460,6 +479,85 @@ The `comments` list is optional — omit it and the mutation behaves exactly lik
 a plain `postCreate`.  Passing an empty list (`comments: []`) is a no-op
 (existing comments are never removed).
 
+#### Nested writes are gated by the child (2.2)
+
+Run the mutation above **logged out**. It fails:
+
+```json
+{
+  "errors": [{ "message": "You do not have permission to perform this action.",
+               "extensions": { "code": "PERMISSION_DENIED", "status_code": 403 } }]
+}
+```
+
+`PostWithCommentsMutation` declares no permission of its own. The denial comes
+from the **child**: `CommentModelType.permission_classes = [IsOwnerOrReadOnly]`
+is what gates `commentCreate`, and since 2.2.0 the nested writer runs the
+child's own hosts too. So the caller who cannot write a `Comment` through the
+front door cannot write one through the parent either — and because the child's
+denial escapes the mutation's `transaction.atomic()` block, the parent `Post`
+rolls back with it. Nothing lands.
+
+Try it in three steps:
+
+1. Logged out, run `commentCreate` — denied.
+2. Logged out, run `postWithCommentsCreate` with a `comments` list — denied by
+   the same class, and `posts { totalCount }` is unchanged.
+3. Log in via `/admin`, run it again — the post and its comments are created.
+
+Drop `permission_classes` from `CommentModelType` in `blog/schema.py` and step 2
+succeeds anonymously again: that is the pre-2.2.0 shape, and it is why a child
+model's own permissions are the thing to check when auditing a nested write.
+
+### 6. A schema pruned to the caller (2.2)
+
+`config/settings.py` ships with `"PERMISSION_SCOPED_SCHEMA": True`, so every
+request to **`/graphql/secure/`** (`AuthenticatedGraphQLView`) is validated
+against a schema pruned to the caller's **Django model permissions**. A field
+the caller may not use does not exist for them: selecting it is graphql-core's
+own `Cannot query field`, a not-found indistinguishable from a typo, never an
+authorization error that would confirm the field is there.
+
+Of the three permission-scoped features the release ships (`DjangoModelPermissions`,
+`API_ACCESS_GROUP`, `PERMISSION_SCOPED_SCHEMA`), this is the one the playground
+demonstrates, because it is the only one whose effect you can *see* rather than
+merely be denied by — and because the field it prunes here is the nested one
+from the demo above.
+
+The seeded `demo` user is a superuser and always gets the **full** schema, so
+make an ordinary user first:
+
+```bash
+uv run python manage.py shell -c "
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
+u = get_user_model().objects.create_user('editor', password='editor12345', is_staff=True)
+u.user_permissions.set(Permission.objects.filter(content_type__app_label='blog').exclude(content_type__model__in=['note', 'comment']))
+"
+```
+
+`editor` may write posts but holds no `Note` or `Comment` permission at all.
+`is_staff` only lets them log in at `/admin` so GraphiQL shares the session; it
+grants no model permission. Log in as `editor` / `editor12345`, open
+<http://127.0.0.1:8000/graphql/secure/> and run:
+
+| Document at `/graphql/secure/` | Result |
+|---|---|
+| `mutation { noteCreate(newNote: { title: "x" }) { ok } }` | `Cannot query field 'noteCreate' on type 'RootMutation'. Did you mean 'postCreate'?` |
+| `mutation { commentCreate(newComment: { … }) { ok } }` | `Cannot query field 'commentCreate' on type 'RootMutation'` |
+| `postWithCommentsCreate(newPost: { …, comments: [...] })` | `Field 'comments' is not defined by type 'PostCreateNestedCommentsType'` — the mutation survives, the **nested input field** does not |
+| `postWithCommentsCreate(newPost: { … })`, no `comments` | `ok: true` — the parent write is theirs to make |
+| `{ serverTime posts { totalCount } }` | resolves normally — untagged and readable fields are untouched |
+
+The `comments` row is the 2.2.0 part: the nested `comments` input is stamped with
+the **child's** permission, so a caller who may write posts but not comments
+loses the nested surface while keeping the parent. Prune and gate are two halves
+of one model — `/graphql/` is **not** pruned, which is exactly why
+`permission_classes` (the runtime half, section 5) is the one you must not skip.
+
+Flip `PERMISSION_SCOPED_SCHEMA` to `False` in `config/settings.py` and every
+pruned field comes back.
+
 ---
 
 ## Query depth and cost limits
@@ -567,6 +665,10 @@ subscription {
 }
 ```
 
+Trigger it with a comment write — log in via `/admin` first, since
+`commentCreate` is gated by `IsOwnerOrReadOnly` (the subscribe itself stays
+public):
+
 ```graphql
 # Delivered (post 1):
 mutation { commentCreate(newComment: { post: 1, authorName: "Ada", text: "hi" }) { ok } }
@@ -605,7 +707,7 @@ subscription {
 | `/graphql/stream` | `subscription_sse_view` | Native Server-Sent Events subscription transport |
 | `/ws/graphql/` | `subscription_ws_consumer` | Native `graphql-transport-ws` WebSocket (see `config/asgi.py`) |
 | `/graphql/client/` | `SubscriptionClientView` | Browser client for the subscription flow (WS + SSE) |
-| `/graphql/secure/` | `AuthenticatedGraphQLView` | Same schema behind **view-level** HTTP 403 auth |
+| `/graphql/secure/` | `AuthenticatedGraphQLView` | Same schema behind **view-level** HTTP 403 auth, and **pruned per caller** (`PERMISSION_SCOPED_SCHEMA`, [section 6](#6-a-schema-pruned-to-the-caller-22)) |
 
 `AuthenticatedGraphQLView` rejects unauthenticated requests before any query
 runs. Override `permission_classes` for custom gates:
