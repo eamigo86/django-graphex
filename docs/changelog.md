@@ -272,8 +272,15 @@ All notable changes to this library are documented here. The format is based on
 ### Removed
 
 - Six internal names that nothing in the package reached, each confirmed
-  callerless before deletion. None was exported or documented, so no import you
-  can write today breaks:
+  callerless before deletion. None was exported through `django_graphex.__all__`
+  or documented anywhere. Four of them were nonetheless importable by name —
+  `utils.py` and `converter.py` declare no `__all__`, so
+  `from django_graphex.utils import get_obj`, `create_obj`,
+  `converter.assert_valid_name` and `converter.convert_choice_name` resolved on
+  2.2.0 and raise `ImportError` here. None had a caller inside the package, and
+  `create_obj` returned an error *string* rather than raising, so a project
+  depending on it was already handling a value it could not distinguish from
+  success. The names:
   `paginations.utils._nonzero_int` (which also still carried the zero
   passthrough its sibling `_positive_int` documents fixing — `_nonzero_int(0,
   strict=True)` returned `0` instead of raising, and it accepted negatives);

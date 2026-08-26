@@ -420,6 +420,15 @@ def merge_uploaded_files(data: dict[str, Any], info: Any, input_type: Any) -> No
     if not files:
         return
     accepted = _accepted_part_names(input_type)
-    data.update(
-        {accepted[name]: value for name, value in files.items() if name in accepted}
-    )
+    # A request naming ONE field under BOTH spellings contradicts itself, and
+    # only one file can land. Apply the published alias first and the model
+    # attribute second, so the attribute always wins: which file survives is a
+    # property of the request, not of the order the parts happen to arrive in.
+    for pass_over_attname in (False, True):
+        data.update(
+            {
+                accepted[name]: value
+                for name, value in files.items()
+                if name in accepted and (name == accepted[name]) is pass_over_attname
+            }
+        )
