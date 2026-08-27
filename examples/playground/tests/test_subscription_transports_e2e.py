@@ -46,6 +46,25 @@ _POST_SUB_QUERY = (
 )
 
 
+async def _sse_frames(response):
+    """Iterate an SSE response's frames as text, dropping comment chunks.
+
+    The stream opens with a bare ``:`` comment line so the ASGI server flushes
+    the status line and headers before the first event. A comment is not a
+    frame, so tests that read frames skip it.
+
+    Args:
+        response: The streaming response returned by the SSE view.
+
+    Yields:
+        text: Each decoded body chunk that carries an SSE event, in order.
+    """
+    async for chunk in response.streaming_content:
+        text = chunk.decode("utf-8") if isinstance(chunk, (bytes, bytearray)) else chunk
+        if not text.startswith(":"):
+            yield text
+
+
 @pytest.fixture(autouse=True)
 def _fresh_channel_layer():
     """Reset the in-memory channel layer between tests (no group leakage).
@@ -158,6 +177,84 @@ async def test_ws_subscription_delivers_post_create(author: Author) -> None:
     await communicator.disconnect()
 
 
+async def test_ws_refuses_a_subscribe_past_the_shipped_cap(author: Author) -> None:
+    """Assert "MAX_SUBSCRIPTIONS_PER_CONNECTION" bounds one socket's operations.
+
+    The setting ships ON at 50 and this playground never names it, so a reader
+    copying "config/settings.py" inherits the cap without reading a line about
+    it. The cap is lowered to 1 here so the boundary is reachable in a test;
+    what is pinned is the behaviour at the boundary, which does not depend on
+    where it sits.
+
+    The refusal is scoped to the OFFENDING operation: the socket stays open and
+    the subscription already running on it keeps delivering, which is the half
+    a reader has to trust before raising the cap in production.
+
+    Args:
+        author: The persisted "Author" fixture that owns the created post.
+    """
+    from blog.consumers import AppWSConsumer
+    from blog.models import Post
+    from channels.testing import WebsocketCommunicator
+    from django.conf import settings
+    from django.test import override_settings
+
+    from django_graphex.subscriptions.transports import ws as ws_module
+
+    namespace = dict(settings.DJANGO_GRAPHEX)
+    namespace["MAX_SUBSCRIPTIONS_PER_CONNECTION"] = 1
+
+    with override_settings(DJANGO_GRAPHEX=namespace):
+        communicator = WebsocketCommunicator(
+            AppWSConsumer.as_asgi(),
+            "/ws/graphql/",
+            subprotocols=["graphql-transport-ws"],
+        )
+        connected, _ = await communicator.connect()
+        assert connected
+        await communicator.send_json_to({"type": "connection_init"})
+        assert (await communicator.receive_json_from(timeout=3))[
+            "type"
+        ] == "connection_ack"
+
+        await communicator.send_json_to(
+            {"id": "p1", "type": "subscribe", "payload": {"query": _POST_SUB_QUERY}}
+        )
+        await _await_started_group(ws_module, communicator, "p1", timeout=3.0)
+
+        # The second operation is one past the cap of 1.
+        await communicator.send_json_to(
+            {"id": "p2", "type": "subscribe", "payload": {"query": _POST_SUB_QUERY}}
+        )
+        refusal = await communicator.receive_json_from(timeout=3.0)
+
+        assert refusal["type"] == "error"
+        assert refusal["id"] == "p2"
+        assert "MAX_SUBSCRIPTIONS_PER_CONNECTION" in json.dumps(refusal["payload"])
+
+        # The socket and the surviving operation are untouched by the refusal.
+        from channels.db import database_sync_to_async
+
+        @database_sync_to_async
+        def _create_post():
+            return Post.objects.create(
+                title="Survives the cap",
+                author=author,
+                status=Post.Status.PUBLISHED,
+            )
+
+        await _create_post()
+
+        delivered = await communicator.receive_json_from(timeout=3.0)
+        assert delivered["type"] == "next"
+        assert delivered["id"] == "p1"
+        assert delivered["payload"]["data"]["postSubscription"]["title"] == (
+            "Survives the cap"
+        )
+
+        await communicator.disconnect()
+
+
 async def test_ws_handshake_then_ping_pong() -> None:
     """Smoke-test that the consumer completes the handshake and answers ping.
 
@@ -242,9 +339,8 @@ async def test_sse_subscription_delivers_post_create(author: Author) -> None:
 
     await _create_post()
 
-    aiter = response.streaming_content.__aiter__()
+    aiter = _sse_frames(response).__aiter__()
     first = await asyncio.wait_for(aiter.__anext__(), timeout=3.0)
-    first = first.decode() if isinstance(first, (bytes, bytearray)) else first
     assert first.startswith("event: next\n"), f"unexpected first frame: {first!r}"
 
     payload_line = [ln for ln in first.splitlines() if ln.startswith("data: ")][0]
@@ -367,7 +463,43 @@ async def test_anonymous_note_subscription_joins_no_group(demo_user: object) -> 
     )
 
     frame = await asyncio.wait_for(
-        response.streaming_content.__aiter__().__anext__(), timeout=3.0
+        _sse_frames(response).__aiter__().__anext__(), timeout=3.0
     )
-    frame = frame.decode() if isinstance(frame, (bytes, bytearray)) else frame
     assert "UNAUTHENTICATED" in frame, frame
+
+
+@pytest.mark.asyncio
+async def test_the_websocket_route_validates_the_handshake_origin() -> None:
+    """Assert the routed WebSocket app refuses a foreign Origin.
+
+    A WebSocket handshake is a plain HTTP request that carries cookies and is
+    NOT subject to CORS, so a page on any other site can open one and inherit
+    the visitor's session. That routes straight around REQUIRE_CSRF_HEADER,
+    which this release turns on precisely to stop cross-site writes over HTTP.
+    Channels ships "AllowedHostsOriginValidator" for it, and "config/asgi.py"
+    wraps the router in one.
+
+    ALLOWED_HOSTS is "*" in this dev settings file, which makes the validator
+    accept everything, so the test pins it against a REAL host list instead —
+    otherwise it would pass without the wrapper.
+    """
+    from channels.testing import WebsocketCommunicator
+    from config.asgi import build_websocket_application
+    from django.test import override_settings
+
+    with override_settings(ALLOWED_HOSTS=["testserver"]):
+        app = build_websocket_application()
+
+        foreign = WebsocketCommunicator(app, "/ws/graphql/")
+        foreign.scope["subprotocols"] = ["graphql-transport-ws"]
+        foreign.scope["headers"] = [(b"origin", b"https://evil.example")]
+        connected, _ = await foreign.connect()
+        assert not connected, "a foreign Origin must not complete the handshake"
+        await foreign.disconnect()
+
+        same = WebsocketCommunicator(app, "/ws/graphql/")
+        same.scope["subprotocols"] = ["graphql-transport-ws"]
+        same.scope["headers"] = [(b"origin", b"http://testserver")]
+        connected, _ = await same.connect()
+        assert connected, "the site's own Origin must still connect"
+        await same.disconnect()

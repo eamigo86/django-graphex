@@ -237,3 +237,44 @@ def test_compile_all_inputs_model_rebuild_errors() -> None:
     ):
         with pytest.raises(ImproperlyConfigured, match="RebuildTestInput"):
             compile_all_inputs()
+
+
+def _refusing_fields_thunk() -> dict:
+    """Refuse to build a field map, exactly as a projection guard does.
+
+    Returns:
+        Never returns: the thunk always raises.
+
+    Raises:
+        ImproperlyConfigured: Always, standing in for a build-time guard.
+    """
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured("bio is not published")
+
+
+def test_recompile_fields_surfaces_a_buried_configuration_error() -> None:
+    """Assert a refusal raised inside a fields thunk arrives as itself.
+
+    graphql-core rewraps ANYTHING a thunk raises as a bare "TypeError" whose
+    message chains generated type names. Every eager force site routes through
+    "recompile_fields" so the operator sees the "ImproperlyConfigured" the docs
+    promise, whichever site happened to force the thunk first. If this breaks,
+    the exception type depends on the compile order.
+    """
+    from django.core.exceptions import ImproperlyConfigured
+    from graphql import GraphQLField, GraphQLObjectType, GraphQLString
+
+    from django_graphex.core.base import recompile_fields
+
+    refusing = GraphQLObjectType(name="RefusingType", fields=_refusing_fields_thunk)
+    with pytest.raises(ImproperlyConfigured, match="bio is not published"):
+        recompile_fields(refusing)
+
+    # The contrast case: a genuine graphql-core type error is NOT rewritten,
+    # or a real schema-shape bug would be reported as a configuration error.
+    broken = GraphQLObjectType(
+        name="BrokenType", fields=lambda: {"a": GraphQLField(GraphQLString, args=1)}
+    )
+    with pytest.raises(TypeError):
+        recompile_fields(broken)

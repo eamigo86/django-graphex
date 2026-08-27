@@ -9,6 +9,10 @@ are imported from `django_graphex.core`. See
 [Fields → Typed scalar descriptors](../usage/fields.md#typed-scalar-descriptors)
 for the usage guide.
 
+The `Django*Field` classes documented further down are **siblings** of `Field`,
+not subclasses of it: both `Field` and every `Django*Field` mount through the
+same `NativeMountedField` base.
+
 ### `Field`
 
 ```python
@@ -67,7 +71,8 @@ objects/lists pass through on both output and input). `as_str=True` binds
 A GraphQL field for querying a single Django model object by ID.
 
 ```python
-class DjangoObjectField(Field)
+# Subclasses the native NativeMountedField
+class DjangoObjectField(NativeMountedField)
 ```
 
 ### Parameters
@@ -188,7 +193,8 @@ class Query(ObjectType):
 A GraphQL field for querying a filtered list of Django model objects.
 
 ```python
-class DjangoFilterListField(Field)
+# Subclasses the native NativeMountedField
+class DjangoFilterListField(NativeMountedField)
 ```
 
 ### Parameters
@@ -260,7 +266,8 @@ query GetFilteredUsers {
 A GraphQL field for querying a filtered and paginated list of Django model objects.
 
 ```python
-class DjangoFilterPaginateListField(Field)
+# Subclasses the native NativeMountedField
+class DjangoFilterPaginateListField(NativeMountedField)
 ```
 
 ### Parameters
@@ -350,7 +357,8 @@ query GetPaginatedUsers {
 A GraphQL field for Django list objects that returns both count and results.
 
 ```python
-class DjangoListObjectField(Field)
+# Subclasses the native NativeMountedField
+class DjangoListObjectField(NativeMountedField)
 ```
 
 ### Parameters
@@ -528,14 +536,18 @@ class Query(ObjectType):
 ### Performance Optimization
 
 ```python
-class UserListType(DjangoListObjectType):
+class UserType(DjangoObjectType):
     class Meta:
         model = User
-        pagination = LimitOffsetGraphqlPagination(default_limit=25)
 
     @classmethod
     def get_queryset(cls, queryset, info):
         return queryset.select_related('profile').prefetch_related('posts')
+
+class UserListType(DjangoListObjectType):
+    class Meta:
+        model = User
+        pagination = LimitOffsetGraphqlPagination(default_limit=25)
 
 class Query(ObjectType):
     users = DjangoListObjectField(UserListType)
@@ -545,5 +557,31 @@ A prefetch declared here for a relation the optimizer also derives from the
 selection is **replaced** by the derived (narrowed, filtered) version rather than
 colliding with it; prefetches of other relations are kept. See
 [Query Optimization](../usage/query-optimization.md#custom-resolvers).
+
+!!! danger "`get_queryset` belongs on the node type, never on the list type"
+    Note where the hook sits above: on `UserType`, not on `UserListType`.
+    `DjangoObjectType` supports the hook; `DjangoListObjectType` does not, and a
+    `get_queryset` declared on a list type is **never called** — silently, with
+    no error and no warning.
+
+    The two are not distinguished by their base class — both subclass the same
+    one. They are distinguished by a marker `DjangoObjectType` sets on itself and
+    `DjangoListObjectType` does not. Every row-serving path funnels through one
+    helper that checks for that marker and, when it is absent, hands the queryset
+    back untouched. So the list type's hook is not overridden or shadowed: it is
+    simply never looked up.
+
+    `DjangoListObjectField` resolves rows through the **node** type
+    (`DjangoListObjectType._meta.baseType`, the `DjangoObjectType` registered
+    for the same model), and that is the class whose hook runs.
+
+    This matters far beyond performance: the same hook is the row-level scoping
+    hook (see [Types → `get_queryset`](types.md#djangoobjecttype)). A tenant
+    filter written on the list type leaks every row in the table, and
+    `totalCount` counts them too.
+
+    To scope a list without touching the node type, set `Meta.queryset` on the
+    list type instead — it replaces the default manager as the base queryset on
+    every request.
 
 This API reference provides comprehensive documentation for all field classes in `django-graphex`, enabling developers to effectively use and customize GraphQL fields for their Django applications.

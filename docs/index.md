@@ -52,6 +52,7 @@ django-graphex builds on graphql-core and Pydantic to make Django GraphQL APIs e
 ## Quick Example
 
 ```python title="Basic Usage"
+from django.contrib.auth.models import User
 from django_graphex.mutation import DjangoModelMutation
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.types import DjangoListObjectType

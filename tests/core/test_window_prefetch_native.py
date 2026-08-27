@@ -244,24 +244,26 @@ def test_native_nested_window_offset_beyond_end_count_correct() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Ordering security on the window path under native (dual-backend parity).
+# Ordering security on the window path under native.
 #
 # A relation-spanning ordering term ("author__name") is a DoS vector (arbitrary
 # join chains). On the window path it must DECLINE the DB-side window opt
-# (pre-check 5 in build_window_prefetch rejects non-concrete attnames) and fall
-# back safely WITHOUT emitting ROW_NUMBER() SQL and WITHOUT crashing — exactly
-# what the graphene backend does. This is the genuine window-path security
-# behavior; the hard-raise validation (_validate_ordering_terms) fires on the
-# queryset paginate_queryset path (top-level lists, covered by WU6a's
-# test_relation_spanning_ordering_rejected).
+# (pre-check 5 in build_window_prefetch rejects non-concrete attnames) so no
+# ROW_NUMBER() SQL is emitted, and the plain prefetch path it falls back to must
+# then REFUSE the term rather than silently ignoring it.
+#
+# The refusal used to depend on whether the nested type carried a projection:
+# a projecting type raised, an unprojected one sorted by nothing at all. Now the
+# allowlist is read off the compiled type, which every type has, so both answer
+# the same way -- and the same way the top-level queryset path already did.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
 def test_native_nested_window_relation_spanning_ordering_declines_window() -> None:
     """Ships broken if relation-spanning ordering stops declining the window
-    optimization (no ROW_NUMBER SQL, no arbitrary-join DoS) and no longer
-    falls back safely under native — must match graphene.
+    optimization (no ROW_NUMBER SQL, no arbitrary-join DoS) or stops being
+    refused by the plain prefetch path it falls back to.
     """
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
@@ -281,7 +283,9 @@ def test_native_nested_window_relation_spanning_ordering_declines_window() -> No
     with CaptureQueriesContext(connection) as ctx:
         result = graphql_sync(schema, query)
 
-    assert result.errors is None, result.errors
+    assert [str(e.message) for e in (result.errors or [])] == [
+        "Invalid ordering field: 'author__name'."
+    ]
     sql_list = [q["sql"].upper() for q in ctx.captured_queries]
     window_sql = [s for s in sql_list if "ROW_NUMBER()" in s]
     assert len(window_sql) == 0, (

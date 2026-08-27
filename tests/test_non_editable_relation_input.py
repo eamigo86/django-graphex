@@ -85,9 +85,8 @@ def test_non_editable_m2m_is_no_longer_an_id_relation() -> None:
     """A server-managed many-to-many is no longer rendered as an "ID" list.
 
     The relation spec is what turned the raw pk list into "[ID!]"; dropping it
-    is this module's half of the fix. Removing the field outright additionally
-    needs "core.fields.m2m_fields" to honour "editable" -- see the two xfails
-    below.
+    is this module's half of the fix. The two tests below assert the stronger
+    property the guard now delivers: the field is gone from the input entirely.
     """
     for sdl in (
         print_type(_ThingCreate._meta.graphql_input_type),
@@ -99,7 +98,8 @@ def test_non_editable_m2m_is_no_longer_an_id_relation() -> None:
 def test_non_editable_m2m_is_absent_from_create_input() -> None:
     """A server-managed many-to-many is not offered for write.
 
-    Still expected to fail: the raw pk list is emitted one layer down.
+    This test breaks if the concrete-field guard stops covering
+    "ManyToManyField", which puts the raw pk list back into the create input.
     """
     sdl = print_type(_ThingCreate._meta.graphql_input_type)
 
@@ -109,7 +109,7 @@ def test_non_editable_m2m_is_absent_from_create_input() -> None:
 def test_non_editable_m2m_is_absent_from_update_input() -> None:
     """A server-managed many-to-many is not offered for write on update.
 
-    Still expected to fail: the raw pk list is emitted one layer down.
+    Create and update share the relation walk, so both must stay clean.
     """
     sdl = print_type(_ThingUpdate._meta.graphql_input_type)
 

@@ -107,36 +107,9 @@ NAME_PATTERN = r"^[_a-zA-Z][_a-zA-Z0-9]*$"
 COMPILED_NAME_PATTERN = re.compile(NAME_PATTERN)
 
 
-def assert_valid_name(name: str) -> None:
-    """Assert that the provided name is valid for GraphQL.
-
-    Args:
-        name: the candidate name to validate.
-
-    Raises:
-        AssertionError: if "name" does not match the GraphQL name pattern.
-    """
-    assert COMPILED_NAME_PATTERN.match(name), (
-        f'Names must match /{NAME_PATTERN}/ but "{name}" does not.'
-    )
-
-
 def _is_valid_name(name: str) -> bool:
     """Return whether ``name`` is a usable, non-empty GraphQL enum name."""
     return bool(name) and bool(COMPILED_NAME_PATTERN.match(name))
-
-
-def convert_choice_name(name: Any) -> str:
-    """Convert a Django choice value to a valid GraphQL enum name.
-
-    Args:
-        name: the raw choice value to convert.
-
-    Returns:
-        A GraphQL-safe enum name, prefixed when otherwise invalid.
-    """
-    const = to_const(force_str(name))
-    return const if _is_valid_name(const) else f"A_{const}"
 
 
 def choice_enum_name(value: Any, label: Any) -> str:
@@ -382,6 +355,40 @@ def build_choices_enum_type(
     return enum_type
 
 
+def field_is_projected(
+    name: str,
+    only_fields: Any,
+    include_fields: Any,
+    exclude_fields: Any,
+) -> bool:
+    """Report whether a model field name survives a "Meta" projection.
+
+    The ONE reading of "only_fields" / "include_fields" / "exclude_fields",
+    shared by the builder below and by the guard that refuses a projection a
+    type cannot honour, so the guard measures the selection this module
+    performs instead of a copy of it that can drift.
+
+    Args:
+        name: The model field name being projected.
+        only_fields: Field names to include exclusively, or a falsy value.
+        include_fields: Field names to force-include regardless of the other
+            two options.
+        exclude_fields: Field names to exclude.
+
+    Returns:
+        True when the projection keeps the field.
+    """
+    if include_fields and name in include_fields:
+        return True
+    # A trailing "+" means related_query_name is disabled (no back ref):
+    # https://docs.djangoproject.com/en/stable/ref/models/fields/#django.db.models.ForeignKey.related_query_name
+    return not (
+        (only_fields and name not in only_fields)
+        or (exclude_fields and name in exclude_fields)
+        or str(name).endswith("+")
+    )
+
+
 def construct_fields(
     model: type[Model],
     registry: Registry,
@@ -432,17 +439,10 @@ def construct_fields(
         for name, field in _model_fields:
             if input_flag == "create" and name == "id":
                 continue
-            is_included = include_fields and name in include_fields
             nested_field = name in nested_fields
-            is_not_in_only = only_fields and name not in only_fields
-            is_excluded = exclude_fields and name in exclude_fields
-            # A trailing "+" means related_query_name is disabled (no back ref):
-            # https://docs.djangoproject.com/en/stable/ref/models/fields/#django.db.models.ForeignKey.related_query_name
-            is_no_backref = str(name).endswith("+")
-            if not is_included and (is_not_in_only or is_excluded or is_no_backref):
-                # We skip this field if we specify only_fields and is not
-                # in there. Or when we exclude this field in exclude_fields.
-                # Or when there is no back reference.
+            if not field_is_projected(
+                name, only_fields, include_fields, exclude_fields
+            ):
                 continue
             if (
                 input_flag

@@ -336,13 +336,17 @@ def test_pk_lookups_explicit_lookup_tuple(db: None) -> None:
     assert isinstance(result.fields["in"].type, GraphQLList)
 
 
-def test_path_with_separator_but_no_relation_treated_as_own(db: None) -> None:
-    """Ships broken if a "foo__bar" path whose head is not a relation stops
-    being treated as an own field.
+def test_path_with_separator_but_no_relation_is_refused(db: None) -> None:
+    """Ships broken if a "foo__bar" path whose head is not a relation is dropped.
+
+    The whole compound goes into "own", where "get_field" does not answer to
+    it: the entry compiled to nothing and was accepted and ignored.
 
     Args:
         db: Enables database access for this test (pytest-django fixture).
     """
+    from django.core.exceptions import ImproperlyConfigured
+
     from django_graphex.filtering.native_schema import (
         _NATIVE_INPUT_CACHE,
         build_filter_input_type,
@@ -350,27 +354,31 @@ def test_path_with_separator_but_no_relation_treated_as_own(db: None) -> None:
     from tests.models import Post
 
     _NATIVE_INPUT_CACHE.clear()
-    # 'title__icontains' — head 'title' is a scalar (no relation): the whole path
-    # goes into 'own', then get_field('title__icontains') raises FieldDoesNotExist
-    # and is skipped (lines 387-390). Result still has the and/or/not combinators.
-    result = build_filter_input_type(Post, ["title__icontains"])
-    assert isinstance(result, GraphQLInputObjectType)
-    # The bogus own path was skipped; combinators keep the type non-empty.
-    assert "and" in result.fields
+    with pytest.raises(ImproperlyConfigured) as exc:
+        build_filter_input_type(Post, ["title__icontains"])
+
+    assert "icontains" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
-# field that does not exist -> FieldDoesNotExist skip (389-390)
+# field that does not exist -> refused, not silently dropped
 # ---------------------------------------------------------------------------
 
 
-def test_nonexistent_own_field_is_skipped(db: None) -> None:
-    """Ships broken if an own field name that does not exist on the model
-    stops being skipped.
+def test_nonexistent_own_field_is_refused(db: None) -> None:
+    """Ships broken if an entry naming no field is accepted and ignored again.
+
+    It used to be dropped by the field thunk, so the declaration compiled to
+    nothing and the operator was never told -- the same "accepted and ignored"
+    defect every other refusal in the filter builder exists to prevent. "pk" and
+    an "id" on a natural-key model land here too.
 
     Args:
         db: Enables database access for this test (pytest-django fixture).
     """
+    import pytest
+    from django.core.exceptions import ImproperlyConfigured
+
     from django_graphex.filtering.native_schema import (
         _NATIVE_INPUT_CACHE,
         build_filter_input_type,
@@ -378,11 +386,10 @@ def test_nonexistent_own_field_is_skipped(db: None) -> None:
     from tests.models import Post
 
     _NATIVE_INPUT_CACHE.clear()
-    # 'nonexistent_field' is not a relation and not a real field -> skipped.
-    result = build_filter_input_type(Post, ["nonexistent_field", "title"])
-    assert "title" in result.fields
-    # The phantom field produced no entry.
-    assert "nonexistentField" not in result.fields
+    with pytest.raises(ImproperlyConfigured) as exc:
+        build_filter_input_type(Post, ["nonexistent_field", "title"])
+
+    assert "nonexistent_field" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

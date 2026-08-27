@@ -26,6 +26,7 @@ from django_graphex._strconv import to_snake_case
 from django_graphex.base_types import DjangoListObjectBase
 from django_graphex.core.bridge import GdxPayload
 from django_graphex.core.ir import GdxMeta
+from django_graphex.core.output_compiler import publishes_column_value
 from django_graphex.paginations.utils import (
     _get_count,
     _positive_int,
@@ -38,6 +39,7 @@ DEFAULT_CURSOR_PAGE_SIZE = 20
 
 # Separator used by Django ORM for relation traversal (e.g. "author__name").
 _LOOKUP_SEP = "__"
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -258,28 +260,205 @@ def _normalize_ordering(ordering: Any) -> Any:
     return _split_ordering(ordering)
 
 
-def _validate_ordering_terms(model: Any, ordering: str | list[str]) -> None:
-    """Validate each ordering term against the model's concrete attnames.
+def _resolve_ordering(
+    kwargs: dict[str, Any],
+    ordering_param: str,
+    default: Any,
+    allowed: set[str] | None,
+) -> tuple[Any, set[str] | None]:
+    """Resolve the effective ordering AND the allowlist its provenance earns.
+
+    THE THREAT is RANKING. Sorting by a column the type hides orders the rows by
+    a value the schema never hands out, and a client that can filter the page
+    down to two rows reads that comparison off the sequence -- repeated, it
+    recovers the hidden value. "_validate_ordering_terms" states the same threat
+    in the same words, because there is one threat model here and it belongs to
+    both ends of this seam.
+
+    WHAT THE GUARD IS SCOPED TO is client input. Not because a server-configured
+    ordering ranks by less -- it ranks by exactly as much -- but because the
+    OPERATOR chose it, knowingly, for every request and every client alike, and
+    re-litigating that choice at request time converts a deployment decision into
+    a total outage of the list field with no client argument involved. A
+    configuration the operator can fix by editing one line is not defended by
+    refusing every query against it.
+
+    So the allowlist rides on the ARGUMENT, never on the fallback: a request
+    that supplies "ordering" is checked, a request that does not runs the
+    configured default unchecked. A client that merely repeats the configured
+    value is still checked, because the check follows where the value came from
+    rather than what it says.
+
+    THE CARVE-OUT is echoing. A paginator that prints the ordering VALUE back to
+    the client is no longer ranking, it is reading out, and no argument about
+    operator intent survives that: "CursorGraphqlPagination" serialises both the
+    ordering value and its pk tiebreak into the cursor token, so it does not
+    route through here and enforces the allowlist on its configured ordering
+    regardless of provenance (see "CursorGraphqlPagination._ordering_field").
+    The two paginators that DO route through here
+    ("LimitOffsetGraphqlPagination", "PageGraphqlPagination") answer with the
+    rows and nothing else.
+
+    Args:
+        kwargs: The pagination arguments; the ordering argument is POPPED out
+            of it, matching the call sites this replaces.
+        ordering_param: The name of the ordering argument to pop.
+        default: The paginator's configured "ordering", used when the client
+            supplies none.
+        allowed: The attnames the GraphQL type exposes, or "None" when no type
+            projection applies.
+
+    Returns:
+        The normalized ordering and the allowlist to validate it against
+        ("None" for the configured default).
+    """
+    requested = kwargs.pop(ordering_param, None)
+    if requested:
+        return _normalize_ordering(requested), allowed
+    return _normalize_ordering(default), None
+
+
+def _pk_tiebreak_ordering(
+    items: Any, order: Any, allowed: set[str] | None
+) -> tuple[Any, set[str] | None]:
+    """Substitute the paginator's own pk ordering when none was resolved.
+
+    G4 ordering parity: the DB-side window path always emits ORDER BY pk as a
+    deterministic tiebreak, so the prefetch-cache path has to agree or the same
+    query answers differently depending on how the nested list happened to
+    resolve.
+
+    The substituted term is SERVER-generated, so the allowlist is dropped with
+    it. "_resolve_ordering" hands back the projection allowlist whenever the
+    client supplied an ordering ARGUMENT, and an argument can normalize to
+    nothing (",", " ", "+"): the allowlist then survived while the value did
+    not, and the pk this function substitutes was validated as if the client
+    had asked for it. A nested list whose child type hides its pk therefore
+    answered "Invalid ordering field: 'id'" to any such value — an outage
+    caused by the server's own tiebreak, checked against a rule written for
+    client input.
+
+    Args:
+        items: The already-resolved rows, used both to detect an empty page and
+            to read the model's pk attname off the first instance.
+        order: The ordering resolved so far; a truthy value is returned
+            unchanged.
+        allowed: The allowlist the resolved ordering's provenance earned.
+
+    Returns:
+        The ordering to apply and the allowlist to validate it against; the
+        allowlist is "None" whenever the pk tiebreak was substituted.
+    """
+    if order or not items:
+        return order, allowed
+    pk = getattr(getattr(items[0].__class__, "_meta", None), "pk", None)
+    if pk is None:
+        return order, allowed
+    return pk.attname, None
+
+
+def projected_ordering_attnames(model: Any, compiled_type: Any) -> set[str]:
+    """Return the concrete attnames the COMPILED type publishes.
+
+    Read the allowlist off the compiled output type rather than re-deriving it
+    from "Meta". The compiled type IS the SDL, so "orderable" and "selectable"
+    cannot drift apart, and every filter the output compiler grows later is
+    inherited here without a second edit. The four rounds of blockers this
+    replaces were all one defect: the previous implementation re-applied the
+    compiler's "only_fields" / "exclude_fields" / "include_fields" filters by
+    hand, and a hand copy is wrong for every shape it did not anticipate -- a
+    multi-table-inheritance child whose pk is the parent link, a declared class
+    attribute that re-publishes a column "only_fields" removed, a relation the
+    compiler drops because its target is unregistered.
+
+    Whether a given column's VALUE is published is not decided here. It is one
+    question with one answer, asked by the ordering axis and the filtering axis
+    alike, so it lives in "core.output_compiler.publishes_column_value" and both
+    axes call it. Two implementations of "hidden" is how the axes came to
+    contradict each other -- one closing a masked column while the other left the
+    identical field filterable -- and a shared predicate is the only shape that
+    cannot drift. In particular the predicate, not this function, is what knows
+    that a masked declaration publishes a name and not a value, that a forward
+    FK's column belongs to the TARGET type's key rather than to the relation
+    field, and that a multi-table-inheritance parent link rides on the inherited
+    key the compiler publishes in its place.
+
+    What is left here is the ORM's own vocabulary, which the SDL cannot state:
+
+    - The MAPPING. The predicate answers per model FIELD; the ORM orders by
+      ATTNAMES. A forward FK published as "author" is ordered by "author_id".
+    - The pk ALIASES. "pk" is not a column, and the pk's field name is not an
+      attname, yet both are spellings the ORM accepts and every path's tiebreak
+      needs. They ride along exactly when the predicate says the key's value is
+      published.
+
+    Fails CLOSED. A caller with no compiled type has no SDL to read, so the
+    predicate refuses every column and the allowlist comes back empty. Falling
+    back to the model's full column set there would restore the read oracle at
+    precisely the moment nothing can prove it is safe.
+
+    It lives here rather than beside the types that call it because all three
+    callers -- the list container in "types.py", the flat paginated list field
+    and the nested window pre-check in "fields.py" -- already import this
+    module, and "types.py" imports "fields.py".
+
+    Args:
+        model: The Django model whose concrete columns form the universe.
+        compiled_type: The compiled "GraphQLObjectType" serving the rows, taken
+            from the schema that will serve the request, or any value carrying no
+            field map (which fails closed).
+
+    Returns:
+        The attnames the type publishes, plus the primary-key aliases when the
+        key's value is published; empty when there is no compiled type to read.
+    """
+    allowed = {
+        f.attname
+        for f in model._meta.concrete_fields
+        if publishes_column_value(compiled_type, f)
+    }
+
+    pk = model._meta.pk
+    if pk is not None and publishes_column_value(compiled_type, pk):
+        allowed |= {"pk", pk.name, pk.attname}
+    return allowed
+
+
+def _validate_ordering_terms(
+    model: Any, ordering: str | list[str], allowed: set[str] | None = None
+) -> None:
+    """Validate each ordering term against the allowed attnames.
 
     Rejects:
     - Terms whose root field (before '__') is not a concrete attname on the model.
-      This covers invalid fields, relation-spanning lookups, and hidden/non-exposed
-      columns (e.g. 'password', 'is_superuser').
+      This covers invalid field names and relation-spanning lookups.
+    - Terms naming a concrete column the GraphQL type projects away, when
+      "allowed" is supplied. Without it the column is invisible in the SDL,
+      unselectable and unfilterable, yet still sortable -- a read oracle that
+      ranks the rows by the hidden value and, with a filter that isolates two
+      rows, recovers it exactly.
     - Any term that contains '__' (relation traversal), regardless of root validity,
       to prevent arbitrary join-chain DoS.
 
-    Only the concrete attnames from ``model._meta.concrete_fields`` are allowed,
-    matching the pattern already used in ``django_graphex/fields.py:727``.
+    Ranking IS the threat, and a server-configured ordering ranks by just as
+    much. "allowed" being "None" is therefore not a claim that the value is
+    harmless; it is where the caller decided this term is not client input, and
+    "_resolve_ordering" is where that decision is made and justified. The one
+    caller that refuses to make it is "CursorGraphqlPagination", which prints its
+    ordering value into the cursor.
 
     Args:
         model: The Django model class whose ``_meta.concrete_fields`` defines the
-            allowlist.
+            column universe.
         ordering: A comma-separated ordering string or a list of ordering terms.
             Leading ``-``/``+`` direction prefixes are stripped before comparison.
+        allowed: The attnames the GraphQL type exposes, or "None" to allow every
+            concrete column. "None" is what a hand-constructed paginator carries,
+            so a caller with no type behind it keeps the model-wide allowlist.
 
     Raises:
         GraphQLError: When any term is invalid, contains a relation separator, or
-            references a non-concrete/non-exposed column.
+            references a non-concrete/projected-away column.
     """
     if not ordering:
         return
@@ -288,6 +467,8 @@ def _validate_ordering_terms(model: Any, ordering: str | list[str]) -> None:
         f.attname
         for f in model._meta.concrete_fields  # type: ignore[union-attr]
     }
+    if allowed is not None:
+        concrete_attnames &= allowed
 
     # Normalize client-supplied camelCase spellings to snake_case attnames
     # BEFORE the allowlist check, so ``createdAt`` validates exactly like
@@ -302,6 +483,23 @@ def _validate_ordering_terms(model: Any, ordering: str | list[str]) -> None:
     if model._meta.pk is not None:  # type: ignore[union-attr]
         pk_aliases.add(model._meta.pk.attname)  # type: ignore[union-attr]
         pk_aliases.add(model._meta.pk.name)  # type: ignore[union-attr]
+
+    # The exemption is for a SURROGATE key: ranking rows by an identifier the
+    # client already reads gives away nothing. A NATURAL key (slug, code, email)
+    # is business data, so when the type projects the pk away the exemption is
+    # dropped wholesale and the aliases fall through to the allowlist check
+    # below -- otherwise "ordering: 'pk'" reads back the very column the
+    # projection removed. ``allowed`` already answers this: it carries the pk
+    # aliases exactly when the pk survived the projection.
+    #
+    # Nothing legitimate loses its tiebreak. A paginator-GENERATED pk ordering
+    # never reaches here carrying an allowlist: the in-memory path substitutes
+    # it through ``_pk_tiebreak_ordering``, which drops the allowlist along with
+    # the client value it replaces. Reading provenance off ``_resolve_ordering``
+    # alone was not enough — a client argument that normalizes to nothing keeps
+    # the allowlist and still lands on the substituted pk.
+    if allowed is not None and not pk_aliases & allowed:
+        pk_aliases = set()
 
     for term in terms:
         # Strip direction prefix
@@ -321,7 +519,9 @@ def _validate_ordering_terms(model: Any, ordering: str | list[str]) -> None:
             raise GraphQLError(f"Invalid ordering field: '{bare}'.")
 
 
-def _inmemory_order(items: Iterable[Any], ordering: Any) -> list[Any]:
+def _inmemory_order(
+    items: Iterable[Any], ordering: Any, allowed: set[str] | None = None
+) -> list[Any]:
     """Order an in-memory sequence of model instances by an ordering string.
 
     Used when a nested list resolves from the "prefetch_related" cache (a Python
@@ -332,9 +532,15 @@ def _inmemory_order(items: Iterable[Any], ordering: Any) -> list[Any]:
     Args:
         items: The model instances to order.
         ordering: A comma-separated ordering string or iterable of terms.
+        allowed: The attnames the GraphQL type exposes, or "None" to sort by any
+            attribute the instances happen to carry.
 
     Returns:
         A new list of the items ordered by the given ordering.
+
+    Raises:
+        GraphQLError: When "allowed" is supplied and a term names an attribute
+            outside it.
     """
     if not ordering:
         return list(items)
@@ -343,6 +549,22 @@ def _inmemory_order(items: Iterable[Any], ordering: Any) -> list[Any]:
     # None key (no-op sort). This keeps the in-memory path in parity with the DB
     # path for the same input.
     terms = _split_ordering(ordering)
+
+    # There is no queryset here to validate against, so the projection allowlist
+    # is enforced on the raw ``getattr`` instead. Skipping it would leave the
+    # guarantee dependent on HOW a nested list happened to resolve: the same
+    # query reads the hidden column whenever the rows came from the prefetch
+    # cache rather than the database.
+    # "pk" used to be exempted unconditionally here. It no longer needs to be:
+    # ``projected_ordering_attnames`` puts the alias INTO ``allowed`` whenever
+    # the pk survives the projection, so the plain membership test keeps the
+    # surrogate-key case working and stops a projected-away NATURAL key from
+    # being sorted by through its alias.
+    if allowed is not None:
+        for term in terms:
+            bare = term.lstrip("-+")
+            if bare not in allowed:
+                raise GraphQLError(f"Invalid ordering field: '{bare}'.")
 
     ordered = list(items)
     for term in reversed(terms):  # last key first -> stable multi-key sort
@@ -355,36 +577,37 @@ def _inmemory_order(items: Iterable[Any], ordering: Any) -> list[Any]:
     return ordered
 
 
-def _apply_ordering(qs: Any, ordering: Any) -> Any:
+def _apply_ordering(qs: Any, ordering: Any, allowed: set[str] | None = None) -> Any:
     """Apply an ordering to a queryset or an in-memory list of rows.
 
     The ONE place the "ordering" pagination argument is turned into a real
     ordering, so every paginator branch (bounded page, unbounded "return
     everything", queryset, prefetch-cache list) honors it identically. A
-    queryset is validated against the model's concrete attnames BEFORE
-    "order_by" so an invalid term raises the clean "Invalid ordering field"
-    error instead of Django's "FieldError", whose message enumerates every
-    column of the model (CWE-209); an in-memory list is sorted by
-    :func:`_inmemory_order`.
+    queryset is validated against the allowed attnames BEFORE "order_by" so an
+    invalid term raises the clean "Invalid ordering field" error instead of
+    Django's "FieldError", whose message enumerates every column of the model
+    (CWE-209); an in-memory list is sorted by :func:`_inmemory_order`.
 
     Args:
         qs: The queryset or list of model instances to order.
         ordering: An already-normalized ordering string, list of terms, or a
             falsy value meaning "leave the natural order alone".
+        allowed: The attnames the GraphQL type exposes, or "None" to allow every
+            concrete column.
 
     Returns:
         The ordered queryset or a new ordered list; *qs* unchanged when
         *ordering* is falsy.
 
     Raises:
-        GraphQLError: When a term is invalid or relation-spanning (queryset
-            path only).
+        GraphQLError: When a term is invalid, relation-spanning, or projected
+            away by the type.
     """
     if not ordering:
         return qs
     if not isinstance(qs, QuerySet):
-        return _inmemory_order(qs, ordering)
-    _validate_ordering_terms(qs.model, ordering)
+        return _inmemory_order(qs, ordering, allowed)
+    _validate_ordering_terms(qs.model, ordering, allowed)
     return qs.order_by(*_split_ordering(ordering))
 
 
@@ -402,6 +625,41 @@ class BaseDjangoGraphqlPagination:
     """
 
     __name__ = None
+
+    # The attnames the GraphQL type this paginator serves actually publishes.
+    # ``None`` means "no type behind me" — a hand-constructed paginator keeps
+    # the model-wide allowlist, so nothing outside the schema changes behaviour.
+    _ordering_allowed_source: Any = None
+
+    @property
+    def ordering_allowed_attnames(self) -> set[str] | None:
+        """Return the attnames this paginator's type publishes, resolving lazily.
+
+        The setter accepts a zero-arg CALLABLE as well as a value, and the first
+        read resolves it and replaces it in place. Two stampers pass a callable
+        -- a flat "DjangoFilterPaginateListField", stamped while the root class
+        body is still executing, and the permission pruner, which reads a clone
+        it is in the middle of building. The list container stamps a plain
+        value; the deferral it used to carry answered nothing measurable.
+
+        Returns:
+            The published attnames, or "None" when no type stands behind this
+            paginator.
+        """
+        source = self._ordering_allowed_source
+        if callable(source):
+            source = self._ordering_allowed_source = source()
+        return source
+
+    @ordering_allowed_attnames.setter
+    def ordering_allowed_attnames(self, value: Any) -> None:
+        """Store the allowlist, or a zero-arg callable that will produce it.
+
+        Args:
+            value: The attname set, "None" for no type, or a callable resolved
+                on first read.
+        """
+        self._ordering_allowed_source = value
 
     def _resolve_page_size(
         self,
@@ -570,8 +828,22 @@ class BaseDjangoGraphqlPagination:
     ) -> None:
         """Validate ordering terms for a given model before DB-side window slicing.
 
-        Delegates to "_validate_ordering_terms". Exposed as a method so tests
-        and callers can exercise the guard without constructing a queryset.
+        Delegates to "_validate_ordering_terms", carrying this paginator's
+        projection allowlist.
+
+        NOTHING IN THIS PACKAGE CALLS IT. The live window guard is inline in
+        "fields.build_window_prefetch", and it cannot be replaced by this method
+        because the two need opposite failure modes: the window path DECLINES
+        the optimization on a term it cannot serve (falling back to the plain
+        prefetch path, which then decides whether to raise), while this method
+        RAISES. Wrapping a raise in a try/except to recover a decline would be
+        control flow through an exception for no gain over the three-line
+        membership test already there.
+
+        It stays because it is public API released in 2.2.0: a subclass that
+        overrides "prefetch_window_slice" has no other supported way to reach
+        the same allowlist this paginator carries. It is an extension seam, not
+        a production path, so treat it as such when reading coverage.
 
         Args:
             model: The Django model class to validate against.
@@ -579,9 +851,10 @@ class BaseDjangoGraphqlPagination:
                 terms.
 
         Raises:
-            GraphQLError: When any term is invalid or relation-spanning.
+            GraphQLError: When any term is invalid, relation-spanning, or
+                projected away by the type this paginator serves.
         """
-        _validate_ordering_terms(model, ordering)
+        _validate_ordering_terms(model, ordering, self.ordering_allowed_attnames)
 
 
 class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
@@ -724,14 +997,14 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
         # field this paginator backs, so skipping it whenever no page size is
         # configured made the argument silently inert under the SHIPPED defaults
         # (``DEFAULT_PAGE_SIZE`` and ``MAX_PAGE_SIZE`` are both ``None``).
-        order = _normalize_ordering(
-            kwargs.pop(self.ordering_param, None) or self.ordering
+        order, allowed = _resolve_ordering(
+            kwargs, self.ordering_param, self.ordering, self.ordering_allowed_attnames
         )
 
         # Unbounded only when neither a default nor a max is configured: the
         # page is the WHOLE set, but it still has to come back ordered.
         if limit is None:
-            return _apply_ordering(qs, order)
+            return _apply_ordering(qs, order, allowed)
 
         offset = kwargs.get(self.offset_query_param, 0) or 0
 
@@ -747,18 +1020,11 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
 
         if not isinstance(qs, QuerySet):
             # Nested list resolved from the prefetch cache: order/slice in memory.
-            # G4 ordering parity: when no explicit ordering is given and the items
-            # are Django model instances, fall back to pk-ascending order so the
-            # in-memory path agrees with the window path (which always emits
-            # ORDER BY pk as a deterministic tiebreak).
-            if not order and qs:
-                meta = getattr(getattr(qs[0].__class__, "_meta", None), "pk", None)
-                if meta is not None:
-                    order = meta.attname
-            items = _inmemory_order(qs, order) if order else list(qs)
+            order, allowed = _pk_tiebreak_ordering(qs, order, allowed)
+            items = _inmemory_order(qs, order, allowed) if order else list(qs)
             return items[offset : offset + abs(limit)]
 
-        return _apply_ordering(qs, order)[offset : offset + abs(limit)]
+        return _apply_ordering(qs, order, allowed)[offset : offset + abs(limit)]
 
     def prefetch_window_slice(self, **kwargs: Any) -> tuple[int, int, Any] | None:
         """Return (offset, limit, ordering) for DB-side window slicing.
@@ -799,6 +1065,17 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
         # Normalize camelCase ordering so the window pre-check (which matches
         # terms against concrete snake_case attnames) does not decline the
         # optimization for a camelCase spelling.
+        #
+        # Deliberately NOT "_resolve_ordering": the returned triple has room for
+        # the ordering but not for its PROVENANCE, and the consumer
+        # ("fields.build_window_prefetch") applies the projection allowlist to
+        # whatever it is handed. Client input does reach here, so the allowlist
+        # must be applied — it just cannot be applied leniently. The consumer
+        # therefore checks EVERY term, argument or configured default, and
+        # DECLINES the optimization instead of raising, which routes the query
+        # to the plain prefetch path where provenance is known again. A
+        # configured default naming a projected-away column costs the window
+        # optimization there and nothing else.
         order = _normalize_ordering(
             kwargs.pop(self.ordering_param, None) or self.ordering
         )
@@ -965,24 +1242,19 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         else:
             offset = page_size * (page - 1)
 
-        # Normalize camelCase ordering to snake_case attnames (see LimitOffset).
-        order = _normalize_ordering(
-            kwargs.pop(self.ordering_param, None) or self.ordering
+        # Normalize camelCase ordering to snake_case attnames (see LimitOffset),
+        # and keep the projection allowlist on the CLIENT argument only.
+        order, allowed = _resolve_ordering(
+            kwargs, self.ordering_param, self.ordering, self.ordering_allowed_attnames
         )
 
         if not isinstance(qs, QuerySet):
             # Nested list resolved from the prefetch cache: order/slice in memory.
-            # G4 ordering parity: when no explicit ordering is given and items are
-            # Django model instances, fall back to pk-ascending order so the
-            # in-memory path agrees with the window path.
-            if not order and qs:
-                meta = getattr(getattr(qs[0].__class__, "_meta", None), "pk", None)
-                if meta is not None:
-                    order = meta.attname
-            items = _inmemory_order(qs, order) if order else list(qs)
+            order, allowed = _pk_tiebreak_ordering(qs, order, allowed)
+            items = _inmemory_order(qs, order, allowed) if order else list(qs)
             return items[offset : offset + page_size]
 
-        return _apply_ordering(qs, order)[offset : offset + page_size]
+        return _apply_ordering(qs, order, allowed)[offset : offset + page_size]
 
     def prefetch_window_slice(self, **kwargs: Any) -> tuple[int, int, Any] | None:
         """Return (offset, page_size, ordering) for DB-side window slicing.
@@ -1018,7 +1290,10 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             # Both cases fall back to the in-memory path.
             return None
         offset = page_size * (page - 1)
-        # Normalize camelCase ordering (see LimitOffset.prefetch_window_slice).
+        # Normalize camelCase ordering, and deliberately do NOT use
+        # "_resolve_ordering" here — see LimitOffset.prefetch_window_slice for
+        # why the triple cannot carry provenance and why the consumer's
+        # unconditional allowlist check is the correct trade.
         order = _normalize_ordering(
             kwargs.pop(self.ordering_param, None) or self.ordering
         )
@@ -1208,13 +1483,81 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
     def _ordering_field(self) -> tuple[str, str, bool]:
         """Return the ordering term, field name and direction for the ordering.
 
+        This paginator's ordering is ALWAYS server-configured -- it advertises
+        no "ordering" argument -- and everywhere else in this module a
+        server-configured ordering is exempt from the projection allowlist. Not
+        because it ranks by less than a client term does (it ranks by exactly as
+        much), but because the guard is scoped to CLIENT input: the operator
+        chose that ordering knowingly for every request, and gating it at request
+        time would take the list field offline over a configuration
+        (see "_resolve_ordering").
+
+        That scoping does not survive HERE. A keyset cursor IS the
+        ordering value: "encode_cursor" serialises it into the token that
+        "pageInfo.startCursor" / "endCursor" hand straight back to the client,
+        under nothing but base64. Configuring this paginator to order by a
+        column the node type projects away therefore does not rank the hidden
+        value, it PRINTS it -- a direct read, strictly worse than the oracle the
+        allowlist was built to close. So the allowlist applies to the cursor
+        ordering regardless of provenance.
+
+        The pk TIEBREAK is printed by the same token and needs the same gate.
+        "encode_cursor" appends the boundary row's primary key after the
+        ordering value, so a type that projects its pk away -- which only a
+        NATURAL key (a slug, a code, an email) ever does, since a surrogate
+        "id" is business-free and normally exposed -- has that key handed back
+        verbatim in "startCursor" and "endCursor". Gating the ordering column
+        alone missed it entirely: the ordering can name a perfectly public
+        column and the cursor still prints the hidden one.
+
+        The tiebreak cannot simply be dropped, because it is what makes the
+        keyset boundary total: without it "value > boundary" silently skips
+        every row tied on the ordering value. Encrypting the cursor would keep
+        both properties, but it needs a key to manage, a rotation story and a
+        wire-format break, all to protect a column the operator could have
+        exposed instead. Tiebreaking on another column the type does expose
+        needs that column to be UNIQUE, which nothing here can promise. So the
+        configuration is REFUSED: keyset pagination is unavailable on a type
+        that hides its primary key, and the operator picks -- expose the key,
+        or page it another way. The cursor's wire format is unchanged.
+
+        Both entry points ("paginate_queryset" and "get_page_info") resolve the
+        ordering through here, which is why both checks live at this seam
+        rather than in either of them.
+
         Returns:
             A tuple of the order-by term, the bare field name and whether the
             ordering is descending.
+
+        Raises:
+            GraphQLError: When the configured ordering names a column the node
+                type projects away, or when the node type projects its primary
+                key away. Both are misconfigurations, not client input, so they
+                fail loudly on every request instead of silently publishing the
+                hidden column.
         """
         field = self.ordering.split(",")[0].strip()
         descending = field.startswith("-")
-        return field, field.lstrip("+-"), descending
+        bare = field.lstrip("+-")
+        allowed = self.ordering_allowed_attnames
+        if allowed is not None and bare not in allowed:
+            raise GraphQLError(f"Invalid ordering field: '{bare}'.")
+        # "projected_ordering_attnames" puts the "pk" alias into the allowlist
+        # exactly when "core.output_compiler.publishes_column_value" says the
+        # type hands out the KEY'S VALUE, so its absence IS the hidden-pk answer.
+        # Asking the predicate rather than the field map is what keeps this from
+        # refusing a type whose key is plainly published under another name -- an
+        # MTI child's pk is a parent link the compiler drops while publishing the
+        # inherited key. The hidden column is not named in the message:
+        # it is absent from the SDL, and spelling it out would hand back a name
+        # the projection removed.
+        if allowed is not None and "pk" not in allowed:
+            raise GraphQLError(
+                "Cursor pagination is unavailable on a type that hides its "
+                "primary key: every cursor carries the key as its tiebreak. "
+                "Expose the primary key or use offset/page pagination."
+            )
+        return field, bare, descending
 
     def _order_terms(self, order_term: str, descending: bool) -> tuple[Any, str]:
         """Return the ``order_by`` terms with deterministic NULL placement + pk.
@@ -1577,8 +1920,11 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         (same logic as the graphene resolver).
 
         Args:
-            node_type: The compiled element (node) "GraphQLObjectType" (unused;
-                accepted for signature parity with the base method).
+            node_type: The compiled element (node) "GraphQLObjectType" this
+                container paginates. The field's own output type is the shared
+                "CursorPageInfo", which names no model, so the node is recorded
+                on the resolver: it is the only way a later transform can tell
+                which type's projection this "pageInfo" answers for.
 
         Returns:
             A "graphql.GraphQLField" for the cursor "pageInfo".
@@ -1598,6 +1944,14 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
                 "startCursor": info_dict["start_cursor"],
                 "endCursor": info_dict["end_cursor"],
             }
+
+        # A keyset cursor IS the ordering value, so "pageInfo" is bound by the
+        # same projection allowlist as "results" -- and by the SAME node type,
+        # which nothing downstream can recover from the field itself. The
+        # permission pruner re-derives the allowlist per clone; leave it both
+        # halves of the question ("core.schema_pruner._rescope_paginated_resolver").
+        _native_resolver.page_info_paginator = self  # type: ignore[attr-defined]
+        _native_resolver.page_info_node_type = node_type  # type: ignore[attr-defined]
 
         return GraphQLField(
             NATIVE_CURSOR_PAGE_INFO,

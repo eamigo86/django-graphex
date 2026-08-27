@@ -62,12 +62,18 @@ query {
 
 ## Standard GraphQL directives (spec built-ins)
 
-`all_directives` also bundles the GraphQL **specification's** own directives:
-`@skip`, `@include`, and `@deprecated`. These are **not** django-graphex
-directives — `@skip` / `@include` are evaluated by the graphql-core
-**executor** itself (they work without `GraphQLDirectiveMiddleware`), and
-`@deprecated` is a **type-system (SDL) directive** that annotates the schema
-rather than transforming values.
+`all_directives` holds 30 directive instances: the library's own 25 plus the
+GraphQL **specification's** 5 — `@skip`, `@include`, `@deprecated`,
+`@specifiedBy` and `@oneOf` (graphql-core's `specified_directives` bundle).
+The last five are **not** django-graphex directives — `@skip` / `@include` are
+evaluated by the graphql-core **executor** itself (they work without
+`GraphQLDirectiveMiddleware`), while `@deprecated`, `@specifiedBy` and `@oneOf`
+are **type-system (SDL) directives** that annotate the schema rather than
+transforming values. Only the three documented below are ones you interact
+with: `@specifiedBy` (custom-scalar specification URLs) and `@oneOf`
+(exactly-one-key input objects) ride along with graphql-core's bundle and are
+never emitted by this library's compiler. See the
+[API reference](api/directives.md#standard-graphql-directives-spec-built-ins).
 
 === "@skip / @include (queries)"
 
@@ -632,8 +638,8 @@ already-resolved field `value` and the **coerced** `args` dict — read them wit
 ### 2. Register it on the schema
 
 Pass an **instance** alongside `all_directives` (which already bundles the
-built-ins plus the standard GraphQL directives: `@skip`, `@include`, and
-`@deprecated`):
+library's 25 built-ins plus the 5 standard GraphQL directives: `@skip`,
+`@include`, `@deprecated`, `@specifiedBy` and `@oneOf`):
 
 ```python
 # myapp/schema.py
@@ -717,8 +723,9 @@ Add directives to your GraphQL schema:
     from django_graphex.schema import DjangoGraphQLSchema
     from .directives import MaskGraphQLDirective
 
-    # all_directives already includes the built-in GraphQL directives
-    # (@skip, @include, @deprecated), so just append your own.
+    # all_directives already includes the 5 spec GraphQL directives
+    # (@skip, @include, @deprecated, @specifiedBy, @oneOf), so just append
+    # your own.
     custom_directives = [
         *all_directives,
         MaskGraphQLDirective()

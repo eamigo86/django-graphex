@@ -35,6 +35,7 @@ from graphql import GraphQLSchema  # noqa: E402
 from django_graphex.security import AuthenticatedFieldsMiddleware  # noqa: E402
 from django_graphex.subscriptions import Subscription  # noqa: E402
 from tests.models import Post, SecretLedger, SecretRecord  # noqa: E402
+from tests.subscriptions._sse import sse_frames  # noqa: E402
 
 # The WS consumer touches the DB connection registry on every dispatched message
 # and the broadcast test needs a real commit for its "on_commit" callback, so the
@@ -158,7 +159,7 @@ async def _drain(response: Any, *, max_frames: int = 4) -> list[str]:
         The decoded frame strings, stopping early on the "complete" frame.
     """
     frames: list[str] = []
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     for _ in range(max_frames):
         try:
             chunk = await asyncio.wait_for(aiter.__anext__(), timeout=2.0)

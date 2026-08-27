@@ -432,6 +432,63 @@ def test_path_with_script_close_tag_does_not_break_out_of_inline_script() -> Non
     assert "alert(1)" in body
 
 
+def _editor_document(body: str) -> str:
+    """Extract the document the query editor is pre-filled with.
+
+    Args:
+        body: The rendered client HTML.
+
+    Returns:
+        document: The textarea's content, HTML-unescaped.
+    """
+    import html
+    import re
+
+    match = re.search(r'id="gdsx-query"[^>]*>(.*?)</textarea>', body, re.DOTALL)
+    assert match is not None, "the query editor textarea is missing from the page"
+    return html.unescape(match.group(1))
+
+
+def test_prefilled_document_is_a_real_subscription_operation() -> None:
+    """The editor's pre-filled document must parse and select a root field.
+
+    Contract: this test ships broken if the pre-filled document is a comment
+    block with an empty selection set, because pressing the run button then
+    answers "Syntax Error: Expected Name, found '}'" — while the playground
+    README tells the reader to run the pre-filled subscription as step 2.
+    """
+    from graphql import OperationType, parse
+
+    document = parse(_editor_document(_default_view_body()))
+    operations = [
+        node for node in document.definitions if getattr(node, "operation", None)
+    ]
+    assert len(operations) == 1
+    assert operations[0].operation is OperationType.SUBSCRIPTION
+    # Exactly one root field: graphql-core's SingleFieldSubscriptionsRule.
+    assert len(operations[0].selection_set.selections) == 1
+
+
+def test_prefilled_document_is_named_from_the_live_schema() -> None:
+    """Introspection must rename the placeholder field to a real subscription.
+
+    Contract: this test ships broken if the client stops asking for the
+    schema's subscription root or stops substituting the placeholder name,
+    which is what turns the generic pre-filled document into one the reader's
+    own server actually serves.
+
+    A static-HTML assertion, like every other client test in this module (the
+    page ships no browser test harness).
+    """
+    body = _default_view_body()
+    # The introspection query must reach the subscription root's field names.
+    assert "subscriptionType{name fields{name}}" in body
+    # The untouched default is captured and its placeholder swapped for the
+    # first subscription field the schema advertises.
+    assert "defaultQuery" in body
+    assert "yourSubscription" in body
+
+
 def test_ws_path_with_script_close_tag_is_also_escaped() -> None:
     """The ws_path injection must be hardened the same way as http_path.
 
@@ -442,3 +499,32 @@ def test_ws_path_with_script_close_tag_is_also_escaped() -> None:
     request = RequestFactory().get("/graphql/client/")
     body = SubscriptionClientView.as_view(ws_path=malicious)(request).content.decode()
     assert "/ws/graphql/</script>" not in body
+
+
+def test_client_sse_parser_ignores_the_comment_preamble() -> None:
+    """The SSE parser must drop a comment frame instead of reporting an error.
+
+    Every SSE response opens with a bare ":" comment line so the ASGI server
+    flushes the status line and headers before the first event (see
+    "_PREAMBLE_FRAME" in the transport). A comment is not an event, and the
+    SSE specification says a conforming client ignores it.
+
+    Without the guard the client's own parser takes that frame down the else
+    branch, which logs "Unexpected SSE frame (message)", re-enables the run
+    button mid-stream and sets the status to "Connection Error" — on a healthy
+    stream, verified in a browser. The guard must therefore come BEFORE the
+    event/data line scan, which is what the ordering assertion below pins.
+
+    Contract: this test ships broken if the parser stops skipping comment
+    frames, or skips them somewhere the error branch can still be reached.
+    """
+    body = _get_body()
+
+    guard = 'frame.trim().charAt(0) === ":"'
+    assert guard in body, "the SSE parser lost its comment-line guard"
+
+    # The guard is worthless if the error branch can still run first.
+    error_branch = "Unexpected SSE frame ("
+    assert body.index(guard) < body.index(error_branch), (
+        "the comment guard must precede the unexpected-frame branch"
+    )

@@ -14,6 +14,76 @@ The benchmark measures **schema build time**, **per-operation latency**
 (mean / p50 / p95 / min / stddev over 100 timed iterations), and **SQL query
 count** per operation. It is fully deterministic and offline.
 
+## What the published artifacts are
+
+Every figure in `results/` and on
+[Why django-graphex](https://eamigo86.github.io/django-graphex/why/) is the
+**median of three runs** per library per seed. Each file records that under an
+`aggregation` key — if that key is **absent**, the file is a single run, which
+is what `run_all.sh` writes by default.
+
+Three runs is not ceremony. Repeating the same code minutes apart on the same
+machine drifts by up to **8 %** here, so one sample cannot resolve any
+difference smaller than that. A run is discarded rather than published when a
+SQL count or a `surface` list moves, or when latencies rise **uniformly across
+all four libraries** — three of them are code nobody in this repo touched, so
+they are the control: if they move together, the machine moved, not the code.
+
+### Cold import and schema build are two different numbers
+
+`schema_import_ms` used to be labelled "schema build", and it was timing
+`import bench_schema` — which pays the library's **whole dependency tree** and
+the **schema construction** in one measurement. Those differ by two orders of
+magnitude, so their sum answers neither question:
+
+| | cold import | rebuild (declarations only) |
+| :--- | ---: | ---: |
+| graphex | ~9–10 ms | ~3 ms |
+| graphene-django | ~10 ms | ~4 ms |
+| strawberry | ~98–107 ms | ~6 ms |
+| ariadne | ~44–49 ms | ~2 ms |
+
+strawberry's hundred milliseconds is **importing strawberry**, not building
+anything. Both figures now ship in every artifact:
+
+- **`schema_import_ms`** — the cold first import. What a process actually pays
+  at startup, and the only one of the two comparable across libraries.
+- **`schema_rebuild_samples_ms`** — the schema built again with the dependency
+  tree already imported, five times, kept as a **raw series in order**.
+
+The rebuild series is a **diagnostic, not a comparison, and it is deliberately
+not reduced to a median.** Re-executing declarations perturbs each library's
+process state differently: django-graphex's series climbs measurably
+(`[2.99, 3.38, 3.70, 3.89, 4.34]` is typical) while ariadne's is flat
+(`[2.74, 2.16, 1.96, 1.97, 2.02]` — one warm-up sample, then level).
+**Read the series down one column; never across.** It is not a cache hit: in
+all four libraries the rebuilt schema object, its `GraphQLSchema`, its Author
+type and that type's fields are all new objects.
+
+django-graphex's climb has a known cause, so the series **understates it** by
+roughly 45 %: `_gdx_output_registry` (`django_graphex/core/base.py`) is an
+append-only list of every declared type, and `compile_all_outputs()` walks the
+whole thing, calling `recompile_fields()` on each dead generation as well as
+the live one. Truncating that list between rebuilds flattens the series to
+~2.6 ms. The first sample of each series is therefore the uncontaminated
+figure. This costs a real deployment nothing — `compile_all_outputs()` runs
+once per process from `AppConfig.ready()` — and the permission-scoped schema
+path does not touch it at all (`prune_schema` is a graphql-core clone-on-write
+transform that declares no types; 500 distinct permission signatures leave the
+list at 6).
+
+### The cold-import bias, and its fix
+
+`run_all.sh` seeds the database under `.venv-graphex/bin/python`, which left
+graphex's imports and file cache hot while the other three were measured cold —
+a bias **in graphex's favour**, on the one row where the libraries are closest.
+It now warms **every** virtualenv with a throwaway import before the measured
+loop. The spread on that row fell from **24–51 % to 3–15 %**.
+
+Even fixed, do not read a winner out of it between graphex and graphene-django:
+one millisecond apart, on a metric that wanders 3–15 %, is not a result. An
+order of magnitude is — ariadne roughly 5×, strawberry roughly 10×.
+
 ## The fairness rule (read this first)
 
 The four libraries do **not** share a schema. Each has its own
@@ -26,15 +96,48 @@ The four libraries do **not** share a schema. Each has its own
    repo's own `.venv` (see `setup_envs.sh`). Same Python (3.12).
 3. **The same five logical operations**, defined by the operation contract below.
 
+4. **The same schema surface.** Every library declares the same explicit field
+   lists — `fields` on graphene-django, `strawberry.auto` annotations on
+   strawberry, the SDL on ariadne, `Meta.only_fields` on graphex — so no library
+   is charged for compiling a different amount of surface. **Seven** of the
+   **eighteen** declared fields are in no operation's selection set at all —
+   `Author.bio`, `Author.email`, `Post.body`, `Post.createdAt`,
+   `Comment.authorName`, `Comment.createdAt`, `Comment.isApproved` — and that is
+   deliberate: the schema-build number compares how much surface each library
+   compiles, so the surface has to be the same one whether a query reaches it or
+   not. **This rule is checked, not asserted**: the harness introspects the
+   built schema and writes the declared field lists into `results/<lib>.json`
+   under `surface`, so
+   `diff <(jq .surface results/graphex.json) <(jq .surface results/ariadne.json)`
+   settles it.
+
+   On graphex that option is also a **security boundary**: a projected column is
+   unreadable, unorderable and unfilterable through the type, so
+   `PostType.filter_fields` naming the `author` relation is admitted only
+   because `AuthorType` publishes the author's key. Counted and timed over three
+   runs by `guard_cost.py`, the shared predicate costs **46 calls / 0.69–0.71 ms
+   of a 9–12 ms schema build** and **17 calls / about 0.015 ms per `nested`
+   request** (0.13 % of it). Both are inside the numbers, and neither is
+   switchable off.
+
 Per-library query documents may differ in **SHAPE** (e.g. graphex uses a
-`results {} / totalCount` wrapper with `results(limit:, offset:)`; graphene uses
-Relay connections; strawberry uses `OffsetPaginationInput`; ariadne uses whatever
-its SDL defines). They **MUST be semantically equivalent**: the same rows are
-touched, the same fields are returned. No library is allowed to short-cut an
-operation (e.g. skip the nested comments, or over-fetch a smaller set). Each
-operation ships a `validate()` callable that asserts the response shape; the
-harness aborts loudly if validation fails, because **a benchmark that returns the
-wrong data is invalid**.
+`results {} / totalCount` wrapper and asks it for `results(limit:, ordering:)`;
+graphene uses Relay connections; strawberry uses `OffsetPaginationInput`; ariadne
+uses whatever its SDL defines). They **MUST be semantically equivalent**: the
+same rows are touched, the same fields are returned. No library is allowed to
+short-cut an operation (e.g. skip the nested comments, or over-fetch a smaller
+set). Each operation ships a `validate()` callable that asserts the response
+shape; the harness aborts loudly if validation fails, because **a benchmark that
+returns the wrong data is invalid**.
+
+**No operation on any library selects `totalCount`** — the five documents ask for
+rows, never for a count — and that is the whole story behind the SQL counts on
+the two list rows. graphex issues no `COUNT` at all, because its count is
+deferred to the selection that asks for it; graphene's Relay connection issues
+one regardless, and that unasked-for `SELECT COUNT(*)` is the second query in
+its `flat_list` and its `filtered` row. Neither is a short-cut: both return the
+same rows to the same document, and what differs is what each library does with
+a count nobody requested.
 
 Django itself is tuned identically for all libraries (`config/settings.py`,
 `DEBUG=False`). Each library's own performance knobs (query optimizer,
@@ -88,6 +191,11 @@ matches `Post 42`, `Post 420..429`, `Post 4200..4299`, and `Post 1420..9942…`
   "django": "6.0.6",
   "machine": { "platform": "...", "cpu_count": 16 },
   "schema_import_ms": 12.27,           // time to build the schema (import bench_schema)
+  "surface": {                          // declared field lists, read back by introspection
+    "Author": ["bio", "email", "id", "name", "posts"],
+    "Post": ["author", "body", "comments", "createdAt", "id", "status", "title", "viewsCount"],
+    "Comment": ["authorName", "createdAt", "id", "isApproved", "text"]
+  },
   "ops": {
     "flat_list": {
       "mean_ms": 1.71, "p50_ms": 1.56, "p95_ms": 2.00,
@@ -123,6 +231,33 @@ Run a single library manually:
 BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings .venv-graphex/bin/python harness.py
 ```
 
+The published table in [`docs/why.md`](../docs/why.md) uses the **doubled**
+dataset (`--authors 2000`), which `run_all.sh` does not seed. Reseeding for it
+requires a **fresh database**, not just `seed_bench --authors 2000`: the command
+deletes rows but SQLite keeps counting primary keys, so the `single` operation's
+fixed pk `5000` would address a row that no longer exists and every library's
+`validate()` would abort.
+
+`BENCH_PREFIX` is what makes this recipe produce the artifacts the page cites
+rather than overwriting the 1,000-author four: the harness cannot tell which
+seed it is measuring, so the caller names the file.
+
+```bash
+rm -f db.sqlite3
+BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
+  .venv-graphex/bin/python -m django migrate --run-syncdb
+BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
+  .venv-graphex/bin/python -m django seed_bench --authors 2000
+for lib in graphex graphene strawberry ariadne; do
+  BENCH_PREFIX=2x_ BENCH_LIB=$lib DJANGO_SETTINGS_MODULE=config.settings \
+    ".venv-$lib/bin/python" harness.py
+done
+```
+
+Leave `BENCH_PREFIX` out and the loop writes `results/<lib>.json` — the
+1,000-author names — with 2,000-author numbers inside them. That is the one
+mistake this recipe cannot detect for you, because both seeds are valid runs.
+
 ## Layout
 
 ```
@@ -132,6 +267,7 @@ benchmarks/
 ├── setup_envs.sh                     # per-lib venvs, identical Django pin
 ├── run_all.sh                        # fresh DB, seed once, run all harnesses
 ├── harness.py                        # the measurement loop (runs in a lib venv)
+├── guard_cost.py                     # what the projection boundary costs (docs/why.md cites it)
 ├── config/
 │   ├── settings.py                   # single shared settings; LIB_APPS per lib
 │   └── urls.py                       # mounts libs/<BENCH_LIB>/bench_schema.graphql_view
@@ -140,11 +276,24 @@ benchmarks/
 │   └── management/commands/seed_bench.py
 ├── libs/
 │   ├── graphex/bench_schema.py       # reference implementation (django-graphex v2)
-│   ├── graphene/bench_schema.py      # (to be implemented)
-│   ├── strawberry/bench_schema.py    # (to be implemented)
-│   └── ariadne/bench_schema.py       # (to be implemented)
-└── results/                          # <lib>.json output (gitignored)
+│   ├── graphene/bench_schema.py      # Relay nodes + DjangoFilterConnectionField
+│   ├── strawberry/bench_schema.py    # strawberry.auto + DjangoOptimizerExtension
+│   └── ariadne/bench_schema.py       # SDL-first + hand-written resolvers
+└── results/                          # <lib>.json + 2x_<lib>.json — TRACKED (see below)
 ```
+
+## The results are tracked on purpose
+
+`docs/why.md` cites eight artifacts by path, so eight artifacts are in the
+repository: `results/<lib>.json` (1,000-author seed) and `results/2x_<lib>.json`
+(the doubled seed the published table uses). A citation a reader cannot open is
+not a citation, and these files are 1.7 kB each — cheap honesty.
+
+`.gitignore` therefore ignores `results/*` and re-includes exactly those eight.
+Anything else you leave in there (summaries, ad-hoc reruns) stays ignored.
+Re-running `run_all.sh` **overwrites** the tracked 1,000-author four with your
+own machine's numbers, which will show up as a plain `git diff` — that is the
+intended way to disagree with the published table.
 
 ## Seeded dataset
 

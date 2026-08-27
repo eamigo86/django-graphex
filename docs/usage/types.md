@@ -26,8 +26,14 @@ class UserType(DjangoObjectType):
     class Meta:
         description = "Type definition for a single user"
         model = User
-        # Optional: restrict / shape the exposed fields.
-        only_fields = ("id", "username", "email", "is_active")
+        # The projection. It is a security boundary, not cosmetics — see
+        # [the rule](#projection-security-boundary) — and it is the ONE
+        # projection for `User` on this page: every later sample that lists,
+        # filters or orders users is bound by exactly these columns.
+        only_fields = (
+            "id", "username", "email", "first_name", "last_name",
+            "date_joined", "is_active",
+        )
         # Enables `filter:` when this type is used as a (nested) list.
         filter_fields = {"username": ("exact", "icontains")}
 ```
@@ -65,7 +71,7 @@ See [Filtering — `@filter_field`](filtering.md#custom-per-field-filters-filter
 for the full reference including type override, composition order, and reserved
 argument names.
 
-### Custom queryset (per-request filtering)
+### Custom queryset (per-request filtering) { #relation-scope-hatch }
 
 Override `get_queryset(cls, queryset, info)` to scope what a type exposes on a
 per-request basis — for example, to restrict rows to the current user's data:
@@ -115,17 +121,128 @@ level.
     issues one query per parent instead.  Types that declare no scope keep the
     cache and the single query.
 
-!!! note "Remaining boundary: auto-expanded nested-relation fields"
-    Relation fields that django-graphex **auto-expands** to a nested list
-    (e.g. a `ForeignKey` reverse relation exposed as
-    `allAuthors { results { posts { results { title } } } }`, resolved by
-    `DjangoNestedListObjectField`) use the parent's prefetch cache and do
-    **not** call the child type's `get_queryset`.  This is intentional: wiring
-    the hook there would require rebuilding the prefetch queryset inside the
-    resolver, which conflicts with the window-pagination and prefetch
-    optimizations.  If you need per-relation row scoping there, either mount the
-    relation explicitly as a `DjangoFilterListField` (which does apply the hook)
-    or add a `resolve_<relation>` method on the parent type.
+!!! warning "Remaining boundary: auto-expanded relation fields"
+    The hook is a **field-level** scope, not a model-level one.  Relation fields
+    that django-graphex **auto-expands** on a parent type do not call the child
+    type's `get_queryset`, in **both** directions:
+
+    * **to-MANY** — a reverse FK or M2M exposed as
+      `allAuthors { results { posts { results { title } } } }` (resolved by
+      `DjangoNestedListObjectField`) reads out of the parent's prefetch cache.
+    * **to-ONE** — a forward `ForeignKey` or `OneToOneField` exposed as
+      `allPosts { results { author { name } } }` is a plain attribute read off
+      the already-fetched parent (`select_related`).
+
+    So `{ allAuthors { results { name } } }` correctly hides a row the scope
+    excludes, while `{ allPosts { results { author { name } } } }` still serves
+    that same row through the relation.  **Do not rely on `get_queryset` alone
+    to hide rows that are reachable through a relation.**
+
+    This is intentional, and the cost is the reason: the to-MANY arm would have
+    to rebuild the prefetch queryset inside the resolver, which conflicts with
+    the window-pagination and prefetch optimizations, and the to-ONE arm would
+    have to re-fetch the target per parent row, replacing one `select_related`
+    join with one query per row.
+
+    If you need per-relation row scoping, **declare the relation field
+    explicitly** on the parent type.  A declared field of the same name replaces
+    the auto-expanded one, and only then is a resolver wired at all.
+
+    * **to-MANY** — mount it as a `DjangoFilterListField`, which applies the
+      hook on its own (see the cost note above):
+
+        ```python
+        from django_graphex.fields import DjangoFilterListField
+
+        class AuthorType(DjangoObjectType):
+            # Replaces the auto-expanded PostListType container; the hook runs.
+            posts = DjangoFilterListField(PostType)
+
+            class Meta:
+                model = Author
+        ```
+
+        This changes the field's wire shape from the `PostListType` container
+        (`posts { results { … } }`) to a plain `[PostType]` (`posts { … }`), so
+        existing clients selecting `results` need updating. It also withdraws
+        `posts` from the filter axis — see the warning below.
+
+    * **to-ONE** — declare the field and scope it in its `resolve_` method:
+
+        ```python
+        from django_graphex.core import Field
+
+        class PostType(DjangoObjectType):
+            # REQUIRED: without this declaration the resolver below never runs.
+            author = Field(AuthorType)
+
+            class Meta:
+                model = Post
+
+            def resolve_author(self, info):
+                # The auto-expanded FK read would bypass AuthorType.get_queryset.
+                return AuthorType.get_queryset(
+                    Author.objects.filter(pk=self.author_id), info
+                ).first()
+        ```
+
+!!! warning "Declaring the relation withdraws it from the other axes — in both directions"
+    A relation served by a resolver of your own is treated as a **mask**,
+    exactly like a column served by one: what the client can read is whatever
+    the callable returns, not what the row holds. **One rule, both arms of the
+    hatch** — a to-one declaration plus its `resolve_` method, and a to-many
+    `DjangoFilterListField` / `DjangoFilterPaginateListField`, which carries a
+    resolver of its own by construction. Their *cost* differs only because a
+    to-one relation owns a column on the parent row and a to-many one does not:
+
+    | Axis | to-ONE `author = Field(AuthorType)` + `resolve_author` | to-MANY `posts = DjangoFilterListField(PostType)` |
+    |------|--------------------------------------------------------|---------------------------------------------------|
+    | `ordering` | `ordering: "authorId"` refused — `GraphQLError: Invalid ordering field`. | Unaffected: a reverse FK or M2M owns no column here, so nothing leaves the allowlist. |
+    | `filter` | `filter_fields = {"author__name": …}` **stops the schema building**. | `filter_fields = {"posts__title": …}` **stops the schema building**. |
+
+    The build failure is `ImproperlyConfigured`, the same
+    contradiction-between-two-`Meta`-options refusal every hidden path gets.
+    **Drop those entries when you declare either arm of the hatch.**
+
+    The cost to a reader who already followed this guide is exactly that:
+    a nested `posts__…` filter on the parent type now has to go. Nothing about
+    the *output* changes — the relation is still selectable, still scoped, and
+    still returns the rows its `get_queryset` allows. What goes is the ORM
+    **join** through it, which never ran that `get_queryset` and therefore
+    answered, one lookup at a time, the very question the hatch was mounted to
+    refuse. If you need the join, the parent type has to serve the relation
+    itself: drop the declaration and scope the parent's own queryset instead.
+
+    This is not a cost the boundary could have avoided. Both axes read the
+    relation **unscoped**: `ordering` ranks by the raw foreign-key column on the
+    parent's own row, and a nested filter compiles to an ORM join that never
+    passes through `AuthorType.get_queryset`. Left open,
+    `{ posts(filter: { author: { name: { icontains: "a" } } }) }` narrows posts
+    by an author the hatch exists to hide — the row's *name* stays out of the
+    response while the filter confirms, one substring at a time, that such an
+    author exists behind that post. And a `resolve_author` that returns no
+    author at all — a stand-in, a `None` — would still have published a ranking
+    over `author_id`, a key **no type in the schema serves**.
+
+    Nothing readable at build time separates those two resolvers; the
+    difference is in a body no static analysis can read. The boundary therefore
+    fails **closed** for both. If you need the key orderable or the relation
+    filterable, the parent type has to serve the relation itself — drop the
+    declaration and scope the parent's own queryset instead.
+
+    A declaration standing under a relation's name that compiles to a
+    **scalar** publishes no relation at all, and fails closed for the same
+    reason. A declaration rendering the relation with a type bound to *another*
+    model does not: the value behind it is still the real target row, so the
+    key stays published. That is a schema bug, not a projection boundary. See
+    [What "hidden" means](#what-hidden-means).
+
+!!! danger "A bare `resolve_<relation>` method is silently ignored"
+    An auto-expanded relation field is derived from the **model**, not from the
+    parent type, so nothing looks for a `resolve_<relation>` method on the class
+    — in **either** direction.  Writing one without the matching field
+    declaration shown above leaves the relation served exactly as before, with
+    no error and no warning.  Declare the field.
 
 !!! note "DjangoModelType uses a different hook"
     `DjangoModelType` has its own queryset-scoping API (`get_queryset` +
@@ -153,10 +270,128 @@ The full set of recognised options for `DjangoObjectType.Meta` is:
 | `interfaces` | GraphQL interfaces to implement |
 | `max_depth` | Max nested-object depth below this type |
 | `complexity` | Cost weight for query cost analysis |
+| `unions` | Mapping of `GenericForeignKey` field name to a `DjangoUnionType` |
+| `name` | Type name in the schema; defaults to the class name |
 | `description` | Type description exposed in the schema |
 
-Any key not in this table is rejected at startup. Review your `DjangoObjectType`
-and `DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
+Graphene's own base options ride along on top of that list and are accepted
+too: `possible_types`, `default_resolver` and `container`. Every other public
+key is rejected at startup. Review your `DjangoObjectType` and
+`DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
+
+### The projection is a security boundary { #projection-security-boundary }
+
+**This is the canonical statement of the rule. Every other page links here.**
+
+!!! danger "`only_fields` / `exclude_fields` are a security boundary, on every axis"
+
+    A column your type projects away is not merely absent from the output. It
+    must not be **readable, orderable, or filterable** through that type — one
+    rule, three axes:
+
+    | Axis | What a hidden column does | Enforced |
+    |------|---------------------------|----------|
+    | Output | Absent from the SDL, unselectable. | Schema build |
+    | `ordering` | `GraphQLError: Invalid ordering field: '<name>'` — see [Ordering validation](pagination.md#ordering-validation-security). | Query time |
+    | `filter` | `ImproperlyConfigured` — the schema **stops building**; see [The projection is the outer boundary](filtering.md#projection-boundary). | Schema build |
+
+    The filter axis refuses rather than drops because a `filter_fields` entry
+    naming a hidden column is a **contradiction between two `Meta` options on
+    the same type**, and the operator is the only one who can say which half
+    was meant. Accepting the option and ignoring it is the defect 2.2.0 fixed;
+    doing it here would have left an `exact` lookup returning the hidden value
+    in one request. **A schema that builds today can stop building after
+    upgrading, and that is the point** — every schema that stops building was
+    answering that lookup.
+
+#### What "hidden" means — one predicate, both axes { #what-hidden-means }
+
+Both axes ask one question of one function: *does the type that will serve this
+request hand out the **value** this column holds?* It is answered against the
+**compiled type** — the type in the SDL — and never by re-reading `Meta`, so
+*orderable*, *filterable* and *selectable* cannot drift apart. Five different
+causes therefore give one answer:
+
+| The type … | Column's value published? |
+|------------|---------------------------|
+| never listed the column (`only_fields` / `exclude_fields`) | **No** |
+| publishes the column's **name** over a resolver of its own (`resolve_<name>`, or a field-level `resolver=`) | **No** — a published name is not a published value |
+| publishes a **relation** over a resolver of its own — a declared to-one plus its `resolve_`, **or** a declared to-many `DjangoFilterListField` / `DjangoFilterPaginateListField` (the [scoping hatch](#relation-scope-hatch), in either direction) | **No** for the relation's `_id` column, and the relation stops being traversable — the client reads whatever the resolver returns, so the key behind it is served by nothing |
+| publishes a relation whose target type hides its own key | **No** for the relation's `_id` column |
+| lost a relation because the compiler dropped it (its target model has no registered type) | **No** |
+
+Two consequences worth spelling out, because both break code that used to work:
+
+- **A forward FK's `_id` column follows the *target* type's key.** `author_id`
+  is orderable and filterable only when `PostType` publishes `author` **and**
+  the type behind `author` publishes the key `author` points at. A target that
+  projects its own primary key away takes `author_id` down with it — the id was
+  never readable through `author { id }` in that schema, so nothing about it was
+  already public.
+- **A multi-table-inheritance parent link rides on the inherited key.** The
+  compiler drops the `<parent>_ptr` link as plumbing and publishes the parent's
+  `id` in its place, so the child's `pk` follows that `id`.
+
+The rule **fails closed**: a resolver body is user Python that no build-time
+check can read, so a `resolve_<name>` that happens to return the real column
+loses the column anyway. Drop the resolver, or publish the substitute under a
+different name. The one shortcut the compiler *can* read is exempt — a
+same-name `source=`, as in `bio = CharField(source="bio")`, provably reads that
+very attribute, so it keeps the column. A `source=` naming anything else does
+not.
+
+#### The one exception, and the three open boundaries { #projection-exception }
+
+There is exactly **one** exception, and it is about *provenance*, not about the
+column:
+
+!!! warning "An operator-configured `ordering=` default is not client input"
+
+    The `ordering=` you pass when constructing `LimitOffsetGraphqlPagination`
+    or `PageGraphqlPagination` may name a column the type projects away. That
+    is a deliberate decision, not a claim that the default leaks nothing: a
+    server-configured ordering ranks by exactly as much as a client term does,
+    but it is your own deployment choice, applied identically to every request,
+    and turning it into a runtime outage would punish a configuration only you
+    can see. A **client** repeating that same value is still rejected.
+
+    `CursorGraphqlPagination` gets **no** exemption, because it *echoes* the
+    ordering value: `pageInfo.startCursor` is base64 of
+    `cursor:<ordering value>\x1f<pk>`. Printing the column back is reading it
+    out, not ranking by it, and no operator-intent argument survives that. See
+    [Ordering validation](pagination.md#ordering-validation-security).
+
+Three boundaries the rule cannot close, stated rather than hidden:
+
+- **A `@filter_field` method body.** Its *name* is checked — a method spelled
+  like a hidden column compiles the very `<Model>FilterInput` field a
+  `filter_fields` entry naming it is refused, so the one-line rename is shut.
+  The body is opaque user Python; keep your own ORM lookups inside your own
+  projection. See [Custom per-field filters](filtering.md#custom-per-field-filters-filter_field).
+- **Per-type narrowing on the filter axis.** There is one
+  `<Model>FilterInput` per model, shared by every context, so a second, narrower
+  type over the same model cannot get a narrower filter input — it gets a build
+  failure instead. The boundary is measured against the **union** the shared
+  input ends up serving, and against **every** type that will serve it, so the
+  narrow type cannot inherit the wide one's filters in silence. See
+  [Two node types over one model share one input](filtering.md#filter-input-union).
+- **A hand-written `Subscription` that names `Meta.model`.** It builds its event
+  type and its `<Model>SubscriptionFilterInput` from the **model**, so it does
+  not inherit the projection of whatever `DjangoObjectType` the schema
+  registered for that model: a column hidden on the node type stays selectable
+  **and** equality-filterable on that subscription. The subscription honours a
+  projection — its **own** `Meta.only_fields` / `Meta.exclude_fields` — so
+  repeat it there. A subscription generated from a `DjangoModelType`
+  (`Meta.stream` plus `SubscriptionField()`) is not affected: that host
+  **forwards** its own projection into the subscription class it builds. See
+  [Subscriptions › Filter key validation](subscriptions.md#filter-key-validation).
+
+!!! note "Underscore-prefixed names are not checked"
+    The unknown-option check skips a key starting with `_`: an
+    `from app.models import Foo as _Foo` inside the `Meta` body leaks as a class
+    attribute, and rejecting it would fail a build for an import alias. This is
+    not a promise that every underscored key is harmless — `_meta`, for
+    instance, is consumed elsewhere and raises on its own.
 
 ### Model inheritance { #model-inheritance }
 
@@ -231,11 +466,13 @@ class UserListType(DjangoListObjectType):
 
 ### Configuration Options
 
-A `DjangoListObjectType` concentrates all of its list behavior in `Meta`: the
-paginator (with its default/max page size and ordering), the `filter_fields`
-lookups exposed on the `filter:` argument, a custom base `queryset`, and the
-usual field restrictions. The example below shows every common option in one
-place:
+A `DjangoListObjectType` concentrates its list behavior in `Meta`: the paginator
+(with its default/max page size and ordering), the `filter_fields` lookups
+exposed on the `filter:` argument, and a custom base `queryset`. The field
+restrictions are the one thing that does **not** belong here when a node type is
+already registered for the model — they live on that node type, for the reason
+the box under the sample gives. The example below continues the `UserType`
+declared at the top of this page:
 
 ```python
 class UserListType(DjangoListObjectType):
@@ -256,16 +493,63 @@ class UserListType(DjangoListObjectType):
             "email": ("exact", "icontains"),
             "date_joined": ("exact", "gte", "lte"),
             "is_active": ("exact",),
-            "groups": ("exact",),
+            # No "groups" entry. Filtering through a relation needs the TARGET
+            # to be published too, and `Group` has no registered
+            # `DjangoObjectType` here, so the compiler drops the relation and
+            # the entry would refuse the build. Register a `GroupType` first if
+            # you want it.
         }
 
         # Custom queryset
         queryset = User.objects.select_related('profile')
 
-        # Field restrictions
-        only_fields = ("id", "username", "email", "first_name", "last_name")
-        exclude_fields = ("password",)
+        # Field restrictions: NOT here. `UserType` is already registered for
+        # `User` (top of this page), so this container reuses that node type and
+        # a projection of its own would be dropped — declaring one raises, see
+        # the box below. The restriction lives on `UserType`, and every column
+        # the two options above name is published there. It has to be: a
+        # projection is a security boundary, so filtering or ordering by a
+        # column the node type hides fails the build (see
+        # [the rule](#projection-security-boundary)).
 ```
+
+!!! danger "The projection only applies when the container **mints** its node type"
+
+    A `DjangoListObjectType` builds its node type from these options **only**
+    when no `DjangoObjectType` is registered for the model yet. Declare the two
+    side by side — the ordinary arrangement — and the container reuses the
+    registered type, which was built from **its own** `Meta`.
+
+    Until this release the container's `only_fields` / `include_fields` /
+    `exclude_fields` were then **dropped without a word**, so every column the
+    projection was meant to hide stayed readable, orderable and filterable.
+    Declaring one in that situation now raises `ImproperlyConfigured` at class
+    definition, naming the option, the model and the type that registered the
+    node:
+
+    ```text
+    UserListType.Meta.exclude_fields cannot be honored: the node type for User
+    is reused from UserType, which was built from its own Meta, so the
+    projection would be silently dropped and any field it hides would stay
+    exposed. Declare exclude_fields on UserType instead, or remove the option.
+    ```
+
+    **The fix is to move the projection to the node type**, which is where it
+    was always taking effect. This is the same answer 2.2.0 gave the identical
+    defect on `DjangoModelType`: a warning is filterable and would leave the
+    leak live in production, and the only configurations affected are the ones
+    already leaking.
+
+    **Restating the node's own projection is not affected.** The refusal is
+    about a declaration being dropped into a DIFFERENCE, so the guard compares
+    the columns the two projections SELECT, not the options they spell. Adding
+    `only_fields = ("id", "username", "email", "first_name", "last_name",
+    "date_joined", "is_active")` to the sample above still builds, because that
+    is exactly what `UserType` publishes; so does
+    `exclude_fields = ("password",)` on top of it, and so does any other
+    spelling that selects the same set. Only a projection that would change what
+    the schema publishes is refused. The sample omits it anyway, because a
+    restatement is a second place to update when the real projection moves.
 
 ### Helper Methods
 
@@ -792,6 +1076,47 @@ class InvoiceType(TimestampedType):
     the registered type. A silent no-op there would leave a column you excluded
     for security reasons queryable.
 
+    **Restating the registered type's own projection is accepted**, exactly as
+    it is for [`DjangoListObjectType`](#configuration-options) — the guard
+    compares the columns the two projections select, not the options they
+    spell. Restating it is worth doing: this host **forwards** its projection
+    into the subscription it generates from `Meta.stream`, so the repetition is
+    what keeps a hidden column off the subscription surface too.
+
+### Limiting the generated operations — `model_operations` { #model-operations }
+
+A `DjangoModelType` serves all five operations it can generate, so a type that
+declares nothing behaves exactly as it always has. Narrow that with
+`Meta.model_operations`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `model_operations` | `("create", "update", "delete", "list", "retrieve")` | The operations this type serves; any subset of the default. The `*Field()` builder of an excluded operation raises `AttributeError`, and `QueryFields()` / `MutationFields()` return only what is enabled. An excluded write also stops this type counting as a **write host** for the model it is bound to. |
+
+That last clause is the opt-out for nested-write scoping: a `DjangoModelType`
+is a write host for the models a parent nests through
+[`Meta.nested_fields`](mutations.md#how-nested-writes-work), so its
+`Meta.queryset` and its `only_fields` gate that nested write. In the common
+read-type-plus-write-mutation split that queryset is a display default, not a
+policy — declaring the type a read host says so:
+
+```python
+class UserCard(DjangoModelType):
+    class Meta:
+        model = User
+        # A display default, NOT a policy: hide deactivated users from the card.
+        queryset = User.objects.filter(is_active=True)
+        model_operations = ("list", "retrieve")
+
+class Query(ObjectType):
+    user_retrieve, user_list = UserCard.QueryFields()   # both still generated
+```
+
+`UserCard.CreateField()` now raises `AttributeError`, `MutationFields()` returns
+an empty tuple, and the card's queryset no longer decides whether a parent may
+write a `User` inline. Its read fields are unchanged. See the
+[`Meta` reference](../api/types.md#djangomodeltype) for the full option table.
+
 ### Auto-generated Query Fields
 
 A `DjangoModelType` builds its read operations for you: `RetrieveField()`
@@ -840,7 +1165,7 @@ The write side is generated the same way: `CreateField()`, `DeleteField()` and
 `UpdateField()` each return a complete mutation — input type derived from the
 model, validation and DB integrity checks included — whose payload carries the
 mutated object plus `ok` / `errors`. `MutationFields()` is the shorthand that
-returns all three in **create, delete, update** order:
+returns them in **create, delete, update** order:
 
 ```python
 from django_graphex.core import ObjectType
@@ -856,6 +1181,15 @@ class Mutation(ObjectType):
     delete_user = UserModelType.DeleteField(description='Delete user')
     update_user = UserModelType.UpdateField(description='Update user')
 ```
+
+Both shorthands return **only the operations
+[`Meta.model_operations`](#model-operations) enables**, so the three-name unpack
+above is what the default — every operation — produces. Narrow the option and
+the tuple shrinks with it: a type declaring
+`model_operations = ("list", "retrieve")` returns an **empty** tuple from
+`MutationFields()`, and the unpack raises `ValueError: not enough values to
+unpack`. Unpack as many names as the type serves, or call the individual
+`*Field()` builders.
 
 ### Custom mutation arguments — `class Arguments`
 
@@ -1067,10 +1401,12 @@ class CategoryType(DjangoModelType):
 ```
 
 ```graphql
-category {
-  posts {                # level 1 ✅
-    comments {           # level 2 ✅
-      author { username }  # level 3 ❌ "Query exceeds the maximum nesting depth of 2 ..."
+{
+  category(id: 1) {
+    posts {                # level 1 ✅
+      comments {           # level 2 ✅
+        author { username }  # level 3 ❌ "Query exceeds the maximum nesting depth of 2 ..."
+      }
     }
   }
 }
@@ -1382,12 +1718,17 @@ class UserListType(DjangoListObjectType):
         # Optimize database queries
         queryset = User.objects.select_related('profile').prefetch_related('groups')
 
-        # Limit exposed fields (use only_fields / exclude_fields, not fields / exclude)
-        only_fields = ("id", "username", "email", "first_name", "last_name")
-
         # Enable caching for expensive queries
         # (Configure in settings)
 ```
+
+Limit the exposed fields with `only_fields` / `exclude_fields` (never `fields` /
+`exclude`) on the **node type**, not on the container: a container that reuses a
+registered `DjangoObjectType` cannot honour a projection of its own and refuses
+to build with one — see
+[the projection is a security boundary](#projection-security-boundary). Narrowing
+the surface is a security decision before it is a performance one, which is
+precisely why it has exactly one home.
 
 ### 4. Combine Types Strategically
 

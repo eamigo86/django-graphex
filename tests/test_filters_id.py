@@ -12,12 +12,31 @@ from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListObjectField
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
-from django_graphex.types import DjangoListObjectType
+from django_graphex.types import DjangoListObjectType, DjangoObjectType
 
 from ._schema_isolation import isolated_pair
 from .models import Author, Post, UUIDItem, UUIDThing
 
 R = Registry()
+
+
+class AuthorType(DjangoObjectType):
+    """Node type for Author, registered so the "author" relation is filterable.
+
+    A relation the output compiler DROPS (its target model has no registered
+    type) is refused as a filter path: the nested input would otherwise probe a
+    model the schema cannot name. Registering the target is what publishes the
+    relation, and publishing it is what makes "author: { exact }" legal.
+    """
+
+    class Meta:
+        """Bind the node type to "Author" with no projection.
+
+        See the enclosing type's docstring for why it has to exist.
+        """
+
+        model = Author
+        registry = R
 
 
 class PostListType(DjangoListObjectType):

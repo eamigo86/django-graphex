@@ -1,0 +1,114 @@
+{
+  "lib": "graphene",
+  "versions": {
+    "graphene-django": "3.2.3",
+    "graphene": "3.4.3",
+    "django": "6.0.6",
+    "graphql-core": "3.2.11",
+    "django-filter": "25.2"
+  },
+  "python": "3.12.11",
+  "django": "6.0.6",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "cpu_count": 16
+  },
+  "schema_import_ms": 10.6956,
+  "surface": {
+    "Author": [
+      "bio",
+      "email",
+      "id",
+      "name",
+      "posts"
+    ],
+    "Post": [
+      "author",
+      "body",
+      "comments",
+      "createdAt",
+      "id",
+      "status",
+      "title",
+      "viewsCount"
+    ],
+    "Comment": [
+      "authorName",
+      "createdAt",
+      "id",
+      "isApproved",
+      "text"
+    ]
+  },
+  "ops": {
+    "flat_list": {
+      "mean_ms": 1.799,
+      "p50_ms": 1.676,
+      "p95_ms": 1.9949,
+      "min_ms": 1.6249,
+      "stddev_ms": 0.7683,
+      "iterations": 100,
+      "sql_queries": 2
+    },
+    "nested": {
+      "mean_ms": 58.8352,
+      "p50_ms": 58.1121,
+      "p95_ms": 64.5364,
+      "min_ms": 55.9005,
+      "stddev_ms": 2.8384,
+      "iterations": 100,
+      "sql_queries": 442
+    },
+    "single": {
+      "mean_ms": 0.9849,
+      "p50_ms": 0.9408,
+      "p95_ms": 1.0697,
+      "min_ms": 0.9098,
+      "stddev_ms": 0.0743,
+      "iterations": 100,
+      "sql_queries": 2
+    },
+    "filtered": {
+      "mean_ms": 3.2643,
+      "p50_ms": 3.2255,
+      "p95_ms": 3.9158,
+      "min_ms": 3.0954,
+      "stddev_ms": 0.2542,
+      "iterations": 100,
+      "sql_queries": 2
+    },
+    "create_comment": {
+      "mean_ms": 1.5861,
+      "p50_ms": 1.4026,
+      "p95_ms": 2.2638,
+      "min_ms": 1.1927,
+      "stddev_ms": 1.0169,
+      "iterations": 100,
+      "sql_queries": 1
+    }
+  },
+  "schema_rebuild_samples_ms": [
+    4.9215,
+    4.0954,
+    4.1276,
+    4.484,
+    4.2838
+  ],
+  "aggregation": {
+    "runs": 3,
+    "ops": "median across runs of each statistic",
+    "schema_import_ms": {
+      "reported": "median of the three runs",
+      "samples": [
+        10.628,
+        10.6956,
+        10.9863
+      ],
+      "note": "Cold import of the library, its dependency tree and one schema build. run_all.sh warms every virtualenv before measuring any of them, which removed the bias that used to favour graphex (the seeding step runs under the graphex interpreter)."
+    },
+    "schema_rebuild_samples_ms": {
+      "reported": "the middle run's series, raw and in order",
+      "note": "A within-process DIAGNOSTIC, not a cross-library comparison. Re-executing the declarations perturbs each library's process state differently: django-graphex climbs across the series, ariadne is flat. Read it down one column only."
+    }
+  }
+}

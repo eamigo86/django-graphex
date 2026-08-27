@@ -62,6 +62,92 @@ query { __schema { queryType { name } } }
 # -> error: "GraphQL introspection is disabled."
 ```
 
+### "Did you mean" suggestions are stripped too
+
+`graphql-core` answers a misspelled field, type or argument with the correct
+spelling. That hint names **real schema members**, so probing with invented
+names rebuilds much of the schema the middleware is there to hide:
+
+```graphql
+{ user { emial } }
+# introspection allowed:
+#   "Cannot query field 'emial' on type 'UserType'. Did you mean 'email'?"
+# introspection disabled:
+#   "Cannot query field 'emial' on type 'UserType'."
+```
+
+Only the trailing suggestion sentence is removed — the rest of the message, the
+`locations` and the `path` are untouched, so a client that reports validation
+errors keeps working. The strip is active **only when introspection is actually
+disabled**: it needs `DisableIntrospectionMiddleware` in `MIDDLEWARE` *and*
+`ALLOW_INTROSPECTION=False`. With introspection open the same names are public
+anyway and the suggestion is a genuine development aid, so nothing changes.
+
+!!! note "Superusers do not get the suggestions back"
+
+    `INTROSPECTION_ALLOW_SUPERUSER` still lets an active superuser run
+    `__schema`, but the strip is deliberately request-independent: error bodies
+    are stored in the response cache, and a per-user decision there would serve
+    one caller's body to another.
+
+## Cross-site POST protection
+
+The GraphQL endpoint is `csrf_exempt` — it authenticates each request explicitly
+instead of relying on Django's session-cookie CSRF token. That is fine for
+`application/json`, which a browser cannot send cross-site without a CORS
+preflight. It is **not** fine for the CORS *simple* content types, which need no
+preflight at all: a page on any origin can submit a `<form>` at your endpoint and
+the browser attaches the victim's session cookie.
+
+`REQUIRE_CSRF_HEADER` (default **`True`**) closes that hole. A POST whose content
+type is one of
+
+- `application/x-www-form-urlencoded`
+- `multipart/form-data`
+- `text/plain`
+- *(none at all — a body-less POST carrying its query in the query string)*
+
+must send the **`X-Requested-With`** header, or it is rejected with HTTP 403
+before the body is read:
+
+```json
+{ "errors": [{ "message": "This content type requires the X-Requested-With header. …" }] }
+```
+
+The header value is never inspected; `XMLHttpRequest` is the conventional one.
+What matters is that `X-Requested-With` is **not** on the CORS safelist, so a
+cross-origin request carrying it triggers a preflight the attacker page cannot
+pass.
+
+```python
+import requests
+
+requests.post(
+    "https://app.example.com/graphql/",
+    files={"avatar": open("avatar.png", "rb")},
+    data={"query": "mutation { profileCreate(input: {}) { ok } }"},
+    headers={"X-Requested-With": "XMLHttpRequest"},   # <- required
+)
+```
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `REQUIRE_CSRF_HEADER` | `True` | When `True`, a POST of a CORS-simple content type must carry `X-Requested-With`. Set to `False` only if a client cannot add the header **and** the endpoint is protected another way. |
+
+!!! info "`application/json` and `application/graphql` clients change nothing"
+
+    Neither is a CORS-simple content type, so both already force a preflight.
+    GET requests and the GraphiQL page are unaffected as well.
+
+The [SSE subscription endpoint](subscriptions.md#sse-the-wire-protocol) is
+guarded by the same setting: it is `csrf_exempt` too and reads a form-encoded
+`query` straight out of `request.POST`, so leaving it open would just move the
+forged POST one URL over. Its refusal is the same HTTP 403 carrying the same
+text, sent as a plain body rather than a JSON envelope — an `EventSource`
+client does not parse one, and every other pre-stream rejection on that
+endpoint (`No GraphQL query provided.`, `GraphQL syntax error: …`) is a plain
+body too.
+
 ## Field-level authentication
 
 `AuthenticatedFieldsMiddleware` requires an authenticated user

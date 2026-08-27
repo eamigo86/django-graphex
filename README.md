@@ -23,7 +23,9 @@ your Django models — no DRF, no graphene, no `django-filter`.
 - **Custom validation** — DRF-style inline `validate_<field>()` / `validate()` or a
   `Meta.pydantic_model`.
 - **Permissions, security & directives** — permission classes, depth & cost limits,
-  introspection control, and string/number/date/list directives.
+  introspection control, and string/number/date/list directives. `Meta.only_fields`
+  / `Meta.exclude_fields` are a **security boundary**: a column a type hides is
+  unreadable, unorderable **and** unfilterable through it.
 - **Subscriptions** — real-time GraphQL over Django Channels 4 (optional extra).
 
 > **Coming from `graphene-django` or `graphene-django-extras`?** See the
@@ -99,7 +101,7 @@ Query it with the nested `filter:` argument (`and` / `or` / `not`):
 
 ```graphql
 {
-  users(filter: { is_active: { exact: true }, username: { icontains: "jo" } }) {
+  users(filter: { isActive: { exact: true }, username: { icontains: "jo" } }) {
     results(limit: 10, ordering: "-date_joined") { id username }
     totalCount
   }
@@ -124,6 +126,20 @@ DJANGO_GRAPHEX = {
 }
 ```
 
+Two keys are **not** in that dict on purpose — both ship enabled, and pinning a
+key to its own default only hides that you depend on it:
+
+- **`REQUIRE_CSRF_HEADER`** (`True`) demands an `X-Requested-With` header on
+  form-encoded and `multipart/form-data` POSTs, which a browser can send
+  cross-site with no CORS preflight. `application/json` clients are unaffected;
+  form-encoded and multipart clients get **HTTP 403** without it.
+- **`MAX_SUBSCRIPTIONS_PER_CONNECTION`** (`50`) caps the concurrent operations
+  one `graphql-transport-ws` socket may hold.
+
+Both are documented in
+[Settings](https://eamigo86.github.io/django-graphex/usage/settings/), and both
+are breaking for clients written against 2.2.0.
+
 To use directives, add the middleware and pass `all_directives` to the schema:
 
 ```python
@@ -136,7 +152,7 @@ schema = DjangoGraphQLSchema(query=Query, mutation=Mutation, directives=all_dire
 
 ## Playground
 
-A fully wired example project lives in [`examples/playground/`](examples/playground/). It exercises every major feature end-to-end — types, paginators, filtering, mutations, permissions, subscriptions, and the query optimizer — and installs the library from this repo checkout (editable, no PyPI release needed).
+A fully wired example project lives in [`examples/playground/`](examples/playground/). It exercises every major feature end-to-end — types, paginators, filtering, mutations, permissions, subscriptions, file uploads on both paths, the projection boundary on all three axes, and the query optimizer — and installs the library from this repo checkout (editable, no PyPI release needed). `make test` runs 51 end-to-end tests, several of which assert the verbatim answer strings its README quotes.
 
 ## Documentation
 

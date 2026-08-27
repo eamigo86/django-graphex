@@ -59,9 +59,13 @@ The library's `GraphQLView` includes the rule by default — per-type
 ```python
 # settings.py
 DJANGO_GRAPHEX = {
-    "MAX_QUERY_DEPTH": 10,   # None (default) disables the global cap
+    "MAX_QUERY_DEPTH": 10,   # None (default) is the ONLY way to disable it
 }
 ```
+
+`None` is the only value that turns the global cap off. `0` and negatives used
+to disable it silently, which made a typo look like a configured limit; reading
+either now raises `ImproperlyConfigured`. The smallest usable value is `1`.
 
 On a plain `BaseGraphQLView` (or your own view), add it alongside the standard rules (passing a list
 **replaces** the defaults, so include them):
@@ -78,8 +82,10 @@ class MyGraphQLView(BaseGraphQLView):
 !!! note "What counts as a level"
 
     Only fields with a sub-selection (object/list-of-object fields) add depth;
-    scalars don't. `max_depth = 0` forbids selecting any nested object on that
-    type. With nothing configured, the rule is a no-op.
+    scalars don't. A per-type `Meta.max_depth = 0` forbids selecting any nested
+    object on that type — `0` is a real value there, unlike in the global
+    `MAX_QUERY_DEPTH`, which refuses it. With nothing configured, the rule is a
+    no-op.
 
 ## Query cost analysis
 
@@ -109,7 +115,7 @@ It follows fragments, so they can't be used to under-count.
 ```python
 # settings.py
 DJANGO_GRAPHEX = {
-    "MAX_QUERY_COST": 1000,        # None (default) = never block
+    "MAX_QUERY_COST": 1000,        # None (default) is the ONLY way to disable it
     "EXPOSE_QUERY_COST": False,    # True = add extensions.cost to responses
     "DEFAULT_LIST_MULTIPLIER": 10, # used only when no page size / cap is known
     "MAX_PAGE_SIZE": 100,          # the realistic per-list ceiling (recommended)
@@ -121,7 +127,7 @@ DJANGO_GRAPHEX = {
 
 | Setting | Default | Effect |
 |---------|---------|--------|
-| `MAX_QUERY_COST` | `None` | Budget; queries over it are rejected. `None` never blocks. |
+| `MAX_QUERY_COST` | `None` | Budget; queries over it are rejected. `None` is the **only** way to disable the budget; `0` or a negative value raises `ImproperlyConfigured`. |
 | `EXPOSE_QUERY_COST` | `False` | When `True`, responses include `extensions.cost`. |
 | `MAX_PAGE_SIZE` | `None` | Caps every list multiplier (also a pagination setting). |
 | `DEFAULT_PAGE_SIZE` | `None` | Fallback multiplier for an unbounded list when `MAX_PAGE_SIZE` is not set. |

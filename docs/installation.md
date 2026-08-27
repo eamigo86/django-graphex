@@ -69,8 +69,8 @@ fields and `GraphQLView` works without it — but it is **required to use the
 [`graphql_schema`](usage/settings.md#exporting-the-schema) management command**
 (Django only auto-discovers commands from installed apps), and it is
 **recommended** in general: the app's `AppConfig.ready()` eagerly pre-compiles
-all registered `InputType` and `OutputType` subclasses at startup (instead of
-lazily on first request), so type-compilation errors surface immediately.
+all registered `InputType` and `DjangoObjectType` subclasses at startup (instead
+of lazily on first request), so type-compilation errors surface immediately.
 
 ## Requirements
 

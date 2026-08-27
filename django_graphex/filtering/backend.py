@@ -35,6 +35,7 @@ class FilterBackend:
         filter_fields: Any,
         registry: Registry | None = None,
         custom_filters: list | None = None,
+        node_type: Any = None,
     ) -> Any:
         """Return the GraphQL input type for a model's filter declaration.
 
@@ -44,6 +45,12 @@ class FilterBackend:
             registry: The registry providing related types and choices enums.
             custom_filters: Optional list of "(arg_name, method, metadata)"
                 triples from "@filter_field"-decorated methods.
+            node_type: The COMPILED type that will serve this model's rows,
+                which is what the projection boundary is measured against. Left
+                "None" it is recovered from "registry" -- a model-keyed,
+                last-wins index a type opts out of with "Meta.skip_registry",
+                so a caller that KNOWS which type will serve the request has to
+                say so or the guard answers about a different type.
 
         Returns:
             A "GraphQLInputObjectType" (or "None" when no filterable fields
@@ -79,6 +86,7 @@ class NativeFilterBackend(FilterBackend):
         filter_fields: Any,
         registry: Registry | None = None,
         custom_filters: list | None = None,
+        node_type: Any = None,
     ) -> Any:
         """Build the recursive "<Model>FilterInput" type (memoized).
 
@@ -88,6 +96,10 @@ class NativeFilterBackend(FilterBackend):
             registry: The registry providing related types and choices enums.
             custom_filters: Optional list of "(arg_name, method, metadata)"
                 triples from "@filter_field"-decorated methods.
+            node_type: The COMPILED type serving this model's rows, forwarded
+                to the projection guard. Without it the guard falls back to the
+                registry's last-wins entry, which is not necessarily the type
+                about to serve the request.
 
         Returns:
             A "GraphQLInputObjectType" (or "None" when no filterable fields
@@ -97,7 +109,11 @@ class NativeFilterBackend(FilterBackend):
         from .native_schema import build_filter_input_type
 
         return build_filter_input_type(
-            model, filter_fields, registry, custom_filters=custom_filters
+            model,
+            filter_fields,
+            registry,
+            custom_filters=custom_filters,
+            node_type=node_type,
         )
 
     def apply(self, queryset: QuerySet, value: Any) -> QuerySet:

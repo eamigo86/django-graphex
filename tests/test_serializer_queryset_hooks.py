@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
 
-class HookType(DjangoModelType):
+class QuerysetHookType(DjangoModelType):
     """Model type under test.
 
     Exposes the get_queryset/filter_queryset hooks so tests can monkeypatch
@@ -26,7 +26,7 @@ class HookType(DjangoModelType):
     """
 
     class Meta:
-        """Configuration for "HookType".
+        """Configuration for "QuerysetHookType".
 
         Declares the backing model and the fields exposed to native filtering.
         """
@@ -36,10 +36,10 @@ class HookType(DjangoModelType):
 
 
 class _Query(ObjectType):
-    """Root query exposing single and list fields for "HookType"."""
+    """Root query exposing single and list fields for "QuerysetHookType"."""
 
-    hook = HookType.RetrieveField()
-    hooks = HookType.ListField()
+    hook = QuerysetHookType.RetrieveField()
+    hooks = QuerysetHookType.ListField()
 
 
 _schema = DjangoGraphQLSchema(query=_Query)
@@ -91,17 +91,17 @@ def test_get_queryset_override(db: None, monkeypatch: MonkeyPatch) -> None:
 
     Args:
         db: The pytest-django fixture that grants database access for the test.
-        monkeypatch: Used to patch "HookType.get_queryset" for the duration of
+        monkeypatch: Used to patch "QuerysetHookType.get_queryset" for the duration of
             the test.
     """
     _seed()
 
     def _gq(
-        cls: type[HookType], manager: object, info: object, **kwargs: object
+        cls: type[QuerysetHookType], manager: object, info: object, **kwargs: object
     ) -> QuerySet[HookModel]:
         return HookModel.objects.filter(text__startswith="keep")
 
-    monkeypatch.setattr(HookType, "get_queryset", classmethod(_gq))
+    monkeypatch.setattr(QuerysetHookType, "get_queryset", classmethod(_gq))
 
     res = _execute("{ hooks { results { text } totalCount } }")
     assert res.errors is None, res.errors
@@ -121,17 +121,20 @@ def test_filter_queryset_override(db: None, monkeypatch: MonkeyPatch) -> None:
 
     Args:
         db: The pytest-django fixture that grants database access for the test.
-        monkeypatch: Used to patch "HookType.filter_queryset" for the duration
+        monkeypatch: Used to patch "QuerysetHookType.filter_queryset" for the duration
             of the test.
     """
     a, b, c = _seed()
 
     def _fq(
-        cls: type[HookType], qs: QuerySet[HookModel], info: object, **kwargs: object
+        cls: type[QuerysetHookType],
+        qs: QuerySet[HookModel],
+        info: object,
+        **kwargs: object,
     ) -> QuerySet[HookModel]:
         return qs.filter(text__startswith="keep")
 
-    monkeypatch.setattr(HookType, "filter_queryset", classmethod(_fq))
+    monkeypatch.setattr(QuerysetHookType, "filter_queryset", classmethod(_fq))
 
     res = _execute("{ hooks { results { text } totalCount } }")
     assert res.errors is None, res.errors
@@ -158,18 +161,21 @@ def test_perform_mutate_fallback_when_excluded(
 
     Args:
         db: The pytest-django fixture that grants database access for the test.
-        monkeypatch: Used to patch "HookType.filter_queryset" so it excludes
+        monkeypatch: Used to patch "QuerysetHookType.filter_queryset" so it excludes
             everything.
     """
     obj = HookModel.objects.create(text="drop-1")
 
     def _fq(
-        cls: type[HookType], qs: QuerySet[HookModel], info: object, **kwargs: object
+        cls: type[QuerysetHookType],
+        qs: QuerySet[HookModel],
+        info: object,
+        **kwargs: object,
     ) -> QuerySet[HookModel]:
         return qs.none()  # excludes everything
 
-    monkeypatch.setattr(HookType, "filter_queryset", classmethod(_fq))
+    monkeypatch.setattr(QuerysetHookType, "filter_queryset", classmethod(_fq))
 
-    result = HookType.perform_mutate(obj, info=None)
+    result = QuerysetHookType.perform_mutate(obj, info=None)
     assert result.ok is True
-    assert getattr(result, HookType._meta.output_field_name).pk == obj.pk
+    assert getattr(result, QuerysetHookType._meta.output_field_name).pk == obj.pk

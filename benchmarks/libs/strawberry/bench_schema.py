@@ -74,20 +74,31 @@ class PostFilter:
 
 # --------------------------------------------------------------------------- #
 # Object types (auto fields from the Django models)                            #
+#                                                                              #
+# The declared field lists are the SAME on all four libraries — the harness     #
+# introspects them back out of the running schema and records them under        #
+# ``surface`` in results/<lib>.json, so the fairness rule is checkable from the  #
+# artifact rather than taken on trust. Fields the five operations never query   #
+# (body, createdAt, email, bio, isApproved) are declared anyway, because the    #
+# schema-build number is a comparison of how much surface each library compiles.#
 # --------------------------------------------------------------------------- #
 @strawberry_django.type(Comment, order=CommentOrder)
 class CommentType:
     id: strawberry.auto
-    text: strawberry.auto
     author_name: strawberry.auto
+    text: strawberry.auto
+    is_approved: strawberry.auto
+    created_at: strawberry.auto
 
 
 @strawberry_django.type(Post, filters=PostFilter, order=PostOrder, pagination=True)
 class PostType:
     id: strawberry.auto
     title: strawberry.auto
+    body: strawberry.auto
     status: strawberry.auto
     views_count: strawberry.auto
+    created_at: strawberry.auto
     author: "AuthorType"
     # Nested paginated + ordered comments (the N+1 stressor leaf).
     comments: list[CommentType] = strawberry_django.field(
@@ -99,6 +110,8 @@ class PostType:
 class AuthorType:
     id: strawberry.auto
     name: strawberry.auto
+    email: strawberry.auto
+    bio: strawberry.auto
     # Nested paginated + ordered posts.
     posts: list[PostType] = strawberry_django.field(
         order=PostOrder, pagination=True

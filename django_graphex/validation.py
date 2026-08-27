@@ -117,8 +117,15 @@ class DepthLimitValidationRule(ValidationRule):
         # Read via the module so `override_settings` (which rebuilds the cached
         # settings object) is honored.
         global_max = _settings.graphql_api_settings.MAX_QUERY_DEPTH
-        if global_max:
-            constraints.append(_Constraint(int(global_max), 0, "query"))
+        # None is the ONLY disabling value: a limit of 0 means "allow nothing",
+        # and the settings reader refuses it rather than let it read as falsy
+        # here and silently switch the guard off.
+        if global_max is not None:
+            # Label the budget with the operation the client actually sent.
+            # Both subscription transports now validate with the shared rule
+            # tuple, so a hardcoded "query" would refuse a subscription for an
+            # operation it never wrote.
+            constraints.append(_Constraint(int(global_max), 0, node.operation.value))
 
         self._walk(node.selection_set, root_type, 0, constraints, frozenset())
 

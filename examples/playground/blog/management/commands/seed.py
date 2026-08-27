@@ -154,11 +154,18 @@ class Command(BaseCommand):
                 bio=f"Bio of author {a}",
                 user=user if a == 0 else None,
             )
+            # Each body names the tag the post carries, so the "@filter_field"
+            # search demo has something to find: `filter: { search: "django" }`
+            # matches roughly a third of the posts instead of returning an empty
+            # page and reading like a broken example.
             posts = Post.objects.bulk_create(
                 [
                     Post(
                         title=f"Author {a} Post {p}",
-                        body=f"Body of post {p} by author {a}.",
+                        body=(
+                            f"Body of post {p} by author {a}. "
+                            f"Topic: {tags[p % len(tags)].name}."
+                        ),
                         status=statuses[(a + p) % 3],
                         author=author,
                         category=categories[(a + p) % len(categories)],

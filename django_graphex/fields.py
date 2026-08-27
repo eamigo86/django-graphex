@@ -24,7 +24,11 @@ from .core.descriptors import (
     NativeNonNull,
 )
 from .filtering.filter_field import apply_custom_filters
-from .paginations.pagination import BaseDjangoGraphqlPagination, _split_ordering
+from .paginations.pagination import (
+    BaseDjangoGraphqlPagination,
+    _split_ordering,
+    projected_ordering_attnames,
+)
 from .utils import (
     _apply_field_hook,
     _compute_child_only,
@@ -502,6 +506,17 @@ class DjangoFilterPaginateListField(NativeMountedField):
                 'You need to pass a valid DjangoGraphqlPagination in DjangoFilterPaginateListField, received "{}".'
             ).format(pagination)
 
+            # The ordering allowlist is NOT stamped here. It is a per-SCHEMA
+            # fact — which columns the node type publishes is decided by the
+            # compiled type the schema being built holds, and this class body
+            # can only name the class-def canonical instance, which is a
+            # different object. ``schema_compiler._rescoped_paginate_field``
+            # stamps a copy of this field and of this paginator against the
+            # served node type instead, on every mount path (root fields and a
+            # relation declared on a node type both route through
+            # ``_build_filter_list_field``). Leaving the shared instance
+            # untouched here is what lets one paginator back several fields in
+            # several schemas without the last one built deciding for the rest.
             self.pagination = pagination
 
             # The native compiler (schema_compiler) wires pagination args
@@ -919,6 +934,27 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # --- Pre-check 5: all ordering terms must be concrete attnames ----------
         child = self.type._meta.model
         concrete_attnames = {f.attname for f in child._meta.concrete_fields}
+        # Narrow to what the child TYPE exposes. This path applies the ORDER BY
+        # in SQL and hands back rows already sliced (``already_paginated``), so
+        # ``paginate_queryset`` — and with it the ordering allowlist — never
+        # runs: accepting a projected-away column here would sort by it and no
+        # later guard would see the term. Declining instead routes the query to
+        # the plain prefetch path, which rejects it with the same error the root
+        # list gives.
+        #
+        # ``slice_tuple`` carries the resolved ordering but not its PROVENANCE,
+        # so a paginator whose configured ``ordering=`` names a projected-away
+        # column is declined here too. That costs the window optimization on
+        # exactly that configuration; it never costs correctness, because the
+        # plain prefetch path it falls back to applies the allowlist to the
+        # client argument only and serves the operator's default unchanged.
+        #
+        # The allowlist is derived from ``child_gql_type`` — THIS schema's row
+        # type, threaded in by the walker — rather than read off a paginator
+        # instance the schemas share. A caller that passes no row type gets the
+        # empty allowlist and the optimization simply declines, which is the
+        # documented fallback above.
+        concrete_attnames &= projected_ordering_attnames(child, child_gql_type)
         # order may be a comma-separated string ("id,-title") or an iterable of
         # strings. Normalize to a list of individual terms, converting any
         # camelCase spelling to its snake_case attname (``authorId`` ->
@@ -1188,9 +1224,12 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         Wiring "get_queryset" on nested relations would require rebuilding
         the prefetch queryset inside the resolver, which conflicts with the
-        window-pagination and prefetch optimizations. The documented boundary
-        for per-relation row scoping is a "resolve_<rel>" override on the
-        parent type.
+        window-pagination and prefetch optimizations. The documented hatch for
+        per-relation row scoping is to DECLARE the relation on the parent type
+        as a "DjangoFilterListField", which replaces this auto-expanded
+        container and does apply the hook. A bare "resolve_<rel>" method is not
+        the hatch: this method binds "self.resolver or self.list_resolver" and
+        never consults the parent class.
 
         Args:
             parent_resolver: the resolver supplied by the parent field.

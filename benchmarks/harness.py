@@ -17,10 +17,17 @@ What it measures, per library:
        * validate(): run on the FIRST response — a benchmark that returns the
          wrong shape is INVALID, so we abort loudly on AssertionError.
 
+  3. surface — the declared field list of Author / Post / Comment, read back
+     out of the running schema by introspection. The fairness rule says all four
+     libraries declare the SAME fields; recording them puts that claim in the
+     artifact where a reader can diff it instead of trusting the README.
+
 ``create_comment`` is run LAST (it mutates the DB). All requests go through
 ``django.test.Client`` POSTing to ``/graphql/`` — no network, fully deterministic.
 
-Output: results/<lib>.json.
+Output: results/<lib>.json, or results/<BENCH_PREFIX><lib>.json when
+``BENCH_PREFIX`` is set (``BENCH_PREFIX=2x_`` writes the doubled-dataset
+artifacts ``docs/why.md`` publishes).
 """
 
 import json
@@ -35,28 +42,59 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 BENCH_LIB = os.environ.setdefault("BENCH_LIB", "graphex")
+# Which SEED the run measures is the caller's business, not something this file
+# can detect, so the artifact name carries it: BENCH_PREFIX=2x_ writes
+# results/2x_<lib>.json, the doubled-dataset artifacts docs/why.md cites. Empty
+# by default, so run_all.sh keeps writing results/<lib>.json byte-identically.
+BENCH_PREFIX = os.environ.get("BENCH_PREFIX", "")
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 WARMUP = 15
 TIMED = 100
+# Rebuilds of the schema, timed after the dependency tree is already imported.
+SCHEMA_BUILDS = 5
 
 # Operations that mutate the DB must run last.
 MUTATING = {"create_comment"}
 
 
 def _import_schema():
-    """Import the active library's bench_schema, timing the import (schema build).
+    """Import the active library's bench_schema and time it two separate ways.
 
     ``django.setup()`` must have already run: importing bench_schema pulls in the
-    Django models, which requires the app registry to be populated. The timed
-    region is JUST the schema-building import, not Django bootstrap.
+    Django models, which requires the app registry to be populated.
+
+    The FIRST import pays two costs at once — loading the library and its
+    dependency tree off disk, and building the schema from the declarations —
+    and only the second of those is a property of the library's compiler. They
+    are wildly different sizes (strawberry spends over two orders of magnitude
+    more time importing than building), so reporting the sum as "schema build"
+    compares the wrong thing, and it is the import half that is cold-cache
+    sensitive and therefore noisy.
+
+    So the build is measured on its own: purge ``bench_schema`` from
+    ``sys.modules`` and re-import it. The dependency tree stays cached, so the
+    re-import re-executes only the module body — the declarations and the
+    schema constructor. Verified fresh, not a cache hit: in all four libraries
+    the rebuilt schema object, its ``GraphQLSchema``, its Author type and that
+    type's fields are all new objects.
     """
     import importlib
 
+    name = f"libs.{BENCH_LIB}.bench_schema"
+
     t0 = time.perf_counter()
-    module = importlib.import_module(f"libs.{BENCH_LIB}.bench_schema")
-    schema_import_ms = (time.perf_counter() - t0) * 1000.0
-    return module, schema_import_ms
+    module = importlib.import_module(name)
+    cold_import_ms = (time.perf_counter() - t0) * 1000.0
+
+    build_samples = []
+    for _ in range(SCHEMA_BUILDS):
+        del sys.modules[name]
+        t0 = time.perf_counter()
+        module = importlib.import_module(name)
+        build_samples.append(round((time.perf_counter() - t0) * 1000.0, 4))
+
+    return module, cold_import_ms, build_samples
 
 
 def _post(client, op):
@@ -72,6 +110,41 @@ def _post(client, op):
         f"HTTP {resp.status_code}: {resp.content[:500]!r}"
     )
     return json.loads(resp.content)
+
+
+_SURFACE_QUERY = """
+    query {
+      __schema {
+        types { name fields { name } }
+      }
+    }
+"""
+
+
+def _surface(client):
+    """Read the declared field list of the three benchmarked types back out.
+
+    The fairness rule says all four libraries declare the SAME field lists, and a
+    rule nobody can check is a rule nobody should believe. Introspecting the
+    running schema puts the answer in the result artifact, where a reader can
+    diff it across libraries instead of taking the claim on trust.
+
+    Type names differ by library idiom (ariadne's SDL says ``Post``, the three
+    class-based libraries say ``PostType``), so both spellings are accepted.
+
+    Args:
+        client: A Django test client already pointed at the mounted GraphQL view.
+
+    Returns:
+        Model name mapped to its sorted declared field names.
+    """
+    resp = _post(client, {"query": _SURFACE_QUERY, "variables": None})
+    by_name = {t["name"]: t for t in resp["data"]["__schema"]["types"]}
+    out = {}
+    for model in ("Author", "Post", "Comment"):
+        entry = by_name.get(f"{model}Type") or by_name.get(model)
+        out[model] = sorted(f["name"] for f in (entry or {}).get("fields") or ())
+    return out
 
 
 def _stats(samples_ms):
@@ -93,8 +166,8 @@ def main():
 
     django.setup()
 
-    # 2) Time the schema import (schema build) — the region we actually measure.
-    schema_module, schema_import_ms = _import_schema()
+    # 2) Time the cold import and, separately, the schema build itself.
+    schema_module, cold_import_ms, build_samples = _import_schema()
 
     from django.db import connection
     from django.test import Client
@@ -154,13 +227,24 @@ def main():
             "platform": platform.platform(),
             "cpu_count": os.cpu_count(),
         },
-        "schema_import_ms": round(schema_import_ms, 4),
+        # The cold first import: library + dependency tree + one schema build.
+        # Cold-cache sensitive, so only comparable when every library's
+        # virtualenv was warmed equally beforehand (run_all.sh does that).
+        "schema_import_ms": round(cold_import_ms, 4),
+        # Rebuilds of the schema with the dependency tree already imported, in
+        # order. A DIAGNOSTIC, deliberately not reduced to a single figure and
+        # NOT a cross-library comparison: re-executing the declarations
+        # perturbs each library's process state differently, so the series is
+        # only meaningful read down a single column. django-graphex climbs
+        # here; ariadne is flat. See benchmarks/README.md.
+        "schema_rebuild_samples_ms": build_samples,
+        "surface": _surface(client),
         "ops": results,
     }
 
     out_dir = BASE_DIR / "results"
     out_dir.mkdir(exist_ok=True)
-    out_path = out_dir / f"{BENCH_LIB}.json"
+    out_path = out_dir / f"{BENCH_PREFIX}{BENCH_LIB}.json"
     out_path.write_text(json.dumps(output, indent=2))
     sys.stdout.write(json.dumps(output, indent=2) + "\n")
     sys.stdout.write(f"\nWrote {out_path}\n")

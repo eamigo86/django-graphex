@@ -58,12 +58,17 @@ Process the field value with the directive.
 
 ## Standard GraphQL Directives (spec built-ins)
 
-`all_directives` bundles the GraphQL **specification's** own directives
-alongside the library's own: `@skip`, `@include`, and `@deprecated`. They are
-*not* django-graphex directives: `@skip` / `@include` are evaluated by the
-graphql-core **executor** (no `GraphQLDirectiveMiddleware` required), while
-`@deprecated` is a **type-system (SDL) directive** that annotates the schema —
-it never appears in queries.
+`all_directives` holds 30 directive instances: the library's own 25 plus the
+GraphQL **specification's** 5 — `@skip`, `@include`, `@deprecated`,
+`@specifiedBy` and `@oneOf` (graphql-core's `specified_directives` bundle).
+The last five are *not* django-graphex directives: `@skip` / `@include` are
+evaluated by the graphql-core **executor** (no `GraphQLDirectiveMiddleware`
+required), while `@deprecated`, `@specifiedBy` and `@oneOf` are **type-system
+(SDL) directives** that annotate the schema — they never appear in queries.
+Only the three documented below are ones you interact with; `@specifiedBy`
+(custom-scalar specification URLs) and `@oneOf` (exactly-one-key input objects)
+ride along with graphql-core's bundle and are never emitted by this library's
+own compiler.
 
 ### @skip
 
@@ -182,8 +187,8 @@ query {
 !!! info "String directives pass `null` through"
 
     Every string directive (`@uppercase`, `@lowercase`, `@capitalize`,
-    `@camelCase`, `@snakeCase`, `@kebabCase`, `@swapCase`, `@strip`,
-    `@titleCase`, `@center`, `@replace`, `@truncate`, `@slugify`) returns
+    `@camel_case`, `@snake_case`, `@kebab_case`, `@swap_case`, `@strip`,
+    `@title_case`, `@center`, `@replace`, `@truncate`, `@slugify`) returns
     `null` for a `null` field value instead of rendering the literal text
     `"None"`. This matches `@floor`, `@ceil`, `@round` and `@abs`.
 
@@ -736,8 +741,8 @@ class MaskGraphQLDirective(BaseExtraGraphQLDirective):
 from django_graphex.directives import all_directives
 from django_graphex.schema import DjangoGraphQLSchema
 
-# Add custom directive to the list (all_directives already includes the
-# built-in @skip / @include / @deprecated directives).
+# Add custom directive to the list (all_directives already bundles the five
+# spec directives along with this library's own).
 custom_directives = [
     *all_directives,
     MaskGraphQLDirective()

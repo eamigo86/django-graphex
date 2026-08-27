@@ -27,7 +27,7 @@ class Registry:
         """Initialize empty registry stores.
 
         Creates the separate keyed stores for object/input types, list types,
-        enums, directives, unions, interfaces and interface implementors.
+        enums, directives, unions and interfaces.
         """
         #: (model, for_input) -> object/input type. ``for_input`` is None for
         #: output types, else the action key ("create"/"update"/"delete").
@@ -41,10 +41,10 @@ class Registry:
         #: (which is (model, for_input)-keyed); a union has no single model so it
         #: cannot live in ``_types`` without breaking that invariant.
         self._union_types: dict[str, Any] = {}
-        #: GraphQL type name -> DjangoInterfaceType subclass.
+        #: GraphQL type name -> DjangoInterfaceType subclass. Implementors are
+        #: NOT stored alongside it: ``get_member_models`` derives them from
+        #: ``_types`` on demand, so a second store could only go stale.
         self._interface_types: dict[str, Any] = {}
-        #: interface GraphQL name -> list of implementor DjangoObjectTypes.
-        self._interface_implementors: dict[str, list] = {}
         #: child_model -> every host class declared for it IN THIS REGISTRY, in
         #: declaration order. It drives the nested projection merge, the nested
         #: permission stamp, the write-time row scoping and the write-time

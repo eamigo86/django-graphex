@@ -33,58 +33,10 @@ from graphql import GraphQLSchema
 
 pytest.importorskip("channels")
 
-from django_graphex.types import DjangoObjectType as _DOT  # noqa: E402
-from tests.models import Post  # noqa: E402
 
-
-class _TagT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Tag"]).Tag
-
-
-class _CategoryT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Category"]).Category
-
-
-class _AuthorT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Author"]).Author
-
-
-class _PostT(_DOT):
-    class Meta:
-        model = Post
-
-
-def _full_schema_with_subscription() -> GraphQLSchema:
-    """Build a native schema mounting a Post SubscriptionField ("post" present).
-
-    Returns:
-        schema: The assembled GraphQLSchema with a "post" subscription field.
-    """
-    from graphql import GraphQLBoolean
-
-    from django_graphex.core import ObjectType, field
-    from django_graphex.core.registry_compiler import compile_all_outputs
-    from django_graphex.schema import DjangoGraphQLSchema
-    from django_graphex.types import DjangoModelType
-
-    class PostModelType(DjangoModelType):
-        class Meta:
-            model = Post
-            stream = "posts"
-            payload_mode = "full"
-
-    class Query(ObjectType):
-        ok = field(GraphQLBoolean)
-
-    class SubscriptionRoot(ObjectType):
-        post = PostModelType.SubscriptionField()
-
-    compile_all_outputs()
-    schema = DjangoGraphQLSchema(query=Query, subscription=SubscriptionRoot)
-    return schema.graphql_schema
+# The node types Post's relation graph needs, and the assembled schema, are
+# built ONCE process-wide by the shared module (see its docstring).
+from tests.subscriptions._transport_schema import build_native_schema  # noqa: E402
 
 
 def _pruned_schema_without_subscription() -> GraphQLSchema:
@@ -230,7 +182,7 @@ async def test_sse_plain_schema_accepts_valid_subscription_field(
 
     monkeypatch.setattr(sse, "create_source_event_stream", _stub)
 
-    full = _full_schema_with_subscription()
+    full = build_native_schema()
     view = sse.subscription_sse_view(schema=full)
     response = await view(_make_request(_SUB_QUERY, user=_User()))
     assert response.status_code == 200
@@ -357,7 +309,7 @@ async def test_ws_provider_resolved_once_per_connection(
 
     monkeypatch.setattr(ws, "create_source_event_stream", _stub)
 
-    full = _full_schema_with_subscription()
+    full = build_native_schema()
     calls = {"n": 0}
 
     def provider(user: "_User") -> GraphQLSchema:
@@ -396,7 +348,7 @@ async def test_ws_plain_schema_validates_known_subscription_field(
 
     monkeypatch.setattr(ws, "create_source_event_stream", _stub)
 
-    full = _full_schema_with_subscription()
+    full = build_native_schema()
     consumer = _ws_consumer({"user": _User()}, schema=full)
     await consumer._run_operation("1", {"query": _SUB_QUERY})
     assert "Cannot query field" not in json.dumps(consumer._sent)

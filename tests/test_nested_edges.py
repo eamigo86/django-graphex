@@ -42,27 +42,27 @@ def _create(type_cls: type[DjangoModelType], data: dict[str, Any]) -> Any:
 
 
 class PostNestedType(DjangoModelType):
-    """Nested-fields type declaring one real relation and one bogus one.
+    """Nested-fields type declaring one real relation.
 
-    "author" is a real forward FK; "bogus" is not a model relation, so it
-    exercises the non-introspectable-nested-field branch below.
+    "author" is a real forward FK. A key naming no relation cannot be declared
+    any more -- "types._check_nested_field_keys" refuses it at class definition
+    (see "tests.test_write_host_misconfiguration").
     """
 
     class Meta:
-        """Bind the type to "Post" with a mix of valid and bogus nested fields.
+        """Bind the type to "Post" with one nested field.
 
-        "bogus" has no corresponding model relation on purpose.
+        "author" is a forward FK, so it exercises the to-one nested branch.
         """
 
         model = Post
-        nested_fields = {"author": Author, "bogus": Author}
+        nested_fields = {"author": Author}
 
 
 class DeclaredButAbsentTest(TestCase):
-    """Coverage for nested fields declared but absent from, or unmapped in, the payload.
+    """Coverage for nested fields declared but absent from the payload.
 
-    Exercises both the "field not in data" skip and the non-introspectable
-    (non-relation) nested-key pass-through.
+    Exercises the "field not in data" skip.
     """
 
     def test_nested_field_absent_from_payload_is_skipped(self) -> None:
@@ -78,12 +78,12 @@ class DeclaredButAbsentTest(TestCase):
         assert result.ok, getattr(result, "errors", None)
         assert Post.objects.get().author.name == "A"
 
-    def test_non_introspectable_nested_left_for_parent(self) -> None:
-        """A nested key that is not a model relation is left in data for the parent backend.
+    def test_unmapped_payload_key_left_for_parent(self) -> None:
+        """A payload key the nested mapping does not name is left for the backend.
 
-        This test breaks if a non-relation nested key ("bogus") stops being
-        passed through untouched, since the parent backend relies on silently
-        ignoring unknown keys instead of the nested mixin failing on them.
+        This test breaks if an unknown payload key stops being passed through
+        untouched, since the parent backend relies on silently ignoring unknown
+        keys instead of the nested mixin failing on them.
         """
         result = _create(
             PostNestedType,

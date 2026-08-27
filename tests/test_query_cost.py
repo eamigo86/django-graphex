@@ -23,7 +23,7 @@ from graphql import (
 from django_graphex import cost as cost_module
 from django_graphex.core import ObjectType, field
 from django_graphex.cost import CostLimitValidationRule, analyze_cost
-from django_graphex.registry import get_global_registry
+from django_graphex.registry import Registry, get_global_registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoListObjectType, DjangoModelType, DjangoObjectType
 from django_graphex.views import GraphQLView
@@ -349,6 +349,10 @@ class ComplexityWiringTest(TestCase):
             class Meta:
                 model = Author
                 complexity = 7
+                # Private registry: this test only reads "_meta", so the type must
+                # not claim the model's canonical slot on the global registry --
+                # a schema built later would resolve the relation through it.
+                registry = Registry()
 
         self.assertEqual(_ComplexityAuthorType._meta.complexity, 7)
 
@@ -359,12 +363,16 @@ class ComplexityWiringTest(TestCase):
         be readable off "_meta.complexity".
         """
 
-        class _AuthorList(DjangoListObjectType):
+        class _ComplexityAuthorList(DjangoListObjectType):
             class Meta:
                 model = Author
                 complexity = 8
+                # Private registry: this test only reads "_meta", so the type must
+                # not claim the model's canonical slot on the global registry --
+                # a schema built later would resolve the relation through it.
+                registry = Registry()
 
-        self.assertEqual(_AuthorList._meta.complexity, 8)
+        self.assertEqual(_ComplexityAuthorList._meta.complexity, 8)
 
     def test_serializer_type_forwards_complexity_to_output_type(self) -> None:
         """Assert a serializer type's complexity propagates to its output type.
@@ -376,13 +384,13 @@ class ComplexityWiringTest(TestCase):
         reg._types.pop((UUIDItem, None), None)
         reg._list_types.pop(UUIDItem, None)
 
-        class _ItemType(DjangoModelType):
+        class _ComplexityItemType(DjangoModelType):
             class Meta:
                 model = UUIDItem
                 complexity = 9
 
-        self.assertEqual(_ItemType._meta.complexity, 9)
-        self.assertEqual(_ItemType._meta.output_type._meta.complexity, 9)
+        self.assertEqual(_ComplexityItemType._meta.complexity, 9)
+        self.assertEqual(_ComplexityItemType._meta.output_type._meta.complexity, 9)
 
 
 class CostViewWiringTest(TestCase):

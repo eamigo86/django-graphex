@@ -7,7 +7,10 @@ to qs.order_by() with no validation.
 (a) invalid field name → Django FieldError leaks the full model field list
     (CWE-209). Fix: raise GraphQLError('Invalid ordering field: ...').
 (b) hidden/non-exposed column (e.g. 'password') → silent sort oracle.
-    Fix: only concrete attnames from _meta.concrete_fields are allowed.
+    Fix: only the attnames the GraphQL TYPE exposes are allowed. The
+    projection half of that guarantee lives in
+    tests/test_pagination_ordering_projection.py; this module covers the
+    model-level half (a term that is not a concrete column at all).
 (c) relation-spanning term ('a__b__c') → arbitrary join chain DoS.
     Fix: reject any term whose root (before '__') is not a concrete attname.
 
@@ -237,30 +240,40 @@ class TestInvalidFieldRaisesGraphQLError(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# (b) Hidden/non-exposed column — relation traversal is the actual block
+# (b) Hidden/non-exposed column — the model-level half of the allowlist
 # ---------------------------------------------------------------------------
 # The security boundary of the allowlist is:
-#   - Concrete attnames on the queryset's model are allowed (prevents FieldError
-#     leaking the field list and prevents relation-chain DoS).
+#   - Only attnames the GraphQL TYPE exposes are allowed. A column removed with
+#     'only_fields' / 'exclude_fields' is rejected, so 'ordering' can no longer
+#     rank rows by a column the client cannot select.
 #   - Non-existent fields are rejected (covers typos + injected field names).
 #   - Relation-spanning lookups ('a__b') are rejected even when 'a' exists.
 #
-# Ordering by a concrete column like 'password' on a User queryset cannot be
-# blocked at the paginator level alone because the paginator has no reference
-# to which schema fields are exposed — that requires application-level
-# schema design (e.g. not exposing LimitOffset ordering on User types at all,
-# or customising allowed_orderings in the type).
+# This block used to state the OPPOSITE: that ordering by a concrete column like
+# 'password' "cannot be blocked at the paginator level alone because the
+# paginator has no reference to which schema fields are exposed". That was a
+# real design decision and it was wrong — it left 'ordering' a read oracle over
+# every hidden column. The paginator now carries the type's projection
+# ('ordering_allowed_attnames'), stamped on a COPY of the paginator once per
+# SCHEMA — in the list container's fields thunk, in the flat paginated list
+# field's constructor, and again in the permission pruner for each pruned clone
+# — because which columns a node publishes is a per-schema fact and the
+# paginator instance is shared. The projection half of the contract is pinned in
+# tests/test_pagination_ordering_projection.py and
+# tests/test_ordering_allowlist_scope.py.
 #
-# We document this boundary and test the cases the paginator CAN enforce.
+# What stays here is the half that needs no type: a term naming a column the
+# MODEL does not have, and a relation-spanning term. A bare paginator built in
+# a test carries no projection, so it still allows every concrete column.
 
 
 class TestHiddenColumnRejected(TestCase):
     """Ordering by fields that don't exist on the model must be rejected.
 
-    True 'hidden concrete column' blocking requires schema-level controls
-    (not exposing User password field types).  The paginator enforces the
-    concrete-attname allowlist which prevents FieldError disclosure and
-    relation-chain DoS.
+    A paginator constructed directly carries no type projection, so these
+    cases exercise the model-level allowlist: non-existent columns and
+    relation names that are not concrete attnames. Blocking a column the type
+    projects away is covered in tests/test_pagination_ordering_projection.py.
     """
 
     def setUp(self) -> None:

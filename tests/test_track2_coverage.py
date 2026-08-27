@@ -905,7 +905,6 @@ def test_django_interface_type_self_registers_into_global_registry_by_default() 
         assert global_reg._interface_types.get(iface_name) is _GlobalDefaultInterface
     finally:
         global_reg._interface_types.pop(iface_name, None)
-        global_reg._interface_implementors.pop(iface_name, None)
 
 
 # =========================================================================== #

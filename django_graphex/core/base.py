@@ -661,6 +661,59 @@ _gdx_output_registry: list[_GdxOutputEntry] = []
 _gdx_shared_output_registry: Any = None
 
 
+def buried_config_error(error: BaseException) -> Exception | None:
+    """Dig a configuration error out of a graphql-core thunk wrapper.
+
+    Args:
+        error: The exception graphql-core raised.
+
+    Returns:
+        The "ImproperlyConfigured" somewhere in the cause chain, or None when
+        the failure is genuinely a graphql-core type error.
+    """
+    from django.core.exceptions import ImproperlyConfigured
+
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, ImproperlyConfigured):
+            return cause
+        cause = cause.__cause__
+    return None
+
+
+def recompile_fields(gql_type: Any) -> None:
+    """Drop a compiled type's cached field map and build it again, eagerly.
+
+    Every eager force site routes through here, and the reason is the SECOND
+    line: graphql-core rewraps ANYTHING a fields thunk raises as a plain
+    "TypeError" whose message is a chain of type names. A build-time refusal --
+    a projection contradiction, a filter entry naming nothing -- is raised
+    inside such a thunk, so it reached the operator as a "TypeError" naming
+    types they never declared, and every doc stating the contract had to lie
+    about it. Which site happens to force the thunk first is an implementation
+    detail; the exception the operator sees must not depend on it.
+
+    The cached map is dropped first because "GraphQLObjectType.fields" is a
+    "cached_property": a premature read (a test, a mid-thunk peek) may have
+    cached a fallback for a relation whose target was not registered yet.
+
+    Args:
+        gql_type: The compiled type whose field map is forced.
+
+    Raises:
+        Exception: The buried "ImproperlyConfigured", when the thunk raised
+            one; otherwise graphql-core's own wrapper, untouched.
+    """
+    gql_type.__dict__.pop("fields", None)
+    try:
+        _ = gql_type.fields
+    except TypeError as error:
+        buried = buried_config_error(error)
+        if buried is None:
+            raise
+        raise buried from None
+
+
 def get_shared_output_registry() -> Any:
     """Return the process-wide shared "NativeOutputRegistry" singleton.
 

@@ -114,13 +114,15 @@ class ViewBaseTest(TestCase):
 
     def test_form_urlencoded_body(self) -> None:
         """Ship-broken contract: a URL-encoded form body carrying "query" must
-        be accepted and executed successfully.
+        be accepted and executed successfully. The header is what the
+        CORS-simple POST guard asks such a caller to add.
         """
         view = BaseGraphQLView.as_view(schema=_schema)
         request = self.factory.post(
             "/graphql/",
             "query=" + "%7B+hello+%7D",  # urlencoded "{ hello }"
             content_type="application/x-www-form-urlencoded",
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
         response = view(request)
         self.assertEqual(response.status_code, 200)

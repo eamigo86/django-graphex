@@ -4,6 +4,8 @@
   nested lists (results/totalCount, N+1-safe), directives.
 - Private queries (require auth): "me" and "myNotes" (scoped to the user).
 - Mutations: Note create/update/delete via DjangoModelType + permissions.
+- Nested writes: "postWithCommentsCreate", gated by the child's own permission
+  ("CommentModelType") the way 2.2.0 requires.
 - Subscriptions: public "postSubscription" and private "noteSubscription".
 """
 
@@ -81,48 +83,79 @@ class UserType(DjangoObjectType):
     """GraphQL type for the auth user, exposed by the private "me" query.
 
     Demonstrates a DjangoObjectType over the project user model with a small
-    filter allowlist.
+    filter allowlist, and the projection boundary on the one column where
+    getting it wrong is unforgivable: the password hash.
     """
 
     class Meta:
-        """Bind the type to the user model and its filterable fields.
+        """Bind the type to the user model, hide the hash, list the filters.
+
+        "exclude_fields" projects "User.password" away. The library treats that
+        as a SECURITY boundary rather than an output shape — the same rule
+        "AuthorType" demonstrates on "bio", stated here on a column whose leak
+        would be a real incident. Without it the hash is published to every
+        AUTHENTICATED caller, because "Author.user" reaches this type:
+
+            { authors { results { user { password } } } }
+            Cannot query field 'password' on type 'UserType'.
+
+        An anonymous caller is stopped one layer earlier, by "resolve_user"
+        below — that is a SECOND wall, not this one. Two walls on one column is
+        the point: the projection is what still holds the day the resolver is
+        relaxed, and the resolver is what holds if a future type publishes the
+        column again.
+
+        Where the FILTER axis is concerned, this type is a lesson in itself.
+        The "filter_fields" below compile no input at all in this schema: no
+        field anywhere mounts a filtered list of users ("me" is a single
+        object), so "UserFilterInput" never reaches the type map. A
+        "filter_fields" entry is measured against the projection when the input
+        it belongs to is COMPILED — so on this type, unlike "AuthorType" or
+        "CommentType", naming "password" here would build cleanly and serve
+        nothing. Do not read that as permission: the moment a list of users is
+        mounted the entry compiles and the build fails.
 
         Filtering allows an exact id lookup and a substring "username" lookup.
         """
 
         model = User
+        exclude_fields = ("password",)
         filter_fields = {"id": ("exact",), "username": ("icontains",)}
-
-
-class CategoryType(DjangoObjectType):
-    """GraphQL type for a post category.
-
-    Demonstrates exact and icontains lookups on the "name" field.
-    """
-
-    class Meta:
-        """Bind the type to the Category model and its filterable fields.
-
-        Filtering on "name" allows both exact and substring lookups.
-        """
-
-        model = Category
-        filter_fields = {"id": ("exact",), "name": ("exact", "icontains")}
 
 
 class CommentType(DjangoObjectType):
     """GraphQL type for a post comment.
 
-    Demonstrates a substring lookup over the free-text "text" field.
+    Demonstrates a substring lookup over the free-text "text" field, and the
+    read half of the "internal_note" projection.
     """
 
     class Meta:
-        """Bind the type to the Comment model and its filterable fields.
+        """Bind the type to Comment, hide the moderation note, list the filters.
+
+        "internal_note" is an ordinary editable column, so leaving it alone
+        would publish every moderator's scratchpad. Projecting it away closes
+        every axis this type reaches:
+
+        - Output. "comments { results { internalNote } }" answers
+          "Cannot query field 'internalNote' on type 'CommentType'."
+        - Filter. "CommentFilterInput" carries "id" and "text" only; naming
+          "internal_note" in the "filter_fields" below would raise
+          "ImproperlyConfigured" while the schema builds.
+
+        The ordering axis is not reachable HERE, and for a reason worth
+        knowing: "CommentListType" paginates by cursor, and a cursor paginator
+        takes its ordering from its own constructor rather than from the
+        client, so "results" publishes "first" / "cursor" and no "ordering"
+        argument at all. See "AuthorType" for the same rule on a list that does
+        take one. The write half of this projection lives on
+        "CommentModelType".
 
         Filtering targets the free-text "text" field with a substring lookup.
         """
 
         model = Comment
+        exclude_fields = ("internal_note",)
         filter_fields = {"id": ("exact",), "text": ("icontains",)}
 
 
@@ -224,6 +257,24 @@ class PostType(DjangoObjectType):
     # types before the query optimizer runs.
     # Try it: anonymous request → only PUBLISHED posts returned.
     #         authenticated request (log in via /admin) → all posts visible.
+    #
+    # READ THE BOUNDARY BEFORE YOU COPY THIS — it is a FIELD-level scope, not a
+    # model-level one, and it is documented as such in
+    # docs/usage/types.md#relation-scope-hatch ("Remaining boundary: auto-expanded
+    # relation fields"). An AUTO-EXPANDED relation does not call it, in either
+    # direction, and the seed data below makes that visible rather than hiding it:
+    #
+    #   { posts { results { title status } } }                  scoped   (published only)
+    #   { categories { name posts { title status } } }          scoped   (declared hatch,
+    #                                                                     see CategoryType)
+    #   { authors { results { posts { results { status } } } } } NOT scoped — drafts
+    #                                                            come back through the
+    #                                                            auto-expanded relation
+    #
+    # The third one is the documented behaviour, not a bug: rebuilding the prefetch
+    # queryset inside the resolver would break window pagination and the .only()
+    # plan. If you need the rows hidden through the relation too, declare the field
+    # — CategoryType.posts above is that same query with the hatch mounted.
     @classmethod
     def get_queryset(cls, queryset: QuerySet, info: GraphQLResolveInfo) -> QuerySet:
         """Scope every top-level Post query by the requester's auth state.
@@ -231,6 +282,10 @@ class PostType(DjangoObjectType):
         This hook runs on all four top-level field types (single, list,
         paginated, list-object) before the query optimizer, so anonymous
         callers see only published posts while authenticated callers see all.
+
+        It is a FIELD-level scope: an auto-expanded relation does not call it.
+        See the comment above and the relation-scope hatch in
+        "docs/usage/types.md".
 
         Args:
             queryset: The base Post queryset to scope.
@@ -246,6 +301,55 @@ class PostType(DjangoObjectType):
             return queryset
         # Anonymous users only see published posts.
         return queryset.filter(status=Post.Status.PUBLISHED)
+
+
+# CategoryType is declared AFTER PostType because it mounts PostType directly as
+# the to-MANY arm of the relation-scope hatch below.
+class CategoryType(DjangoObjectType):
+    """GraphQL type for a post category, hosting the to-MANY scope hatch.
+
+    Demonstrates exact and icontains lookups on the "name" field, and the
+    to-MANY arm of the relation-scope hatch documented in
+    "docs/usage/types.md#relation-scope-hatch".
+    """
+
+    # ---- Relation-scope hatch, to-MANY arm ---------------------------------- #
+    # An AUTO-EXPANDED reverse relation reads out of the parent's prefetch cache
+    # and therefore never calls the child type's `get_queryset`. Left alone,
+    # `categories { posts { results { status } } }` hands an ANONYMOUS caller the
+    # DRAFT posts that `PostType.get_queryset` exists to hide — the leak
+    # docs/usage/types.md calls out under "Remaining boundary".
+    #
+    # Declaring the relation as a DjangoFilterListField replaces the auto-expanded
+    # container with a field that carries a resolver of its own, and that resolver
+    # runs the hook. Two costs, both deliberate:
+    #
+    #   1. The WIRE SHAPE changes from the container (`posts { results { … } }`)
+    #      to a plain list (`posts { … }`). Compare it against
+    #      `authors { results { posts { results { … } } } }`, which is still the
+    #      auto-expanded container and still shows drafts to anonymous callers.
+    #   2. `posts__…` leaves the filter axis. The entry below is REFUSED and
+    #      STOPS THE SCHEMA BUILDING — it is not dropped in silence:
+    #
+    #        filter_fields = {"posts__title": ("icontains",)}
+    #        django.core.exceptions.ImproperlyConfigured: … CategoryType …
+    #
+    #      because that entry compiles to an ORM join which reaches the very rows
+    #      the hook hides, one substring at a time. Nothing leaves the ORDERING
+    #      allowlist here: a reverse FK owns no column on the Category row.
+    posts = DjangoFilterListField(PostType)
+
+    class Meta:
+        """Bind the type to the Category model and its filterable fields.
+
+        Filtering on "name" allows both exact and substring lookups. There is
+        deliberately no "posts__" entry: declaring the hatch above withdraws
+        that relation from the filter axis, and writing one anyway fails the
+        build rather than serving a join around the scope.
+        """
+
+        model = Category
+        filter_fields = {"id": ("exact",), "name": ("exact", "icontains")}
 
 
 # --------------------------------------------------------------------------- #
@@ -293,16 +397,99 @@ class AuthorType(DjangoObjectType):
 
     # Explicit nested list (instead of the auto-generated one) so we can attach a
     # per-field optimize hook below. Reuses PostListType's pagination + filtering.
+    #
+    # NOTE this is still the AUTO-EXPANDED shape, only mounted by hand: it reads
+    # from the prefetch cache, so PostType.get_queryset does NOT run here and an
+    # anonymous caller sees drafts through it. That is the documented boundary —
+    # CategoryType.posts is the same relation with the hatch mounted. See
+    # docs/usage/types.md#relation-scope-hatch.
     posts = DjangoNestedListObjectField(PostListType, accessor="posts")
 
+    # ---- Relation-scope hatch, to-ONE arm ----------------------------------- #
+    # `Author.user` is a forward FK, so the auto-expanded field is a plain
+    # attribute read off the already-fetched parent (select_related) — no resolver
+    # is wired at all, and a bare `resolve_user` without this declaration would be
+    # SILENTLY IGNORED. Declaring the field is what makes the resolver run.
+    #
+    # A relation served by a resolver of your own is a MASK: what the client reads
+    # is whatever the callable returns, not what the row holds. So the key behind
+    # it leaves both of the other axes, and here BOTH refusals bite:
+    #
+    #   ordering  -> `authors { results(ordering: "userId") { name } }` answers
+    #                `Invalid ordering field: 'user_id'.` (the term is normalized
+    #                to the column before it is judged) — ranking rows by the raw
+    #                FK is a read of a key this type no longer hands out.
+    #   filter    -> `filter_fields = {"user": ("exact",)}` (or "user__username")
+    #                STOPS THE SCHEMA BUILDING with ImproperlyConfigured, because
+    #                the join runs past this resolver entirely.
+    #
+    # Drop those entries when you declare either arm; the Meta below has none.
+    user = Field(UserType)
+
     class Meta:
-        """Bind the type to the Author model and its filterable fields.
+        """Bind the type to the Author model, its projection and its filters.
+
+        "exclude_fields" projects "Author.bio" away, and the library treats that
+        as a SECURITY boundary rather than an output shape: the column is
+        unreadable, unorderable and unfilterable through this type — ONE rule,
+        THREE axes. Paste these into GraphiQL and read the three answers:
+
+        1. UNREADABLE. Selecting it is a plain not-found; the column is absent
+           from the SDL, so no client can ask for it::
+
+               { authors { results { bio } } }
+               Cannot query field 'bio' on type 'AuthorType'.
+
+        2. UNORDERABLE. Ranking the visible rows by a hidden column recovers it
+           one comparison at a time, so the term is refused at query time::
+
+               { authors { results(ordering: "bio") { id name } } }
+               Invalid ordering field: 'bio'.
+
+           The control matters as much as the refusal — a published column is
+           untouched: "results(ordering: \\"name\\")" still sorts.
+
+        3. UNFILTERABLE. There is no lookup to send, because "AuthorFilterInput"
+           carries no "bio" field. Adding "bio" to the "filter_fields" below
+           does NOT quietly drop the entry: it raises "ImproperlyConfigured"
+           while the schema builds, because a "filter_fields" entry naming a
+           projected-away column is a contradiction between two "Meta" options
+           on the same type, and only you can say which half was meant.
+
+        The same rule reaches further than "only_fields" / "exclude_fields":
+        "UserType" applies it to the password hash, "CommentType" to a
+        moderation note, and the "user" declaration above withdraws a relation's
+        key by carrying a resolver. See
+        "docs/usage/types.md#projection-security-boundary" for the canonical
+        statement, and "tests/test_projection_boundary.py", which pins the three
+        axes on the very schema "make run" serves.
 
         Filtering allows an exact id lookup and a substring "name" lookup.
         """
 
         model = Author
+        exclude_fields = ("bio",)
         filter_fields = {"id": ("exact",), "name": ("icontains",)}
+
+    def resolve_user(self, info: GraphQLResolveInfo) -> User | None:
+        """Serve the linked user to authenticated callers only.
+
+        The to-ONE arm of the relation-scope hatch. Without the "user"
+        declaration above, this method would never be called: an auto-expanded
+        forward FK is a plain attribute read and nothing looks for a
+        "resolve_<relation>" on the parent type.
+
+        Args:
+            info: The GraphQL resolve info carrying the request context.
+
+        Returns:
+            user: The author's linked user for an authenticated caller,
+                otherwise None.
+        """
+        caller = getattr(info.context, "user", None)
+        if caller is None or not caller.is_authenticated:
+            return None
+        return self.user
 
     @staticmethod
     def optimize_posts(
@@ -456,10 +643,20 @@ class AttachmentType(DjangoObjectType):
         through a GenericPrefetch with one ".only()"-narrowed queryset per
         content type (Account fetches "balance", Invoice fetches "amount"),
         batched across all attachments, with no N+1.
+
+        "content_type" and "object_id" are excluded on purpose. They are the
+        two raw columns the GenericForeignKey is built from, and "target"
+        already exposes what they point at, typed. Leaving "content_type" in
+        would also make the compiler log a warning on every management command:
+        its target model "ContentType" has no registered DjangoObjectType, so
+        the relation is dropped from the type anyway. Excluding it keeps the
+        output identical and the log quiet. The columns stay on the model, so
+        the GenericPrefetch above is unaffected.
         """
 
         model = Attachment
         unions = {"target": AttachmentTargetUnion}
+        exclude_fields = ("content_type", "object_id")
 
 
 class AttachmentListType(DjangoListObjectType):
@@ -479,7 +676,8 @@ class AttachmentListType(DjangoListObjectType):
 
 
 # --------------------------------------------------------------------------- #
-# Custom permission — demonstrates BasePermission subclassing.               #
+# Custom permission — demonstrates BasePermission subclassing. Assigned on    #
+# "CommentModelType" below, which is what gates the nested write.             #
 # AllowAny, IsAuthenticated, IsAdmin, and IsAdminOrReadOnly are imported      #
 # above so you can assign them on any DjangoModelType.permission_classes      #
 # without adding extra imports yourself.                                      #
@@ -718,11 +916,22 @@ class CommentSubscription(Subscription):
         """Bind the subscription to Comment with a full-payload notification.
 
         Notifications flow on the "comments" stream.
+
+        "exclude_fields" RESTATES what "CommentType" already projects away, and
+        it has to: a subscription bound to "Meta.model" builds its event type
+        and its filter input from the MODEL, so it is measured against its OWN
+        "Meta" and inherits nothing from the type registered for that model.
+        Drop this line and "internal_note" becomes both selectable and
+        filterable by an anonymous subscriber on both transports, while every
+        query surface keeps refusing it. Pinned by
+        "tests/test_projection_boundary.py"; the library-level gap is
+        documented at "docs/usage/types.md#projection-security-boundary".
         """
 
         model = Comment
         stream = "comments"
         payload_mode = "full"
+        exclude_fields = ("internal_note",)
 
 
 # --------------------------------------------------------------------------- #
@@ -798,6 +1007,21 @@ class PrivateQuery(ObjectType):
     me = field(UserType, description="The current user.")
     # NoteModelType.filter_queryset scopes this list to the current user; the
     # field's own resolver (cls.list) runs, so no resolve_* method is needed.
+    #
+    # Two things to notice on this one field, both of them recent:
+    #
+    # 1. WIRE-VISIBLE RENAME (2.2.0). The container a DjangoModelType generates is
+    #    `NoteListGenericType`, not `NoteListType` — the old name collided with the
+    #    one the guides give your own DjangoListObjectType, so declaring both over
+    #    one model failed the build with `Schema must contain uniquely named
+    #    types`. Field names and shapes are unchanged; a client document that
+    #    spells the container's type name out needs updating.
+    # 2. `totalCount` IS LAZY. This path used to issue its `COUNT(*)` whether or
+    #    not you selected it, so `myNotes { results { title } }` paid for two round
+    #    trips where the DjangoListObjectField path paid for one. Select `results`
+    #    alone and watch the SQL panel: one query. Add `totalCount` and the count
+    #    appears — still over the UNSLICED queryset, so the number is the same as
+    #    before under a filter or a page limit.
     my_notes = NoteModelType.ListField(description="Notes owned by the current user.")
 
     def resolve_me(self, info: GraphQLResolveInfo) -> User | None:
@@ -833,20 +1057,52 @@ class PostMutation(DjangoModelMutation):
         model = Post
 
 
-class CommentMutation(DjangoModelMutation):
-    """Public Comment CRUD.
+class CommentModelType(DjangoModelType):
+    """Comment CRUD behind a permission — the child host of the nested write.
 
-    Drives "commentSubscription" from "/graphql" the same way PostMutation
-    drives "postSubscription".
+    A "DjangoModelType" rather than a "DjangoModelMutation" because
+    "permission_classes" lives on the type: this class is what makes the
+    comment gate exist at all. It drives "commentSubscription" from "/graphql"
+    the same way PostMutation drives "postSubscription", and reads keep coming
+    from "CommentType" / "CommentListType".
+
+    Since 2.2.0 this gate is also the nested one. "PostWithCommentsMutation"
+    carries no permission of its own, yet a caller denied "commentCreate" here
+    is denied the identical write through "postWithCommentsCreate" too — the
+    nested writer runs the child's own hosts, and the denial rolls the parent
+    Post back with it. Before 2.2.0 the parent was a door into a child the
+    caller could not write directly.
     """
 
-    class Meta:
-        """Bind the mutation to the Comment model.
+    permission_classes = [IsOwnerOrReadOnly]
 
-        All CRUD operations (create, update, delete) are generated.
+    class Meta:
+        """Bind the type to Comment, project the note away, serve writes only.
+
+        "model_operations" leaves out "list" / "retrieve" because the reads are
+        already served by "CommentType" / "CommentListType"; what is declared
+        here is a pure write host.
+
+        "exclude_fields" is the WRITE half of the "internal_note" projection
+        ("CommentType" carries the read half), and 2.2.0 is what makes it reach
+        the nested surface: the child's declared input projection used to be
+        DROPPED when a parent listed the relation in "Meta.nested_fields", so a
+        column this host refuses was still writable through the parent. Read the
+        two generated inputs side by side in GraphiQL's docs panel — the
+        standalone one behind "commentCreate" and "CommentCreateInPostType"
+        (the nested one under "postWithCommentsCreate") — and neither publishes
+        "internalNote".
+
+        The standalone input's name carries a hash suffix here
+        ("CommentCreateGenericType_<sig>"): "PERMISSION_SCOPED_SCHEMA" is on in
+        "config/settings.py", and this host's "permission_classes" makes its
+        input surface per-caller, so the name is stamped with the permission
+        signature it was compiled for.
         """
 
         model = Comment
+        exclude_fields = ("internal_note",)
+        model_operations = ("create", "update", "delete")
 
 
 class PostWithCommentsMutation(DjangoModelMutation):
@@ -865,6 +1121,22 @@ class PostWithCommentsMutation(DjangoModelMutation):
     The auto-generated input type for the "create" operation therefore exposes
     "comments" as a list-of-object argument. No hand-written resolver or
     serializer is needed.
+
+    Authorization (2.2.0): this mutation declares no permission of its own, and
+    it does not need one for the children. Each inline comment is authorized by
+    the child's own host — "CommentModelType" and its "IsOwnerOrReadOnly" — so
+    the caller denied "commentCreate" is denied it here too, and the parent Post
+    rolls back with the denial. The nested "comments" input is stamped with the
+    child's permission as well, which is what "PERMISSION_SCOPED_SCHEMA" prunes
+    it by on "/graphql/secure/".
+
+    WIRE-VISIBLE RENAME (2.2.0): the child input a nested field exposes is now
+    built PER NESTING PARENT and named "<Child><Op>In<Parent>Type" — here
+    "CommentCreateInPostType" — instead of borrowing the child's own
+    "CommentCreateGenericType". Field names and shapes are unchanged; a client
+    document that spells the nested child input type name out needs updating.
+    Building it per parent is what lets the child's own projection reach it (see
+    "CommentModelType.Meta.exclude_fields").
     """
 
     class Meta:
@@ -974,40 +1246,110 @@ class CreateCategory(Mutation):
 
 
 # --------------------------------------------------------------------------- #
-# Base64 file upload demo (v1.3.0).                                            #
+# File uploads. ONE column, "Document.attached_file", TWO ways to fill it.     #
 #                                                                              #
-# UploadDocument demonstrates the full Base64FileInput pattern:                #
-#   1. Accept a Base64FileInput argument.                                      #
-#   2. Call .to_uploaded_file(max_size=...) inside the resolver.               #
-#   3. Assign the resulting SimpleUploadedFile to a model FileField.           #
+# A. MULTIPART (2.2.0 — the release this feature is named for).                #
+#    DocumentMutation below is the write host. No configuration at all: a part #
+#    named after a FileField the mutation input EXPOSES is merged into the     #
+#    payload and saved. See docs/usage/mutations.md#automatic-multipart-uploads.#
 #                                                                              #
-# MAX_UPLOAD_SIZE and MAX_REQUEST_BODY_SIZE are set in config/settings.py so  #
+# B. BASE64 inside the JSON body (v1.3.0). UploadDocument below demonstrates   #
+#    the full Base64FileInput pattern:                                         #
+#      1. Accept a Base64FileInput argument.                                   #
+#      2. Call .to_uploaded_file(max_size=...) inside the resolver.            #
+#      3. Assign the resulting SimpleUploadedFile to a model FileField.        #
+#                                                                              #
+# MAX_UPLOAD_SIZE and MAX_REQUEST_BODY_SIZE are set in config/settings.py so   #
 # the guard fires in this playground. Unset either to see ImproperlyConfigured.#
 #                                                                              #
-# Try it in GraphiQL:                                                          #
+# Try B in GraphiQL:                                                           #
 #   import base64                                                              #
 #   data = base64.b64encode(b"hello world").decode()                           #
 #   mutation {                                                                 #
 #       uploadDocument(                                                        #
 #           name: "readme.txt"                                                 #
 #           file: {filename: "readme.txt", data: "<data>", contentType: "text/plain"} #
-#       ) { ok name }                                                          #
+#       ) { ok name document { id name attachedFile created } }               #
 #   }                                                                          #
 # --------------------------------------------------------------------------- #
 class DocumentType(DjangoObjectType):
     """GraphQL type for an uploaded document.
 
-    Read back after an "uploadDocument" mutation stores the decoded file.
+    Read back through the "document" field of the "uploadDocument" and
+    "documentCreate" payloads, which is what mounts this type on the schema. A
+    "DjangoObjectType" that no field ever returns is registered but never
+    reaches the schema type map, so it cannot be queried or introspected.
     """
 
     class Meta:
-        """Bind the type to Document, exposing only id, name and created.
+        """Bind the type to Document and expose the stored file name.
 
-        The stored file field itself is intentionally not exposed.
+        "attached_file" is published so an upload can be read straight back:
+        the field renders as a plain String — the storage name — on output, and
+        that same string is a valid INPUT for it, so a value read back can be
+        written back unchanged. The file itself never travels through the
+        GraphQL variables in either direction.
         """
 
         model = Document
-        only_fields = ("id", "name", "created")
+        only_fields = ("id", "name", "attached_file", "created")
+
+
+class DocumentMutation(DjangoModelMutation):
+    """The multipart upload host — the 2.2.0 headline, end to end.
+
+    A part named after a "FileField" the input exposes is merged into the
+    payload and saved to that column. Nothing is configured for it: this class
+    is four lines and the merge runs on create AND on update.
+
+    Send the operation and the file in ONE "multipart/form-data" request: a
+    "query" part carrying the document, an optional "variables" part carrying
+    its variables as JSON, and one part per file named after the field. There
+    is no "operations" / "map" envelope — the view reads a multipart body
+    straight out of "request.POST".
+
+    EITHER SPELLING OF THE PART NAME WORKS. The part is matched against the
+    camelCase alias the SDL publishes and the model's snake_case attribute, off
+    the same compiled field, so "attachedFile" and "attached_file" both land on
+    "Document.attached_file". A part matching no exposed input field is IGNORED
+    — the mutation still answers "ok: true" and saves no file — so a misspelled
+    part name looks exactly like success.
+
+    THE POST MUST CARRY "X-Requested-With". "multipart/form-data" is a
+    CORS-simple content type, so a browser posts it cross-site with no
+    preflight; this endpoint is "csrf_exempt", so without the header a forged
+    form submit would execute under the victim's session. "REQUIRE_CSRF_HEADER"
+    (on by default, written down in "config/settings.py") refuses such a
+    request with HTTP 403 before the body is read. The value is never
+    inspected.
+
+    Try it from a shell in this directory::
+
+        echo hello > /tmp/notes.txt
+        curl http://127.0.0.1:8000/graphql/ \\
+          -H 'X-Requested-With: XMLHttpRequest' \\
+          -F 'query=mutation { documentCreate(newDocument: { name: "Notes" })
+                { ok document { id name attachedFile } } }' \\
+          -F 'attachedFile=@/tmp/notes.txt'
+
+    Drop the header to watch the 403, and rename the part to "attached_file" to
+    watch the other spelling land on the same column. GraphiQL cannot send a
+    multipart body, so this one is a curl demo by nature.
+
+    THE PROJECTION STILL BOUNDS IT: the merge is measured against the compiled
+    input surface, not against the part name, so a file column the host
+    projects away cannot be written through a part under either spelling.
+    """
+
+    class Meta:
+        """Bind the mutation to Document, generating create and update.
+
+        Both operations run the merge; "delete" is left out because there is
+        nothing upload-shaped to show on it.
+        """
+
+        model = Document
+        model_operations = ("create", "update")
 
 
 class UploadDocument(Mutation):
@@ -1029,7 +1371,9 @@ class UploadDocument(Mutation):
       "Base64FileInput" instance ("Base64FileInput(**file)") before calling
       ".to_uploaded_file()".
     - Output payload fields use the same "BooleanField" / "CharField" scalar
-      shortcuts.
+      shortcuts, plus "Field(DocumentType)" for the stored record — the same
+      object-ref idiom "CreateCategory" uses, and what puts "DocumentType" on
+      the schema.
     """
 
     class Arguments:
@@ -1043,6 +1387,7 @@ class UploadDocument(Mutation):
 
     ok = BooleanField()
     name = CharField()
+    document = Field(DocumentType)
     error = CharField()
 
     @classmethod
@@ -1058,8 +1403,9 @@ class UploadDocument(Mutation):
                 "file" is the base64 file input dict.
 
         Returns:
-            payload: A payload with "ok=True" and the saved document name, or
-                "ok=False" and the error message when decoding or saving fails.
+            payload: A payload with "ok=True", the saved document name and the
+                stored record, or "ok=False" and the error message when
+                decoding or saving fails.
         """
         name = kwargs["name"]
         file = kwargs["file"]
@@ -1072,26 +1418,37 @@ class UploadDocument(Mutation):
             # max_size is not passed — both are checked.
             uploaded = upload_input.to_uploaded_file()  # uses MAX_UPLOAD_SIZE
             doc = Document(name=name)
-            doc.file.save(uploaded.name, uploaded, save=True)
+            doc.attached_file.save(uploaded.name, uploaded, save=True)
             # Pass every payload field explicitly (incl. error=None): native does
             # not auto-default unset payload fields.
-            return cls(ok=True, name=doc.name, error=None)
+            return cls(ok=True, name=doc.name, document=doc, error=None)
         except Exception as exc:  # noqa: BLE001
-            return cls(ok=False, name=name, error=str(exc))
+            return cls(ok=False, name=name, document=None, error=str(exc))
 
 
 # --------------------------------------------------------------------------- #
 # Native compile trigger (native backend only).                                 #
 #                                                                              #
-# Hand-written ``Mutation`` arguments below reference a COMPILED                #
-# ``GraphQLInputObjectType`` (``CategoryInput`` / ``Base64FileInput``).  Those  #
-# input types — and every ``DjangoObjectType`` output type — are compiled by    #
-# ``compile_all_inputs`` / ``compile_all_outputs``.  In a project that lists     #
-# ``django_graphex`` in ``INSTALLED_APPS`` its ``AppConfig.ready()`` runs these  #
-# automatically at startup; this playground triggers them explicitly here,       #
-# AFTER all type declarations and BEFORE ``RootMutation`` calls ``.Field()`` (so #
-# the argument-position ``Field`` descriptors resolve to real compiled input      #
-# types, not ``None``).                                                           #
+# Hand-written "Mutation" arguments below reference a COMPILED                 #
+# "GraphQLInputObjectType" ("CategoryInput" / "Base64FileInput"). Those input  #
+# types — and every "DjangoObjectType" output type — are compiled by           #
+# "compile_all_inputs" / "compile_all_outputs".                                #
+#                                                                              #
+# These two calls are MANDATORY, not a convenience. "django_graphex" IS in     #
+# this project's INSTALLED_APPS (see "config/settings.py"), and its            #
+# "AppConfig.ready()" does call both — but "ready()" runs BEFORE this module   #
+# is imported, so it can only compile what was already imported by then.       #
+# Every type declared in this file, plus "Base64FileInput" (the package never  #
+# imports "django_graphex.uploads" itself), is compiled only here. Delete      #
+# these calls and "RootMutation" raises at import time:                        #
+#                                                                              #
+#   TypeError: Can only create a wrapper for a GraphQLType, but got:           #
+#   <class 'django_graphex.uploads.Base64FileInput'>                           #
+#                                                                              #
+# Placement is load-bearing too: AFTER all type declarations and BEFORE        #
+# "RootMutation" calls ".Field()", so the argument-position "Field"            #
+# descriptors resolve to real compiled input types, not "None". See            #
+# "docs/usage/mutations.md" for the full rule.                                 #
 # --------------------------------------------------------------------------- #
 from django_graphex.core.base import compile_all_inputs  # noqa: E402
 from django_graphex.core.registry_compiler import (  # noqa: E402
@@ -1114,14 +1471,18 @@ class RootMutation(ObjectType):
     post_create = PostMutation.CreateField()
     post_update = PostMutation.UpdateField()
     post_delete = PostMutation.DeleteField()
-    comment_create = CommentMutation.CreateField()
-    comment_update = CommentMutation.UpdateField()
-    comment_delete = CommentMutation.DeleteField()
+    # Gated by CommentModelType.permission_classes — the same gate the nested
+    # postWithCommentsCreate below now runs for each inline comment.
+    comment_create, comment_delete, comment_update = CommentModelType.MutationFields()
     # Hand-written mutation using an explicit DjangoInputObjectType argument.
     create_category = CreateCategory.Field()
     # Nested-write demo: single operation creates the Post + its Comment(s).
     post_with_comments_create = PostWithCommentsMutation.CreateField()
-    # Base64 file upload demo (v1.3.0).
+    # Multipart file upload (2.2.0). Both operations run the merge — see the
+    # curl invocation on DocumentMutation.
+    document_create = DocumentMutation.CreateField()
+    document_update = DocumentMutation.UpdateField()
+    # Base64 file upload demo (v1.3.0), writing the same column.
     upload_document = UploadDocument.Field()
 
 

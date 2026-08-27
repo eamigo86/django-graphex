@@ -28,7 +28,7 @@ _graphql_{identity}_{version}_{body_hash}
 |-----------|--------|---------|
 | `_graphql_` | fixed prefix | Namespaces GraphQL entries inside a shared Django cache |
 | `{identity}` | `cache_key_prefix(request)` | Isolates responses by user identity (see below) |
-| `{version}` | per-identity version counter | Lets mutations invalidate a user's entries without a global flush |
+| `{version}` | version counter for the identity's **invalidation bucket** | Lets mutations invalidate a bucket's entries without a global flush |
 | `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of `request.body`; for GET requests (where the body is empty) the hash also incorporates the `query`, `variables`, and `operationName` query-string parameters | Distinguishes different queries / variable sets |
 
 ---
@@ -44,19 +44,68 @@ result is never served to another user.
 | Token-auth only (`Authorization` header, no `request.user`) | `t{sha256(header)[:16]}` | Per-token (isolated) |
 | Anonymous (no credentials) | `anon` | Shared (safe — no private data) |
 
+This partitioning applies to the **response entry**, which always carries the
+full identity.  Invalidation is grouped more coarsely for unauthenticated
+identities — see
+[Bucketing for unauthenticated identities](#bucketing-for-unauthenticated-identities).
+
 ---
 
 ## Mutation invalidation (scoped, not global)
 
-When a mutation is detected, the view **increments a per-identity version
-counter** stored in the cache rather than calling `cache.clear()`.
+When a mutation is detected, the view **increments a version counter** stored in
+the cache rather than calling `cache.clear()`.
 
 This has two important properties:
 
-1. **Only the issuing user's namespace is invalidated.**  User B's cached
-   reads are unaffected when user A sends a mutation.
+1. **Only the issuing caller's invalidation bucket is invalidated.**  For an
+   authenticated user, and for the fully-anonymous partition, the bucket is that
+   identity alone — user B's cached reads are unaffected when user A sends a
+   mutation.  For a **token-only** identity the bucket is shared; see below.
 2. **Unrelated cache entries survive.**  Keys set by other parts of your
    application (sessions, page fragments, etc.) are not touched.
+
+### Bucketing for unauthenticated identities
+
+The version counter is stored permanently (see
+[Version-counter key TTL](#version-counter-key-ttl)), and the `t{hash}` identity
+is derived from a **caller-supplied** `Authorization` header that nothing has
+verified at that point.  A client rotating that header per request would
+otherwise mint one permanent cache key per request.  So every identity an
+unauthenticated caller can vary is mapped onto one of a fixed number of
+**invalidation buckets**, and identities that land in the same bucket share a
+version counter.
+
+That is a real behaviour change, and it is worth being exact about what it costs:
+
+| Property | Status | Consequence |
+|---|---|---|
+| Response isolation | **Kept** | The response entry is keyed by the **full** identity, never by the bucket.  Two callers sharing a bucket never share a response slot, so one caller's body is never served to another. |
+| Invalidation locality | **Spent** | A mutation from one bucket member advances the counter its bucket-mates read, so their cached entries become unreachable and their next read re-executes. |
+
+The counter only ever moves forward, so the spent property can only turn a cache
+**hit** into a **miss** — the reader then answers from current data.  No entry is
+resurrected and nothing stale is served.  Authenticated identities (bounded by
+your user table) and the single `anon` partition are **not** bucketed and keep
+their exact namespace.
+
+!!! warning "The spent property is reachable by an attacker"
+
+    Be blunt about this one.  The bucket is a **pure function of a header the
+    caller chooses**, so an unauthenticated client can hash candidate
+    credentials offline until one lands in whichever bucket it wants, run a
+    mutation, and send that bucket's members back to the database.  Salting the
+    digest would not help: the namespace is small by construction, so a caller
+    that cannot *aim* can still cover every bucket by volume.
+
+    What that buys an attacker is **cache misses** and nothing else.  The
+    counter only moves forward, and the response entry is keyed by the **full**
+    identity, so no body ever crosses callers.  Treat it as a throughput
+    consideration on a public token-only endpoint: put a request limit in front
+    of your GraphQL view, or authenticate the client.
+
+If a token-only client is latency-sensitive, authenticate it: an authenticated
+identity gets its own counter back and is not bucketed at all.
 
 ### Post-commit invalidation (TOCTOU safety)
 

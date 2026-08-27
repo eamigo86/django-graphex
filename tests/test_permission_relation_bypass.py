@@ -16,6 +16,9 @@ Invariants asserted here:
   the data — including when the target model has NO root field of its own (so
   its permission label reaches the pruner through the schema label-set).
 - The to-ONE arm ("commentRetrieve { post { title } }") is gated the same way.
+- The ABSTRACT arm: a typed GFK union ("Meta.unions") is gated by its MEMBERS'
+  view permissions, not left untagged/public because a "GraphQLUnionType"
+  carries no "_meta.model" of its own.
 - The pruned SDL simply does not contain the relation field.
 - With the flag OFF (the default) traversal is byte-identical to today, and a
   project that declares no "permission_classes" is unaffected.
@@ -33,12 +36,13 @@ from django.http import HttpRequest
 from django.test import RequestFactory, TestCase, override_settings
 from graphql import print_schema
 
-from django_graphex.core import ObjectType
+from django_graphex.core import ObjectType, field
 from django_graphex.core import permission_signature_cache as psc
 from django_graphex.core.registry_compiler import compile_all_outputs
 from django_graphex.permissions import DjangoModelPermissions
+from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
-from django_graphex.types import DjangoModelType
+from django_graphex.types import DjangoModelType, DjangoObjectType, DjangoUnionType
 from django_graphex.views import AuthenticatedGraphQLView
 
 from .models import (
@@ -46,6 +50,9 @@ from .models import (
     PermRelAuthor,
     PermRelComment,
     PermRelPost,
+    Track2Account,
+    Track2GfkComment,
+    Track2Invoice,
 )
 
 _ON = {"PERMISSION_SCOPED_SCHEMA": True}
@@ -68,7 +75,7 @@ class _CommentType(DjangoModelType):
         model = PermRelComment
 
 
-class _PostType(DjangoModelType):
+class _PermRelPostType(DjangoModelType):
     """Model type for "PermRelPost", gated by "DjangoModelPermissions"."""
 
     permission_classes: ClassVar[tuple[Any, ...]] = (DjangoModelPermissions,)
@@ -82,8 +89,8 @@ class _PostType(DjangoModelType):
 class _Query(ObjectType):
     """Root exposing BOTH models directly — the exact reproduction schema."""
 
-    post_retrieve = _PostType.RetrieveField()
-    post_list = _PostType.ListField()
+    post_retrieve = _PermRelPostType.RetrieveField()
+    post_list = _PermRelPostType.ListField()
     comment_retrieve = _CommentType.RetrieveField()
     comment_list = _CommentType.ListField()
 
@@ -95,13 +102,13 @@ class _ParentOnlyQuery(ObjectType):
     the pruner if the schema label-set accounts for relation labels too.
     """
 
-    post_retrieve = _PostType.RetrieveField()
+    post_retrieve = _PermRelPostType.RetrieveField()
 
 
 # --------------------------------------------------------------------------- #
 # Ungated pair: no "permission_classes" anywhere (the "unaffected" baseline).
 # --------------------------------------------------------------------------- #
-class _AuthorType(DjangoModelType):
+class _PermRelAuthorType(DjangoModelType):
     """Model type for "PermRelAuthor" declaring NO "permission_classes"."""
 
     class Meta:
@@ -123,13 +130,81 @@ class _OpenQuery(ObjectType):
     """Root for the permission-class-free project baseline."""
 
     article_retrieve = _ArticleType.RetrieveField()
-    author_retrieve = _AuthorType.RetrieveField()
+    author_retrieve = _PermRelAuthorType.RetrieveField()
+
+
+# --------------------------------------------------------------------------- #
+# Typed GFK union: the ABSTRACT arm of the same bypass.
+#
+# Declared against an ISOLATED registry so these member types never land in the
+# global one (the Track2 models already carry global types of their own).
+# --------------------------------------------------------------------------- #
+_union_registry = Registry()
+
+
+class _UnionAccountType(DjangoObjectType):
+    """Union member type for "Track2Account"."""
+
+    class Meta:
+        """Bind the member to "Track2Account" in the isolated registry."""
+
+        model = Track2Account
+        registry = _union_registry
+        name = "PermUnionAccount"
+
+
+class _UnionInvoiceType(DjangoObjectType):
+    """Union member type for "Track2Invoice"."""
+
+    class Meta:
+        """Bind the member to "Track2Invoice" in the isolated registry."""
+
+        model = Track2Invoice
+        registry = _union_registry
+        name = "PermUnionInvoice"
+
+
+class _PaymentUnion(DjangoUnionType):
+    """Typed union over the two GFK member types."""
+
+    class Meta:
+        """Enumerate the union members explicitly."""
+
+        types = (_UnionAccountType, _UnionInvoiceType)
+        registry = _union_registry
+        name = "PermUnionPayment"
+
+
+class _GfkOwnerType(DjangoObjectType):
+    """GFK owner whose "target" is exposed as the typed union."""
+
+    class Meta:
+        """Expose "Track2GfkComment.target" through "_PaymentUnion"."""
+
+        model = Track2GfkComment
+        registry = _union_registry
+        name = "PermUnionOwner"
+        unions = {"target": _PaymentUnion}
+
+
+class _UnionQuery(ObjectType):
+    """Root pairing the GFK owner with a DIRECT field to one union member.
+
+    The direct "account" field is the CONTROL: it is untagged too, so the
+    pruner gates it through the member's implicit label. If it disappears for a
+    caller lacking "view_track2account" while "owner { target }" survives, the
+    union arm is the hole.
+    """
+
+    owner = field(_GfkOwnerType)
+    account = field(_UnionAccountType)
 
 
 compile_all_outputs()
 _schema = DjangoGraphQLSchema(query=_Query)
 _parent_only_schema = DjangoGraphQLSchema(query=_ParentOnlyQuery)
 _open_schema = DjangoGraphQLSchema(query=_OpenQuery)
+_union_schema = DjangoGraphQLSchema(query=_UnionQuery)
 
 
 def _post(query: str, user: Any) -> HttpRequest:
@@ -315,3 +390,86 @@ class RelationPermissionBypassTest(TestCase):
         self.assertEqual(response.status_code, 200)
         articles = json.loads(response.content)["data"]["authorRetrieve"]["articles"]
         self.assertEqual(articles["results"][0]["title"], "an article")
+
+
+class GfkUnionPermissionBypassTest(TestCase):
+    """A typed GFK union must obey its MEMBER models' view permissions.
+
+    The union arm of the same bypass: "implicit_perms_for_type" reads
+    "extensions[gdx]._meta.model", which a "GraphQLUnionType" does not have, so
+    the union field was untagged == PUBLIC while a DIRECT root field to the very
+    same member type was pruned away.
+    """
+
+    def setUp(self) -> None:
+        """Clear the process-wide pruned-schema LRU.
+
+        A pruned schema built for one caller's signature would otherwise be
+        served to the next test's caller.
+        """
+        psc._CACHE.clear()
+
+    def _user(self, name: str, *models: type[Model]) -> User:
+        """Create a user granted the view permission of each given model.
+
+        Args:
+            name: The username to create.
+            *models: The models whose view permission the user receives.
+
+        Returns:
+            The persisted user.
+        """
+        user = User.objects.create_user(username=name, password="x")
+        for model in models:
+            user.user_permissions.add(_view_perm(model))
+        return user
+
+    def _sdl(self, user: User) -> str:
+        """Return the pruned SDL the given caller would be served.
+
+        Args:
+            user: The caller whose live permissions drive the pruning.
+
+        Returns:
+            The printed SDL of the pruned schema.
+        """
+        return print_schema(psc.pruned_schema_for(user, _union_schema.graphql_schema))
+
+    # 1. THE BYPASS: no member perm at all -> the union field must be gone.
+    @override_settings(DJANGO_GRAPHEX=_ON)
+    def test_gfk_union_field_pruned_without_member_perms(self) -> None:
+        """Ship-broken contract: a caller holding only the GFK OWNER's view
+        permission must not reach the union members' rows through the typed
+        "target" field.
+        """
+        ana = self._user("union_ana", Track2GfkComment)
+        sdl = self._sdl(ana)
+        # The control: the DIRECT root field to a member is pruned today.
+        self.assertNotIn("account:", sdl)
+        # ... so the union carrying the same member must be pruned too.
+        self.assertNotIn("target:", sdl)
+        self.assertNotIn("PermUnionPayment", sdl)
+        self.assertNotIn("PermUnionAccount", sdl)
+
+    # 2. Holding EVERY member perm keeps the union field readable.
+    @override_settings(DJANGO_GRAPHEX=_ON)
+    def test_gfk_union_field_kept_with_every_member_perm(self) -> None:
+        """Ship-broken contract: pruning must remove only what the caller lacks
+        — a caller holding every member's view permission keeps the union.
+        """
+        eve = self._user("union_eve", Track2GfkComment, Track2Account, Track2Invoice)
+        sdl = self._sdl(eve)
+        self.assertIn("target: PermUnionPayment", sdl)
+        self.assertIn("union PermUnionPayment", sdl)
+
+    # 3. The documented AND tradeoff: one missing member takes the whole field.
+    @override_settings(DJANGO_GRAPHEX=_ON)
+    def test_gfk_union_field_pruned_when_one_member_perm_is_missing(self) -> None:
+        """Ship-broken contract: a union label is the UNION of its members'
+        perms, so a caller missing ONE member's view permission loses the field
+        rather than keeping a field that can still return that member's rows.
+        """
+        bob = self._user("union_bob", Track2GfkComment, Track2Account)
+        sdl = self._sdl(bob)
+        self.assertNotIn("target:", sdl)
+        self.assertNotIn("PermUnionPayment", sdl)

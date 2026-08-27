@@ -42,6 +42,7 @@ from tests.models import (  # noqa: E402
     SubFilterPost,
     SubFilterTag,
 )
+from tests.subscriptions._sse import sse_frames  # noqa: E402
 
 
 # Output types registered ONCE at module scope (a DjangoObjectType registration
@@ -49,12 +50,12 @@ from tests.models import (  # noqa: E402
 # shared slot for whatever test runs next). "SubFilterPost"/"SubFilterTag" exist
 # so the "post" relation actually renders on the event type instead of being
 # dropped as an unregistered target.
-class _TagT(_DOT):
+class _SubFilterTagT(_DOT):
     class Meta:
         model = SubFilterTag
 
 
-class _PostT(_DOT):
+class _SubFilterPostT(_DOT):
     class Meta:
         model = SubFilterPost
 
@@ -476,7 +477,7 @@ async def test_sse_delivers_only_events_matching_the_filter(
     await layer.group_send(group, _notify(miss))
     await layer.group_send(group, _notify(match))
 
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     frame = await asyncio.wait_for(aiter.__anext__(), timeout=2.0)
     frame = frame.decode() if isinstance(frame, (bytes, bytearray)) else frame
     assert frame.startswith("event: next\n")

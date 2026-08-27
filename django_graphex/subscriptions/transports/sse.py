@@ -58,7 +58,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from graphql import (
@@ -70,8 +70,10 @@ from graphql import (
 )
 from graphql.utilities import get_operation_ast
 
+from ...security import format_graphql_error
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
+from . import operation_selection_error
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -109,6 +111,12 @@ def _close_source_sync(source: "ChannelLayerSource") -> None:
 # Without it, graphql-core surfaces the vague-but-leaky "Schema is not configured
 # to execute subscription operation." instead.
 _SUBSCRIPTION_DENIED_MESSAGE = "Subscriptions are not available."
+
+# Sentinel distinguishing "the body was not an object" (``None``) from "the
+# body was fine but ``variables`` was not a mapping". They are different client
+# errors and deserve different messages; sharing one would send the caller
+# looking at their whole payload instead of one key.
+_INVALID_VARIABLES: "dict[str, Any]" = {}
 
 
 # A view → started-source map so callers/tests can observe the live source a
@@ -186,26 +194,83 @@ class TransportContext:
         self.middleware = build_middleware_manager()
 
 
-def _read_request_body(request: "HttpRequest") -> dict[str, Any]:
+async def _resolve_request_user(request: "HttpRequest") -> Any:
+    """Resolve "request.user" in a thread, before anything reads it in the loop.
+
+    "AuthenticationMiddleware" assigns a "SimpleLazyObject" and leaves it
+    UNRESOLVED; the session/user query only runs when something first touches
+    it. In a WSGI view that is harmless. Here the whole view body IS the event
+    loop, so the first hook to read "info.context.user" — or a
+    "schema_provider" pruning by permission — fires that query in an async
+    context and dies with "SynchronousOnlyOperation". Anonymous callers never
+    noticed: an empty session resolves to "AnonymousUser" without touching the
+    database.
+
+    Touching one attribute from a thread resolves the lazy object IN PLACE, so
+    this is the whole fix for every later reader — the hooks, the middleware
+    chain and any resolver reaching back through "context.request" all see a
+    plain, already-loaded user. The WS transport needs no equivalent: Channels'
+    "AuthMiddleware" awaits the lookup before the consumer runs.
+
+    Args:
+        request: The incoming HTTP request, possibly carrying a lazy user.
+
+    Returns:
+        The resolved user, or "None" when the request never met the auth
+        middleware (an endpoint mounted outside the session/auth chain).
+    """
+    user = getattr(request, "user", None)
+    if user is None:
+        return None
+    await sync_to_async(lambda: getattr(user, "is_authenticated", False))()
+    return user
+
+
+def _read_request_body(request: "HttpRequest") -> "dict[str, Any] | None":
     """Parse the GraphQL request body (JSON or form-encoded "query").
 
     Args:
         request: The incoming HTTP request.
 
     Returns:
-        A mapping with "query" / "variables" / "operationName" keys.
+        A mapping with "query" / "variables" / "operationName" keys, or "None"
+        when the JSON body decoded to something that is not an object.
     """
     content_type = (request.content_type or "").lower()
     if "application/json" in content_type:
         try:
             body = json.loads(request.body.decode("utf-8") or "{}")
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            # "RecursionError" is NOT a "ValueError": a deeply nested body blows
+            # the decoder's recursion limit, and without it in this tuple the
+            # error escaped the view and reached the client as a 500.
             body = {}
+        if not isinstance(body, dict):
+            # "[1,2,3]", '"x"' and "null" all decode cleanly and only then break
+            # the mapping assumption below ("body.get" -> "AttributeError" ->
+            # 500). The HTTP view already answers 400 for exactly this shape, so
+            # the caller refuses it the same way instead.
+            return None
     else:
         body = request.POST
+    variables = body.get("variables")
+    if isinstance(variables, str):
+        # A form-encoded body makes EVERY value a string, and a JSON body may
+        # carry variables as an encoded string too. graphql-core raises a plain
+        # TypeError for anything but a mapping, and nothing downstream catches
+        # it, so an undecoded string escaped the async view as a 500. The HTTP
+        # view has always decoded this shape; the transport now matches it.
+        try:
+            variables = json.loads(variables or "{}")
+        except ValueError:
+            return _INVALID_VARIABLES
+        if not isinstance(variables, dict):
+            return _INVALID_VARIABLES
+    elif variables is not None and not isinstance(variables, dict):
+        return _INVALID_VARIABLES
     return {
         "query": body.get("query"),
-        "variables": body.get("variables"),
+        "variables": variables,
         "operationName": body.get("operationName"),
     }
 
@@ -223,7 +288,7 @@ def _frame_next(result: ExecutionResult) -> bytes:
     if result.data is not None:
         payload["data"] = result.data
     if result.errors:
-        payload["errors"] = [error.formatted for error in result.errors]
+        payload["errors"] = [format_graphql_error(error) for error in result.errors]
     body = json.dumps(payload)
     return f"event: next\ndata: {body}\n\n".encode("utf-8")
 
@@ -231,6 +296,11 @@ def _frame_next(result: ExecutionResult) -> bytes:
 # The terminal SSE frame. The empty ``data:`` line is MANDATORY — an EventSource
 # client never fires the ``complete`` event without a data line on the frame.
 _COMPLETE_FRAME: bytes = b"event: complete\ndata: \n\n"
+
+# The frame that OPENS the response. A bare ``:`` is an SSE comment line, which
+# every conforming client ignores — its only job is to be the first body chunk,
+# because that is what makes an ASGI server flush the status line and headers.
+_PREAMBLE_FRAME: bytes = b":\n\n"
 
 
 def _make_spec(
@@ -309,17 +379,52 @@ def subscription_sse_view(
         )
 
     async def _view(request: "HttpRequest", *args: Any, **kwargs: Any) -> Any:
-        from django.http import HttpResponseBadRequest
+        from django.http import HttpResponseBadRequest, HttpResponseForbidden
+
+        # Imported HERE, not at module level: "views" reaches
+        # "core.permission_signature_cache", which reads "DJANGO_GRAPHEX" while it
+        # is being imported. A module-level import would therefore make this
+        # transport unimportable until Django settings are configured -- a
+        # dependency it did not have before it started sharing the HTTP view's
+        # CSRF guard and rule tuple, and one that bites any entrypoint importing
+        # the view builder before it points at a settings module.
+        from ...views import (
+            CSRF_GUARD_MESSAGE,
+            DEFAULT_VALIDATION_RULES,
+            BaseGraphQLView,
+            csrf_header_missing,
+        )
+
+        # Same hole as the HTTP views, same guard: this endpoint is csrf_exempt
+        # and reads a form-encoded "query" straight out of "request.POST", and
+        # form-encoded / multipart / text/plain are CORS-simple, so a cross-site
+        # <form> submit reaches it with the victim's session cookie. Refused in
+        # PLAIN TEXT, like every other pre-200 rejection below: an EventSource
+        # client never parses a JSON "errors" envelope.
+        if csrf_header_missing(request, BaseGraphQLView.get_content_type(request)):
+            return HttpResponseForbidden(CSRF_GUARD_MESSAGE)
+
+        # Resolve the lazy user ONCE, in a thread, before either the provider
+        # below or any subscribe hook reads it from inside this async view.
+        user = await _resolve_request_user(request)
 
         # Per-connection schema resolution: the provider (when given) wins and is
         # resolved with the request user, matching the HTTP pruned schema.
-        conn_schema = (
-            schema_provider(getattr(request, "user", None))
-            if schema_provider is not None
-            else schema
-        )
+        conn_schema = schema_provider(user) if schema_provider is not None else schema
 
         body = _read_request_body(request)
+        if body is None:
+            # PRE-200: a decodable but non-object JSON body is a client error,
+            # answered with the HTTP view's own message so the whole library
+            # classifies the shape identically.
+            return HttpResponseBadRequest(
+                "The received data is not a valid JSON query."
+            )
+        if body is _INVALID_VARIABLES:
+            # PRE-200: the HTTP view's own message, so the whole library
+            # classifies this shape identically.
+            return HttpResponseBadRequest("Variables are invalid JSON.")
+
         query = body["query"]
         if not query:
             # PRE-200: no query at all is a plain client error (HTTP 4xx).
@@ -331,6 +436,13 @@ def subscription_sse_view(
             return HttpResponseBadRequest(f"GraphQL syntax error: {exc}")
 
         operation_ast = get_operation_ast(document, body["operationName"])
+        if operation_ast is None:
+            # PRE-200: no operation could be SELECTED — several with no name to
+            # pick one, or a name matching none. Distinct from "not a
+            # subscription", which is what the fall-through below reports.
+            selection_error = operation_selection_error(document, body["operationName"])
+            if selection_error is not None:
+                return HttpResponseBadRequest(selection_error)
         if (
             operation_ast is None
             or operation_ast.operation != OperationType.SUBSCRIPTION
@@ -363,9 +475,15 @@ def subscription_sse_view(
             # (the 200 text/event-stream response is committed below), NOT an HTTP
             # 4xx — once the streaming response has started a 4xx is impossible and
             # an EventSource client only observes in-stream frames.
+            #
+            # Same rule tuple as the HTTP view: a subscription's selection set is
+            # re-executed for EVERY delivered event, so an over-deep or over-costly
+            # document is paid for repeatedly — the depth/cost guards matter more
+            # here than on a one-shot query, not less.
             validation_errors = validate(
                 conn_schema,
                 document,
+                DEFAULT_VALIDATION_RULES,
                 max_errors=graphql_api_settings.MAX_VALIDATION_ERRORS,
             )
             if validation_errors:
@@ -397,6 +515,15 @@ def subscription_sse_view(
         )
 
         async def _event_stream() -> "AsyncIterator[bytes]":
+            # Open the response before anything else. An ASGI server writes the
+            # status line and headers with the FIRST body chunk, so a stream
+            # that yields nothing until an event fires leaves the client with
+            # no response at all while it idles: the browser's fetch never
+            # resolves (the bundled client cannot show a connected state) and
+            # an intermediary times the silent connection out. ``:`` opens an
+            # SSE comment line, which every conforming client ignores.
+            yield _PREAMBLE_FRAME
+
             # A pre-stream result (validation error / subscribe deny) is delivered
             # in-stream as a single ``next`` frame then ``complete`` — NOT a 4xx.
             if started_source is None:
@@ -459,5 +586,8 @@ def subscription_sse_view(
     # protection to a same-origin JSON POST. Without this, a real browser/curl
     # POST (which carries no CSRF token) is rejected with 403 by
     # ``CsrfViewMiddleware`` before the view ever runs — the bundled client's
-    # ``fetch`` POST sends no token, so it would never reach the stream.
+    # ``fetch`` POST sends no token, so it would never reach the stream. What
+    # replaces the token for the content types a browser CAN post cross-site
+    # without a preflight is the ``REQUIRE_CSRF_HEADER`` guard at the top of
+    # ``_view``, shared with the HTTP views.
     return csrf_exempt(_view)

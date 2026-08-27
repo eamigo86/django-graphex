@@ -6,7 +6,10 @@ that exercises every major django-graphex feature end-to-end: queries with all
 three paginators, filtering (including a custom `@filter_field`), N+1-safe
 nested lists, the full query-optimization surface, a typed
 `GenericForeignKey` union, directives, CRUD mutations with permissions,
-descriptor-API hand-written mutations, base64 file uploads, query depth/cost
+descriptor-API hand-written mutations, file uploads on **both** paths (base64
+in the JSON body and a multipart part), the
+[projection security boundary](../types.md#projection-security-boundary) on all
+three axes, the relation scoping hatch in both directions, query depth/cost
 limits, and native subscriptions over WebSocket and SSE.
 
 !!! note "Playground vs. the tutorial"
@@ -56,7 +59,11 @@ All the `Makefile` targets:
 
 - **15 authors x 12 posts each** (180 posts), statuses cycling
   `DRAFT` / `PUBLISHED` / `ARCHIVED`, each post in one of the categories
-  **Tech / Life / News** and tagged with one of **django / graphql / python**
+  **Tech / Life / News** and tagged with one of **django / graphql / python**.
+  Each body **names its own tag** (`"Body of post 9 by author 13. Topic:
+  django."`) so the custom `@filter_field` has something to find —
+  `posts(filter: { search: "django" })` answers `totalCount: 20` rather than an
+  empty page that reads like a broken example
 - **3 comments per post** (540 comments)
 - **12 private notes** owned by the demo user
 - **2 accounts + 2 invoices + 4 attachments** — the attachments alternate
@@ -103,6 +110,21 @@ Log out of `/admin` to test the anonymous (public) behaviour again.
     [`get_queryset` hook](../permissions.md) working on every top-level field
     type.
 
+    `get_queryset` is **field-level**, and the playground shows both sides of
+    that. Anonymously:
+
+    | Query | Statuses returned |
+    |---|---|
+    | `{ posts { results { status } } }` | `PUBLISHED` only |
+    | `{ categories { name posts { title status } } }` | `PUBLISHED` only — `CategoryType.posts` is a mounted `DjangoFilterListField`, so the scope runs |
+    | `{ authors { results { posts { results { status } } } } }` | `DRAFT`, `ARCHIVED`, `PUBLISHED` — the auto-expanded relation reads the prefetch cache, so `PostType.get_queryset` never runs |
+
+    The third row is not a bug; it is the boundary the
+    [scoping hatch](../types.md#relation-scope-hatch) exists to close, and the
+    second row is that hatch mounted. Declaring it costs the relation its
+    nested filter paths — see the table under
+    [Filtering](../filtering.md#filter-refusal-shapes).
+
 ## Schema tour
 
 Everything lives in [`blog/schema.py`](https://github.com/eamigo86/django-graphex/blob/main/examples/playground/blog/schema.py)
@@ -117,11 +139,14 @@ Everything lives in [`blog/schema.py`](https://github.com/eamigo86/django-graphe
 | **Query optimization** | `AuthorType.post_count = AnnotatedField(GraphQLInt, Count("posts"))` (annotation injected **only when selected**); the `AuthorType.optimize_posts` per-field hook; DB-side window pagination of nested pages — all `OPTIMIZE_*` settings are ON by default | [Query Optimization](../query-optimization.md) |
 | **Typed GFK union** | `AttachmentTargetUnion` (`DjangoUnionType`, `Meta.types = (AccountType, InvoiceType)`) mapped via `AttachmentType.Meta.unions = {"target": AttachmentTargetUnion}` | [Types](../types.md) |
 | **Directives** | `DjangoGraphQLSchema(..., directives=all_directives)` + `GraphQLDirectiveMiddleware` in `DJANGO_GRAPHEX["MIDDLEWARE"]` | [Directives](../../directives.md) |
-| **Model CRUD mutations** | `PostMutation` / `CommentMutation` (`DjangoModelMutation`) → `postCreate/Update/Delete`, `commentCreate/Update/Delete`; `NoteModelType.MutationFields()` → `noteCreate/Update/Delete` | [Mutations](../mutations.md) |
+| **Model CRUD mutations** | `PostMutation` (`DjangoModelMutation`) → `postCreate/Update/Delete`; `CommentModelType.MutationFields()` and `NoteModelType.MutationFields()` (`DjangoModelType`) → `commentCreate/Update/Delete` and `noteCreate/Update/Delete` | [Mutations](../mutations.md) |
 | **Nested writes** | `PostWithCommentsMutation` — `Meta.nested_fields = {"comments": Comment}` creates a `Post` plus its comments in one atomic operation | [Mutations](../mutations.md#nested-fields-support) |
 | **Descriptor-API mutations** | `CreateCategory` / `UploadDocument` — hand-written `Mutation` classes with `class Arguments` (`Field(CategoryInput, required=True)`, `CharField(required=True)`) and payload fields declared with `BooleanField()` / `CharField()` / `Field(CategoryType)` | [Mutations](../mutations.md) |
-| **File uploads** | `UploadDocument` accepts a `Base64FileInput`; `MAX_UPLOAD_SIZE` (5 MB) and `MAX_REQUEST_BODY_SIZE` (20 MB) guard it in `config/settings.py` | [Mutations](../mutations.md) |
-| **Permissions** | `NoteModelType.permission_classes = [IsAuthenticatedOrReadOnly]`; a custom `IsOwnerOrReadOnly(BasePermission)`; per-request scoping via `filter_queryset` (`myNotes` returns only your notes) | [Permissions](../permissions.md) |
+| **File uploads, base64** | `UploadDocument` accepts a `Base64FileInput`; `MAX_UPLOAD_SIZE` (5 MB) and `MAX_REQUEST_BODY_SIZE` (20 MB) guard it in `config/settings.py` | [Mutations](../mutations.md#file-upload-support) |
+| **File uploads, multipart** | `DocumentMutation` (`DjangoModelMutation`, `model_operations = ("create", "update")`) → `documentCreate` / `documentUpdate`; a part named `attachedFile` **or** `attached_file` lands on the same `Document.attached_file` column — one column, two documented ways in | [Mutations](../mutations.md#automatic-multipart-uploads) |
+| **Projection = security boundary** | `AuthorType` hides `bio`, `UserType` hides `password`, `CommentType` / `CommentModelType` hide `internal_note` on read **and** write — each unreadable, unorderable and unfilterable through its type | [Types](../types.md#projection-security-boundary) |
+| **Relation scoping hatch** | to-MANY: `CategoryType.posts = DjangoFilterListField(PostType)`; to-ONE: `AuthorType.user = Field(UserType)` + `resolve_user`. Beside them `AuthorType.posts` stays the auto-expanded shape, so the pair shows what the hatch buys and costs | [Types](../types.md#relation-scope-hatch) |
+| **Permissions** | `NoteModelType.permission_classes = [IsAuthenticatedOrReadOnly]`; a custom `IsOwnerOrReadOnly(BasePermission)` assigned on `CommentModelType`, which is also the gate the nested `postWithCommentsCreate` runs for each inline comment; per-request scoping via `filter_queryset` (`myNotes` returns only your notes) | [Permissions](../permissions.md) |
 | **Public/private schema split** | `DjangoGraphQLSchema(query=..., private_query=..., subscription=..., private_subscription=...)` + `AuthenticatedFieldsMiddleware` protects the private roots at resolve time | [Security](../security.md) |
 | **Subscriptions** | Public `PostSubscription` / `CommentSubscription` (`payload_mode = "full"`, per-subscriber `filter`); private `NoteModelType.SubscriptionField()` with `subscription_scope` (server-forced "only my notes") and `subscription_index_fields = ("owner",)` | [Subscriptions](../subscriptions.md) |
 | **Query limits** | Global `MAX_QUERY_DEPTH = 6` in settings; per-type `PostType.Meta.max_depth = 4` and `complexity = 2` (most-restrictive wins) | [Query Limits](../query-limits.md) |
@@ -241,6 +266,87 @@ work anonymously.
     }
     ```
 
+## The projection boundary, live
+
+`AuthorType` projects `bio` away. The rule says a hidden column is not
+readable, not orderable and not filterable
+([the canonical statement](../types.md#projection-security-boundary)) — here
+are all three axes, anonymously, with the answers the playground returns. It
+sets `ALLOW_INTROSPECTION = True`, so the `Did you mean …?` tails below are
+present; flip that flag off and the tails are stripped while the messages
+themselves stay.
+
+| Query | Answer |
+|---|---|
+| `{ authors { results { bio } } }` | `Cannot query field 'bio' on type 'AuthorType'. Did you mean 'id'?` |
+| `{ authors { results(ordering: "bio") { name } } }` | `Invalid ordering field: 'bio'.` |
+| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Field 'bio' is not defined by type 'AuthorFilterInput'. Did you mean 'id'?` |
+| `{ authors { results(ordering: "name", page: 1) { name } } }` | the control — still sorts, `Author 0`, `Author 1`, `Author 10`, … |
+
+The same rule is told on two columns where it matters more than on a bio:
+
+| Query | Answer |
+|---|---|
+| `{ authors { results { user { password } } } }` | `Cannot query field 'password' on type 'UserType'.` — without the exclusion `Author.user` answers the hash to every **authenticated** caller. Anonymous ones are stopped one layer earlier by `resolve_user` (see the hatch table below), so this column has two independent walls |
+| `{ comments { results(first: 1) { internalNote } } }` | `Cannot query field 'internalNote' on type 'CommentType'.` |
+| `mutation { commentCreate(newComment: { post: 1, authorName: "a", text: "t", internalNote: "x" }) { ok } }` | `Field 'internalNote' is not defined by type 'CommentCreateGenericType_p84059c'.` — the same projection on the **write** input |
+
+The to-ONE hatch closes the ordering axis on the key behind it:
+
+| Query | Answer |
+|---|---|
+| `{ authors { results { name user { username } } } }` | `user: null` for an anonymous caller — `resolve_user` scopes it |
+| `{ authors { results(ordering: "userId") { name } } }` | `Invalid ordering field: 'user_id'.` — the term is normalized to the column *before* it is judged, so the message names `user_id`, not what you sent |
+
+!!! warning "One surface in this playground does **not** honour the same projection"
+    `CommentSubscription` is a hand-written `Subscription` bound to
+    `Meta.model = Comment`, so it compiles its event type and its
+    `CommentSubscriptionFilterInput` from the **model** — `internalNote` is
+    selectable and equality-filterable there while `CommentType` hides it. That
+    is the third of the
+    [open boundaries](../types.md#projection-exception) the rule states, and
+    the remedy is one line: repeat `exclude_fields` in the subscription's own
+    `Meta`. The playground leaves it open on purpose and pins it with a test
+    that goes red the day it is closed.
+
+## Uploading a file
+
+`documentCreate` is a `DjangoModelMutation` over a model with a `FileField`, so
+a multipart part named after the field is merged into the payload with no extra
+configuration. GraphiQL cannot send multipart, so this one is a `curl` demo —
+run it against `make run`:
+
+```bash
+curl -s http://127.0.0.1:8000/graphql/ \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  -F 'query=mutation { documentCreate(newDocument: { name: "Notes" }) { ok document { id name attachedFile } } }' \
+  -F 'attachedFile=@notes.txt'
+```
+
+```json
+{"data":{"documentCreate":{"ok":true,"document":{"id":"1","name":"Notes","attachedFile":"documents/notes.txt"}}}}
+```
+
+Three variations worth running, because each one teaches a rule:
+
+| Change | What happens |
+|---|---|
+| rename the part to `attached_file` | same landing column — the part name is matched against **both** the camelCase alias the SDL publishes and the model attribute. The stored path picks up a uniqueness suffix (`documents/notes_ciyKdvA.txt`) only because the first upload already took `documents/notes.txt` |
+| misspell the part (`attachedFyle`) | `ok: true` with `attachedFile: ""` — a part matching no exposed input field is ignored, so a typo looks exactly like success |
+| drop `-H 'X-Requested-With: …'` | **HTTP 403**, `This content type requires the X-Requested-With header. …`, before the body is read |
+
+## Two settings that ship on, and are invisible until they bite
+
+`config/settings.py` deliberately does **not** set either of these — both ship
+enabled, and pinning a key to its own default only hides that you depend on it.
+The file names and explains them in comments instead, so a reader copying it
+meets both walls at their desk:
+
+| Setting | Default | What you meet |
+|---|---|---|
+| [`REQUIRE_CSRF_HEADER`](../security.md#cross-site-post-protection) | `True` | the 403 in the upload table above. `application/json` clients — GraphiQL included — never see it |
+| [`MAX_SUBSCRIPTIONS_PER_CONNECTION`](../subscriptions.md#per-connection-subscription-cap) | `50` | the 51st concurrent `subscribe` on **one** WebSocket is answered with an `error` frame naming the limit; the socket and every subscription already running on it keep going |
+
 ## Try subscriptions live
 
 The playground serves the v2 native subscription engine behind both
@@ -250,7 +356,11 @@ to watch them work is the built-in browser client:
 
 1. Open <http://127.0.0.1:8000/graphql/client/>. **WS** mode is
    pre-selected and already points at `/ws/graphql/`; press **Connect**.
-2. Enter a subscription and press the run (▶) button:
+2. Press the run (▶) button. The editor is already holding a **runnable**
+   document — the client ships `yourSubscription(action: ALL_ACTIONS) { id }`
+   and its introspection renames the placeholder to the first field this
+   schema's subscription root advertises, which here is `postSubscription`.
+   Widen the selection set if you want more than the id:
 
     ```graphql
     subscription {
@@ -261,6 +371,12 @@ to watch them work is the built-in browser client:
       }
     }
     ```
+
+    The rename needs introspection, and this playground sets
+    `ALLOW_INTROSPECTION = True` so it happens. On a project that leaves the
+    flag off, the document still says `yourSubscription` and pressing ▶ answers
+    `Cannot query field 'yourSubscription' on type 'Subscription'` until you
+    type your own field name.
 
 3. Trigger a change from GraphiQL in another tab (any existing author id
    works — grab one with `{ authors { results(page: 1) { id name } } }`):
@@ -298,11 +414,17 @@ More things to try:
 The playground ships genuine end-to-end tests that drive the same consumer,
 SSE view and schema the server runs — a WS round-trip (subscribe → ORM
 `Post.objects.create()` → `next` frame received) and the equivalent SSE
-round-trip, plus schema/permission and client smoke tests:
+round-trip, the multipart upload in all four spellings, the projection boundary
+on every axis it can reach, both arms of the relation hatch, and the two
+settings that ship on:
 
 ```bash
-make test
+make test          # 51 passed
 ```
+
+Several of them assert the **verbatim** answer strings this page and the
+project's own `README.md` quote, so a message that changes turns the suite red
+instead of leaving the documentation quietly wrong.
 
 ## Where to go next
 

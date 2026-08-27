@@ -12,6 +12,1404 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 3.0.0 — 2026-08-27
+
+**Security release, and the largest set of breaking changes since 2.0.** Read
+this section before upgrading: it names every one of them in one place, and each
+is expanded in the entries below.
+
+The major bump is what the breaking changes below require, not a rewrite: the
+API you write is the 2.x API. What changed is what the library **refuses**. A
+schema that never answered a question its own projection said it would not
+answer builds unchanged.
+
+The theme is a single rule finally enforced everywhere it was already written
+down: **`Meta.only_fields` / `Meta.exclude_fields` are a security boundary, not
+an output shape.** A column a type hides must be unreadable, unorderable **and**
+unfilterable through it. Read it once in
+[Types › The projection is a security boundary](usage/types.md#projection-security-boundary);
+every other page links there.
+
+**Two new settings ship ON.** Both change behaviour for existing clients.
+
+- **`REQUIRE_CSRF_HEADER`** (`True`) demands an **`X-Requested-With`** header on
+  POSTs whose content type a browser can send cross-site with no CORS
+  preflight — `application/x-www-form-urlencoded`, `multipart/form-data`,
+  `text/plain`, and a body-less POST with no content type — on the HTTP views
+  **and** the SSE subscription endpoint. Without it: **HTTP 403** before the
+  body is read. Form-encoded clients break, and so does **any multipart upload
+  client written against 2.2.0**. `application/json` and `application/graphql`
+  clients change nothing.
+- **`MAX_SUBSCRIPTIONS_PER_CONNECTION`** (`50`) caps the concurrent operations
+  one `graphql-transport-ws` socket may hold. The socket and everything already
+  running on it survive a refusal; SSE is unaffected. `None` restores the old
+  unbounded behaviour.
+
+**Requests that used to succeed are now refused at query time.** All on the
+ordering axis, all closing a read the rule always prohibited:
+
+- ordering by a column the type projects away, by a type's **own** hidden
+  primary key, or by a model field name a `resolve_<name>` of yours masks;
+- ordering by a relation's `_id` when that relation is served by a resolver of
+  your own — the [scoping hatch](usage/types.md#relation-scope-hatch), in either
+  direction;
+- ordering by a forward FK's `_id` when the **target** type hides the key it
+  points at;
+- an operator-configured `ordering=` naming a projected-away column, which now
+  raises on **every** request through `CursorGraphqlPagination` (it echoes the
+  value in the cursor); `LimitOffset` / `Page` keep their operator exemption;
+- cursor-paginating a list type whose SDL does not publish its primary key.
+
+**Schemas that build today can stop building.** That is the point — every one
+of them was answering a question the projection said it would not:
+
+- a `filter_fields` entry naming a projected-away column, a masked relation, a
+  hop through either arm of the scoping hatch, `pk`, or a lookup spelled into
+  the key instead of the value;
+- `only_fields` / `exclude_fields` / `include_fields` on a
+  `DjangoListObjectType` that reuses a node type already registered for the
+  model (restating that node's own projection is still accepted).
+
+**And one that does NOT stop the build, which is worse.**
+`MAX_QUERY_DEPTH` / `MAX_QUERY_COST` set to `0` or a negative value used to
+switch the guard off silently, and is now refused — but the refusal fires when
+the setting is READ, on the first request, not while the schema builds.
+So the schema builds, `manage.py check` stays green, and the first signal is a
+failing request. `None` remains the only way to disable a guard. Grep your
+settings for a literal `0` on either key before you deploy; the value you want
+is `None`.
+
+**Four more behaviour changes worth checking before you upgrade:**
+
+- **Subscriptions are now measured against `MAX_QUERY_DEPTH` / `MAX_QUERY_COST`.**
+  Both transports previously validated with graphql-core's default rules, so
+  neither guard ever saw a subscription document. Raise the limits if your
+  subscription documents need it.
+- **An `async def` subscribe gate now actually denies.** It failed **open**:
+  `authorize_subscription`'s wrapper discarded the coroutine, so the check never
+  ran. A subscription that used to be granted may now be refused — by the gate
+  you wrote.
+- **`BaseGraphQLView.format_error` is an instance method** taking the request:
+  `format_error(self, error, request=None)`. A subclass overriding the old
+  `@staticmethod format_error(error)` must be updated.
+- **`MAX_REQUEST_BODY_SIZE` now bounds multipart bodies honestly** — an
+  under-declared body gets **413**, a chunked one **411** on WSGI. Only when the
+  setting is configured; the `None` default is unaffected.
+
+**Removed.** The **`CAMELCASE_ERRORS`** setting (it had zero consumers and
+changed nothing), plus six internal names — four of which were importable, so
+`from django_graphex.utils import get_obj` / `create_obj` and
+`converter.assert_valid_name` / `convert_choice_name` now raise `ImportError`.
+
+### Security
+
+- **A relation served by a `resolve_` method of your own ranked and filtered by
+  the key behind it.** The mask stamp — which withdraws a declared attribute
+  that publishes a column's NAME over a resolver serving something else — was
+  carved out for a declared RELATION, on the argument that a relation's name is
+  not a column's and the key behind it is the *target* type's answer. That
+  argument holds for the AUTO-EXPANDED relation, whose value really is the row's.
+  It does not hold for a declaration served by a resolver: `ordering: "authorId"`
+  ranks by the raw foreign key on the parent's own row and
+  `filter_fields = {"author__name": …}` joins straight past the target type, so
+  a `resolve_author` returning a redacted stand-in — or nothing at all — left a
+  live ranking oracle over a key **no type in the schema serves**. That shape is
+  indistinguishable at build time from the to-one scoping hatch
+  [Types › Custom queryset](usage/types.md#relation-scope-hatch) documents, whose
+  resolver returns a *scoped* target and still ranks the rows it hides: the
+  difference lives in a resolver body no static analysis can read. Both now fail
+  **closed**, like every other masked declaration. **This rejects orderings that
+  used to succeed and fails a schema that builds today**: declaring the hatch
+  withdraws that relation's `_id` column from the ordering allowlist, and a
+  `filter_fields` path through the declared relation raises
+  `ImproperlyConfigured` while the schema builds. Both were already the guide's
+  own written remedy for the leak — drop the relation's filter paths, project
+  the key away — so the boundary now does by itself what the reader was being
+  asked to do by hand. A declaration carrying **no** resolver is untouched: it
+  serves the attribute, so it keeps both axes.
+- **The to-MANY half of that same hatch stayed open.** Closing the to-one arm
+  left its byte-equivalent twin fail-open: a relation declared as
+  `posts = DjangoFilterListField(PostType)` — which
+  [Types › Custom queryset](usage/types.md#relation-scope-hatch) teaches for the
+  identical purpose, and which carries a resolver of its own by construction —
+  never reached the mask stamp, so `filter_fields = {"posts__title": …}`
+  compiled to an ORM join that reaches every row the mounted list field's
+  `get_queryset` exists to hide. One user intent, one release, two opposite
+  answers. Both arms now answer the same. The to-MANY arm's cost is strictly
+  smaller than the to-one arm's, because a reverse foreign key or a
+  many-to-many owns no column on the parent row: **nothing leaves the ordering
+  allowlist**, the relation stays selectable and stays scoped, and what goes is
+  the nested `posts__…` filter path — **which stops the schema building** with
+  `ImproperlyConfigured`. Drop those entries when you declare either arm.
+- **The shared filter input could be widened by a build the guard never saw.**
+  The union of every declaration sharing one `<Model>FilterInput` is measured
+  against every type serving it — but the measurement read the cache BEFORE the
+  assertion, and the assertion FORCES compiled field maps, which re-enters the
+  builder for the same model through a nested list field's own thunk. On that
+  path the cache entry was born inside the assertion, and the branch that
+  returned it recorded the narrow type as a server of paths nothing had ever
+  measured: its list field answered `filter: {bio: {icontains: …}}` for a column
+  its own SDL denies. The union is now measured in a loop that re-reads the
+  cache until it stops moving, so the shape being served and the shape being
+  measured cannot differ.
+- **One WebSocket socket could open unbounded subscriptions.** The
+  `graphql-transport-ws` consumer registered every accepted `subscribe` with no
+  ceiling, and each live operation joins its own channel-layer group — so a
+  single client turned one connection into hundreds of subscribers (500
+  concurrent operations on one socket was reproduced) while the HTTP side had
+  bounded its analogous surface with `MAX_BATCH_SIZE` since 1.2.1. The new
+  **`MAX_SUBSCRIPTIONS_PER_CONNECTION`** setting (default `50`) caps the
+  concurrent operations one socket may hold. **This rejects subscriptions that
+  used to be accepted**, but only past 50 concurrent operations on a *single*
+  connection; a `subscribe` past the cap is answered with the transport's own
+  `error` frame naming the limit, and the socket plus every subscription
+  already running on it survive untouched. A slot frees itself the moment its
+  operation ends (client `complete`, stream end, or disconnect). Set
+  `MAX_SUBSCRIPTIONS_PER_CONNECTION = None` to restore the previous unbounded
+  behaviour. The SSE transport is unaffected: one request carries exactly one
+  subscription. See
+  [Subscriptions › Per-connection subscription cap](usage/subscriptions.md#per-connection-subscription-cap).
+- **A cross-site form could execute mutations under the victim's session.** The
+  endpoint is `csrf_exempt` and `parse_body` accepts
+  `application/x-www-form-urlencoded` and `multipart/form-data`. Both are
+  CORS-*simple* content types, so a `<form>` on any origin posted straight
+  through with no preflight and the browser attached the victim's session
+  cookie — a plain CSRF hole on every mutation. The same hole was open on the
+  **SSE subscription endpoint**, which is `csrf_exempt` too and reads a
+  form-encoded `query` straight out of `request.POST`. The new
+  **`REQUIRE_CSRF_HEADER`** setting (default **`True`**) now demands the
+  **`X-Requested-With`** header on the CORS-simple set — form-encoded,
+  multipart, `text/plain`, and a body-less POST carrying no content type at all
+  — and answers HTTP 403 before the body is read otherwise, on the HTTP views
+  **and** on the SSE endpoint (whose refusal is a plain body, not a JSON
+  envelope, because an `EventSource` client does not parse one). The header is
+  not CORS-safelisted, so requiring it forces back the preflight the attacker
+  page cannot pass; the value itself is never inspected. The check runs **ahead
+  of every dispatch**, wrapped around the view callable, because
+  `GraphQLView.dispatch` owns the whole response-cache interaction and reaches
+  the shared dispatch only through `super_call`: a guard behind it is bypassed
+  by a warm cache entry, has its own 403 stored and replayed to legitimate
+  callers, and still lets a rejected mutation flush the caller's cache
+  namespace. **`application/json` and `application/graphql` clients change
+  nothing**: neither is simple, so both already required a preflight. See
+  [Security › Cross-site POST protection](usage/security.md#cross-site-post-protection).
+
+    !!! warning "This is a breaking change for two kinds of client, on by default"
+
+        **Who breaks.** Anyone POSTing `query=` as
+        `application/x-www-form-urlencoded`, and **anyone using the multipart
+        file upload shipped in 2.2.0** — that feature works in the published
+        release, so upload clients written against 2.2.0 do break here.
+
+        **What they see.** HTTP 403 with
+        `This content type requires the X-Requested-With header. …`, before the
+        body is read. The message names the header; there is no silent failure
+        and no partial execution.
+
+        **The fix, one line.** Add the header to the request:
+        `headers={"X-Requested-With": "XMLHttpRequest"}` (`requests`),
+        `xhr.setRequestHeader(...)`, or the equivalent. The value is never
+        inspected. Nothing else about the request changes.
+
+        **The opt-out.** `REQUIRE_CSRF_HEADER = False` restores the previous
+        behaviour wholesale. Use it only if a client genuinely cannot set a
+        header **and** the endpoint is protected another way.
+
+        **Why multipart is not exempted.** `multipart/form-data` is itself a
+        CORS-simple content type, so a cross-site `<form enctype="multipart…">`
+        posts to the endpoint with no preflight at all. Exempting it to spare
+        the upload clients would reopen exactly the hole this closes — and
+        would leave the *upload* mutations, the ones that write files, as the
+        only unprotected surface.
+
+- **Disabling introspection still leaked the schema, one guess at a time.**
+  `format_error` returned graphql-core's `formatted` mapping verbatim, so the
+  `Did you mean 'email'?` suggestion appended to an unknown field, type or
+  argument rode out even with `DisableIntrospectionMiddleware` installed —
+  probing with invented names rebuilt much of a schema the operator believed
+  was hidden. The WS and SSE transports leaked it by the same route, serializing
+  raw `error.formatted` of their own, so any deployment exposing subscriptions
+  kept the oracle open on a `subscribe` frame or a direct POST to the SSE
+  endpoint. The trailing suggestion sentence is now stripped whenever
+  introspection is **actually** disabled (the middleware installed *and*
+  `ALLOW_INTROSPECTION=False`), through **one shared formatter**
+  (`django_graphex.security.format_graphql_error`) that the HTTP view and both
+  transports call — WS covers its validation errors, its subscribe-entry
+  failures and its in-stream `next{errors}` frames. The strip is keyed on the
+  **rules that actually leak** — `FieldsOnCorrectTypeRule`,
+  `KnownTypeNamesRule`, `KnownArgumentNames*Rule`, `ValuesOfCorrectTypeRule` /
+  `coerce_input_value` and enum-value coercion — by matching the message each
+  one writes ahead of its suggestion, not by matching the shape of a trailing
+  `Did you mean …?` sentence. Nothing else changes: the rest of the message, the
+  `locations` and the `path` all survive; `ScalarLeafsRule`'s
+  `Did you mean 'field { … }'?` guidance (built from the name the *client*
+  typed, not from the schema) and a resolver-raised application error that
+  happens to end in a question keep every word; and with introspection allowed
+  the suggestion is kept because the same names are public anyway. The strip is
+  request-independent by design, so the `INTROSPECTION_ALLOW_SUPERUSER` bypass
+  does not restore it — an error body reaches the response cache, where a
+  per-user decision would serve one caller's body to another. See
+  [Security › "Did you mean" suggestions are stripped too](usage/security.md#did-you-mean-suggestions-are-stripped-too).
+- **`PERMISSION_SCOPED_SCHEMA` treated a typed GFK union as public.** The
+  implicit relation label is derived from the output type's
+  `extensions["gdx"]._meta.model`, and a `GraphQLUnionType` has no model — so a
+  `Meta.unions` GenericForeignKey field stayed untagged, and untagged means
+  public. The abstract arm of the relation-traversal bypass the 2.2.0 notes
+  describe: a caller whose *direct* root field to a member type was pruned away
+  still read that member's rows through the union. A union's requirement is now
+  the **union of its members'** read permissions, so keeping the field takes
+  every member's `view_M`. **This prunes a field that used to survive**: a
+  caller holding one member's permission but not another's now loses the field
+  entirely, because the union can return either member and the requirement
+  applies to the whole field. Expose the members as their own fields if they
+  are meant to be reachable independently. See
+  [Permission-scoped schema › A typed GFK union requires every member's permission](usage/permission-scoped-schema.md#a-typed-gfk-union-requires-every-members-permission).
+- **`ordering` was a read oracle over every column the type hides.** The
+  allowlist was built from `model._meta.concrete_fields` — the MODEL's columns,
+  not the TYPE's projection — so a column removed with `only_fields` /
+  `exclude_fields` was absent from the SDL, unselectable and unfilterable, and
+  still fully sortable. Sorting by it ranks the visible rows by the hidden
+  value; with a filter narrow enough to isolate a pair of rows the value is
+  recovered exactly, and a hidden boolean was read back for every row of a test
+  table. The docstring of the guard claimed it already rejected
+  `password` / `is_superuser`, and there was no `ordering_fields` option
+  anywhere in the package, so a project had no way to mitigate it. The
+  allowlist is now **read off the compiled node type that actually serves
+  `results`** — the type in the SDL, resolved per schema when that schema is
+  built — and enforces it on all three ordering paths: the queryset path, the
+  prefetch-cache (in-memory) path, and the nested window-prefetch optimization
+  — which applied its `ORDER BY` in SQL and returned pre-sliced rows, so no
+  later guard ever saw the term. For `LimitOffsetGraphqlPagination` and
+  `PageGraphqlPagination` the allowlist gates the **client argument only**: the
+  `ordering=` you pass when constructing one of those paginators is your own
+  configuration, identical on every request and never echoed back — the response
+  is the rows — so it may name a projected-away column and still serve. A client
+  that repeats that value is still rejected — the check follows the value's
+  provenance, not its text. **This rejects orderings that used to succeed**: any
+  client sorting by a column its type projects away now gets
+  `Invalid ordering field: '<name>'`. Affected are
+  projects that hid a column with `only_fields` / `exclude_fields` while still
+  ordering by it — expose the column if the ordering is legitimate, or drop the
+  ordering. A forward FK exposed as `author` keeps `author_id` orderable **only
+  when the type behind `author` publishes the key it points at** — see the
+  shared-predicate entry below — and paginators constructed directly, outside a
+  list type, keep the model-wide
+  allowlist. **The prefetch-cache path is stricter too**: it previously enforced
+  nothing at all on a type that declared no projection, so the same nested list
+  answered differently depending on whether its rows came from the database or
+  from the prefetch cache. It now refuses the terms the queryset path already
+  refused — a relation-spanning `author__name` on a nested list raises instead of
+  sorting by nothing. See
+  [Pagination › Ordering validation](usage/pagination.md#ordering-validation-security).
+- **Two shapes the ordering allowlist wrongly refused, and one it shared across
+  schemas.** The allowlist used to be built by re-applying the output compiler's
+  `only_fields` / `exclude_fields` / `include_fields` filters by hand, which is a
+  copy of the compiler held in a second place — and a copy is wrong for every
+  shape it did not anticipate. Three consequences, all closed by reading the
+  compiled type instead of re-deriving it:
+    - A **multi-table-inheritance child** whose `only_fields` names `id` was
+      judged to be hiding its primary key, because a child's own pk is the
+      implicit `<parent>_ptr` link and no `only_fields` list can contain it. That
+      refused cursor pagination on a working configuration, with a message
+      asserting the type hides a key its SDL plainly publishes. Such a type now
+      paginates by cursor again.
+    - An **explicitly declared class attribute** that re-publishes a column
+      `only_fields` removed (`bio = CharField()` on a type restricted to
+      `id` / `name`) made that column appear in the SDL while the allowlist still
+      refused to order by it. It is now orderable, because it is selectable —
+      provided the declaration carries **no resolver**, so that the field really
+      does serve the column (see the masked-declaration entry below).
+    - **Two schemas over one list container class** shared a single paginator
+      object, so building the second schema overwrote the first schema's
+      allowlist — the first schema then accepted a hidden column it had refused a
+      moment earlier. The per-schema answer now lives on a per-schema copy; the
+      instance you construct and mount is never mutated.
+- **A natural primary key hidden by the projection was still sortable.** The
+  allowlist exempted the primary key unconditionally, after the projection
+  filters ran. That is right for a surrogate `id` — ranking rows by an
+  identifier the client already reads gives nothing away — but a **natural** key
+  (a slug, a code, an email) carries business data and can be projected away
+  like any other column, so the exemption handed the read oracle straight back
+  on every such model: `ordering: "slug"`, `ordering: "pk"` and the pk's own
+  attname all passed the check, on the queryset path, the in-memory path and the
+  nested window-prefetch path alike. The pk is now added to the allowlist only
+  when the SDL publishes the key's **value**, and the `pk` alias rides
+  with it rather than standing on its own. On a multi-table-inherited child that
+  value is the parent's `id`, which the SDL does publish, so `ordering: "pk"` and
+  the parent-link column keep working there. **This rejects orderings that used to
+  succeed** on any type whose `only_fields` / `exclude_fields` removes its own
+  primary key. Nothing else changes: the paginators' generated pk tiebreak is
+  not client input and is not gated, and where the nested window optimization
+  cannot serve that tiebreak it declines and the plain prefetch path returns the
+  same rows.
+- **`CursorGraphqlPagination` published its ordering column through the
+  cursor.** The server-default exemption above rests on the configured ordering
+  never being echoed back. `CursorGraphqlPagination` takes the same `ordering=`
+  kwarg and *does* echo it: `pageInfo.startCursor` and `endCursor` are base64 of
+  `cursor:<ordering value>\x1f<pk>`, so a paginator pointed at a column the node
+  type projects away printed that column verbatim to any client willing to
+  base64-decode the token — a direct read of the hidden value, not merely a
+  ranking of it. The cursor paginator now enforces the projection allowlist on
+  its configured ordering regardless of provenance, at the one seam both
+  `paginate_queryset` and `get_page_info` resolve the ordering through.
+  **This is a hard failure, not a downgrade**: a `CursorGraphqlPagination`
+  configured to order by a projected-away column now raises
+  `GraphQLError: Invalid ordering field: '<name>'` on every request. Point it at
+  a column the node type exposes. See
+  [Pagination › Ordering validation](usage/pagination.md#ordering-validation-security).
+- **`CursorGraphqlPagination` also published a hidden primary key through the
+  cursor.** Gating the ordering column left the other half of the token open: a
+  composite cursor is `cursor:<ordering value>\x1f<pk>`, and that `<pk>` is
+  appended unconditionally. A type whose `only_fields` / `exclude_fields` removes
+  its own **natural** primary key — a slug, a code, an email — therefore had that
+  key printed verbatim in `pageInfo.startCursor` and `endCursor` even when the
+  ordering named a perfectly public column. The tiebreak is what makes the keyset
+  boundary total, so it cannot simply be dropped: without it a `value > boundary`
+  page silently skips every row tied on the ordering value. Encrypting the cursor
+  would keep both properties at the cost of a key to manage, a rotation story and
+  a wire-format break; tiebreaking on an exposed column instead needs that column
+  to be unique, which nothing can promise. So **the configuration is refused**: a
+  list type whose SDL does not publish its primary key's value can no longer be
+  paginated by cursor, and every request raises `GraphQLError` naming the problem
+  without naming the hidden column. That covers an `only_fields` list that simply
+  omits the key as much as an `exclude_fields` that names it, and it does **not**
+  cover a multi-table-inherited child, which publishes the parent's `id`. Publish
+  the key, or use `LimitOffsetGraphqlPagination` /
+  `PageGraphqlPagination`, which echo nothing. **The cursor's wire format is
+  unchanged** — existing cursors keep decoding exactly as before. See
+  [Pagination › Ordering validation](usage/pagination.md#ordering-validation-security).
+- **A nested list whose child type hides its pk failed on an empty `ordering`.**
+  The prefetch-cache path substitutes the paginator's own pk ordering when none
+  was resolved, so the in-memory page matches the DB-side window slice. Provenance
+  was read off *whether the client sent an `ordering` argument*, and an argument
+  can normalize to nothing (`","`, `" "`, `"+"`): the projection allowlist then
+  survived while the value did not, and the server's own tiebreak was validated as
+  if the client had asked for it. Any such value answered
+  `Invalid ordering field: 'id'` on a nested list whose child type projects its
+  primary key away. The substitution now drops the allowlist along with the value
+  it replaces. A real client term outside the allowlist is still rejected.
+- **A declared field could publish a column's NAME while hiding its value, and
+  `ordering` believed the name.** Reading the allowlist off the compiled type
+  answers "is this name in the SDL", which is not the same question as "does
+  this field serve that column". A declared class attribute wins over the
+  model-derived field of the same name, so a type could drop `bio` with
+  `only_fields`, declare `bio = CharField()` with a `resolve_bio` returning
+  `"[redacted]"`, and hand every client the redaction while
+  `ordering: "bio"` ranked the rows by the raw column — the read oracle the
+  projection exists to close, rebuilt out of the type's own declaration. On
+  `CursorGraphqlPagination` it was not even a ranking: the hidden value came
+  back verbatim inside `pageInfo.startCursor`. A masked `id` did the same for
+  the primary key, carrying `ordering: "pk"` in with it. The compiler now marks
+  a declared field whose value does **not** come from the column — the test is
+  the resolver it compiled, so a field-level `resolver=` and a class
+  `resolve_<name>` are both covered — and the allowlist skips those columns.
+  **This rejects orderings that used to succeed** on any type that declares a
+  resolver over a model field name; a declaration with no resolver keeps the
+  default attribute resolver, still serves the column, and stays orderable. The
+  rule fails closed: a `resolve_<name>` that happens to return the real column
+  loses the ordering term too, because no build-time check can read a resolver
+  body. Drop the resolver, or publish the substitute under a different name. See
+  [Pagination › Ordering validation](usage/pagination.md#ordering-validation-security).
+- **A pruned schema answered ordering questions with the FULL schema's
+  allowlist.** Under `PERMISSION_SCOPED_SCHEMA` the pruned schema is a clone,
+  and cloning a field carried its resolver through verbatim — including the
+  paginator the allowlist is stamped on, which was derived once against the
+  *unpruned* node type. A caller denied `view_author` was served a schema with
+  no `author` field on the post node and no author type in the type map at all,
+  and could still send `results(ordering: "-authorId")` and rank the rows by
+  that foreign key. Every pruned clone now stamps its own paginator copy from
+  the node type **that clone** publishes, so the answer belongs to the schema
+  actually serving the request; a caller holding the permission keeps the term
+  on the very same field. Both paginating shapes are covered: the list
+  container's `results` and a flat `DjangoFilterPaginateListField`. Schemas
+  built without the flag are untouched. See
+  [Permission-scoped schema › `ordering` follows the pruned schema](usage/permission-scoped-schema.md#ordering-follows-the-pruned-schema-not-the-full-one).
+- **An anonymous caller could plant unbounded permanent cache entries.**
+  `GraphQLView.cache_key_prefix` partitions the response cache by a hash of the
+  `Authorization` header when the request is not authenticated — unverified
+  input a client can vary per request — and each identity seeds its own
+  namespace version counter, stored with `timeout=None` so it never expires (it
+  has to outlive the responses it namespaces). One anonymous client sending a
+  fresh token per request therefore minted a fresh never-expiring cache key per
+  request. The counter's namespace is now **bucketed** for any identity derived
+  from an unauthenticated request: a fixed 64 buckets, so what an anonymous
+  caller can create is bounded no matter how many credentials it invents.
+  Authenticated identities (bounded by your user table) and the single shared
+  `anon` partition keep their exact namespace. **Isolation is unchanged** — the
+  response entry still carries the full identity, so two callers sharing a bucket
+  never share a response body. **Invalidation granularity is a behaviour
+  change**: two token-only callers that land in the same bucket now share a
+  version counter, so a mutation from one makes the other's cached entries
+  unreachable. The counter only moves forward, so that can only turn a cache
+  **hit** into a **miss** — the next read re-executes against current data and
+  nothing stale is ever resurrected — but a token-only client that relied on its
+  reads surviving another client's mutation will see extra misses. Authenticate
+  it to get its own counter back. A custom `cache_key_prefix` inherits the bound
+  automatically. **The spent property is reachable by an attacker, and that is
+  stated rather than closed**: the bucket is a pure function of a caller-chosen
+  header, so an unauthenticated client can hash candidates until one lands in any
+  bucket it likes and evict that bucket's members. Salting would not help — the
+  namespace is small by construction, so a caller that cannot aim can still cover
+  it by volume. The ceiling is misses, never bodies. See
+  [Caching › Bucketing for unauthenticated identities](usage/caching.md#bucketing-for-unauthenticated-identities)
+  and
+  [Views › Response caching and cache identity](usage/views.md#response-caching-and-cache-identity).
+- **A hand-mounted interface field leaked its implementors' rows.** The
+  permission-scoped schema derives a field's implicit label from its output
+  type's model; an abstract type has none, and the pruner treats an untagged
+  field as public. 2.2.0 closed this for typed GFK unions but left the sibling
+  interface arm open, so `field(SomeDjangoInterfaceType)` handed a caller rows
+  of every implementor while a direct field to the very same implementor type
+  was pruned away. An interface's label is now the **union of the read
+  permissions of every implementor the schema mounts**, exactly as a union's is
+  — an AND, because the field can return any of them. A caller holding some but
+  not all of those `view` permissions **loses the interface field** rather than
+  keeping one that can still return a row they may not read; expose those
+  implementors through their own gated fields instead. The implementors are read
+  from the schema's own `get_possible_types`, not from the process-wide registry:
+  a registry is populated at class-definition time and is a strict superset of
+  what any one schema mounts, so scoping the label to it would have cost a caller
+  the field over a type no query could ever reach — turning a leak into an
+  outage. The schema-level label set is derived from the same schema, so the two
+  can never disagree.
+- **A multipart POST under ASGI was bounded by nothing but the client's own
+  claim.** `MAX_REQUEST_BODY_SIZE` measures the body itself precisely because
+  `Content-Length` is client-supplied — but that measurement reads the body,
+  which for `multipart/form-data` breaks the streamed upload and collides with
+  the CSRF check, so multipart was left with the declared length as its only
+  check. Nothing downstream re-imposed that declaration under ASGI:
+  `ASGIHandler.read_body` spools every chunk with no cap and hands the spool
+  straight to `request._stream` (no `LimitedStream`, unlike WSGI), and
+  `MultiPartParser` builds its reader from `_chunk_size`, consulting
+  `_content_length` only to shortcut a **zero**-length body. A multipart POST
+  declaring `Content-Length: 100` and sending 8 MiB was therefore answered
+  `200 OK` with all 8,388,608 bytes parsed, under a cap of 1 KiB. Multipart is
+  now measured **without being read**: `request._stream` is seeked to its end and
+  straight back, which allocates nothing, leaves the parser an untouched stream,
+  keeps the upload streaming to disk, and reports the real size — the same
+  measurement Django's own `HttpRequest.body` performs on a seekable stream, done
+  one level up so the answer is a 413 rather than a 400. WSGI is unaffected: its
+  `LimitedStream` already truncates an under-declared body, and where the stream
+  cannot be seeked a multipart POST declaring **no** length is refused with
+  **HTTP 411 Length Required** instead. **This rejects requests that used to be
+  accepted** — an under-declared multipart body now gets a 413, and a chunked one
+  a 411 on WSGI — and only when the cap is configured; projects leaving it at its
+  `None` default are unaffected. Note the boundary, now stated plainly in the
+  docs: **no view-level setting can stop a multipart body from being received
+  under ASGI**, only from being processed. Bound reception at your ASGI server.
+  See
+  [Settings › What this cannot do under ASGI](usage/settings.md#what-this-cannot-do-under-asgi).
+- **A column a type hid was still fully filterable — the sharpest read oracle in
+  the library.** `Meta.only_fields` / `Meta.exclude_fields` removed a column from
+  the SDL and, since 2.2.0, from `ordering` — but the filter input ignored the
+  projection completely. It is compiled from `Meta.filter_fields` against the
+  MODEL, with no idea which columns the type publishes, so
+  `filter: { bio: { exact: "…" } }` answered **exactly, in one request**, for a
+  column the schema said did not exist. `icontains` turned the same argument into
+  a prefix walk that recovers the value character by character, and the whole
+  lookup set was published in the SDL as `<Model>FilterInput.bio`, so the oracle
+  was discoverable by introspection rather than guessed. Every other door led to
+  the same place: a relation-spanning `author__bio` reached it across a join, the
+  `and` / `or` / `not` combinators composed over it, a nested list filter and a
+  per-field `fields=` override both resolved to the same shared per-model input,
+  and a narrow declaration was silently **widened** to the model's root paths, so
+  a list that declared only `name` still served `bio`. The projection is now
+  what it was always documented to be — a **security boundary, not an output
+  shape** — and a `filter_fields` entry naming a column its type projects away
+  raises `ImproperlyConfigured` while the schema builds, naming the type, the
+  entry and the column. Each hop of a `__` path is measured against the type
+  that publishes THAT hop, so hiding `bio` on the author's type also refuses
+  `PostType.filter_fields = {"author__bio": …}`; widening a cached input is
+  checked on the same path, so the second door is shut with the first. **A schema
+  that builds today can therefore fail to build after upgrading — which is the
+  point: every schema that stops building was answering that oracle.** The entry
+  is refused rather than silently dropped, following the 2.2.0 precedent, because
+  dropping it would repeat the exact defect 2.2.0 fixed — an option accepted and
+  ignored — and only the operator can say which of the two contradicting options
+  was meant. The fix is one line: publish the column (`only_fields` /
+  `include_fields`, or drop it from `exclude_fields`), or drop the
+  `filter_fields` entry. **One boundary stays open, deliberately and documented**:
+  the BODY of an `@filter_field` method, whose argument is an opaque scalar and
+  whose ORM lookup lives in user Python where no build-time analysis can see it —
+  keep those bodies inside your own projection. Its **name** is checked, so the
+  one-line rename out of a refusal is not a bypass; see the shared-predicate
+  entry below. Subscription filter inputs were
+  already correct (they are built from the projected output field names) and are
+  unchanged. See
+  [Filtering › The projection is the outer boundary](usage/filtering.md#projection-boundary).
+- **The ordering axis and the filter axis had each invented their own notion of
+  "hidden", and they contradicted each other.** The two entries above were
+  written against the same rule and implemented twice: ordering read the
+  compiled type and honoured the compiler's mask stamp, while filtering
+  re-derived the answer from `Meta`. On the identical declaration — a column
+  `only_fields` removed and a declared attribute put back with a resolver — the
+  ordering axis said *published* and the filter axis said *hidden*. That is the
+  same drift the ordering axis had already suffered internally, now repeated
+  BETWEEN axes, and a schema whose two guards disagree is a schema whose rule
+  nobody can state. Both axes now ask **one predicate**,
+  `core.output_compiler.publishes_column_value`, against the compiled type that
+  will serve the request: *does this type hand out the VALUE this column holds?*
+  Absence, a projection, a masking declaration and a compiler-dropped relation
+  are one answer, and neither axis can drift from the SDL again. Three
+  behaviour changes fall out of it, all breaking, all in the same direction —
+  **closing a read the rule always prohibited**:
+    - **A forward FK's `_id` column now follows the TARGET type's key.**
+      `ordering: "author_id"` was admitted unconditionally whenever the node
+      published `author`, justified by "the id is already readable through
+      `author { id }`" — a claim about the *author's* type that nobody asked.
+      Where that type projects its own key away, `author { id }` does not exist
+      either, so the ordering ranked rows by a key nothing in the schema hands
+      out. It is now refused with `Invalid ordering field: 'author_id'.`, and
+      `filter_fields = {"author": ("exact",)}` is refused at build time on the
+      same configuration, because a relation named with no tail filters on that
+      same key. **Publish the key on the target type** if the ordering or the
+      lookup is legitimate.
+    - **A `filter_fields` path through a relation whose target model has no
+      registered type now fails the build.** The output compiler drops such a
+      relation, so the schema could never name the rows the nested filter input
+      reached — a substring oracle over a model no query can select. Register a
+      type for the target, or drop the path.
+    - **An `@filter_field` method spelled like a projected-away column now fails
+      the build.** Its name compiles the very `<Model>FilterInput` field a
+      `filter_fields` entry naming it is refused, so the rename out of a refusal
+      is shut. The method **body** remains the documented open boundary; a
+      method whose name is not a column on the model is untouched.
+
+  One over-refusal was closed in the same pass, in the opposite direction: the
+  same-name `source=` shortcut (`bio = CharField(source="bio")`) compiles to a
+  resolver that provably reads that very attribute, so it is no longer stamped
+  as a mask and the column stays orderable **and** filterable. A `source=`
+  naming a different attribute, and a `resolve_<name>`, still withdraw the
+  column. The rule, its one exception and the two boundaries it cannot close are
+  now stated once, in
+  [Types › The projection is a security boundary](usage/types.md#projection-security-boundary);
+  every other page links there.
+- **The filter guard measured the projection of a type that was not serving the
+  request.** It resolved the serving type by MODEL through the graphene
+  registry — a last-wins index a type opts out of with the public
+  `Meta.skip_registry` — so the boundary was measured against whichever type
+  happened to hold the model's slot. A narrow type that left the registry, or
+  simply lost the slot to a wider sibling declared after it, was checked against
+  the sibling's projection and its own hidden columns sailed through: the guard
+  was a no-op for exactly the type about to answer. The compiler path now NAMES
+  the type it is measuring — `core.base.resolved_output_type` on the pair being
+  built, so a permission-scoped clone is measured as itself, and a list-object
+  field is measured against the node it paginates rather than the container.
+- **A relation-direct filter entry over a reverse FK or a many-to-many skipped
+  the boundary entirely.** `{"posts": ("exact",)}` filters on the *post's*
+  primary key, but a reverse foreign key and a many-to-many own no column on the
+  declaring model, so the predicate declined them and the last-hop check let
+  them through — while the byte-identical `{"posts__id": …}` spelling of the
+  same query was refused. Same query, two spellings, opposite answers. The
+  target's key is now asked of the target type directly, so both spellings agree.
+- **Two node types over one model shared one `<Model>FilterInput`, and only one
+  of them was measured.** The input is cached per **model** and every context
+  converges on the model's root declaration, so a narrow `DjangoObjectType`
+  mounted beside a wide one is served the **union** of both declarations — while
+  the guard only ever saw the declaration in front of it. The narrow type's list
+  field was therefore filterable by a column its own SDL projects away, with no
+  build failure at all. The boundary is now measured against the union the shared
+  input will actually serve, and against **every** type that will serve it.
+- **A `DjangoListObjectType`'s projection was silently discarded whenever a
+  `DjangoObjectType` was already registered for the model** — which is the
+  ordinary documented arrangement. The container builds its node type from
+  `Meta.only_fields` / `include_fields` / `exclude_fields` **only** when it mints
+  it; reusing a registered type dropped all three without a word, so every column
+  the operator meant to hide stayed readable, orderable and filterable.
+  Declaring one in that situation now raises `ImproperlyConfigured` at class
+  definition, naming the option, the model and the type that registered the node
+  — the same answer 2.2.0 gave the identical defect on `DjangoModelType`. **This
+  fails a schema that builds today**, deliberately: only the already-leaking
+  configuration is affected, and the fix is to move the projection to the node
+  type, where it was always taking effect. See
+  [Types › Configuration Options](usage/types.md#configuration-options).
+- **Under `PERMISSION_SCOPED_SCHEMA` the two axes disagreed on the same pruned
+  schema.** The ordering allowlist is re-derived from the pruned clone and
+  refuses a dropped relation's column; the `filter` argument and its whole nested
+  `<Model>FilterInput` rode through the prune verbatim. One schema, two answers —
+  and the surviving half was a prefix oracle over a model the clone does not
+  mount. The pruned filter input now narrows with the schema on the same
+  predicate: a relation the pruned node type no longer publishes is dropped from
+  it, and a nested input left over an unmounted model falls out of the type map.
+  The full schema is untouched, and each pruned variant carries its own clone.
+  See
+  [Permission-scoped schema › `filter` follows the same prune](usage/permission-scoped-schema.md#filter-follows-the-same-prune).
+- **A `filter_fields` entry naming nothing was accepted and ignored.** `"pk"` is
+  an ORM alias `_meta.get_field` does not answer to, and `"id"` names no column
+  on a natural-key model; either one compiled to **nothing**, so an operator
+  reading their own `Meta` believed the list was filterable by its key while
+  every request returned the unfiltered set. A segment naming no field on the
+  model that owns it now fails the build, naming the model's real primary key.
+  A lookup spelled into the KEY (`"name__icontains"`) is refused by the same
+  guard, and for the same reason: lookups are declared in the entry's **value**,
+  so the compound key lands on the model's own leaves where `_meta.get_field`
+  does not answer to it and the field thunk dropped it. It compiled to exactly
+  as much as `"pk"` — nothing — and exempting it refused one dead spelling while
+  accepting its byte-equivalent twin. **This rejects a declaration that used to
+  build**: move the lookup into the value (`{"name": ("icontains",)}`), which is
+  what it was always compiled from.
+
+### Changed
+
+- **Subscriptions are now measured against `MAX_QUERY_DEPTH` and
+  `MAX_QUERY_COST`.** Both transports validated with graphql-core's default
+  rules, so the depth and cost guards never saw a subscription document — while
+  [Mutations](usage/mutations.md) says they are enforced on "query, mutation,
+  and subscription selection sets" and
+  [Query optimization](usage/query-optimization.md) says "**all** GraphQL
+  operation types". The WebSocket and SSE transports now validate with the same
+  settings-driven rule tuple the HTTP view uses. **This rejects subscriptions
+  that used to be accepted**: a subscription's selection set is re-executed for
+  every delivered event, so an over-deep or over-costly document was paid for
+  repeatedly rather than once — the guard matters more here than on a one-shot
+  query, not less. A project that relied on the gap must raise
+  `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` far enough to cover its subscription
+  documents.
+- **`BaseGraphQLView.format_error` is now an instance method taking the
+  request** — `format_error(self, error, request=None)`, previously
+  `@staticmethod format_error(error)`. It has to be: the formatter decides
+  whether to strip the schema suggestion by looking at the middleware chain, and
+  the chain that actually ran comes from `get_middleware(request)`, the same
+  per-request hook execution asks. A static, request-less formatter could reach
+  neither, and a subclass that resolves middleware per request got a formatter
+  whose verdict disagreed with the chain that ran. **Migration:** a subclass
+  overriding it as `def format_error(error)` (or a caller invoking
+  `MyView.format_error(err)` on the class) must become
+  `def format_error(self, error, request=None)`. Calls through an instance —
+  `self.format_error(err)` — are unaffected.
+
+### Fixed
+
+- **An SSE subscription sent no bytes at all until its first event.** Django's
+  ASGI handler emits `http.response.start` before iterating the body, but a
+  server only writes the status line and headers when the first body chunk
+  arrives — daphne stores them on `http.response.start` and flushes on the
+  first `write()`. So an idle stream left the client with no response
+  whatsoever: a browser's `fetch` never resolved (the bundled client could not
+  show a connected state), and an intermediary proxy times a silent connection
+  out. Every stream now opens with an SSE comment line (`:\n\n`) before
+  anything else — including before an in-stream denial, so a refused subscribe
+  flushes too. A comment is not an event; conforming clients ignore it, and the
+  bundled browser client was taught to as well — its parser had no comment
+  guard, so it reported "Connection Error" on a healthy stream. Both transports
+  are now verified end to end in a real browser.
+- **The depth-limit refusal named an operation the client never sent.** The
+  budget was labelled `'query'` unconditionally, so an over-deep mutation — and,
+  now that both subscription transports validate with the shared rule tuple, an
+  over-deep subscription — was refused for a query that was not in the request.
+  The label is the operation's own kind.
+- **Both transports reported a document they could not SELECT from as the wrong
+  error.** `get_operation_ast` answers `None` for three unrelated reasons: the
+  operation is not a subscription, the document carries several and the request
+  named none, and the name matches no operation at all. All three produced
+  "only serves subscriptions", which sends the caller hunting for a query or
+  mutation their document does not contain. The two selection failures now name
+  themselves — one says to pick an operation with `operationName`, the other
+  names the operation the document does not define.
+- **A WebSocket subscribe could end in total silence.** Two changes in this
+  release interact: both transports now validate with the shared rule tuple,
+  whose depth rule READS `MAX_QUERY_DEPTH` at validation time, and the settings
+  reader now refuses a limit of `0`. `ImproperlyConfigured` is not a
+  `GraphQLError`, so it never became a validation error — it escaped the
+  operation task, whose done-callback only *logged* it. The client received no
+  `error`, no `complete` and nothing else, and waited forever: byte-for-byte
+  the shape the malformed-payload fix eliminated, reached by another route, and
+  reachable by a misconfiguration that fails loudly on HTTP while hanging
+  silently here. Every operation is now wrapped so any escaping error is framed
+  as `error{id}`; `CancelledError` still propagates untouched, because a client
+  `complete` or a disconnect is a teardown and not a fault.
+- **The SSE transport answered 500 where the HTTP view answers 400.** A
+  `variables` value that is not a mapping reached graphql-core, which raises a
+  plain `TypeError` that nothing wrapped, so it escaped the async view. Two
+  reachable shapes: a JSON body carrying `variables` as an encoded string
+  (which the HTTP view has always decoded), and any form-encoded body, where
+  every value is a string by construction. The transport now decodes and
+  validates it the same way the HTTP view does.
+- **The published sdist could not run its own test suite.** The allowlist ships
+  `/tests`, and three of those modules load a script from `/scripts` by path
+  (`spec_from_file_location`), which was not shipped — so collection aborted in
+  the tarball. Same class as the `pytest_coverage_isolation.py` omission fixed
+  above it.
+- **Two `pytest` runs in one checkout reported each other's coverage, then
+  `0.00%`.** `pytest-cov` collects into a per-process file and then COMBINES
+  every sibling file next to the configured data file. With the data file at the
+  repo root, a second run in the same checkout is a sibling: each run swept up —
+  and deleted — the other's partials, so the loser reported the winner's totals
+  and then `FAIL Required test coverage of 95% not reached. Total coverage:
+  0.00%` and exited 1, with 4120 tests passing above it. Every concurrent
+  verification of this repository was unreliable, and the failure reads exactly
+  like a real coverage regression. Each process now gets its own data-file
+  directory, so the combine sweep can only find its own partials. `coverage.xml`
+  and `htmlcov/` stay where they were, because CI uploads them from there.
+- **The flat paginated list field ranked by a type its schema does not serve.**
+  Every other ordering-allowlist stamper reads the node type the schema being
+  built holds; `DjangoFilterPaginateListField` stamped
+  `_type._meta.graphql_output_type` — the CLASS-DEF canonical instance — once,
+  while the root class body was still executing. That instance is measurably not
+  the object the schema serves (twelve of the fields this project's own suite
+  builds resolve to a different one), and it agreed only because a fork
+  recompiles the same class from the same `Meta`. The allowlist is now derived
+  from the served node type on every mount path, so a schema publishing less can
+  no longer be ranked by a column its SDL denies.
+- **A projection MIRRORING the reused type's own was refused.** Declaring a node
+  type beside its `DjangoListObjectType` — the ordinary documented
+  arrangement — and restating the same `only_fields` / `exclude_fields` on both
+  failed the build, because the guard fired on the mere PRESENCE of the option
+  rather than on it making a difference. Honouring a mirror and dropping it
+  publish the same columns, so the schema cannot tell them apart and neither
+  can a reader: the refusal cost a defensive restatement an outage, and it broke
+  the "every common option in one place" sample in
+  [Types](usage/types.md#configuration-options). The guard now compares the
+  SELECTED columns, through the same predicate `converter.construct_fields`
+  selects with, so an equivalent projection spelled differently stands too. The
+  same allowance applies to the identical guard on `DjangoModelType`. A
+  projection that would genuinely change what is exposed is refused exactly as
+  before.
+- **A build-time refusal reached the caller as a `TypeError`.** Every guard in
+  the filter builder raises `ImproperlyConfigured` from inside a graphql-core
+  fields thunk, and graphql-core rewraps ANYTHING a thunk raises as a bare
+  `TypeError` whose message chains generated type names. The schema build
+  already dug the real error back out; the two EAGER force sites
+  (`compile_all_outputs`, which the app-ready hook and every schema module call,
+  and the forked `compile_outputs_into`) did not — so which site happened to
+  force the thunk first decided the exception type the operator saw, and the
+  documented contract was wrong for the most common path. All three now force
+  fields through one helper that surfaces the buried configuration error.
+- **A filter refusal named a `Meta` that does not exist.** The message opened
+  with `<Model>.filter_fields`, and a model has no `Meta.filter_fields`: the
+  declaration lives on a TYPE, and the input is shared per model, so the type
+  that contributed the path is not always the type serving the rows. Each path
+  now carries the name of the class whose `Meta` declared it — the node's, not
+  the container's, when a `DjangoListObjectType` inherited the declaration — and
+  the refusal names it, so "drop the entry" points at a file the reader can
+  open. An entry whose deep hop names nothing is attributed the same way: the
+  entry to the declaration it was written in, the missing segment to the model
+  that fails to hold it.
+- **…and then named a class that exists in no user file.** An auto-expanded
+  to-many gets a container the reader never wrote: `get_or_create_list_object_type`
+  mints one and SEEDS its `Meta` with the node type's own `filter_fields` so the
+  nested list stays filterable. A seeded declaration looked self-declared, so
+  the attribution above handed the blame to `GenericListType.Meta.filter_fields`
+  — a factory class inside this library, which is the exact defect the fix above
+  set out to close, reintroduced one code path over. The container is now
+  credited with a declaration only when it is not the very object its node type
+  holds, so an inherited entry names the node's `Meta` whether the container was
+  written by hand or minted by the compiler.
+- **A relation refused for the wrong reason listed every cause but the likely
+  one.** The traversal refusal offered three explanations — the projection
+  removed it, a declared attribute publishes the name over a leaf, or the
+  compiler dropped it for an unregistered target — and none of them fits the
+  reader who declared the to-one scoping hatch. They read "publish `author`"
+  while looking at `author` in their own `only_fields`. The message now names
+  the fourth cause: a declared attribute publishing the name over a resolver of
+  its own.
+- **`totalCount` was counted whether or not the client asked for it.** A list
+  served by `DjangoModelType` issued its `COUNT(*)` eagerly, so a query
+  selecting only `results` paid for two round trips where the
+  `DjangoListObjectField` path paid for one — while
+  [Pagination](usage/pagination.md) states the count is "only issued when the
+  client actually **selects** `totalCount`". The count is now deferred to first
+  access, matching the sibling path and the documented behaviour. A client that
+  does select it sees the same number as before, including under a filter or a
+  page limit, because the deferred call still closes over the unsliced queryset.
+- **A nested child was fetched and authorized twice on every write.** The
+  reverse-relation and many-to-many paths resolved the child by primary key,
+  ran the ownership and scope checks, and then handed the raw payload to the
+  writer, which resolved the same row again and repeated the same checks — two
+  lookups plus two scope queries per host, per child, growing linearly with the
+  payload. The already-resolved row is now passed through. Every check still
+  runs, and runs against the same row: the authorization outcome is unchanged
+  for every relation kind, for a permitted and a denied caller alike.
+- **A multipart part spelled the way the SDL spells it was silently dropped.**
+  The merge that folds an upload into a mutation payload built its allow-list
+  from each input field's snake_case model attribute, so `profilePhoto` — the
+  only spelling a client can discover from the schema — matched nothing: the
+  part was dropped and the mutation still answered `ok: true` with no file
+  written. Both spellings are now accepted, derived from the same compiled input
+  field so neither can name a target the other does not. The projection guard is
+  unchanged: a part naming a field the input does not publish is still ignored
+  under either name.
+- **A request naming one field under BOTH spellings let part order decide which
+  file landed.** Accepting the alias and the attribute made a self-contradicting
+  request possible — `profilePhoto` and `profile_photo` in one body, two files,
+  one column — and the merge folded the accepted parts in whatever order
+  `request.FILES` yielded them, so which file was written depended on how the
+  client happened to serialize the body rather than on the body itself. The
+  alias is now applied first and the model attribute second, so the attribute
+  always wins and the outcome is a property of the request. A body naming a
+  field under exactly one spelling, which is every ordinary body, is unaffected.
+- **A malformed batch entry answered HTTP 500 where the docs promise 400.** A
+  batch body was checked for being a non-empty list but never for what the list
+  held, so an entry that was not a JSON object reached `get_graphql_params`,
+  where `data.get("query")` raised an `AttributeError` that escaped the view's
+  error handler: posting `[1, 2, 3]` returned a 500 while
+  [Views](usage/views.md) documents a 400. Every entry is now checked alongside
+  the outer list and a non-object one is rejected with the documented 400. A
+  well-formed batch executes exactly as before.
+- **A misconfigured write host was accepted in silence, three ways.**
+  `DjangoModelMutation` never ran the unknown-`Meta`-option check its sibling
+  `DjangoModelType` has run since 2.0, so `exclude_field` — a typo for
+  `exclude_fields` — built a mutation whose input still carried the very column
+  the declaration meant to hide, and a `Meta.queryset` was accepted while
+  scoping nothing (this host scopes through `filter_queryset`).
+  `permission_classes` was worse than a no-op: the plain assignment raised a raw
+  Pydantic error telling you to annotate it `ClassVar`, and taking that advice
+  bought a class that builds with a permission that never fires, because the
+  class reads the name nowhere. And a `nested_fields` key naming no relation was
+  skipped when the input surface was built and skipped again on the write path,
+  yet the generated input type was still *named* after it — so `{'bookz': Book}`
+  minted an `AuthorCreateNestedBookzType` carrying no nested field at all, on
+  both hosts. All three now raise `ImproperlyConfigured` at class definition,
+  the nested one listing the accessors that would have worked. A schema that
+  builds today can therefore fail to build after upgrading — which is the point:
+  each of these classes was running a configuration its author had written down
+  and the library had thrown away.
+- **An unknown `Meta` option that is real on a sibling class read as a typo.**
+  `registry` is a supported option on `DjangoModelMutation`, but declared on a
+  `DjangoModelType` it was reported with nothing but "Check for typos", sending
+  you hunting for a misspelling in a word spelled correctly. The message now
+  names the classes that do accept the option, read from their own signatures so
+  the list cannot drift out of date.
+- **…and then told you to look for the typo anyway.** The sentence naming the
+  sibling class was *appended* to the typo hint rather than replacing it, so the
+  user who spelled `registry` correctly still read "Check for typos" and went
+  looking for a misspelling that was not there. The hint is now emitted only
+  when at least one unknown name is a `Meta` option on no class at all. A real
+  typo reads exactly as it did.
+- **A write-only `DjangoModelType` seized the model's read container.** Every
+  generated list container claims the model's canonical registry slot on a
+  last-write-wins basis, and that slot is what a reverse to-many relation
+  resolves through — so a host declaring
+  `Meta.model_operations = ("create", "update", "delete")`, which says in as
+  many words that it does not serve `list`, still displaced the
+  `DjangoListObjectType` the project had declared for its reads. Attaching a
+  permission to a model's write path (`permission_classes` lives on
+  `DjangoModelType`, not on `DjangoModelMutation`) therefore silently rewrote
+  that model's shape everywhere it appears nested, and a query selecting the
+  declared container's `pageInfo` stopped validating. A host that does not serve
+  `list` now hands the slot back to whoever holds it, and still fills an empty
+  one so a project with a single write-only host keeps that host's own
+  pagination. A host that *does* serve `list` is unchanged, and
+  `_meta.output_list_type` is still populated on every host, so
+  `list_object_type()` and `ListField()` are unaffected.
+- **Both subscription transports stopped importing without configured Django
+  settings.** Sharing the HTTP view's validation-rule tuple — and, for SSE, its
+  CSRF guard — put a module-level `from ...views import ...` in each transport,
+  and `views` reaches `core.permission_signature_cache`, which reads
+  `DJANGO_GRAPHEX` *while it is being imported*. So
+  `import django_graphex.subscriptions.transports.ws` raised
+  `ImproperlyConfigured` on the import alone, breaking any ASGI entrypoint that
+  reaches the consumer (directly or through a routing module) before it points
+  the process at a settings module — a dependency neither transport had before.
+  Both imports are deferred into the request/operation path, so the shared rule
+  tuple and the shared CSRF guard are unchanged and the transports import
+  settings-free again.
+- **Two write-only hosts over one model resolve to the first one declared.** The
+  container-slot fix above reverses the old outcome for this case: the first
+  host fills the empty slot, so the second finds it taken and hands it back,
+  where last-write-wins used to give the slot to the second. Neither declaration
+  claims `list`, so nothing in either ranks them; first-wins is kept because it
+  is the choice that does not move a model's read shape when a second write
+  concern is added later, and it drops nothing — the losing container is still
+  on its own `_meta`, and a write-only host's `ListField()` raises, so it can
+  never reach a schema. Only a project declaring **two** write-only hosts for
+  one model is affected; one host, or any host that serves `list`, is unchanged.
+- **The test suite was order-dependent: some shuffles died with `Schema must
+  contain uniquely named types`.** No library behaviour changed — the defect was
+  test hygiene. The output registry is keyed by **model**, so when two unrelated
+  test modules declared a class under the *same* GraphQL type name for the same
+  model on the **global** registry, one module kept its own compiled node while
+  the registry handed the other's out through the relation graph, and any schema
+  reaching both died. Nine such names were reachable from a real schema
+  (`_PostListType`, `_PostType`, `_PostT`, `_TagT`, `_AuthorT`, `_AuthorType`,
+  `_AuthorList`, `HookType`, `ScopedDocType`); each is now module-unique. The
+  four node types the six subscription-transport modules each re-declared, and
+  the subscription schema each of them rebuilt on every call, now live once in
+  `tests/subscriptions/_transport_schema.py`. The root cause behind two of the
+  names was `tests/test_optimizer_phase_c.py` passing `{}` as `Meta.registry`:
+  an empty dict is falsy, so `Meta.registry` fell back to the global registry
+  and every type built there published itself process-wide. Two further modules
+  now keep the throwaway types they declare only to read `_meta` off the global
+  registry entirely, and the two `ScalarKindsModel` round-trip tests mount only
+  the scalar field they assert instead of the whole compiled type, so neither
+  drags the shared relation graph into a schema. Verified with the full suite
+  under 150 distinct `--randomly-seed` values, including the seeds that used to
+  fail.
+- **The SSE subscription endpoint answered HTTP 500 for a JSON body that was
+  not an object.** `[1,2,3]`, `"x"` and `null` all decode cleanly and only then
+  broke the transport's mapping assumption (`body.get(...)` →
+  `AttributeError`), so SSE was the one surface in the library returning a
+  server error for a body `GraphQLView` already classifies as a client error.
+  It now answers `400 Bad Request` with the HTTP view's own message, *The
+  received data is not a valid JSON query.* The same decode guard now also
+  catches `RecursionError`, so a deeply nested JSON body — which is not a
+  `ValueError` and used to escape as a 500 — is a plain 400 too. A well-formed
+  request on the endpoint is unaffected.
+- **A WebSocket `subscribe` with a non-object `payload` was silently dropped.**
+  The payload went straight into the operation task, where `payload.get(...)`
+  raised, was logged, and then vanished: no `error` frame, no `complete`, no
+  response of any kind, leaving the client unable to tell the protocol
+  violation from a slow server. The consumer now answers with its own
+  `{"type": "error", "id": …}` frame — the same shape every other malformed
+  `subscribe` gets — and the socket plus every operation already running on it
+  keep going.
+- **A limit set to `0` did the opposite of what it says.** `MAX_QUERY_DEPTH: 0`
+  and `MAX_QUERY_COST: 0` were read as falsy by their validation rules, which
+  returned early — so a limit that reads as "allow nothing" allowed
+  *everything*, with no warning, while `None` was documented as the way to
+  disable them. A negative value was worse: it enforced a budget no query could
+  meet and named that negative in the error. `PERMISSION_SCHEMA_CACHE_MAXSIZE:
+  0` had the same shape in reverse, quietly restoring the default `64` instead
+  of caching nothing. All three are now validated where every reader routes
+  through — the settings reader itself — and a value below the key's minimum
+  raises `ImproperlyConfigured` naming the key, the minimum and the remedy.
+  **`None` remains the only off switch for the two query limits**, and `0` is
+  now honored for the cache bound as "cache nothing". Projects on the defaults
+  are unaffected; a project that had written `0` was already running without
+  the guard it thought it had. See
+  [Settings › Query depth & cost](usage/settings.md#query-depth-cost).
+- **`PERMISSION_SCHEMA_CACHE_MAXSIZE` was frozen at import.** The bound was
+  captured in the cache's constructor and the cache is a module singleton, so
+  the setting was fixed for the life of the process and `override_settings`
+  could never reach it. It is now read on every eviction pass instead; nothing
+  else about the cache's identity depends on it, since the bound only decides
+  when to evict, never what a key means.
+- **`MAX_REQUEST_BODY_SIZE` turned every multipart POST after the first into a
+  500.** `dispatch` carries `@ensure_csrf_cookie`, whose token check reads
+  `request.POST` whenever the client holds a `csrftoken` cookie — and for
+  multipart that drains the upload stream. The body guard then called
+  `len(request.body)` on the drained request and raised
+  `RawPostDataException`. Since the endpoint plants that cookie on every
+  response, only a fresh client's *first* multipart POST ever worked. The same
+  read also dragged multipart under Django's `DATA_UPLOAD_MAX_MEMORY_SIZE`
+  (2.5 MB by default), which a streamed upload otherwise escapes, so a 3 MB file
+  that uploaded fine with the guard off became an opaque Django 400 with the
+  20 MB cap the docs recommend — and the documented workaround, raising
+  `DATA_UPLOAD_MAX_MEMORY_SIZE`, doubled peak memory by pulling the whole body
+  into RAM. The guard now measures multipart **without reading it** — every
+  other content type is still measured by reading. This fix first fell back to
+  the declared `Content-Length` alone, on the belief that Django caps the
+  request stream at `CONTENT_LENGTH`; that is true only under WSGI, so the
+  fallback bounded nothing under ASGI. See *A multipart POST under ASGI was
+  bounded by nothing but the client's own claim* above for the measurement that
+  replaced it, and
+  [Settings › How the guard reads each content type](usage/settings.md#how-the-guard-reads-each-content-type).
+- **`DOCUMENT_CACHE_MAXSIZE = None` took the whole endpoint down.** `None` is
+  the documented "no limit" value for every sibling bound in the namespace, but
+  here it reached `int(None)` and every single request came back HTTP 400
+  carrying the leaked `TypeError` text. It now means unbounded, as it reads.
+- **Three malformed bodies answered 500 instead of 400.** A deeply nested JSON
+  body (20 KB is enough) raised `RecursionError` out of `json.loads`, which is
+  not a `ValueError` and so missed the decoder's handler; an
+  `application/graphql` body that is not valid UTF-8 raised `UnicodeDecodeError`
+  from a `decode()` the neighbouring JSON branch already guarded; and with
+  `CACHE_ACTIVE` a `query` that is not a string, or one holding a literal nested
+  past the parser's recursion limit, escaped the `except GraphQLSyntaxError` in
+  the cache's pre-parse. All three are ordinary bad client input and are now
+  reported as such. The pre-parse now matches the sibling call site in
+  `execute_graphql_request`, which already treated any parse failure the same
+  way.
+- **The documented `source=` shortcut silently cost a column its ordering.** The
+  ordering guard treats a declared attribute carrying a resolver as publishing
+  the field's *name* without its *value*, and `source="x"` is compiled into a
+  resolver — so `email = CharField(source="email")`, the no-logic shortcut
+  [Types](usage/types.md#custom-fields-with-resolvers) documents, made `email`
+  unsortable on a type that hides nothing, and `id = IDField(source="id")` took
+  the primary key with it, which is the tiebreak every cursor page needs. A
+  source naming the field's **own** attribute is now recognized as the
+  passthrough it is. A source naming any other attribute, and a
+  `resolve_<name>`, are unchanged: both still withdraw the column, because no
+  build-time analysis can read a resolver body.
+- **A filter refusal named the type it asked, not the type you have to change.**
+  A deep path (`author__posts__title`) told the reader to publish the missing
+  hop on the *root* type, which never held it, and a relation the compiler
+  dropped told them to publish a name whose absence has a cause the message did
+  not list — no `Meta` edit brings back a to-one relation whose target model has
+  no registered type. Each refusal now names the type owning the failing hop,
+  and a dropped relation names the target model that needs a
+  `DjangoObjectType`. The documentation's standing advice to disregard the
+  message is gone with it.
+- **`FilterBackend.build_input_type` could not name the serving type**, so the
+  public seam fell back to `registry.get_type_for_model` — the model-keyed,
+  last-wins index a type opts out of with `Meta.skip_registry`, and the very
+  lookup this release removed from the compiler path — which made the projection
+  guard a no-op through it. The seam now takes `node_type` and forwards it. The
+  registry fallback is kept for callers that name none.
+- Three write-only assignments on `DjangoObjectType._meta` (`only_fields`,
+  `include_fields`, `exclude_fields`) were removed. Nothing read them: the
+  output compiler takes the projection from the registration entry, and neither
+  projection guard reads a declaration at all. The comment beside them named a
+  reader that does not exist.
+- **Every authenticated SSE subscription died with `SynchronousOnlyOperation`.**
+  `AuthenticationMiddleware` leaves `request.user` an unresolved
+  `SimpleLazyObject`, and the SSE view is `async`: the first reader of
+  `info.context.user` — any `authorize_subscription` gate, or a
+  `schema_provider` pruning by permission — therefore fired the session and user
+  query inside the event loop. A gate saw
+  `You cannot call this from an async context` in place of its answer and denied
+  the subscription; a provider raised it straight out of the view, past the
+  in-stream framing, as a 500. Anonymous callers never noticed, because an empty
+  session resolves to `AnonymousUser` without touching the database — which is
+  why every SSE test (all of which injected an already-resolved user object) and
+  the anonymous playground samples stayed green. The view now resolves the user
+  once, in a thread, before anything else reads it; because a `SimpleLazyObject`
+  resolves in place, every later reader — hooks, middleware, resolvers reaching
+  back through `context.request` — sees a plain loaded user. The WebSocket
+  transport was never affected: Channels' `AuthMiddleware` awaits the lookup
+  before the consumer runs. Both transports are now pinned to the same contract
+  by one test matrix driven through the real middleware chains — authenticated,
+  anonymous, a session whose user row was deleted, no session at all, and an
+  auth gate that denies as well as one that grants.
+- **An `async def` subscribe gate failed OPEN.** The engine awaits an awaitable
+  hook result, and `subscription_scope`'s wrapper forwards one — but
+  `authorize_subscription`'s wrapper discarded its return, so a gate declared
+  `async def` produced a coroutine nobody awaited and the subscribe was
+  **granted**. Python reports it as nothing louder than a
+  `RuntimeWarning: coroutine … was never awaited`. `async def` is the only shape
+  that can reach the ORM from these hooks, because both transports run them on
+  the event loop, so this is the shape a permission check wants. The wrapper now
+  forwards the return, like its sibling. A synchronous gate behaves exactly as
+  before. See
+  [Subscriptions › ORM access in the subscribe hooks](usage/subscriptions.md#orm-access-in-the-subscribe-hooks),
+  whose previous text claimed both hooks were lifted into a thread pool and
+  could query the ORM freely — they never were, and that claim is what made the
+  async-context failure above look impossible.
+- **The bundled subscription client's pre-filled document was a syntax error.**
+  Its editor shipped a `subscription { }` whose entire selection set was
+  commented out, so pressing the run button — step 2 of the playground's own
+  walkthrough — answered `Syntax Error: Expected Name, found '}'`. The editor now
+  ships a runnable document, and the introspection the client already performs
+  for autocomplete renames its placeholder field to the first subscription the
+  live schema advertises, so the button works on first press against any schema.
+  An editor the reader has already typed into is never rewritten.
+
+### Removed
+
+- Six internal names that nothing in the package reached, each confirmed
+  callerless before deletion. None was exported through `django_graphex.__all__`
+  or documented anywhere. Four of them were nonetheless importable by name —
+  `utils.py` and `converter.py` declare no `__all__`, so
+  `from django_graphex.utils import get_obj`, `create_obj`,
+  `converter.assert_valid_name` and `converter.convert_choice_name` resolved on
+  2.2.0 and raise `ImportError` here. None had a caller inside the package, and
+  `create_obj` returned an error *string* rather than raising, so a project
+  depending on it was already handling a value it could not distinguish from
+  success. The names:
+  `paginations.utils._nonzero_int` (which also still carried the zero
+  passthrough its sibling `_positive_int` documents fixing — `_nonzero_int(0,
+  strict=True)` returned `0` instead of raising, and it accepted negatives);
+  `Registry._interface_implementors` (never written and never read —
+  `get_member_models` derives implementors from `_types` on demand, so the
+  second store could only go stale); `utils.get_obj` and `utils.create_obj`
+  (test-only, and `get_obj`'s whole `except` chain was unreachable because
+  `get_Object_or_None` already swallows those exceptions); and
+  `converter.assert_valid_name` / `converter.convert_choice_name`, superseded by
+  `_is_valid_name` and `choice_enum_name`.
+- The `NullBooleanField` key from the two internal-type-keyed field maps
+  (`core.fields.FIELD_TYPES` and the filter-schema scalar map). Django reports
+  `"BooleanField"` from `get_internal_type()` for a `NullBooleanField`, so the
+  key was unreachable in both — and the package's third field map had already
+  dropped it, leaving the three to drift apart. A `NullBooleanField` resolves to
+  a boolean exactly as before, now through one key in all three.
+- The **`CAMELCASE_ERRORS`** setting, which had **zero consumers**. It shipped
+  with a documented default of `True` and a promise to camelCase the `field` /
+  `path` keys of error objects; no code in the package ever read it, so setting
+  it — to either value — changed nothing at all. It is removed rather than
+  implemented, because a setting an operator flips while believing something
+  changed is worse than no setting. A project that still passes it now gets the
+  `django_graphex.W001` unknown-key warning from `manage.py check` naming it,
+  and error payloads are byte-identical to 2.2.0.
+
+### Documentation
+
+- **Nothing told you to validate the WebSocket handshake's `Origin`, and the
+  example project did not.** A handshake is an ordinary HTTP request: the
+  browser sends cookies with it and **CORS does not apply**, so any other site
+  could open a socket to a session-authenticated endpoint *as your logged-in
+  visitor* and read every subscription that user is entitled to. It routes
+  straight around `REQUIRE_CSRF_HEADER`, which this release turns on for exactly
+  this threat on the HTTP side and never sees this endpoint. The library cannot
+  fix it — it never sees the handshake, your ASGI routing does — so
+  [Subscriptions › Validate the WebSocket handshake's Origin](usage/subscriptions.md#websocket-origin)
+  now says so under a `danger` admonition with the wiring, and the playground
+  ships `AllowedHostsOriginValidator` around its router, pinned by a test that
+  rebuilds the app under a real host list (the playground's own
+  `ALLOWED_HOSTS = ["*"]` makes the validator accept everything, so a test that
+  did not rebuild it would pass without the wrapper).
+- **The multipart upload rule was documented as it behaved before this
+  release.** `docs/api/mutations.md` still said *every* entry in
+  `request.FILES` is merged under its own form-field name. It is now merged
+  only when the name matches a file field the mutation's input **publishes**,
+  under either spelling, and a part matching nothing is ignored rather than
+  saved — the projection is the same boundary on the multipart path as on the
+  JSON one.
+- **The example project's public subscription published a column its query
+  surface hides.** `CommentSubscription` names `Meta.model` and declared no
+  projection, so `internalNote` — described in the model as a moderation
+  scratchpad — was selectable **and** equality-filterable by an anonymous
+  subscriber on both transports, while `CommentType` refused it everywhere
+  else. The subscription now restates the exclusion, and the model comment,
+  which claimed the column was "written in the Django admin, never on the
+  wire", says what is actually true: the playground registers no admin at all,
+  and the subscription surface is the fourth place the column has to be hidden
+  because it is the only one that inherits nothing. The library-level gap it
+  compensates for is unchanged and stays pinned by its own isolated test — see
+  [Types › The one exception, and the three open boundaries](usage/types.md#projection-exception).
+- **An upgrade instruction that was the exact inverse of reality.** The
+  3.0.0 preamble listed "importing either subscription transport
+  before Django settings are configured" as something that "now raises
+  `ImproperlyConfigured` on the import alone" — under a heading about schemas
+  that stop building. That is what this release **fixed**, as its own `Fixed`
+  entry says; no published version ever raised it. An upgrader following the
+  preamble would have rearranged their ASGI entrypoint for a failure that does
+  not exist. The bullet is gone.
+- **Three claims in the example project that a reader could disprove.** The
+  password-hash lesson said the hash reaches **anonymous** callers without
+  `UserType.exclude_fields`; `Author.resolve_user` already stops those, so the
+  true statement — every **authenticated** caller, which is still an incident —
+  is what it says now, with the second wall named rather than conflated. The
+  validation section demonstrated a "failing validation" with `title: ""`,
+  which returns `ok: true` and creates the row, because validation is Pydantic
+  and `blank` is a form-level concern Django never enforces on `save()`; the
+  sample is now a `max_length` refusal with its literal message, and both
+  halves are pinned by a test. A pruned-schema refusal was quoted without the
+  tail this release added to it.
+- **A projection rule the code does not implement, and a table that outgrew its
+  own sentence.** [Types › What "hidden" means](usage/types.md#what-hidden-means)
+  promised that a relation published over a type bound to **another** model
+  measures as unpublished on both axes, on the grounds that no target answers
+  for the key. It never did, and it must not: such a declaration carries no
+  resolver, so the default attribute resolver hands out the real target row and
+  `author { id }` returns the author's own primary key — refusing to rank by a
+  value the same request returns is precisely the SDL-versus-guard drift the
+  predicate exists to end. The promise is withdrawn rather than implemented, and
+  the shape it described is named for what it is: a schema bug, not a projection
+  boundary. The sentence introducing that table also announced four causes over
+  six rows; the table is now five rows and the count matches.
+- **The example project demonstrated none of the 2.2.0 permission story, and its
+  nested mutation was the exact shape those release notes call vulnerable.**
+  `examples/playground` imported five permission classes to assign one, and
+  neither `commentCreate` nor the nested `postWithCommentsCreate` carried any —
+  so an anonymous caller created a `Post` *and* its `Comment` rows through the
+  parent, in a project whose README claimed it showed "every major feature".
+  Comment writes are now served by a `CommentModelType` carrying the
+  `IsOwnerOrReadOnly` the module already defined, which is the same gate the
+  nested write runs: the caller denied the child's own mutation is denied it
+  through the parent, and the parent rolls back with the denial.
+  `PERMISSION_SCOPED_SCHEMA` is switched on so `/graphql/secure/` serves each
+  caller a schema pruned to their model permissions — including the nested
+  `comments` input, which is stamped with the *child's* permission — and the
+  README's coverage matrix now separates what the playground demonstrates from
+  what it merely imports. See
+  [Permission-scoped schema](usage/permission-scoped-schema.md).
+- **Four pages described a codebase that had moved.** The playground schema tour
+  still named a `CommentMutation` that no longer exists and still called
+  `IsOwnerOrReadOnly` a pattern no type assigns; the example project's settings
+  claimed subscription connections validate against a pruned schema, when both
+  transports there are wired with `schema=` and pruning happens only through
+  `schema_provider=`; the mutation examples still said a multipart part must be
+  named after the model's snake_case attribute while the guide it links to now
+  says either spelling works; and the `DjangoModelMutation` `Meta` reference
+  claimed its table was the whole list while the graphene base still accepts
+  `name`, `_meta`, `interfaces`, `possible_types`, `default_resolver` and
+  `container`. All four now say what the code does.
+- **The multipart upload pages never named the part that carries the document.**
+  Both the guide and the API reference described "the part carrying the JSON
+  body under whatever key your view reads", which sent readers looking for the
+  `operations` / `map` envelope of the graphql-multipart-request spec — an
+  envelope this library does not implement. A multipart body is read straight
+  out of `request.POST`, so the parts are **`query`** and (optionally)
+  **`variables`**; anything else answers `Must provide query string.` with HTTP
+  400. Both pages now name them, show a working `requests.post` call, and carry
+  the `X-Requested-With` requirement (the API reference had neither). See
+  [Mutations › Automatic multipart uploads](usage/mutations.md#automatic-multipart-uploads).
+- **Three more pages contradicted the code, and one contradicted another page.**
+  The directives guide still called the spec bundle three directives in three
+  places — it is five of thirty (`@skip`, `@include`, `@deprecated`,
+  `@specifiedBy`, `@oneOf`), which the API reference already said; the
+  pagination API reference still promised backward cursor pagination "for a
+  future release" while the guide it links to says the work is **not
+  scheduled**, and `CursorGraphqlPagination.__init__` takes no `last` /
+  `before`; the `DjangoObjectType` `Meta` table was billed as the full set yet
+  omitted `unions` and `name`, so its "every other key is rejected at startup"
+  was false; and the nested-list example named a `Group.users` accessor Django
+  does not create (`user_set`, compiled as `userSet`) while promising a
+  `DjangoListObjectType` the example never declared. All four now say what the
+  code does.
+- **Two links 404'd and three snippets could not have run.** A relative link in
+  the blog-schema tutorial resolved to a `permissions.md` that does not exist
+  beside it, and the frontend guide reached four directories above the site root
+  for `examples/playground/`. Building both tutorial schemas and validating the
+  guides' queries against them also caught three snippets that fail before the
+  server sees them: a nested M2M selected as `tags { name }` when a nested list
+  is a container (`tags { results { name } }`), a `status` variable typed
+  `String` where a field with `choices` compiles to `<app_label><Model><field>Enum`,
+  and enum values sent as the model's stored `'draft'` / `'published'` instead
+  of the schema's `DRAFT` / `PUBLISHED`.
+- **`DjangoObjectType.get_queryset` did not scope a to-ONE relation, and nothing
+  said so.** The to-MANY boundary was documented — an auto-expanded nested list
+  reads the parent's prefetch cache and skips the hook — but the forward
+  `ForeignKey` / `OneToOneField` arm has the same boundary and was documented
+  nowhere, while `apply_object_type_get_queryset` called itself "the single
+  choke point … every path". So `{ allAuthors { results { name } } }` hides a
+  scoped-out row and `{ allPosts { results { author { name } } } }` serves it.
+  The boundary note now names both directions, spells out that `get_queryset` is
+  a **field-level** scope that must not be relied on to hide relation-reachable
+  rows, and shows the escape hatch for each: an explicitly **declared** relation
+  field — a `DjangoFilterListField` for the to-MANY arm, a `Field(TargetType)`
+  plus its `resolve_` method for the to-ONE arm. A bare `resolve_<relation>`
+  method with no declaration does **nothing** — an auto-expanded relation field
+  is derived from the model, so nothing on the parent class is consulted — and
+  the note now says so, because a mitigation snippet that silently no-ops is
+  worse than the boundary it claims to close. Both snippets are executed by the
+  suite. The docstring names its three real callers instead of claiming every
+  path. The
+  behaviour is unchanged: enforcing the to-ONE arm would trade the
+  `select_related` join for one query per parent row on exactly the types that
+  opted into scoping. See
+  [Types › Custom queryset (per-request filtering)](usage/types.md#custom-queryset-per-request-filtering).
+- **The example project shipped an upload demo its own settings rejected.** The
+  playground advertises a 5 MB `Base64FileInput` upload and a 20 MB
+  `MAX_REQUEST_BODY_SIZE`, but left Django's `DATA_UPLOAD_MAX_MEMORY_SIZE` at
+  its 2.5 MB default — and a base64 upload travels inside the JSON body, so a
+  5 MB file was refused with an opaque HTML 400 long before either library cap
+  saw it. The project now sets `DATA_UPLOAD_MAX_MEMORY_SIZE` to match, and the
+  settings guide has a table saying which content types that ceiling applies to:
+  base64 and every other in-memory body, never multipart, which streams to disk.
+  The views guide gained the matching per-content-type note on the 413 guard.
+- **Two pages disagreed about `0` in one release.** The settings reference says
+  `MAX_QUERY_DEPTH` and `MAX_QUERY_COST` refuse `0` and negatives with
+  `ImproperlyConfigured` — but [Query depth & cost limits](usage/query-limits.md),
+  the page a reader actually lands on for those two settings, still presented
+  them as ordinary values (`None (default) = never block`, with nothing said
+  about the boundary). It now states that `None` is the only way to disable
+  either guard, and disambiguates the neighbouring note about a per-type
+  `Meta.max_depth = 0`, which **is** a real value there — that one forbids
+  nested objects rather than disabling anything.
+- **The published benchmark table was measured on 2.0.0, read from gitignored
+  files, and rested on single runs.** [Why django-graphex](why.md) went out in
+  2.2.0 with a table whose own conditions list said `django-graphex 2.0.0`, from
+  result files nobody could open — a reader could neither tell which code had
+  been timed nor check one figure. All eight artifacts are now **tracked**, were
+  **re-measured on this branch's code**, and each is the **median of three
+  runs**, recorded in the file under a new `aggregation` key. Three runs matter:
+  repeating identical code minutes apart drifts up to **8 %** on the reference
+  hardware, so the old single samples could not resolve any smaller difference —
+  and an earlier re-measurement on this branch was discarded rather than
+  published because latencies rose uniformly across **all four** libraries,
+  three of which nobody here has touched. Against the 2.0.0-era figures the
+  operations read: `nested` **15.97 → 12.26 ms**, `create_comment`
+  **0.62 → 0.58 ms**, `filtered` **1.18 → 1.16 ms**, `flat_list`
+  **0.81 → 0.79 ms**, `single` **0.38 ms**, unmoved. The scaling pair behind the
+  `O(table)` claim holds: graphene's `filtered` reads **3.23 ms** at 1,000
+  authors and **5.17 ms** at 2,000, against graphex's 1.19 and 1.16. **No SQL
+  count moved on any operation of any library, and no `surface` moved** — the
+  structural story is exactly what it was.
+- **"Schema build" was never measuring schema build.** The figure was the wall
+  time of `import bench_schema`, which pays the library's **entire dependency
+  tree** and the **schema construction** in one number — and those differ by two
+  orders of magnitude, so their sum answers neither question. Measured apart:
+  strawberry costs **~106 ms to import and ~6 ms to build**, ariadne **~49 ms and
+  ~2 ms**, graphene-django **~10 ms and ~4 ms**, graphex **~9 ms and ~3 ms**. So
+  the old claim that "strawberry pays 10× and ariadne 5×" was describing how
+  heavy those libraries are to *load*, not how fast they *compile a schema* —
+  and on compilation the ordering is different again. The harness now reports
+  `schema_import_ms` (the cold import, the comparable one) and
+  `schema_rebuild_samples_ms` (five rebuilds with the dependency tree already
+  loaded) separately.
+- **The cold-import row was biased toward graphex; the harness now removes the
+  bias rather than the page apologising for it.** `run_all.sh` runs
+  `makemigrations`, `migrate` and `seed_bench` under the **graphex** virtualenv,
+  so graphex was timed warm and the other three cold — on the one row where the
+  libraries are closest. It now warms **every** virtualenv before the measured
+  loop, and the spread on that row fell from **24–51 % to 3–15 %**. Even so, no
+  winner is claimed between graphex and graphene-django: successive revisions of
+  that page named opposite ones — graphene by 0.05 ms, then graphex by 1 ms —
+  and **both were beneath the instrument's resolution.**
+- **The rebuild series ships as raw samples, because it is a diagnostic and not
+  a ranking.** Re-executing declarations perturbs each library's process state
+  differently: **django-graphex's cost climbs across repeated in-process
+  rebuilds** (`[2.99, 3.38, 3.70, 3.89, 4.34]` is typical) where ariadne's is
+  flat, and `gc.collect()` between rebuilds makes graphex's *worse* rather than
+  better, so something is retained. It has no effect on a deployment that builds
+  its schema once. It is not a cache hit either — in all four libraries the
+  rebuilt schema object, its `GraphQLSchema`, its Author type and that type's
+  fields are all new objects. Part of that build cost is this release's own
+  projection boundary, priced rather than implied: `benchmarks/guard_cost.py`
+  counts and times the shared predicate at **46 calls / 0.69–0.71 ms** and **17
+  calls / about 0.015 ms per `nested` request**, 0.13 % of that operation.
+- **The example project demonstrated none of this release.** The 2.2.0 headline
+  — automatic multipart uploads — had no write host to exercise it at all
+  (`Document` was read-only, reachable only through a hand-written base64
+  mutation), so the feature the release is named for could not be run.
+  `Document.file` is now `Document.attached_file` (a two-word column, because a
+  one-word one spells both accepted part names identically and therefore cannot
+  show that either works) behind a `DocumentMutation` serving `documentCreate` /
+  `documentUpdate`. `Comment` gained an `internal_note` moderation column that
+  the schema hides on **both** sides, so one projection can be watched
+  travelling through the output type, the filter input, the write input and the
+  nested child input a `Meta.nested_fields` parent exposes. Both arms of the
+  relation scoping hatch are mounted — `CategoryType.posts` and
+  `AuthorType.user` — beside the auto-expanded `AuthorType.posts` that is *not*
+  scoped, so the pair teaches the boundary instead of implying a defect.
+  `UserType` now excludes `password`, which any anonymous caller could read
+  through `Author.user`. The two settings that ship on are named and explained
+  in `config/settings.py` as comments rather than pinned to their own defaults.
+  And the README's own suggested `search: "django"` returned zero rows, because
+  no seeded post contained the word: each body now names its tag, so it answers
+  20. The suite grew from 23 tests to **49**, several asserting the verbatim
+  answer strings the README quotes.
+- **`docs/usage/settings.md` told you to budget for an envelope this library
+  does not implement.** Two pages were corrected in this release to say the
+  multipart contract is a `query` part plus an optional `variables` part — with
+  no `operations` / `map` envelope — and the settings page was missed, still
+  telling readers to size `MAX_REQUEST_BODY_SIZE` and
+  `DATA_UPLOAD_MAX_MEMORY_SIZE` against "a multi-thousand-entry `map`". Posting
+  that envelope answers `400 Must provide query string`; the page now names the
+  two parts that do count.
+- **A sample in the types API reference could not run for a reader who followed
+  the page.** The [Types API reference](api/types.md) under `DjangoModelType`
+  showed a read-only `UserCard(DjangoModelType)` carrying `only_fields` over
+  `User` — and the first code block on that page registers a `UserType` over
+  `User`, which makes exactly that declaration raise the `ImproperlyConfigured`
+  documented in the warning ten lines below it. The sample now uses a model no
+  other block on the page registers, and the warning quotes the refusal the old
+  one produced.
+- **The projection boundary had a third open edge nobody had written down.** A
+  hand-written `Subscription` binding `Meta.model` compiles its event type and
+  its `<Model>SubscriptionFilterInput` from the **model**, so it does not
+  inherit the projection of whatever `DjangoObjectType` the schema registered
+  for that model: a column hidden on the node type stays selectable **and**
+  equality-filterable there. The remedy is one line — repeat the projection in
+  the subscription's own `Meta` — and a subscription generated by
+  `DjangoModelType.SubscriptionField()` needs none, because that host forwards
+  its own projection into the class it builds. Stated once alongside the other
+  two open boundaries in
+  [Types › The one exception, and the three open boundaries](usage/types.md#projection-exception),
+  and repeated where a reader meets the filter surface.
+- **A build-time guarantee that reads stronger than it is.** The filter axis
+  refuses a `filter_fields` entry naming a hidden column *while
+  `<Model>FilterInput` compiles* — and that input compiles only because some
+  field mounts a filtered list of the type. A declaration on a type nothing
+  mounts that way is never measured and the schema builds in silence.
+  [Filtering › The projection is the outer boundary](usage/filtering.md#projection-boundary)
+  now says so: a clean build is a statement about the filter surface you serve,
+  not a review of every `Meta` in the file.
+- **Three pages still described pre-branch behaviour.** The sample application
+  said two hosts over one model are allowed "only while neither declares a
+  projection", which stopped being true when this release started accepting a
+  projection that **mirrors** the registered type's own; the same page and the
+  types guide now say so, and say why restating it is worth doing. The bundled
+  subscription client's editor was described as something you type into, when
+  it now ships a runnable document and renames its placeholder field from
+  introspection — including what happens when introspection is off. And the
+  playground page documented neither the multipart host, nor either arm of the
+  relation hatch, nor the projection boundary, nor the two settings that ship
+  on; it now walks all four with the answers they return.
+- **The nav never reached the 2.0 upgrade guide.** `docs/UPGRADE-2.0.md` is
+  built and linked from three pages, but no `nav:` entry listed it, so it was
+  reachable only by following a link. It is now under **Getting Started**.
+
 ## 2.2.0 — 2026-08-24
 
 **Security release. Upgrade if you use `Meta.nested_fields`.**
@@ -1481,11 +2879,14 @@ for the user-facing behavior these changes preserve.
   types, making every override a silent no-op. It is now called for
   `DjangoObjectField`, `DjangoFilterListField`, `DjangoFilterPaginateListField`, and
   `DjangoListObjectField` (results + totalCount). (#58)
-- **Pagination `ordering` validated against exposed columns** — Client-supplied
-  `ordering` values are now checked against the field's declared column list before
-  they reach the ORM. An unknown field name can no longer trigger a `FieldError` that
-  discloses the model's full field list, nor a relation-traversal `JOIN` that enables
-  a DoS via index-missing foreign keys. (#59)
+- **Pagination `ordering` validated against the model's concrete columns** —
+  Client-supplied `ordering` values are now checked before they reach the ORM. An
+  unknown field name can no longer trigger a `FieldError` that discloses the model's
+  full field list, nor a relation-traversal `JOIN` that enables a DoS via
+  index-missing foreign keys. (#59) *Corrected: this entry originally said
+  "validated against exposed columns". It was not — the allowlist came from the
+  model, so a column the type projected away stayed sortable. See the 3.0.0
+  Security section.*
 - **Response cache skips cookie-bearing and multipart requests** — The
   `CACHE_ACTIVE` cache no longer stores responses to requests that carry cookies or
   are `multipart/form-data`. Previously such responses could be replayed to unrelated

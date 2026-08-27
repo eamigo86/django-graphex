@@ -249,14 +249,16 @@ class TestG3WindowOnlySpike(TestCase):
 # Phase 4: build_window_prefetch — pre-checks + window construction
 # ---------------------------------------------------------------------------
 
-# Module-level type registry to avoid inner-class scoping issues.
-_REG_BWP = {}
-
 
 def _make_test_nested_field():
     """Build a minimal DjangoNestedListObjectField for Post (author.posts).
 
-    Uses a module-level registry to avoid Python inner-class scoping issues.
+    Builds a private "Registry" per call. A plain dict is NOT a registry: it is
+    falsy while empty, so "Meta.registry" falls back to the global registry and
+    every type declared here would publish itself under the process-wide
+    "_PostListType" / "_AuthorType" names, colliding with the same names
+    declared by other test modules.
+
     Returns the DjangoNestedListObjectField instance.
     """
     from django_graphex.fields import DjangoNestedListObjectField
@@ -264,7 +266,7 @@ def _make_test_nested_field():
     from django_graphex.types import DjangoListObjectType, DjangoObjectType
     from tests.models import Author, Post
 
-    _REG_BWP.clear()
+    _REG_BWP = Registry()
 
     # Use type() to define inner classes so the registry variable is captured
     # via closure in the Meta namespace correctly.
@@ -294,6 +296,23 @@ def _make_test_nested_field():
     )
 
     return _AuthorType._meta.fields["posts"]
+
+
+def _row_gql_type(inst):
+    """Return the compiled ROW type the nested field's container serves.
+
+    "build_window_prefetch" reads its ordering allowlist off the row type the
+    caller threads in, and fails closed when there is none: the live walker
+    always resolves it from the schema, so a direct call has to supply it too or
+    the pre-check declines every ordering term.
+
+    Args:
+        inst: The "DjangoNestedListObjectField" under test.
+
+    Returns:
+        The compiled "GraphQLObjectType" for one row of the nested list.
+    """
+    return inst.type._meta.baseType._meta.graphql_output_type
 
 
 class TestBuildWindowPrefetchPreChecks(TestCase):
@@ -340,6 +359,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 related_field=related_field,
                 sub_selection=None,
                 fragments={},
+                child_gql_type=_row_gql_type(inst),
             )
             self.assertIsNone(
                 result, "Must return None when OPTIMIZE_NESTED_PAGINATION=False"
@@ -362,6 +382,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNone(result, "Must return None when slice_tuple is None")
 
@@ -420,6 +441,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=_FakeM2MRelated(),
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNone(
             result, "Must return None for M2M relations (pre-check 3 isolation)"
@@ -475,6 +497,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=_FakeRelated(),
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNone(result, "Must return None for non-one_to_many relations")
 
@@ -496,6 +519,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNone(result, "Must return None for non-concrete ordering term")
 
@@ -525,6 +549,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 related_field=related_field,
                 sub_selection=fake_selection,
                 fragments={},
+                child_gql_type=_row_gql_type(inst),
             )
         self.assertIsNone(
             result, "Must return None when _compute_child_only returns None (full load)"
@@ -547,6 +572,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNotNone(
             result,
@@ -574,6 +600,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNotNone(pf)
 
@@ -604,6 +631,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
 
         with CaptureQueriesContext(connection):
@@ -631,6 +659,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         rows = list(pf.queryset)
         for row in rows:
@@ -676,6 +705,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 related_field=related_field,
                 sub_selection=None,
                 fragments={},
+                child_gql_type=_row_gql_type(inst),
             )
         self.assertIsNone(
             result, "Must return None when filter_backend.apply forces .distinct() (G5)"
@@ -1450,7 +1480,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
         from tests.models import Author, Post
 
-        _REG = {}
+        _REG = Registry()
         _PostType = _gtype(
             "_7P",
             (DjangoObjectType,),
@@ -1513,7 +1543,7 @@ class TestAlreadyPaginatedListResolver(TestCase):
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
         from tests.models import Author, Post
 
-        _REG = {}
+        _REG = Registry()
         _PostType = _gtype(
             "_72P",
             (DjangoObjectType,),
@@ -2476,6 +2506,7 @@ class TestBuildWindowPrefetchWithSubSelection(TestCase):
             related_field=related_field,
             sub_selection=sub_selection,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNotNone(
             pf, "build_window_prefetch must return a Prefetch with sub_selection"

@@ -12,9 +12,13 @@ Three groups, all under the PLAYGROUND's own "config.settings":
 3. Subscription client (RANK 19, LEAN) — "SubscriptionClientView" at
    "/graphql/client/" serves the self-contained HTML client with BOTH
    transports wired (graphql-transport-ws + graphql-sse) and the playground's
-   own WS/HTTP endpoints injected. This is the lightest meaningful coverage of
-   the browser client WITHOUT adding a headless-browser dependency; the full
-   live browser round-trip is deferred to 2.1 (per the v2.0 release audit).
+   own WS/HTTP endpoints injected, and the document it ships pre-filled is one
+   THIS schema can run: the README's walkthrough says to press Connect and then
+   Run without typing, so a placeholder that does not parse or names a field
+   this schema lacks makes the documented path fail on step 2. This is the
+   lightest meaningful coverage of the browser client WITHOUT adding a
+   headless-browser dependency; the full live browser round-trip is deferred to
+   2.1 (per the v2.0 release audit).
 
 Run from this directory:
 
@@ -63,6 +67,28 @@ def test_playground_schema_builds() -> None:
     # The Base64 upload mutation is present (lazy-thunk arg pattern compiled OK).
     mfields = set(gs.mutation_type.fields)
     assert {"postCreate", "uploadDocument", "createCategory"} <= mfields
+
+
+def test_readme_nested_comments_query_validates() -> None:
+    """Assert the README's flagship nested query still validates.
+
+    "CommentModelType" is a write-only host over the same model as the
+    hand-declared, cursor-paginated "CommentListType". A host that does not
+    serve "list" must not take the model's container slot away from the one
+    that does, or the nested "comments" list loses the "pageInfo" every README
+    query selects.
+    """
+    from blog.schema import schema
+    from graphql import parse, validate
+
+    query = (
+        "{ posts { results { id comments { results { id }"
+        " pageInfo { hasNextPage } } } } }"
+    )
+
+    errors = validate(schema.graphql_schema, parse(query))
+
+    assert errors == [], [str(error) for error in errors]
 
 
 # --------------------------------------------------------------------------- #
@@ -200,3 +226,47 @@ def test_subscription_client_endpoints_match_playground_routes(client: Client) -
     # The default playground routes are wired into the client JS.
     assert "/ws/graphql/" in html
     assert "/graphql" in html
+
+
+@pytest.mark.django_db
+def test_the_clients_prefilled_document_runs_against_this_schema(
+    client: Client,
+) -> None:
+    """Assert the document the client ships pre-filled is one this schema serves.
+
+    The README's subscription walkthrough tells the reader to press Connect and
+    then Run without typing anything, so the shipped document has to be
+    RUNNABLE — a commented-out selection set answers "Syntax Error: Expected
+    Name, found '}'" — and it has to name a field this schema actually has.
+
+    The client ships a placeholder field name and rewrites it, on introspection
+    load, to the FIRST field its subscription root advertises. That rewrite is
+    applied here the same way the client applies it, so the assertion covers
+    the document the reader will actually press Run on rather than the template
+    on disk.
+
+    Args:
+        client: The Django test client fetching the served client page.
+    """
+    import html as html_module
+
+    from blog.schema import schema
+    from graphql import parse, validate
+
+    page = client.get("/graphql/client/").content.decode("utf-8")
+    document = html_module.unescape(
+        page.split('id="gdsx-query" spellcheck="false">')[1].split("</textarea>")[0]
+    )
+
+    # A comment-only selection set is what used to ship, and it does not parse.
+    assert "#" not in document, document
+
+    first_subscription = next(iter(schema.graphql_schema.subscription_type.fields))
+    assert first_subscription == "postSubscription", (
+        "the README names the field the client's rewrite lands on"
+    )
+
+    rewritten = document.replace("yourSubscription", first_subscription)
+    errors = validate(schema.graphql_schema, parse(rewritten))
+
+    assert errors == [], [str(error) for error in errors]

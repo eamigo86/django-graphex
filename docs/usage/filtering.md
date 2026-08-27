@@ -12,6 +12,10 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
 - **Relation descent** (`author: { name: { … } }`), to-many auto-`distinct()`.
 - **Logical operators**: `and`, `or`, `not` (arbitrarily nested).
 - `choices` fields filter through their generated **Enum**.
+- **Bounded by the type's projection** — a column whose value the serving type
+  does not publish cannot be filtered, and naming it fails the build. See
+  [Types › The projection is a security boundary](types.md#projection-security-boundary)
+  for the rule and [the outer boundary](#projection-boundary) for this axis.
 
 !!! warning "Different from the previous library"
 
@@ -71,6 +75,121 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
 
     For **custom per-field logic** (previously the only reason to use `None`),
     use the new `@filter_field` decorator instead — see the section below.
+
+### The projection is the outer boundary { #projection-boundary }
+
+!!! danger "A hidden column cannot be filtered — breaking change"
+
+    `Meta.only_fields` / `Meta.exclude_fields` are a **security boundary**, not
+    an output shape — [the rule is stated in full on the Types
+    page](types.md#projection-security-boundary). This section is how the filter
+    axis enforces it, and filtering is the sharpest of the three axes: an
+    `exact` lookup answers in **one** request and `icontains` walks the value
+    prefix by prefix.
+
+    A `filter_fields` entry naming a column **the compiled type serving that
+    model does not publish the value of** is a **contradiction between two
+    `Meta` options**, and it raises `ImproperlyConfigured` while the schema
+    builds:
+
+    ```text
+    AuthorType.Meta.filter_fields entry 'bio' names 'bio', which AuthorType
+    does not publish -- Meta.only_fields / Meta.exclude_fields removed it, or a
+    declared attribute publishes the name over a different value. A projection
+    is a security boundary, not an output shape: a column a type hides must not
+    be readable, orderable or filterable through it, and one filter request
+    returns the hidden value exactly. Publish 'bio' on AuthorType, or drop the
+    entry.
+    ```
+
+    **A schema that builds today can fail to build after upgrading — which is
+    the point.** Until this release the entry was accepted and it *worked*:
+    `filter: { bio: { exact: "…" } }` answered exactly for a column the SDL said
+    did not exist, and the whole lookup set was advertised as
+    `<Model>FilterInput.bio`, so the oracle was discoverable by introspection
+    rather than guessed. Every schema that stops building was answering it.
+
+    **The fix is one line, and it is a decision you have to make**: publish the
+    column (add it to `only_fields`, drop it from `exclude_fields`, or force it
+    back with `include_fields`), or drop the `filter_fields` entry. It is **not**
+    dropped silently for you — that would repeat the defect 2.2.0 fixed, an
+    option accepted and ignored.
+
+    The rule covers every door into the filter input, because they all compile
+    from the one declaration this guard checks: relation-spanning paths, a
+    relation head declared on a type that hides the relation, the `and` / `or` /
+    `not` combinators, nested list filters, and per-field `fields=` overrides.
+
+    **It measures declarations that compile, not declarations.** The guard runs
+    while `<Model>FilterInput` is built, and that input is built only because
+    some field mounts a filtered list of the type. Declare
+    `filter_fields = {"password": ("exact",)}` on a type nothing mounts that way
+    and the schema builds in silence — the entry compiled to nothing and no
+    client can reach it. Mount `DjangoFilterListField(UserType)` and the same
+    declaration raises. So a clean build is a statement about the filter surface
+    you actually serve, not a review of every `Meta` in the file: mounting a
+    type later can turn a dormant declaration into a build failure, and that is
+    the failure arriving exactly when the oracle would have.
+
+#### The shapes it refuses { #filter-refusal-shapes }
+
+The guard walks each declared path against the **compiled types the schema
+being built will serve**, so a hop is measured against the type that publishes
+*that* hop, never against a registry lookup for the model. Eight declarations
+are refused, and only the first is the familiar one — a ninth, the lookup
+spelled into the key, is the same defect as the eighth:
+
+| Declaration | Why it is refused |
+|-------------|-------------------|
+| `{"bio": …}` where the node type hides `bio` | Rule 1 — the column's value is not published. A declared attribute masking `bio` behind a `resolve_bio` reads identically. |
+| `{"author__bio": …}` where the **author's** type hides `bio` | The head is only traversed; the tail is measured against the type `author` resolves to. |
+| `{"author": ("exact",)}` where the **author's** type hides its own key | A forward foreign key named with no tail is filtered by the target's primary key, so it is that key's value the boundary asks about. |
+| `{"posts": ("exact",)}` where the **post's** type hides its own key | The same query, spelled over a reverse foreign key or a many-to-many. Those own no column on this model, so the target's key is asked of the target type directly — otherwise `posts` and `posts__id` would answer differently. |
+| `{"author__name": …}` where the type declares `author` over a `resolve_author` of its own | The client reads whatever that resolver returns, while the filter joins straight past it — so the hop is a mask, exactly as a declared column served by a resolver is. This is the [scoping hatch](types.md#relation-scope-hatch); declaring it costs the relation its filter paths. |
+| `{"posts__title": …}` where the type declares `posts` as a `DjangoFilterListField` | The to-MANY arm of the same hatch, refused by the same rule. The mounted list field carries a resolver by construction, so the rows the client reads are the ones it hands back while the join reaches every row behind it. |
+| `{"category__name": …}` where `Category` has **no registered type** | The compiler emits no `category` field at all, so the hop fails closed. Keeping a nested filter input over a model nothing in the schema can name is a substring oracle over rows nothing can select. |
+| `{"pk": …}`, or `{"id": …}` on a natural-key model | The name is not a field, so the entry compiled to **nothing** and the list was never filterable by its key. An option accepted and ignored is the defect every refusal here exists to prevent. |
+| `{"name__icontains": …}` — a lookup spelled into the **key** | Lookups are declared in the entry's **value**. Spelled into the key, the whole compound lands on the model's own leaves, where no field answers to it: byte-equivalent to `pk`, and refused for the same reason. Write `{"name": ("icontains",)}`. |
+
+Each refusal opens with the `Meta` the entry has to leave — the type whose
+`Meta.filter_fields` declared it, which for a `DjangoListObjectType` that
+declares none of its own is the **node type** it inherited the declaration
+from — and then names the type **you have to change**, the one owning the hop
+that failed rather than the one the path was declared on. A relation the
+compiler dropped says so, naming the target model that needs a registered type:
+
+```text
+PostType.Meta.filter_fields entry 'category__title' traverses 'category', which
+PostType does not publish as a relation -- Meta.only_fields /
+Meta.exclude_fields removed it, a declared attribute publishes the name over a
+resolver of its own or over a leaf, or the output compiler dropped it because
+Category has no registered DjangoObjectType. […] Publish 'category' on PostType -- registering a
+DjangoObjectType for Category if that is what is missing -- or drop the entry.
+```
+
+#### Two node types over one model share one input { #filter-input-union }
+
+There is exactly one `<Model>FilterInput` per model, and every context building
+it converges on the model's root declaration, so two `DjangoObjectType`s over
+one model in one schema **share a single instance** — widened in place by
+whichever of them asks for the most paths. The boundary is therefore measured
+against the **union that will actually be served**, and against **every type
+that will serve it**: a narrow type mounted beside a wide one fails the build
+rather than inheriting the wide one's filters over a column it projects away.
+
+The **body** of an `@filter_field` method stays the one deliberately open
+boundary: the argument is an opaque scalar and the ORM lookup lives in your
+Python, where no build-time analysis can see it. Its *name* is checked — see
+[Custom per-field filters](#custom-per-field-filters-filter_field).
+
+#### Under `PERMISSION_SCOPED_SCHEMA` the clone answers { #filter-prune-scope }
+
+A permission-scoped schema is a **clone that publishes less**, and the filter
+argument narrows with it: a relation the pruned node type no longer publishes
+is dropped from the pruned `<Model>FilterInput`, and a nested input left over a
+model the clone does not mount falls out of the schema entirely. This is the
+same answer the ordering allowlist gives on the same clone — one schema, one
+boundary, one predicate.
 
 Which lookups the **list form** actually gives you — and which ones it does
 **not** — is covered next.
@@ -258,6 +377,18 @@ applies `.distinct()` so join fan-out doesn't duplicate rows.
     `AuthorNameLookups { exact, icontains }`, so both contexts work off one
     canonical type.
 
+!!! danger "The **related** type's projection governs the nested input"
+
+    Each hop of a `__` path is checked against the type that publishes it, not
+    against the type that declared the path. `PostType.filter_fields =
+    {"author__bio": …}` is refused when **`AuthorType`** hides `bio`, and it is
+    refused when `PostType` hides the `author` relation itself. Otherwise any
+    third type could undo a projection by reaching the column through a join —
+    and because all filter inputs for a model converge on one
+    `<Model>FilterInput`, that widened shape would then serve every list
+    filtering that model. See
+    [The projection is the outer boundary](#projection-boundary).
+
 ## Filtering by id / pk (incl. `UUIDField`)
 
 Declare the `id` field — or a relation field **directly** (not a `__` path) — with
@@ -288,6 +419,18 @@ scalar lookups, and it filters on the primary key. This replaces the old
       }
     }
     ```
+
+!!! warning "A relation-direct entry needs the **target** type's key published"
+
+    `"customer": ("exact",)` filters on `Order.customer_id`, whose value is the
+    *customer's* primary key — so it is admitted only when the type behind
+    `customer` publishes that key. A customer type declaring
+    `only_fields = ("name",)` refuses this entry at build time, exactly as
+    `ordering: "customer_id"` is refused at query time on the same schema. It is
+    the third row of [The shapes it refuses](#filter-refusal-shapes) — the
+    fourth covers the same query spelled over a reverse relation or a
+    many-to-many — and the refusal names the customer's type, which is where
+    the fix belongs.
 
 ## `choices` fields filter via their Enum
 
@@ -333,6 +476,38 @@ query {
   }
 }
 ```
+
+!!! warning "The method NAME is checked"
+
+    A method spelled like a column the type hides compiles the very same
+    `<Model>FilterInput` field that a `filter_fields` entry naming it is
+    refused, so the one-line rename out of a refusal is shut. Declaring
+    `def bio(...)` on a type whose `only_fields` drops `bio` fails the build:
+
+    ```text
+    Author: @filter_field method 'bio' is spelled like a column AuthorType does
+    not publish, so it compiles the same <Model>FilterInput field a
+    filter_fields entry naming it is refused. Rename the method, or publish
+    'bio' on AuthorType.
+    ```
+
+    A method whose name is not a column on the model — `search` above — says
+    nothing about what its body touches and is left alone.
+
+!!! danger "The projection guard stops at the method BODY — this is on you"
+
+    Everything else in this page is checked when the schema builds. A
+    `@filter_field` **body** cannot be: its argument is an opaque scalar and the
+    ORM lookup lives in your Python, so nothing at build time can see which
+    columns it touches. The example above would happily read a `body` the type
+    hides, under the perfectly innocent name `search`.
+
+    This is a **documented boundary, deliberately left open** — refusing every
+    `@filter_field` on a projected type would punish the honest majority for a
+    body the compiler cannot read. When your type declares `only_fields` /
+    `exclude_fields`, it is your job to keep the method body inside that same
+    set. A method that filters on a hidden column reopens exactly the oracle
+    [the projection boundary](#projection-boundary) closes.
 
 ### Decorator signature
 
@@ -559,11 +734,12 @@ has no read operations, so there the scope governs `update` and `delete` only.
     `permission_classes` on one has no effect. Use `DjangoModelType` when you
     need per-action authorization, or gate the mutation at the schema root.
 
-!!! danger "Upgrade note"
+!!! danger "Upgrade note — fixed in 2.2.0"
     2.1.0 and earlier applied this scope on the read path only: `update` and
     `delete` looked their target up on the bare model, so the snippet above
     protected reads while leaving every row in the table writable by any
-    caller. Fixed in the next release.
+    caller. Both write methods resolve through the scoped queryset from 2.2.0
+    on; if you are still on 2.1.0 or earlier, upgrade.
 
 See [Permissions & hooks](permissions.md) for `get_queryset` / `filter_queryset`.
 
@@ -582,6 +758,34 @@ Filtering composes with the list field's pagination/ordering, which live on the
   }
 }
 ```
+
+!!! warning "A hidden column is not sortable either"
+
+    The two axes are **one boundary asking one predicate**, so they cannot
+    disagree: a column removed with `only_fields` / `exclude_fields` is rejected
+    by `ordering` for the same reason it cannot appear in the filter input at
+    all — a filter narrow enough to isolate a pair of rows, plus an `ordering`
+    on the hidden column, reads the hidden value back one comparison at a time.
+    The rule itself lives in
+    [Types › The projection is a security boundary](types.md#projection-security-boundary);
+    see [the outer boundary](#projection-boundary) for the filter half and
+    [Ordering validation](pagination.md#ordering-validation-security) for the
+    ordering half.
+
+    They differ only in **when** they fire. The filter half is enforced at
+    **build time** — a `filter_fields` entry naming a hidden column fails the
+    schema build outright, so nothing hidden ever reaches the filter input. The
+    ordering half is enforced at **query time**, because the allowlist belongs
+    to the schema serving the request: under
+    [`PERMISSION_SCOPED_SCHEMA`](permission-scoped-schema.md) two callers hold
+    different pruned schemas over the same type, and only the one serving the
+    request can say what it publishes.
+
+    The ordering axis also carries the boundary's
+    [one exception](types.md#projection-exception) — an operator-configured
+    `ordering=` default on the two offset paginators. The filter axis has no
+    equivalent: there is no operator-supplied filter *value*, only a declared
+    surface, and a declared surface is exactly what is refused.
 
 ## Field-level filtering
 
@@ -660,6 +864,12 @@ none).
     model). The per-field override shines when the type itself declares no
     `filter_fields` (as above), giving each query field its own filter
     surface.
+
+    Because a `fields=` override **widens** that shared type, it is checked
+    against the node type's projection exactly like a `Meta.filter_fields`
+    declaration: a `fields=` entry naming a hidden column fails the schema
+    build. Widening is the second door into the same input, and it is shut too
+    — see [The projection is the outer boundary](#projection-boundary).
 
 ## Best practices
 

@@ -154,8 +154,9 @@ _STR = (
 FIELD_TYPES: dict[str, Any] = {
     **{name: int for name in _INT},
     **{name: str for name in _STR},
+    # A ``NullBooleanField`` reports "BooleanField" from ``get_internal_type()``,
+    # so it needs no key of its own here (and could never reach one).
     "BooleanField": bool,
-    "NullBooleanField": bool,
     "FloatField": float,
     "DecimalField": decimal.Decimal,
     "DateField": datetime.date,

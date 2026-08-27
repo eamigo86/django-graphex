@@ -408,7 +408,10 @@ class DjangoGraphQLSchema:
         """
         from graphql import GraphQLObjectType, GraphQLSchema
 
-        from django_graphex.core.base import default_schema_registries
+        from django_graphex.core.base import (
+            buried_config_error,
+            default_schema_registries,
+        )
         from django_graphex.core.perm_labels import implicit_label_set, input_label_set
         from django_graphex.core.schema_compiler import compile_native_root
 
@@ -504,7 +507,7 @@ class DjangoGraphQLSchema:
                 extensions=extensions,
             )
         except TypeError as error:
-            buried = DjangoGraphQLSchema._buried_config_error(error)
+            buried = buried_config_error(error)
             if buried is None:
                 raise
             raise buried from None
@@ -527,26 +530,6 @@ class DjangoGraphQLSchema:
             | input_label_set(schema)
         )
         return schema
-
-    @staticmethod
-    def _buried_config_error(error: BaseException) -> Exception | None:
-        """Dig a configuration error out of a graphql-core thunk wrapper.
-
-        Args:
-            error: The exception graphql-core raised.
-
-        Returns:
-            The "ImproperlyConfigured" somewhere in the cause chain, or None
-            when the failure is genuinely a graphql-core type error.
-        """
-        from django.core.exceptions import ImproperlyConfigured
-
-        cause: BaseException | None = error
-        while cause is not None:
-            if isinstance(cause, ImproperlyConfigured):
-                return cause
-            cause = cause.__cause__
-        return None
 
     @staticmethod
     def _compute_label_set(*roots: Any) -> frozenset[str]:

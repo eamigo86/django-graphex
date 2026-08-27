@@ -24,7 +24,9 @@ Protocol (graphql-transport-ws, primary subprotocol only; the legacy
     "complete{id}" when the source ends. A subscribe-time error (validation /
     authorize-deny / parse) is delivered as "error{id, payload:[...]}". A
     duplicate "id" (one already running) closes with 4409. N operations are
-    multiplexed independently over the one socket.
+    multiplexed independently over the one socket, bounded by
+    "MAX_SUBSCRIPTIONS_PER_CONNECTION": a subscribe past the cap is rejected
+    with the same "error{id, payload:[...]}" frame and the socket lives on.
   * "ping" -> "pong" (keep-alive, either direction; the server answers a
     client "ping").
   * Client "complete{id}" cancels ONLY that id's task and "group_discard"s ITS
@@ -51,7 +53,8 @@ a context exposing ".user" + a "scope" mapping, here built from "self.scope"
 behave identically to the SSE transport.
 
 This module reads "graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT"
-(NOT "graphene_settings" — the no-graphene-import gate). It imports neither
+and "graphql_api_settings.MAX_SUBSCRIPTIONS_PER_CONNECTION" (NOT
+"graphene_settings" — the no-graphene-import gate). It imports neither
 graphene at any scope nor "channels" at module scope; "channels" is imported
 lazily inside the factory so the base subscriptions package never hard-requires
 the optional "[subscriptions]" extra (the consumer module is only imported when
@@ -77,8 +80,10 @@ from graphql import (
 )
 from graphql.utilities import get_operation_ast
 
+from ...security import format_graphql_error
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
+from . import operation_selection_error
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable, Mapping
@@ -417,9 +422,11 @@ def subscription_ws_consumer(
             """Start a multiplexed operation for "subscribe{id, payload}".
 
             A subscribe BEFORE the ack is Unauthorized (4401). A duplicate id
-            (one already running) is 4409. Otherwise an "asyncio.Task" runs the
-            engine for this id; "add_done_callback" removes it from the registry
-            the instant the task ends (normal/error/cancel).
+            (one already running) is 4409. A subscribe past
+            "MAX_SUBSCRIPTIONS_PER_CONNECTION" gets an "error" frame and the
+            socket keeps its running operations. Otherwise an "asyncio.Task"
+            runs the engine for this id; "add_done_callback" removes it from the
+            registry the instant the task ends (normal/error/cancel).
             """
             if not self._acked:
                 await self._close(_CODE_UNAUTHORIZED)
@@ -433,8 +440,49 @@ def subscription_ws_consumer(
                 await self._close(_CODE_SUBSCRIBER_ALREADY_EXISTS)
                 return
 
+            max_subscriptions = graphql_api_settings.MAX_SUBSCRIPTIONS_PER_CONNECTION
+            if (
+                max_subscriptions is not None
+                and len(self._operations) >= max_subscriptions
+            ):
+                # Reject the OFFENDING operation only — closing the socket would
+                # punish the subscriptions the client already has running (and a
+                # close is what the protocol reserves for violations, which
+                # over-subscribing is not). The slot frees itself the moment an
+                # operation ends ("_operation_done" pops the registry).
+                await self._send_error(
+                    op_id,
+                    [
+                        {
+                            "message": (
+                                f"Subscription count exceeds the "
+                                f"MAX_SUBSCRIPTIONS_PER_CONNECTION limit of "
+                                f"{max_subscriptions}. Complete an existing "
+                                "subscription on this connection or set "
+                                "MAX_SUBSCRIPTIONS_PER_CONNECTION=None to "
+                                "disable the limit."
+                            )
+                        }
+                    ],
+                )
+                return
+
             payload = content.get("payload") or {}
-            task = asyncio.ensure_future(self._run_operation(op_id, payload))
+            if not isinstance(payload, dict):
+                # A non-mapping payload used to reach "_run_operation", where
+                # "payload.get" raised INSIDE the operation task — logged by
+                # "_operation_done" and then DROPPED. The client got no "error"
+                # frame, no "complete", nothing: a protocol violation it cannot
+                # tell apart from a slow server, so it waits forever. Frame it
+                # like every other malformed subscribe and leave the socket (and
+                # the operations already running on it) alone.
+                await self._send_error(
+                    op_id,
+                    [{"message": "The subscribe payload must be a JSON object."}],
+                )
+                return
+
+            task = asyncio.ensure_future(self._run_operation_framed(op_id, payload))
             self._operations[op_id] = task
             # strawberry.channels hardening: drop the id the instant its task ends
             # (normal completion, error, OR abnormal cancel) so the registry never
@@ -484,6 +532,37 @@ def subscription_ws_consumer(
             self._conn_schema = resolved
             return resolved
 
+        async def _run_operation_framed(
+            self, op_id: str, payload: dict[str, Any]
+        ) -> None:
+            """Run one operation, framing ANY escaping error instead of logging it.
+
+            No subscribe may end in silence. Before this wrapper an exception
+            that is not a "GraphQLError" — an "ImproperlyConfigured" raised
+            while validation READ a limit setting, say — escaped the operation
+            task, whose done-callback only logged it. The client received no
+            "error", no "complete" and nothing else, and could not tell a
+            server fault from a slow one. That is the same shape the malformed
+            payload fix eliminated, reached by a different route.
+
+            "CancelledError" is re-raised untouched: a client "complete" or a
+            disconnect is a normal teardown, not a fault.
+
+            Args:
+                op_id: The operation id the frame must be addressed to.
+                payload: The subscribe payload to run.
+            """
+            try:
+                await self._run_operation(op_id, payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - framed, never escapes
+                logger.exception(
+                    "Subscription operation %r failed before it could stream.",
+                    op_id,
+                )
+                await self._send_error(op_id, [{"message": str(exc)}])
+
         async def _run_operation(self, op_id: str, payload: dict[str, Any]) -> None:
             """Run one subscription operation: subscribe -> next* -> complete.
 
@@ -508,6 +587,16 @@ def subscription_ws_consumer(
                 return
 
             operation_ast = get_operation_ast(document, payload.get("operationName"))
+            if operation_ast is None:
+                # No operation could be SELECTED — several with no name to pick
+                # one, or a name matching none. Distinct from "not a
+                # subscription", which is what the fall-through below reports.
+                selection_error = operation_selection_error(
+                    document, payload.get("operationName")
+                )
+                if selection_error is not None:
+                    await self._send_error(op_id, [{"message": selection_error}])
+                    return
             if (
                 operation_ast is None
                 or operation_ast.operation != OperationType.SUBSCRIPTION
@@ -535,13 +624,30 @@ def subscription_ws_consumer(
                 )
                 return
 
+            # Same rule tuple as the HTTP view: a subscription's selection set is
+            # re-executed for EVERY delivered event, so an over-deep or over-costly
+            # document is paid for repeatedly — the depth/cost guards matter more
+            # here than on a one-shot query, not less.
+            #
+            # Imported HERE, not at module level: "views" reaches
+            # "core.permission_signature_cache", which reads "DJANGO_GRAPHEX" while
+            # it is being imported. A module-level import would therefore make this
+            # transport unimportable until Django settings are configured -- a
+            # dependency it did not have before the shared rule tuple, and one that
+            # bites any ASGI entrypoint that routes the consumer before it points
+            # at a settings module.
+            from ...views import DEFAULT_VALIDATION_RULES
+
             validation_errors = validate(
                 conn_schema,
                 document,
+                DEFAULT_VALIDATION_RULES,
                 max_errors=graphql_api_settings.MAX_VALIDATION_ERRORS,
             )
             if validation_errors:
-                await self._send_error(op_id, [e.formatted for e in validation_errors])
+                await self._send_error(
+                    op_id, [format_graphql_error(e) for e in validation_errors]
+                )
                 return
 
             # Run the subscription field's native subscribe entry. The KEPT hooks
@@ -556,15 +662,30 @@ def subscription_ws_consumer(
                     variable_values=payload.get("variables"),
                     operation_name=payload.get("operationName"),
                 )
-            except Exception as exc:  # authorize-deny raised before any group_add
-                await self._send_error(op_id, [{"message": str(exc)}])
+            except Exception as exc:
+                # NOT the authorize-deny path: graphql-core funnels everything
+                # the subscribe resolver RAISES into an ExecutionResult below
+                # (execute_subscription re-raises through located_error, which
+                # always yields a GraphQLError, and create_source_event_stream
+                # catches GraphQLError). Two things escape that funnel instead.
+                # The client-reachable one is assert_valid_execution_arguments,
+                # which runs before that try block — a client sending
+                # "variables" as an unparsed JSON string gets a plain TypeError
+                # (this is the branch the tests drive). The other is
+                # create_source_event_stream's own "Subscription field must
+                # return AsyncIterable" TypeError, raised INSIDE the try but not
+                # caught there: a subscribe entry that RETURNS the wrong kind of
+                # object lands here rather than in the ExecutionResult path.
+                # Frame both: an escaping exception kills the consumer task and
+                # every OTHER subscription multiplexed on this socket with it.
+                await self._send_error(op_id, [format_graphql_error(exc)])
                 return
 
             if isinstance(source_or_result, ExecutionResult):
                 errors = source_or_result.errors or []
                 await self._send_error(
                     op_id,
-                    [e.formatted for e in errors]
+                    [format_graphql_error(e) for e in errors]
                     or [{"message": "Subscription could not be started."}],
                 )
                 return
@@ -671,7 +792,7 @@ def subscription_ws_consumer(
             if result.data is not None:
                 payload["data"] = result.data
             if result.errors:
-                payload["errors"] = [e.formatted for e in result.errors]
+                payload["errors"] = [format_graphql_error(e) for e in result.errors]
             await self.send_json({"id": op_id, "type": "next", "payload": payload})
 
         async def _send_error(self, op_id: str, errors: list[Any]) -> None:

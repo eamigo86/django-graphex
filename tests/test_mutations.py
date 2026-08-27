@@ -60,11 +60,11 @@ class UserMutation(DjangoModelMutation):
 class UserMutationWithCustomName(DjangoModelMutation):
     """Test mutation with custom model name.
 
-    Used by the custom-lookup-field and limited-operations tests.
+    Used by the limited-operations tests.
     """
 
     class Meta:
-        """Bind the mutation to "User" with a custom lookup field and limited operations.
+        """Bind the mutation to "User" with limited operations.
 
         Only "create" and "update" are enabled; "delete" is intentionally
         excluded.
@@ -72,7 +72,6 @@ class UserMutationWithCustomName(DjangoModelMutation):
 
         model = User
         model_operations = ("create", "update")
-        lookup_field = "username"
         registry = _RMUT
 
 
@@ -404,11 +403,11 @@ class DjangoModelMutationTest(TestCase):
         errors = data.get("errors") or []
         self.assertGreater(len(errors), 0)
 
-    def test_custom_lookup_field_mutation(self) -> None:
-        """A mutation configured with "lookup_field='username'" updates by that field.
+    def test_update_on_a_create_update_only_mutation(self) -> None:
+        """A mutation restricted to ("create", "update") still updates by "id".
 
-        This test breaks if the custom lookup field stops being honored when
-        resolving the target row to update.
+        This test breaks if narrowing "model_operations" stops leaving the
+        operations it does list fully working.
         """
         mutation = f"""
             mutation {{

@@ -1142,6 +1142,46 @@ class CrudLeakDoc(DummyModel):
     secret = models.CharField(max_length=128, default="")
 
 
+class StaleUnionAuthor(DummyModel):
+    """Author-shaped row for the stale-filter-cache regression.
+
+    Owns a sensitive column and a reverse many-to-many, which is what makes
+    forcing a narrow type's field map build this very model's filter input
+    from ANOTHER type's declaration, in the middle of the guard measuring it.
+    A dedicated model keeps that shared, process-wide filter-input cache entry
+    exclusive to the one test that needs it.
+    """
+
+    name = models.CharField(max_length=100)
+    bio = models.TextField(default="")
+
+
+class StaleUnionPost(DummyModel):
+    """Post-shaped row filtering authors through a many-to-many relation.
+
+    Its "co_authors__bio" declaration is the path the author's own root
+    declaration never names, so the nested build widens the shared author
+    filter input past what a narrow author type publishes.
+    """
+
+    title = models.CharField(max_length=200)
+    co_authors = models.ManyToManyField(
+        StaleUnionAuthor, related_name="stale_posts", blank=True
+    )
+
+
+class CrudMirrorDoc(DummyModel):
+    """Row whose registered output type already hides its sensitive column.
+
+    Lets the projection guard be proven NOT to fire when the CRUD type merely
+    restates the projection the reused output type was built from, which
+    changes nothing about what the schema publishes.
+    """
+
+    label = models.CharField(max_length=100)
+    secret = models.CharField(max_length=128, default="")
+
+
 class CrudFreshDoc(DummyModel):
     """Row whose output type is built by its own "DjangoModelType".
 
@@ -2712,3 +2752,74 @@ class NestedR7OnlyKid(DummyModel):
     )
     headline = models.CharField(max_length=100)
     secret = models.CharField(max_length=100, blank=True, default="")
+
+
+class WriteHostThread(DummyModel):
+    """The parent of the list-container displacement fixture.
+
+    Its reverse "replies" accessor is what resolves through the registry slot a
+    write-only host used to seize, so the displacement is visible in the schema
+    without mounting the child anywhere.
+    """
+
+    title = models.CharField(max_length=100)
+
+
+class WriteHostReply(DummyModel):
+    """A child whose reads and writes are served by two different classes.
+
+    Dedicated to this fixture because "DjangoModelType" always registers into
+    the GLOBAL registry, so sharing a model with another test module would make
+    the two modules fight over the same slot.
+    """
+
+    thread = models.ForeignKey(
+        WriteHostThread, related_name="replies", on_delete=models.CASCADE
+    )
+    body = models.CharField(max_length=100)
+
+
+class WriteHostAudit(DummyModel):
+    """A model whose host serves "list", proving the unchanged path.
+
+    Kept apart from "WriteHostReply" so the list-serving host and the
+    write-only host never compete for one registry slot.
+    """
+
+    label = models.CharField(max_length=100)
+
+
+class SelfKeyedNode(DummyModel):
+    """A model whose primary key IS a one-to-one relation back to itself.
+
+    Django's system checks pass on it -- "SelfKeyedNode.check()" returns no
+    messages -- and it produces the one field shape
+    "core.output_compiler.publishes_column_value" cannot walk: a concrete field
+    whose "target_field" is the field ITSELF. Every other forward relation
+    points at some OTHER field, which is what lets the predicate recurse into
+    the target type; this one recurses into itself forever.
+
+    Declared UNMANAGED, and that is a statement about Django rather than about
+    the schema: "SchemaEditor.column_sql" resolves a relation's column type
+    through "target_field.db_parameters", which for this field is the field
+    itself, so Django's own DDL for it hits "RecursionError". Unmanaged is how
+    a table like this reaches an app in practice -- a legacy table or a database
+    view Django maps but never creates. Nothing here inserts a row either: the
+    key would have to name a row that does not exist yet, and the predicate is
+    answered at schema-build time, never against data.
+    """
+
+    link = models.OneToOneField(
+        "self", primary_key=True, related_name="linked", on_delete=models.CASCADE
+    )
+    label = models.CharField(max_length=100, default="")
+
+    class Meta:
+        """Meta configuration for "SelfKeyedNode".
+
+        Keeps the shared app label and marks the model unmanaged so Django
+        never emits the DDL its own schema editor cannot produce.
+        """
+
+        app_label = "tests"
+        managed = False

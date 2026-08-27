@@ -9,7 +9,6 @@ import re
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Iterator
 
-from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.models import (
     NOT_PROVIDED,
@@ -265,85 +264,6 @@ def get_model_fields(model: type[Model]) -> list[tuple[str, Any]]:
     all_fields = local_fields + reverse_fields
 
     return all_fields
-
-
-def get_obj(app_label: str, model_name: str, object_id: Any) -> Model | None:
-    """Get a Django object by app label, model name, and object ID.
-
-    Args:
-        app_label: The Django app label.
-        model_name: The model name.
-        object_id: The primary key of the object.
-
-    Returns:
-        The model instance, or None if it does not exist.
-
-    Raises:
-        ValidationError: If the lookup fails validation.
-        TypeError: If the lookup arguments have an invalid type.
-        Exception: If any other error occurs during the lookup.
-    """
-    try:
-        model = apps.get_model(f"{app_label}.{model_name}")
-    except LookupError:
-        # Unknown app label / model name -> no such object.
-        return None
-
-    if not is_valid_django_model(model):
-        return None
-
-    try:
-        return get_Object_or_None(model, pk=object_id)
-    except model.DoesNotExist:
-        return None
-    except ValidationError as e:
-        raise ValidationError(str(e))
-    except TypeError as e:
-        raise TypeError(str(e))
-    except Exception as e:
-        raise Exception(str(e))
-
-
-def create_obj(
-    django_model: Any, new_obj_key: str | None = None, *args: Any, **kwargs: Any
-) -> Any:
-    """Create a Django model instance.
-
-    Args:
-        django_model: A Django model class or a "app_label.model_name" string.
-        new_obj_key: The key in "kwargs" holding the data, if any.
-        *args: Additional positional arguments.
-        **kwargs: The model attribute values.
-
-    Returns:
-        The created model instance, or an error message string on failure.
-
-    Raises:
-        ValidationError: If the new object fails validation.
-        TypeError: If the supplied data has an invalid type.
-    """
-    try:
-        if isinstance(django_model, str):
-            django_model = apps.get_model(django_model)
-        assert is_valid_django_model(django_model), (
-            "You need to pass a valid Django Model or a string with format: "
-            '<app_label>.<model_name> to "create_obj"'
-            ' function, received "{}".'
-        ).format(django_model)
-
-        data = kwargs.get(new_obj_key, None) if new_obj_key else kwargs
-        new_obj = django_model(**data)
-        new_obj.full_clean()
-        new_obj.save()
-        return new_obj
-    except LookupError:
-        pass
-    except ValidationError as e:
-        raise ValidationError(str(e))
-    except TypeError as e:
-        raise TypeError(str(e))
-    except Exception as e:
-        return str(e)
 
 
 def clean_dict(d: Any) -> Any:
@@ -3785,11 +3705,18 @@ def apply_object_type_get_queryset(
 ) -> QuerySet:
     """Apply a "DjangoObjectType.get_queryset" row-level scope to a queryset.
 
-    The single choke point for the per-request scoping hook: every path that
-    serves rows for a "DjangoObjectType" routes through here, whether the
-    queryset came from a fresh manager ("queryset_factory") or from a parent's
-    relation accessor (the related fast path in
-    "DjangoFilterListField.list_resolver").
+    The choke point for the per-request scoping hook on the paths that build a
+    QUERYSET. It has exactly three callers: "queryset_factory" (a fresh
+    manager), "DjangoObjectType.get_node" (a primary-key lookup), and the
+    related fast path in "DjangoFilterListField.list_resolver" (a parent's
+    relation accessor).
+
+    It is NOT every path that serves rows for a "DjangoObjectType". An
+    auto-expanded relation field never builds a queryset at all: the to-MANY arm
+    reads the parent's prefetch cache and the to-ONE (FK / OneToOne) arm is a
+    plain attribute read off the already-fetched parent, so neither reaches this
+    function and neither is scoped. That boundary is documented for users in
+    docs/usage/types.md, together with the "resolve_<relation>" escape hatch.
 
     The sentinel "_dgx_has_object_type_get_queryset" is set on
     "DjangoObjectType" and inherited by every plain subclass; it is NOT present

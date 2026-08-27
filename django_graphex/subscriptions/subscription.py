@@ -437,9 +437,13 @@ class Subscription(NativeObjectType):
 
         Hook meant to be overridden (or injected by "DjangoModelType").
         Raise "GraphQLError" to deny; the denial is surfaced to the client as
-        "ok: False" / "error". The default allows. Runs in the HTTP request
-        context, so "info.context.user" is available -- keep it free of
-        blocking ORM access.
+        "ok: False" / "error". The default allows. "info.context.user" is
+        already resolved by the time this runs, on both transports.
+
+        Both transports run this ON THE EVENT LOOP, so a synchronous override
+        must stay free of blocking ORM access. An override that needs the ORM
+        may be declared "async def" (the return is awaited) and lift the query
+        with "asgiref.sync_to_async".
 
         Args:
             info: GraphQL resolve info for the subscribe request.
@@ -722,13 +726,21 @@ class Subscription(NativeObjectType):
         """
         from .streaming import SubscriptionSpec
 
-        def _authorize(context: Any, **kwargs: Any) -> None:
+        def _authorize(context: Any, **kwargs: Any) -> Any:
             # The kept classmethod takes (info, **kwargs); pass the
             # transport-neutral context as ``info``. Both transports' contexts
             # expose ``.user`` AND a ``.context`` self-alias, so the documented
             # ``info.context.user`` spelling resolves here exactly as it does in
             # a resolver (where ``info`` is a real GraphQLResolveInfo).
-            cls.authorize_subscription(context, **kwargs)
+            #
+            # The RETURN is forwarded, like ``_scope`` below: the engine awaits
+            # an awaitable hook result (``streaming._maybe_await``), and both
+            # transports run the hooks on the event loop — so a gate declared
+            # ``async def`` (the only way it can reach the ORM) is the normal
+            # shape, not an exotic one. Swallowing the coroutine here made such
+            # a gate fail OPEN: its denial never ran, and Python only whispered
+            # "coroutine was never awaited".
+            return cls.authorize_subscription(context, **kwargs)
 
         def _scope(context: Any, **kwargs: Any) -> dict[str, Any] | None:
             return cls.subscription_scope(context, **kwargs)

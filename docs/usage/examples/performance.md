@@ -4,11 +4,15 @@
 
 === "Efficient Queries with select_related"
 
+    The hook goes on the **node** type, not on the list container. A
+    `DjangoListObjectField` resolves rows through the `DjangoObjectType` the
+    container wraps, and that is the class whose `get_queryset` runs — see
+    [Fields → Performance Optimization](../../api/fields.md#performance-optimization).
+
     ```python
-    class PostListType(DjangoListObjectType):
+    class PostType(DjangoObjectType):
         class Meta:
             model = Post
-            pagination = LimitOffsetGraphqlPagination(default_limit=10)
 
         @classmethod
         def get_queryset(cls, queryset, info):
@@ -17,6 +21,11 @@
             ).prefetch_related(
                 'tags', 'comments__author'
             )
+
+    class PostListType(DjangoListObjectType):
+        class Meta:
+            model = Post
+            pagination = LimitOffsetGraphqlPagination(default_limit=10)
     ```
 
 === "Custom Resolver Optimization"

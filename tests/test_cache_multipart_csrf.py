@@ -65,6 +65,8 @@ class MultipartCacheBypassTest(TestCase):
             data={"query": "{ hello }"},
             # Django's RequestFactory uses multipart/form-data when data is a dict
             # without an explicit content_type — equivalent to a browser form POST.
+            # The header carries it past the CORS-simple POST guard.
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
         request.user = AnonymousUser()
         response = self.view(request)
@@ -84,6 +86,7 @@ class MultipartCacheBypassTest(TestCase):
         request = self.factory.post(
             "/graphql/",
             data={"query": "{ hello }"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
         request.user = AnonymousUser()
         response = self.view(request)
@@ -138,8 +141,19 @@ class MultipartCacheBypassTest(TestCase):
             call_count["n"] += 1
             return original_super_call(self_view, request, *args, **kwargs)
 
-        req1 = self.factory.post("/graphql/", data={"query": "{ hello }"})
-        req2 = self.factory.post("/graphql/", data={"query": "{ hello }"})
+        # The header carries both requests past the CORS-simple POST guard,
+        # which refuses a header-less multipart POST before "super_call" ever
+        # runs — this test is about the CACHE bypass, not the guard.
+        req1 = self.factory.post(
+            "/graphql/",
+            data={"query": "{ hello }"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        req2 = self.factory.post(
+            "/graphql/",
+            data={"query": "{ hello }"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
         req1.user = AnonymousUser()
         req2.user = AnonymousUser()
 

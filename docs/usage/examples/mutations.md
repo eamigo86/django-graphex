@@ -190,7 +190,8 @@ uploads and error handling. For a complete runnable project see
 
 There is no `Upload` scalar. A file column is published as `String`, and the
 file itself rides in the `multipart/form-data` body as a part named after the
-model's snake_case attribute — see
+field — either the camelCase alias the SDL publishes or the model's snake_case
+attribute, both match — see
 [Automatic multipart uploads](../mutations.md#automatic-multipart-uploads).
 
 The part can only address a field on the model the mutation is bound to, so an
@@ -200,9 +201,11 @@ child through its own mutation:
 === "Update User Avatar"
 
     ```graphql
-    # POST multipart/form-data
-    #   part "operations": this document plus its variables
-    #   part "avatar":     the image bytes
+    # POST multipart/form-data, and it MUST carry X-Requested-With or the
+    # endpoint refuses it with 403 before reading the body.
+    #   field "query":     this document
+    #   field "variables": its variables, JSON-encoded
+    #   part  "avatar":    the image bytes, named after the model attribute
     mutation UpdateProfileAvatar($profileId: ID!) {
       updateProfile(newProfile: {id: $profileId}) {
         ok

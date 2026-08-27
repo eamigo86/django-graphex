@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from graphql import GraphQLError, Undefined
 
@@ -22,6 +23,7 @@ from django_graphex.filtering.backend import (
 )
 from django_graphex.filtering.native_schema import (
     _relation_model,
+    _split_filter_paths,
     build_filter_input_type,
 )
 from django_graphex.filtering.translate import (
@@ -126,21 +128,23 @@ def test_relation_direct_list_form_uses_default_pk_lookups() -> None:
 
 
 def test_non_relation_double_underscore_path_falls_back_to_leaf() -> None:
-    """A "field__weird" path where "field" is not a relation must be dropped, not crash.
+    """A "field__weird" path where "field" is not a relation is an own leaf.
 
-    Covers the "own[path] = lookups" fallback branch when "get_field" raises
-    for the compound path.
+    Covers the "own[path] = lookups" split branch, and the refusal that keeps
+    it from ever reaching a compiled field: no field answers to the compound
+    name, so the entry compiled to nothing.
     """
-    # `name__weird` where `name` is not a relation: the whole path is kept as a
-    # leaf on the model (the `own[path] = lookups` fallback branch).
     R = Registry()
     built = build_filter_input_type(FilterModel, ["rating"], registry=R)
-    # The fallback path: get_field("name__bad") raises -> field is skipped.
-    built2 = build_filter_input_type(FilterModel, {"name__bad": ("exact",)}, registry=R)
     assert built is not None
-    assert built2 is not None
-    # `name__bad` is not a real field so it is dropped from the namespace.
-    assert "name__bad" not in built2.fields
+
+    own, relations, direct = _split_filter_paths(FilterModel, {"name__bad": ("exact",)})
+    assert own == {"name__bad": ("exact",)}
+    assert not relations
+    assert not direct
+
+    with pytest.raises(ImproperlyConfigured):
+        build_filter_input_type(FilterModel, {"name__bad": ("exact",)}, registry=R)
 
 
 def test_relation_model_returns_none_for_scalar_and_missing() -> None:

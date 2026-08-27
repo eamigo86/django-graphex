@@ -430,11 +430,40 @@ urlpatterns = [
 
 Open `/graphql/client/`: it connects to the chosen transport, lets you send a
 `subscription { … }` operation, and streams the notifications back. The editor
-supports **Tab** to indent (Shift+Tab to outdent) and **schema-aware
-autocomplete** — it introspects the configured endpoint and suggests types,
-fields, arguments and enum values as you type (Ctrl+Space to trigger, Enter/Tab to
-accept). If introspection is disabled on the server, autocomplete falls back to
-GraphQL keywords only. The endpoints default to the page's own origin with the
+ships **a runnable document**, not a commented-out example:
+
+```graphql
+subscription {
+  yourSubscription(action: ALL_ACTIONS) {
+    id
+  }
+}
+```
+
+`yourSubscription` is a placeholder, and the introspection the client already
+runs for autocomplete rewrites it to the **first field your subscription root
+advertises** — so on a schema with any generated subscription, pressing ▶ works
+on first press. Every generated subscription field takes that same required
+`action` argument and exposes `id`, which is why one placeholder fits every
+schema. The rewrite only ever touches an editor still holding the shipped
+default; once you type, the client leaves your document alone.
+
+The editor also supports **Tab** to indent (Shift+Tab to outdent) and
+**schema-aware autocomplete** — it introspects the configured endpoint and
+suggests types, fields, arguments and enum values as you type (Ctrl+Space to
+trigger, Enter/Tab to accept).
+
+!!! warning "With introspection off, the placeholder stays a placeholder"
+    Both the autocomplete and the field rename come from the same
+    introspection query. With `ALLOW_INTROSPECTION = False` (the default) and
+    `DisableIntrospectionMiddleware` installed, autocomplete falls back to
+    GraphQL keywords only **and** the document still says `yourSubscription`,
+    so pressing ▶ answers `Cannot query field 'yourSubscription' on type
+    'Subscription'` until you type your own field name. An active superuser
+    bypasses the block (`INTROSPECTION_ALLOW_SUPERUSER`), so the same page can
+    behave differently for two logged-in users.
+
+The endpoints default to the page's own origin with the
 routes `/ws/graphql/` (WS), `/graphql/stream` (SSE) and `/graphql/` (HTTP);
 override them if yours differ:
 
@@ -511,6 +540,15 @@ event: complete
 data: 
 ```
 
+!!! info "Posting the document form-encoded needs `X-Requested-With`"
+
+    The endpoint also accepts `query` as `application/x-www-form-urlencoded` or
+    `multipart/form-data`. Both are CORS-*simple*, and the endpoint is
+    `csrf_exempt`, so such a POST must carry the `X-Requested-With` header or it
+    is answered with **HTTP 403** before the stream starts — see
+    [Security → Cross-site POST protection](security.md#cross-site-post-protection).
+    The JSON POST above (and the bundled client) is unaffected.
+
 !!! warning "The browser `EventSource` API cannot start a subscription"
 
     The limitation is in the **`EventSource` JavaScript API**, not the wire
@@ -544,9 +582,10 @@ data:
 
 Error surfacing splits at the moment the stream is committed:
 
-- **Pre-stream (HTTP 400)** — a missing `query`, a GraphQL **syntax** error, or
-  a non-subscription operation is rejected as a plain `400 Bad Request` before
-  any stream starts.
+- **Pre-stream (HTTP 400)** — a missing `query`, a GraphQL **syntax** error, a
+  non-subscription operation, or a JSON body that is not an object (`[1,2,3]`,
+  `"x"`, `null`) is rejected as a plain `400 Bad Request` before any stream
+  starts — the same classification `GraphQLView` gives those bodies.
 - **In-stream** — everything after that (**validation errors** and
   **authorize-denials**) is delivered inside the committed
   `200 text/event-stream` response as a single `next` frame carrying
@@ -570,7 +609,8 @@ multiplexes any number of operations, each identified by a client-chosen `id`:
 
 The `subscribe` payload carries the same `query` / `variables` /
 `operationName` keys as an HTTP POST. A subscribe-time failure (parse error,
-validation error, authorize-deny) is answered with
+validation error, authorize-deny, a `payload` that is not a JSON object, or the
+[per-connection cap](#per-connection-subscription-cap)) is answered with
 `{"type": "error", "id": "1", "payload": [...]}` instead of `next` frames, and
 the server answers a client `{"type": "ping"}` with `{"type": "pong"}`. The
 [`graphql-ws`](https://github.com/enisdenjo/graphql-ws) JavaScript client
@@ -682,10 +722,12 @@ Filters are evaluated **per connection at delivery time**:
     Equality and membership only answer "is it exactly this value?", which
     forces a whole-value guess.
 
-    2.0.0 documented `text__icontains` as usable; 2.1.0 started rejecting it at
-    subscribe time and 2.1.0 makes it unexpressible in the schema. Move the
-    substring match to `subscription_scope` (server code, exempt from this
-    check) or filter client-side on the delivered payload.
+    2.0.0 documented `text__icontains` as usable. 2.1.0 closed it twice over:
+    the runtime gate rejects the lookup at subscribe time, and the generated
+    input type does not declare it, so it fails schema validation before the
+    runtime ever sees it. Move the substring match to `subscription_scope`
+    (server code, exempt from this check) or filter client-side on the
+    delivered payload.
 
 !!! note "Delete + lookup filters"
     On a `delete` the row no longer exists, so only the in-memory (equality)
@@ -864,6 +906,49 @@ serializer state, no re-serialization).
 
 ## Security hardening
 
+### Validate the WebSocket handshake's `Origin` { #websocket-origin }
+
+!!! danger "A session-authenticated socket without an Origin check is cross-site reachable"
+
+    A WebSocket handshake is an ordinary HTTP request: the browser sends your
+    cookies with it, and **CORS does not apply**. So a page on any other site
+    can open a socket to your endpoint *as your logged-in visitor* and read
+    every subscription that user is entitled to. Nothing in this library can
+    stop it, because the library never sees the handshake — your ASGI routing
+    does.
+
+    This is the WebSocket counterpart of
+    [`REQUIRE_CSRF_HEADER`](security.md#cross-site-post-protection), which
+    guards the HTTP endpoint and never sees this one.
+
+Wrap the routed WebSocket application in Channels'
+`AllowedHostsOriginValidator`, **outside** the auth stack:
+
+```python
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+from channels.sessions import SessionMiddlewareStack
+from channels.security.websocket import AllowedHostsOriginValidator
+
+application = ProtocolTypeRouter({
+    "http": django_asgi_app,
+    "websocket": AllowedHostsOriginValidator(          # <- the guard
+        SessionMiddlewareStack(
+            AuthMiddlewareStack(
+                URLRouter([path("ws/graphql/", MyWSConsumer.as_asgi())])
+            )
+        )
+    ),
+})
+```
+
+It checks the handshake's `Origin` against `ALLOWED_HOSTS`, so a foreign origin
+never completes the handshake and never reaches `connection_init`. Note that
+`ALLOWED_HOSTS = ["*"]` makes it accept everything — convenient in development,
+and worth remembering when you read a test that seems to pass without it. The
+[playground](examples/playground.md) ships this wiring, and pins it with a test
+that rebuilds the app under a real host list.
+
 ### Transport-level authentication
 
 v2.0 has **no** separate `channelId` handshake or channel-ownership cache to
@@ -878,6 +963,35 @@ setting) was removed. Authentication is now the transport's own request/scope:
 The subscription's `authorize_subscription` / `permission_classes` hooks run
 **before** any `group_add`, so a denial short-circuits before the source is
 created — there is no window where an unauthorized subscriber is joined.
+
+### Per-connection subscription cap
+
+One `graphql-transport-ws` socket multiplexes any number of operations, and every
+live operation joins its own channel-layer group — so an unbounded socket lets a
+single client amplify one connection into hundreds of subscribers.
+`MAX_SUBSCRIPTIONS_PER_CONNECTION` (default `50`) bounds it, the same way
+[`MAX_BATCH_SIZE`](settings.md#http-view-hardening) bounds a batch request:
+
+```python
+DJANGO_GRAPHEX = {
+    "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,  # None disables the cap
+}
+```
+
+A `subscribe` past the cap is **rejected, not fatal**: the server answers that
+operation id with an `error` frame naming the limit, and every subscription
+already running on the socket keeps streaming. The slot frees itself as soon as
+an operation ends — a client `complete`, a stream that ends on its own, or a
+disconnect — so a client that stays under the cap never notices it.
+
+!!! warning "`None` removes the protection"
+    `MAX_SUBSCRIPTIONS_PER_CONNECTION = None` allows any number of concurrent
+    subscriptions per socket. Use it only when every client is trusted and you
+    bound connections elsewhere (gateway/proxy rate limiting).
+
+The SSE transport needs no equivalent: one `text/event-stream` request carries
+exactly one subscription, so its concurrency is bounded by your server's
+connection limits rather than by an in-process registry.
 
 ### GraphQL execution middleware
 
@@ -955,6 +1069,29 @@ projection to keep sensitive columns out of both the payload and the filter
 surface. If you need tighter control still, override `subscription_scope` to
 enforce server-side filters that cannot be widened or removed by the client.
 
+!!! danger "The projection that gates this is **this class's** `Meta`"
+    A hand-written `Subscription` binds `Meta.model` and compiles its event
+    type and `<Model>SubscriptionFilterInput` **from that model**. It does not
+    read whatever `DjangoObjectType` the schema registered for the same model,
+    so a column that type hides with `exclude_fields` is still selectable
+    **and** equality-filterable here. Repeat the projection:
+
+    ```python
+    class CommentSubscription(Subscription):
+        """Comment change notifications."""
+
+        class Meta:
+            model = Comment
+            stream = "comments"
+            payload_mode = "full"
+            exclude_fields = ("internal_note",)   # <- not inherited from CommentType
+    ```
+
+    A subscription generated by `DjangoModelType.SubscriptionField()` needs no
+    repetition: that host forwards its own `only_fields` / `exclude_fields`
+    into the subscription class it builds. This is the third of the
+    [open boundaries](types.md#projection-exception) the projection rule states.
+
 !!! note "Relation and comparison lookups are server-side only"
     Multi-hop keys such as `{"author__name": "alice"}` and comparison keys such
     as `{"text__icontains": "urgent"}` are not accepted from a client — since
@@ -1011,13 +1148,39 @@ Subscription broadcasts (`_on_save`, `_on_delete`) are now deferred via
     If your subscription tests assert on `captured_group_sends`, mark them with
     `@pytest.mark.django_db(transaction=True)` so real commits occur.
 
-### Async-safe subscription hooks
+### ORM access in the subscribe hooks
 
 `authorize_subscription` and `subscription_scope` are synchronous classmethods
-(user-overridable). When a subscription is driven inside an ASGI server (Daphne,
-Uvicorn), the engine runs on the event loop, so both hooks are lifted via
-`asgiref.sync_to_async` and execute in a thread-pool worker — they may make real
-Django ORM queries safely. No change is needed in user code.
+(user-overridable), and both transports run them **on the event loop** — not in
+a thread. A blocking ORM query inside either one therefore raises
+`SynchronousOnlyOperation` ("You cannot call this from an async context"), which
+the engine reports as a subscribe *denial*, not as a crash. Reading
+`info.context.user` is free: both transports resolve the user before the hooks
+run. Anything past it — a related row, a permission lookup, a
+`Model.objects` call — must be lifted by you:
+
+```python
+from asgiref.sync import sync_to_async
+from graphql import GraphQLError
+
+
+class PostSubscription(Subscription):
+    class Meta:
+        model = Post
+
+    @classmethod
+    async def authorize_subscription(cls, info, **kwargs):
+        user = info.context.user
+        if not user.is_authenticated:
+            raise GraphQLError("authentication required")
+        allowed = await sync_to_async(user.has_perm)("blog.view_post")
+        if not allowed:
+            raise GraphQLError("not allowed")
+```
+
+Both hooks may be declared `async def` (as above) or stay synchronous; an
+awaitable return is awaited either way. Keep a synchronous hook free of
+blocking ORM access.
 
 ### JavaScript path escaping
 

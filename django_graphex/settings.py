@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.core.checks import Warning as CheckWarning
+from django.core.exceptions import ImproperlyConfigured
 from django.test.signals import setting_changed
 from django.utils.module_loading import import_string
 
@@ -67,6 +68,16 @@ DEFAULTS = {
     # not recommended for public APIs — use only when you control all clients
     # and have independent rate limiting at the gateway/proxy level).
     "MAX_BATCH_SIZE": 10,
+    # Require the "X-Requested-With" header on a POST whose content type a
+    # browser can send cross-site with NO CORS preflight (form-urlencoded,
+    # multipart, text/plain, or no content type at all). The endpoint is
+    # csrf_exempt, so without this a cross-site <form> submit executes with the
+    # victim's session cookie. The header is not CORS-safelisted, so demanding
+    # it forces the preflight a forged request cannot pass. Requests sent as
+    # "application/json" / "application/graphql" already require a preflight and
+    # are never asked for it. Set to False only if a client cannot add the
+    # header AND the endpoint is protected some other way.
+    "REQUIRE_CSRF_HEADER": True,
     # Security middlewares
     # Allow __schema/__type introspection (DisableIntrospectionMiddleware).
     "ALLOW_INTROSPECTION": False,
@@ -165,17 +176,40 @@ DEFAULTS = {
     "ATOMIC_MUTATIONS": False,
     # Cap the number of GraphQL validation errors returned (None = no cap).
     "MAX_VALIDATION_ERRORS": None,
-    # camelCase the field/path keys in error objects to match the wire schema.
-    "CAMELCASE_ERRORS": True,
     # graphql-transport-ws: seconds the server waits for the first
     # ``connection_init`` after the socket opens before closing with 4408
     # (``connectionInitWaitTimeout``). The transport factory may override it.
     "SUBSCRIPTION_CONNECTION_INIT_TIMEOUT": 3.0,
+    # Maximum number of concurrent subscriptions ONE graphql-transport-ws socket
+    # may hold. A subscribe past the limit is rejected with an "error" frame;
+    # the socket and its running operations survive. Default 50 is a pragmatic
+    # safety cap: every live operation joins its own channel-layer group, so an
+    # unbounded socket is a cheap amplification vector, and 50 concurrent
+    # subscriptions on a SINGLE connection is already pathological.
+    # Set to None to allow any number (pre-cap behavior, not recommended for
+    # public endpoints — use only when you control all clients).
+    "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,
 }
 
 
 # List of settings that may be in string import notation.
 IMPORT_STRINGS = ("DEFAULT_PAGINATION_CLASS", "MIDDLEWARE", "SCHEMA")
+
+#: Limits whose boundary value used to mean the OPPOSITE of what an operator
+#: writing it can intend, mapped to (smallest usable value, remedy). Zero was a
+#: second, silent way to disable the depth and cost guards, and a negative
+#: enforced a budget no query could meet while naming that negative in the
+#: error; the cache bound at zero quietly restored the default 64. Each is now
+#: refused where every reader routes through, so the mistake surfaces as a
+#: configuration error instead of as a guard that is not running.
+LIMIT_MINIMUMS = {
+    "MAX_QUERY_DEPTH": (1, "Use None to disable the global depth guard."),
+    "MAX_QUERY_COST": (1, "Use None to disable the cost budget."),
+    "PERMISSION_SCHEMA_CACHE_MAXSIZE": (
+        0,
+        "Use 0 to cache nothing, or None to keep the calibrated default.",
+    ),
+}
 
 
 class _BaseAPISettings:
@@ -229,6 +263,8 @@ class _BaseAPISettings:
 
         Raises:
             AttributeError: If ``attr`` is not a known setting.
+            ImproperlyConfigured: If ``attr`` is a limit set below the smallest
+                value that means anything.
         """
         if attr not in self.defaults:
             raise AttributeError(f"Invalid {self.setting_name} setting: '{attr}'")
@@ -238,6 +274,8 @@ class _BaseAPISettings:
             value = self.defaults[attr]
         if attr in self.import_strings:
             value = _perform_import(value, attr)
+        if attr in LIMIT_MINIMUMS:
+            _validate_limit(value, attr, self.setting_name)
         setattr(self, attr, value)
         return value
 
@@ -283,6 +321,29 @@ class GraphQLAPISettings(_BaseAPISettings):
             import_strings or IMPORT_STRINGS,
             "DJANGO_GRAPHEX",
         )
+
+
+def _validate_limit(value: Any, key: str, setting_name: str) -> None:
+    """Refuse a limit written below the smallest value that means anything.
+
+    Only integers are inspected: "None" is every one of these keys' documented
+    off switch, and a non-integer is somebody else's error to report.
+
+    Args:
+        value: The resolved setting value.
+        key: The limit key being read (a key of "LIMIT_MINIMUMS").
+        setting_name: The Django setting namespace (for the message).
+
+    Raises:
+        ImproperlyConfigured: When "value" is an integer below the minimum.
+    """
+    minimum, remedy = LIMIT_MINIMUMS[key]
+    if not isinstance(value, int) or value >= minimum:
+        return
+    raise ImproperlyConfigured(
+        "{}['{}'] = {!r} is below the minimum of {}, so it cannot mean what "
+        "it says. {}".format(setting_name, key, value, minimum, remedy)
+    )
 
 
 def _perform_import(value: Any, setting_name: str) -> Any:

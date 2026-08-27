@@ -43,7 +43,18 @@ from benchapp.models import Comment, Post
 # --------------------------------------------------------------------------- #
 # camelCase field/arg names; convert_names_case=True maps them to the model's
 # snake_case attributes (viewsCount -> views_count, authorName -> author_name).
+#
+# The declared field lists are the SAME on all four libraries — the harness
+# introspects them back out of the running schema and records them under
+# ``surface`` in results/<lib>.json, so the fairness rule is checkable from the
+# artifact rather than taken on trust. Fields the five operations never query
+# (body, createdAt, email, bio, isApproved) are declared anyway, because the
+# schema-build number is a comparison of how much surface each library compiles.
+# ``DateTime`` is declared without a binding: no operation selects a datetime,
+# so the default pass-through serializer is never exercised.
 type_defs = """
+    scalar DateTime
+
     type Query {
         posts(limit: Int!, offset: Int, titleContains: String): [Post!]!
         authors(limit: Int!, offset: Int): [Author!]!
@@ -68,21 +79,28 @@ type_defs = """
     type Author {
         id: ID!
         name: String!
+        email: String!
+        bio: String!
         posts(limit: Int!, offset: Int): [Post!]!
     }
 
     type Post {
         id: ID!
         title: String!
+        body: String!
         status: String!
         viewsCount: Int!
+        createdAt: DateTime!
         author: Author!
         comments(limit: Int!, offset: Int): [Comment!]!
     }
 
     type Comment {
         id: ID!
+        authorName: String!
         text: String!
+        isApproved: Boolean!
+        createdAt: DateTime!
     }
 """
 

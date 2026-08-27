@@ -33,8 +33,23 @@ class UserMutation(DjangoModelMutation):
 | `input_field_name` | `str` | `'new_{model}'` | Name of input argument |
 | `output_field_name` | `str` | `'{model}'` | Name of output field |
 | `description` | `str` | Auto-generated | Mutation description |
-| `nested_fields` | `dict` | `{}` | Nested field configuration |
+| `nested_fields` | `dict` | `()` | Nested field configuration — a `{field_name: Model}` mapping. The empty default means no nested writes. Every key must name a relation accessor on `model`; one that does not raises `ImproperlyConfigured`, listing the accessors that would have worked. |
 | `model_operations` | `tuple` | `("create", "update", "delete")` | Which CRUD operations to generate; any subset of `("create", "update", "delete")`. Calling the `*Field()` builder for an excluded operation raises `AttributeError`. |
+| `registry` | `Registry` | Global registry | Type registry the mutation's output node and input type resolve against. A custom registry scopes the whole mutation subgraph to one schema's own pair, so a forked `DjangoGraphQLSchema` re-forks the payload's output node into its own namespace instead of reaching the process-global node. |
+
+!!! warning "Anything outside this table raises"
+    Every `Meta` key django-graphex itself reads is in the table above; any other
+    key raises `ImproperlyConfigured` at class definition. That covers the typo
+    (`exclude_field` for `exclude_fields`, which used to leave the column it
+    named writable) and the option that belongs to the other host: `queryset` is
+    read by `DjangoModelType`, never here. Declaring `permission_classes` raises
+    for the same reason — see
+    [Mutations](../usage/mutations.md#permissions-are-djangomodeltype-only).
+
+    The one exception is the handful of keys the graphene `ObjectType` base
+    consumes before django-graphex sees them — `name`, `_meta`, `interfaces`,
+    `possible_types`, `default_resolver` and `container`. They are accepted, and
+    only `name` and `description` do anything useful on a mutation.
 
 ### Fields
 
@@ -62,6 +77,8 @@ Initialize the mutation subclass with meta configuration.
 - `output_field_name` (`str`): Output field name
 - `description` (`str`): Mutation description
 - `nested_fields` (`dict`): Nested field configuration
+- `model_operations` (`tuple`): CRUD operations to generate
+- `registry` (`Registry`): Type registry the output node and input type resolve against
 
 #### `get_errors(errors)` (classmethod)
 
@@ -392,10 +409,13 @@ mutation DeleteUser($id: ID!) {
 
 ### File Upload Support
 
-When the request content type is `multipart/form-data`, every entry in
-`request.FILES` is merged into the input payload under its own form-field name,
-so a part named after a `FileField` / `ImageField` **on the mutation's own
-model** is saved to that field on create and on update:
+When the request content type is `multipart/form-data`, an uploaded part is
+merged into the input payload when its name matches a file field **the
+mutation's own input publishes** — under either spelling, the camelCase wire
+name or the model's own attribute name. A part matching nothing is ignored
+rather than saved, and a column the input projects away is not writable through
+a part any more than it is through the JSON body: the projection is the same
+boundary on both. Matching parts are saved on create and on update:
 
 ```python
 class ProfileMutation(DjangoModelMutation):
@@ -425,6 +445,33 @@ mutation UpdateProfile($profileData: ProfileInput!) {
 The GraphQL input field stays `String`: the file travels in the multipart body,
 never in the GraphQL variables. That field also accepts a plain storage path
 string, and rejects any other shape with a structured error.
+
+The request carries a **`query`** part with the document, an optional
+**`variables`** part with its variables as JSON, and one part per file named
+after the model field — the view reads a multipart body straight out of
+`request.POST`, so there is no `operations` / `map` envelope:
+
+```python
+requests.post(
+    "https://app.example.com/graphql/",
+    files={"avatar": open("avatar.png", "rb")},
+    data={
+        "query": "mutation UpdateProfile($profileData: ProfileInput!) { … }",
+        "variables": json.dumps({"profileData": {"bio": "hi"}}),
+    },
+    headers={"X-Requested-With": "XMLHttpRequest"},   # <- required
+)
+```
+
+!!! warning "A multipart POST must carry `X-Requested-With`"
+
+    `multipart/form-data` is a CORS-*simple* content type, so a browser posts it
+    cross-site with no preflight and the `csrf_exempt` endpoint would otherwise
+    execute a forged `<form>` submit under the victim's session cookie. A
+    multipart request without the header is refused with HTTP 403 before its
+    body is read. See
+    [Security → Cross-site POST protection](../usage/security.md#cross-site-post-protection)
+    for the `REQUIRE_CSRF_HEADER` opt-out.
 
 !!! warning "Top-level fields only"
 

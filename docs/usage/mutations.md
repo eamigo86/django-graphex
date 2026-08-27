@@ -123,27 +123,27 @@ class UserMutation(DjangoModelMutation):
 
 A model field declared `editable=False` is server-managed, so it is left out of
 the generated create and update inputs — you do not have to list it in
-`exclude_fields`. This covers relations too: a `created_by` / `tenant`
-`ForeignKey` or `OneToOneField` set inside `save()` no longer advertises itself
-as writable.
+`exclude_fields`. This covers **every** concrete field, relations included: a
+`created_by` / `tenant` `ForeignKey`, a `OneToOneField` or a `ManyToManyField`
+set inside `save()` no longer advertises itself as writable.
 
 ```python
 class Document(models.Model):
     title = models.CharField(max_length=200)
     owner = models.ForeignKey(User, on_delete=models.CASCADE, editable=False)
+    reviewers = models.ManyToManyField(User, related_name="reviews", editable=False)
 ```
 
 ```graphql
 input DocumentCreateGenericType {
   title: String!
-  # no "owner" — the server owns it
+  # no "owner", no "reviewers" — the server owns them
 }
 ```
 
-!!! warning "Known gap"
-    A non-editable `ManyToManyField` still appears in the input, now as a raw
-    list of primary keys rather than `[ID!]`. List it in `exclude_fields` if
-    you need it gone today.
+Reverse relations are untouched by this: Django sets `editable = False` on every
+reverse relation object, so honoring it there would delete the reverse-relation
+input surface wholesale.
 
 ### Custom Arguments with `Field`
 
@@ -236,13 +236,30 @@ A row outside the scope answers exactly as a missing one (`ok: false`,
 `<Model> with id <pk> does not exist.`), so the response cannot be used to probe
 which primary keys exist. `create` has no target row, so nothing is scoped there.
 
-!!! warning "`permission_classes` is `DjangoModelType`-only"
-    The two hosts are **not** symmetric on authorization. `permission_classes` /
-    `authorize` — the per-action checks described under
-    [Permissions](permissions.md) — are honored by `DjangoModelType` only.
-    Declaring `permission_classes` on a `DjangoModelMutation` has **no effect**:
-    the class never reads it. Reach for `DjangoModelType` when you need
-    per-action authorization, or gate the mutation field at the schema root.
+#### Permissions are `DjangoModelType`-only
+
+The two hosts are **not** symmetric on authorization. `permission_classes` /
+`authorize` — the per-action checks described under
+[Permissions](permissions.md) — are honored by `DjangoModelType` only, because
+`DjangoModelMutation` reads the name nowhere.
+
+Declaring `permission_classes` on a `DjangoModelMutation` therefore raises
+`ImproperlyConfigured` at class definition. It used to be worse than a no-op:
+the plain assignment tripped a raw Pydantic error telling you to annotate the
+attribute `ClassVar`, and taking that advice produced a class that builds fine
+with a permission that never fires. Reach for `DjangoModelType` when you need
+per-action authorization, or gate the mutation field at the schema root.
+
+!!! warning "Unknown `Meta` options are refused too"
+    `DjangoModelMutation` rejects any `Meta` key its signature does not name —
+    the same check `DjangoModelType` has run since 2.0. An `exclude_field` typo
+    used to build a mutation whose input still carried the column the
+    declaration meant to hide, and a `Meta.queryset` was accepted while scoping
+    nothing (this host scopes through `filter_queryset`, above). Both raise now.
+    So does a `nested_fields` key naming no relation on the model: it was
+    skipped when the input was built and skipped again on the write path, while
+    the generated input type was still named after it. The full list of accepted
+    keys is the [Meta options table](../api/mutations.md#meta-options).
 
 ### Automatic multipart uploads
 
@@ -262,26 +279,62 @@ class ProfileMutation(DjangoModelMutation):
 
 The GraphQL input field stays `String` — the file itself never travels through
 the GraphQL variables. Send the operation and the file in one
-`multipart/form-data` request: the part carrying the JSON body under whatever
-key your view reads, plus one part per file named after the model field. The
+`multipart/form-data` request: a **`query`** part carrying the document, an
+optional **`variables`** part carrying its variables as JSON, plus one part per
+file named after the model field. (The view reads a multipart body straight out
+of `request.POST`, so those are the two part names it looks for — there is no
+`operations` / `map` envelope.) The
 same field also accepts a plain **storage path string**, which is what a query
 returns for it, so a value read back can be written back unchanged. Anything
 else — a number, a list, an object — comes back as a normal validation error,
 and a path longer than the column's `max_length` is rejected before it reaches
 the database.
 
-!!! important "Name the part after the model attribute"
+!!! warning "A multipart POST must carry `X-Requested-With`"
 
-    The part name is matched against the model's **snake_case** attribute, not
-    the camelCase alias the field is published under: `profile_photo`, never
-    `profilePhoto`. A part matching no exposed input field is ignored — the
-    mutation still answers `ok: true` and simply saves no file — so a
-    misspelled or camelCased part name looks like success with nothing written.
+    `multipart/form-data` is a CORS-*simple* content type: a browser posts it
+    cross-site with no preflight, so the endpoint — which is `csrf_exempt` —
+    would otherwise execute a forged `<form>` submit under the victim's session
+    cookie. Every multipart (and form-encoded) request therefore has to send the
+    **`X-Requested-With`** header, or it is refused with HTTP 403 before the body
+    is read. The value is not inspected; `XMLHttpRequest` is the conventional
+    one.
+
+    ```python
+    requests.post(
+        "https://app.example.com/graphql/",
+        files={"avatar": open("avatar.png", "rb")},
+        data={
+            "query": "mutation Create($doc: ProfileCreateGenericType!) { … }",
+            "variables": json.dumps({"doc": {"bio": "hi"}}),
+        },
+        headers={"X-Requested-With": "XMLHttpRequest"},   # <- required
+    )
+    ```
+
+    JSON clients are unaffected. See
+    [Security → Cross-site POST protection](security.md#cross-site-post-protection)
+    for the `REQUIRE_CSRF_HEADER` opt-out.
+
+!!! important "Either spelling of the field name works"
+
+    The part name is matched against **both** spellings of the field: the
+    camelCase alias it is published under — the one the SDL shows — and the
+    model's snake_case attribute. `profilePhoto` and `profile_photo` both land
+    on `Profile.profile_photo`, so there is nothing to remember. A part
+    matching no exposed input field is ignored — the mutation still answers
+    `ok: true` and simply saves no file — so a misspelled part name looks like
+    success with nothing written.
 
     A field the type projects away with `Meta.exclude_fields`, or leaves out of
     `Meta.only_fields`, is not an exposed input field: a part named after it is
-    ignored like any other, so a projection cannot be walked around through the
-    multipart body.
+    ignored under **either** spelling, so a projection cannot be walked around
+    through the multipart body.
+
+    The match is against **every** field the input exposes, not only its file
+    columns. A part sharing a name with an ordinary column replaces that
+    column's JSON value with the upload, which then fails that column's
+    validation — name parts after file fields only.
 
 !!! warning "Top-level fields only"
 
@@ -826,9 +879,10 @@ are not yet unified:
 top-level mutation instead (send `tags: []` or `tags: null` to clear), or issue a separate mutation
 that clears and re-adds.
 
-!!! note "Not yet implemented as of v2.0"
-    A per-field `m2m_behavior = "set" | "add"` option will let you choose the semantics on the
-    nested path and align the default to `.set` (matching top-level behavior).
+!!! note "Not implemented"
+    There is no per-field `m2m_behavior = "set" | "add"` option to pick the semantics on the
+    nested path, and none is scheduled. The nested path is additive; reach for the top-level
+    path when you need `.set`.
 
 ### Explicit-null semantics in update mutations
 

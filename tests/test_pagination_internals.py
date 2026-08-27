@@ -18,7 +18,6 @@ from django_graphex.paginations.pagination import (
 )
 from django_graphex.paginations.utils import (
     _get_count,
-    _nonzero_int,
     _positive_int,
 )
 from tests.models import Author
@@ -90,7 +89,7 @@ def test_inmemory_order_multikey_with_iterable_terms() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _positive_int / _nonzero_int / _get_count                                    #
+# _positive_int / _get_count                                                   #
 # --------------------------------------------------------------------------- #
 def test_positive_int_passthrough_falsey() -> None:
     """Assert a falsy input short-circuits "_positive_int" without validation.
@@ -130,26 +129,6 @@ def test_positive_int_cutoff_clamps() -> None:
     configured maximum.
     """
     assert _positive_int(100, cutoff=10) == 10
-
-
-def test_nonzero_int_strict_zero_string_raises() -> None:
-    """Assert strict mode rejects the string "0" once parsed to zero.
-
-    If this fails, "_nonzero_int" accepts a zero value under strict mode
-    instead of raising.
-    """
-    with pytest.raises(ValueError):
-        _nonzero_int("0", strict=True)
-
-
-def test_nonzero_int_cutoff_clamps() -> None:
-    """Assert "_nonzero_int" clamps to cutoff and passes falsy values through.
-
-    If this fails, an oversized value is not capped, or an empty string is
-    incorrectly coerced instead of passing through.
-    """
-    assert _nonzero_int(100, cutoff=10) == 10
-    assert _nonzero_int("") == ""
 
 
 def test_get_count_queryset_and_list(db: None) -> None:
