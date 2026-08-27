@@ -121,7 +121,11 @@ class DepthLimitValidationRule(ValidationRule):
         # and the settings reader refuses it rather than let it read as falsy
         # here and silently switch the guard off.
         if global_max is not None:
-            constraints.append(_Constraint(int(global_max), 0, "query"))
+            # Label the budget with the operation the client actually sent.
+            # Both subscription transports now validate with the shared rule
+            # tuple, so a hardcoded "query" would refuse a subscription for an
+            # operation it never wrote.
+            constraints.append(_Constraint(int(global_max), 0, node.operation.value))
 
         self._walk(node.selection_set, root_type, 0, constraints, frozenset())
 

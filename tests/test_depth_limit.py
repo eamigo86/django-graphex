@@ -279,3 +279,54 @@ class ViewWiringTest(TestCase):
         self.assertIn(DepthLimitValidationRule, rules)
         # The standard rules are still present (not replaced).
         self.assertGreater(len(rules), 1)
+
+
+def _build_three_root_schema() -> GraphQLSchema:
+    """Build a schema whose query, mutation and subscription roots all nest.
+
+    Returns:
+        schema: A schema with a self-referential "Node" mounted on all three
+            operation roots, so one document shape can be sent as any of them.
+    """
+    node = GraphQLObjectType(
+        "Node",
+        lambda: {"name": GraphQLField(GraphQLString), "child": GraphQLField(node)},
+    )
+    return GraphQLSchema(
+        query=GraphQLObjectType("Query", {"root": GraphQLField(node)}),
+        mutation=GraphQLObjectType("Mutation", {"root": GraphQLField(node)}),
+        subscription=GraphQLObjectType("Subscription", {"root": GraphQLField(node)}),
+        types=[node],
+    )
+
+
+class DepthRefusalNamesTheOperationTest(TestCase):
+    """The depth refusal must name the operation the client actually sent.
+
+    Both subscription transports now validate with DEFAULT_VALIDATION_RULES, so
+    the depth guard reaches subscriptions for the first time. A refusal that
+    always says "query" sends a subscription author looking for a query they
+    never wrote.
+    """
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_DEPTH": 2})
+    def test_each_operation_type_is_named_in_its_own_refusal(self) -> None:
+        """Each operation must be refused for the label matching its own kind.
+
+        If this breaks, the refusal misattributes the over-deep document to an
+        operation type the client never sent.
+        """
+        schema = _build_three_root_schema()
+        body = "{ root { child { child { name } } } }"
+        for keyword, label in (
+            ("query", "query"),
+            ("mutation", "mutation"),
+            ("subscription", "subscription"),
+        ):
+            with self.subTest(operation=keyword):
+                errors = _errors(schema, f"{keyword} {body}")
+                self.assertEqual(len(errors), 1)
+                self.assertEqual(
+                    errors[0],
+                    f"Query exceeds the maximum nesting depth of 2 for '{label}'.",
+                )
