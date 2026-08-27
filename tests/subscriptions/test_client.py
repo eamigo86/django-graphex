@@ -499,3 +499,32 @@ def test_ws_path_with_script_close_tag_is_also_escaped() -> None:
     request = RequestFactory().get("/graphql/client/")
     body = SubscriptionClientView.as_view(ws_path=malicious)(request).content.decode()
     assert "/ws/graphql/</script>" not in body
+
+
+def test_client_sse_parser_ignores_the_comment_preamble() -> None:
+    """The SSE parser must drop a comment frame instead of reporting an error.
+
+    Every SSE response opens with a bare ":" comment line so the ASGI server
+    flushes the status line and headers before the first event (see
+    "_PREAMBLE_FRAME" in the transport). A comment is not an event, and the
+    SSE specification says a conforming client ignores it.
+
+    Without the guard the client's own parser takes that frame down the else
+    branch, which logs "Unexpected SSE frame (message)", re-enables the run
+    button mid-stream and sets the status to "Connection Error" — on a healthy
+    stream, verified in a browser. The guard must therefore come BEFORE the
+    event/data line scan, which is what the ordering assertion below pins.
+
+    Contract: this test ships broken if the parser stops skipping comment
+    frames, or skips them somewhere the error branch can still be reached.
+    """
+    body = _get_body()
+
+    guard = 'frame.trim().charAt(0) === ":"'
+    assert guard in body, "the SSE parser lost its comment-line guard"
+
+    # The guard is worthless if the error branch can still run first.
+    error_branch = "Unexpected SSE frame ("
+    assert body.index(guard) < body.index(error_branch), (
+        "the comment guard must precede the unexpected-frame branch"
+    )

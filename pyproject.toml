@@ -98,6 +98,10 @@ include = [
     # resolves during "Config._preparse" -- before collection. Without it the
     # published tarball cannot run its own suite at all.
     "/pytest_coverage_isolation.py",
+    # Also ships with "/tests", for the same reason: three test modules load a
+    # script from here BY PATH ("spec_from_file_location"), so without it the
+    # published tarball's own suite cannot even be collected.
+    "/scripts",
     "/docs",
     "/README.md",
     "/LICENSE",

@@ -152,7 +152,7 @@ schema = DjangoGraphQLSchema(query=Query, mutation=Mutation, directives=all_dire
 
 ## Playground
 
-A fully wired example project lives in [`examples/playground/`](examples/playground/). It exercises every major feature end-to-end — types, paginators, filtering, mutations, permissions, subscriptions, file uploads on both paths, the projection boundary on all three axes, and the query optimizer — and installs the library from this repo checkout (editable, no PyPI release needed). `make test` runs 49 end-to-end tests, several of which assert the verbatim answer strings its README quotes.
+A fully wired example project lives in [`examples/playground/`](examples/playground/). It exercises every major feature end-to-end — types, paginators, filtering, mutations, permissions, subscriptions, file uploads on both paths, the projection boundary on all three axes, and the query optimizer — and installs the library from this repo checkout (editable, no PyPI release needed). `make test` runs 51 end-to-end tests, several of which assert the verbatim answer strings its README quotes.
 
 ## Documentation
 

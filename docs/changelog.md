@@ -678,18 +678,35 @@ changed nothing), plus six internal names — four of which were importable, so
   show a connected state), and an intermediary proxy times a silent connection
   out. Every stream now opens with an SSE comment line (`:\n\n`) before
   anything else — including before an in-stream denial, so a refused subscribe
-  flushes too. A comment is not an event; conforming clients ignore it.
+  flushes too. A comment is not an event; conforming clients ignore it, and the
+  bundled browser client was taught to as well — its parser had no comment
+  guard, so it reported "Connection Error" on a healthy stream. Both transports
+  are now verified end to end in a real browser.
 - **The depth-limit refusal named an operation the client never sent.** The
   budget was labelled `'query'` unconditionally, so an over-deep mutation — and,
   now that both subscription transports validate with the shared rule tuple, an
   over-deep subscription — was refused for a query that was not in the request.
   The label is the operation's own kind.
-- **Both transports reported an ambiguous document as the wrong error.**
-  `get_operation_ast` answers `None` both when the operation is not a
-  subscription and when the document carries several operations and the request
-  named none. Both cases produced "only serves subscriptions", which sends the
-  caller hunting for a query or mutation their document does not contain. The
-  second case now says to name one with `operationName`.
+- **Both transports reported a document they could not SELECT from as the wrong
+  error.** `get_operation_ast` answers `None` for three unrelated reasons: the
+  operation is not a subscription, the document carries several and the request
+  named none, and the name matches no operation at all. All three produced
+  "only serves subscriptions", which sends the caller hunting for a query or
+  mutation their document does not contain. The two selection failures now name
+  themselves — one says to pick an operation with `operationName`, the other
+  names the operation the document does not define.
+- **The SSE transport answered 500 where the HTTP view answers 400.** A
+  `variables` value that is not a mapping reached graphql-core, which raises a
+  plain `TypeError` that nothing wrapped, so it escaped the async view. Two
+  reachable shapes: a JSON body carrying `variables` as an encoded string
+  (which the HTTP view has always decoded), and any form-encoded body, where
+  every value is a string by construction. The transport now decodes and
+  validates it the same way the HTTP view does.
+- **The published sdist could not run its own test suite.** The allowlist ships
+  `/tests`, and three of those modules load a script from `/scripts` by path
+  (`spec_from_file_location`), which was not shipped — so collection aborted in
+  the tarball. Same class as the `pytest_coverage_isolation.py` omission fixed
+  above it.
 - **Two `pytest` runs in one checkout reported each other's coverage, then
   `0.00%`.** `pytest-cov` collects into a per-process file and then COMBINES
   every sibling file next to the configured data file. With the data file at the

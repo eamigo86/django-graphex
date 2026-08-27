@@ -28,31 +28,48 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["sse", "ws"]
 
 
-def is_ambiguous_operation(
+def operation_selection_error(
     document: "DocumentNode", operation_name: str | None
-) -> bool:
-    """Check whether a document needs an "operationName" it was not given.
+) -> str | None:
+    """Explain why no operation could be SELECTED from "document".
 
-    "get_operation_ast" answers None for two unrelated cases: the named (or
-    only) operation is not the kind the caller wanted, and the document holds
-    several operations while the request named none. Both transports refuse on
-    None, so they need this to tell the caller which one happened.
+    "get_operation_ast" answers None for three unrelated reasons, and only one
+    of them is "the operation is not the kind this transport serves". The other
+    two are about picking an operation at all, and reporting either as an
+    operation-kind problem sends the caller hunting for a query or mutation
+    their document does not contain.
+
+    Both transports call this first and fall back to their own operation-kind
+    message only when it answers "None".
 
     Args:
         document: The parsed GraphQL document.
         operation_name: The operation name the request supplied, if any.
 
     Returns:
-        "True" when the document defines more than one operation and the
-        request named none of them.
+        A message naming the selection problem, or "None" when the document
+        does offer an operation the request could have selected.
     """
     from graphql import OperationDefinitionNode
 
-    if operation_name:
-        return False
     operations = [
         definition
         for definition in document.definitions
         if isinstance(definition, OperationDefinitionNode)
     ]
-    return len(operations) > 1
+    if operation_name:
+        if any(
+            operation.name and operation.name.value == operation_name
+            for operation in operations
+        ):
+            return None
+        return (
+            f"This request names operation {operation_name!r}, which this "
+            "document does not define."
+        )
+    if len(operations) > 1:
+        return (
+            "This request carries several operations; name the one to run "
+            "with operationName."
+        )
+    return None

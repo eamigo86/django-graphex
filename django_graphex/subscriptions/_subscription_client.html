@@ -408,6 +408,12 @@
     // Parse a single SSE frame (event:/data: lines) and log it.
     function flushFrame(frame){
       if(!frame.trim()) return;
+      // A line beginning with ":" is an SSE comment, not an event. The server
+      // opens every stream with one so the status line and headers reach the
+      // wire before the first event; without this guard it would fall through
+      // to the else branch below and report "Connection Error" on a healthy
+      // stream. Must stay ABOVE the event/data scan.
+      if(frame.trim().charAt(0) === ":") return;
       var eventType="message", dataLines=[];
       frame.split("\n").forEach(function(line){
         if(line.startsWith("event: ")){eventType=line.slice(7).trim();}

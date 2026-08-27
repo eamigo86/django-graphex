@@ -693,3 +693,77 @@ async def test_an_ambiguous_multi_subscription_document_says_so(
     named._body = json.dumps({"query": both, "operationName": "A"}).encode()
     ok = await view(named)
     assert ok.status_code == 200
+
+
+async def test_an_operation_name_that_matches_nothing_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A named operation that is not in the document must be refused for THAT.
+
+    "get_operation_ast" answers None for three unrelated reasons: the operation
+    is not a subscription, the document is ambiguous, and the name matches no
+    operation at all. The third was still falling through to the operation-kind
+    message, telling a caller whose document holds nothing but subscriptions to
+    go find a query — the exact misdirection the ambiguity branch exists to
+    remove.
+
+    Contract: this test ships broken if an unmatched "operationName" is
+    reported as an operation-kind problem.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+    view = sse.subscription_sse_view(schema=build_native_schema())
+
+    document = "subscription Named { post(action: CREATE) { id } }"
+    request = _make_request(document)
+    request._body = json.dumps({"query": document, "operationName": "Nope"}).encode()
+
+    response = await view(request)
+    assert response.status_code == 400
+    body = response.content.decode()
+    assert "Nope" in body, body
+    assert "only serves subscription" not in body, body
+
+
+async def test_a_non_dict_variables_value_is_a_400_not_a_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A "variables" value that is not a mapping must be refused, not crash.
+
+    graphql-core's "assert_valid_execution_arguments" raises a plain TypeError
+    for anything but a dict, and nothing wrapped the subscribe call, so a JSON
+    body carrying "variables" as a STRING escaped the async view as a 500. The
+    HTTP view has decoded that shape since forever (views.py); this transport
+    did not, and form-encoded bodies — which it documents supporting — make
+    every value a string by construction.
+
+    Contract: this test ships broken if a non-mapping "variables" reaches
+    "create_source_event_stream", or if a JSON-encoded string stops being
+    decoded the way the HTTP view decodes it.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+    view = sse.subscription_sse_view(schema=build_native_schema())
+    document = "subscription { post(action: CREATE) { id } }"
+
+    # A JSON-encoded mapping is decoded, exactly as the HTTP view decodes it.
+    ok_request = _make_request(document)
+    ok_request._body = json.dumps({"query": document, "variables": "{}"}).encode()
+    assert (await view(ok_request)).status_code == 200
+
+    # Anything that is not a mapping is a client error, never a 500.
+    bad_request = _make_request(document)
+    bad_request._body = json.dumps({"query": document, "variables": "nope"}).encode()
+    bad = await view(bad_request)
+    assert bad.status_code == 400
+    assert "variables" in bad.content.decode().lower()

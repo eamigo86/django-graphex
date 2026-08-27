@@ -73,7 +73,7 @@ from graphql.utilities import get_operation_ast
 from ...security import format_graphql_error
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
-from . import is_ambiguous_operation
+from . import operation_selection_error
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -111,6 +111,12 @@ def _close_source_sync(source: "ChannelLayerSource") -> None:
 # Without it, graphql-core surfaces the vague-but-leaky "Schema is not configured
 # to execute subscription operation." instead.
 _SUBSCRIPTION_DENIED_MESSAGE = "Subscriptions are not available."
+
+# Sentinel distinguishing "the body was not an object" (``None``) from "the
+# body was fine but ``variables`` was not a mapping". They are different client
+# errors and deserve different messages; sharing one would send the caller
+# looking at their whole payload instead of one key.
+_INVALID_VARIABLES: "dict[str, Any]" = {}
 
 
 # A view → started-source map so callers/tests can observe the live source a
@@ -247,9 +253,24 @@ def _read_request_body(request: "HttpRequest") -> "dict[str, Any] | None":
             return None
     else:
         body = request.POST
+    variables = body.get("variables")
+    if isinstance(variables, str):
+        # A form-encoded body makes EVERY value a string, and a JSON body may
+        # carry variables as an encoded string too. graphql-core raises a plain
+        # TypeError for anything but a mapping, and nothing downstream catches
+        # it, so an undecoded string escaped the async view as a 500. The HTTP
+        # view has always decoded this shape; the transport now matches it.
+        try:
+            variables = json.loads(variables or "{}")
+        except ValueError:
+            return _INVALID_VARIABLES
+        if not isinstance(variables, dict):
+            return _INVALID_VARIABLES
+    elif variables is not None and not isinstance(variables, dict):
+        return _INVALID_VARIABLES
     return {
         "query": body.get("query"),
-        "variables": body.get("variables"),
+        "variables": variables,
         "operationName": body.get("operationName"),
     }
 
@@ -399,6 +420,10 @@ def subscription_sse_view(
             return HttpResponseBadRequest(
                 "The received data is not a valid JSON query."
             )
+        if body is _INVALID_VARIABLES:
+            # PRE-200: the HTTP view's own message, so the whole library
+            # classifies this shape identically.
+            return HttpResponseBadRequest("Variables are invalid JSON.")
 
         query = body["query"]
         if not query:
@@ -411,16 +436,13 @@ def subscription_sse_view(
             return HttpResponseBadRequest(f"GraphQL syntax error: {exc}")
 
         operation_ast = get_operation_ast(document, body["operationName"])
-        if operation_ast is None and is_ambiguous_operation(
-            document, body["operationName"]
-        ):
-            # PRE-200: several operations and no name to pick one. Distinct
-            # from "not a subscription" — reporting it as that sends the caller
-            # hunting for a query or mutation their document does not contain.
-            return HttpResponseBadRequest(
-                "This request carries several operations; name the one to run "
-                "with operationName."
-            )
+        if operation_ast is None:
+            # PRE-200: no operation could be SELECTED — several with no name to
+            # pick one, or a name matching none. Distinct from "not a
+            # subscription", which is what the fall-through below reports.
+            selection_error = operation_selection_error(document, body["operationName"])
+            if selection_error is not None:
+                return HttpResponseBadRequest(selection_error)
         if (
             operation_ast is None
             or operation_ast.operation != OperationType.SUBSCRIPTION
