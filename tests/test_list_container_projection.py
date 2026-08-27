@@ -339,7 +339,13 @@ class TestTheDocumentedConfigurationSampleBuilds:
 
             users = DjangoListObjectField(UserListType)
 
-        assert GroupType is not None
+        # Force every declared type's field map before the schema build. The
+        # sample filters on "groups", and the compiler drops a relation whose
+        # target is not resolvable YET -- which in a run where fewer modules
+        # execute makes the build fail for a reason the sample is not about.
+        # Stating the precondition keeps the test measuring the sample.
+        assert GroupType._meta.graphql_output_type is not None
+        assert UserType._meta.graphql_output_type is not None
         schema = DjangoGraphQLSchema(query=_SampleQuery, registries=isolated_pair(reg))
         node = schema.graphql_schema.type_map["UserType"]
 

@@ -696,8 +696,14 @@ class TestARelationDeclaredWithoutATailIsMeasuredToo:
                 model = Post
                 registry = reg
 
-        assert _KeylessTagType is not None
-        assert _TaggedPostType is not None
+        # Force the TARGET's field map first. Without it the relation is only
+        # resolvable if some other module happened to compile a Tag type into
+        # this process, and the compiler drops "tags" from the post's SDL --
+        # which produces a DIFFERENT, equally correct refusal naming the post
+        # type. The assertion below is about WHICH type the message sends the
+        # user to, so the precondition has to be stated, not inherited.
+        assert _KeylessTagType._meta.graphql_output_type is not None
+        assert _TaggedPostType._meta.graphql_output_type is not None
         with pytest.raises(ImproperlyConfigured) as exc:
             build_filter_input_type(
                 Post, {"tags": ("exact",)}, reg, registries=isolated_pair(reg)
