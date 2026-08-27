@@ -1240,6 +1240,81 @@ class TestTheCompiledReadSideOfTheSameBoundary:
         assert filter_key_is_published(Author, "and", [serving])
         assert filter_key_is_published(Author, None, [serving])
 
+    def test_a_relation_key_is_measured_by_traversability(self) -> None:
+        """The RELATION arm: a relation key asks whether the hop is traversable.
+
+        A relation owns no column of its own, so the leaf helper answers False
+        for it — routing a relation key through that helper would withdraw
+        every nested filter from every permission-scoped schema, silently, from
+        a caller who lost nothing. The relation arm asks "_traversed_type"
+        instead, and it is the only arm no other test in this class reaches.
+
+        Both directions are pinned: a published relation keeps its key, a
+        projected-away one loses it.
+
+        If this breaks, a pruned schema either drops nested filter keys it
+        should keep, or keeps ones whose relation it no longer serves.
+        """
+        reg = Registry()
+
+        class _KeyRelPostType(DjangoObjectType):
+            """Post type giving the reverse relation something to resolve to.
+
+            A relation is only traversable when a type for its TARGET is
+            registered alongside it; without this the hop compiles to nothing
+            and the test would measure a missing type rather than a projection.
+            """
+
+            class Meta:
+                """Bind to "Post" with no projection."""
+
+                model = Post
+                registry = reg
+
+        class _KeyRelAuthorType(DjangoObjectType):
+            """Author type publishing the reverse "posts" relation."""
+
+            class Meta:
+                """Bind to "Author" with no projection, so "posts" survives."""
+
+                model = Author
+                registry = reg
+
+        narrow_reg = Registry()
+
+        class _KeyNoRelPostType(DjangoObjectType):
+            """The same Post target, in the registry of the narrow author."""
+
+            class Meta:
+                """Bind to "Post" with no projection."""
+
+                model = Post
+                registry = narrow_reg
+
+        class _KeyNoRelAuthorType(DjangoObjectType):
+            """Author type that projects the "posts" relation away.
+
+            The Post type above is registered beside it, so the only reason the
+            hop is not traversable is the projection — which is the thing under
+            test.
+            """
+
+            class Meta:
+                """Bind to "Author" publishing only scalar columns."""
+
+                model = Author
+                registry = narrow_reg
+                only_fields = ("id", "name")
+
+        with_relation = _KeyRelAuthorType._meta.graphql_output_type
+        without_relation = _KeyNoRelAuthorType._meta.graphql_output_type
+
+        # Traversable: the hop survives, so the key does.
+        assert filter_key_is_published(Author, "posts__title", [with_relation])
+        assert filter_key_is_published(Author, "posts", [with_relation])
+        # Not traversable: the hop is gone, so the key goes with it.
+        assert not filter_key_is_published(Author, "posts__title", [without_relation])
+
 
 class TestADeepSegmentNamingNothingIsRefusedToo:
     """A hop past the first is dropped just as silently, and refused the same.

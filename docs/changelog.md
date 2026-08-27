@@ -63,10 +63,16 @@ of them was answering a question the projection said it would not:
   the key instead of the value;
 - `only_fields` / `exclude_fields` / `include_fields` on a
   `DjangoListObjectType` that reuses a node type already registered for the
-  model (restating that node's own projection is still accepted);
-- `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` set to `0` or a negative value, which
-  used to switch the guard off silently — `None` remains the only way to
-  disable one.
+  model (restating that node's own projection is still accepted).
+
+**And one that does NOT stop the build, which is worse.**
+`MAX_QUERY_DEPTH` / `MAX_QUERY_COST` set to `0` or a negative value used to
+switch the guard off silently, and is now refused — but the refusal fires when
+the setting is READ, on the first request, not while the schema builds.
+So the schema builds, `manage.py check` stays green, and the first signal is a
+failing request. `None` remains the only way to disable a guard. Grep your
+settings for a literal `0` on either key before you deploy; the value you want
+is `None`.
 
 **Four more behaviour changes worth checking before you upgrade:**
 

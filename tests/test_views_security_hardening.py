@@ -783,6 +783,43 @@ class SuggestionStripReachesTheVariablePathTest(TestCase):
         )
         self.assertEqual(_SUGGESTION_RE.sub(r"\1", message), message)
 
+    def test_an_enum_cannot_represent_suggestion_is_stripped(self) -> None:
+        """Strip the suggestion from the OTHER pair of enum coercion messages.
+
+        "GraphQLEnumType" raises two distinct shapes and only one of them was
+        pinned. "parse_literal" answers "cannot represent non-enum value" and
+        appends "did_you_mean_enum_value", which names a REAL member of the
+        enum — the same schema leak the sibling rule closes. "parse_value"
+        answers "non-string" through the same template, so both spellings are
+        asserted here.
+
+        Contract: this test ships broken if the "cannot represent" entry leaves
+        "_SCHEMA_ORACLE_PREFIXES"; deleting that entry today changes no other
+        test in the suite.
+        """
+        from django_graphex.security import _SUGGESTION_RE
+
+        # Verbatim from graphql-core: GraphQLEnumType.parse_literal on a string
+        # literal where an enum member was expected.
+        literal = (
+            "Enum 'Status' cannot represent non-enum value: \"DRAFT\". "
+            "Did you mean the enum value 'DRAFT'?"
+        )
+        self.assertEqual(
+            _SUGGESTION_RE.sub(r"\1", literal),
+            "Enum 'Status' cannot represent non-enum value: \"DRAFT\".",
+        )
+
+        # The "non-string" spelling, reached through the variable wrapper.
+        wrapped = (
+            "Variable '$status' got invalid value 42; "
+            "Enum 'Status' cannot represent non-string value: 42. "
+            "Did you mean the enum value 'DRAFT'?"
+        )
+        stripped = _SUGGESTION_RE.sub(r"\1", wrapped)
+        self.assertNotIn("Did you mean", stripped)
+        self.assertIn("cannot represent non-string value: 42.", stripped)
+
 
 class TheGuardHeaderValueIsNeverInspectedTest(TestCase):
     """A present-but-empty guard header is still a header.
