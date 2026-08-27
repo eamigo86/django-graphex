@@ -906,6 +906,49 @@ serializer state, no re-serialization).
 
 ## Security hardening
 
+### Validate the WebSocket handshake's `Origin` { #websocket-origin }
+
+!!! danger "A session-authenticated socket without an Origin check is cross-site reachable"
+
+    A WebSocket handshake is an ordinary HTTP request: the browser sends your
+    cookies with it, and **CORS does not apply**. So a page on any other site
+    can open a socket to your endpoint *as your logged-in visitor* and read
+    every subscription that user is entitled to. Nothing in this library can
+    stop it, because the library never sees the handshake — your ASGI routing
+    does.
+
+    This is the WebSocket counterpart of
+    [`REQUIRE_CSRF_HEADER`](security.md#cross-site-post-protection), which
+    guards the HTTP endpoint and never sees this one.
+
+Wrap the routed WebSocket application in Channels'
+`AllowedHostsOriginValidator`, **outside** the auth stack:
+
+```python
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+from channels.sessions import SessionMiddlewareStack
+from channels.security.websocket import AllowedHostsOriginValidator
+
+application = ProtocolTypeRouter({
+    "http": django_asgi_app,
+    "websocket": AllowedHostsOriginValidator(          # <- the guard
+        SessionMiddlewareStack(
+            AuthMiddlewareStack(
+                URLRouter([path("ws/graphql/", MyWSConsumer.as_asgi())])
+            )
+        )
+    ),
+})
+```
+
+It checks the handshake's `Origin` against `ALLOWED_HOSTS`, so a foreign origin
+never completes the handshake and never reaches `connection_init`. Note that
+`ALLOWED_HOSTS = ["*"]` makes it accept everything — convenient in development,
+and worth remembering when you read a test that seems to pass without it. The
+[playground](examples/playground.md) ships this wiring, and pins it with a test
+that rebuilds the app under a real host list.
+
 ### Transport-level authentication
 
 v2.0 has **no** separate `channelId` handshake or channel-ownership cache to

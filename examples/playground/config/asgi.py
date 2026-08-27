@@ -14,21 +14,50 @@ django_asgi_app = ASGIStaticFilesHandler(get_asgi_application())
 from blog.consumers import AppWSConsumer  # noqa: E402
 from channels.auth import AuthMiddlewareStack  # noqa: E402
 from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
+from channels.security.websocket import AllowedHostsOriginValidator  # noqa: E402
 from channels.sessions import SessionMiddlewareStack  # noqa: E402
 from django.urls import path  # noqa: E402
 
-# SessionMiddlewareStack populates scope["session"] and AuthMiddlewareStack
-# populates scope["user"] from the session. v2.0 authenticates at the WebSocket
-# connection scope (connection_init is the auth boundary), so the subscription's
-# authorize/scope hooks can read scope["user"] -- this is the standard Channels
-# pattern and is what the private noteSubscription flow relies on.
-_ws_app = SessionMiddlewareStack(
-    AuthMiddlewareStack(URLRouter([path("ws/graphql/", AppWSConsumer.as_asgi())]))
-)
+
+def build_websocket_application() -> AllowedHostsOriginValidator:
+    """Build the routed WebSocket app, Origin-validated and session-authenticated.
+
+    Built by a function rather than at import time so a test can rebuild it
+    under a different ALLOWED_HOSTS -- this settings file uses "*", which makes
+    the Origin validator accept everything, so a test that did not rebuild it
+    would pass with or without the wrapper.
+
+    Layers, outermost first:
+
+    - "AllowedHostsOriginValidator" checks the handshake's Origin against
+      ALLOWED_HOSTS. This is NOT optional on a session-authenticated socket: a
+      WebSocket handshake is an ordinary HTTP request that carries cookies and
+      is not subject to CORS, so without it any other site can open a socket as
+      your logged-in visitor and read every subscription they are entitled to.
+      It is the WebSocket counterpart of REQUIRE_CSRF_HEADER, which guards the
+      HTTP side but never sees this endpoint.
+    - "SessionMiddlewareStack" populates scope["session"], and
+      "AuthMiddlewareStack" populates scope["user"] from it. The subscription
+      authenticates at the connection scope (connection_init is the auth
+      boundary), so the authorize/scope hooks read scope["user"] -- the
+      standard Channels pattern, and what the private noteSubscription flow
+      relies on.
+
+    Returns:
+        app: The Origin-validated, session-authenticated WebSocket application.
+    """
+    return AllowedHostsOriginValidator(
+        SessionMiddlewareStack(
+            AuthMiddlewareStack(
+                URLRouter([path("ws/graphql/", AppWSConsumer.as_asgi())])
+            )
+        )
+    )
+
 
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
-        "websocket": _ws_app,
+        "websocket": build_websocket_application(),
     }
 )

@@ -409,10 +409,13 @@ mutation DeleteUser($id: ID!) {
 
 ### File Upload Support
 
-When the request content type is `multipart/form-data`, every entry in
-`request.FILES` is merged into the input payload under its own form-field name,
-so a part named after a `FileField` / `ImageField` **on the mutation's own
-model** is saved to that field on create and on update:
+When the request content type is `multipart/form-data`, an uploaded part is
+merged into the input payload when its name matches a file field **the
+mutation's own input publishes** — under either spelling, the camelCase wire
+name or the model's own attribute name. A part matching nothing is ignored
+rather than saved, and a column the input projects away is not writable through
+a part any more than it is through the JSON body: the projection is the same
+boundary on both. Matching parts are saved on create and on update:
 
 ```python
 class ProfileMutation(DjangoModelMutation):

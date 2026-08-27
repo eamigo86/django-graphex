@@ -1099,6 +1099,27 @@ changed nothing), plus six internal names — four of which were importable, so
 
 ### Documentation
 
+- **Nothing told you to validate the WebSocket handshake's `Origin`, and the
+  example project did not.** A handshake is an ordinary HTTP request: the
+  browser sends cookies with it and **CORS does not apply**, so any other site
+  could open a socket to a session-authenticated endpoint *as your logged-in
+  visitor* and read every subscription that user is entitled to. It routes
+  straight around `REQUIRE_CSRF_HEADER`, which this release turns on for exactly
+  this threat on the HTTP side and never sees this endpoint. The library cannot
+  fix it — it never sees the handshake, your ASGI routing does — so
+  [Subscriptions › Validate the WebSocket handshake's Origin](usage/subscriptions.md#websocket-origin)
+  now says so under a `danger` admonition with the wiring, and the playground
+  ships `AllowedHostsOriginValidator` around its router, pinned by a test that
+  rebuilds the app under a real host list (the playground's own
+  `ALLOWED_HOSTS = ["*"]` makes the validator accept everything, so a test that
+  did not rebuild it would pass without the wrapper).
+- **The multipart upload rule was documented as it behaved before this
+  release.** `docs/api/mutations.md` still said *every* entry in
+  `request.FILES` is merged under its own form-field name. It is now merged
+  only when the name matches a file field the mutation's input **publishes**,
+  under either spelling, and a part matching nothing is ignored rather than
+  saved — the projection is the same boundary on the multipart path as on the
+  JSON one.
 - **The example project's public subscription published a column its query
   surface hides.** `CommentSubscription` names `Meta.model` and declared no
   projection, so `internalNote` — described in the model as a moderation

@@ -466,3 +466,40 @@ async def test_anonymous_note_subscription_joins_no_group(demo_user: object) -> 
         _sse_frames(response).__aiter__().__anext__(), timeout=3.0
     )
     assert "UNAUTHENTICATED" in frame, frame
+
+
+@pytest.mark.asyncio
+async def test_the_websocket_route_validates_the_handshake_origin() -> None:
+    """Assert the routed WebSocket app refuses a foreign Origin.
+
+    A WebSocket handshake is a plain HTTP request that carries cookies and is
+    NOT subject to CORS, so a page on any other site can open one and inherit
+    the visitor's session. That routes straight around REQUIRE_CSRF_HEADER,
+    which this release turns on precisely to stop cross-site writes over HTTP.
+    Channels ships "AllowedHostsOriginValidator" for it, and "config/asgi.py"
+    wraps the router in one.
+
+    ALLOWED_HOSTS is "*" in this dev settings file, which makes the validator
+    accept everything, so the test pins it against a REAL host list instead —
+    otherwise it would pass without the wrapper.
+    """
+    from channels.testing import WebsocketCommunicator
+    from config.asgi import build_websocket_application
+    from django.test import override_settings
+
+    with override_settings(ALLOWED_HOSTS=["testserver"]):
+        app = build_websocket_application()
+
+        foreign = WebsocketCommunicator(app, "/ws/graphql/")
+        foreign.scope["subprotocols"] = ["graphql-transport-ws"]
+        foreign.scope["headers"] = [(b"origin", b"https://evil.example")]
+        connected, _ = await foreign.connect()
+        assert not connected, "a foreign Origin must not complete the handshake"
+        await foreign.disconnect()
+
+        same = WebsocketCommunicator(app, "/ws/graphql/")
+        same.scope["subprotocols"] = ["graphql-transport-ws"]
+        same.scope["headers"] = [(b"origin", b"http://testserver")]
+        connected, _ = await same.connect()
+        assert connected, "the site's own Origin must still connect"
+        await same.disconnect()
