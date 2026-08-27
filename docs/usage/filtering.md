@@ -120,6 +120,17 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
     relation head declared on a type that hides the relation, the `and` / `or` /
     `not` combinators, nested list filters, and per-field `fields=` overrides.
 
+    **It measures declarations that compile, not declarations.** The guard runs
+    while `<Model>FilterInput` is built, and that input is built only because
+    some field mounts a filtered list of the type. Declare
+    `filter_fields = {"password": ("exact",)}` on a type nothing mounts that way
+    and the schema builds in silence — the entry compiled to nothing and no
+    client can reach it. Mount `DjangoFilterListField(UserType)` and the same
+    declaration raises. So a clean build is a statement about the filter surface
+    you actually serve, not a review of every `Meta` in the file: mounting a
+    type later can turn a dormant declaration into a build failure, and that is
+    the failure arriving exactly when the oracle would have.
+
 #### The shapes it refuses { #filter-refusal-shapes }
 
 The guard walks each declared path against the **compiled types the schema

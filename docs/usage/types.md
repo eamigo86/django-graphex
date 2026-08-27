@@ -340,7 +340,7 @@ same-name `source=`, as in `bio = CharField(source="bio")`, provably reads that
 very attribute, so it keeps the column. A `source=` naming anything else does
 not.
 
-#### The one exception, and the two open boundaries { #projection-exception }
+#### The one exception, and the three open boundaries { #projection-exception }
 
 There is exactly **one** exception, and it is about *provenance*, not about the
 column:
@@ -361,7 +361,7 @@ column:
     out, not ranking by it, and no operator-intent argument survives that. See
     [Ordering validation](pagination.md#ordering-validation-security).
 
-Two boundaries the rule cannot close, stated rather than hidden:
+Three boundaries the rule cannot close, stated rather than hidden:
 
 - **A `@filter_field` method body.** Its *name* is checked — a method spelled
   like a hidden column compiles the very `<Model>FilterInput` field a
@@ -375,6 +375,16 @@ Two boundaries the rule cannot close, stated rather than hidden:
   input ends up serving, and against **every** type that will serve it, so the
   narrow type cannot inherit the wide one's filters in silence. See
   [Two node types over one model share one input](filtering.md#filter-input-union).
+- **A hand-written `Subscription` that names `Meta.model`.** It builds its event
+  type and its `<Model>SubscriptionFilterInput` from the **model**, so it does
+  not inherit the projection of whatever `DjangoObjectType` the schema
+  registered for that model: a column hidden on the node type stays selectable
+  **and** equality-filterable on that subscription. The subscription honours a
+  projection — its **own** `Meta.only_fields` / `Meta.exclude_fields` — so
+  repeat it there. A subscription generated from a `DjangoModelType`
+  (`Meta.stream` plus `SubscriptionField()`) is not affected: that host
+  **forwards** its own projection into the subscription class it builds. See
+  [Subscriptions › Filter key validation](subscriptions.md#filter-key-validation).
 
 !!! note "Underscore-prefixed names are not checked"
     The unknown-option check skips a key starting with `_`: an
@@ -1065,6 +1075,13 @@ class InvoiceType(TimestampedType):
     `ImproperlyConfigured` at class definition, naming the option, the model and
     the registered type. A silent no-op there would leave a column you excluded
     for security reasons queryable.
+
+    **Restating the registered type's own projection is accepted**, exactly as
+    it is for [`DjangoListObjectType`](#configuration-options) — the guard
+    compares the columns the two projections select, not the options they
+    spell. Restating it is worth doing: this host **forwards** its projection
+    into the subscription it generates from `Meta.stream`, so the repetition is
+    what keeps a hidden column off the subscription surface too.
 
 ### Limiting the generated operations — `model_operations` { #model-operations }
 

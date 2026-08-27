@@ -64,7 +64,12 @@ Credibility is in the conditions, so let me state all of them up front.
   across all four virtual environments. Latest PyPI versions of every library:
   graphene-django 3.2.3 (+ graphene 3.4.3, django-filter 25.2),
   strawberry-graphql-django 0.86.4 (+ strawberry-graphql 0.320.1),
-  ariadne 1.1.0 (+ ariadne-django 0.3.0), and django-graphex 2.2.0.
+  ariadne 1.1.0 (+ ariadne-django 0.3.0). django-graphex is the one exception:
+  it is installed **editable from this repository**, not from PyPI. The
+  artifacts record `2.2.0` because that is the version string in
+  `pyproject.toml`, but the projection boundary priced in the caveats below
+  landed *after* the 2.2.0 release — so this run pays for a guard the published
+  2.2.0 tarball does not even contain.
 - **Identical data.** The same Django models and the same seeded dataset for
   everyone: **2,000 authors, 20,000 posts, 60,000 comments, 60,000 tag
   relations**, generated from a deterministic seed. That is the `--authors 2000`

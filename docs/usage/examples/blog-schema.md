@@ -338,12 +338,20 @@ Let's start with a blog application to demonstrate the features:
         for the models that need bespoke wiring, `DjangoModelType` for the
         boilerplate ones.
 
-        Per model, still pick one. Two hosts over one model is allowed only while
-        neither declares a projection: the moment a `DjangoModelType` adds
-        `only_fields` / `exclude_fields` / `include_fields` for a model a
-        `DjangoObjectType` already registered, the build stops with
-        `ImproperlyConfigured` — because the projection would otherwise be
-        dropped and the field it hides would stay exposed.
+        Per model, still pick one projection. A second host over a model a
+        `DjangoObjectType` already registered reuses **that** type's output
+        fields, so declaring `only_fields` / `exclude_fields` /
+        `include_fields` on it is only accepted when it **mirrors** what the
+        registered type already publishes. Declare anything narrower or wider
+        and the build stops with `ImproperlyConfigured`, naming the option, the
+        model and the type that registered the output type — because the
+        projection would otherwise be dropped and the field it hides would stay
+        exposed.
+
+        Mirroring is worth declaring rather than omitting: a `DjangoModelType`
+        forwards **its own** projection into the subscription it generates, so
+        the repetition is what keeps a hidden column off the subscription
+        surface too.
 
         Since **2.2.0** the generated container is named `<Model>ListGenericType`,
         so it no longer collides with the `<Model>ListType` you declare yourself.

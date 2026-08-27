@@ -51,14 +51,23 @@ The four libraries do **not** share a schema. Each has its own
    switchable off.
 
 Per-library query documents may differ in **SHAPE** (e.g. graphex uses a
-`results {} / totalCount` wrapper with `results(limit:, offset:)`; graphene uses
-Relay connections; strawberry uses `OffsetPaginationInput`; ariadne uses whatever
-its SDL defines). They **MUST be semantically equivalent**: the same rows are
-touched, the same fields are returned. No library is allowed to short-cut an
-operation (e.g. skip the nested comments, or over-fetch a smaller set). Each
-operation ships a `validate()` callable that asserts the response shape; the
-harness aborts loudly if validation fails, because **a benchmark that returns the
-wrong data is invalid**.
+`results {} / totalCount` wrapper and asks it for `results(limit:, ordering:)`;
+graphene uses Relay connections; strawberry uses `OffsetPaginationInput`; ariadne
+uses whatever its SDL defines). They **MUST be semantically equivalent**: the
+same rows are touched, the same fields are returned. No library is allowed to
+short-cut an operation (e.g. skip the nested comments, or over-fetch a smaller
+set). Each operation ships a `validate()` callable that asserts the response
+shape; the harness aborts loudly if validation fails, because **a benchmark that
+returns the wrong data is invalid**.
+
+**No operation on any library selects `totalCount`** — the five documents ask for
+rows, never for a count — and that is the whole story behind the SQL counts on
+the two list rows. graphex issues no `COUNT` at all, because its count is
+deferred to the selection that asks for it; graphene's Relay connection issues
+one regardless, and that unasked-for `SELECT COUNT(*)` is the second query in
+its `flat_list` and its `filtered` row. Neither is a short-cut: both return the
+same rows to the same document, and what differs is what each library does with
+a count nobody requested.
 
 Django itself is tuned identically for all libraries (`config/settings.py`,
 `DEBUG=False`). Each library's own performance knobs (query optimizer,

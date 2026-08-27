@@ -299,7 +299,7 @@ The practical consequences:
 |---|---|---|
 | `application/json` (including base64 uploads) | `MAX_REQUEST_BODY_SIZE`, measured by reading | **Yes** — the body must be in memory to be parsed |
 | `application/graphql`, `application/x-www-form-urlencoded` | `MAX_REQUEST_BODY_SIZE`, measured by reading | Yes, same reason |
-| `multipart/form-data` | `MAX_REQUEST_BODY_SIZE` vs the **measured** body where the stream is seekable (ASGI); vs the `Content-Length` Django already capped the stream at otherwise (WSGI), with **411** when none is declared | **File parts, no** — they stream to disk. **Non-file parts, yes** — Django sums every non-file part (your `operations` / `map` JSON included) against that limit |
+| `multipart/form-data` | `MAX_REQUEST_BODY_SIZE` vs the **measured** body where the stream is seekable (ASGI); vs the `Content-Length` Django already capped the stream at otherwise (WSGI), with **411** when none is declared | **File parts, no** — they stream to disk. **Non-file parts, yes** — Django sums every non-file part (your `query` and `variables` parts included) against that limit |
 
 #### What this cannot do under ASGI
 
@@ -334,9 +334,14 @@ on every **non-file** part of a multipart body — it sums their sizes and raise
 stream to disk under WSGI and are spooled by the handler under ASGI, and their
 bytes are governed by
 [`FILE_UPLOAD_MAX_MEMORY_SIZE`](https://docs.djangoproject.com/en/stable/ref/settings/#file-upload-max-memory-size)
-instead. So the file itself does not count, and the `operations` / `map` JSON
-parts that ride alongside it do. Raise the limit if those grow large — a
-multi-thousand-entry `map` is the shape that reaches it.
+instead. So the file itself does not count, and the parts that ride alongside it
+do. This library's multipart contract has exactly two of those: a **`query`**
+part carrying the document and an optional **`variables`** part carrying its
+variables as JSON — there is no `operations` / `map` envelope, and posting one
+is answered with `400 Must provide query string`. See
+[Mutations → Automatic multipart uploads](mutations.md#automatic-multipart-uploads).
+Raise the limit if `variables` grows large — a bulk write whose variables carry
+thousands of rows is the shape that reaches it.
 
 A multipart upload does still need `MAX_REQUEST_BODY_SIZE` set above the
 whole multipart body — **on both servers**. Under WSGI a declared

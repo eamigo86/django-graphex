@@ -592,13 +592,24 @@ class UserType(DjangoModelType):
       they were never meant to be a policy.
 
     ```python
-    class UserCard(DjangoModelType):
+    class ProfileCard(DjangoModelType):
         class Meta:
-            model = User
+            model = Profile
             model_operations = ("list", "retrieve")
-            only_fields = ("id", "username", "avatar")
-            queryset = User.objects.filter(is_active=True)
+            only_fields = ("id", "display_name", "avatar")
+            queryset = Profile.objects.filter(is_public=True)
     ```
+
+    ```pycon
+    >>> ProfileCard.CreateField()
+    AttributeError: "create" is not enabled on ProfileCard;
+    Meta.model_operations is ('list', 'retrieve').
+    ```
+
+    The model here is `Profile` and not `User` for a reason the next warning
+    spells out: every `User` block on this page registers an output type of its
+    own, and `only_fields` on a `DjangoModelType` whose model already has one
+    **raises**. A read-only card is exactly the shape that trips it.
 
 !!! warning "The projection needs an output type this type actually builds"
     A `DjangoModelType` reuses the output type already registered for its model
@@ -608,6 +619,17 @@ class UserType(DjangoModelType):
     class definition, naming the option, the model and the type that registered
     the output type. Move the projection to that `DjangoObjectType` (or drop the
     option); it is honored as usual when no other type registered the model.
+
+    Declared after the [`UserType` at the top of this page](#meta-configuration),
+    the card above would have read:
+
+    ```text
+    ImproperlyConfigured: UserCard.Meta.only_fields cannot be honored: the
+    output type for User is reused from UserType, which was built from its own
+    Meta, so the projection would be silently dropped and any field it hides
+    would stay exposed. Declare only_fields on UserType instead, or remove the
+    option.
+    ```
 
     (Fixed in 2.2.0: 2.1.0 and earlier dropped the option silently, so a column
     excluded here stayed queryable.)
@@ -909,6 +931,17 @@ class UserType(DjangoObjectType):
     field, so a **declared** column can be tested for equality but not walked
     with `startswith` / `gt` / `icontains` — those do not exist in the schema.
     The projection is still what keeps a column off the surface entirely.
+
+    **The projection that gates it is the subscription's own.** A hand-written
+    `Subscription` whose `Meta.model` names a model builds its event type and
+    its filter input **from that model**, not from whatever `DjangoObjectType`
+    the schema registered for it — so a column hidden on the node type is still
+    both selectable and filterable on that subscription unless you repeat the
+    projection in the subscription's `Meta`. `DjangoModelType` is what makes the
+    tip above true: it **forwards** its own `only_fields` / `exclude_fields`
+    into the subscription it generates, so declare the projection there and the
+    generated subscription inherits it. See
+    [The one exception, and the open boundaries](../usage/types.md#projection-exception).
 
     (Fixed in 2.1.0: 2.0.0 silently dropped the option on the subscription path,
     so the excluded column stayed both serialized and filterable. 2.1.0 moved

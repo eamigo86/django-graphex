@@ -83,6 +83,7 @@ nav:
     - Quick Start: quickstart.md
     - Why graphex?: why.md
     - Migration Guide: migration.md
+    - Upgrade Guide (1.x → 2.0): UPGRADE-2.0.md
   - User Guide:
     - Settings: usage/settings.md
     - Views: usage/views.md
