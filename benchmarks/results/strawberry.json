@@ -9,10 +9,10 @@
   "python": "3.12.11",
   "django": "6.0.6",
   "machine": {
-    "platform": "macOS-26.5-arm64-arm-64bit",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
     "cpu_count": 16
   },
-  "schema_import_ms": 109.9035,
+  "schema_import_ms": 98.8052,
   "surface": {
     "Author": [
       "bio",
@@ -41,49 +41,62 @@
   },
   "ops": {
     "flat_list": {
-      "mean_ms": 1.9007,
-      "p50_ms": 1.721,
-      "p95_ms": 1.9766,
-      "min_ms": 1.6864,
-      "stddev_ms": 1.3616,
+      "mean_ms": 1.8201,
+      "p50_ms": 1.6906,
+      "p95_ms": 2.1523,
+      "min_ms": 1.6107,
+      "stddev_ms": 0.8581,
       "iterations": 100,
       "sql_queries": 1
     },
     "nested": {
-      "mean_ms": 28.2393,
-      "p50_ms": 25.4453,
-      "p95_ms": 49.6176,
-      "min_ms": 24.419,
-      "stddev_ms": 7.9237,
+      "mean_ms": 26.1847,
+      "p50_ms": 24.2599,
+      "p95_ms": 41.5968,
+      "min_ms": 23.2699,
+      "stddev_ms": 5.3602,
       "iterations": 100,
       "sql_queries": 3
     },
     "single": {
-      "mean_ms": 1.3385,
-      "p50_ms": 1.0271,
-      "p95_ms": 1.459,
-      "min_ms": 0.9758,
-      "stddev_ms": 2.4333,
+      "mean_ms": 1.1139,
+      "p50_ms": 0.9355,
+      "p95_ms": 1.0346,
+      "min_ms": 0.9146,
+      "stddev_ms": 1.559,
       "iterations": 100,
       "sql_queries": 1
     },
     "filtered": {
-      "mean_ms": 2.3466,
-      "p50_ms": 2.1653,
-      "p95_ms": 3.4011,
-      "min_ms": 2.0351,
-      "stddev_ms": 0.4364,
+      "mean_ms": 2.0882,
+      "p50_ms": 1.9682,
+      "p95_ms": 2.8314,
+      "min_ms": 1.9113,
+      "stddev_ms": 0.2924,
       "iterations": 100,
       "sql_queries": 1
     },
     "create_comment": {
-      "mean_ms": 1.8772,
-      "p50_ms": 1.5715,
-      "p95_ms": 2.676,
-      "min_ms": 1.5035,
-      "stddev_ms": 1.7442,
+      "mean_ms": 1.7253,
+      "p50_ms": 1.5188,
+      "p95_ms": 2.3208,
+      "min_ms": 1.3644,
+      "stddev_ms": 1.3121,
       "iterations": 100,
       "sql_queries": 8
+    }
+  },
+  "aggregation": {
+    "runs": 3,
+    "statistic": "median across runs of each statistic",
+    "schema_import_ms": {
+      "reported": "median of the warm runs only",
+      "samples_in_order": [
+        94.851,
+        102.7594,
+        139.8464
+      ],
+      "caveat": "One cold sample per process, and run_all.sh warms the graphex venv (makemigrations/migrate/seed all run under it) before measuring any library. This row therefore carries a bias in graphex's favour and a noise floor far wider than the differences between libraries. See benchmarks/README.md."
     }
   }
 }

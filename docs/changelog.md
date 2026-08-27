@@ -1225,26 +1225,42 @@ changed nothing), plus six internal names — four of which were importable, so
   either guard, and disambiguates the neighbouring note about a per-type
   `Meta.max_depth = 0`, which **is** a real value there — that one forbids
   nested objects rather than disabling anything.
-- **The published benchmark table was measured on 2.0.0, and the numbers have
-  moved since.** [Why django-graphex](why.md) went out in 2.2.0 with a table
-  whose own conditions list said `django-graphex 2.0.0`, read from result files
-  that were gitignored — so a reader could neither tell which code had been
-  timed nor open a single figure. The eight artifacts are now tracked and were
-  regenerated on this branch's code, and the table follows them: `nested` fell
-  **15.97 ms → 13.47 ms**, `create_comment` **0.62 ms → 0.60 ms**, `filtered`
-  rose **1.18 ms → 1.24 ms**, `flat_list` **0.81 ms → 0.83 ms**, `single`
-  **0.38 ms → 0.40 ms**, and the schema build rose **9.7 ms → 11.74 ms**, which
-  is why that row lost its trophy: graphene-django sits at 13.72 ms beside it
-  and two milliseconds is noise, not a win. The scaling pair behind the
-  `O(table)` claim moved with them — graphene's `filtered` reads 3.63 ms at
-  1,000 authors and 6.05 ms at 2,000, against 3.55 ms and 6.71 ms before. **No
-  SQL count moved on any operation.** Part of the build increase is this
-  release's own projection boundary, and it is now priced rather than implied:
+- **The published benchmark table was measured on 2.0.0, read from gitignored
+  files, and rested on single runs.** [Why django-graphex](why.md) went out in
+  2.2.0 with a table whose own conditions list said `django-graphex 2.0.0`, from
+  result files nobody could open — a reader could neither tell which code had
+  been timed nor check one figure. All eight artifacts are now **tracked**, were
+  **re-measured on this branch's code**, and each is the **median of three
+  runs**, recorded in the file under a new `aggregation` key. Three runs matter:
+  repeating identical code minutes apart drifts up to **8 %** on the reference
+  hardware, so the old single samples could not resolve any smaller difference —
+  and an earlier re-measurement on this branch was discarded rather than
+  published because latencies rose uniformly across **all four** libraries,
+  three of which nobody here has touched. Against the 2.0.0-era figures the
+  operations read: `nested` **15.97 → 12.14 ms**, `create_comment`
+  **0.62 → 0.56 ms**, `filtered` **1.18 → 1.17 ms**, `flat_list`
+  **0.81 → 0.79 ms**, `single` **0.38 ms**, unmoved. The scaling pair behind the
+  `O(table)` claim holds: graphene's `filtered` reads **3.28 ms** at 1,000
+  authors and **4.93 ms** at 2,000, against graphex's 1.14 and 1.17. **No SQL
+  count moved on any operation of any library, and no `surface` moved** — the
+  structural story is exactly what it was.
+- **The schema-build row is biased toward graphex, and now says so instead of
+  naming a winner.** Two measured reasons. It is **one cold sample per
+  process**, whose spread across repetitions reaches **24 % for graphene-django,
+  44 % for strawberry and 51 % for ariadne**. And `run_all.sh` runs
+  `makemigrations`, `migrate` and `seed_bench` under the **graphex** virtualenv
+  before measuring anybody, so graphex is timed warm and the other three cold.
+  Successive revisions of that page named opposite winners between graphex and
+  graphene-django — graphene by 0.05 ms, then graphex by 1 ms — and **both were
+  beneath the instrument's resolution**. The row is now presented for both seeds
+  with the bias stated, claims no winner in either direction, and points at the
+  open harness work (a warmup pass per virtualenv, N samples instead of one).
+  The per-operation rows are unaffected: p50 over 100 iterations after 15
+  warmups is long past any import cost. Part of the build cost is this release's
+  own projection boundary, priced rather than implied:
   `benchmarks/guard_cost.py` counts and times the shared predicate at **46
-  calls / 0.73–1.04 ms of a 10–15 ms schema build** and **17 calls / about
-  0.02 ms per `nested` request**, 0.15 % of that operation. The rest of the
-  delta is not attributable to anything — two runs of different code are not an
-  A/B, and there is no switch that turns the boundary off to make one.
+  calls / 0.69–0.71 ms of a 9–12 ms schema build** and **17 calls / about
+  0.015 ms per `nested` request**, 0.13 % of that operation.
 - **The example project demonstrated none of this release.** The 2.2.0 headline
   — automatic multipart uploads — had no write host to exercise it at all
   (`Document` was read-only, reachable only through a hand-written base64

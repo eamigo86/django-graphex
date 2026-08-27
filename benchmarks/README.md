@@ -14,6 +14,45 @@ The benchmark measures **schema build time**, **per-operation latency**
 (mean / p50 / p95 / min / stddev over 100 timed iterations), and **SQL query
 count** per operation. It is fully deterministic and offline.
 
+## What the published artifacts are
+
+Every figure in `results/` and on
+[Why django-graphex](https://eamigo86.github.io/django-graphex/why/) is the
+**median of three runs** per library per seed. Each file records that under an
+`aggregation` key — if that key is **absent**, the file is a single run, which
+is what `run_all.sh` writes by default.
+
+Three runs is not ceremony. Repeating the same code minutes apart on the same
+machine drifts by up to **8 %** here, so one sample cannot resolve any
+difference smaller than that. A run is discarded rather than published when a
+SQL count or a `surface` list moves, or when latencies rise **uniformly across
+all four libraries** — three of them are code nobody in this repo touched, so
+they are the control: if they move together, the machine moved, not the code.
+
+### The schema-build row is biased, and here is how
+
+**Do not read a winner out of it between graphex and graphene-django.** Two
+independent reasons:
+
+1. **One cold sample per process.** Its spread across three repetitions reaches
+   **24 % (graphene-django), 44 % (strawberry), 51 % (ariadne)**. The published
+   figure discards each library's first, coldest run for that reason. An
+   instrument with that spread cannot resolve one or two milliseconds.
+2. **`run_all.sh` warms the graphex virtualenv before measuring anybody.**
+   `makemigrations`, `migrate` and `seed_bench` all run under
+   `.venv-graphex/bin/python` (lines 20–27), so graphex's imports and file cache
+   are hot while the other three are measured cold. The bias points **at
+   graphex**, and it is on this row only — the per-operation rows are p50 over
+   100 iterations after 15 warmups, long past any import cost.
+
+Read the row as an **order of magnitude**: graphex and graphene-django
+indistinguishable around 10 ms, ariadne roughly 5×, strawberry roughly 10×.
+
+**Open work, not a defence of the status quo.** Fixing this means a warmup pass
+per virtualenv before the measured pass, and N samples of the build instead of
+one. Until that lands, the row stays a range with this caveat attached rather
+than a comparison.
+
 ## The fairness rule (read this first)
 
 The four libraries do **not** share a schema. Each has its own
@@ -45,9 +84,9 @@ The four libraries do **not** share a schema. Each has its own
    unreadable, unorderable and unfilterable through the type, so
    `PostType.filter_fields` naming the `author` relation is admitted only
    because `AuthorType` publishes the author's key. Counted and timed over three
-   runs by `guard_cost.py`, the shared predicate costs **46 calls / 0.73–1.04 ms
-   of a 10–15 ms schema build** and **17 calls / about 0.02 ms per `nested`
-   request** (0.15 % of it). Both are inside the numbers, and neither is
+   runs by `guard_cost.py`, the shared predicate costs **46 calls / 0.69–0.71 ms
+   of a 9–12 ms schema build** and **17 calls / about 0.015 ms per `nested`
+   request** (0.13 % of it). Both are inside the numbers, and neither is
    switchable off.
 
 Per-library query documents may differ in **SHAPE** (e.g. graphex uses a
