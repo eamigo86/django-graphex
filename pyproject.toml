@@ -94,6 +94,10 @@ packages = ["django_graphex"]
 include = [
     "/django_graphex",
     "/tests",
+    # Ships with "/tests" because "addopts" loads it with "-p", which pytest
+    # resolves during "Config._preparse" -- before collection. Without it the
+    # published tarball cannot run its own suite at all.
+    "/pytest_coverage_isolation.py",
     "/docs",
     "/README.md",
     "/LICENSE",
@@ -168,6 +172,11 @@ python_files = ["tests.py", "test_*.py", "*_tests.py", "bench_*.py"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = [
+    # Loaded during Config._preparse, which is the last point BEFORE pytest-cov
+    # builds its Coverage object (a tryfirst pytest_load_initial_conftests hook,
+    # earlier than any conftest). It moves .coverage out of the repo root so two
+    # runs in one checkout stop combining -- and deleting -- each other's data.
+    "-p", "pytest_coverage_isolation",
     "--strict-markers",
     "--strict-config",
     "--verbose",

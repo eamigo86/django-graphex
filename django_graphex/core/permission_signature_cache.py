@@ -27,7 +27,8 @@ Design (SDD "permission-scoped-schema" D3):
 
 The default "maxsize" (64) is CALIBRATED by the P4 benchmark
 (tests/spike/bench_permission_schema.py) and overridable via the
-"PERMISSION_SCHEMA_CACHE_MAXSIZE" key of DJANGO_GRAPHEX. Calibration: a
+"PERMISSION_SCHEMA_CACHE_MAXSIZE" key of DJANGO_GRAPHEX (0 caches nothing,
+None keeps the calibrated default, a negative is refused). Calibration: a
 realistic role-driven request stream produces ~50 distinct permission
 signatures, and 64 captures that entire working set (~97% hit rate, at/after the
 curve's knee — 128 adds nothing) while a single pruned variant retains only a
@@ -53,7 +54,7 @@ __all__ = ("permission_signature", "pruned_schema_for")
 #: LRU bound calibrated by the P4 benchmark (~50 distinct signatures on a
 #: realistic role-driven stream; 64 holds the full working set at the curve's
 #: knee). Overridable via the ``PERMISSION_SCHEMA_CACHE_MAXSIZE`` setting (read
-#: per cache construction).
+#: per eviction pass, so the bound is not frozen at import).
 _DEFAULT_MAXSIZE = 64
 
 #: The schema-extensions channel that carries the global label-set (P0).
@@ -106,10 +107,14 @@ class _SignatureSchemaCache:
         """Initialize an empty cache with the given (or settings-derived) bound.
 
         Args:
-            maxsize: The LRU bound; when None, resolved from the
-                ``PERMISSION_SCHEMA_CACHE_MAXSIZE`` setting (or the default).
+            maxsize: A fixed LRU bound for this instance; when None the bound
+                follows the ``PERMISSION_SCHEMA_CACHE_MAXSIZE`` setting, read
+                on every eviction pass. The module singleton is built at
+                import, so capturing the setting here would freeze it for the
+                life of the process and make it unreachable from
+                ``override_settings``.
         """
-        self._maxsize = maxsize if maxsize is not None else _resolve_maxsize()
+        self._maxsize = maxsize
         # Key: (id(full), signature). Value: (weakref-or-None to full, pruned).
         self._entries: OrderedDict[tuple[int, str], tuple[Any, GraphQLSchema]] = (
             OrderedDict()
@@ -247,8 +252,9 @@ class _SignatureSchemaCache:
         return pruned
 
     def _evict_if_needed(self) -> None:
-        """Evict least-recently-used entries until within ``maxsize``."""
-        while len(self._entries) > self._maxsize:
+        """Evict least-recently-used entries until within the current bound."""
+        maxsize = self._maxsize if self._maxsize is not None else _resolve_maxsize()
+        while len(self._entries) > maxsize:
             self._entries.popitem(last=False)
 
 
@@ -273,11 +279,19 @@ def _safe_ref(obj: Any) -> "weakref.ref[Any] | None":
 
 
 def _resolve_maxsize() -> int:
-    """Return the configured LRU bound (setting override or the default)."""
+    """Return the configured LRU bound (setting override or the default).
+
+    A bound of 0 is honored as "cache nothing"; it used to be falsy here and
+    silently restored the default, so turning the cache off left the 64-entry
+    default running. A negative bound is refused by the settings reader.
+
+    Returns:
+        The current LRU bound.
+    """
     configured = getattr(
         graphql_api_settings, "PERMISSION_SCHEMA_CACHE_MAXSIZE", _DEFAULT_MAXSIZE
     )
-    return int(configured) if configured else _DEFAULT_MAXSIZE
+    return _DEFAULT_MAXSIZE if configured is None else int(configured)
 
 
 #: Process-wide cache backing :func:`pruned_schema_for`.

@@ -3,7 +3,10 @@
 This is the CANONICAL implementation the other three libraries are compared
 against. It uses django-graphex idiomatically:
 
-  * ``DjangoObjectType`` with ``filter_fields`` for the leaf types.
+  * ``DjangoObjectType`` with ``only_fields`` + ``filter_fields`` for the leaf
+    types. ``only_fields`` matches the other libraries' explicit field lists and
+    is a security boundary: a projected column is unreadable, unorderable and
+    unfilterable through the type.
   * ``DjangoListObjectType`` + ``LimitOffsetGraphqlPagination`` for the
     ``results {} / totalCount`` list wrapper (used by flat_list, nested,
     filtered).
@@ -33,16 +36,40 @@ from benchapp.models import Author, Comment, Post
 
 # --------------------------------------------------------------------------- #
 # Object types                                                                #
+#                                                                             #
+# ``only_fields`` mirrors the explicit field lists graphene-django and         #
+# strawberry declare in their own bench schemas, so the four libraries compile #
+# the SAME surface and the schema-build number compares like for like. Without #
+# it graphex auto-exposed every column plus ``tags`` and ``category``, building #
+# the widest schema of the four — and ``category`` was dropped with a WARNING  #
+# at import time, inside the region the harness times, because ``Category`` has #
+# no registered type.                                                          #
+#                                                                             #
+# It is also a security boundary, not just a shape: a projected-away column is #
+# unreadable, unorderable and unfilterable through the type. ``PostType``      #
+# filters on ``author``, a relation-direct lookup, which is admitted only      #
+# because ``AuthorType`` below publishes the author's key.                     #
 # --------------------------------------------------------------------------- #
 class CommentType(DjangoObjectType):
     class Meta:
         model = Comment
+        only_fields = ("id", "author_name", "text", "is_approved", "created_at")
         filter_fields = {"id": ("exact",), "text": ("icontains",)}
 
 
 class PostType(DjangoObjectType):
     class Meta:
         model = Post
+        only_fields = (
+            "id",
+            "title",
+            "body",
+            "status",
+            "views_count",
+            "created_at",
+            "author",
+            "comments",
+        )
         filter_fields = {
             "id": ("exact",),
             "title": ("icontains",),
@@ -66,6 +93,7 @@ class PostListType(DjangoListObjectType):
 class AuthorType(DjangoObjectType):
     class Meta:
         model = Author
+        only_fields = ("id", "name", "email", "bio", "posts")
         filter_fields = {"id": ("exact",), "name": ("icontains",)}
 
 

@@ -467,6 +467,20 @@ def subscription_ws_consumer(
                 return
 
             payload = content.get("payload") or {}
+            if not isinstance(payload, dict):
+                # A non-mapping payload used to reach "_run_operation", where
+                # "payload.get" raised INSIDE the operation task — logged by
+                # "_operation_done" and then DROPPED. The client got no "error"
+                # frame, no "complete", nothing: a protocol violation it cannot
+                # tell apart from a slow server, so it waits forever. Frame it
+                # like every other malformed subscribe and leave the socket (and
+                # the operations already running on it) alone.
+                await self._send_error(
+                    op_id,
+                    [{"message": "The subscribe payload must be a JSON object."}],
+                )
+                return
+
             task = asyncio.ensure_future(self._run_operation(op_id, payload))
             self._operations[op_id] = task
             # strawberry.channels hardening: drop the id the instant its task ends

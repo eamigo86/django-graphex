@@ -16,6 +16,55 @@ All notable changes to this library are documented here. The format is based on
 
 ### Security
 
+- **A relation served by a `resolve_` method of your own ranked and filtered by
+  the key behind it.** The mask stamp — which withdraws a declared attribute
+  that publishes a column's NAME over a resolver serving something else — was
+  carved out for a declared RELATION, on the argument that a relation's name is
+  not a column's and the key behind it is the *target* type's answer. That
+  argument holds for the AUTO-EXPANDED relation, whose value really is the row's.
+  It does not hold for a declaration served by a resolver: `ordering: "authorId"`
+  ranks by the raw foreign key on the parent's own row and
+  `filter_fields = {"author__name": …}` joins straight past the target type, so
+  a `resolve_author` returning a redacted stand-in — or nothing at all — left a
+  live ranking oracle over a key **no type in the schema serves**. That shape is
+  indistinguishable at build time from the to-one scoping hatch
+  [Types › Custom queryset](usage/types.md#relation-scope-hatch) documents, whose
+  resolver returns a *scoped* target and still ranks the rows it hides: the
+  difference lives in a resolver body no static analysis can read. Both now fail
+  **closed**, like every other masked declaration. **This rejects orderings that
+  used to succeed and fails a schema that builds today**: declaring the hatch
+  withdraws that relation's `_id` column from the ordering allowlist, and a
+  `filter_fields` path through the declared relation raises
+  `ImproperlyConfigured` while the schema builds. Both were already the guide's
+  own written remedy for the leak — drop the relation's filter paths, project
+  the key away — so the boundary now does by itself what the reader was being
+  asked to do by hand. A declaration carrying **no** resolver is untouched: it
+  serves the attribute, so it keeps both axes.
+- **The to-MANY half of that same hatch stayed open.** Closing the to-one arm
+  left its byte-equivalent twin fail-open: a relation declared as
+  `posts = DjangoFilterListField(PostType)` — which
+  [Types › Custom queryset](usage/types.md#relation-scope-hatch) teaches for the
+  identical purpose, and which carries a resolver of its own by construction —
+  never reached the mask stamp, so `filter_fields = {"posts__title": …}`
+  compiled to an ORM join that reaches every row the mounted list field's
+  `get_queryset` exists to hide. One user intent, one release, two opposite
+  answers. Both arms now answer the same. The to-MANY arm's cost is strictly
+  smaller than the to-one arm's, because a reverse foreign key or a
+  many-to-many owns no column on the parent row: **nothing leaves the ordering
+  allowlist**, the relation stays selectable and stays scoped, and what goes is
+  the nested `posts__…` filter path — **which stops the schema building** with
+  `ImproperlyConfigured`. Drop those entries when you declare either arm.
+- **The shared filter input could be widened by a build the guard never saw.**
+  The union of every declaration sharing one `<Model>FilterInput` is measured
+  against every type serving it — but the measurement read the cache BEFORE the
+  assertion, and the assertion FORCES compiled field maps, which re-enters the
+  builder for the same model through a nested list field's own thunk. On that
+  path the cache entry was born inside the assertion, and the branch that
+  returned it recorded the narrow type as a server of paths nothing had ever
+  measured: its list field answered `filter: {bio: {icontains: …}}` for a column
+  its own SDL denies. The union is now measured in a loop that re-reads the
+  cache until it stops moving, so the shape being served and the shape being
+  measured cannot differ.
 - **One WebSocket socket could open unbounded subscriptions.** The
   `graphql-transport-ws` consumer registered every accepted `subscribe` with no
   ceiling, and each live operation joins its own channel-layer group — so a
@@ -114,6 +163,404 @@ All notable changes to this library are documented here. The format is based on
   does not restore it — an error body reaches the response cache, where a
   per-user decision would serve one caller's body to another. See
   [Security › "Did you mean" suggestions are stripped too](usage/security.md#did-you-mean-suggestions-are-stripped-too).
+- **`PERMISSION_SCOPED_SCHEMA` treated a typed GFK union as public.** The
+  implicit relation label is derived from the output type's
+  `extensions["gdx"]._meta.model`, and a `GraphQLUnionType` has no model — so a
+  `Meta.unions` GenericForeignKey field stayed untagged, and untagged means
+  public. The abstract arm of the relation-traversal bypass the 2.2.0 notes
+  describe: a caller whose *direct* root field to a member type was pruned away
+  still read that member's rows through the union. A union's requirement is now
+  the **union of its members'** read permissions, so keeping the field takes
+  every member's `view_M`. **This prunes a field that used to survive**: a
+  caller holding one member's permission but not another's now loses the field
+  entirely, because the union can return either member and the requirement
+  applies to the whole field. Expose the members as their own fields if they
+  are meant to be reachable independently. See
+  [Permission-scoped schema › A typed GFK union requires every member's permission](usage/permission-scoped-schema.md#a-typed-gfk-union-requires-every-members-permission).
+- **`ordering` was a read oracle over every column the type hides.** The
+  allowlist was built from `model._meta.concrete_fields` — the MODEL's columns,
+  not the TYPE's projection — so a column removed with `only_fields` /
+  `exclude_fields` was absent from the SDL, unselectable and unfilterable, and
+  still fully sortable. Sorting by it ranks the visible rows by the hidden
+  value; with a filter narrow enough to isolate a pair of rows the value is
+  recovered exactly, and a hidden boolean was read back for every row of a test
+  table. The docstring of the guard claimed it already rejected
+  `password` / `is_superuser`, and there was no `ordering_fields` option
+  anywhere in the package, so a project had no way to mitigate it. The
+  allowlist is now **read off the compiled node type that actually serves
+  `results`** — the type in the SDL, resolved per schema when that schema is
+  built — and enforces it on all three ordering paths: the queryset path, the
+  prefetch-cache (in-memory) path, and the nested window-prefetch optimization
+  — which applied its `ORDER BY` in SQL and returned pre-sliced rows, so no
+  later guard ever saw the term. For `LimitOffsetGraphqlPagination` and
+  `PageGraphqlPagination` the allowlist gates the **client argument only**: the
+  `ordering=` you pass when constructing one of those paginators is your own
+  configuration, identical on every request and never echoed back — the response
+  is the rows — so it may name a projected-away column and still serve. A client
+  that repeats that value is still rejected — the check follows the value's
+  provenance, not its text. **This rejects orderings that used to succeed**: any
+  client sorting by a column its type projects away now gets
+  `Invalid ordering field: '<name>'`. Affected are
+  projects that hid a column with `only_fields` / `exclude_fields` while still
+  ordering by it — expose the column if the ordering is legitimate, or drop the
+  ordering. A forward FK exposed as `author` keeps `author_id` orderable **only
+  when the type behind `author` publishes the key it points at** — see the
+  shared-predicate entry below — and paginators constructed directly, outside a
+  list type, keep the model-wide
+  allowlist. **The prefetch-cache path is stricter too**: it previously enforced
+  nothing at all on a type that declared no projection, so the same nested list
+  answered differently depending on whether its rows came from the database or
+  from the prefetch cache. It now refuses the terms the queryset path already
+  refused — a relation-spanning `author__name` on a nested list raises instead of
+  sorting by nothing. See
+  [Pagination › Ordering validation](usage/pagination.md#ordering-validation-security).
+- **Two shapes the ordering allowlist wrongly refused, and one it shared across
+  schemas.** The allowlist used to be built by re-applying the output compiler's
+  `only_fields` / `exclude_fields` / `include_fields` filters by hand, which is a
+  copy of the compiler held in a second place — and a copy is wrong for every
+  shape it did not anticipate. Three consequences, all closed by reading the
+  compiled type instead of re-deriving it:
+    - A **multi-table-inheritance child** whose `only_fields` names `id` was
+      judged to be hiding its primary key, because a child's own pk is the
+      implicit `<parent>_ptr` link and no `only_fields` list can contain it. That
+      refused cursor pagination on a working configuration, with a message
+      asserting the type hides a key its SDL plainly publishes. Such a type now
+      paginates by cursor again.
+    - An **explicitly declared class attribute** that re-publishes a column
+      `only_fields` removed (`bio = CharField()` on a type restricted to
+      `id` / `name`) made that column appear in the SDL while the allowlist still
+      refused to order by it. It is now orderable, because it is selectable —
+      provided the declaration carries **no resolver**, so that the field really
+      does serve the column (see the masked-declaration entry below).
+    - **Two schemas over one list container class** shared a single paginator
+      object, so building the second schema overwrote the first schema's
+      allowlist — the first schema then accepted a hidden column it had refused a
+      moment earlier. The per-schema answer now lives on a per-schema copy; the
+      instance you construct and mount is never mutated.
+- **A natural primary key hidden by the projection was still sortable.** The
+  allowlist exempted the primary key unconditionally, after the projection
+  filters ran. That is right for a surrogate `id` — ranking rows by an
+  identifier the client already reads gives nothing away — but a **natural** key
+  (a slug, a code, an email) carries business data and can be projected away
+  like any other column, so the exemption handed the read oracle straight back
+  on every such model: `ordering: "slug"`, `ordering: "pk"` and the pk's own
+  attname all passed the check, on the queryset path, the in-memory path and the
+  nested window-prefetch path alike. The pk is now added to the allowlist only
+  when the SDL publishes the key's **value**, and the `pk` alias rides
+  with it rather than standing on its own. On a multi-table-inherited child that
+  value is the parent's `id`, which the SDL does publish, so `ordering: "pk"` and
+  the parent-link column keep working there. **This rejects orderings that used to
+  succeed** on any type whose `only_fields` / `exclude_fields` removes its own
+  primary key. Nothing else changes: the paginators' generated pk tiebreak is
+  not client input and is not gated, and where the nested window optimization
+  cannot serve that tiebreak it declines and the plain prefetch path returns the
+  same rows.
+- **`CursorGraphqlPagination` published its ordering column through the
+  cursor.** The server-default exemption above rests on the configured ordering
+  never being echoed back. `CursorGraphqlPagination` takes the same `ordering=`
+  kwarg and *does* echo it: `pageInfo.startCursor` and `endCursor` are base64 of
+  `cursor:<ordering value>\x1f<pk>`, so a paginator pointed at a column the node
+  type projects away printed that column verbatim to any client willing to
+  base64-decode the token — a direct read of the hidden value, not merely a
+  ranking of it. The cursor paginator now enforces the projection allowlist on
+  its configured ordering regardless of provenance, at the one seam both
+  `paginate_queryset` and `get_page_info` resolve the ordering through.
+  **This is a hard failure, not a downgrade**: a `CursorGraphqlPagination`
+  configured to order by a projected-away column now raises
+  `GraphQLError: Invalid ordering field: '<name>'` on every request. Point it at
+  a column the node type exposes. See
+  [Pagination › Ordering validation](usage/pagination.md#ordering-validation-security).
+- **`CursorGraphqlPagination` also published a hidden primary key through the
+  cursor.** Gating the ordering column left the other half of the token open: a
+  composite cursor is `cursor:<ordering value>\x1f<pk>`, and that `<pk>` is
+  appended unconditionally. A type whose `only_fields` / `exclude_fields` removes
+  its own **natural** primary key — a slug, a code, an email — therefore had that
+  key printed verbatim in `pageInfo.startCursor` and `endCursor` even when the
+  ordering named a perfectly public column. The tiebreak is what makes the keyset
+  boundary total, so it cannot simply be dropped: without it a `value > boundary`
+  page silently skips every row tied on the ordering value. Encrypting the cursor
+  would keep both properties at the cost of a key to manage, a rotation story and
+  a wire-format break; tiebreaking on an exposed column instead needs that column
+  to be unique, which nothing can promise. So **the configuration is refused**: a
+  list type whose SDL does not publish its primary key's value can no longer be
+  paginated by cursor, and every request raises `GraphQLError` naming the problem
+  without naming the hidden column. That covers an `only_fields` list that simply
+  omits the key as much as an `exclude_fields` that names it, and it does **not**
+  cover a multi-table-inherited child, which publishes the parent's `id`. Publish
+  the key, or use `LimitOffsetGraphqlPagination` /
+  `PageGraphqlPagination`, which echo nothing. **The cursor's wire format is
+  unchanged** — existing cursors keep decoding exactly as before. See
+  [Pagination › Ordering validation](usage/pagination.md#ordering-validation-security).
+- **A nested list whose child type hides its pk failed on an empty `ordering`.**
+  The prefetch-cache path substitutes the paginator's own pk ordering when none
+  was resolved, so the in-memory page matches the DB-side window slice. Provenance
+  was read off *whether the client sent an `ordering` argument*, and an argument
+  can normalize to nothing (`","`, `" "`, `"+"`): the projection allowlist then
+  survived while the value did not, and the server's own tiebreak was validated as
+  if the client had asked for it. Any such value answered
+  `Invalid ordering field: 'id'` on a nested list whose child type projects its
+  primary key away. The substitution now drops the allowlist along with the value
+  it replaces. A real client term outside the allowlist is still rejected.
+- **A declared field could publish a column's NAME while hiding its value, and
+  `ordering` believed the name.** Reading the allowlist off the compiled type
+  answers "is this name in the SDL", which is not the same question as "does
+  this field serve that column". A declared class attribute wins over the
+  model-derived field of the same name, so a type could drop `bio` with
+  `only_fields`, declare `bio = CharField()` with a `resolve_bio` returning
+  `"[redacted]"`, and hand every client the redaction while
+  `ordering: "bio"` ranked the rows by the raw column — the read oracle the
+  projection exists to close, rebuilt out of the type's own declaration. On
+  `CursorGraphqlPagination` it was not even a ranking: the hidden value came
+  back verbatim inside `pageInfo.startCursor`. A masked `id` did the same for
+  the primary key, carrying `ordering: "pk"` in with it. The compiler now marks
+  a declared field whose value does **not** come from the column — the test is
+  the resolver it compiled, so a field-level `resolver=` and a class
+  `resolve_<name>` are both covered — and the allowlist skips those columns.
+  **This rejects orderings that used to succeed** on any type that declares a
+  resolver over a model field name; a declaration with no resolver keeps the
+  default attribute resolver, still serves the column, and stays orderable. The
+  rule fails closed: a `resolve_<name>` that happens to return the real column
+  loses the ordering term too, because no build-time check can read a resolver
+  body. Drop the resolver, or publish the substitute under a different name. See
+  [Pagination › Ordering validation](usage/pagination.md#ordering-validation-security).
+- **A pruned schema answered ordering questions with the FULL schema's
+  allowlist.** Under `PERMISSION_SCOPED_SCHEMA` the pruned schema is a clone,
+  and cloning a field carried its resolver through verbatim — including the
+  paginator the allowlist is stamped on, which was derived once against the
+  *unpruned* node type. A caller denied `view_author` was served a schema with
+  no `author` field on the post node and no author type in the type map at all,
+  and could still send `results(ordering: "-authorId")` and rank the rows by
+  that foreign key. Every pruned clone now stamps its own paginator copy from
+  the node type **that clone** publishes, so the answer belongs to the schema
+  actually serving the request; a caller holding the permission keeps the term
+  on the very same field. Both paginating shapes are covered: the list
+  container's `results` and a flat `DjangoFilterPaginateListField`. Schemas
+  built without the flag are untouched. See
+  [Permission-scoped schema › `ordering` follows the pruned schema](usage/permission-scoped-schema.md#ordering-follows-the-pruned-schema-not-the-full-one).
+- **An anonymous caller could plant unbounded permanent cache entries.**
+  `GraphQLView.cache_key_prefix` partitions the response cache by a hash of the
+  `Authorization` header when the request is not authenticated — unverified
+  input a client can vary per request — and each identity seeds its own
+  namespace version counter, stored with `timeout=None` so it never expires (it
+  has to outlive the responses it namespaces). One anonymous client sending a
+  fresh token per request therefore minted a fresh never-expiring cache key per
+  request. The counter's namespace is now **bucketed** for any identity derived
+  from an unauthenticated request: a fixed 64 buckets, so what an anonymous
+  caller can create is bounded no matter how many credentials it invents.
+  Authenticated identities (bounded by your user table) and the single shared
+  `anon` partition keep their exact namespace. **Isolation is unchanged** — the
+  response entry still carries the full identity, so two callers sharing a bucket
+  never share a response body. **Invalidation granularity is a behaviour
+  change**: two token-only callers that land in the same bucket now share a
+  version counter, so a mutation from one makes the other's cached entries
+  unreachable. The counter only moves forward, so that can only turn a cache
+  **hit** into a **miss** — the next read re-executes against current data and
+  nothing stale is ever resurrected — but a token-only client that relied on its
+  reads surviving another client's mutation will see extra misses. Authenticate
+  it to get its own counter back. A custom `cache_key_prefix` inherits the bound
+  automatically. **The spent property is reachable by an attacker, and that is
+  stated rather than closed**: the bucket is a pure function of a caller-chosen
+  header, so an unauthenticated client can hash candidates until one lands in any
+  bucket it likes and evict that bucket's members. Salting would not help — the
+  namespace is small by construction, so a caller that cannot aim can still cover
+  it by volume. The ceiling is misses, never bodies. See
+  [Caching › Bucketing for unauthenticated identities](usage/caching.md#bucketing-for-unauthenticated-identities)
+  and
+  [Views › Response caching and cache identity](usage/views.md#response-caching-and-cache-identity).
+- **A hand-mounted interface field leaked its implementors' rows.** The
+  permission-scoped schema derives a field's implicit label from its output
+  type's model; an abstract type has none, and the pruner treats an untagged
+  field as public. 2.2.0 closed this for typed GFK unions but left the sibling
+  interface arm open, so `field(SomeDjangoInterfaceType)` handed a caller rows
+  of every implementor while a direct field to the very same implementor type
+  was pruned away. An interface's label is now the **union of the read
+  permissions of every implementor the schema mounts**, exactly as a union's is
+  — an AND, because the field can return any of them. A caller holding some but
+  not all of those `view` permissions **loses the interface field** rather than
+  keeping one that can still return a row they may not read; expose those
+  implementors through their own gated fields instead. The implementors are read
+  from the schema's own `get_possible_types`, not from the process-wide registry:
+  a registry is populated at class-definition time and is a strict superset of
+  what any one schema mounts, so scoping the label to it would have cost a caller
+  the field over a type no query could ever reach — turning a leak into an
+  outage. The schema-level label set is derived from the same schema, so the two
+  can never disagree.
+- **A multipart POST under ASGI was bounded by nothing but the client's own
+  claim.** `MAX_REQUEST_BODY_SIZE` measures the body itself precisely because
+  `Content-Length` is client-supplied — but that measurement reads the body,
+  which for `multipart/form-data` breaks the streamed upload and collides with
+  the CSRF check, so multipart was left with the declared length as its only
+  check. Nothing downstream re-imposed that declaration under ASGI:
+  `ASGIHandler.read_body` spools every chunk with no cap and hands the spool
+  straight to `request._stream` (no `LimitedStream`, unlike WSGI), and
+  `MultiPartParser` builds its reader from `_chunk_size`, consulting
+  `_content_length` only to shortcut a **zero**-length body. A multipart POST
+  declaring `Content-Length: 100` and sending 8 MiB was therefore answered
+  `200 OK` with all 8,388,608 bytes parsed, under a cap of 1 KiB. Multipart is
+  now measured **without being read**: `request._stream` is seeked to its end and
+  straight back, which allocates nothing, leaves the parser an untouched stream,
+  keeps the upload streaming to disk, and reports the real size — the same
+  measurement Django's own `HttpRequest.body` performs on a seekable stream, done
+  one level up so the answer is a 413 rather than a 400. WSGI is unaffected: its
+  `LimitedStream` already truncates an under-declared body, and where the stream
+  cannot be seeked a multipart POST declaring **no** length is refused with
+  **HTTP 411 Length Required** instead. **This rejects requests that used to be
+  accepted** — an under-declared multipart body now gets a 413, and a chunked one
+  a 411 on WSGI — and only when the cap is configured; projects leaving it at its
+  `None` default are unaffected. Note the boundary, now stated plainly in the
+  docs: **no view-level setting can stop a multipart body from being received
+  under ASGI**, only from being processed. Bound reception at your ASGI server.
+  See
+  [Settings › What this cannot do under ASGI](usage/settings.md#what-this-cannot-do-under-asgi).
+- **A column a type hid was still fully filterable — the sharpest read oracle in
+  the library.** `Meta.only_fields` / `Meta.exclude_fields` removed a column from
+  the SDL and, since 2.2.0, from `ordering` — but the filter input ignored the
+  projection completely. It is compiled from `Meta.filter_fields` against the
+  MODEL, with no idea which columns the type publishes, so
+  `filter: { bio: { exact: "…" } }` answered **exactly, in one request**, for a
+  column the schema said did not exist. `icontains` turned the same argument into
+  a prefix walk that recovers the value character by character, and the whole
+  lookup set was published in the SDL as `<Model>FilterInput.bio`, so the oracle
+  was discoverable by introspection rather than guessed. Every other door led to
+  the same place: a relation-spanning `author__bio` reached it across a join, the
+  `and` / `or` / `not` combinators composed over it, a nested list filter and a
+  per-field `fields=` override both resolved to the same shared per-model input,
+  and a narrow declaration was silently **widened** to the model's root paths, so
+  a list that declared only `name` still served `bio`. The projection is now
+  what it was always documented to be — a **security boundary, not an output
+  shape** — and a `filter_fields` entry naming a column its type projects away
+  raises `ImproperlyConfigured` while the schema builds, naming the type, the
+  entry and the column. Each hop of a `__` path is measured against the type
+  that publishes THAT hop, so hiding `bio` on the author's type also refuses
+  `PostType.filter_fields = {"author__bio": …}`; widening a cached input is
+  checked on the same path, so the second door is shut with the first. **A schema
+  that builds today can therefore fail to build after upgrading — which is the
+  point: every schema that stops building was answering that oracle.** The entry
+  is refused rather than silently dropped, following the 2.2.0 precedent, because
+  dropping it would repeat the exact defect 2.2.0 fixed — an option accepted and
+  ignored — and only the operator can say which of the two contradicting options
+  was meant. The fix is one line: publish the column (`only_fields` /
+  `include_fields`, or drop it from `exclude_fields`), or drop the
+  `filter_fields` entry. **One boundary stays open, deliberately and documented**:
+  the BODY of an `@filter_field` method, whose argument is an opaque scalar and
+  whose ORM lookup lives in user Python where no build-time analysis can see it —
+  keep those bodies inside your own projection. Its **name** is checked, so the
+  one-line rename out of a refusal is not a bypass; see the shared-predicate
+  entry below. Subscription filter inputs were
+  already correct (they are built from the projected output field names) and are
+  unchanged. See
+  [Filtering › The projection is the outer boundary](usage/filtering.md#projection-boundary).
+- **The ordering axis and the filter axis had each invented their own notion of
+  "hidden", and they contradicted each other.** The two entries above were
+  written against the same rule and implemented twice: ordering read the
+  compiled type and honoured the compiler's mask stamp, while filtering
+  re-derived the answer from `Meta`. On the identical declaration — a column
+  `only_fields` removed and a declared attribute put back with a resolver — the
+  ordering axis said *published* and the filter axis said *hidden*. That is the
+  same drift the ordering axis had already suffered internally, now repeated
+  BETWEEN axes, and a schema whose two guards disagree is a schema whose rule
+  nobody can state. Both axes now ask **one predicate**,
+  `core.output_compiler.publishes_column_value`, against the compiled type that
+  will serve the request: *does this type hand out the VALUE this column holds?*
+  Absence, a projection, a masking declaration and a compiler-dropped relation
+  are one answer, and neither axis can drift from the SDL again. Three
+  behaviour changes fall out of it, all breaking, all in the same direction —
+  **closing a read the rule always prohibited**:
+    - **A forward FK's `_id` column now follows the TARGET type's key.**
+      `ordering: "author_id"` was admitted unconditionally whenever the node
+      published `author`, justified by "the id is already readable through
+      `author { id }`" — a claim about the *author's* type that nobody asked.
+      Where that type projects its own key away, `author { id }` does not exist
+      either, so the ordering ranked rows by a key nothing in the schema hands
+      out. It is now refused with `Invalid ordering field: 'author_id'.`, and
+      `filter_fields = {"author": ("exact",)}` is refused at build time on the
+      same configuration, because a relation named with no tail filters on that
+      same key. **Publish the key on the target type** if the ordering or the
+      lookup is legitimate.
+    - **A `filter_fields` path through a relation whose target model has no
+      registered type now fails the build.** The output compiler drops such a
+      relation, so the schema could never name the rows the nested filter input
+      reached — a substring oracle over a model no query can select. Register a
+      type for the target, or drop the path.
+    - **An `@filter_field` method spelled like a projected-away column now fails
+      the build.** Its name compiles the very `<Model>FilterInput` field a
+      `filter_fields` entry naming it is refused, so the rename out of a refusal
+      is shut. The method **body** remains the documented open boundary; a
+      method whose name is not a column on the model is untouched.
+
+  One over-refusal was closed in the same pass, in the opposite direction: the
+  same-name `source=` shortcut (`bio = CharField(source="bio")`) compiles to a
+  resolver that provably reads that very attribute, so it is no longer stamped
+  as a mask and the column stays orderable **and** filterable. A `source=`
+  naming a different attribute, and a `resolve_<name>`, still withdraw the
+  column. The rule, its one exception and the two boundaries it cannot close are
+  now stated once, in
+  [Types › The projection is a security boundary](usage/types.md#projection-security-boundary);
+  every other page links there.
+- **The filter guard measured the projection of a type that was not serving the
+  request.** It resolved the serving type by MODEL through the graphene
+  registry — a last-wins index a type opts out of with the public
+  `Meta.skip_registry` — so the boundary was measured against whichever type
+  happened to hold the model's slot. A narrow type that left the registry, or
+  simply lost the slot to a wider sibling declared after it, was checked against
+  the sibling's projection and its own hidden columns sailed through: the guard
+  was a no-op for exactly the type about to answer. The compiler path now NAMES
+  the type it is measuring — `core.base.resolved_output_type` on the pair being
+  built, so a permission-scoped clone is measured as itself, and a list-object
+  field is measured against the node it paginates rather than the container.
+- **A relation-direct filter entry over a reverse FK or a many-to-many skipped
+  the boundary entirely.** `{"posts": ("exact",)}` filters on the *post's*
+  primary key, but a reverse foreign key and a many-to-many own no column on the
+  declaring model, so the predicate declined them and the last-hop check let
+  them through — while the byte-identical `{"posts__id": …}` spelling of the
+  same query was refused. Same query, two spellings, opposite answers. The
+  target's key is now asked of the target type directly, so both spellings agree.
+- **Two node types over one model shared one `<Model>FilterInput`, and only one
+  of them was measured.** The input is cached per **model** and every context
+  converges on the model's root declaration, so a narrow `DjangoObjectType`
+  mounted beside a wide one is served the **union** of both declarations — while
+  the guard only ever saw the declaration in front of it. The narrow type's list
+  field was therefore filterable by a column its own SDL projects away, with no
+  build failure at all. The boundary is now measured against the union the shared
+  input will actually serve, and against **every** type that will serve it.
+- **A `DjangoListObjectType`'s projection was silently discarded whenever a
+  `DjangoObjectType` was already registered for the model** — which is the
+  ordinary documented arrangement. The container builds its node type from
+  `Meta.only_fields` / `include_fields` / `exclude_fields` **only** when it mints
+  it; reusing a registered type dropped all three without a word, so every column
+  the operator meant to hide stayed readable, orderable and filterable.
+  Declaring one in that situation now raises `ImproperlyConfigured` at class
+  definition, naming the option, the model and the type that registered the node
+  — the same answer 2.2.0 gave the identical defect on `DjangoModelType`. **This
+  fails a schema that builds today**, deliberately: only the already-leaking
+  configuration is affected, and the fix is to move the projection to the node
+  type, where it was always taking effect. See
+  [Types › Configuration Options](usage/types.md#configuration-options).
+- **Under `PERMISSION_SCOPED_SCHEMA` the two axes disagreed on the same pruned
+  schema.** The ordering allowlist is re-derived from the pruned clone and
+  refuses a dropped relation's column; the `filter` argument and its whole nested
+  `<Model>FilterInput` rode through the prune verbatim. One schema, two answers —
+  and the surviving half was a prefix oracle over a model the clone does not
+  mount. The pruned filter input now narrows with the schema on the same
+  predicate: a relation the pruned node type no longer publishes is dropped from
+  it, and a nested input left over an unmounted model falls out of the type map.
+  The full schema is untouched, and each pruned variant carries its own clone.
+  See
+  [Permission-scoped schema › `filter` follows the same prune](usage/permission-scoped-schema.md#filter-follows-the-same-prune).
+- **A `filter_fields` entry naming nothing was accepted and ignored.** `"pk"` is
+  an ORM alias `_meta.get_field` does not answer to, and `"id"` names no column
+  on a natural-key model; either one compiled to **nothing**, so an operator
+  reading their own `Meta` believed the list was filterable by its key while
+  every request returned the unfiltered set. A segment naming no field on the
+  model that owns it now fails the build, naming the model's real primary key.
+  A lookup spelled into the KEY (`"name__icontains"`) is refused by the same
+  guard, and for the same reason: lookups are declared in the entry's **value**,
+  so the compound key lands on the model's own leaves where `_meta.get_field`
+  does not answer to it and the field thunk dropped it. It compiled to exactly
+  as much as `"pk"` — nothing — and exempting it refused one dead spelling while
+  accepting its byte-equivalent twin. **This rejects a declaration that used to
+  build**: move the lookup into the value (`{"name": ("icontains",)}`), which is
+  what it was always compiled from.
 
 ### Changed
 
@@ -146,6 +593,79 @@ All notable changes to this library are documented here. The format is based on
 
 ### Fixed
 
+- **Two `pytest` runs in one checkout reported each other's coverage, then
+  `0.00%`.** `pytest-cov` collects into a per-process file and then COMBINES
+  every sibling file next to the configured data file. With the data file at the
+  repo root, a second run in the same checkout is a sibling: each run swept up —
+  and deleted — the other's partials, so the loser reported the winner's totals
+  and then `FAIL Required test coverage of 95% not reached. Total coverage:
+  0.00%` and exited 1, with 4120 tests passing above it. Every concurrent
+  verification of this repository was unreliable, and the failure reads exactly
+  like a real coverage regression. Each process now gets its own data-file
+  directory, so the combine sweep can only find its own partials. `coverage.xml`
+  and `htmlcov/` stay where they were, because CI uploads them from there.
+- **The flat paginated list field ranked by a type its schema does not serve.**
+  Every other ordering-allowlist stamper reads the node type the schema being
+  built holds; `DjangoFilterPaginateListField` stamped
+  `_type._meta.graphql_output_type` — the CLASS-DEF canonical instance — once,
+  while the root class body was still executing. That instance is measurably not
+  the object the schema serves (twelve of the fields this project's own suite
+  builds resolve to a different one), and it agreed only because a fork
+  recompiles the same class from the same `Meta`. The allowlist is now derived
+  from the served node type on every mount path, so a schema publishing less can
+  no longer be ranked by a column its SDL denies.
+- **A projection MIRRORING the reused type's own was refused.** Declaring a node
+  type beside its `DjangoListObjectType` — the ordinary documented
+  arrangement — and restating the same `only_fields` / `exclude_fields` on both
+  failed the build, because the guard fired on the mere PRESENCE of the option
+  rather than on it making a difference. Honouring a mirror and dropping it
+  publish the same columns, so the schema cannot tell them apart and neither
+  can a reader: the refusal cost a defensive restatement an outage, and it broke
+  the "every common option in one place" sample in
+  [Types](usage/types.md#configuration-options). The guard now compares the
+  SELECTED columns, through the same predicate `converter.construct_fields`
+  selects with, so an equivalent projection spelled differently stands too. The
+  same allowance applies to the identical guard on `DjangoModelType`. A
+  projection that would genuinely change what is exposed is refused exactly as
+  before.
+- **A build-time refusal reached the caller as a `TypeError`.** Every guard in
+  the filter builder raises `ImproperlyConfigured` from inside a graphql-core
+  fields thunk, and graphql-core rewraps ANYTHING a thunk raises as a bare
+  `TypeError` whose message chains generated type names. The schema build
+  already dug the real error back out; the two EAGER force sites
+  (`compile_all_outputs`, which the app-ready hook and every schema module call,
+  and the forked `compile_outputs_into`) did not — so which site happened to
+  force the thunk first decided the exception type the operator saw, and the
+  documented contract was wrong for the most common path. All three now force
+  fields through one helper that surfaces the buried configuration error.
+- **A filter refusal named a `Meta` that does not exist.** The message opened
+  with `<Model>.filter_fields`, and a model has no `Meta.filter_fields`: the
+  declaration lives on a TYPE, and the input is shared per model, so the type
+  that contributed the path is not always the type serving the rows. Each path
+  now carries the name of the class whose `Meta` declared it — the node's, not
+  the container's, when a `DjangoListObjectType` inherited the declaration — and
+  the refusal names it, so "drop the entry" points at a file the reader can
+  open. An entry whose deep hop names nothing is attributed the same way: the
+  entry to the declaration it was written in, the missing segment to the model
+  that fails to hold it.
+- **…and then named a class that exists in no user file.** An auto-expanded
+  to-many gets a container the reader never wrote: `get_or_create_list_object_type`
+  mints one and SEEDS its `Meta` with the node type's own `filter_fields` so the
+  nested list stays filterable. A seeded declaration looked self-declared, so
+  the attribution above handed the blame to `GenericListType.Meta.filter_fields`
+  — a factory class inside this library, which is the exact defect the fix above
+  set out to close, reintroduced one code path over. The container is now
+  credited with a declaration only when it is not the very object its node type
+  holds, so an inherited entry names the node's `Meta` whether the container was
+  written by hand or minted by the compiler.
+- **A relation refused for the wrong reason listed every cause but the likely
+  one.** The traversal refusal offered three explanations — the projection
+  removed it, a declared attribute publishes the name over a leaf, or the
+  compiler dropped it for an unregistered target — and none of them fits the
+  reader who declared the to-one scoping hatch. They read "publish `author`"
+  while looking at `author` in their own `only_fields`. The message now names
+  the fourth cause: a declared attribute publishing the name over a resolver of
+  its own.
 - **`totalCount` was counted whether or not the client asked for it.** A list
   served by `DjangoModelType` issued its `COUNT(*)` eagerly, so a query
   selecting only `results` paid for two round trips where the
@@ -168,9 +688,19 @@ All notable changes to this library are documented here. The format is based on
   from each input field's snake_case model attribute, so `profilePhoto` — the
   only spelling a client can discover from the schema — matched nothing: the
   part was dropped and the mutation still answered `ok: true` with no file
-  written. Both spellings are now accepted, read off the same compiled input
-  field so the pair cannot disagree. The projection guard is unchanged: a part
-  naming a field the input does not publish is still ignored under either name.
+  written. Both spellings are now accepted, derived from the same compiled input
+  field so neither can name a target the other does not. The projection guard is
+  unchanged: a part naming a field the input does not publish is still ignored
+  under either name.
+- **A request naming one field under BOTH spellings let part order decide which
+  file landed.** Accepting the alias and the attribute made a self-contradicting
+  request possible — `profilePhoto` and `profile_photo` in one body, two files,
+  one column — and the merge folded the accepted parts in whatever order
+  `request.FILES` yielded them, so which file was written depended on how the
+  client happened to serialize the body rather than on the body itself. The
+  alias is now applied first and the model attribute second, so the attribute
+  always wins and the outcome is a property of the request. A body naming a
+  field under exactly one spelling, which is every ordinary body, is unaffected.
 - **A malformed batch entry answered HTTP 500 where the docs promise 400.** A
   batch body was checked for being a non-empty list but never for what the list
   held, so an entry that was not a JSON object reached `get_graphql_params`,
@@ -268,6 +798,111 @@ All notable changes to this library are documented here. The format is based on
   drags the shared relation graph into a schema. Verified with the full suite
   under 150 distinct `--randomly-seed` values, including the seeds that used to
   fail.
+- **The SSE subscription endpoint answered HTTP 500 for a JSON body that was
+  not an object.** `[1,2,3]`, `"x"` and `null` all decode cleanly and only then
+  broke the transport's mapping assumption (`body.get(...)` →
+  `AttributeError`), so SSE was the one surface in the library returning a
+  server error for a body `GraphQLView` already classifies as a client error.
+  It now answers `400 Bad Request` with the HTTP view's own message, *The
+  received data is not a valid JSON query.* The same decode guard now also
+  catches `RecursionError`, so a deeply nested JSON body — which is not a
+  `ValueError` and used to escape as a 500 — is a plain 400 too. A well-formed
+  request on the endpoint is unaffected.
+- **A WebSocket `subscribe` with a non-object `payload` was silently dropped.**
+  The payload went straight into the operation task, where `payload.get(...)`
+  raised, was logged, and then vanished: no `error` frame, no `complete`, no
+  response of any kind, leaving the client unable to tell the protocol
+  violation from a slow server. The consumer now answers with its own
+  `{"type": "error", "id": …}` frame — the same shape every other malformed
+  `subscribe` gets — and the socket plus every operation already running on it
+  keep going.
+- **A limit set to `0` did the opposite of what it says.** `MAX_QUERY_DEPTH: 0`
+  and `MAX_QUERY_COST: 0` were read as falsy by their validation rules, which
+  returned early — so a limit that reads as "allow nothing" allowed
+  *everything*, with no warning, while `None` was documented as the way to
+  disable them. A negative value was worse: it enforced a budget no query could
+  meet and named that negative in the error. `PERMISSION_SCHEMA_CACHE_MAXSIZE:
+  0` had the same shape in reverse, quietly restoring the default `64` instead
+  of caching nothing. All three are now validated where every reader routes
+  through — the settings reader itself — and a value below the key's minimum
+  raises `ImproperlyConfigured` naming the key, the minimum and the remedy.
+  **`None` remains the only off switch for the two query limits**, and `0` is
+  now honored for the cache bound as "cache nothing". Projects on the defaults
+  are unaffected; a project that had written `0` was already running without
+  the guard it thought it had. See
+  [Settings › Query depth & cost](usage/settings.md#query-depth-cost).
+- **`PERMISSION_SCHEMA_CACHE_MAXSIZE` was frozen at import.** The bound was
+  captured in the cache's constructor and the cache is a module singleton, so
+  the setting was fixed for the life of the process and `override_settings`
+  could never reach it. It is now read on every eviction pass instead; nothing
+  else about the cache's identity depends on it, since the bound only decides
+  when to evict, never what a key means.
+- **`MAX_REQUEST_BODY_SIZE` turned every multipart POST after the first into a
+  500.** `dispatch` carries `@ensure_csrf_cookie`, whose token check reads
+  `request.POST` whenever the client holds a `csrftoken` cookie — and for
+  multipart that drains the upload stream. The body guard then called
+  `len(request.body)` on the drained request and raised
+  `RawPostDataException`. Since the endpoint plants that cookie on every
+  response, only a fresh client's *first* multipart POST ever worked. The same
+  read also dragged multipart under Django's `DATA_UPLOAD_MAX_MEMORY_SIZE`
+  (2.5 MB by default), which a streamed upload otherwise escapes, so a 3 MB file
+  that uploaded fine with the guard off became an opaque Django 400 with the
+  20 MB cap the docs recommend — and the documented workaround, raising
+  `DATA_UPLOAD_MAX_MEMORY_SIZE`, doubled peak memory by pulling the whole body
+  into RAM. The guard now measures multipart **without reading it** — every
+  other content type is still measured by reading. This fix first fell back to
+  the declared `Content-Length` alone, on the belief that Django caps the
+  request stream at `CONTENT_LENGTH`; that is true only under WSGI, so the
+  fallback bounded nothing under ASGI. See *A multipart POST under ASGI was
+  bounded by nothing but the client's own claim* above for the measurement that
+  replaced it, and
+  [Settings › How the guard reads each content type](usage/settings.md#how-the-guard-reads-each-content-type).
+- **`DOCUMENT_CACHE_MAXSIZE = None` took the whole endpoint down.** `None` is
+  the documented "no limit" value for every sibling bound in the namespace, but
+  here it reached `int(None)` and every single request came back HTTP 400
+  carrying the leaked `TypeError` text. It now means unbounded, as it reads.
+- **Three malformed bodies answered 500 instead of 400.** A deeply nested JSON
+  body (20 KB is enough) raised `RecursionError` out of `json.loads`, which is
+  not a `ValueError` and so missed the decoder's handler; an
+  `application/graphql` body that is not valid UTF-8 raised `UnicodeDecodeError`
+  from a `decode()` the neighbouring JSON branch already guarded; and with
+  `CACHE_ACTIVE` a `query` that is not a string, or one holding a literal nested
+  past the parser's recursion limit, escaped the `except GraphQLSyntaxError` in
+  the cache's pre-parse. All three are ordinary bad client input and are now
+  reported as such. The pre-parse now matches the sibling call site in
+  `execute_graphql_request`, which already treated any parse failure the same
+  way.
+- **The documented `source=` shortcut silently cost a column its ordering.** The
+  ordering guard treats a declared attribute carrying a resolver as publishing
+  the field's *name* without its *value*, and `source="x"` is compiled into a
+  resolver — so `email = CharField(source="email")`, the no-logic shortcut
+  [Types](usage/types.md#custom-fields-with-resolvers) documents, made `email`
+  unsortable on a type that hides nothing, and `id = IDField(source="id")` took
+  the primary key with it, which is the tiebreak every cursor page needs. A
+  source naming the field's **own** attribute is now recognized as the
+  passthrough it is. A source naming any other attribute, and a
+  `resolve_<name>`, are unchanged: both still withdraw the column, because no
+  build-time analysis can read a resolver body.
+- **A filter refusal named the type it asked, not the type you have to change.**
+  A deep path (`author__posts__title`) told the reader to publish the missing
+  hop on the *root* type, which never held it, and a relation the compiler
+  dropped told them to publish a name whose absence has a cause the message did
+  not list — no `Meta` edit brings back a to-one relation whose target model has
+  no registered type. Each refusal now names the type owning the failing hop,
+  and a dropped relation names the target model that needs a
+  `DjangoObjectType`. The documentation's standing advice to disregard the
+  message is gone with it.
+- **`FilterBackend.build_input_type` could not name the serving type**, so the
+  public seam fell back to `registry.get_type_for_model` — the model-keyed,
+  last-wins index a type opts out of with `Meta.skip_registry`, and the very
+  lookup this release removed from the compiler path — which made the projection
+  guard a no-op through it. The seam now takes `node_type` and forwards it. The
+  registry fallback is kept for callers that name none.
+- Three write-only assignments on `DjangoObjectType._meta` (`only_fields`,
+  `include_fields`, `exclude_fields`) were removed. Nothing read them: the
+  output compiler takes the projection from the registration entry, and neither
+  projection guard reads a declaration at all. The comment beside them named a
+  reader that does not exist.
 
 ### Removed
 
@@ -297,9 +932,29 @@ All notable changes to this library are documented here. The format is based on
   key was unreachable in both — and the package's third field map had already
   dropped it, leaving the three to drift apart. A `NullBooleanField` resolves to
   a boolean exactly as before, now through one key in all three.
+- The **`CAMELCASE_ERRORS`** setting, which had **zero consumers**. It shipped
+  with a documented default of `True` and a promise to camelCase the `field` /
+  `path` keys of error objects; no code in the package ever read it, so setting
+  it — to either value — changed nothing at all. It is removed rather than
+  implemented, because a setting an operator flips while believing something
+  changed is worse than no setting. A project that still passes it now gets the
+  `django_graphex.W001` unknown-key warning from `manage.py check` naming it,
+  and error payloads are byte-identical to 2.2.0.
 
 ### Documentation
 
+- **A projection rule the code does not implement, and a table that outgrew its
+  own sentence.** [Types › What "hidden" means](usage/types.md#what-hidden-means)
+  promised that a relation published over a type bound to **another** model
+  measures as unpublished on both axes, on the grounds that no target answers
+  for the key. It never did, and it must not: such a declaration carries no
+  resolver, so the default attribute resolver hands out the real target row and
+  `author { id }` returns the author's own primary key — refusing to rank by a
+  value the same request returns is precisely the SDL-versus-guard drift the
+  predicate exists to end. The promise is withdrawn rather than implemented, and
+  the shape it described is named for what it is: a schema bug, not a projection
+  boundary. The sentence introducing that table also announced four causes over
+  six rows; the table is now five rows and the count matches.
 - **The example project demonstrated none of the 2.2.0 permission story, and its
   nested mutation was the exact shape those release notes call vulnerable.**
   `examples/playground` imported five permission classes to assign one, and
@@ -360,6 +1015,46 @@ All notable changes to this library are documented here. The format is based on
   `String` where a field with `choices` compiles to `<app_label><Model><field>Enum`,
   and enum values sent as the model's stored `'draft'` / `'published'` instead
   of the schema's `DRAFT` / `PUBLISHED`.
+- **`DjangoObjectType.get_queryset` did not scope a to-ONE relation, and nothing
+  said so.** The to-MANY boundary was documented — an auto-expanded nested list
+  reads the parent's prefetch cache and skips the hook — but the forward
+  `ForeignKey` / `OneToOneField` arm has the same boundary and was documented
+  nowhere, while `apply_object_type_get_queryset` called itself "the single
+  choke point … every path". So `{ allAuthors { results { name } } }` hides a
+  scoped-out row and `{ allPosts { results { author { name } } } }` serves it.
+  The boundary note now names both directions, spells out that `get_queryset` is
+  a **field-level** scope that must not be relied on to hide relation-reachable
+  rows, and shows the escape hatch for each: an explicitly **declared** relation
+  field — a `DjangoFilterListField` for the to-MANY arm, a `Field(TargetType)`
+  plus its `resolve_` method for the to-ONE arm. A bare `resolve_<relation>`
+  method with no declaration does **nothing** — an auto-expanded relation field
+  is derived from the model, so nothing on the parent class is consulted — and
+  the note now says so, because a mitigation snippet that silently no-ops is
+  worse than the boundary it claims to close. Both snippets are executed by the
+  suite. The docstring names its three real callers instead of claiming every
+  path. The
+  behaviour is unchanged: enforcing the to-ONE arm would trade the
+  `select_related` join for one query per parent row on exactly the types that
+  opted into scoping. See
+  [Types › Custom queryset (per-request filtering)](usage/types.md#custom-queryset-per-request-filtering).
+- **The example project shipped an upload demo its own settings rejected.** The
+  playground advertises a 5 MB `Base64FileInput` upload and a 20 MB
+  `MAX_REQUEST_BODY_SIZE`, but left Django's `DATA_UPLOAD_MAX_MEMORY_SIZE` at
+  its 2.5 MB default — and a base64 upload travels inside the JSON body, so a
+  5 MB file was refused with an opaque HTML 400 long before either library cap
+  saw it. The project now sets `DATA_UPLOAD_MAX_MEMORY_SIZE` to match, and the
+  settings guide has a table saying which content types that ceiling applies to:
+  base64 and every other in-memory body, never multipart, which streams to disk.
+  The views guide gained the matching per-content-type note on the 413 guard.
+- **Two pages disagreed about `0` in one release.** The settings reference says
+  `MAX_QUERY_DEPTH` and `MAX_QUERY_COST` refuse `0` and negatives with
+  `ImproperlyConfigured` — but [Query depth & cost limits](usage/query-limits.md),
+  the page a reader actually lands on for those two settings, still presented
+  them as ordinary values (`None (default) = never block`, with nothing said
+  about the boundary). It now states that `None` is the only way to disable
+  either guard, and disambiguates the neighbouring note about a per-type
+  `Meta.max_depth = 0`, which **is** a real value there — that one forbids
+  nested objects rather than disabling anything.
 
 ## 2.2.0 — 2026-08-24
 
@@ -1830,11 +2525,14 @@ for the user-facing behavior these changes preserve.
   types, making every override a silent no-op. It is now called for
   `DjangoObjectField`, `DjangoFilterListField`, `DjangoFilterPaginateListField`, and
   `DjangoListObjectField` (results + totalCount). (#58)
-- **Pagination `ordering` validated against exposed columns** — Client-supplied
-  `ordering` values are now checked against the field's declared column list before
-  they reach the ORM. An unknown field name can no longer trigger a `FieldError` that
-  discloses the model's full field list, nor a relation-traversal `JOIN` that enables
-  a DoS via index-missing foreign keys. (#59)
+- **Pagination `ordering` validated against the model's concrete columns** —
+  Client-supplied `ordering` values are now checked before they reach the ORM. An
+  unknown field name can no longer trigger a `FieldError` that discloses the model's
+  full field list, nor a relation-traversal `JOIN` that enables a DoS via
+  index-missing foreign keys. (#59) *Corrected: this entry originally said
+  "validated against exposed columns". It was not — the allowlist came from the
+  model, so a column the type projected away stayed sortable. See the Unreleased
+  Security section.*
 - **Response cache skips cookie-bearing and multipart requests** — The
   `CACHE_ACTIVE` cache no longer stores responses to requests that carry cookies or
   are `multipart/form-data`. Previously such responses could be replayed to unrelated

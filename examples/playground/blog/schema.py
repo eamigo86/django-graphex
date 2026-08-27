@@ -298,12 +298,24 @@ class AuthorType(DjangoObjectType):
     posts = DjangoNestedListObjectField(PostListType, accessor="posts")
 
     class Meta:
-        """Bind the type to the Author model and its filterable fields.
+        """Bind the type to the Author model, its projection and its filters.
+
+        "exclude_fields" projects "Author.bio" away, and the library treats that
+        as a SECURITY boundary rather than an output shape: the column is
+        unreadable, unorderable and unfilterable through this type. See
+        "tests/test_projection_boundary.py", which pins all three axes, and the
+        README section "The projection boundary" for the queries to paste into
+        GraphiQL.
 
         Filtering allows an exact id lookup and a substring "name" lookup.
+        Adding "bio" here would raise "ImproperlyConfigured" while the schema
+        builds — a "filter_fields" entry naming a projected-away column is a
+        contradiction between two "Meta" options, so it is refused rather than
+        dropped in silence.
         """
 
         model = Author
+        exclude_fields = ("bio",)
         filter_fields = {"id": ("exact",), "name": ("icontains",)}
 
     @staticmethod

@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import warnings
 from collections import OrderedDict
+from copy import copy
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 from django.core.exceptions import ImproperlyConfigured
@@ -14,12 +15,13 @@ from graphql import GraphQLBoolean, GraphQLError
 
 from .backends import resolve_backend
 from .base_types import DjangoListObjectBase, factory_type
-from .converter import construct_fields
+from .converter import construct_fields, field_is_projected
 from .core.base import InputType as NativeInputType
 from .core.base import NativeObjectTypeOptions, _props
 from .core.base import ObjectType as NativeObjectType
 from .core.descriptors import NativeField, NativeList, NativeMountedField
 from .core.descriptors import field as native_field
+from .core.output_compiler import MASKED_COLUMN_EXT
 from .core.validators import build_validator_model
 from .errors import ErrorType
 from .fields import DjangoListObjectField, DjangoObjectField
@@ -28,7 +30,10 @@ from .filtering.filter_field import (
     collect_custom_filters,
 )
 from .nested import NestedFieldsMixin, hosts_serving, register_nested_host
-from .paginations.pagination import BaseDjangoGraphqlPagination
+from .paginations.pagination import (
+    BaseDjangoGraphqlPagination,
+    projected_ordering_attnames,
+)
 from .permissions import supported_kwargs
 from .registry import Registry, get_global_registry
 from .settings import graphql_api_settings
@@ -36,6 +41,7 @@ from .uploads import merge_uploaded_files
 from .utils import (
     _apply_optimizations,
     apply_object_type_get_queryset,
+    get_model_fields,
     get_Object_or_None,
     is_valid_django_model,
     maybe_queryset,
@@ -174,7 +180,15 @@ def _compile_declared_list_fields(
         # DjangoNestedListObjectField is a subclass of DjangoListObjectField, so
         # this single isinstance covers both the nested and the flat list field.
         if isinstance(field, DjangoListObjectField):
-            out[to_camel_case(field_name)] = _build_list_object_field(field, registries)
+            # The THIRD spelling of a declared to-many relation, and it carries a
+            # resolver exactly as the other two do. Leaving it unstamped made the
+            # boundary answer differently for three ways of writing one intent:
+            # a container declared here could still be traversed by a filter
+            # while the "DjangoFilterListField" spelling of the same relation
+            # was refused.
+            out[to_camel_case(field_name)] = _mark_masked_column(
+                field_name, _build_list_object_field(field, registries)
+            )
     return out
 
 
@@ -303,7 +317,9 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
         # nested field carries the DECLARED node type as ``[Node]`` / ``[Node!]``
         # and its filter + pagination args — byte-identical to the root path.
         if isinstance(field, (DjangoFilterListField, DjangoFilterPaginateListField)):
-            out[to_camel_case(field_name)] = _build_filter_list_field(field, registries)
+            out[to_camel_case(field_name)] = _mark_masked_column(
+                field_name, _build_filter_list_field(field, registries)
+            )
             continue
         # DEFECT C: a field whose name matches a model relation/field is usually
         # the AUTO-DERIVED graphene field (owned by compile_output_fields / the
@@ -318,10 +334,100 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
             src_cls, field_name
         ):
             continue
-        out[to_camel_case(field_name)] = compile_declared_field(
-            src_cls, field_name, field, registries
+        out[to_camel_case(field_name)] = _mark_masked_column(
+            field_name,
+            compile_declared_field(src_cls, field_name, field, registries),
         )
     return out
+
+
+def _mark_masked_column(field_name: str, gql_field: Any) -> Any:
+    """Stamp a declared field that publishes a name without serving the column.
+
+    A declaration that carries NO resolver keeps graphql-core's default
+    attribute resolver, so "bio = CharField()" over a hidden "bio" column still
+    hands out the column: the name and the value agree and the column stays
+    orderable. A declaration WITH a resolver -- the field's own "resolver=", or
+    a "resolve_<name>" on the class -- serves whatever that callable returns, so
+    the name is published and the value is not. The projection guards read this
+    stamp ("core.output_compiler.publishes_column_value") because sorting or
+    filtering by such a name works on the raw column the response hides.
+
+    The SAME-NAME source shortcut is the one resolver that is provably a
+    passthrough: "descriptors.NativeMountedField" turns 'source="bio"' into
+    'partial(_source_resolver, "bio")', which reads that very attribute off the
+    row. Stamping it cost a type its column for declaring the documented
+    shortcut, and a type declaring 'id = IDField(source="id")' -- projecting
+    NOTHING away -- lost the primary key, and with it the tiebreak every cursor
+    page needs. A source naming any OTHER attribute is a mask like the rest.
+
+    A declared RELATION is NOT carved out, and the attempt to carve it out is
+    what this paragraph exists to warn off. The argument for one is that a
+    relation's name is not a column's, so the key behind it is the target
+    type's answer -- true of the AUTO-EXPANDED relation, whose value really is
+    the row's. It is not true of a declaration served by a resolver: the target
+    the client can read is whatever that callable returns, while
+    'ordering: "authorId"' ranks by the raw key on the parent row and
+    'filter_fields = {"author__name": ...}' joins straight past the target
+    type. Carve it out and 'author = Field(AuthorType)' plus a 'resolve_author'
+    that never returns an author publishes a ranking oracle over a key no type
+    in the schema serves.
+
+    That declaration is SHAPED exactly like the to-one scoping hatch
+    "docs/usage/types.md" documents, whose resolver does return a scoped
+    target, and no build-time discriminator separates the two: the difference
+    is in a resolver body, and even the honest hatch ranks the rows it hides.
+    So both close, and the guide's own remedy -- drop the relation's filter
+    paths, project the key away -- is what the boundary now does by itself.
+
+    The to-MANY arm of that same hatch -- "posts = DjangoFilterListField(...)",
+    which the guide teaches for the identical purpose -- is stamped by the same
+    call, because it is the same declaration in the other direction: the rows
+    the client reads are the ones its resolver hands back, while
+    'filter_fields = {"posts__title": ...}' compiles to a JOIN that never
+    reaches it. Leaving one direction open while the other refuses would be two
+    rules for one intent. The stamp costs that arm strictly less than it costs
+    the to-one one: a reverse relation or an M2M owns NO column on the parent
+    row, so nothing leaves the ordering allowlist and only the nested filter
+    paths through the declared relation close.
+
+    The test is the compiled resolver, not the declaration, so both wiring
+    routes are covered by the one check that "compile_declared_field" itself
+    used to pick the resolver.
+
+    Deliberately fails CLOSED beyond that: a "resolve_<name>" that happens to
+    return the real column loses its column. No build-time analysis can read a
+    resolver body, and the cost of guessing wrong the other way is a read
+    oracle.
+
+    Args:
+        field_name: The snake_case name the attribute was declared under, which
+            is the attribute a passthrough source has to name.
+        gql_field: The compiled field for a declared class attribute.
+
+    Returns:
+        The same field, stamped when its value does not come from the column.
+    """
+    from functools import partial
+
+    from graphql import default_field_resolver
+
+    from .core.descriptors import _source_resolver
+
+    resolve = getattr(gql_field, "resolve", None)
+    if resolve is default_field_resolver:
+        return gql_field
+    if (
+        isinstance(resolve, partial)
+        and resolve.func is _source_resolver
+        and resolve.args[:1] == (field_name,)
+    ):
+        return gql_field
+    gql_field.extensions = {
+        **(gql_field.extensions or {}),
+        MASKED_COLUMN_EXT: True,
+    }
+    return gql_field
 
 
 def _compile_gfk_union_output_fields(
@@ -740,6 +846,26 @@ def _make_list_fields_thunk_for(
 
             node_gql = _S  # type: ignore[assignment]
 
+        # Which columns the node type publishes is a PER-SCHEMA fact: this thunk
+        # runs once per schema (the class-def container and every pair-local
+        # fork get their own), and ``node_gql`` is THIS schema's element type.
+        # The paginator instance, on the other hand, is shared -- the class-def
+        # object reaches every fork through ``_meta.paginator``, and one
+        # module-level paginator is routinely mounted on several containers. So
+        # stamp a COPY: mutating the shared instance let the last schema built
+        # decide every earlier schema's allowlist, silently re-opening the read
+        # oracle in a schema that was correct a moment before.
+        #
+        # The stamp is a VALUE. It used to be a thunk, on the theory that
+        # ``node_gql.fields`` might still be under construction here — it is
+        # not: instrumenting every stamp the test suite makes (35 219 of them)
+        # found the element type's field map either already built or cold, and
+        # never once re-entered. Deriving it now costs a few microseconds per
+        # container per schema and removes a deferred read that nothing needed.
+        if _pg is not None:
+            _pg = copy(_pg)
+            _pg.ordering_allowed_attnames = projected_ordering_attnames(_m, node_gql)
+
         from django_graphex.paginations.utils import NativePaginationField
 
         _results_args: dict = {}
@@ -1070,11 +1196,34 @@ class DjangoObjectType(NativeObjectType):
         _meta = NativeObjectTypeOptions(cls)
         _meta.model = model
         _meta.registry = registry
+        # The opt-out has to OUTLIVE this call. Both slot writes below read the
+        # local ``skip_registry``, but a FORKED build (the ``registries=`` pair)
+        # re-runs the slot write from ``core.registry_compiler`` long after this
+        # frame is gone, with only the class and its ``_meta`` in hand. Reading
+        # the opt-out from ``_meta`` there answered False for every type -- so
+        # the fork handed the model's compiled slot to a type that declined it,
+        # and the ``DjangoListObjectType`` container resolving ``results``
+        # through that slot served the declined type instead of its ``baseType``.
+        _meta.skip_registry = skip_registry
         _meta.filter_fields = filter_fields
         _meta.fields = django_fields
         _meta.max_depth = max_depth
         _meta.complexity = complexity
         _meta.unions = dict(unions) if unions else None
+        # The projection is deliberately NOT recorded on ``_meta``. Nothing
+        # reads it from here: the OUTPUT compiler takes it from the
+        # ``_gdx_output_registry`` entry written at registration
+        # (``core.registry_compiler`` reads ``entry.only_fields``), and NEITHER
+        # projection guard reads a declaration at all — both the ordering
+        # allowlist and the filter guard ask
+        # ``core.output_compiler.publishes_column_value`` against the COMPILED
+        # type, because the question is "does the schema serving this request
+        # hand out that column's value", which a declaration cannot answer: a
+        # declared class attribute can re-publish a column ``only_fields``
+        # removed, a resolver can publish a name without the value, and the
+        # compiler can drop a relation nothing declared. Two readings of one
+        # rule is how those axes came to contradict each other; one predicate
+        # is why they no longer can.
 
         super().__init_subclass_with_meta__(
             _meta=_meta, interfaces=interfaces, **options
@@ -2193,6 +2342,73 @@ class DjangoInputObjectType(NativeInputType):
         return cls
 
 
+def _mirrors_registered_projection(
+    model: Any,
+    registered: type,
+    only_fields: Any,
+    include_fields: Any,
+    exclude_fields: Any,
+) -> bool:
+    """Report whether a projection selects exactly what the reused type does.
+
+    The discriminator both reuse guards need. A projection declared where it
+    cannot be honoured is refused because it is accepted and then discarded --
+    but a declaration that selects the very columns the registered type already
+    selects is discarded into no difference at all: honouring it and dropping
+    it expose the same schema. Refusing it broke the documented arrangement
+    (a node type declared beside its container, each restating the projection)
+    for a restatement that leaks nothing.
+
+    Measured on the SELECTED COLUMNS, not on the spelling, through the
+    predicate "converter.construct_fields" itself selects with: two
+    declarations reaching the same set are the same projection however they
+    are written, and a guard reading the option tuples would refuse a
+    difference the schema cannot see.
+
+    Args:
+        model: The Django model both types are bound to.
+        registered: The already-registered output type being reused.
+        only_fields: The declared "Meta.only_fields", or a falsy value.
+        include_fields: The declared "Meta.include_fields", or a falsy value.
+        exclude_fields: The declared "Meta.exclude_fields", or a falsy value.
+
+    Returns:
+        True when honouring the declaration would change nothing. Fails CLOSED:
+        a reused type carrying no registration record answers False, so the
+        declaration is refused rather than assumed harmless.
+    """
+    from .core.base import _gdx_output_registry
+
+    entry = None
+    for candidate in reversed(_gdx_output_registry):
+        if candidate.cls is registered:
+            entry = candidate
+            break
+    if entry is None:
+        return False
+
+    def _selected(only: Any, include: Any, exclude: Any) -> frozenset[str]:
+        """Return the model field names one projection keeps.
+
+        Args:
+            only: The "only_fields" half of the projection.
+            include: The "include_fields" half.
+            exclude: The "exclude_fields" half.
+
+        Returns:
+            The selected field names.
+        """
+        return frozenset(
+            name
+            for name, _field in get_model_fields(model)
+            if field_is_projected(name, only, include, exclude)
+        )
+
+    return _selected(only_fields, include_fields, exclude_fields) == _selected(
+        entry.only_fields, entry.include_fields, entry.exclude_fields
+    )
+
+
 class DjangoListObjectType(NativeObjectType):
     """A GraphQL type for paginated Django model lists.
 
@@ -2264,6 +2480,9 @@ class DjangoListObjectType(NativeObjectType):
         results_field_name = results_field_name or "results"
 
         baseType = registry.get_type_for_model(model)
+        # A node MINTED below is built FROM this container's Meta, so it can
+        # never be the source of a declaration this container inherited.
+        reused_node = baseType is not None
 
         if not baseType:
             factory_kwargs = {
@@ -2278,7 +2497,67 @@ class DjangoListObjectType(NativeObjectType):
                 "skip_registry": False,
             }
             baseType = factory_type("output", DjangoObjectType, **factory_kwargs)
+        else:
+            # SECURITY: the reused node type was built from ITS OWN Meta, so a
+            # projection declared here is DROPPED and the column it was meant
+            # to hide stays readable, orderable and filterable through the
+            # container's results. Reusing a registered node type is the
+            # ORDINARY documented arrangement, so this was silent in the common
+            # case. Same treatment as the 2.2.0 guard on "DjangoModelType"
+            # (below): fail the schema build rather than warn, because a
+            # warning is filterable and would leave the leak live in
+            # production, and only the already-leaking configuration is
+            # affected.
+            #
+            # A declaration MIRRORING the node's own projection is not that
+            # configuration: dropping it and honouring it publish the same
+            # columns, so refusing it cost the documented side-by-side
+            # arrangement an outage for a restatement that leaks nothing.
+            dropped = [
+                option
+                for option, value in (
+                    ("only_fields", only_fields),
+                    ("include_fields", include_fields),
+                    ("exclude_fields", exclude_fields),
+                )
+                if value
+            ]
+            if dropped and not _mirrors_registered_projection(
+                model, baseType, only_fields, include_fields, exclude_fields
+            ):
+                raise ImproperlyConfigured(
+                    "{name}.Meta.{options} cannot be honored: the node type for "
+                    "{model} is reused from {registered}, which was built from "
+                    "its own Meta, so the projection would be silently dropped "
+                    "and any field it hides would stay exposed. Declare "
+                    "{options} on {registered} instead, or remove the "
+                    "option.".format(
+                        name=cls.__name__,
+                        options="/".join(dropped),
+                        model=model.__name__,
+                        registered=baseType.__name__,
+                    )
+                )
 
+        # Remember WHOSE "Meta" the surviving declaration came from before the
+        # fallback erases the distinction: a filter refusal names it, and
+        # naming the container for an entry written on the node sends the
+        # reader to a "Meta" that never held it.
+        #
+        # A present "filter_fields" is not proof the container declared it. An
+        # auto-expanded to-many gets a container the reader never wrote, and
+        # "get_or_create_list_object_type" SEEDS its Meta with the node's own
+        # dict so the nested list stays filterable -- the same object, passed
+        # through. Naming the container for that sent the reader to
+        # "GenericListType.Meta", a factory class in this library's source.
+        # Identity is the discriminator precisely because it is the seeding
+        # that shares the object; a container that spells its own dict owns it.
+        inherited = reused_node and filter_fields is getattr(
+            baseType._meta, "filter_fields", None
+        )
+        filter_fields_declared_on = (
+            cls.__name__ if filter_fields and not inherited else baseType.__name__
+        )
         filter_fields = filter_fields or baseType._meta.filter_fields
 
         # ----------------------------------------------------------------
@@ -2305,6 +2584,13 @@ class DjangoListObjectType(NativeObjectType):
 
                 paginator = global_paginator()
 
+        # No allowlist is stamped here on purpose. The class body cannot know
+        # which node type will serve ``results`` in any given schema, and this
+        # paginator object is shared across every schema that compiles the
+        # class. The per-schema stamp lives in ``_make_list_fields_thunk_for``,
+        # on a copy; leaving a stale answer on the shared instance is what let
+        # one schema's build overwrite another's.
+
         _meta = NativeObjectTypeOptions(cls)
         _meta.model = model
         _meta.registry = registry
@@ -2312,6 +2598,7 @@ class DjangoListObjectType(NativeObjectType):
         _meta.baseType = baseType
         _meta.results_field_name = results_field_name
         _meta.filter_fields = filter_fields
+        _meta.filter_fields_declared_on = filter_fields_declared_on
         _meta.exclude_fields = exclude_fields
         _meta.only_fields = only_fields
         _meta.pagination = pagination
@@ -2757,7 +3044,10 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             # this fails the schema build instead of warning: a warning is
             # filterable and would leave the leak live in production. Only the
             # already-leaking configuration is affected -- move the projection to
-            # the registered type, or drop the option.
+            # the registered type, or drop the option. A declaration MIRRORING
+            # the reused type's own projection is not that configuration: it is
+            # discarded into no difference at all, so it stands (see
+            # "_mirrors_registered_projection").
             dropped = [
                 option
                 for option, value in (
@@ -2767,7 +3057,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
                 )
                 if value
             ]
-            if dropped:
+            if dropped and not _mirrors_registered_projection(
+                model, output_type, only_fields, include_fields, exclude_fields
+            ):
                 raise ImproperlyConfigured(
                     "{name}.Meta.{options} cannot be honored: the output type for "
                     "{model} is reused from {registered}, which was built from its "
@@ -2812,11 +3104,20 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         # the model's READ shape everywhere it appears nested.
         incumbent_list_type = registry.get_list_type_for_model(model)
 
+        # The projection is deliberately NOT forwarded to the container. By the
+        # time this runs the node type is registered and already carries it --
+        # either it was just minted from these very kwargs, or it pre-existed
+        # and the guard above refused the declaration outright. Forwarding it
+        # anyway would hand the container an option it cannot honour, which is
+        # exactly what "DjangoListObjectType" now refuses.
         output_list_type = factory_type(
             "list",
             DjangoListObjectType,
             **{
                 **factory_kwargs,
+                "only_fields": (),
+                "include_fields": (),
+                "exclude_fields": (),
                 "name": to_camel_case("{}_List_Generic_Type".format(model.__name__)),
             },
         )

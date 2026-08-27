@@ -116,15 +116,23 @@ class UserType(DjangoObjectType):
 | `model` | `Model` | Required | Django model class |
 | `registry` | `Registry` | Global registry | Type registry instance |
 | `skip_registry` | `bool` | `False` | Skip automatic type registration |
-| `only_fields` | `tuple/list` | `()` | Include only specified fields |
-| `exclude_fields` | `tuple/list` | `()` | Exclude specified fields |
+| `only_fields` | `tuple/list` | `()` | Include only specified fields. **A security boundary** — see below |
+| `exclude_fields` | `tuple/list` | `()` | Exclude specified fields. **A security boundary** — see below |
 | `include_fields` | `tuple/list` | `()` | Additional fields to include |
-| `filter_fields` | `dict` | `None` | Field filtering configuration |
+| `filter_fields` | `dict` | `None` | Field filtering configuration. An entry naming a projected-away column **fails the schema build** |
 | `interfaces` | `tuple` | `()` | GraphQL interfaces to implement |
 | `description` | `str` | `None` | GraphQL description for this type; defaults to the class docstring when omitted |
 | `unions` | `dict` | `None` | Mapping of `GenericForeignKey` field name → `DjangoUnionType` subclass; enables typed GFK targets instead of `GenericForeignKeyType`. Renamed from `gfk_unions` in 2.0 — the old key raises `ImproperlyConfigured`. |
 | `max_depth` | `int` | `None` | Max nested-object depth below this type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of a field returning this type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
+
+!!! danger "`only_fields` / `exclude_fields` are a security boundary"
+    A column this type projects away must not be **readable, orderable or
+    filterable** through it. `ordering` rejects it at query time; a
+    `filter_fields` entry naming it stops the schema from building. The rule,
+    what "hidden" means when a declaration or a relation is involved, its one
+    exception and the two boundaries it cannot close are stated once, in
+    [The projection is a security boundary](../usage/types.md#projection-security-boundary).
 
 !!! warning "Unknown Meta options raise ImproperlyConfigured"
     Any key not in the table above is rejected at server startup with

@@ -236,7 +236,18 @@ returned.
     - the relation is **many-to-many** or a **reverse M2M**;
     - the child sub-selection has a **relation-traversing aggregate**
       annotation (its `GROUP BY` cannot compose with `Window()`);
-    - any **ordering term is not a concrete column** on the child;
+    - any **ordering term is not a concrete column** on the child, **or names a
+      column the child type does not publish the value of** (the same predicate
+      the root list uses — see
+      [Types › The projection is a security boundary](types.md#projection-security-boundary))
+      — this path applies
+      the `ORDER BY` in SQL and hands back rows already sliced, so the ordering
+      allowlist never runs; declining routes the query to the plain prefetch
+      path, which rejects a client term with the same error the root list gives.
+      The check does not read the term's provenance, so a paginator whose
+      configured `ordering=` names a projected-away column declines here too:
+      that costs the optimization on exactly that configuration, never
+      correctness;
     - the sub-selection is a **full-load** (an unknown/computed/property leaf);
     - the filter (or an `optimize_<field>` hook) forces `.distinct()`;
     - the relation was **not prefetched at all** — e.g.

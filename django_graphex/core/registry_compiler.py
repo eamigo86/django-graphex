@@ -392,6 +392,7 @@ def compile_all_outputs() -> None:
     from django_graphex.core.base import (
         _gdx_output_registry,
         get_shared_output_registry,
+        recompile_fields,
     )
     from django_graphex.registry import get_global_registry
 
@@ -460,9 +461,7 @@ def compile_all_outputs() -> None:
         # for a relation whose target was not yet registered.  Invalidate that
         # cache first, then re-evaluate so relations resolve to real types.
         for entry in _global_entries:
-            inst = _class_instance(entry)
-            inst.__dict__.pop("fields", None)  # drop stale cached_property
-            _ = inst.fields  # noqa: F841 — force eval + warm correct cache
+            recompile_fields(_class_instance(entry))
 
         # ── Phase 3: assertion — every per-class instance must carry gdx ─────
         for entry in _global_entries:
@@ -649,7 +648,11 @@ def fork_output_class(cls: Any, registries: Any) -> GraphQLObjectType | None:
     if existing is not None:
         return existing
 
-    from django_graphex.core.base import _gdx_output_registry, _GdxOutputEntry
+    from django_graphex.core.base import (
+        _gdx_output_registry,
+        _GdxOutputEntry,
+        recompile_fields,
+    )
 
     # Find the registry entry for this class (last-registered wins, matching the
     # canonical-instance rule).
@@ -687,8 +690,7 @@ def fork_output_class(cls: Any, registries: Any) -> GraphQLObjectType | None:
     )
     # Force eval so the on-demand container's results node resolves against the
     # pair now (it is reached mid-thunk, so warm its cache immediately).
-    forked.__dict__.pop("fields", None)
-    _ = forked.fields  # noqa: F841
+    recompile_fields(forked)
     return forked
 
 
@@ -736,6 +738,7 @@ def compile_outputs_into(registries: Any) -> None:
     """
     from django_graphex.core.base import (
         _gdx_output_registry,
+        recompile_fields,
         resolved_output_type,
     )
     from django_graphex.types import DjangoListObjectType
@@ -795,8 +798,7 @@ def compile_outputs_into(registries: Any) -> None:
         if not pending:
             break
         for cls, forked in pending:
-            forked.__dict__.pop("fields", None)
-            _ = forked.fields  # noqa: F841 — force eval + warm correct cache
+            recompile_fields(forked)
             _warmed.add(id(forked))
 
     # ── Phase 3: assertion — every fork must carry the gdx bridge (R4 sanity).

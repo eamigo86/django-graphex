@@ -1,0 +1,90 @@
+{
+  "lib": "graphene",
+  "versions": {
+    "graphene-django": "3.2.3",
+    "graphene": "3.4.3",
+    "django": "6.0.6",
+    "graphql-core": "3.2.11",
+    "django-filter": "25.2"
+  },
+  "python": "3.12.11",
+  "django": "6.0.6",
+  "machine": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "cpu_count": 16
+  },
+  "schema_import_ms": 10.7546,
+  "surface": {
+    "Author": [
+      "bio",
+      "email",
+      "id",
+      "name",
+      "posts"
+    ],
+    "Post": [
+      "author",
+      "body",
+      "comments",
+      "createdAt",
+      "id",
+      "status",
+      "title",
+      "viewsCount"
+    ],
+    "Comment": [
+      "authorName",
+      "createdAt",
+      "id",
+      "isApproved",
+      "text"
+    ]
+  },
+  "ops": {
+    "flat_list": {
+      "mean_ms": 1.8246,
+      "p50_ms": 1.7589,
+      "p95_ms": 2.1708,
+      "min_ms": 1.6847,
+      "stddev_ms": 0.1668,
+      "iterations": 100,
+      "sql_queries": 2
+    },
+    "nested": {
+      "mean_ms": 78.4567,
+      "p50_ms": 69.6923,
+      "p95_ms": 110.0657,
+      "min_ms": 60.0241,
+      "stddev_ms": 17.7756,
+      "iterations": 100,
+      "sql_queries": 442
+    },
+    "single": {
+      "mean_ms": 1.056,
+      "p50_ms": 0.9974,
+      "p95_ms": 1.3504,
+      "min_ms": 0.9665,
+      "stddev_ms": 0.1329,
+      "iterations": 100,
+      "sql_queries": 2
+    },
+    "filtered": {
+      "mean_ms": 3.6928,
+      "p50_ms": 3.6279,
+      "p95_ms": 4.3357,
+      "min_ms": 3.2552,
+      "stddev_ms": 0.3362,
+      "iterations": 100,
+      "sql_queries": 2
+    },
+    "create_comment": {
+      "mean_ms": 1.5688,
+      "p50_ms": 1.363,
+      "p95_ms": 2.338,
+      "min_ms": 1.2676,
+      "stddev_ms": 1.098,
+      "iterations": 100,
+      "sql_queries": 1
+    }
+  }
+}

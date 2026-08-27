@@ -1,0 +1,88 @@
+{
+  "lib": "graphex",
+  "versions": {
+    "django-graphex": "2.2.0",
+    "django": "6.0.6",
+    "graphql-core": "3.2.11"
+  },
+  "python": "3.12.11",
+  "django": "6.0.6",
+  "machine": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "cpu_count": 16
+  },
+  "schema_import_ms": 10.8043,
+  "surface": {
+    "Author": [
+      "bio",
+      "email",
+      "id",
+      "name",
+      "posts"
+    ],
+    "Post": [
+      "author",
+      "body",
+      "comments",
+      "createdAt",
+      "id",
+      "status",
+      "title",
+      "viewsCount"
+    ],
+    "Comment": [
+      "authorName",
+      "createdAt",
+      "id",
+      "isApproved",
+      "text"
+    ]
+  },
+  "ops": {
+    "flat_list": {
+      "mean_ms": 0.8251,
+      "p50_ms": 0.8051,
+      "p95_ms": 0.9071,
+      "min_ms": 0.781,
+      "stddev_ms": 0.0596,
+      "iterations": 100,
+      "sql_queries": 1
+    },
+    "nested": {
+      "mean_ms": 13.7575,
+      "p50_ms": 12.7387,
+      "p95_ms": 27.553,
+      "min_ms": 12.167,
+      "stddev_ms": 3.9762,
+      "iterations": 100,
+      "sql_queries": 3
+    },
+    "single": {
+      "mean_ms": 0.4608,
+      "p50_ms": 0.4128,
+      "p95_ms": 0.6802,
+      "min_ms": 0.386,
+      "stddev_ms": 0.1244,
+      "iterations": 100,
+      "sql_queries": 1
+    },
+    "filtered": {
+      "mean_ms": 1.2403,
+      "p50_ms": 1.21,
+      "p95_ms": 1.4355,
+      "min_ms": 1.1506,
+      "stddev_ms": 0.0861,
+      "iterations": 100,
+      "sql_queries": 1
+    },
+    "create_comment": {
+      "mean_ms": 0.5982,
+      "p50_ms": 0.5782,
+      "p95_ms": 0.7054,
+      "min_ms": 0.5578,
+      "stddev_ms": 0.0639,
+      "iterations": 100,
+      "sql_queries": 1
+    }
+  }
+}

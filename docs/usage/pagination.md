@@ -174,7 +174,7 @@ LimitOffsetGraphqlPagination(
 
 ### Ordering Validation (Security)
 
-!!! warning "Ordering is validated against concrete model fields"
+!!! warning "Ordering is validated against the fields your type exposes"
 
     Both `LimitOffsetGraphqlPagination` and `PageGraphqlPagination` validate every
     client-supplied `ordering` term **before** calling `qs.order_by()`.
@@ -184,13 +184,161 @@ LimitOffsetGraphqlPagination(
     - An invalid field name would cause Django to raise `FieldError`, which leaks
       the full model field list (including sensitive columns like `password`,
       `is_superuser`) in `errors[].message` — a CWE-209 information disclosure.
+    - A column you hid with `only_fields` / `exclude_fields` would still be
+      *sortable*. Sorting by it ranks the rows by a value the client cannot
+      select — a read oracle. Combined with a filter that isolates two rows, the
+      hidden value is recovered exactly, one query per bit.
     - Relation-spanning lookups (`posts__title`, `author__name`) force Django to
       follow join chains, which can exhaust database resources (DoS).
 
     **Allowlist rule:** each ordering term's root (the part before `__`) must match
-    one of the model's **concrete attnames** (`model._meta.concrete_fields`), or be
-    Django's native `pk` alias (which resolves to the primary key column).
-    Leading `-`/`+` direction prefixes are stripped before comparison.
+    one of the model's **concrete attnames** (`model._meta.concrete_fields`) **that
+    your type actually exposes**. Leading `-`/`+` direction prefixes are stripped
+    before comparison.
+
+    The allowlist is **read off the compiled node type that actually serves
+    `results`** — the type in the SDL — not re-derived from its `Meta`, and it
+    asks the same predicate the filter axis asks. So *orderable*, *filterable*
+    and *selectable* are the same set by construction, whatever put a field
+    there: `only_fields` / `exclude_fields` / `include_fields`, or a relation
+    the compiler drops because its target is not registered. **The rule and
+    everything it means are stated once, in
+    [Types › The projection is a security boundary](types.md#projection-security-boundary);
+    this section is only how the ordering axis enforces it.**
+
+    Field **names** are mapped back to ORM **attnames**, which is the one thing
+    the SDL cannot spell: a forward FK published as `author` is ordered by
+    `author_id`, and `pk` rides along with the primary key. Whether those
+    attnames are *allowed* is still the predicate's answer, not the mapping's —
+    see the forward-FK note below.
+
+    The rule is enforced on every ordering path: the queryset path, the
+    prefetch-cache (in-memory) path, and the nested window-prefetch
+    optimization. It is also **per schema**: two schemas built over the same list
+    container class each read their own node type, so a second schema cannot
+    widen the first one's ordering surface. Under
+    [`PERMISSION_SCOPED_SCHEMA`](permission-scoped-schema.md) that includes the
+    pruned schema a given caller was served — a column that disappears with the
+    relation publishing it stops being orderable for that caller.
+
+    **A published name is not a published value.** A declared class attribute
+    wins over the model-derived field of the same name, so it can put back a
+    column `only_fields` removed. It stays orderable when it carries **no**
+    resolver, because the default resolver hands out the column itself:
+
+    ```python
+    class AuthorType(DjangoObjectType):
+        bio = CharField()  # orderable — this serves Author.bio
+
+        class Meta:
+            model = Author
+            only_fields = ("id", "name")
+    ```
+
+    Add a `resolve_bio` and the field serves whatever that method returns. The
+    name is published, the column is not, and `ordering: "bio"` is rejected —
+    sorting by it would rank the rows by the raw column while every response
+    carries the substitute. A masked primary key takes `ordering: "pk"` down
+    with it, for the same reason.
+
+    This fails closed on purpose: a `resolve_<name>` that happens to return the
+    real column loses the ordering term too. Nothing can read a resolver body at
+    schema-build time, so the line is drawn at the resolver rather than inside
+    it. Drop the resolver, or add a second field under a different name.
+
+    The **same-name `source=` shortcut is the one exemption**, because the
+    compiler can read it: `bio = CharField(source="bio")` compiles to a resolver
+    that provably reads that very attribute, so the column stays orderable — and
+    stays filterable, on the same predicate. A `source=` naming a *different*
+    attribute is a mask like any other and is refused.
+
+    **The projection gates the client argument, not your own default.** The
+    `ordering=` you pass when constructing `LimitOffsetGraphqlPagination` or
+    `PageGraphqlPagination` is your configuration, applied identically to every
+    request, so it may name a column the type projects away:
+
+    ```python
+    class UserListType(DjangoListObjectType):
+        class Meta:
+            model = User
+            # UserType hides "last_login"; ordering by it here is still fine.
+            pagination = LimitOffsetGraphqlPagination(ordering="-last_login")
+    ```
+
+    A client that passes `ordering: "-last_login"` on that same field is still
+    rejected: the check follows where the value came from, not what it says.
+
+    **This is not a claim that the default leaks nothing.** A server-configured
+    ordering ranks by exactly as much as a client term does. It is a decision
+    that a deployment choice you can see and change must not become a runtime
+    outage — the one exception to the rule, recorded as such in
+    [Types › The one exception](types.md#projection-exception).
+
+    !!! danger "`CursorGraphqlPagination` does **not** get this exemption"
+
+        Ranking is where the exemption stops. A paginator that *prints the
+        ordering value back* is reading the column out, not ranking by it, and
+        no operator-intent argument survives that.
+
+        A keyset cursor **is** the ordering value. `pageInfo.startCursor` and
+        `endCursor` are base64 of `cursor:<ordering value>\x1f<pk>`, so
+        configuring `CursorGraphqlPagination(ordering="bio")` on a type that
+        hides `bio` publishes that column verbatim to anyone who base64-decodes
+        the token — a direct read, not a ranking.
+
+        `CursorGraphqlPagination` therefore enforces the allowlist on its
+        configured `ordering` **regardless of provenance**, and raises
+        `GraphQLError: Invalid ordering field: '<name>'` on every request until
+        the configuration is corrected. Order it by a column the node type
+        exposes.
+
+    **The primary key follows the projection like any other column.** Ordering by
+    `pk`, by the pk's field name, or by its attname works whenever the pk itself
+    is exposed — the ordinary surrogate-`id` case, where ranking rows by an
+    identifier the client already reads gives nothing away.
+
+    A **natural** primary key (a slug, a code, an email) carries real data and can
+    be projected away like any other column. When it is, `ordering: "pk"` and
+    `ordering: "<slug>"` are both rejected: exempting the alias while rejecting
+    the name would close nothing, since they resolve to the same column.
+
+    Hiding the pk costs nothing else. The paginators still emit it as their own
+    deterministic tiebreak — that ordering is generated, never client input, so it
+    is not gated. The nested window optimization declines rather than sorting by a
+    tiebreak it cannot serve, and the plain prefetch path returns the same rows.
+
+    **A forward FK's `author_id` follows the *author's* type, not the post's.**
+    It is orderable only when `PostType` publishes `author` **and** the type
+    behind `author` publishes the key that FK points at:
+
+    ```python
+    class AuthorType(DjangoObjectType):
+        class Meta:
+            model = Author
+            only_fields = ("name",)          # the key is projected away
+
+    class PostType(DjangoObjectType):
+        class Meta:
+            model = Post                     # publishes "author" — but its key?
+
+    # ordering: "author_id"  ->  Invalid ordering field: 'author_id'.
+    ```
+
+    Publishing `id` on `AuthorType` puts `author_id` back. **This rejects
+    orderings that used to succeed**, and the old justification — "the id is
+    already readable through `author { id }`" — was simply false in this shape:
+    `author { id }` does not exist in that schema either. Ranking posts by
+    `author_id` there orders them by a key nothing in the SDL hands out, which
+    is the read oracle in its original form. The same predicate answers the
+    filter axis, so `filter_fields = {"author": ("exact",)}` is refused on the
+    very same configuration — see
+    [Types › What "hidden" means](types.md#what-hidden-means).
+
+    Declaring the relation over a `resolve_author` of your own — the
+    [to-one scoping hatch](types.md#relation-scope-hatch) — refuses `author_id`
+    outright, whatever the author's type publishes: what the client can read is
+    then whatever that resolver returns, while `ordering` still ranks by the raw
+    key on the post's own row.
 
     **camelCase is accepted (GraphQL-consistency).** Because every field *name* is
     exposed in **camelCase** on the wire, ordering **values** accept camelCase too:
@@ -206,6 +354,10 @@ LimitOffsetGraphqlPagination(
     ```graphql
     # Non-existent field → GraphQLError: "Invalid ordering field: 'nonexistent'"
     { users { results(ordering: "nonexistent") { id } } }
+
+    # Column the type projects away (exclude_fields = ("password",))
+    # → GraphQLError: "Invalid ordering field: 'password'"
+    { users { results(ordering: "password") { id } } }
 
     # Relation-spanning → GraphQLError: "Invalid ordering field: ..."
     { users { results(ordering: "posts__title") { id } } }
@@ -239,9 +391,13 @@ LimitOffsetGraphqlPagination(
     ```
 
     If you need to allow ordering by additional (non-default) fields, ensure those
-    columns are concrete attnames on the model. You cannot order by reverse-FK names
-    (e.g. `posts`) or by relation paths (`posts__title`) — use a database index and
-    annotate the queryset instead if you need computed sort keys.
+    columns are concrete attnames on the model **and** are exposed by the type (not
+    removed by `only_fields` / `exclude_fields`). You cannot order by reverse-FK
+    names (e.g. `posts`) or by relation paths (`posts__title`) — use a database
+    index and annotate the queryset instead if you need computed sort keys.
+
+    Conversely, `exclude_fields` is now enough to make a column unsortable: there
+    is no separate ordering allowlist to configure.
 
 ### Response Structure
 
@@ -533,6 +689,49 @@ CursorGraphqlPagination(
     - An empty string falls back to `"id"`.
     - A comma-separated value is **not** an error: only the **first** term is
       used, the rest are silently ignored (keyset pagination is single-field).
+    - **It must name a column your node type exposes.** Being server-configured
+      buys no exemption here, because the cursor echoes the ordering value back
+      to the client — see
+      [Ordering Validation (Security)](#ordering-validation-security). Pointing
+      it at a projected-away column raises
+      `GraphQLError: Invalid ordering field: '<name>'` on every request.
+
+!!! warning "The node type must expose its primary key"
+
+    Every cursor is base64 of `cursor:<ordering value>\x1f<pk>`. The pk is the
+    tiebreak that keeps rows sharing an ordering value from being skipped
+    between pages, so it is in **every** token this paginator emits — which
+    makes it a direct read of the primary key, whatever the ordering names.
+
+    The rule is about the **SDL**, not about the kind of key: cursor pagination
+    is refused whenever the node type's compiled fields do not publish the
+    primary key's value. Concretely, these shapes **cannot** use it:
+
+    | Shape | Why |
+    |---|---|
+    | `only_fields` that simply does not list the key | An omission hides the key exactly as an exclusion does — this is the common case, and it does not require a natural key |
+    | `exclude_fields` naming the key | Explicitly removed from the SDL |
+    | A **natural** key (a slug, a code, an email) projected away | Business data, hidden like any other column |
+
+    And this shape **can**, even though its own primary-key field is absent from
+    the SDL:
+
+    | Shape | Why |
+    |---|---|
+    | A multi-table-inheritance child | Its pk is the implicit `<parent>_ptr` link, which is join plumbing the compiler never publishes — but the child publishes the parent's `id`, and the two hold the same value on every row |
+
+    A refused configuration raises on **every** request, from both
+    `results` and `pageInfo`:
+
+    ```
+    GraphQLError: Cursor pagination is unavailable on a type that hides its
+    primary key: every cursor carries the key as its tiebreak. Expose the
+    primary key or use offset/page pagination.
+    ```
+
+    Add the key to the type's published fields, or page that list with
+    `LimitOffsetGraphqlPagination` / `PageGraphqlPagination`, which return rows
+    and nothing else.
 
 !!! info "Effective page size — never unbounded"
 

@@ -19,7 +19,9 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import re
+import sys
 import threading
 import weakref
 from collections import OrderedDict
@@ -43,7 +45,6 @@ from graphql import (
     parse,
     validate_schema,
 )
-from graphql.error import GraphQLSyntaxError
 from graphql.execution.middleware import MiddlewareManager
 from graphql.validation import specified_rules, validate
 
@@ -321,8 +322,15 @@ def _document_cache_maxsize() -> int:
 
     Read per call (never memoized at import) so ``override_settings`` in tests —
     and a live settings reload — take effect immediately.
+
+    ``None`` means "unbounded", the same as it does for every sibling limit in
+    the namespace (``MAX_BATCH_SIZE``, ``MAX_REQUEST_BODY_SIZE``,
+    ``MAX_QUERY_DEPTH``, ``MAX_PAGE_SIZE``). It is reported as ``sys.maxsize`` so
+    the callers stay plain integer comparisons: an LRU can never hold that many
+    entries, so the eviction loop never runs.
     """
-    return int(graphql_api_settings.DOCUMENT_CACHE_MAXSIZE)
+    configured = graphql_api_settings.DOCUMENT_CACHE_MAXSIZE
+    return sys.maxsize if configured is None else int(configured)
 
 
 def _dynamic_limits_key() -> tuple:
@@ -720,9 +728,37 @@ class BaseGraphQLView(View):
         1. Fast-reject (O(1)): if "Content-Length" is present AND already exceeds
            "MAX_REQUEST_BODY_SIZE", reject immediately without reading the body —
            avoids buffering an honest large upload.
-        2. Authoritative check: always verify "len(request.body) <= max_body"
-           regardless of the "Content-Length" header. This prevents a client from
-           spoofing a low "Content-Length" to bypass the guard.
+        2. Authoritative check: measure the body itself, regardless of the
+           "Content-Length" header. This prevents a client from spoofing a low
+           "Content-Length" to bypass the guard.
+
+        Stage 2 measures the body two different ways, because the two request
+        classes offer two different things:
+
+        * Every content type EXCEPT "multipart/form-data" is measured by reading
+          it, "len(request.body)". The body has to be in memory to be parsed
+          anyway, so the read costs nothing extra.
+        * "multipart/form-data" is measured WITHOUT reading it, by seeking
+          "request._stream" to its end and straight back. Reading it would break
+          the request (the CSRF check "@ensure_csrf_cookie" performs has already
+          drained the stream through "request.POST" whenever the client holds a
+          "csrftoken" cookie) and would drag a streamed upload under Django's
+          "DATA_UPLOAD_MAX_MEMORY_SIZE". A seek does neither: nothing is
+          allocated and the parser still receives a pristine stream. This is the
+          same measurement Django's own "HttpRequest.body" performs on a seekable
+          stream, done one level up so it can answer 413 instead of 400.
+
+        A multipart stream that is not seekable is a WSGI "LimitedStream", which
+        is already capped at "CONTENT_LENGTH": an under-declared length truncates
+        the body it is lying about rather than smuggling it past stage 1. The one
+        thing that cap cannot express is an ABSENT length, which "WSGIRequest"
+        turns into a limit of zero, so such a request is refused with HTTP 411 —
+        a clearer answer than the empty-payload 400 Django would otherwise give.
+
+        None of this bounds RECEPTION under ASGI: the handler spools the whole
+        body before this view exists, so the bytes are already on disk by the
+        time the seek measures them. Bounding what arrives is the ASGI server's
+        job, not this setting's.
 
         Args:
             request: The incoming HTTP request.
@@ -759,9 +795,10 @@ class BaseGraphQLView(View):
             #   1. Fast-reject: if Content-Length is present AND already
             #      exceeds the cap, reject immediately without reading the
             #      body (avoids buffering an honest large upload).
-            #   2. Authoritative check: always verify len(request.body) ≤
-            #      max_body.  This catches spoofed-low / absent / garbage
-            #      Content-Length values.
+            #   2. Authoritative check: measure the body itself and verify it
+            #      is ≤ max_body.  This catches spoofed-low / absent / garbage
+            #      Content-Length values.  Multipart is measured by seeking
+            #      rather than by reading — see below.
             #
             # Accessing request.body here is safe: dispatch runs before
             # parse_body, so the stream has not been consumed yet.  Django
@@ -773,6 +810,8 @@ class BaseGraphQLView(View):
             max_body = graphql_api_settings.MAX_REQUEST_BODY_SIZE
             if max_body is not None and request.method.lower() == "post":
                 from django.http import HttpResponse as _HR
+
+                content_type = self.get_content_type(request)
 
                 # --- Stage 1: fast-reject on honest oversized Content-Length ---
                 content_length_str = request.META.get("CONTENT_LENGTH", "")
@@ -792,21 +831,83 @@ class BaseGraphQLView(View):
                     )
 
                 # --- Stage 2: authoritative check on the actual body length ---
-                # This ALWAYS runs so that a spoofed-low / absent / garbage
-                # Content-Length cannot bypass the guard. If reading the body
-                # raises Django's RequestDataTooBig / SuspiciousOperation, that
-                # propagates as Django's own response (we neither mask it nor
-                # 500 on it).
-                actual_length = len(request.body)
-                if actual_length > max_body:
-                    raise HttpError(
-                        _HR(status=413),
-                        message=(
-                            f"Request body ({actual_length} bytes) exceeds the "
-                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
-                            "Split the request or increase the limit."
-                        ),
-                    )
+                # Stage 1 compared the cap against a number the CLIENT chose, so
+                # on its own it bounds nothing: a body declaring less than it
+                # carries sails straight through it. Stage 2 is what makes the
+                # cap mean something, and it must therefore run for every content
+                # type — multipart included, which is where the bypass lived.
+                if content_type == "multipart/form-data":
+                    # Measure the stream instead of reading it. Reading
+                    # request.body here would be WRONG: "dispatch" carries
+                    # @ensure_csrf_cookie, whose process_view runs the full CSRF
+                    # token check whenever a csrftoken cookie is present, and
+                    # that check reads request.POST. For multipart that drains
+                    # the stream before we get here, so request.body raises
+                    # RawPostDataException (HTTP 500) — and this endpoint plants
+                    # the cookie on every response, so only a client's FIRST
+                    # multipart POST ever survived. Reading also drags multipart
+                    # under DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB by default),
+                    # which streaming multipart otherwise escapes, and doubles
+                    # peak memory for an upload that would have gone to disk.
+                    #
+                    # A seek costs none of that. Under ASGI "_stream" is the
+                    # SpooledTemporaryFile "ASGIHandler.read_body" already
+                    # filled, so its true size is one seek away: nothing is
+                    # allocated, "_read_started" is never set, and the parser
+                    # still sees a pristine stream. The position is saved and
+                    # restored rather than assumed to be zero, because the CSRF
+                    # check above may already have consumed it.
+                    stream = getattr(request, "_stream", None)
+                    measured_length = None
+                    if stream is not None and stream.seekable():
+                        position = stream.tell()
+                        measured_length = stream.seek(0, os.SEEK_END)
+                        stream.seek(position)
+
+                    if measured_length is not None and measured_length > max_body:
+                        raise HttpError(
+                            _HR(status=413),
+                            message=(
+                                f"Request body ({measured_length} bytes) exceeds "
+                                f"the MAX_REQUEST_BODY_SIZE limit of {max_body} "
+                                "bytes. Split the request or increase the limit."
+                            ),
+                        )
+
+                    # Not seekable means a WSGI LimitedStream, which Django has
+                    # already capped at CONTENT_LENGTH — an under-declared length
+                    # truncates the body it lies about instead of smuggling it,
+                    # and stage 1 refused every declared length above the cap. So
+                    # the only unbounded case left is an ABSENT length, which
+                    # WSGIRequest turns into a limit of zero: the request was
+                    # doomed anyway, but it died as an opaque "must provide query
+                    # string" 400. 411 says what actually went wrong. It is not
+                    # 413 because the size is unknown, not known-too-big.
+                    if measured_length is None and declared_length is None:
+                        raise HttpError(
+                            _HR(status=411),
+                            message=(
+                                "A multipart/form-data request must declare a "
+                                "Content-Length while MAX_REQUEST_BODY_SIZE is "
+                                "set, because this server cannot measure its "
+                                "body. Send a declared length instead of a "
+                                "chunked body."
+                            ),
+                        )
+                else:
+                    # If reading the body raises Django's RequestDataTooBig /
+                    # SuspiciousOperation, that propagates as Django's own
+                    # response (we neither mask it nor 500 on it).
+                    actual_length = len(request.body)
+                    if actual_length > max_body:
+                        raise HttpError(
+                            _HR(status=413),
+                            message=(
+                                f"Request body ({actual_length} bytes) exceeds the "
+                                f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                                "Split the request or increase the limit."
+                            ),
+                        )
 
             data = self.parse_body(request)
             show_graphiql = self.graphiql and self.can_display_graphiql(request, data)
@@ -965,14 +1066,22 @@ class BaseGraphQLView(View):
             The parsed request data (a mapping, or a list for batch requests).
 
         Raises:
-            HttpError: When the body is not valid JSON, or when a batch view
-                receives a non-list body, an empty list, or a list holding an
-                entry that is not a JSON object.
+            HttpError: When the body is not valid UTF-8, is not valid JSON (a
+                body nested too deeply for the decoder counts), or when a batch
+                view receives a non-list body, an empty list, or a list holding
+                an entry that is not a JSON object.
         """
         content_type = self.get_content_type(request)
 
         if content_type == "application/graphql":
-            return {"query": request.body.decode()}
+            # Same guard the "application/json" branch below already had: a body
+            # that is not valid UTF-8 is bad client input, not a server fault,
+            # and "UnicodeDecodeError" would escape the "except HttpError"
+            # handler in "dispatch" as an unhandled 500.
+            try:
+                return {"query": request.body.decode("utf-8")}
+            except UnicodeDecodeError as e:
+                raise HttpError(HttpResponseBadRequest(str(e)))
         elif content_type == "application/json":
             try:
                 body = request.body.decode("utf-8")
@@ -1015,7 +1124,12 @@ class BaseGraphQLView(View):
                             message="The received data is not a valid JSON query.",
                         )
                 return request_json
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, RecursionError):
+                # "RecursionError" is NOT a "ValueError": a body of deeply nested
+                # arrays or objects (20 KB is enough) exhausts the JSON scanner's
+                # stack, and without it here the request became an unhandled 500.
+                # It is caught alongside the other two because the cause is the
+                # same — a body this decoder cannot accept.
                 raise HttpError(HttpResponseBadRequest("POST body sent invalid JSON."))
         elif content_type in (
             "application/x-www-form-urlencoded",
@@ -1295,6 +1409,12 @@ DEFAULT_VALIDATION_RULES = (
     CostLimitValidationRule,
 )
 
+#: Cache identity shared by every credential-free anonymous request. It is a
+#: single fixed partition, so it is the one unauthenticated identity that is
+#: already bounded and does not need the bucketing ``_cache_version_identity``
+#: applies to the rest.
+_ANON_CACHE_IDENTITY = "anon"
+
 
 class GraphQLView(BaseGraphQLView):
     """Enhanced GraphQL view: response caching + depth/cost rules + cost payload.
@@ -1310,11 +1430,11 @@ class GraphQLView(BaseGraphQLView):
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.
 
-        Returns None when there is no query, when the query is syntactically
-        invalid (a malformed document must not raise here; "dispatch" falls
-        through to "super_call" which returns a 400), or when the document
-        declares several operations and the request does not name one — the
-        caller must then treat the operation as undeterminable.
+        Returns None when there is no query, when the query cannot be parsed at
+        all (a malformed document must not raise here; "dispatch" falls through
+        to "super_call" which returns a 400), or when the document declares
+        several operations and the request does not name one — the caller must
+        then treat the operation as undeterminable.
 
         The operation name is read through "get_graphql_params", the same
         helper the execution path uses, so the operation classified here is the
@@ -1342,9 +1462,19 @@ class GraphQLView(BaseGraphQLView):
             # CACHE_ACTIVE path does not double-parse: get_response and
             # execute_graphql_request read the same cached DocumentNode. The
             # immutable AST is identical to parsing a Source(query); only error
-            # location labels would differ, and a syntax error is swallowed here.
+            # location labels would differ, and a parse failure is swallowed here.
             document_ast = cached_parse(query)
-        except GraphQLSyntaxError:
+        except Exception:
+            # Every failure to turn the body's "query" into a document is
+            # answered the same way: give up on classifying the operation and
+            # let "super_call" produce the 400. "GraphQLSyntaxError" alone was
+            # too narrow — a non-string "query" raises "TypeError" out of the
+            # lexer and a deeply nested inline literal raises "RecursionError",
+            # both of which became 500s. This mirrors the sibling call site in
+            # "execute_graphql_request", which already catches "Exception" around
+            # the very same "cached_parse" call and reports it as a GraphQL
+            # error. Nothing is swallowed: the request still executes through
+            # "super_call", which re-parses and surfaces the same failure.
             return None
 
         _, _, operation_name, _ = self.get_graphql_params(request, data)
@@ -1403,7 +1533,10 @@ class GraphQLView(BaseGraphQLView):
         contain no private data).
 
         Subclasses may override this staticmethod to use a different identity
-        source (e.g. a session key or a tenant identifier).
+        source (e.g. a session key or a tenant identifier). Whatever it returns
+        for an UNAUTHENTICATED request is treated as caller-controlled: see
+        "_cache_version_identity", which bounds how many permanent version
+        counters such an identity can create.
 
         Args:
             request: The incoming HTTP request.
@@ -1420,7 +1553,7 @@ class GraphQLView(BaseGraphQLView):
                 :16
             ]
             return f"t{h}"
-        return "anon"
+        return _ANON_CACHE_IDENTITY
 
     #: Sentinel used by ``dispatch`` to distinguish a cache miss from a cached
     #: falsy value (e.g. an empty-body response).  Using ``cache.get(key)``
@@ -1428,11 +1561,88 @@ class GraphQLView(BaseGraphQLView):
     #: treat a legitimately cached empty response as a miss.
     _CACHE_MISS = object()
 
-    #: Template for the per-identity namespace version counter cache key.
-    #: ``{identity}`` is substituted with the value returned by
-    #: ``cache_key_prefix``; this scopes invalidation to the issuing user's
-    #: namespace only so that a mutation by user A does not flush user B's cache.
+    #: Template for the namespace version counter cache key. ``{identity}`` is
+    #: substituted with the value returned by ``_cache_version_identity``, NOT
+    #: with ``cache_key_prefix`` itself: an AUTHENTICATED caller keeps its own
+    #: namespace, so a mutation by user A does not flush user B's cache, while
+    #: an anonymous caller is folded into one of ``_CACHE_VERSION_BUCKETS``
+    #: shared namespaces. Response entries are keyed by the FULL identity
+    #: either way — see ``_cache_version_identity`` for what bucketing spends.
     _CACHE_VERSION_KEY_TEMPLATE = "_graphql_cacheversion_{identity}"
+
+    #: How many version namespaces an UNAUTHENTICATED caller can reach. The
+    #: version counter is permanent by design (see ``_get_cache_version``), so
+    #: an identity an anonymous caller can vary at will — ``cache_key_prefix``
+    #: derives one from the caller-supplied ``Authorization`` header — would
+    #: otherwise let it plant unbounded never-expiring cache entries. See
+    #: ``_cache_version_identity`` for why collisions here are harmless.
+    _CACHE_VERSION_BUCKETS = 64
+
+    def _cache_version_identity(self, request: HttpRequest, identity: str) -> str:
+        """Return the namespace whose version counter *identity* invalidates.
+
+        The version counter is PERMANENT (see "_get_cache_version": it must
+        outlive the response entries it namespaces, issue #60b). A permanent key
+        whose name an unauthenticated caller chooses is a memory leak with a
+        remote control: "cache_key_prefix" derives an identity from the
+        caller-supplied "Authorization" header, which nothing has verified at
+        this point, so an anonymous client sending a fresh token per request
+        minted a fresh never-expiring counter per request.
+
+        Bounding it costs one property and keeps the important one:
+
+        * KEPT — isolation. Only the COUNTER namespace is bucketed. The response
+          entry itself is still keyed by the FULL identity (see "dispatch"), so
+          two callers who share a bucket never share a response slot and one
+          caller's body is never handed to another.
+        * SPENT — invalidation locality. Callers sharing a bucket share a
+          counter, so one caller's mutation advances the other's namespace too.
+          That can only turn a cache HIT into a MISS, which re-reads current data
+          from the database; the counter only ever moves forward, so no entry is
+          ever resurrected.
+
+        Two identities keep their exact namespace because neither is mintable:
+        an authenticated caller's is bounded by the real user table, and every
+        credential-free request already shares the single "anon" partition. Any
+        OTHER identity produced for an unauthenticated request is bucketed —
+        including one a subclass override invents, which is the point: the rule
+        is about what an unauthenticated caller can vary, not about the shape of
+        the token this class happens to emit.
+
+        STATED, NOT CLOSED — the spent property is reachable by an attacker. The
+        bucket is a pure function of a header the caller chooses, so an
+        unauthenticated client can hash candidate credentials offline until one
+        lands in any bucket it likes, then bump that bucket's counter and send
+        its members back to the database. Salting the digest would not help: the
+        namespace is small by construction, so a caller that cannot AIM can
+        still cover every bucket by volume. What bounds the damage is the shape
+        of the property itself — the counter only moves forward, so the worst
+        outcome is a miss, and the response entry is keyed by the FULL identity,
+        so no body ever crosses callers. Anything stronger needs the counter key
+        to be unguessable, which it cannot be while it is derived from the
+        identity it namespaces. A latency-sensitive token client should
+        authenticate: an authenticated identity is not bucketed at all.
+        "tests/test_views_cache_bucket_invalidation.py" pins both halves.
+
+        Args:
+            request: The incoming HTTP request, read for its authentication
+                state only.
+            identity: The per-request identity token from "cache_key_prefix".
+
+        Returns:
+            The identity itself when it is not attacker-mintable, else one of
+            "_CACHE_VERSION_BUCKETS" bucket names derived from it.
+        """
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            return identity
+        if identity == _ANON_CACHE_IDENTITY:
+            return identity
+        digest = hashlib.sha256(identity.encode(), usedforsecurity=False).digest()
+        bucket = int.from_bytes(digest[:4], "big") % self._CACHE_VERSION_BUCKETS
+        # Prefixed with the anon partition name so a bucket can never collide
+        # with an authenticated ``u{pk}`` namespace.
+        return f"{_ANON_CACHE_IDENTITY}{bucket}"
 
     def _get_cache_version(self, _cache: Any, identity: str) -> str:
         """Return the current namespace version token for *identity*.
@@ -1570,18 +1780,22 @@ class GraphQLView(BaseGraphQLView):
 
         * Cache keys are partitioned by user identity (see "cache_key_prefix") so
           one user's cached response is never served to another user.
-        * Mutations advance a global namespace version counter instead of calling
+        * Mutations advance a namespace version counter instead of calling
           "cache.clear()", which would flush unrelated cache entries shared by
           other users or other cache clients. The counter is advanced AFTER the
           mutation has run, so a concurrent reader can never cache pre-mutation
-          data under the new version (issue #60a).
+          data under the new version (issue #60a). Its namespace is bucketed for
+          identities an unauthenticated caller can vary, because the counter key
+          is permanent — see "_cache_version_identity". The response entry keeps
+          the FULL identity either way, so the isolation above is unaffected.
         * A request that would render GraphiQL (the view serves it and the client
           prefers HTML) bypasses the cache entirely, so an HTML page and the JSON
           answer for the same query never share a cache slot.
         * A sentinel object detects cache misses so a legitimately cached falsy or
           empty body is not re-executed on every request.
-        * A malformed GraphQL document ("GraphQLSyntaxError" during
-          "get_operation_ast") falls through to "super_call", which returns the
+        * A "query" that cannot be parsed during "get_operation_ast" — a syntax
+          error, a non-string value, or a literal nested past the parser's
+          recursion limit — falls through to "super_call", which returns the
           appropriate HTTP 400 response.
         * Multipart/form-data requests bypass the cache entirely because
           "parse_body" for that content type consumes the WSGI input stream via
@@ -1634,6 +1848,10 @@ class GraphQLView(BaseGraphQLView):
 
         _cache = caches["default"]
         identity = self.cache_key_prefix(request)
+        # The response entry keeps the FULL identity; only the version counter's
+        # namespace is bucketed, because that key is permanent and an
+        # unauthenticated caller must not be able to choose its name.
+        version_identity = self._cache_version_identity(request, identity)
         try:
             operation_ast = self.get_operation_ast(request)
         except HttpError:
@@ -1663,9 +1881,9 @@ class GraphQLView(BaseGraphQLView):
                 # Here the mutation's own transaction has already committed, and
                 # under ``ATOMIC_REQUESTS`` the request-level block is still
                 # open so the bump remains deferred to its commit.
-                self._bump_cache_version(_cache, identity)
+                self._bump_cache_version(_cache, version_identity)
 
-        version = self._get_cache_version(_cache, identity)
+        version = self._get_cache_version(_cache, version_identity)
         # ``_cache_key_signature`` is empty on the base view (byte-identical to
         # today) and, on ``AuthenticatedGraphQLView`` with ``PERMISSION_SCOPED_
         # SCHEMA`` active, the caller's permission signature. Folding it in keeps

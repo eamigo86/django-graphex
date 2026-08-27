@@ -116,6 +116,9 @@ class _Pruner:
         self._clones: dict[str, Any] = {}
         # Memoized implicit (output-type-derived) perms, keyed by type name.
         self._implicit: dict[str, frozenset[str] | None] = {}
+        # Memoized pruned NODE clones per Django model, so a filter input can
+        # be measured against the very types the clone serves its rows with.
+        self._serving: dict[Any, list[Any]] = {}
 
     # -- entry point -------------------------------------------------------- #
     def run(self) -> GraphQLSchema:
@@ -223,6 +226,14 @@ class _Pruner:
     def _implicit_perms(self, gtype: Any) -> frozenset[str] | None:
         """Return the output type's implicit read perms, memoized by type name.
 
+        The FULL schema is handed along so an interface's label is the union
+        over the implementors this schema mounts rather than over every one
+        registered in the process. It must be the same schema
+        ``perm_labels.implicit_label_set`` was built from — the caller
+        intersects the granted permissions with that label set before this runs,
+        so a label the two disagree about is stripped and the field disappears
+        for everyone.
+
         Args:
             gtype: The field's (possibly list- / non-null-wrapped) output type.
 
@@ -233,7 +244,7 @@ class _Pruner:
         named = get_named_type(gtype)
         name = named.name
         if name not in self._implicit:
-            self._implicit[name] = implicit_perms_for_type(named)
+            self._implicit[name] = implicit_perms_for_type(named, self._full)
         return self._implicit[name]
 
     def _surviving_actions(self, perms: dict[str, Any]) -> set[str]:
@@ -403,8 +414,93 @@ class _Pruner:
         kwargs["fields"] = lambda g=gtype: {
             fname: self._clone_input_field(ifield)
             for fname, ifield in self._filtered_input_fields[g.name].items()
+            if self._filter_key_survives(g, ifield)
         }
         return type(gtype)(**kwargs)
+
+    def _filter_key_survives(self, gtype: Any, ifield: Any) -> bool:
+        """Return whether a filter input's key still names something the clone serves.
+
+        The projection boundary is not only ``Meta.only_fields`` -- a PRUNE
+        publishes less than the schema it clones, and the ordering axis already
+        re-derives its allowlist against the clone
+        (:func:`_rescope_paginated_resolver`). The filter argument rode through
+        verbatim, so a caller who lost the ``author`` relation kept
+        ``filter: {author: {name: {icontains: ...}}}``: a prefix oracle over a
+        model the pruned SDL does not mount.
+
+        Only a generated ``<Model>FilterInput`` carries a model on its ``gdx``
+        payload; every other input object (the per-field ``<Field>Lookups``, the
+        mutation inputs) has no column to measure and rides through untouched.
+
+        Evaluated INSIDE the input clone's field thunk, which is what lets it
+        read the pruned node clones: they are memoized by name before their own
+        field thunks run, so forcing one from here resolves against the pruned
+        universe without re-entering this thunk (an argument's input type is
+        remapped to the memoized clone, never forced).
+
+        Args:
+            gtype: The SOURCE input object type being cloned.
+            ifield: One of its permitted input fields.
+
+        Returns:
+            True when the key survives into the pruned schema.
+        """
+        model = getattr((gtype.extensions or {}).get("gdx"), "model", None)
+        if model is None:
+            return True
+        from django_graphex.filtering.native_schema import filter_key_is_published
+
+        return filter_key_is_published(
+            model, getattr(ifield, "out_name", None), self._serving_clones(model)
+        )
+
+    def _serving_clones(self, model: Any) -> list[Any]:
+        """Return the pruned NODE clones that serve a model's rows.
+
+        A ``<Model>ListType`` container carries the same model on its payload
+        but publishes only ``results`` and a count, so the projection boundary
+        is measured on the node it paginates and containers are skipped here.
+
+        More than one node type per model is normal (two ``DjangoObjectType``s
+        over one model share the single ``<Model>FilterInput`` name), so the key
+        has to clear ALL of them -- the same union rule the build-time guard
+        applies.
+
+        Args:
+            model: The Django model whose serving types are wanted.
+
+        Returns:
+            The memoized clones, in a stable order.
+        """
+        clones = self._serving.get(model)
+        if clones is None:
+            clones = [
+                self._clone_named(self._full.type_map[name])
+                for name in sorted(self._survivors)
+                if self._is_node_type_for(self._full.type_map[name], model)
+            ]
+            self._serving[model] = clones
+        return clones
+
+    @staticmethod
+    def _is_node_type_for(gtype: Any, model: Any) -> bool:
+        """Return whether a type is a generated NODE type over *model*.
+
+        Args:
+            gtype: A named type from the full schema.
+            model: The Django model to match.
+
+        Returns:
+            True for a model-backed object type that is not a list container.
+        """
+        if not is_object_type(gtype):
+            return False
+        meta = getattr((gtype.extensions or {}).get("gdx"), "_meta", None)
+        return (
+            getattr(meta, "model", None) is model
+            and getattr(meta, "results_field_name", None) is None
+        )
 
     def _input_field_permitted(self, ifield: Any) -> bool:
         """Return whether an input field clears the caller's permissions.
@@ -439,11 +535,19 @@ class _Pruner:
     def _rebuild_field(self, gql_field: GraphQLField) -> GraphQLField:
         """Clone a field, remapping its output type and pruning its action enum.
 
-        ``resolve`` / ``subscribe`` / ``deprecation_reason`` / ``description`` /
-        ``extensions`` ride through ``to_kwargs()`` verbatim.
+        ``subscribe`` / ``deprecation_reason`` / ``description`` / ``extensions``
+        ride through ``to_kwargs()`` verbatim. So did ``resolve`` — and a
+        paginating results resolver carries the FULL schema's ordering allowlist
+        inside it, which is a pre-prune answer to a post-prune question; see
+        ``_rescope_paginated_resolver``.
         """
         kwargs = gql_field.to_kwargs()
         kwargs["type_"] = self._remap_type(gql_field.type)
+        rescoped = _rescope_paginated_resolver(
+            kwargs.get("resolve"), kwargs["type_"], self._remap_type
+        )
+        if rescoped is not None:
+            kwargs["resolve"] = rescoped
         args = kwargs.get("args")
         if args:
             perms = (gql_field.extensions or {}).get("gdx_required_perms")
@@ -506,6 +610,112 @@ class _Pruner:
         if isinstance(gtype, GraphQLList):
             return GraphQLList(self._remap_type(gtype.of_type))
         return self._clone_named(gtype)
+
+
+def _rescope_paginated_resolver(resolve: Any, pruned_type: Any, remap: Any) -> Any:
+    """Return a results resolver whose ordering allowlist answers for the PRUNE.
+
+    Which columns "ordering" may name is derived from the node type serving the
+    rows, and it is stamped on the paginator when the list container is built --
+    once, against the FULL schema's node type. Cloning the field carries that
+    resolver through verbatim, so the pruned schema asked the full schema's
+    question: a caller who lost the "author" relation (and with it the whole
+    author type) kept "ordering: -authorId", ranking the rows by a foreign key
+    the pruned SDL denies exists.
+
+    The paginator instance cannot simply be re-stamped: one instance backs the
+    full schema and every pruned variant, so writing on it would let the last
+    prune decide every other caller's allowlist -- the same reason the container
+    stamps a COPY. This stamps another copy, per clone, and rebuilds the results
+    resolver around it.
+
+    The stamp is a THUNK here, unlike the list container's, which is a plain
+    value. This runs from INSIDE "_rebuild_fields", and "pruned_type" is a clone
+    whose own field map is a thunk back into that same walk; the clone graph is
+    cyclic (a node reaches its own list container through any relation) and
+    graphql-core caches "fields" only once a thunk RETURNS. Reading the pruned
+    fields here is therefore re-entrant by construction. The models this suite
+    ships cannot close the loop through a second paginated field, so the guard
+    is structural rather than a reproduction -- do not make it eager to match
+    the container without adding a self-referential fixture first.
+
+    Both paginating shapes are covered, because both are reachable from a root
+    and both hold the allowlist the same way -- the two shapes
+    "utils._resolve_results_paginator" already enumerates for the optimizer:
+
+    - the list container's results field, a closure over a
+      "NativePaginationField", rebuilt around the rescoped copy;
+    - a flat "DjangoFilterPaginateListField", a partial bound to the graphene
+      field that paginates in its own resolver, rebound to a copy of that field.
+
+    A THIRD field on the same container needs the same answer and cannot be
+    recognised the same way: "pageInfo". Its output type is the shared
+    "CursorPageInfo", which names no model, so "pruned_type" says nothing about
+    whose columns it may page by -- and it is the field where the allowlist
+    matters MOST, because a keyset cursor prints the ordering value and the row
+    key into "startCursor" / "endCursor" rather than merely ranking by them.
+    Leaving it on the pre-prune paginator gave one container two answers, and
+    the cursor was the one that spelled the value out. So the paginator stamps
+    the node it pages onto that resolver ("get_native_page_info_field") and the
+    node is remapped to THIS clone here.
+
+    Anything else -- a plain field, a custom resolver that owns its own scoping
+    -- returns "None" and rides through unchanged.
+
+    Args:
+        resolve: The source field's resolver, or "None".
+        pruned_type: The field's already-remapped output type.
+        remap: The pruner's type remapper, used to reach the pruned clone of a
+            node type that the field's own output type cannot name.
+
+    Returns:
+        A replacement resolver, or "None" to keep the original.
+    """
+    from copy import copy
+    from functools import partial
+
+    from graphql import default_field_resolver
+
+    from django_graphex.paginations.pagination import (
+        BaseDjangoGraphqlPagination,
+        projected_ordering_attnames,
+    )
+    from django_graphex.paginations.utils import NativePaginationField
+
+    stamped_node = getattr(resolve, "page_info_node_type", None)
+    node = get_named_type(pruned_type if stamped_node is None else remap(stamped_node))
+    gdx = (getattr(node, "extensions", None) or {}).get("gdx")
+    model = getattr(getattr(gdx, "_meta", None), "model", None)
+    if model is None:
+        return None
+
+    def _rescoped(paginator: Any) -> Any:
+        scoped = copy(paginator)
+        scoped.ordering_allowed_attnames = lambda: projected_ordering_attnames(
+            model, node
+        )
+        return scoped
+
+    paginator = getattr(resolve, "page_info_paginator", None)
+    if isinstance(paginator, BaseDjangoGraphqlPagination):
+        return _rescoped(paginator).get_native_page_info_field(node).resolve
+
+    paginator = getattr(resolve, "paginator_instance", None)
+    if isinstance(paginator, BaseDjangoGraphqlPagination):
+        return NativePaginationField(
+            type=node, paginator=_rescoped(paginator)
+        ).wrap_resolve(default_field_resolver)
+
+    func = getattr(resolve, "func", None)
+    bound = getattr(func, "__self__", None)
+    paginator = getattr(bound, "pagination", None)
+    if isinstance(paginator, BaseDjangoGraphqlPagination):
+        field_clone = copy(bound)
+        field_clone.pagination = _rescoped(paginator)
+        return partial(
+            getattr(field_clone, func.__name__), *resolve.args, **resolve.keywords
+        )
+    return None
 
 
 def _is_action_enum(gtype: Any) -> bool:

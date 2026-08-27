@@ -208,6 +208,57 @@ def test_a_part_naming_no_field_at_all_is_still_ignored() -> None:
     assert not AliasUploadDoc.objects.get().profile_photo
 
 
+class TestOneFieldNamedUnderBothSpellings:
+    """A request naming one field twice resolves by CONTRACT, not by part order.
+
+    Only one file can land, so the merge applies the published alias first and
+    the model attribute second. Which file survives is then a property of the
+    request rather than of the order the parts happen to arrive in -- and a
+    reversal of those two passes is invisible unless something asserts it,
+    which is what this class is for.
+    """
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize("alias_first", [True, False])
+    def test_the_model_attribute_wins_whatever_the_part_order(
+        self, alias_first: bool
+    ) -> None:
+        """Assert the snake_case attname's file lands, under either arrival order.
+
+        Args:
+            alias_first: Whether the camelCase part is inserted before the
+                snake_case one, which is the only thing this varies.
+        """
+        alias = SimpleUploadedFile(
+            "alias.txt", b"from-alias", content_type="text/plain"
+        )
+        attname = SimpleUploadedFile(
+            "attname.txt", b"from-attname", content_type="text/plain"
+        )
+        parts = (
+            {"profilePhoto": alias, "profile_photo": attname}
+            if alias_first
+            else {"profile_photo": attname, "profilePhoto": alias}
+        )
+
+        info = _multipart_info(parts)
+        payload = {AliasUploadDocMutation._meta.input_field_name: {"label": "L"}}
+        with (
+            tempfile.TemporaryDirectory() as media,
+            override_settings(MEDIA_ROOT=media),
+        ):
+            result = AliasUploadDocMutation.create(None, info, **payload)
+            assert result.ok, _error_pairs(result)
+            row = AliasUploadDoc.objects.get()
+            assert row.profile_photo, "Neither spelling reached the column"
+            with row.profile_photo.open("rb") as stored:
+                assert stored.read() == b"from-attname", (
+                    "The published alias overwrote the model attribute; the "
+                    "two merge passes are applied in the wrong order, so part "
+                    "order decides which file lands."
+                )
+
+
 class TestTheProjectionGuardHoldsForBothSpellings:
     """A projected-away column stays unreachable under EITHER part name.
 

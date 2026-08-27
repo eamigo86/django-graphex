@@ -35,6 +35,7 @@ from django_graphex.types import DjangoModelType, DjangoObjectType
 from .models import (
     CrudFreshDoc,
     CrudLeakDoc,
+    CrudMirrorDoc,
     CrudNodeDoc,
     CrudPermDoc,
     CrudScopedDoc,
@@ -410,6 +411,44 @@ def test_projection_on_reused_output_type_is_rejected(db: None) -> None:
     assert "exclude_fields" in message, message
     assert "CrudLeakDoc" in message, message
     assert "LeakDocNode" in message, message
+
+
+class MirrorDocNode(DjangoObjectType):
+    """Output type registered for "CrudMirrorDoc" WITH the projection.
+
+    The CRUD type below restates this very projection, which is the case the
+    guard must let through.
+    """
+
+    class Meta:
+        """Configuration for "MirrorDocNode".
+
+        Declares the backing model and hides "secret" on its own Meta.
+        """
+
+        model = CrudMirrorDoc
+        exclude_fields = ("secret",)
+
+
+def test_projection_mirroring_the_reused_output_type_is_accepted() -> None:
+    """Ships broken if restating the reused type's own projection is refused.
+
+    The guard refuses a projection that would be accepted and discarded. One
+    that selects exactly what the registered type already selects is discarded
+    into no difference, so refusing it is an outage over a defensive
+    restatement.
+    """
+
+    class _MirrorDocType(DjangoModelType):
+        """CRUD type restating the projection the output type carries."""
+
+        class Meta:
+            """Bind to "CrudMirrorDoc" and hide "secret", exactly as above."""
+
+            model = CrudMirrorDoc
+            exclude_fields = ("secret",)
+
+    assert _MirrorDocType._meta.output_type is MirrorDocNode
 
 
 def test_projection_is_honored_when_output_type_is_built_fresh(db: None) -> None:

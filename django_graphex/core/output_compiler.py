@@ -39,6 +39,7 @@ from graphql import (
     GraphQLList,
     GraphQLNonNull,
     GraphQLString,
+    get_named_type,
 )
 
 from django_graphex._strconv import to_camel_case as _to_camel_case
@@ -54,6 +55,14 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+#: "GraphQLField.extensions" key marking a compiled field that publishes a model
+#: column's NAME while serving something else as its value. Stamped by
+#: "types._compile_declared_fields" as it emits a declared class attribute, read
+#: by "publishes_column_value". It lives beside its reader, in the module that
+#: owns the compiled output shape, so both projection axes reach it without
+#: importing each other.
+MASKED_COLUMN_EXT = "gdx_masked_column"
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +717,25 @@ def _to_graphql_field(
             )
             return {}
 
+        # SCOPE BOUNDARY (documented, not a defect): this is a plain attribute
+        # read off the already-fetched parent, so it does NOT route through
+        # ``utils.apply_object_type_get_queryset`` — a target type declaring
+        # ``get_queryset`` scopes its own root fields but NOT this relation.
+        # Enforcing it here would mean re-fetching the target per parent row,
+        # trading the ``select_related`` join for one query per row on exactly
+        # the types that opted into scoping. The to-MANY sibling has the same
+        # boundary for the same reason.
+        #
+        # The escape hatch is an explicitly DECLARED field of the same name on
+        # the parent type: ``types._compile_declared_fields`` runs last in the
+        # output thunk and a declared override wins, and only that path wires a
+        # ``resolve_<name>``. This resolver deliberately does NOT look for one
+        # itself — the compiler is per-MODEL and has no source class, so it
+        # would have to recover the parent type per row, and the to-MANY sibling
+        # (``fields.DjangoNestedListObjectField.wrap_resolve``) does not honour
+        # one either. A bare ``resolve_<relation>`` method is therefore inert;
+        # docs/usage/types.md says so, and tests/test_relation_scope_hatch.py
+        # pins both halves.
         def _default_resolver(
             root: Any,
             _info: Any,
@@ -947,3 +975,115 @@ def compile_output_fields(
         fields.update(field_map)
 
     return fields
+
+
+def _serves_its_own_value(gql_field: Any) -> bool:
+    """Report whether a compiled field hands out the value it was derived from.
+
+    A field is either absent (the compiler emitted nothing under that name, so
+    there is nothing to hand out) or present and possibly STAMPED: the declared
+    class attribute that publishes a column's name over a resolver of its own
+    carries "MASKED_COLUMN_EXT", written by the compiler as it picked that
+    resolver. Reading the stamp is what keeps this from guessing at a resolver
+    it cannot read.
+
+    Args:
+        gql_field: The compiled field found under the wire name, or "None" when
+            the type publishes no such field.
+
+    Returns:
+        True when the field serves the value of whatever it was compiled from.
+    """
+    if gql_field is None:
+        return False
+    return not (getattr(gql_field, "extensions", None) or {}).get(MASKED_COLUMN_EXT)
+
+
+def publishes_column_value(node_type: Any, field: Any) -> bool:
+    """Report whether a compiled type hands out the VALUE a model column holds.
+
+    The one predicate the ordering and filtering projection guards share.
+    "Meta.only_fields" / "Meta.exclude_fields" are a security boundary, so both
+    axes need the same answer to the same question, and the question is about
+    the VALUE on the row -- not about a name in the SDL, which a declaration can
+    publish over a resolver that serves something else.
+
+    What it computes, exactly three rules against the COMPILED field map of the
+    type it is handed:
+
+    - A column whose field the type publishes unstamped is published. Absence
+      and a masked stamp are the same answer, so a projection that dropped the
+      column, a compiler rule that dropped its relation, and a declaration that
+      masked it all read alike.
+    - A forward relation owns the column holding the TARGET's key, so it is
+      published only when the relation field itself is published AND the type
+      that relation resolves to publishes the referenced field in turn. The
+      recursion follows the compiled field's own type, never a registry, so it
+      describes the schema the caller is holding.
+    - A multi-table-inheritance parent link is followed to the key it points at
+      and asked of the SAME type: the compiler drops the link as plumbing while
+      publishing the inherited key, and the two hold one value per row.
+
+    Nothing here re-reads "Meta". The compiled type IS the SDL, so an answer
+    cannot drift from what the schema serves, and a filter the compiler grows
+    later is inherited rather than mirrored.
+
+    What it does NOT answer, deliberately:
+
+    - Whether a relation may be TRAVERSED. A field owning no column -- a reverse
+      relation, a many-to-many, a generic foreign key -- has no value to publish
+      here and answers False; that is not a statement about joining through it.
+    - Whether a resolver returns the column after all. A body no build-time
+      analysis can read is treated as a mask, so a "resolve_<name>" that happens
+      to return the real column costs its column. The one exception is the
+      compiler-visible same-name source shortcut, which is not stamped because
+      the resolver provably reads that very attribute.
+    - Which type serves the model. The caller names it. Under
+      "PERMISSION_SCOPED_SCHEMA" that means naming the type from the SERVING
+      schema: the pruned clone publishes less, and only the clone can say so.
+      The cost is that no answer may be memoized on the model or on the
+      declaring class -- it belongs to one compiled type -- and that a caller
+      holding only a model has nothing to ask.
+
+    Fails CLOSED at every unknown: a caller with no compiled field map, a
+    relation resolving to something with no fields of its own (a union, a
+    scalar), or a field carrying no column all answer False.
+
+    Args:
+        node_type: The compiled type serving the model's rows, taken from the
+            schema that will serve the request, or any object carrying no field
+            map (which fails closed).
+        field: The model field to ask about, as "model._meta" holds it.
+
+    Returns:
+        True when the type publishes the value of the column that field owns.
+    """
+    fields = getattr(node_type, "fields", None)
+    if not isinstance(fields, dict) or not getattr(field, "concrete", False):
+        return False
+
+    # A concrete field with a DIFFERENT target field is a forward relation: its
+    # column stores the target's key, so the target field is what has to be
+    # published. A field pointing at ITSELF -- a one-to-one relation to "self"
+    # declared as the primary key, which Django's system checks accept -- is its
+    # own column, and the walk has to stop here: sending its question to the
+    # target type sends it straight back, and the recursion runs until the
+    # interpreter raises. No other model shape reaches this clause, so it is
+    # pinned by a fixture of its own (tests.models.SelfKeyedNode); deleting it
+    # leaves the whole suite green and the schema build dead on that model.
+    #
+    # ponytail: an identity check, not a cycle detector. A LONGER cycle through
+    # several models cannot be built -- each hop's target must already exist to
+    # be pointed at -- so a visited-set would cost every call to guard a shape
+    # Django cannot express.
+    target = getattr(field, "target_field", None)
+    if target is None or target is field:
+        return _serves_its_own_value(fields.get(_to_camel_case(field.name)))
+
+    if getattr(getattr(field, "remote_field", None), "parent_link", False):
+        return publishes_column_value(node_type, target)
+
+    relation = fields.get(_to_camel_case(field.name))
+    if not _serves_its_own_value(relation):
+        return False
+    return publishes_column_value(get_named_type(relation.type), target)

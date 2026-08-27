@@ -298,6 +298,23 @@ def _make_test_nested_field():
     return _AuthorType._meta.fields["posts"]
 
 
+def _row_gql_type(inst):
+    """Return the compiled ROW type the nested field's container serves.
+
+    "build_window_prefetch" reads its ordering allowlist off the row type the
+    caller threads in, and fails closed when there is none: the live walker
+    always resolves it from the schema, so a direct call has to supply it too or
+    the pre-check declines every ordering term.
+
+    Args:
+        inst: The "DjangoNestedListObjectField" under test.
+
+    Returns:
+        The compiled "GraphQLObjectType" for one row of the nested list.
+    """
+    return inst.type._meta.baseType._meta.graphql_output_type
+
+
 class TestBuildWindowPrefetchPreChecks(TestCase):
     """Tests for the applicability pre-checks in build_window_prefetch (task 4.1–4.7).
 
@@ -342,6 +359,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 related_field=related_field,
                 sub_selection=None,
                 fragments={},
+                child_gql_type=_row_gql_type(inst),
             )
             self.assertIsNone(
                 result, "Must return None when OPTIMIZE_NESTED_PAGINATION=False"
@@ -364,6 +382,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNone(result, "Must return None when slice_tuple is None")
 
@@ -422,6 +441,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=_FakeM2MRelated(),
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNone(
             result, "Must return None for M2M relations (pre-check 3 isolation)"
@@ -477,6 +497,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=_FakeRelated(),
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNone(result, "Must return None for non-one_to_many relations")
 
@@ -498,6 +519,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNone(result, "Must return None for non-concrete ordering term")
 
@@ -527,6 +549,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 related_field=related_field,
                 sub_selection=fake_selection,
                 fragments={},
+                child_gql_type=_row_gql_type(inst),
             )
         self.assertIsNone(
             result, "Must return None when _compute_child_only returns None (full load)"
@@ -549,6 +572,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNotNone(
             result,
@@ -576,6 +600,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNotNone(pf)
 
@@ -606,6 +631,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
 
         with CaptureQueriesContext(connection):
@@ -633,6 +659,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         rows = list(pf.queryset)
         for row in rows:
@@ -678,6 +705,7 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 related_field=related_field,
                 sub_selection=None,
                 fragments={},
+                child_gql_type=_row_gql_type(inst),
             )
         self.assertIsNone(
             result, "Must return None when filter_backend.apply forces .distinct() (G5)"
@@ -2478,6 +2506,7 @@ class TestBuildWindowPrefetchWithSubSelection(TestCase):
             related_field=related_field,
             sub_selection=sub_selection,
             fragments={},
+            child_gql_type=_row_gql_type(inst),
         )
         self.assertIsNotNone(
             pf, "build_window_prefetch must return a Prefetch with sub_selection"

@@ -572,6 +572,25 @@ def test_list_form_default_lookups_filter(db: None) -> None:
 RPK = Registry()
 
 
+class ArticlePkRelationListType(DjangoListObjectType):
+    """ "Article" list type registered so the reverse "articles" relation exists.
+
+    The output compiler DROPS a relation whose target model has no registered
+    type, and a filter path may not traverse a relation the SDL does not
+    publish -- the nested input would probe a model the schema cannot name.
+    Registering the target is what keeps "articles" filterable.
+    """
+
+    class Meta:
+        """Bind the list type to "Article" with no filter declaration.
+
+        See the enclosing type's docstring for why it has to exist.
+        """
+
+        model = Article
+        registry = RPK
+
+
 class AuthorPkRelationListType(DjangoListObjectType):
     """ "Author" list type declaring the reverse to-many relation as plain pk lookups.
 

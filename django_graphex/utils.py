@@ -3705,11 +3705,18 @@ def apply_object_type_get_queryset(
 ) -> QuerySet:
     """Apply a "DjangoObjectType.get_queryset" row-level scope to a queryset.
 
-    The single choke point for the per-request scoping hook: every path that
-    serves rows for a "DjangoObjectType" routes through here, whether the
-    queryset came from a fresh manager ("queryset_factory") or from a parent's
-    relation accessor (the related fast path in
-    "DjangoFilterListField.list_resolver").
+    The choke point for the per-request scoping hook on the paths that build a
+    QUERYSET. It has exactly three callers: "queryset_factory" (a fresh
+    manager), "DjangoObjectType.get_node" (a primary-key lookup), and the
+    related fast path in "DjangoFilterListField.list_resolver" (a parent's
+    relation accessor).
+
+    It is NOT every path that serves rows for a "DjangoObjectType". An
+    auto-expanded relation field never builds a queryset at all: the to-MANY arm
+    reads the parent's prefetch cache and the to-ONE (FK / OneToOne) arm is a
+    plain attribute read off the already-fetched parent, so neither reaches this
+    function and neither is scoped. That boundary is documented for users in
+    docs/usage/types.md, together with the "resolve_<relation>" escape hatch.
 
     The sentinel "_dgx_has_object_type_get_queryset" is set on
     "DjangoObjectType" and inherited by every plain subclass; it is NOT present

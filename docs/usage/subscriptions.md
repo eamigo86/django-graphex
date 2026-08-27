@@ -553,9 +553,10 @@ data:
 
 Error surfacing splits at the moment the stream is committed:
 
-- **Pre-stream (HTTP 400)** — a missing `query`, a GraphQL **syntax** error, or
-  a non-subscription operation is rejected as a plain `400 Bad Request` before
-  any stream starts.
+- **Pre-stream (HTTP 400)** — a missing `query`, a GraphQL **syntax** error, a
+  non-subscription operation, or a JSON body that is not an object (`[1,2,3]`,
+  `"x"`, `null`) is rejected as a plain `400 Bad Request` before any stream
+  starts — the same classification `GraphQLView` gives those bodies.
 - **In-stream** — everything after that (**validation errors** and
   **authorize-denials**) is delivered inside the committed
   `200 text/event-stream` response as a single `next` frame carrying
@@ -579,7 +580,7 @@ multiplexes any number of operations, each identified by a client-chosen `id`:
 
 The `subscribe` payload carries the same `query` / `variables` /
 `operationName` keys as an HTTP POST. A subscribe-time failure (parse error,
-validation error, authorize-deny, or the
+validation error, authorize-deny, a `payload` that is not a JSON object, or the
 [per-connection cap](#per-connection-subscription-cap)) is answered with
 `{"type": "error", "id": "1", "payload": [...]}` instead of `next` frames, and
 the server answers a client `{"type": "ping"}` with `{"type": "pong"}`. The

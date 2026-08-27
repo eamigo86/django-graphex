@@ -26,7 +26,7 @@ The test model attnames used here:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from django.db import connection
@@ -356,6 +356,20 @@ class TestWindowPrefetchCamelCase(TestCase):
 
         return _make_test_nested_field()
 
+    @staticmethod
+    def _row_type(inst: DjangoNestedListObjectField) -> Any:
+        """Return the compiled row type the window pre-check reads its allowlist from.
+
+        Args:
+            inst: The nested list field under test.
+
+        Returns:
+            The compiled row "GraphQLObjectType" for the nested list.
+        """
+        from tests.test_optimizer_phase_c import _row_gql_type
+
+        return _row_gql_type(inst)
+
     def test_window_prefetch_optimizes_camelcase_term(self) -> None:
         """Assert a camelCase ordering term does not make the window opt decline.
 
@@ -375,6 +389,7 @@ class TestWindowPrefetchCamelCase(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=self._row_type(inst),
         )
         assert result is not None, (
             "window-prefetch must optimize a camelCase ordering term, not decline"
@@ -397,6 +412,7 @@ class TestWindowPrefetchCamelCase(TestCase):
             related_field=related_field,
             sub_selection=None,
             fragments={},
+            child_gql_type=self._row_type(inst),
         )
         assert pf is not None
         with CaptureQueriesContext(connection) as ctx:

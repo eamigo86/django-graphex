@@ -117,7 +117,10 @@ class DepthLimitValidationRule(ValidationRule):
         # Read via the module so `override_settings` (which rebuilds the cached
         # settings object) is honored.
         global_max = _settings.graphql_api_settings.MAX_QUERY_DEPTH
-        if global_max:
+        # None is the ONLY disabling value: a limit of 0 means "allow nothing",
+        # and the settings reader refuses it rather than let it read as falsy
+        # here and silently switch the guard off.
+        if global_max is not None:
             constraints.append(_Constraint(int(global_max), 0, "query"))
 
         self._walk(node.selection_set, root_type, 0, constraints, frozenset())

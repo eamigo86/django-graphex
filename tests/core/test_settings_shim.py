@@ -6,10 +6,14 @@ Tests the single "DJANGO_GRAPHEX" Django-setting namespace and its reader
 BREAKING CHANGE (2.0): django-graphex unified its two settings dicts into ONE
 "DJANGO_GRAPHEX" namespace. The schema/middleware/subscription keys (SCHEMA,
 MIDDLEWARE, SUBSCRIPTION_PATH, ATOMIC_MUTATIONS, MAX_VALIDATION_ERRORS,
-CAMELCASE_ERRORS, SUBSCRIPTION_CONNECTION_INIT_TIMEOUT) now live in
-"DJANGO_GRAPHEX" alongside the package's own settings. The legacy "GRAPHENE"
-namespace (and the former separate schema-settings dict + its reader) are gone:
-"graphql_api_settings" is the single reader for every key.
+SUBSCRIPTION_CONNECTION_INIT_TIMEOUT) now live in "DJANGO_GRAPHEX" alongside the
+package's own settings. The legacy "GRAPHENE" namespace (and the former separate
+schema-settings dict + its reader) are gone: "graphql_api_settings" is the
+single reader for every key.
+
+"CAMELCASE_ERRORS" is NOT one of them. It was dropped from DEFAULTS, so it is no
+longer a recognised key: an operator who sets it gets the unknown-setting system
+check warning from "check_unknown_settings" and the value is ignored.
 """
 
 from __future__ import annotations

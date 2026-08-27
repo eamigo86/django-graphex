@@ -26,6 +26,7 @@ Per-field-kind dispatch:
 
 from __future__ import annotations
 
+from copy import copy
 from typing import Any
 
 from graphql import (
@@ -1101,9 +1102,28 @@ def _filter_arg(
     registries = _resolve_registries(registries)
     model = field.model
     node_type = _unwrap_to_node_type(field)
-    registry = getattr(getattr(node_type, "_meta", None), "registry", None)
+    node_meta = getattr(node_type, "_meta", None)
+    registry = getattr(node_meta, "registry", None)
 
+    # NAME the type the projection boundary is measured against. The filter
+    # guard used to look it up by model in the graphene registry — a last-wins
+    # index a type opts out of with the public ``Meta.skip_registry``, which
+    # made the guard a no-op for exactly the type about to serve the request.
+    # ``resolved_output_type`` also picks THIS pair's forked instance, so a
+    # permission-scoped clone is measured as itself.
+    #
+    # A list-object field declares the ``<Model>ListType`` CONTAINER, and the
+    # projection lives on the node it paginates. Take that node from the pair's
+    # output registry — the very map the container's own thunk reads — rather
+    # than unwrapping the container's ``results`` field: forcing a container's
+    # field map from HERE closes a cycle (container thunk -> ordering stamp ->
+    # the host type's fields -> this nested field -> back to the container).
+    from django_graphex.core.base import resolved_output_type
     from django_graphex.filtering.native_schema import build_filter_input_type
+
+    serving_type = resolved_output_type(node_type, registries)
+    if getattr(node_meta, "results_field_name", None):
+        serving_type = registries.output.get_compiled(model)
 
     native_input = build_filter_input_type(
         model,
@@ -1111,6 +1131,15 @@ def _filter_arg(
         registry,
         custom_filters=custom_filters,
         registries=registries,
+        node_type=serving_type,
+        # NAME the Meta this declaration was read from. The input is shared per
+        # MODEL, so a refusal over a path another type contributed has to name
+        # THAT type: "<Model>.filter_fields" points at a Meta no model has. A
+        # container that declared none carries the node it inherited from.
+        declared_on=(
+            getattr(node_meta, "filter_fields_declared_on", None)
+            or getattr(node_type, "__name__", None)
+        ),
     )
     if native_input is None:
         return {}
@@ -1232,6 +1261,59 @@ def _unwrap_to_node_type(field: Any) -> Any:
     return current
 
 
+def _rescoped_paginate_field(field: Any, node_type: Any, node_output: Any) -> Any:
+    """Rebind a flat paginated list field to THIS schema's ordering allowlist.
+
+    Which columns may be named in "ordering" is a PER-SCHEMA fact, and every
+    other stamper already treats it as one: the list container reads its pair's
+    compiled element type, and the permission pruner re-derives the allowlist
+    against the clone it just built. This one used to read
+    "_type._meta.graphql_output_type" -- the CLASS-DEF canonical instance,
+    stamped once while the root class body was still executing. That instance is
+    not the object the schema serves: instrumenting every flat paginated field
+    the test suite builds found twelve whose served node type is a different
+    object. They agree only because a fork recompiles the same class from the
+    same "Meta", and the disagreement a narrower schema would produce runs the
+    dangerous way -- an allowlist naming a column the served SDL denies.
+
+    Both the field and its paginator are COPIED, for the same reason the
+    container copies: one paginator instance is routinely mounted on several
+    fields and reaches every schema through the class-def field, so writing on
+    the shared object would let the last schema built decide every earlier
+    schema's allowlist.
+
+    The stamp is a THUNK, unlike the container's plain value. This runs while
+    the root (or a host node type's own field map) is still compiling, and
+    "node_output" may be a type whose field map is a thunk back into that same
+    walk. Forcing it here is re-entrant by construction: doing so eagerly raised
+    "RecursionError" out of a node type's own thunk across the whole suite.
+
+    Args:
+        field: The "DjangoFilterPaginateListField" being compiled, whose
+            "pagination" is not "None".
+        node_type: The declared node class, which names the model.
+        node_output: The compiled node type THIS schema will serve rows with.
+
+    Returns:
+        A copy of the field carrying a copy of the paginator, stamped with the
+        allowlist the served type publishes.
+    """
+    from graphql import get_named_type
+
+    from django_graphex.paginations.pagination import projected_ordering_attnames
+
+    model = node_type._meta.model
+    served = get_named_type(node_output)
+
+    rescoped = copy(field)
+    paginator = copy(field.pagination)
+    paginator.ordering_allowed_attnames = lambda: projected_ordering_attnames(
+        model, served
+    )
+    rescoped.pagination = paginator
+    return rescoped
+
+
 def _build_filter_list_field(
     field: Any, registries: SchemaRegistries | None = None
 ) -> GraphQLField:
@@ -1278,6 +1360,8 @@ def _build_filter_list_field(
     # inside list_resolver, so the args must be on THIS field.
     paginator = getattr(field, "pagination", None)
     if paginator is not None:
+        field = _rescoped_paginate_field(field, node_type, node_output)
+        paginator = field.pagination
         args.update(paginator.to_graphql_fields(native=True))
 
     resolve = field.wrap_resolve(default_field_resolver)

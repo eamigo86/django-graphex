@@ -363,6 +363,73 @@ still gated by `blog.view_comment`.
     only for the generated relation fields nothing else labels. A field
     returning a plain (non-model) type stays untagged and therefore public.
 
+#### A typed GFK union requires *every* member's permission
+
+A [`Meta.unions`](types.md#djangouniontype-typed-genericforeignkey-targets)
+GenericForeignKey field returns a GraphQL union, and
+a union carries no model of its own — it can hand back **any** of its members.
+Its requirement is therefore the **union of its members'** read permissions: to
+keep `target` on
+
+```python
+class CommentType(DjangoObjectType):
+    class Meta:
+        model = Comment
+        unions = {"target": PaymentUnion}   # Account | Invoice
+```
+
+a caller needs `billing.view_account` **and** `billing.view_invoice`.
+
+!!! warning "This deliberately over-prunes"
+
+    A caller holding `view_account` but not `view_invoice` loses `target`
+    entirely, even for a row whose GFK points at an `Account`. The alternative —
+    keeping the field for anyone holding *one* member's permission — would hand
+    that caller `Invoice` rows through the union, which is exactly the traversal
+    the pruner exists to stop. The requirement applies to the whole field, so
+    there is no per-member answer to give.
+
+    If the members are meant to be reachable independently, expose them as their
+    own fields: each one is then gated by its own model's permission.
+
+### `ordering` follows the pruned schema, not the full one
+
+A pruned relation takes its **column** with it. `Post.author` is what makes
+`author_id` an orderable column, so a caller who loses the relation also loses
+`results(ordering: "-authorId")`:
+
+```json
+{
+  "errors": [ { "message": "Invalid ordering field: 'author_id'." } ]
+}
+```
+
+The [ordering allowlist](pagination.md#ordering-validation-security) is derived from the
+node type that serves the rows, and each pruned schema is a distinct clone, so
+each caller's paginator answers for the schema that caller was actually served
+— a full-permission caller keeps `-authorId` on the very same field. Both the
+list container's `results` and a flat `DjangoFilterPaginateListField` are
+covered.
+
+### `filter` follows the same prune
+
+The filter argument narrows with the schema, on the same predicate: a relation
+the pruned node type no longer publishes is **dropped from the pruned
+`<Model>FilterInput`**, and a nested input left over a model the clone does not
+mount falls out of the pruned type map entirely. The caller above therefore
+loses `filter: { author: { name: { icontains: … } } }` exactly as they lose
+`ordering: "-authorId"` — one schema, one boundary, one answer.
+
+The full schema is untouched; each pruned variant carries its own clone of the
+input, so a full-permission caller keeps the whole filter surface.
+
+!!! warning "The `@filter_field` body is still yours to scope"
+
+    A custom filter argument is an opaque scalar whose ORM lookup lives in your
+    Python, so the prune cannot narrow it. A `@filter_field` method that reaches
+    a relation the caller lost still reaches it. See
+    [Custom per-field filters](filtering.md#custom-per-field-filters-filter_field).
+
 ### Nested write inputs are covered too
 
 The same argument runs on the input side. A parent declaring

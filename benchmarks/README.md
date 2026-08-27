@@ -26,6 +26,30 @@ The four libraries do **not** share a schema. Each has its own
    repo's own `.venv` (see `setup_envs.sh`). Same Python (3.12).
 3. **The same five logical operations**, defined by the operation contract below.
 
+4. **The same schema surface.** Every library declares the same explicit field
+   lists — `fields` on graphene-django, `strawberry.auto` annotations on
+   strawberry, the SDL on ariadne, `Meta.only_fields` on graphex — so no library
+   is charged for compiling a different amount of surface. **Seven** of the
+   **eighteen** declared fields are in no operation's selection set at all —
+   `Author.bio`, `Author.email`, `Post.body`, `Post.createdAt`,
+   `Comment.authorName`, `Comment.createdAt`, `Comment.isApproved` — and that is
+   deliberate: the schema-build number compares how much surface each library
+   compiles, so the surface has to be the same one whether a query reaches it or
+   not. **This rule is checked, not asserted**: the harness introspects the
+   built schema and writes the declared field lists into `results/<lib>.json`
+   under `surface`, so
+   `diff <(jq .surface results/graphex.json) <(jq .surface results/ariadne.json)`
+   settles it.
+
+   On graphex that option is also a **security boundary**: a projected column is
+   unreadable, unorderable and unfilterable through the type, so
+   `PostType.filter_fields` naming the `author` relation is admitted only
+   because `AuthorType` publishes the author's key. Counted and timed over three
+   runs by `guard_cost.py`, the shared predicate costs **46 calls / 0.73–1.04 ms
+   of a 10–15 ms schema build** and **17 calls / about 0.02 ms per `nested`
+   request** (0.15 % of it). Both are inside the numbers, and neither is
+   switchable off.
+
 Per-library query documents may differ in **SHAPE** (e.g. graphex uses a
 `results {} / totalCount` wrapper with `results(limit:, offset:)`; graphene uses
 Relay connections; strawberry uses `OffsetPaginationInput`; ariadne uses whatever
@@ -88,6 +112,11 @@ matches `Post 42`, `Post 420..429`, `Post 4200..4299`, and `Post 1420..9942…`
   "django": "6.0.6",
   "machine": { "platform": "...", "cpu_count": 16 },
   "schema_import_ms": 12.27,           // time to build the schema (import bench_schema)
+  "surface": {                          // declared field lists, read back by introspection
+    "Author": ["bio", "email", "id", "name", "posts"],
+    "Post": ["author", "body", "comments", "createdAt", "id", "status", "title", "viewsCount"],
+    "Comment": ["authorName", "createdAt", "id", "isApproved", "text"]
+  },
   "ops": {
     "flat_list": {
       "mean_ms": 1.71, "p50_ms": 1.56, "p95_ms": 2.00,
@@ -123,6 +152,33 @@ Run a single library manually:
 BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings .venv-graphex/bin/python harness.py
 ```
 
+The published table in [`docs/why.md`](../docs/why.md) uses the **doubled**
+dataset (`--authors 2000`), which `run_all.sh` does not seed. Reseeding for it
+requires a **fresh database**, not just `seed_bench --authors 2000`: the command
+deletes rows but SQLite keeps counting primary keys, so the `single` operation's
+fixed pk `5000` would address a row that no longer exists and every library's
+`validate()` would abort.
+
+`BENCH_PREFIX` is what makes this recipe produce the artifacts the page cites
+rather than overwriting the 1,000-author four: the harness cannot tell which
+seed it is measuring, so the caller names the file.
+
+```bash
+rm -f db.sqlite3
+BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
+  .venv-graphex/bin/python -m django migrate --run-syncdb
+BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
+  .venv-graphex/bin/python -m django seed_bench --authors 2000
+for lib in graphex graphene strawberry ariadne; do
+  BENCH_PREFIX=2x_ BENCH_LIB=$lib DJANGO_SETTINGS_MODULE=config.settings \
+    ".venv-$lib/bin/python" harness.py
+done
+```
+
+Leave `BENCH_PREFIX` out and the loop writes `results/<lib>.json` — the
+1,000-author names — with 2,000-author numbers inside them. That is the one
+mistake this recipe cannot detect for you, because both seeds are valid runs.
+
 ## Layout
 
 ```
@@ -132,6 +188,7 @@ benchmarks/
 ├── setup_envs.sh                     # per-lib venvs, identical Django pin
 ├── run_all.sh                        # fresh DB, seed once, run all harnesses
 ├── harness.py                        # the measurement loop (runs in a lib venv)
+├── guard_cost.py                     # what the projection boundary costs (docs/why.md cites it)
 ├── config/
 │   ├── settings.py                   # single shared settings; LIB_APPS per lib
 │   └── urls.py                       # mounts libs/<BENCH_LIB>/bench_schema.graphql_view
@@ -140,11 +197,24 @@ benchmarks/
 │   └── management/commands/seed_bench.py
 ├── libs/
 │   ├── graphex/bench_schema.py       # reference implementation (django-graphex v2)
-│   ├── graphene/bench_schema.py      # (to be implemented)
-│   ├── strawberry/bench_schema.py    # (to be implemented)
-│   └── ariadne/bench_schema.py       # (to be implemented)
-└── results/                          # <lib>.json output (gitignored)
+│   ├── graphene/bench_schema.py      # Relay nodes + DjangoFilterConnectionField
+│   ├── strawberry/bench_schema.py    # strawberry.auto + DjangoOptimizerExtension
+│   └── ariadne/bench_schema.py       # SDL-first + hand-written resolvers
+└── results/                          # <lib>.json + 2x_<lib>.json — TRACKED (see below)
 ```
+
+## The results are tracked on purpose
+
+`docs/why.md` cites eight artifacts by path, so eight artifacts are in the
+repository: `results/<lib>.json` (1,000-author seed) and `results/2x_<lib>.json`
+(the doubled seed the published table uses). A citation a reader cannot open is
+not a citation, and these files are 1.7 kB each — cheap honesty.
+
+`.gitignore` therefore ignores `results/*` and re-includes exactly those eight.
+Anything else you leave in there (summaries, ad-hoc reruns) stays ignored.
+Re-running `run_all.sh` **overwrites** the tracked 1,000-author four with your
+own machine's numbers, which will show up as a plain `git diff` — that is the
+intended way to disagree with the published table.
 
 ## Seeded dataset
 

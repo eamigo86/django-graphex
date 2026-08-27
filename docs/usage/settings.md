@@ -16,7 +16,6 @@ DJANGO_GRAPHEX = {
     "SUBSCRIPTION_PATH": None,       # WebSocket subscription endpoint exposed to GraphiQL
     "ATOMIC_MUTATIONS": False,       # wrap each mutation in transaction.atomic()
     "MAX_VALIDATION_ERRORS": None,   # cap validation errors returned (None = no cap)
-    "CAMELCASE_ERRORS": True,
     "SUBSCRIPTION_CONNECTION_INIT_TIMEOUT": 3.0,  # graphql-transport-ws connection_init wait (s)
 
     # --- Pagination -------------------------------------------------------- #
@@ -86,7 +85,6 @@ part of `DJANGO_GRAPHEX` like everything else.
 | `SUBSCRIPTION_PATH` | `None` | Path of the WebSocket subscription endpoint advertised to GraphiQL / the bundled client. `None` = default routing. See [Subscriptions](subscriptions.md). |
 | `ATOMIC_MUTATIONS` | `False` | Wrap each mutation in `transaction.atomic()` so a failing mutation rolls back its writes. |
 | `MAX_VALIDATION_ERRORS` | `None` | Cap the number of GraphQL validation errors returned in a single response (also honored by the WS/SSE subscription transports). `None` = no cap. |
-| `CAMELCASE_ERRORS` | `True` | camelCase the `field` / `path` keys in error objects to match the camelCase wire schema. |
 | `SUBSCRIPTION_CONNECTION_INIT_TIMEOUT` | `3.0` | Seconds the `graphql-transport-ws` server waits for the first `connection_init` after the socket opens before closing with code **4408** (`connectionInitWaitTimeout`). The transport factory may override it. |
 
 ## Pagination
@@ -145,7 +143,7 @@ The `fetch_cache_key` staticmethod (which hashes the request body) remains separ
 
 | Setting | Default | Description |
 |---|---|---|
-| `DOCUMENT_CACHE_MAXSIZE` | `128` | In-process bound (per LRU) for two independent document caches in the view layer. `0` disables **both** caches. |
+| `DOCUMENT_CACHE_MAXSIZE` | `128` | In-process bound (per LRU) for two independent document caches in the view layer. `0` disables **both** caches; `None` leaves them unbounded. |
 
 graphql-core re-parses and re-revalidates the identical query document on every
 request; real APIs replay a small, stable set of documents (a handful of
@@ -171,7 +169,9 @@ persisted queries from your frontend), so both steps are memoizable:
 
 Raise `DOCUMENT_CACHE_MAXSIZE` if your application legitimately replays more
 than 128 distinct documents per schema; set it to `0` to disable both caches
-entirely (e.g. while debugging a parse/validation-related issue).
+entirely (e.g. while debugging a parse/validation-related issue). `None` means
+unbounded, as it does for every other limit in this namespace — only safe when
+the set of documents your clients send is finite, since nothing is ever evicted.
 
 ## Queryset optimization (N+1)
 
@@ -233,14 +233,14 @@ DJANGO_GRAPHEX = {
 | `PROTECTED_FIELDS` | `()` | Top-level field names requiring auth via `AuthenticatedFieldsMiddleware` (when not using `DjangoGraphQLSchema`). See [Security](security.md). |
 | `API_ACCESS_GROUP` | `""` | Restrict the **authenticated endpoint** (`AuthenticatedGraphQLView`) to members of this Django auth `Group` (by name). `""` disables the gate. Non-members get a generic `403` before any GraphQL parsing/execution; an **active superuser always bypasses** it. The public `GraphQLView` is **not** affected. See [Views → Endpoint-level auth](views.md#endpoint-level-auth-authenticatedgraphqlview) and the [permission guide](permission-scoped-schema.md#layer-2-the-endpoint-gate-api_access_group) (with curl examples). |
 | `PERMISSION_SCOPED_SCHEMA` | `False` | Serve each **authenticated** request (`AuthenticatedGraphQLView`) a schema pruned to the caller's permissions: a field whose required perms the user lacks is **absent**, so selecting it reads as `Cannot query field` (a not-found, never an authz leak). Read **per-request**. An **active superuser** always gets the full schema (no signature computed); a non-superuser whose pruned `Query` root is **empty** gets the endpoint's generic `403`. The public `GraphQLView` is **never** pruned. **Subscriptions:** the **same** flag also gates the bundled `pruned_schema_for` helper used by the SSE/WS transports' `schema_provider` (read **per connection**), so a subscription connection wired to it serves the full schema when off and the pruned one when on — see [Subscriptions → Per-connection schema](subscriptions.md#per-connection-schema-permission-scoped-subscriptions). A **custom** provider callable that does not route through `pruned_schema_for` is not gated. Requires a labeled `DjangoGraphQLSchema`. `False` (default) is byte-identical to today. For a worked, role-by-role walkthrough (pruned SDL per user, exact denial responses), see the [permission guide](permission-scoped-schema.md). |
-| `PERMISSION_SCHEMA_CACHE_MAXSIZE` | `64` | In-process **LRU** bound for the `PERMISSION_SCOPED_SCHEMA` cache. Entries are keyed by the caller's permission **signature** (`perms ∩ schema label-set`), never by user id, so users with the same relevant perms share one pruned schema; least-recently-used entries evict past this cap. |
+| `PERMISSION_SCHEMA_CACHE_MAXSIZE` | `64` | In-process **LRU** bound for the `PERMISSION_SCOPED_SCHEMA` cache. Entries are keyed by the caller's permission **signature** (`perms ∩ schema label-set`), never by user id, so users with the same relevant perms share one pruned schema; least-recently-used entries evict past this cap. `0` caches nothing (every request prunes); `None` keeps the default `64`; a **negative** value raises `ImproperlyConfigured`. Read on every eviction pass, so `override_settings` reaches it. |
 
 ## Query depth & cost
 
 | Setting | Default | Description |
 |---|---|---|
-| `MAX_QUERY_DEPTH` | `None` | Global max nested-object depth (`DepthLimitValidationRule`). `None` disables the global limit; per-type `Meta.max_depth` still applies. |
-| `MAX_QUERY_COST` | `None` | Reject queries whose estimated cost exceeds this (`CostLimitValidationRule`). `None` disables the budget. |
+| `MAX_QUERY_DEPTH` | `None` | Global max nested-object depth (`DepthLimitValidationRule`). `None` is the **only** way to disable the global limit; per-type `Meta.max_depth` still applies. `0` or a negative value raises `ImproperlyConfigured` — it used to switch the guard off silently. |
+| `MAX_QUERY_COST` | `None` | Reject queries whose estimated cost exceeds this (`CostLimitValidationRule`). `None` is the **only** way to disable the budget; `0` or a negative value raises `ImproperlyConfigured`. |
 | `EXPOSE_QUERY_COST` | `False` | Add `extensions.cost` (`requestedCost` / `maxCost`) to responses. Combine with `MAX_QUERY_COST=None` for a non-blocking observation mode. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Cost multiplier for a list field whose page size is unknown (no literal/variable value and no `MAX_PAGE_SIZE` cap). |
 | `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names treated as a list's page size when costing a field. |
@@ -260,7 +260,90 @@ These settings apply to `Base64FileInput` — an opt-in input type for sending f
 | Setting | Default | Description |
 |---|---|---|
 | `MAX_UPLOAD_SIZE` | `None` | Maximum **decoded** size (bytes) of a single `Base64FileInput` field. **Required** when `Base64FileInput` is used — raises `ImproperlyConfigured` at call time when absent and no per-field `max_size` override is given. A per-field `max_size` kwarg on `.to_uploaded_file()` or `decode_base64_file()` overrides this global cap for that specific call. Example: `5 * 1024 * 1024` (5 MB). |
-| `MAX_REQUEST_BODY_SIZE` | `None` | Maximum total HTTP request **body length** (bytes), checked in `BaseGraphQLView.dispatch` **before** JSON parsing. This is the primary memory-safety cap: the entire base64 string is already in the HTTP body before any resolver runs, so rejecting here prevents full-body allocation above the threshold. The per-field decoded-size pre-check in `decode_base64_file` is a secondary guard that saves the decode allocation for payloads that slip past (e.g. when this setting is unset). Requests that exceed the limit receive **HTTP 413**. `None` = disabled (not recommended for public-facing endpoints). Example: `20 * 1024 * 1024` (20 MB). **Note:** for larger base64 uploads you must raise **both** this setting and Django's [`DATA_UPLOAD_MAX_MEMORY_SIZE`](https://docs.djangoproject.com/en/stable/ref/settings/#data-upload-max-memory-size) (default 2.5 MB), since the full base64 body counts toward that limit. |
+| `MAX_REQUEST_BODY_SIZE` | `None` | Maximum total HTTP request **body length** (bytes), checked in `BaseGraphQLView.dispatch` **before** JSON parsing. This is the primary memory-safety cap: the entire base64 string is already in the HTTP body before any resolver runs, so rejecting here prevents full-body allocation above the threshold. The per-field decoded-size pre-check in `decode_base64_file` is a secondary guard that saves the decode allocation for payloads that slip past (e.g. when this setting is unset). Requests that exceed the limit receive **HTTP 413**; a `multipart/form-data` POST that declares no `Content-Length` receives **HTTP 411** on a server whose request stream cannot be measured (WSGI), because it is then the one body whose size is unknowable. `None` = disabled (not recommended for public-facing endpoints). Example: `20 * 1024 * 1024` (20 MB). See [How the guard reads each content type](#how-the-guard-reads-each-content-type) below. |
+
+### How the guard reads each content type
+
+The guard runs in two stages. Stage 1 rejects a declared `Content-Length` above
+the cap without reading anything. Stage 2 then measures the real body, because
+`Content-Length` is a client-supplied claim and stage 1 on its own would take it
+at face value.
+
+Stage 2 measures every content type — but it measures `multipart/form-data`
+differently, because reading a multipart body would break the request (the CSRF
+check has already drained the stream) and pull a streamed upload into RAM.
+Instead it **seeks** `request._stream` to the end and straight back: nothing is
+allocated, the parser still receives an untouched stream, and multipart keeps
+streaming to disk under
+[`FILE_UPLOAD_MAX_MEMORY_SIZE`](https://docs.djangoproject.com/en/stable/ref/settings/#file-upload-max-memory-size).
+This is the same measurement Django's own `HttpRequest.body` performs on a
+seekable stream, done one level up so the answer can be a 413 rather than a 400.
+
+Whether that seek is available depends on the server, and so does what an absent
+`Content-Length` means:
+
+- **ASGI** hands the view a `SpooledTemporaryFile` — the handler already spooled
+  the whole body with no `Content-Length` cap — which is seekable. The real size
+  is always known, so an under-declared *or* absent length is answered with
+  **HTTP 413** when the body exceeds the cap.
+- **WSGI** hands the view a `LimitedStream` capped at `Content-Length`, which is
+  not seekable and does not need to be: an under-declared length truncates the
+  body it is lying about instead of smuggling it through. An **absent** length is
+  the one case that cap cannot express (Django turns it into a limit of zero), so
+  a chunked multipart POST is refused with **HTTP 411 Length Required** whenever
+  `MAX_REQUEST_BODY_SIZE` is set.
+
+The practical consequences:
+
+| Body | Bounded by | `DATA_UPLOAD_MAX_MEMORY_SIZE` applies? |
+|---|---|---|
+| `application/json` (including base64 uploads) | `MAX_REQUEST_BODY_SIZE`, measured by reading | **Yes** — the body must be in memory to be parsed |
+| `application/graphql`, `application/x-www-form-urlencoded` | `MAX_REQUEST_BODY_SIZE`, measured by reading | Yes, same reason |
+| `multipart/form-data` | `MAX_REQUEST_BODY_SIZE` vs the **measured** body where the stream is seekable (ASGI); vs the `Content-Length` Django already capped the stream at otherwise (WSGI), with **411** when none is declared | **File parts, no** — they stream to disk. **Non-file parts, yes** — Django sums every non-file part (your `operations` / `map` JSON included) against that limit |
+
+#### What this cannot do under ASGI
+
+Be blunt about the boundary: **no view-level setting can stop a multipart body
+from being received under ASGI, and this one does not.** Django's ASGI handler
+runs `read_body` before the view exists, spooling every chunk the server hands it
+into a rolling temporary file with no `CONTENT_LENGTH` cap — unlike WSGI, where
+`WSGIRequest` wraps the input in a `LimitedStream` capped at `CONTENT_LENGTH`.
+By the time `MAX_REQUEST_BODY_SIZE` is consulted, the bytes are already on your
+disk.
+
+What `MAX_REQUEST_BODY_SIZE` gives you under ASGI is a refusal to **process**:
+413 once the body — declared honestly, under-declared, or not declared at all —
+is measured above the cap. What actually bounds **reception** is your ASGI
+server's own request limit
+(uvicorn/hypercorn/daphne behind a reverse proxy — set it there) plus
+[`FILE_UPLOAD_MAX_MEMORY_SIZE`](https://docs.djangoproject.com/en/stable/ref/settings/#file-upload-max-memory-size),
+which only decides when the spool moves from RAM to disk. If you serve GraphQL
+uploads over ASGI on a public endpoint, configure that server-level limit; this
+setting is not a substitute for it.
+
+So for larger **base64** uploads you must raise **both** `MAX_REQUEST_BODY_SIZE`
+and Django's
+[`DATA_UPLOAD_MAX_MEMORY_SIZE`](https://docs.djangoproject.com/en/stable/ref/settings/#data-upload-max-memory-size)
+(default 2.5 MB) — the full base64 body counts toward that limit, and a 5 MB file
+needs roughly 6.7 MB of it.
+
+A **multipart** upload can usually leave `DATA_UPLOAD_MAX_MEMORY_SIZE` alone,
+but the reason is narrower than "it does not apply". Django enforces that limit
+on every **non-file** part of a multipart body — it sums their sizes and raises
+`RequestDataTooBig` past the cap. What escapes it is the **file** parts: those
+stream to disk under WSGI and are spooled by the handler under ASGI, and their
+bytes are governed by
+[`FILE_UPLOAD_MAX_MEMORY_SIZE`](https://docs.djangoproject.com/en/stable/ref/settings/#file-upload-max-memory-size)
+instead. So the file itself does not count, and the `operations` / `map` JSON
+parts that ride alongside it do. Raise the limit if those grow large — a
+multi-thousand-entry `map` is the shape that reaches it.
+
+A multipart upload does still need `MAX_REQUEST_BODY_SIZE` set above the
+whole multipart body — **on both servers**. Under WSGI a declared
+`Content-Length` over the cap is refused with 413 before the view runs; under
+ASGI the spooled body is measured and refused the same way. Size that setting
+against the file plus its multipart envelope, not against the JSON overhead
+alone.
 
 ### Choosing values
 

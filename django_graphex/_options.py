@@ -60,6 +60,11 @@ class DjangoObjectOptions(_GdxOptions):
     create_container: Any = None
     results_field_name: Any = None
     filter_fields: tuple = ()
+    #: Name of the class whose "Meta.filter_fields" the declaration above was
+    #: read from. A container inherits its node's when it declares none, and a
+    #: refusal naming the container would send the reader to a Meta that never
+    #: held the entry.
+    filter_fields_declared_on: Any = None
     input_for: Any = None
     max_depth: Any = None
     complexity: Any = None
@@ -90,6 +95,7 @@ class DjangoObjectOptions(_GdxOptions):
         self.create_container = None
         self.results_field_name = None
         self.filter_fields = ()
+        self.filter_fields_declared_on = None
         self.input_for = None
         self.max_depth = None
         self.complexity = None

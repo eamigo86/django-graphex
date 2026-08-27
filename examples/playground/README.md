@@ -24,10 +24,56 @@ imported so you can swap it in (`import only`), deliberately left out
 (`not used`), or covered only in the docs (`doc` / `note`) — read the row before
 copying the shape.
 
+### The projection boundary { #the-projection-boundary }
+
+`Meta.only_fields` / `Meta.exclude_fields` are a **security boundary**, not an
+output shape: a column a type projects away must not be **readable, orderable
+or filterable** through that type. `AuthorType` here demonstrates it with one
+line — `exclude_fields = ("bio",)` — and `Author.bio` is seeded with real
+content, so every refusal below is a refusal to hand out data that exists:
+
+```python
+class AuthorType(DjangoObjectType):
+    class Meta:
+        model = Author
+        exclude_fields = ("bio",)
+        filter_fields = {"id": ("exact",), "name": ("icontains",)}
+```
+
+Paste these into GraphiQL. All three axes close, and the fourth line is the
+control that proves only the one column moved:
+
+| Query | Answer |
+|-------|--------|
+| `{ authors { results(page: 1) { bio } } }` | `Cannot query field 'bio' on type 'AuthorType'. Did you mean 'id'?` |
+| `{ authors { results(page: 1, ordering: "bio") { id } } }` | `Invalid ordering field: 'bio'.` |
+| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Field 'bio' is not defined by type 'AuthorFilterInput'. Did you mean 'id'?` |
+| `{ authors { results(page: 1, ordering: "name") { id name } } }` | The rows, ordered by name. |
+
+Ordering is refused at **query time**; filtering is refused earlier still.
+Adding `"bio"` to that `filter_fields` dict does not drop the entry quietly —
+it raises `ImproperlyConfigured` and the schema **stops building**, because a
+`filter_fields` entry naming a projected-away column is a contradiction between
+two `Meta` options and only you can say which half was meant. Try it: edit
+`blog/schema.py` and run `make test`. Every test that imports the schema fails
+with the same message, which names the `Meta` you just edited:
+
+```text
+AuthorType.Meta.filter_fields entry 'bio' names 'bio', which AuthorType does
+not publish -- Meta.only_fields / Meta.exclude_fields removed it, or a declared
+attribute publishes the name over a different value. […] Publish 'bio' on
+AuthorType, or drop the entry.
+```
+
+`tests/test_projection_boundary.py` pins all four rows. The full rule, its one
+documented exception (an operator-configured `ordering=` default) and the
+boundaries it cannot close live in
+[the Types guide](https://github.com/eamigo86/django-graphex/blob/main/docs/usage/types.md#projection-security-boundary).
+
 ### Safe ordering (anti-oracle hardening)
 
-The ordering allowlist is active on all paginated fields. It rejects
-relation-spanning and non-existent terms to prevent column-oracle attacks:
+The ordering allowlist is active on all paginated fields. Beyond the projection
+above, it rejects relation-spanning and non-existent terms:
 
 | Query | Error |
 |-------|-------|
@@ -89,6 +135,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DjangoUnionType` (typed GFK target) | ✅ | `schema.py` — `AttachmentTargetUnion` (`Meta.types`) + `AttachmentType.Meta.unions = {"target": …}` |
 | `DjangoInterfaceType` | doc | Covered in `docs/usage/types.md`; not in the playground (no shared abstract base fits Account/Invoice cleanly) |
 | `TextChoices` → GraphQL enum | ✅ | `Post.status` / `PostType` |
+| `only_fields` / `exclude_fields` as a **security boundary** | ✅ | `schema.py` — `AuthorType.Meta.exclude_fields = ("bio",)`; `bio` is unreadable, unorderable **and** unfilterable — see [The projection boundary](#the-projection-boundary) |
 | `max_depth` per-type depth limit | ✅ | `schema.py` — `PostType.Meta.max_depth = 4` |
 | `complexity` per-type cost weight | ✅ | `schema.py` — `PostType.Meta.complexity = 2` |
 | **Fields** | | |
@@ -214,6 +261,11 @@ view (`config/urls.py`):
   is denied the same write through `postWithCommentsCreate` (and the parent
   `Post` rolls back), while `/graphql/secure/` serves each caller a schema
   pruned to their Django model permissions.
+- **Projection boundary** (`test_projection_boundary.py`) — `AuthorType` hides
+  `Author.bio`, and the column is pinned unreadable (absent from the SDL),
+  unorderable (`Invalid ordering field: 'bio'.` over the wire) and unfilterable
+  (absent from `AuthorFilterInput`), with a published column ordered
+  successfully as the control.
 - **Subscription client** — `/graphql/client/` serves the HTML client with both
   transports (graphql-transport-ws + graphql-sse) and the playground's WS/HTTP
   endpoints wired. (A full headless-browser round-trip is intentionally deferred

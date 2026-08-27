@@ -40,6 +40,53 @@ JSON clients change nothing. The SSE subscription endpoint is guarded by the
 same setting. Turn it off with `REQUIRE_CSRF_HEADER=False` — see
 [Security → Cross-site POST protection](security.md#cross-site-post-protection).
 
+### Response caching and cache identity
+
+With `CACHE_ACTIVE` on, `GraphQLView` caches query responses (never mutations,
+never batches, never multipart, never a GraphiQL render). Every entry is
+namespaced by a **cache identity** from `cache_key_prefix`:
+
+| Request | Identity |
+|---|---|
+| Authenticated | `u<pk>` |
+| Anonymous with an `Authorization` header | `t<sha256 of the header, 16 hex>` |
+| Anonymous with no credential | `anon` |
+
+Two callers with different identities never share a response entry, which is
+what keeps one caller's body from being served to another. Override
+`cache_key_prefix` to partition on something else (a session key, a tenant id).
+
+Invalidation uses a **version counter**: a mutation advances the issuing caller's
+counter instead of calling `cache.clear()`, so it never flushes the whole cache.
+That counter is stored permanently — it has to outlive
+the responses it namespaces — and a permanent key whose name an unauthenticated
+caller picks is a leak, since the `Authorization` header is unverified input that
+a client can vary per request.
+
+So the counter's namespace is **bucketed for unauthenticated identities**: a
+fixed number of buckets (64), never one per credential. Authenticated callers
+(bounded by your user table) and the single shared `anon` partition keep their
+exact namespace. The trade is deliberate:
+
+- **Kept** — isolation. The response entry still carries the *full* identity, so
+  sharing a bucket never means sharing a response.
+- **Spent** — invalidation locality among unauthenticated callers. Sharing a
+  counter means one caller's mutation can advance another's namespace, which
+  costs a cache miss and a re-read of current data. The counter only moves
+  forward, so no stale entry is ever resurrected.
+
+A custom `cache_key_prefix` inherits this automatically: any identity it returns
+for an unauthenticated request is bucketed, because the rule is about what an
+unauthenticated caller can vary, not about the token shape this view emits.
+
+!!! note "Response entries are still per-credential"
+
+    Only the permanent counter is bucketed. Response bodies stay keyed by the
+    full identity and expire on `CACHE_TIMEOUT`, so an anonymous flood of
+    credentials is ordinary cache pressure your backend evicts — unless you set
+    `CACHE_TIMEOUT=None`, which makes *every* cached response permanent. Don't,
+    on a public endpoint.
+
 ## Endpoint-level auth: `AuthenticatedGraphQLView`
 
 A coarse gate that requires every request to satisfy the view's
@@ -190,6 +237,21 @@ nested list) is rejected with **HTTP 400** and
 `Batch entries should be JSON objects, but received ...`. See
 [`MAX_BATCH_SIZE`](settings.md#http-view-hardening) for the per-request
 operation cap.
+
+## Request body size
+
+With [`MAX_REQUEST_BODY_SIZE`](settings.md#file-uploads) set, `dispatch` refuses
+an oversized POST with **HTTP 413** before the body is parsed. It checks the
+declared `Content-Length` first, then measures the body itself — so a client
+cannot under-declare its length to slip past.
+
+`multipart/form-data` is measured too, but by **seeking** the request stream to
+its end and back rather than by reading it. Reading it would pull a streaming
+upload into memory and break every request from a client holding the endpoint's
+CSRF cookie; a seek does neither. Where the stream cannot be seeked (WSGI, whose
+input is already capped at `Content-Length`) a multipart POST that declares no
+length at all is refused with **HTTP 411** instead. See
+[How the guard reads each content type](settings.md#how-the-guard-reads-each-content-type).
 
 ## Subscriptions
 

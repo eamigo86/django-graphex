@@ -121,6 +121,8 @@ DJANGO_GRAPHEX = {
     # limit. None = disabled (not recommended for public APIs).
     # 20 MB allows a single 5 MB file (base64 overhead ~4/3 × 5 MB ≈ 6.7 MB)
     # plus JSON scaffolding, with margin for a batch of smaller files.
+    # NOTE: this cap only bites AFTER Django's own DATA_UPLOAD_MAX_MEMORY_SIZE
+    # has let the JSON body through — see the Django-level setting below.
     "MAX_REQUEST_BODY_SIZE": 20 * 1024 * 1024,  # 20 MB total body
     # ---------------------------------------------------------------------------
     # Query depth limiting (DepthLimitValidationRule — wired in GraphQLView).
@@ -174,3 +176,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Media files (uploaded by Base64FileInput demo mutations).
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# A base64 upload travels inside the JSON body, so Django has to hold the whole
+# body in memory to parse it — and Django's own default ceiling for that is
+# 2.5 MB, well under the 5 MB file the UploadDocument demo advertises. Without
+# this, a 5 MB upload is refused by Django with an opaque HTML 400 long before
+# MAX_REQUEST_BODY_SIZE (20 MB) or MAX_UPLOAD_SIZE (5 MB) ever sees it. Keep the
+# two in step: this value must clear MAX_REQUEST_BODY_SIZE for base64 uploads.
+# Multipart uploads do NOT need it — they never land in memory whole. They are
+# still capped by MAX_REQUEST_BODY_SIZE, which under ASGI measures the spooled
+# body itself and under WSGI compares the declared Content-Length, so that cap
+# must clear the largest multipart upload this project accepts on either server.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024  # 20 MB, matches the body cap

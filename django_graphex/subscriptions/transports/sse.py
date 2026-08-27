@@ -187,21 +187,31 @@ class TransportContext:
         self.middleware = build_middleware_manager()
 
 
-def _read_request_body(request: "HttpRequest") -> dict[str, Any]:
+def _read_request_body(request: "HttpRequest") -> "dict[str, Any] | None":
     """Parse the GraphQL request body (JSON or form-encoded "query").
 
     Args:
         request: The incoming HTTP request.
 
     Returns:
-        A mapping with "query" / "variables" / "operationName" keys.
+        A mapping with "query" / "variables" / "operationName" keys, or "None"
+        when the JSON body decoded to something that is not an object.
     """
     content_type = (request.content_type or "").lower()
     if "application/json" in content_type:
         try:
             body = json.loads(request.body.decode("utf-8") or "{}")
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            # "RecursionError" is NOT a "ValueError": a deeply nested body blows
+            # the decoder's recursion limit, and without it in this tuple the
+            # error escaped the view and reached the client as a 500.
             body = {}
+        if not isinstance(body, dict):
+            # "[1,2,3]", '"x"' and "null" all decode cleanly and only then break
+            # the mapping assumption below ("body.get" -> "AttributeError" ->
+            # 500). The HTTP view already answers 400 for exactly this shape, so
+            # the caller refuses it the same way instead.
+            return None
     else:
         body = request.POST
     return {
@@ -344,6 +354,14 @@ def subscription_sse_view(
         )
 
         body = _read_request_body(request)
+        if body is None:
+            # PRE-200: a decodable but non-object JSON body is a client error,
+            # answered with the HTTP view's own message so the whole library
+            # classifies the shape identically.
+            return HttpResponseBadRequest(
+                "The received data is not a valid JSON query."
+            )
+
         query = body["query"]
         if not query:
             # PRE-200: no query at all is a plain client error (HTTP 4xx).
