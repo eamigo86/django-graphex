@@ -28,6 +28,25 @@ time BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
 
 mkdir -p "$HERE/results"
 
+# Warm EVERY virtualenv equally before measuring any of them. The seeding above
+# runs under the graphex interpreter, which leaves graphex's imports and file
+# cache hot while the others are still cold -- and ``schema_import_ms`` is a
+# cold-import measurement, so that alone put a bias in graphex's favour on the
+# one row where the libraries are closest. One throwaway import each removes it.
+echo ">> Warming every virtualenv (removes the cold-import bias)"
+# shellcheck disable=SC2068
+for lib in ${LIBS[@]}; do
+  venv_py="$HERE/.venv-$lib/bin/python"
+  [[ -x "$venv_py" ]] || continue
+  BENCH_LIB="$lib" DJANGO_SETTINGS_MODULE=config.settings "$venv_py" -c "
+import django, sys
+sys.path.insert(0, '$HERE')
+django.setup()
+import importlib
+importlib.import_module('libs.$lib.bench_schema')
+" >/dev/null 2>&1 || echo "   (warmup for $lib failed; it will be measured cold)"
+done
+
 # shellcheck disable=SC2068
 for lib in ${LIBS[@]}; do
   venv_py="$HERE/.venv-$lib/bin/python"

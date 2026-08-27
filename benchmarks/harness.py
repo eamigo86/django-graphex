@@ -51,24 +51,50 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 WARMUP = 15
 TIMED = 100
+# Rebuilds of the schema, timed after the dependency tree is already imported.
+SCHEMA_BUILDS = 5
 
 # Operations that mutate the DB must run last.
 MUTATING = {"create_comment"}
 
 
 def _import_schema():
-    """Import the active library's bench_schema, timing the import (schema build).
+    """Import the active library's bench_schema and time it two separate ways.
 
     ``django.setup()`` must have already run: importing bench_schema pulls in the
-    Django models, which requires the app registry to be populated. The timed
-    region is JUST the schema-building import, not Django bootstrap.
+    Django models, which requires the app registry to be populated.
+
+    The FIRST import pays two costs at once — loading the library and its
+    dependency tree off disk, and building the schema from the declarations —
+    and only the second of those is a property of the library's compiler. They
+    are wildly different sizes (strawberry spends over two orders of magnitude
+    more time importing than building), so reporting the sum as "schema build"
+    compares the wrong thing, and it is the import half that is cold-cache
+    sensitive and therefore noisy.
+
+    So the build is measured on its own: purge ``bench_schema`` from
+    ``sys.modules`` and re-import it. The dependency tree stays cached, so the
+    re-import re-executes only the module body — the declarations and the
+    schema constructor. Verified fresh, not a cache hit: in all four libraries
+    the rebuilt schema object, its ``GraphQLSchema``, its Author type and that
+    type's fields are all new objects.
     """
     import importlib
 
+    name = f"libs.{BENCH_LIB}.bench_schema"
+
     t0 = time.perf_counter()
-    module = importlib.import_module(f"libs.{BENCH_LIB}.bench_schema")
-    schema_import_ms = (time.perf_counter() - t0) * 1000.0
-    return module, schema_import_ms
+    module = importlib.import_module(name)
+    cold_import_ms = (time.perf_counter() - t0) * 1000.0
+
+    build_samples = []
+    for _ in range(SCHEMA_BUILDS):
+        del sys.modules[name]
+        t0 = time.perf_counter()
+        module = importlib.import_module(name)
+        build_samples.append(round((time.perf_counter() - t0) * 1000.0, 4))
+
+    return module, cold_import_ms, build_samples
 
 
 def _post(client, op):
@@ -140,8 +166,8 @@ def main():
 
     django.setup()
 
-    # 2) Time the schema import (schema build) — the region we actually measure.
-    schema_module, schema_import_ms = _import_schema()
+    # 2) Time the cold import and, separately, the schema build itself.
+    schema_module, cold_import_ms, build_samples = _import_schema()
 
     from django.db import connection
     from django.test import Client
@@ -201,7 +227,17 @@ def main():
             "platform": platform.platform(),
             "cpu_count": os.cpu_count(),
         },
-        "schema_import_ms": round(schema_import_ms, 4),
+        # The cold first import: library + dependency tree + one schema build.
+        # Cold-cache sensitive, so only comparable when every library's
+        # virtualenv was warmed equally beforehand (run_all.sh does that).
+        "schema_import_ms": round(cold_import_ms, 4),
+        # Rebuilds of the schema with the dependency tree already imported, in
+        # order. A DIAGNOSTIC, deliberately not reduced to a single figure and
+        # NOT a cross-library comparison: re-executing the declarations
+        # perturbs each library's process state differently, so the series is
+        # only meaningful read down a single column. django-graphex climbs
+        # here; ariadne is flat. See benchmarks/README.md.
+        "schema_rebuild_samples_ms": build_samples,
         "surface": _surface(client),
         "ops": results,
     }

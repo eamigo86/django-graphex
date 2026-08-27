@@ -29,29 +29,50 @@ SQL count or a `surface` list moves, or when latencies rise **uniformly across
 all four libraries** — three of them are code nobody in this repo touched, so
 they are the control: if they move together, the machine moved, not the code.
 
-### The schema-build row is biased, and here is how
+### Cold import and schema build are two different numbers
 
-**Do not read a winner out of it between graphex and graphene-django.** Two
-independent reasons:
+`schema_import_ms` used to be labelled "schema build", and it was timing
+`import bench_schema` — which pays the library's **whole dependency tree** and
+the **schema construction** in one measurement. Those differ by two orders of
+magnitude, so their sum answers neither question:
 
-1. **One cold sample per process.** Its spread across three repetitions reaches
-   **24 % (graphene-django), 44 % (strawberry), 51 % (ariadne)**. The published
-   figure discards each library's first, coldest run for that reason. An
-   instrument with that spread cannot resolve one or two milliseconds.
-2. **`run_all.sh` warms the graphex virtualenv before measuring anybody.**
-   `makemigrations`, `migrate` and `seed_bench` all run under
-   `.venv-graphex/bin/python` (lines 20–27), so graphex's imports and file cache
-   are hot while the other three are measured cold. The bias points **at
-   graphex**, and it is on this row only — the per-operation rows are p50 over
-   100 iterations after 15 warmups, long past any import cost.
+| | cold import | rebuild (declarations only) |
+| :--- | ---: | ---: |
+| graphex | ~9–10 ms | ~3 ms |
+| graphene-django | ~10 ms | ~4 ms |
+| strawberry | ~98–107 ms | ~6 ms |
+| ariadne | ~44–49 ms | ~2 ms |
 
-Read the row as an **order of magnitude**: graphex and graphene-django
-indistinguishable around 10 ms, ariadne roughly 5×, strawberry roughly 10×.
+strawberry's hundred milliseconds is **importing strawberry**, not building
+anything. Both figures now ship in every artifact:
 
-**Open work, not a defence of the status quo.** Fixing this means a warmup pass
-per virtualenv before the measured pass, and N samples of the build instead of
-one. Until that lands, the row stays a range with this caveat attached rather
-than a comparison.
+- **`schema_import_ms`** — the cold first import. What a process actually pays
+  at startup, and the only one of the two comparable across libraries.
+- **`schema_rebuild_samples_ms`** — the schema built again with the dependency
+  tree already imported, five times, kept as a **raw series in order**.
+
+The rebuild series is a **diagnostic, not a comparison, and it is deliberately
+not reduced to a median.** Re-executing declarations perturbs each library's
+process state differently: django-graphex's series climbs measurably
+(`[2.99, 3.38, 3.70, 3.89, 4.34]` is typical) while ariadne's is flat
+(`[2.74, 2.16, 1.96, 1.97, 2.02]` — one warm-up sample, then level).
+`gc.collect()` between rebuilds makes graphex's *worse*, not better, so
+something is retained rather than merely uncollected. **Read the series down one
+column; never across.** It is not a cache hit: in all four libraries the
+rebuilt schema object, its `GraphQLSchema`, its Author type and that type's
+fields are all new objects.
+
+### The cold-import bias, and its fix
+
+`run_all.sh` seeds the database under `.venv-graphex/bin/python`, which left
+graphex's imports and file cache hot while the other three were measured cold —
+a bias **in graphex's favour**, on the one row where the libraries are closest.
+It now warms **every** virtualenv with a throwaway import before the measured
+loop. The spread on that row fell from **24–51 % to 3–15 %**.
+
+Even fixed, do not read a winner out of it between graphex and graphene-django:
+one millisecond apart, on a metric that wanders 3–15 %, is not a result. An
+order of magnitude is — ariadne roughly 5×, strawberry roughly 10×.
 
 ## The fairness rule (read this first)
 

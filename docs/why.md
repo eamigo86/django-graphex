@@ -112,40 +112,56 @@ better on both.
 
 | Operation | django-graphex | graphene-django | strawberry | ariadne |
 | :-------- | :------------- | :-------------- | :--------- | :------ |
-| **flat_list** (50 rows) | **0.79 ms** · 1 SQL 🏆 | 1.73 ms · 2 SQL | 1.76 ms · 1 SQL | 1.13 ms · 1 SQL |
-| **nested** (20→10→5) | **12.14 ms** · **3 SQL** 🏆 | 58.63 ms · <span style="color: #e53935;">**442 SQL**</span> | 25.26 ms · 3 SQL | 39.72 ms · 221 SQL |
-| **single** object | **0.38 ms** · 1 SQL 🏆 | 0.93 ms · 2 SQL | 1.03 ms · 1 SQL | 0.87 ms · 2 SQL |
-| **filtered** (`icontains`) | **1.17 ms** · 1 SQL 🏆 | 4.93 ms · 2 SQL | 2.25 ms · 1 SQL | 1.54 ms · 1 SQL |
-| **create_comment** mutation | **0.56 ms** · 1 SQL 🏆 | 1.25 ms · 1 SQL | 1.78 ms · 8 SQL | 0.99 ms · 1 SQL |
+| **flat_list** (50 rows) | **0.79 ms** · 1 SQL 🏆 | 1.73 ms · 2 SQL | 1.70 ms · 1 SQL | 1.24 ms · 1 SQL |
+| **nested** (20→10→5) | **12.26 ms** · **3 SQL** 🏆 | 58.18 ms · <span style="color: #e53935;">**442 SQL**</span> | 24.62 ms · 3 SQL | 39.46 ms · 221 SQL |
+| **single** object | **0.38 ms** · 1 SQL 🏆 | 0.95 ms · 2 SQL | 1.06 ms · 1 SQL | 0.91 ms · 2 SQL |
+| **filtered** (`icontains`) | **1.16 ms** · 1 SQL 🏆 | 5.17 ms · 2 SQL | 2.25 ms · 1 SQL | 1.62 ms · 1 SQL |
+| **create_comment** mutation | **0.58 ms** · 1 SQL 🏆 | 1.25 ms · 1 SQL | 2.00 ms · 8 SQL | 1.09 ms · 1 SQL |
 
-**Schema build is reported separately and carries no trophy** — the row cannot
-support one. Both seeds are shown, because the gap between them is itself the
-best evidence of how much this particular number wanders:
+### Startup cost is a different question, so it gets a different row
+
+The number this page used to call "schema build" was timing an
+`import bench_schema`, which pays **two unrelated costs at once**: loading the
+library and its whole dependency tree off disk, and compiling your declarations
+into a schema. Those turn out to differ by two orders of magnitude, so their
+sum answers neither question. They are now measured separately.
+
+**Cold import** — library + dependencies + one schema build, which is what a
+process actually pays at startup:
 
 | Metric | django-graphex | graphene-django | strawberry | ariadne |
 | :----- | :------------- | :-------------- | :--------- | :------ |
-| **Schema build (import)** | 9.5 ms | 9.8 ms | 106.6 ms | 45.7 ms |
-| *…and at the 1,000-author seed* | *9.5 ms* | *10.3 ms* | *98.8 ms* | *44.1 ms* |
+| **Cold import**, 2,000-author run | 9.17 ms | 9.90 ms | 106.50 ms | 48.71 ms |
+| *…at the 1,000-author seed* | *10.01 ms* | *10.70 ms* | *98.00 ms* | *43.97 ms* |
 
-Read that row as **graphex and graphene-django indistinguishable around 10 ms,
-strawberry an order of magnitude above them, and ariadne roughly five times
-them.** It deliberately does **not** say which of the first two is faster. Two
-independent reasons, both measured rather than assumed:
+Read it as an **order of magnitude**: graphex and graphene-django
+indistinguishable around 10 ms, ariadne roughly 5× them, strawberry roughly
+10×. It still does **not** say which of the first two is faster, and it never
+could — the two are one millisecond apart on a metric whose run-to-run spread
+is 3–15 %. Earlier revisions of this page named opposite winners there, first
+graphene by 0.05 ms and then graphex by 1 ms; **both were beneath the
+instrument's resolution and neither should have been published.**
 
-- it is **one cold sample per process**, and its spread across repetitions
-  reaches **24 % for graphene-django, 44 % for strawberry and 51 % for
-  ariadne** — an instrument that noisy cannot resolve a difference of one or
-  two milliseconds, in either direction;
-- the harness **warms graphex's virtualenv before measuring anyone**.
-  `run_all.sh` runs `makemigrations`, `migrate` and `seed_bench` under the
-  graphex interpreter, so graphex's imports and file cache are hot and the
-  other three are measured cold. That is a bias **in graphex's favour**, on
-  this row, and naming a winner while it exists would be claiming credit the
-  harness handed over. The per-operation rows above are unaffected: they are
-  p50 over 100 iterations after 15 warmups, long past any import cost.
+What that row does *not* measure is how fast each library compiles a schema.
+With the dependency tree already imported, rebuilding the same schema costs
+roughly **3 ms (graphex), 4 ms (graphene-django), 6 ms (strawberry), 2 ms
+(ariadne)** — so strawberry's 106 ms is overwhelmingly the cost of *importing
+strawberry*, not of building anything. Those figures are in the artifacts under
+`schema_rebuild_samples_ms`, kept as a raw series rather than reduced to a
+single number, because they are **a diagnostic and not a comparison**:
+re-executing declarations perturbs each library's process state differently.
+django-graphex's series climbs measurably across repeated rebuilds where
+ariadne's is flat, which is a property of graphex worth knowing and not a
+property you can rank libraries by. Read the series down one column, never
+across.
 
-Fixing the harness — a warmup pass per virtualenv, and N samples instead of one
-— is open work, tracked in `benchmarks/README.md`.
+**The bias this row used to carry is gone.** `run_all.sh` seeds the database
+under the graphex interpreter, which left graphex's imports hot while the other
+three were measured cold — a bias in graphex's favour on the one row where the
+libraries are closest. It now warms **every** virtualenv before measuring any of
+them. The spread on this row fell from 24–51 % to 3–15 % as a result. The
+per-operation rows never had the problem: p50 over 100 iterations after 15
+warmups is long past any import cost.
 
 Every operation cell above is the `p50_ms` / `sql_queries` pair sitting in
 `benchmarks/results/2x_<lib>.json` — each the **median of three runs**, recorded
@@ -162,35 +178,37 @@ graphene-django fires **442 SQL queries** where graphex fires **3** — a textbo
 N+1 explosion that graphex avoids by prefetching the relation tree. And here's
 the part that's easy to miss: this ran on **local SQLite**, which *understates*
 the gap. In production, against Postgres over a network, every one of those 442
-round-trips pays real latency. The 12 ms vs 59 ms you see here becomes a far
+round-trips pays real latency. The 12 ms vs 58 ms you see here becomes a far
 wider chasm the moment there's a wire between your app and your database.
 
 The **scaling story** is just as telling. Doubling the dataset (from 1,000 to
-2,000 authors) left graphex's filtered operation **flat: 1.14 ms → 1.17 ms** —
+2,000 authors) left graphex's filtered operation **flat: 1.19 ms → 1.16 ms** —
 it's `O(page)`: no unconditional `COUNT`, and a `LIKE` + `LIMIT` early exit.
 Over the same doubling, graphene-django's filtered operation climbed from
-**3.28 ms to 4.93 ms** — it's `O(table)`, because its count scans the whole
+**3.23 ms to 5.17 ms** — it's `O(table)`, because its count scans the whole
 thing. The lead doesn't just hold as your data grows; it *widens*.
 
 Every number in that paragraph is the `filtered` operation's **p50**, read from
 four tracked artifacts: `benchmarks/results/graphex.json` and
 `benchmarks/results/graphene.json` for 1,000 authors, and the `2x_` files beside
 them for 2,000 (`benchmarks/README.md` has the reseed recipe). graphex's pair
-rose by 0.03 ms across a doubling — well inside the run-to-run noise, which is
-why the claim here is **flat** rather than *faster*, while graphene's rose by
-1.65 ms, which is an order of magnitude past that noise and is not it.
+*fell* by 0.03 ms across a doubling — which is noise, not an improvement, and is
+exactly why the claim here is **flat** rather than *faster*. graphene's rose by
+1.94 ms — sixty times that — and is not noise at all.
 
 !!! warning "Honest caveats — because you should trust numbers that admit their limits"
-    - **The schema-build row is the weakest number on this page, and it is
-      biased toward graphex.** Both reasons are stated in full above the table
-      rather than buried here: one cold sample per process (24–51 % spread
-      across repetitions, depending on the library) and a harness that warms
-      graphex's virtualenv before measuring anybody. An order of magnitude is a
-      finding on that row; a millisecond is not, in *either* direction. Earlier
-      revisions of this page named a winner between graphex and
-      graphene-django — first graphene by 0.05 ms, then graphex by 1 ms. Both
-      claims were beneath the instrument's resolution and neither should have
-      been made.
+    - **The cold-import row is still the weakest number on this page**, even
+      with its bias fixed. It is one sample per process; its spread across
+      repetitions is 3–15 %, so an order of magnitude is a finding there and a
+      millisecond is not, in *either* direction. The reasoning is stated in
+      full beside the table rather than buried here, including what the row
+      does not measure.
+    - **The rebuild series is a diagnostic, not a ranking.** django-graphex's
+      cost climbs across repeated in-process rebuilds where ariadne's is flat,
+      and `gc.collect()` between rebuilds makes graphex's *worse* rather than
+      better — something is retained. It has no effect on a deployment that
+      builds its schema once, which is the normal case, and it is why that
+      series ships as raw samples instead of a comparable figure.
     - **graphex's parse + validate cache shines on repeated documents** — which is
       the real-world API pattern, where the same operations run over and over. A
       cold *first* parse pays roughly 0.4–0.75 ms once, then it's amortized away.
