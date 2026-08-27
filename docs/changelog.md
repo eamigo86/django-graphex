@@ -12,11 +12,16 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
-## Unreleased
+## 3.0.0 — 2026-08-27
 
 **Security release, and the largest set of breaking changes since 2.0.** Read
 this section before upgrading: it names every one of them in one place, and each
 is expanded in the entries below.
+
+The major bump is what the breaking changes below require, not a rewrite: the
+API you write is the 2.x API. What changed is what the library **refuses**. A
+schema that never answered a question its own projection said it would not
+answer builds unchanged.
 
 The theme is a single rule finally enforced everywhere it was already written
 down: **`Meta.only_fields` / `Meta.exclude_fields` are a security boundary, not
@@ -1151,7 +1156,7 @@ changed nothing), plus six internal names — four of which were importable, so
   compensates for is unchanged and stays pinned by its own isolated test — see
   [Types › The one exception, and the three open boundaries](usage/types.md#projection-exception).
 - **An upgrade instruction that was the exact inverse of reality.** The
-  `## Unreleased` preamble listed "importing either subscription transport
+  3.0.0 preamble listed "importing either subscription transport
   before Django settings are configured" as something that "now raises
   `ImproperlyConfigured` on the import alone" — under a heading about schemas
   that stop building. That is what this release **fixed**, as its own `Fixed`
@@ -2880,7 +2885,7 @@ for the user-facing behavior these changes preserve.
   full field list, nor a relation-traversal `JOIN` that enables a DoS via
   index-missing foreign keys. (#59) *Corrected: this entry originally said
   "validated against exposed columns". It was not — the allowlist came from the
-  model, so a column the type projected away stayed sortable. See the Unreleased
+  model, so a column the type projected away stayed sortable. See the 3.0.0
   Security section.*
 - **Response cache skips cookie-bearing and multipart requests** — The
   `CACHE_ACTIVE` cache no longer stores responses to requests that carry cookies or

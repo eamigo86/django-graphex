@@ -66,10 +66,12 @@ Credibility is in the conditions, so let me state all of them up front.
   strawberry-graphql-django 0.86.4 (+ strawberry-graphql 0.320.1),
   ariadne 1.1.0 (+ ariadne-django 0.3.0). django-graphex is the one exception:
   it is installed **editable from this repository**, not from PyPI. The
-  artifacts record `2.2.0` because that is the version string in
-  `pyproject.toml`, but the projection boundary priced in the caveats below
-  landed *after* the 2.2.0 release — so this run pays for a guard the published
-  2.2.0 tarball does not even contain.
+  artifacts record `2.2.0`, which is the version string `pyproject.toml`
+  carried while the run happened — the code they measure is what shipped as
+  **3.0.0**, projection boundary and all. So the numbers include a guard the
+  published 2.2.0 tarball does not contain, and the label under-states rather
+  than over-states what was timed. The artifacts are not relabelled after the
+  fact, because a measurement record should say what it said.
 - **Identical data.** The same Django models and the same seeded dataset for
   everyone: **2,000 authors, 20,000 posts, 60,000 comments, 60,000 tag
   relations**, generated from a deterministic seed. That is the `--authors 2000`
