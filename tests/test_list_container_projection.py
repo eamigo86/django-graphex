@@ -344,8 +344,15 @@ class TestTheDocumentedConfigurationSampleBuilds:
         # target is not resolvable YET -- which in a run where fewer modules
         # execute makes the build fail for a reason the sample is not about.
         # Stating the precondition keeps the test measuring the sample.
-        assert GroupType._meta.graphql_output_type is not None
-        assert UserType._meta.graphql_output_type is not None
+        # Force the GROUP field map before the user type compiles its own.
+        # "graphql_output_type" hands back a lazy object; only touching
+        # ".fields" actually compiles, and until Group is compiled the user
+        # type's "groups" relation is dropped from its SDL -- so the sample's
+        # "groups" filter is refused for a reason the sample is not about. This
+        # passed here and failed on the job that installs fewer extras, because
+        # there some other module had already compiled a Group type.
+        assert GroupType._meta.graphql_output_type.fields is not None
+        assert UserType._meta.graphql_output_type.fields is not None
         schema = DjangoGraphQLSchema(query=_SampleQuery, registries=isolated_pair(reg))
         node = schema.graphql_schema.type_map["UserType"]
 
