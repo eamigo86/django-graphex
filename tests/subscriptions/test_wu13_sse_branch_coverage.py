@@ -33,6 +33,7 @@ from channels.layers import InMemoryChannelLayer  # noqa: E402
 
 # The node types Post's relation graph needs, and the assembled schema, are
 # built ONCE process-wide by the shared module (see its docstring).
+from tests.subscriptions._sse import sse_frames  # noqa: E402
 from tests.subscriptions._transport_schema import build_native_schema  # noqa: E402
 
 
@@ -335,7 +336,7 @@ async def test_no_source_no_pre_result_streams_complete_only(
     # No started source was recorded.
     assert sse.get_started_source(response) is None
 
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     frames = []
     for _ in range(3):
         try:
@@ -373,7 +374,7 @@ async def test_no_source_with_pre_result_streams_next_then_complete(
     assert response.status_code == 200
     assert sse.get_started_source(response) is None
 
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     frames = []
     for _ in range(3):
         try:

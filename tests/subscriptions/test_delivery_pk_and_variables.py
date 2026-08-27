@@ -30,6 +30,7 @@ pytest.importorskip("channels")
 from channels.testing import WebsocketCommunicator  # noqa: E402
 
 from tests.models import SubSlugPkItem, SubVariablesNote  # noqa: E402
+from tests.subscriptions._sse import sse_frames  # noqa: E402
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -162,7 +163,7 @@ async def _first_payload(response: Any, *, timeout: float = 3.0) -> dict[str, An
     Returns:
         The decoded GraphQL result carried by the first frame.
     """
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     chunk = await asyncio.wait_for(aiter.__anext__(), timeout=timeout)
     text = chunk.decode() if isinstance(chunk, (bytes, bytearray)) else chunk
     assert text.startswith("event: next\n"), text

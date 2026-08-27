@@ -38,6 +38,7 @@ from channels.testing import WebsocketCommunicator  # noqa: E402
 
 from django_graphex.types import DjangoObjectType as _DOT  # noqa: E402
 from tests.models import Post  # noqa: E402
+from tests.subscriptions._sse import sse_frames  # noqa: E402
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -172,7 +173,7 @@ async def _read_frames(response: Any, *, limit: int = 4) -> list[str]:
         The decoded frame strings, stopping early at the "complete" frame.
     """
     frames: list[str] = []
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     for _ in range(limit):
         try:
             chunk = await asyncio.wait_for(aiter.__anext__(), timeout=2.0)

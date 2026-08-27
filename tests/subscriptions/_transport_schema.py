@@ -83,3 +83,59 @@ def build_native_schema() -> GraphQLSchema:
     compile_all_outputs()
     schema = DjangoGraphQLSchema(query=Query, subscription=SubscriptionRoot)
     return schema.graphql_schema
+
+
+@lru_cache(maxsize=1)
+def build_auth_gated_schema() -> GraphQLSchema:  # noqa: DOC005 - nested hook raises
+    """Assemble a schema whose subscribe hook READS the user before joining.
+
+    "build_native_schema" mounts the default hooks, which allow everybody and
+    therefore never touch "info.context.user" — so a schema built from it
+    cannot tell a resolved user from an unresolved lazy one. This one gates on
+    "user.is_authenticated", the same shape the playground and every documented
+    example use, which is what makes the user resolution observable.
+
+    Memoized for the same reason as "build_native_schema": one class per
+    process, or the output registry forks a second node for Post.
+
+    Returns:
+        The assembled GraphQLSchema whose "post" subscription denies anyone
+        who is not authenticated.
+    """
+    from graphql import GraphQLBoolean, GraphQLError
+
+    from django_graphex.core import ObjectType, field
+    from django_graphex.core.registry_compiler import compile_all_outputs
+    from django_graphex.schema import DjangoGraphQLSchema
+    from django_graphex.subscriptions import Subscription
+
+    class _AuthGatedPost(Subscription):
+        class Meta:
+            model = Post
+            stream = "posts"
+            payload_mode = "full"
+
+        @classmethod
+        def authorize_subscription(cls, info: object, **kwargs: object) -> None:
+            """Deny anyone who is not authenticated.
+
+            Args:
+                info: The transport-neutral context the engine passes as info.
+                **kwargs: The subscription arguments (unused).
+
+            Raises:
+                GraphQLError: When the connection carries no authenticated user.
+            """
+            user = getattr(getattr(info, "context", None), "user", None)
+            if not getattr(user, "is_authenticated", False):
+                raise GraphQLError("authentication required")
+
+    class Query(ObjectType):
+        ok = field(GraphQLBoolean)
+
+    class SubscriptionRoot(ObjectType):
+        post = _AuthGatedPost.Field()
+
+    compile_all_outputs()
+    schema = DjangoGraphQLSchema(query=Query, subscription=SubscriptionRoot)
+    return schema.graphql_schema

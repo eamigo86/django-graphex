@@ -58,7 +58,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from graphql import (
@@ -73,6 +73,7 @@ from graphql.utilities import get_operation_ast
 from ...security import format_graphql_error
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
+from . import is_ambiguous_operation
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -187,6 +188,38 @@ class TransportContext:
         self.middleware = build_middleware_manager()
 
 
+async def _resolve_request_user(request: "HttpRequest") -> Any:
+    """Resolve "request.user" in a thread, before anything reads it in the loop.
+
+    "AuthenticationMiddleware" assigns a "SimpleLazyObject" and leaves it
+    UNRESOLVED; the session/user query only runs when something first touches
+    it. In a WSGI view that is harmless. Here the whole view body IS the event
+    loop, so the first hook to read "info.context.user" — or a
+    "schema_provider" pruning by permission — fires that query in an async
+    context and dies with "SynchronousOnlyOperation". Anonymous callers never
+    noticed: an empty session resolves to "AnonymousUser" without touching the
+    database.
+
+    Touching one attribute from a thread resolves the lazy object IN PLACE, so
+    this is the whole fix for every later reader — the hooks, the middleware
+    chain and any resolver reaching back through "context.request" all see a
+    plain, already-loaded user. The WS transport needs no equivalent: Channels'
+    "AuthMiddleware" awaits the lookup before the consumer runs.
+
+    Args:
+        request: The incoming HTTP request, possibly carrying a lazy user.
+
+    Returns:
+        The resolved user, or "None" when the request never met the auth
+        middleware (an endpoint mounted outside the session/auth chain).
+    """
+    user = getattr(request, "user", None)
+    if user is None:
+        return None
+    await sync_to_async(lambda: getattr(user, "is_authenticated", False))()
+    return user
+
+
 def _read_request_body(request: "HttpRequest") -> "dict[str, Any] | None":
     """Parse the GraphQL request body (JSON or form-encoded "query").
 
@@ -242,6 +275,11 @@ def _frame_next(result: ExecutionResult) -> bytes:
 # The terminal SSE frame. The empty ``data:`` line is MANDATORY — an EventSource
 # client never fires the ``complete`` event without a data line on the frame.
 _COMPLETE_FRAME: bytes = b"event: complete\ndata: \n\n"
+
+# The frame that OPENS the response. A bare ``:`` is an SSE comment line, which
+# every conforming client ignores — its only job is to be the first body chunk,
+# because that is what makes an ASGI server flush the status line and headers.
+_PREAMBLE_FRAME: bytes = b":\n\n"
 
 
 def _make_spec(
@@ -345,13 +383,13 @@ def subscription_sse_view(
         if csrf_header_missing(request, BaseGraphQLView.get_content_type(request)):
             return HttpResponseForbidden(CSRF_GUARD_MESSAGE)
 
+        # Resolve the lazy user ONCE, in a thread, before either the provider
+        # below or any subscribe hook reads it from inside this async view.
+        user = await _resolve_request_user(request)
+
         # Per-connection schema resolution: the provider (when given) wins and is
         # resolved with the request user, matching the HTTP pruned schema.
-        conn_schema = (
-            schema_provider(getattr(request, "user", None))
-            if schema_provider is not None
-            else schema
-        )
+        conn_schema = schema_provider(user) if schema_provider is not None else schema
 
         body = _read_request_body(request)
         if body is None:
@@ -373,6 +411,16 @@ def subscription_sse_view(
             return HttpResponseBadRequest(f"GraphQL syntax error: {exc}")
 
         operation_ast = get_operation_ast(document, body["operationName"])
+        if operation_ast is None and is_ambiguous_operation(
+            document, body["operationName"]
+        ):
+            # PRE-200: several operations and no name to pick one. Distinct
+            # from "not a subscription" — reporting it as that sends the caller
+            # hunting for a query or mutation their document does not contain.
+            return HttpResponseBadRequest(
+                "This request carries several operations; name the one to run "
+                "with operationName."
+            )
         if (
             operation_ast is None
             or operation_ast.operation != OperationType.SUBSCRIPTION
@@ -445,6 +493,15 @@ def subscription_sse_view(
         )
 
         async def _event_stream() -> "AsyncIterator[bytes]":
+            # Open the response before anything else. An ASGI server writes the
+            # status line and headers with the FIRST body chunk, so a stream
+            # that yields nothing until an event fires leaves the client with
+            # no response at all while it idles: the browser's fetch never
+            # resolves (the bundled client cannot show a connected state) and
+            # an intermediary times the silent connection out. ``:`` opens an
+            # SSE comment line, which every conforming client ignores.
+            yield _PREAMBLE_FRAME
+
             # A pre-stream result (validation error / subscribe deny) is delivered
             # in-stream as a single ``next`` frame then ``complete`` — NOT a 4xx.
             if started_source is None:

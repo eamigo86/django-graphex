@@ -922,3 +922,54 @@ def test_ws_module_does_not_import_graphene() -> None:
     )
     assert "graphene" not in imported_names
     assert "graphene_settings" not in imported_names
+
+
+async def test_ws_ambiguous_multi_subscription_document_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A document of several subscriptions must be refused for AMBIGUITY.
+
+    Same conflation as the SSE transport: "get_operation_ast" answers None both
+    for a non-subscription operation and for an unnamed multi-operation
+    document, and one message covered both.
+
+    Contract: this test ships broken if an ambiguous document is refused with
+    the operation-kind message instead of naming "operationName".
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
+    from django_graphex.subscriptions.transports import ws
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
+    communicator = _make_communicator(app, layer=layer)
+    await _connect_and_ack(communicator)
+
+    both = (
+        "subscription A { post(action: CREATE) { id } }\n"
+        "subscription B { post(action: UPDATE) { id } }"
+    )
+    await communicator.send_json_to(
+        {"id": "op1", "type": "subscribe", "payload": {"query": both}}
+    )
+    msg = await communicator.receive_json_from(timeout=2)
+    assert msg["type"] == "error"
+    message = msg["payload"][0]["message"]
+    assert "operationName" in message, message
+    assert "only serves subscriptions" not in message, message
+
+    # Naming one of them is what makes the same document servable.
+    await communicator.send_json_to(
+        {
+            "id": "op2",
+            "type": "subscribe",
+            "payload": {"query": both, "operationName": "A"},
+        }
+    )
+    group = await _await_started_group(ws, communicator, "op2", timeout=2.0)
+    assert group
+
+    await communicator.disconnect()

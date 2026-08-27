@@ -100,13 +100,16 @@
     <div class="gdsx-main">
       <div class="gdsx-pane">
         <div class="gdsx-panehead"><span>subscription</span><span id="gdsx-op-id" style="font-size:.76rem;color:var(--accent2)"></span></div>
+        <!-- A RUNNABLE document, not a comment block: pressing the run button on a
+             commented-out selection set answers "Syntax Error: Expected Name,
+             found '}'". The field name is a placeholder only until introspection
+             lands (loadSchema), which rewrites it to the first subscription the
+             schema advertises; every generated subscription field takes the same
+             required "action" argument and exposes "id". -->
         <textarea class="gdsx-editor" id="gdsx-query" spellcheck="false">subscription {
-  # Replace with one of your subscriptions (see your schema).
-  # Example:
-  # postSubscription(action: ALL_ACTIONS) {
-  #   id
-  #   title
-  # }
+  yourSubscription(action: ALL_ACTIONS) {
+    id
+  }
 }</textarea>
         <!-- Optional operationName (for multi-operation documents). -->
         <div class="gdsx-field" style="flex:0 0 auto;padding:.4rem .85rem;border-top:1px solid var(--line);background:var(--panel)">
@@ -153,6 +156,9 @@
   var connectBtn=$("gdsx-connect"), runBtn=$("gdsx-run");
   var out=$("gdsx-out"), countEl=$("gdsx-count");
   var editor=$("gdsx-query"), ac=$("gdsx-ac");
+  // The shipped placeholder document. Kept so loadSchema() only rewrites an
+  // editor the user has not typed into yet.
+  var defaultQuery=editor.value;
   var varsEl=$("gdsx-vars"), opNameEl=$("gdsx-opname");
   var wsField=$("gdsx-ws-field"), sseField=$("gdsx-sse-field");
   var opIdEl=$("gdsx-op-id");
@@ -490,7 +496,7 @@
   // ---- Schema introspection (autocomplete) -----------------------------------
   function loadSchema(){
     var endpoint=$("gdsx-http").value.trim(); if(!endpoint) return;
-    var q="{__schema{types{name kind fields{name args{name}}inputFields{name}enumValues{name}}}}";
+    var q="{__schema{subscriptionType{name fields{name}}types{name kind fields{name args{name}}inputFields{name}enumValues{name}}}}";
     fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify({query:q})})
       .then(function(r){return r.json();})
       .then(function(j){
@@ -506,6 +512,14 @@
         });
         ["subscription","mutation","query","fragment"].forEach(function(k){ add(k,"keyword"); });
         schemaCandidates=cands;
+        // Name the placeholder document after a subscription this schema really
+        // serves, so the run button works on first press. Only while the editor
+        // still holds the shipped default — never overwrite the user's typing.
+        var sub=j.data.__schema.subscriptionType;
+        if(sub&&sub.fields&&sub.fields.length&&editor.value===defaultQuery){
+          editor.value=defaultQuery.replace("yourSubscription",sub.fields[0].name);
+          defaultQuery=editor.value;
+        }
       })
       .catch(function(){ /* introspection optional */ });
   }

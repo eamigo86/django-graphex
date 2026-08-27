@@ -20,4 +20,39 @@ never pulls channels until WS is actually routed.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from graphql import DocumentNode
+
 __all__ = ["sse", "ws"]
+
+
+def is_ambiguous_operation(
+    document: "DocumentNode", operation_name: str | None
+) -> bool:
+    """Check whether a document needs an "operationName" it was not given.
+
+    "get_operation_ast" answers None for two unrelated cases: the named (or
+    only) operation is not the kind the caller wanted, and the document holds
+    several operations while the request named none. Both transports refuse on
+    None, so they need this to tell the caller which one happened.
+
+    Args:
+        document: The parsed GraphQL document.
+        operation_name: The operation name the request supplied, if any.
+
+    Returns:
+        "True" when the document defines more than one operation and the
+        request named none of them.
+    """
+    from graphql import OperationDefinitionNode
+
+    if operation_name:
+        return False
+    operations = [
+        definition
+        for definition in document.definitions
+        if isinstance(definition, OperationDefinitionNode)
+    ]
+    return len(operations) > 1

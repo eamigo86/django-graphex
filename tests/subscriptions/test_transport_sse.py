@@ -46,6 +46,7 @@ from tests.models import Post  # noqa: E402
 
 # The node types Post's relation graph needs, and the assembled schema, are
 # built ONCE process-wide by the shared module (see its docstring).
+from tests.subscriptions._sse import sse_frames  # noqa: E402
 from tests.subscriptions._transport_schema import build_native_schema  # noqa: E402
 
 
@@ -129,7 +130,7 @@ async def _drain_frames(
             the "complete" frame is seen.
     """
     frames: list[str] = []
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     for _ in range(max_frames):
         try:
             chunk = await asyncio.wait_for(aiter.__anext__(), timeout=timeout)
@@ -198,7 +199,7 @@ async def test_sse_next_frame_then_complete_with_flat_pk_data(
     await layer.group_send(group, _notify(group, flat))
 
     # First frame: event: next with the projected flat pk data.
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     first = await asyncio.wait_for(aiter.__anext__(), timeout=1.0)
     first = first.decode() if isinstance(first, (bytes, bytearray)) else first
     assert first.startswith("event: next\n")
@@ -424,7 +425,7 @@ async def test_client_disconnect_acloses_source_and_discards_groups(
     # Begin iterating so the generator is primed (a pull parks in receive()),
     # then simulate a client disconnect: the ASGI handler cancels the consuming
     # task and closes the async generator (GeneratorExit → the view's finally).
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     pull = asyncio.ensure_future(aiter.__anext__())
     await asyncio.sleep(0)  # let the pull park in receive()
     # Cancel the in-flight pull FIRST (cannot aclose a running generator), drain
@@ -501,7 +502,7 @@ async def test_delivery_path_is_zero_queries(monkeypatch: pytest.MonkeyPatch) ->
     def _query_count():
         return len(connection.queries)
 
-    aiter = response.streaming_content.__aiter__()
+    aiter = sse_frames(response).__aiter__()
     await _enable_query_log()
     first = await asyncio.wait_for(aiter.__anext__(), timeout=1.0)
     n_queries = await _query_count()
@@ -574,3 +575,121 @@ def test_sse_module_does_not_import_graphene() -> None:
     # The unified settings reader is imported; the legacy graphene_settings is NOT.
     assert "graphql_api_settings" in imported_names
     assert "graphene_settings" not in imported_names
+
+
+# ---------------------------------------------------------------------------
+# 8) The stream opens on connect, not on the first event
+# ---------------------------------------------------------------------------
+
+
+async def test_stream_emits_a_preamble_before_any_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The response body must yield bytes before the first broadcast arrives.
+
+    An ASGI server writes the status line and headers with the first body
+    chunk. A generator that yields nothing until an event fires therefore
+    leaves the client with no response at all for the whole idle period: the
+    browser's fetch never resolves, so the bundled client cannot show a
+    connected state, and an intermediary proxy times the silent stream out.
+
+    Contract: this test ships broken if the first chunk of the stream is a
+    frame rather than the SSE comment preamble, or if it does not arrive
+    without an event being sent.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+    view = sse.subscription_sse_view(schema=build_native_schema())
+    query = "subscription { post(action: CREATE) { id title } }"
+    response = await view(_make_request(query))
+    assert response.status_code == 200
+
+    # The RAW stream, not sse_frames: this test is the one that must see the
+    # comment chunk the helper exists to hide from every other reader.
+    aiter = response.streaming_content.__aiter__()
+    # No group_send: nothing has happened yet on the subscription.
+    first = await asyncio.wait_for(aiter.__anext__(), timeout=1.0)
+    first = first.decode() if isinstance(first, (bytes, bytearray)) else first
+    assert first == ":\n\n", f"expected an SSE comment preamble, got {first!r}"
+
+    aclose = getattr(aiter, "aclose", None)
+    if aclose is not None:
+        await aclose()
+
+
+async def test_a_denied_subscribe_also_opens_the_stream_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The preamble must precede the in-stream denial frame too.
+
+    A deny is delivered as next+complete inside a committed 200, so it takes
+    the same path and must not be the chunk that opens the response.
+
+    Contract: this test ships broken if a denial frame reaches the wire before
+    the preamble.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+    view = sse.subscription_sse_view(schema=build_native_schema())
+    # An unknown field never starts a source, so the stream is pre-resulted.
+    response = await view(_make_request("subscription { nope(action: CREATE) { id } }"))
+    # The RAW stream, for the same reason as the test above.
+    chunks: list[str] = []
+    async for chunk in response.streaming_content:
+        chunks.append(
+            chunk.decode() if isinstance(chunk, (bytes, bytearray)) else chunk
+        )
+    assert chunks[0] == ":\n\n", f"expected the preamble first, got {chunks[0]!r}"
+    assert any("event: complete" in chunk for chunk in chunks)
+
+
+async def test_an_ambiguous_multi_subscription_document_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A document of several subscriptions must be refused for AMBIGUITY.
+
+    "get_operation_ast" returns None both when the single operation is not a
+    subscription and when the document carries several and the request named
+    none. Reporting the second as the first sends the caller hunting for a
+    query or mutation that is not in their document; the fix is an
+    "operationName", and the refusal has to say so.
+
+    Contract: this test ships broken if an ambiguous document is refused with
+    the operation-kind message instead of naming "operationName".
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+    view = sse.subscription_sse_view(schema=build_native_schema())
+
+    both = (
+        "subscription A { post(action: CREATE) { id } }\n"
+        "subscription B { post(action: UPDATE) { id } }"
+    )
+    response = await view(_make_request(both))
+    assert response.status_code == 400
+    body = response.content.decode()
+    assert "operationName" in body, body
+    assert "only serves subscription" not in body, body
+
+    # Naming one of them is what makes the same document servable.
+    named = _make_request(both)
+    named._body = json.dumps({"query": both, "operationName": "A"}).encode()
+    ok = await view(named)
+    assert ok.status_code == 200

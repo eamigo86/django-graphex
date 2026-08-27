@@ -83,6 +83,7 @@ from graphql.utilities import get_operation_ast
 from ...security import format_graphql_error
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
+from . import is_ambiguous_operation
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable, Mapping
@@ -555,6 +556,23 @@ def subscription_ws_consumer(
                 return
 
             operation_ast = get_operation_ast(document, payload.get("operationName"))
+            if operation_ast is None and is_ambiguous_operation(
+                document, payload.get("operationName")
+            ):
+                # Several operations and no name to pick one. Distinct from
+                # "not a subscription" — reporting it as that sends the caller
+                # hunting for a query or mutation they never wrote.
+                await self._send_error(
+                    op_id,
+                    [
+                        {
+                            "message": "This subscribe carries several "
+                            "operations; name the one to run with "
+                            "operationName."
+                        }
+                    ],
+                )
+                return
             if (
                 operation_ast is None
                 or operation_ast.operation != OperationType.SUBSCRIPTION
