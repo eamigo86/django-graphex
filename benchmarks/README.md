@@ -56,11 +56,21 @@ not reduced to a median.** Re-executing declarations perturbs each library's
 process state differently: django-graphex's series climbs measurably
 (`[2.99, 3.38, 3.70, 3.89, 4.34]` is typical) while ariadne's is flat
 (`[2.74, 2.16, 1.96, 1.97, 2.02]` — one warm-up sample, then level).
-`gc.collect()` between rebuilds makes graphex's *worse*, not better, so
-something is retained rather than merely uncollected. **Read the series down one
-column; never across.** It is not a cache hit: in all four libraries the
-rebuilt schema object, its `GraphQLSchema`, its Author type and that type's
-fields are all new objects.
+**Read the series down one column; never across.** It is not a cache hit: in
+all four libraries the rebuilt schema object, its `GraphQLSchema`, its Author
+type and that type's fields are all new objects.
+
+django-graphex's climb has a known cause, so the series **understates it** by
+roughly 45 %: `_gdx_output_registry` (`django_graphex/core/base.py`) is an
+append-only list of every declared type, and `compile_all_outputs()` walks the
+whole thing, calling `recompile_fields()` on each dead generation as well as
+the live one. Truncating that list between rebuilds flattens the series to
+~2.6 ms. The first sample of each series is therefore the uncontaminated
+figure. This costs a real deployment nothing — `compile_all_outputs()` runs
+once per process from `AppConfig.ready()` — and the permission-scoped schema
+path does not touch it at all (`prune_schema` is a graphql-core clone-on-write
+transform that declares no types; 500 distinct permission signatures leave the
+list at 6).
 
 ### The cold-import bias, and its fix
 

@@ -203,12 +203,14 @@ exactly why the claim here is **flat** rather than *faster*. graphene's rose by
       millisecond is not, in *either* direction. The reasoning is stated in
       full beside the table rather than buried here, including what the row
       does not measure.
-    - **The rebuild series is a diagnostic, not a ranking.** django-graphex's
-      cost climbs across repeated in-process rebuilds where ariadne's is flat,
-      and `gc.collect()` between rebuilds makes graphex's *worse* rather than
-      better — something is retained. It has no effect on a deployment that
-      builds its schema once, which is the normal case, and it is why that
-      series ships as raw samples instead of a comparable figure.
+    - **The rebuild series is a diagnostic, not a ranking, and it understates
+      graphex.** Its cost climbs across repeated in-process rebuilds where
+      ariadne's is flat, because an append-only registry of declared types
+      makes every rebuild re-walk all the dead generations — so the series runs
+      roughly 45 % above a clean build, and the first sample is the honest one.
+      A deployment pays none of it: that walk happens once per process, at
+      `AppConfig.ready()`. It is why the series ships as raw samples rather
+      than a comparable figure.
     - **graphex's parse + validate cache shines on repeated documents** — which is
       the real-world API pattern, where the same operations run over and over. A
       cold *first* parse pays roughly 0.4–0.75 ms once, then it's amortized away.
