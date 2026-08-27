@@ -973,3 +973,50 @@ async def test_ws_ambiguous_multi_subscription_document_says_so(
     assert group
 
     await communicator.disconnect()
+
+
+async def test_a_subscribe_never_ends_in_silence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected error during subscribe must still reach the client.
+
+    Two changes on this branch interact: both transports now validate with the
+    shared rule tuple, whose depth rule READS "MAX_QUERY_DEPTH" at validation
+    time, and the settings reader now refuses a limit of 0 with
+    "ImproperlyConfigured". That is not a "GraphQLError", so it never became a
+    validation error — it escaped the operation task, whose done-callback only
+    LOGGED it. The client got no error, no complete, nothing, and waited
+    forever, which is byte-for-byte the silent-drop shape this branch's own
+    changelog says it eliminated for a malformed payload.
+
+    The rule is broader than the trigger: no subscribe may end in silence.
+
+    Contract: this test ships broken if an unexpected exception during a
+    subscribe stops producing an "error" frame.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+    """
+    from django.test import override_settings
+
+    from django_graphex.subscriptions.transports import ws
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
+    communicator = _make_communicator(app, layer=layer)
+    await _connect_and_ack(communicator)
+
+    # A limit of 0 is refused by the settings reader, from inside validation.
+    with override_settings(DJANGO_GRAPHEX={"MAX_QUERY_DEPTH": 0}):
+        await communicator.send_json_to(
+            {"id": "op1", "type": "subscribe", "payload": {"query": _SUB_QUERY}}
+        )
+        msg = await communicator.receive_json_from(timeout=3)
+
+    assert msg["type"] == "error", msg
+    assert msg["id"] == "op1"
+    assert msg["payload"], "the error frame must carry a message"
+
+    await communicator.disconnect()

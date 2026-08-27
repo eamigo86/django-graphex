@@ -695,6 +695,18 @@ changed nothing), plus six internal names — four of which were importable, so
   mutation their document does not contain. The two selection failures now name
   themselves — one says to pick an operation with `operationName`, the other
   names the operation the document does not define.
+- **A WebSocket subscribe could end in total silence.** Two changes in this
+  release interact: both transports now validate with the shared rule tuple,
+  whose depth rule READS `MAX_QUERY_DEPTH` at validation time, and the settings
+  reader now refuses a limit of `0`. `ImproperlyConfigured` is not a
+  `GraphQLError`, so it never became a validation error — it escaped the
+  operation task, whose done-callback only *logged* it. The client received no
+  `error`, no `complete` and nothing else, and waited forever: byte-for-byte
+  the shape the malformed-payload fix eliminated, reached by another route, and
+  reachable by a misconfiguration that fails loudly on HTTP while hanging
+  silently here. Every operation is now wrapped so any escaping error is framed
+  as `error{id}`; `CancelledError` still propagates untouched, because a client
+  `complete` or a disconnect is a teardown and not a fault.
 - **The SSE transport answered 500 where the HTTP view answers 400.** A
   `variables` value that is not a mapping reached graphql-core, which raises a
   plain `TypeError` that nothing wrapped, so it escaped the async view. Two

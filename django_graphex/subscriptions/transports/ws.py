@@ -482,7 +482,7 @@ def subscription_ws_consumer(
                 )
                 return
 
-            task = asyncio.ensure_future(self._run_operation(op_id, payload))
+            task = asyncio.ensure_future(self._run_operation_framed(op_id, payload))
             self._operations[op_id] = task
             # strawberry.channels hardening: drop the id the instant its task ends
             # (normal completion, error, OR abnormal cancel) so the registry never
@@ -531,6 +531,37 @@ def subscription_ws_consumer(
                 resolved = schema
             self._conn_schema = resolved
             return resolved
+
+        async def _run_operation_framed(
+            self, op_id: str, payload: dict[str, Any]
+        ) -> None:
+            """Run one operation, framing ANY escaping error instead of logging it.
+
+            No subscribe may end in silence. Before this wrapper an exception
+            that is not a "GraphQLError" — an "ImproperlyConfigured" raised
+            while validation READ a limit setting, say — escaped the operation
+            task, whose done-callback only logged it. The client received no
+            "error", no "complete" and nothing else, and could not tell a
+            server fault from a slow one. That is the same shape the malformed
+            payload fix eliminated, reached by a different route.
+
+            "CancelledError" is re-raised untouched: a client "complete" or a
+            disconnect is a normal teardown, not a fault.
+
+            Args:
+                op_id: The operation id the frame must be addressed to.
+                payload: The subscribe payload to run.
+            """
+            try:
+                await self._run_operation(op_id, payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - framed, never escapes
+                logger.exception(
+                    "Subscription operation %r failed before it could stream.",
+                    op_id,
+                )
+                await self._send_error(op_id, [{"message": str(exc)}])
 
         async def _run_operation(self, op_id: str, payload: dict[str, Any]) -> None:
             """Run one subscription operation: subscribe -> next* -> complete.
