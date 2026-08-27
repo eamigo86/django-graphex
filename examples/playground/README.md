@@ -24,7 +24,7 @@ imported so you can swap it in (`import only`), deliberately left out
 (`not used`), or covered only in the docs (`doc` / `note`) — read the row before
 copying the shape.
 
-### The projection boundary { #the-projection-boundary }
+### The projection boundary
 
 `Meta.only_fields` / `Meta.exclude_fields` are a **security boundary**, not an
 output shape: a column a type projects away must not be **readable, orderable
@@ -50,6 +50,14 @@ control that proves only the one column moved:
 | `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Field 'bio' is not defined by type 'AuthorFilterInput'. Did you mean 'id'?` |
 | `{ authors { results(page: 1, ordering: "name") { id name } } }` | The rows, ordered by name. |
 
+Those answers are what the playground serves **as shipped**, with
+`ALLOW_INTROSPECTION = True`. Flip it to `False` (as the
+[Views section](#views) suggests) and the trailing `Did you mean 'id'?` is
+stripped from rows 1 and 3 — guessing at invented names is how a hidden schema
+gets rebuilt, so the suggestion goes with the introspection. Everything before
+it survives, and row 2 is untouched: `Invalid ordering field: 'bio'.` names the
+term *you* sent, not a schema member.
+
 Ordering is refused at **query time**; filtering is refused earlier still.
 Adding `"bio"` to that `filter_fields` dict does not drop the entry quietly —
 it raises `ImproperlyConfigured` and the schema **stops building**, because a
@@ -65,10 +73,63 @@ attribute publishes the name over a different value. […] Publish 'bio' on
 AuthorType, or drop the entry.
 ```
 
-`tests/test_projection_boundary.py` pins all four rows. The full rule, its one
-documented exception (an operator-configured `ordering=` default) and the
+`bio` is the teaching example; the schema applies the same one line to two more
+columns, so you can read the rule where getting it wrong actually costs
+something:
+
+| Type | Column | What it would leak |
+|------|--------|--------------------|
+| `AuthorType` | `Author.bio` | Seeded prose — a value you can watch not come back |
+| `UserType` | `User.password` | The hash. `Author.user` reaches this type, so without the line `authors { results { user { password } } }` answers it to every **authenticated** caller. Anonymous callers are stopped one layer earlier by `resolve_user` — a second wall, not this one |
+| `CommentType` + `CommentModelType` | `Comment.internal_note` | A moderation scratchpad — hidden on **reads and writes alike**, so the column is missing from `CommentFilterInput`, from `commentCreate`'s input **and** from the nested `comments` input under `postWithCommentsCreate` |
+
+`tests/test_projection_boundary.py` pins every one of those. The full rule, its
+one documented exception (an operator-configured `ordering=` default) and the
 boundaries it cannot close live in
 [the Types guide](https://github.com/eamigo86/django-graphex/blob/main/docs/usage/types.md#projection-security-boundary).
+
+One boundary the playground does **not** close, stated here rather than left to
+be discovered: `CommentSubscription` is a hand-written `Subscription` bound to
+`Meta.model = Comment`, and it builds its event type and its filter input from
+the **model**, not from `CommentType`'s projection. `internalNote` is therefore
+selectable and filterable through `commentSubscription` even though every query
+surface refuses it. Project the column on the subscription too, or do not put
+data in it that the query surface hides.
+
+### The relation-scope hatch
+
+`PostType.get_queryset` hides `DRAFT` posts from anonymous callers — but it is
+a **field-level** scope. An **auto-expanded** relation reads the parent's
+prefetch cache and never calls it, in either direction. The playground mounts
+the documented escape hatch for both arms and leaves the unmounted shape
+standing beside it, so you can see the boundary instead of taking its word:
+
+| Query (run it logged out) | Drafts? | Why |
+|---|---|---|
+| `{ posts { results { title status } } }` | hidden | Top-level field: the hook runs |
+| `{ categories { name posts { title status } } }` | hidden | **to-MANY hatch**: `CategoryType.posts = DjangoFilterListField(PostType)` carries a resolver, and the resolver runs the hook |
+| `{ authors { results { posts { results { status } } } } }` | **visible** | Auto-expanded container: reads the prefetch cache, hook never called |
+| `{ authors { results { name user { username } } } }` | `user: null` | **to-ONE hatch**: `AuthorType.user = Field(UserType)` + `resolve_user`. A bare `resolve_user` with no declaration does *nothing* |
+
+Row 3 is the documented behaviour, not a bug: rebuilding the prefetch queryset
+inside the resolver would cost window pagination and the `.only()` plan.
+
+**Declaring either arm costs the relation its other two axes**, because a
+relation served by your own resolver is a *mask* — what the client reads is
+what the callable returns, not what the row holds:
+
+| Axis | What happens |
+|---|---|
+| `ordering` | `{ authors { results(ordering: "userId") { name } } }` → `Invalid ordering field: 'user_id'.` The term is normalized to the column first, so `"user_id"` is refused identically. Ranking rows by the raw foreign key reads a key no type in the schema hands out |
+| `filter` | A `filter_fields` entry through the declared relation — `{"posts__title": ("icontains",)}` on `CategoryType`, `{"user": ("exact",)}` on `AuthorType` — **stops the schema building** with `ImproperlyConfigured`. That entry compiles to an ORM join that reaches exactly the rows the resolver hides |
+
+The to-MANY arm costs less than the to-ONE arm: a reverse FK owns no column on
+the parent row, so **nothing leaves the ordering allowlist** on `CategoryType`
+and only the nested `posts__…` filter paths go. `PostType.author` is the
+control — no resolver, so it keeps both axes and
+`posts { results(ordering: "authorId") { title } }` still sorts.
+
+`tests/test_relation_scope_hatch.py` pins all of it.
 
 ### Safe ordering (anti-oracle hardening)
 
@@ -135,7 +196,10 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DjangoUnionType` (typed GFK target) | ✅ | `schema.py` — `AttachmentTargetUnion` (`Meta.types`) + `AttachmentType.Meta.unions = {"target": …}` |
 | `DjangoInterfaceType` | doc | Covered in `docs/usage/types.md`; not in the playground (no shared abstract base fits Account/Invoice cleanly) |
 | `TextChoices` → GraphQL enum | ✅ | `Post.status` / `PostType` |
-| `only_fields` / `exclude_fields` as a **security boundary** | ✅ | `schema.py` — `AuthorType.Meta.exclude_fields = ("bio",)`; `bio` is unreadable, unorderable **and** unfilterable — see [The projection boundary](#the-projection-boundary) |
+| `only_fields` / `exclude_fields` as a **security boundary** | ✅ | `schema.py` — three columns: `AuthorType` hides `bio`, `UserType` hides `password`, `CommentType` + `CommentModelType` hide `internal_note` on **reads and writes alike** (including the nested child input). Each is unreadable, unorderable **and** unfilterable — see [The projection boundary](#the-projection-boundary) |
+| Relation-scope hatch, to-**MANY** arm | ✅ | `schema.py` — `CategoryType.posts = DjangoFilterListField(PostType)` runs `PostType.get_queryset`; the auto-expanded `AuthorType.posts` container beside it does **not** — see [The relation-scope hatch](#the-relation-scope-hatch) |
+| Relation-scope hatch, to-**ONE** arm | ✅ | `schema.py` — `AuthorType.user = Field(UserType)` + `resolve_user`; a bare `resolve_user` with no declaration would be silently ignored |
+| `get_queryset` (per-request row scoping) | ✅ | `schema.py` — `PostType.get_queryset` hides drafts from anonymous callers. It is a **field-level** scope: read the hatch rows above before relying on it to hide relation-reachable rows |
 | `max_depth` per-type depth limit | ✅ | `schema.py` — `PostType.Meta.max_depth = 4` |
 | `complexity` per-type cost weight | ✅ | `schema.py` — `PostType.Meta.complexity = 2` |
 | **Fields** | | |
@@ -172,10 +236,12 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `IsAdmin` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
 | `IsAdminOrReadOnly` | import only | Imported in `schema.py` behind `# noqa: F401`; no type assigns it. Swap it into `NoteModelType.permission_classes` to see it act |
 | `DjangoModelPermissions` | not used | The playground gates on identity (`IsOwnerOrReadOnly`, `IsAuthenticatedOrReadOnly`), not on Django model permissions. Those still drive `PERMISSION_SCOPED_SCHEMA` below, which reads them straight off the caller |
-| `PERMISSION_SCOPED_SCHEMA` (pruned per-caller schema) | ✅ | `config/settings.py` — active; visible at `/graphql/secure/` — see [A schema pruned to the caller](#a-schema-pruned-to-the-caller-22) |
+| `PERMISSION_SCOPED_SCHEMA` (pruned per-caller schema) | ✅ | `config/settings.py` — active; visible at `/graphql/secure/` — see [A schema pruned to the caller](#6-a-schema-pruned-to-the-caller-22) |
 | `API_ACCESS_GROUP` | not used | Endpoint-wide group gate; the playground keeps `/graphql/` public on purpose. Set it in `config/settings.py` to lock the endpoint to one Django `Group` |
 | **Security / middleware** | | |
-| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` |
+| `DisableIntrospectionMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE; toggle via `ALLOW_INTROSPECTION` — flipping it also strips the `Did you mean …?` tail from schema-derived errors, see [Views](#views) |
+| `REQUIRE_CSRF_HEADER` (cross-site POST guard) | ✅ default | **Inherited, not set** — `config/settings.py` names it in a comment and leaves the default alone. A CORS-simple POST (form-encoded, multipart, `text/plain`, or no content type) needs `X-Requested-With` or gets HTTP 403 — see [Security defaults you inherit](#security-defaults-you-inherit) |
+| `MAX_SUBSCRIPTIONS_PER_CONNECTION` | ✅ default | **Inherited, not set** — 50. One WebSocket may hold 50 concurrent operations; the 51st gets an `error` frame naming the limit and the socket plus its running subscriptions keep going |
 | `AuthenticatedFieldsMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE |
 | `GraphQLDirectiveMiddleware` | ✅ | `config/settings.py` DJANGO_GRAPHEX.MIDDLEWARE |
 | `DjangoGraphQLSchema` (public + private roots) | ✅ | `schema.py` — `private_query=PrivateQuery`, `private_subscription=PrivateSubscriptions` |
@@ -192,7 +258,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DepthLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.max_depth = 4` activates per-type enforcement |
 | `CostLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.complexity = 2`; enable budget via `MAX_QUERY_COST` |
 | `analyze_cost` / `CostReport` | ✅ | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
-| `MAX_QUERY_DEPTH` setting | ✅ | **Active at depth 6** in `config/settings.py:112` — the playground rejects any query nested more than 6 levels |
+| `MAX_QUERY_DEPTH` setting | ✅ | **Active at depth 6** in `config/settings.py` (the `DJANGO_GRAPHEX` block) — the playground rejects any query nested more than 6 levels |
 | `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note | Commented in `config/settings.py` — uncomment to block expensive queries and expose cost |
 | **Queryset optimization** | | |
 | `OPTIMIZE_QUERYSET` | ✅ | Enabled by default; `select_related`/`prefetch_related` derived from the selection. Commented in `config/settings.py` to show how to flip it |
@@ -205,10 +271,12 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `GenericForeignKey` exposed as a typed `DjangoUnionType` | ✅ | `schema.py` — `AttachmentType.target` via `AttachmentTargetUnion` (`Meta.types`) + `Meta.unions` |
 | Per-content-type `GenericPrefetch` narrowing (Django 5.0+) | ✅ | One `.only()`-narrowed queryset per content type (`AccountType.balance`, `InvoiceType.amount`), batched across all attachments |
 | `GenericForeignKey` / `GenericRelation` prefetch | ✅ / wired | `Attachment.target` (GFK) exercised by the seed; `Post.attachments` (reverse `GenericRelation`) is wired but left empty so the GFK-union demo stays runnable |
-| **File uploads (v1.3.0)** | | |
-| `Base64FileInput` (opt-in) | ✅ | `schema.py` — `UploadDocument` mutation; `Document` model has a `FileField`. Try: `mutation { uploadDocument(name: "readme" file: {filename: "readme.txt" data: "<base64>" contentType: "text/plain"}) { ok name document { id name created } } }` — the `document` payload field is what mounts `DocumentType` on the schema |
+| **File uploads** | | |
+| Automatic **multipart** upload (2.2.0) | ✅ | `schema.py` — `DocumentMutation` → `documentCreate` / `documentUpdate`; a part named after a `FileField` the input exposes is merged and saved, with **no configuration at all** — see [Multipart uploads](#7-multipart-uploads-22) |
+| `Base64FileInput` (opt-in, v1.3.0) | ✅ | `schema.py` — `UploadDocument` mutation, writing the same `Document.attached_file` column. Try: `mutation { uploadDocument(name: "readme" file: {filename: "readme.txt" data: "<base64>" contentType: "text/plain"}) { ok name document { id name attachedFile created } } }` — the `document` payload field is what mounts `DocumentType` on the schema |
 | `MAX_UPLOAD_SIZE` | ✅ | `config/settings.py` — `5 * 1024 * 1024` (5 MB) |
 | `MAX_REQUEST_BODY_SIZE` | ✅ | `config/settings.py` — `20 * 1024 * 1024` (20 MB body guard, fires before JSON parse) |
+| `DATA_UPLOAD_MAX_MEMORY_SIZE` (Django's own) | ✅ | `config/settings.py` — raised to 20 MB to match. A base64 upload travels inside the JSON body, so Django's 2.5 MB default refuses a 5 MB file with an opaque HTML 400 before either library cap sees it. Multipart never needs it — it streams to disk |
 | **Response caching** | | |
 | `CACHE_ACTIVE` / `CACHE_TIMEOUT` | note | Commented in `config/settings.py` — uncomment to activate query-result caching |
 | **Subscriptions** | | |
@@ -238,6 +306,14 @@ make clean          remove the db and caches
 
 The `make run` command starts daphne at <http://127.0.0.1:8000/graphql/>.
 
+> **Updating an existing checkout.** `blog/migrations/0*.py` is gitignored, so
+> a fresh clone is never affected. But if you ran `make migrate` before
+> pulling, `makemigrations` may ask you to confirm a column **rename**
+> (`Document.file` became `Document.attached_file`). The prompt defaults to
+> *no*, which drops the column and its stored files — and with no TTY it fails
+> outright with `EOFError`. Run `make reset` instead: the playground's database
+> is demo data, so throwing it away costs nothing.
+
 ---
 
 ## Tests
@@ -261,15 +337,32 @@ view (`config/urls.py`):
   is denied the same write through `postWithCommentsCreate` (and the parent
   `Post` rolls back), while `/graphql/secure/` serves each caller a schema
   pruned to their Django model permissions.
-- **Projection boundary** (`test_projection_boundary.py`) — `AuthorType` hides
-  `Author.bio`, and the column is pinned unreadable (absent from the SDL),
-  unorderable (`Invalid ordering field: 'bio'.` over the wire) and unfilterable
-  (absent from `AuthorFilterInput`), with a published column ordered
-  successfully as the control.
+- **Projection boundary** (`test_projection_boundary.py`) — all three columns
+  the schema projects away, pinned unreadable, unorderable and unfilterable
+  over the wire, with a published column ordered successfully as the control.
+  The answers this README quotes are asserted **verbatim**, on both sides of
+  the `ALLOW_INTROSPECTION` toggle, so the two sections cannot contradict each
+  other. `Comment.internal_note` is pinned on the write inputs too, standalone
+  and nested.
+- **Relation-scope hatch** (`test_relation_scope_hatch.py`) — both arms scope
+  their relation for an anonymous caller, the auto-expanded shape beside them
+  still does not, and the ordering and filter axes the declaration costs are
+  pinned closed with a non-masked relation as the control.
+- **Multipart uploads** (`test_multipart_upload.py`) — `documentCreate` saves a
+  part under either spelling, ignores an unmatched part while still answering
+  `ok: true`, and is refused HTTP 403 without `X-Requested-With`. Uploads are
+  written into a tmp `MEDIA_ROOT`, so a run leaves no files behind.
+- **Shipped defaults** (`test_shipped_defaults.py`) — the two settings this
+  project inherits without configuring them:
+  `REQUIRE_CSRF_HEADER` (here) and `MAX_SUBSCRIPTIONS_PER_CONNECTION` (in the
+  transports module, where the WS communicator lives).
 - **Subscription client** — `/graphql/client/` serves the HTML client with both
   transports (graphql-transport-ws + graphql-sse) and the playground's WS/HTTP
-  endpoints wired. (A full headless-browser round-trip is intentionally deferred
-  — no Playwright/Selenium dependency is added.)
+  endpoints wired, and the document it ships **pre-filled parses and validates
+  against this schema** after the client's own placeholder rewrite — which is
+  the exact thing step 2 of the [subscriptions walkthrough](#subscriptions)
+  tells you to press Run on. (A full headless-browser round-trip is
+  intentionally deferred — no Playwright/Selenium dependency is added.)
 
 Run them with **make** (uses `uv`, installs the `test` dependency group):
 
@@ -486,11 +579,24 @@ Attempt the same **without being logged in** — the permission gate returns:
 }
 ```
 
-A failing validation (blank title) returns the `errors` list instead of `ok: true`:
+A failing validation returns `ok: false` and the `errors` list. Validation is
+**Pydantic**, derived from the column — so it is `max_length`, type and
+nullability that fail, not Django's form-level `blank`. A title over
+`Note.title`'s `max_length=200`:
 
 ```graphql
-mutation { noteCreate(newNote: { title: "" }) { ok errors { field messages } } }
+mutation { noteCreate(newNote: { title: "xxx… 250 chars …xxx" }) { ok errors { field messages } } }
 ```
+
+```json
+{ "data": { "noteCreate": { "ok": false,
+  "errors": [{ "field": "title", "messages": ["String should have at most 200 characters"] }] } } }
+```
+
+`title: ""` is **not** one of these: `blank=True/False` is a form concern
+Django never enforces on `save()`, so a blank title is accepted and returns
+`ok: true`. Use an inline `validate_<field>` hook if you want it refused — see
+[Custom validation](https://eamigo86.github.io/django-graphex/usage/backends/#custom-validation-inline-validate_field).
 
 ### 5. Nested write — create a Post with inline Comments
 
@@ -596,10 +702,14 @@ grants no model permission. Log in as `editor` / `editor12345`, open
 | Document at `/graphql/secure/` | Result |
 |---|---|
 | `mutation { noteCreate(newNote: { title: "x" }) { ok } }` | `Cannot query field 'noteCreate' on type 'RootMutation'. Did you mean 'postCreate'?` |
-| `mutation { commentCreate(newComment: { … }) { ok } }` | `Cannot query field 'commentCreate' on type 'RootMutation'` |
+| `mutation { commentCreate(newComment: { … }) { ok } }` | `Cannot query field 'commentCreate' on type 'RootMutation'. Did you mean 'documentCreate', 'postCreate', or 'documentUpdate'?` |
 | `postWithCommentsCreate(newPost: { …, comments: [...] })` | `Field 'comments' is not defined by type 'PostCreateNestedCommentsType'` — the mutation survives, the **nested input field** does not |
 | `postWithCommentsCreate(newPost: { … })`, no `comments` | `ok: true` — the parent write is theirs to make |
 | `{ serverTime posts { totalCount } }` | resolves normally — untagged and readable fields are untouched |
+
+The first two rows are quoted as shipped, with `ALLOW_INTROSPECTION = True`.
+With introspection off the `Did you mean 'postCreate'?` tail is stripped and the
+rest of each message stands — see [Views](#views).
 
 The `comments` row is the 2.2.0 part: the nested `comments` input is stamped with
 the **child's** permission, so a caller who may write posts but not comments
@@ -609,6 +719,54 @@ of one model — `/graphql/` is **not** pruned, which is exactly why
 
 Flip `PERMISSION_SCOPED_SCHEMA` to `False` in `config/settings.py` and every
 pruned field comes back.
+
+### 7. Multipart uploads (2.2)
+
+`DocumentMutation` is four lines of `Meta` and mounts `documentCreate` /
+`documentUpdate`. There is **nothing to configure**: a part named after a
+`FileField` the mutation input exposes is merged into the payload and saved to
+that column, on create and on update alike.
+
+Send the operation and the file in **one** `multipart/form-data` request: a
+`query` part carrying the document, an optional `variables` part carrying its
+variables as JSON, and one part per file. There is no `operations` / `map`
+envelope — this library does not implement the graphql-multipart-request spec;
+it reads a multipart body straight out of `request.POST`. GraphiQL cannot send
+a multipart body, so this one is a `curl` demo by nature:
+
+```bash
+echo hello > /tmp/notes.txt
+
+curl -sS http://127.0.0.1:8000/graphql/ \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  -F 'query=mutation { documentCreate(newDocument: { name: "Notes" }) { ok document { id name attachedFile } } }' \
+  -F 'attachedFile=@/tmp/notes.txt'
+```
+
+```json
+{"data": {"documentCreate": {"ok": true,
+  "document": {"id": "1", "name": "Notes", "attachedFile": "documents/notes.txt"}}}}
+```
+
+Three things that request teaches, each of which the suite pins:
+
+- **Either spelling of the part name works.** `attachedFile` is the only
+  spelling the SDL publishes; `attached_file` is the model attribute. Both are
+  derived from the same compiled input field, so both land on the same column.
+  Re-run the call with `-F 'attached_file=@/tmp/notes.txt'` and watch it.
+- **A misspelled part is ignored — and still answers `ok: true`.** Try
+  `-F 'attachedFyle=@/tmp/notes.txt'`: the row is created, `ok` is true, and
+  `attachedFile` comes back `""`. A typo looks exactly like success, so check
+  the payload rather than the status.
+- **The header is not optional.** Drop `-H 'X-Requested-With: …'` and the
+  request is refused with HTTP 403 before the body is read —
+  `multipart/form-data` is a CORS-simple content type, so exempting it would
+  leave the mutations that *write files* as the only unprotected surface. See
+  [Security defaults you inherit](#security-defaults-you-inherit).
+
+The same column also accepts a **base64** upload inside the JSON body
+(`uploadDocument`, v1.3.0), which is the path GraphiQL can drive. One column,
+two ways in — compare them side by side in `blog/schema.py`.
 
 ---
 
@@ -673,7 +831,24 @@ The easiest way to try them is the built-in browser client at
 <http://127.0.0.1:8000/graphql/client/>:
 
 1. Press **Connect** — the client opens the WebSocket (or SSE stream).
-2. Run the pre-filled `postSubscription(action: ALL_ACTIONS) { id title }`.
+2. Press **Run**. Nothing to type: the editor arrives holding a runnable
+   document, and against this schema it reads
+
+   ```graphql
+   subscription {
+     postSubscription(action: ALL_ACTIONS) {
+       id
+     }
+   }
+   ```
+
+   The client ships that document with a **placeholder** field name,
+   `yourSubscription`, and renames it to the first subscription your schema
+   advertises as soon as its introspection query comes back — here
+   `postSubscription`. Two consequences worth knowing: add `title` to the
+   selection yourself if you want to read it in the frames, and if you have set
+   `ALLOW_INTROSPECTION = False` the rename cannot happen, so the editor still
+   says `yourSubscription` and you replace it by hand.
 3. Trigger a change (create a `Post` via `postCreate`) — the event arrives
    instantly.
 
@@ -751,6 +926,59 @@ subscription {
 
 ---
 
+## Security defaults you inherit
+
+Two settings that will bite a client are ones this project never sets, because
+they ship **on**: copy `config/settings.py` and you get them either way. The
+file names both in a commented block — the values shown there *are* the
+defaults — and this is what they do.
+
+**`REQUIRE_CSRF_HEADER` (default `True`).** The endpoint is `csrf_exempt` and
+reads form-encoded and multipart bodies, and both of those are CORS-*simple*
+content types: a `<form>` on any origin can POST to `/graphql/` with no
+preflight while the browser attaches your session cookie. So a POST whose
+content type is `application/x-www-form-urlencoded`, `multipart/form-data`,
+`text/plain`, or absent must carry the **`X-Requested-With`** header, or it is
+answered HTTP 403 before the body is read:
+
+```console
+$ curl -sS -X POST http://127.0.0.1:8000/graphql/ -d 'query={ serverTime }'
+{"errors": [{"message": "This content type requires the X-Requested-With header.
+A browser can POST it cross-site without a CORS preflight, so the header is what
+proves the request was not forged. Send 'X-Requested-With: XMLHttpRequest', post
+'application/json' instead, or set REQUIRE_CSRF_HEADER=False to opt out."}]}
+
+$ curl -sS -X POST http://127.0.0.1:8000/graphql/ \
+       -H 'X-Requested-With: XMLHttpRequest' -d 'query={ serverTime }'
+{"data":{"serverTime":"2026-08-27T06:07:28.997769+00:00"}}
+```
+
+(`curl -d` sends `application/x-www-form-urlencoded`; the message above is one
+line in the real response, wrapped here to fit.)
+
+The value is never inspected — the header is not CORS-safelisted, so merely
+requiring it forces back the preflight the attacker page cannot pass. **GraphiQL
+and every `application/json` client change nothing**: `application/json` is not
+simple, so it already required a preflight. The same guard runs on the SSE
+endpoint, which answers a plain-text 403 there because an `EventSource` client
+does not parse a JSON envelope. Set `REQUIRE_CSRF_HEADER: False` in
+`DJANGO_GRAPHEX` only if a client genuinely cannot set a header **and** the
+endpoint is protected another way.
+
+**`MAX_SUBSCRIPTIONS_PER_CONNECTION` (default `50`).** One WebSocket may hold 50
+concurrent operations. A `subscribe` past the cap is answered with the
+transport's own `error` frame naming the limit; **the socket and every
+subscription already running on it survive**, and a slot frees itself the moment
+its operation ends (client `complete`, stream end, or disconnect). The SSE
+transport is unaffected — one request carries exactly one subscription. Set it
+to `None` for the old unbounded behaviour.
+
+Both are pinned by `tests/test_shipped_defaults.py` and
+`tests/test_subscription_transports_e2e.py`, so this section cannot drift from
+the defaults without the suite saying so.
+
+---
+
 ## Views
 
 | Route | View | Notes |
@@ -773,6 +1001,21 @@ AuthenticatedGraphQLView.as_view(graphiql=True, permission_classes=(IsAdmin,))
 > `ALLOW_INTROSPECTION = True`. Set it to `False` in `config/settings.py` to
 > watch `DisableIntrospectionMiddleware` block it (superusers still bypass
 > thanks to `INTROSPECTION_ALLOW_SUPERUSER = True` by default).
+>
+> Flipping it also changes **error messages** this README quotes. With
+> introspection actually disabled — the middleware installed *and* the setting
+> off, which is what `config/settings.py` gives you — the library strips the
+> trailing `Did you mean …?` from every message that builds one out of schema
+> members: `Cannot query field …`, `Field … is not defined by type …`,
+> `Unknown type …`, `Unknown argument …`, and enum-value coercion. Probing with
+> invented names is how a hidden schema is rebuilt one guess at a time, so the
+> suggestion is part of what the toggle hides. Nothing else moves: the rest of
+> the message, the `locations` and the `path` all survive, and a refusal this
+> library raises itself (`Invalid ordering field: 'bio'.`) keeps every word,
+> because it names the term the client sent rather than a schema member. The
+> quoted answers in [The projection boundary](#the-projection-boundary) and
+> [section 6](#6-a-schema-pruned-to-the-caller-22) are the
+> `ALLOW_INTROSPECTION = True` forms.
 
 > **Static files:** under `daphne` (ASGI), static files are served by
 > `ASGIStaticFilesHandler` in `config/asgi.py` while `DEBUG = True`. For

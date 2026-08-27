@@ -122,11 +122,27 @@ class Comment(models.Model):
 
     Backs the second-level nesting (Author -> posts -> comments) used to
     demonstrate multi-page nested queries and N+1 avoidance.
+
+    "internal_note" is the projection fixture: an ordinary editable column that
+    the schema hides on reads AND writes (see "CommentType" and
+    "CommentModelType" in "blog/schema.py"), so a reader can watch one
+    projection travel through the output type, the filter input, the write
+    input AND the nested child input a "Meta.nested_fields" parent exposes.
+
+    The subscription surface is the fourth place it has to be hidden, and the
+    only one that does NOT inherit it: see "CommentSubscription.Meta", which
+    restates the exclusion because a model-bound subscription is measured
+    against its own "Meta" alone.
     """
 
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="comments")
     author_name = models.CharField(max_length=100)
     text = models.TextField()
+    # Moderation scratchpad. Nothing the playground ships can write it -- no
+    # admin registration, no seed value, and every write input projects it
+    # away -- so it stays empty unless you set it from a shell or a migration.
+    # That is deliberate: it exists to be a column you can watch NOT come back.
+    internal_note = models.TextField(blank=True, default="")
     created = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -206,14 +222,21 @@ class Attachment(models.Model):
 
 
 # --------------------------------------------------------------------------- #
-# Base64 file upload demo (v1.3.0).                                            #
-# Document has a FileField to showcase the Base64FileInput → FileField         #
-# round-trip. Upload a file via the uploadDocument mutation in GraphiQL.       #
+# File upload demos. ONE column, TWO ways in:                                  #
+#   - base64 inside the JSON body   -> uploadDocument  (v1.3.0)                #
+#   - a multipart part on the write host -> documentCreate / documentUpdate    #
+#     (2.2.0, the release that feature is named for)                           #
+# Both land on Document.attached_file. See blog/schema.py.                     #
+#                                                                              #
+# The column is named with TWO words on purpose: a multipart part is matched   #
+# against the camelCase alias the SDL publishes AND the snake_case model       #
+# attribute, and a one-word name spells those identically, so it can never     #
+# show the reader that both work.                                              #
 # --------------------------------------------------------------------------- #
 class Document(models.Model):
-    """A simple document with a file attachment — demos Base64FileInput (v1.3.0).
+    """A simple document with a file attachment — demos both upload paths.
 
-    Example GraphQL mutation::
+    Example GraphQL mutation (the base64 path)::
 
         mutation {
             uploadDocument(
@@ -228,7 +251,7 @@ class Document(models.Model):
     """
 
     name = models.CharField(max_length=200)
-    file = models.FileField(upload_to="documents/", blank=True)
+    attached_file = models.FileField(upload_to="documents/", blank=True)
     created = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

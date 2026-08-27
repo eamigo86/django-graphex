@@ -106,6 +106,39 @@ DJANGO_GRAPHEX = {
     # docs/usage/subscriptions.md.
     "PERMISSION_SCOPED_SCHEMA": True,
     # ---------------------------------------------------------------------------
+    # TWO SETTINGS THIS FILE DELIBERATELY DOES NOT SET. Both ship ON, so pinning
+    # them here would only restate a default — but a default is exactly the thing
+    # a project forgets it depends on, and both of these are walls you would
+    # otherwise meet for the first time in production. They are named here so a
+    # reader copying this file meets them at their desk instead. Uncomment either
+    # line to change it; the values shown ARE the defaults.
+    #
+    # REQUIRE_CSRF_HEADER (default True). This endpoint is `csrf_exempt` and
+    # accepts form-encoded and multipart bodies, and both are CORS-SIMPLE content
+    # types: a `<form>` on any origin posts them with NO preflight and the browser
+    # attaches the victim's session cookie — a plain CSRF hole on every mutation,
+    # and on the SSE endpoint too. The guard demands the `X-Requested-With`
+    # header, which is not CORS-safelisted, so requiring it forces back the
+    # preflight a forged request cannot pass. The value is never inspected, and
+    # the refusal (HTTP 403) happens before the body is read.
+    #   Who pays: form-encoded clients, and the multipart upload host
+    #   (`documentCreate` in blog/schema.py) — see the curl invocation there.
+    #   Who does not: `application/json` and `application/graphql` clients, which
+    #   already required a preflight. That is why GraphiQL needs nothing.
+    #   "REQUIRE_CSRF_HEADER": True,
+    #
+    # MAX_SUBSCRIPTIONS_PER_CONNECTION (default 50). Every live
+    # `graphql-transport-ws` operation joins its own channel-layer group, so one
+    # socket with no ceiling turns a single connection into hundreds of
+    # subscribers — the HTTP side has bounded its analogous surface with
+    # MAX_BATCH_SIZE since 1.2.1. A `subscribe` past the cap gets the transport's
+    # own `error` frame naming the limit; the socket and every subscription
+    # already running on it survive, and a slot frees itself when its operation
+    # ends (client `complete`, stream end, or disconnect). SSE is unaffected — one
+    # request carries exactly one subscription. `None` restores the old unbounded
+    # behaviour.
+    #   "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,
+    # ---------------------------------------------------------------------------
     # Base64 file uploads (v1.3.0, opt-in via Base64FileInput).
     #
     # MAX_UPLOAD_SIZE — maximum decoded size (bytes) of a single upload field.

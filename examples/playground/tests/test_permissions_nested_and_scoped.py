@@ -237,3 +237,43 @@ def test_scoped_schema_prunes_the_nested_comments_input(
         status=400,
     )
     assert "Cannot query field 'commentCreate'" in str(child), child
+
+
+@pytest.mark.django_db
+def test_the_readme_validation_sample_is_refused_and_a_blank_title_is_not(
+    client: Client, django_user_model: type[AbstractBaseUser]
+) -> None:
+    """Pin both halves of the README's validation section.
+
+    Validation is PYDANTIC, derived from the column, so "max_length" fails and
+    Django's form-level "blank" does not. The README used to claim the opposite
+    with "title: ''", which returns "ok: true" and creates the row. Both the
+    refusal and the non-refusal are asserted here so the section cannot rot
+    back.
+
+    Args:
+        client: The Django test client issuing the requests.
+        django_user_model: The active user model, used to log a caller in.
+    """
+    user = django_user_model.objects.create_user(username="writer", password="x")
+    client.force_login(user)
+
+    too_long = "x" * 250
+    refused = _graphql(
+        client,
+        f'mutation {{ noteCreate(newNote: {{ title: "{too_long}" }}) '
+        "{ ok errors { field messages } } }",
+    )["data"]["noteCreate"]
+    assert refused["ok"] is False
+    assert refused["errors"] == [
+        {"field": "title", "messages": ["String should have at most 200 characters"]}
+    ]
+
+    # The half the README got wrong: "blank" is a form concern Django never
+    # enforces on save(), so an empty title is accepted.
+    accepted = _graphql(
+        client,
+        'mutation { noteCreate(newNote: { title: "" }) { ok errors { field messages } } }',
+    )["data"]["noteCreate"]
+    assert accepted["ok"] is True
+    assert accepted["errors"] is None
