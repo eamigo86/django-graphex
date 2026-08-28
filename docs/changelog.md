@@ -83,8 +83,10 @@ is `None`.
 
 - **Subscriptions are now measured against `MAX_QUERY_DEPTH` / `MAX_QUERY_COST`.**
   Both transports previously validated with graphql-core's default rules, so
-  neither guard ever saw a subscription document. Raise the limits if your
-  subscription documents need it.
+  neither guard ever saw a subscription document. This can only reach a
+  **hand-written** subscription with a nested payload: the library's own
+  generated event types are flat by construction, so they measure depth 1 and
+  cost 1, and neither setting can legally go below 1.
 - **An `async def` subscribe gate now actually denies.** It failed **open**:
   `authorize_subscription`'s wrapper discarded the coroutine, so the check never
   ran. A subscription that used to be granted may now be refused — by the gate
@@ -92,9 +94,11 @@ is `None`.
 - **`BaseGraphQLView.format_error` is an instance method** taking the request:
   `format_error(self, error, request=None)`. A subclass overriding the old
   `@staticmethod format_error(error)` must be updated.
-- **`MAX_REQUEST_BODY_SIZE` now bounds multipart bodies honestly** — an
-  under-declared body gets **413**, a chunked one **411** on WSGI. Only when the
-  setting is configured; the `None` default is unaffected.
+- **A chunked multipart body now gets `411` instead of a confusing `400`** when
+  `MAX_REQUEST_BODY_SIZE` is configured and the request declares no
+  `Content-Length`. The **413** for an over-sized multipart body is *not* new —
+  2.2.0 answered it with a byte-identical message. Only when the setting is
+  configured; the `None` default is inert on every content type.
 
 **Removed.** The **`CAMELCASE_ERRORS`** setting (it had zero consumers and
 changed nothing), plus six internal names — four of which were importable, so
@@ -658,13 +662,17 @@ changed nothing), plus six internal names — four of which were importable, so
   and subscription selection sets" and
   [Query optimization](usage/query-optimization.md) says "**all** GraphQL
   operation types". The WebSocket and SSE transports now validate with the same
-  settings-driven rule tuple the HTTP view uses. **This rejects subscriptions
-  that used to be accepted**: a subscription's selection set is re-executed for
-  every delivered event, so an over-deep or over-costly document was paid for
-  repeatedly rather than once — the guard matters more here than on a one-shot
-  query, not less. A project that relied on the gap must raise
-  `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` far enough to cover its subscription
-  documents.
+  settings-driven rule tuple the HTTP view uses. A subscription's selection set
+  is re-executed for every delivered event, so an over-deep or over-costly
+  document was paid for repeatedly rather than once — the guard matters more
+  here than on a one-shot query, not less. **Which subscriptions this can reject
+  is narrower than it sounds**, and worth stating so nobody raises a limit they
+  did not need to: the library's own generated event types are FLAT by
+  construction — the build-time guard in `subscriptions/guard.py` enforces it,
+  and relations render as IDs — so a generated subscription measures depth 1 and
+  cost 1, and neither setting can legally be set below 1. Only a **hand-written**
+  subscription with a nested payload can trip either guard; that project must
+  raise the limit far enough to cover its documents, or flatten the payload.
 - **`BaseGraphQLView.format_error` is now an instance method taking the
   request** — `format_error(self, error, request=None)`, previously
   `@staticmethod format_error(error)`. It has to be: the formatter decides
@@ -1122,6 +1130,20 @@ changed nothing), plus six internal names — four of which were importable, so
 
 ### Documentation
 
+- **There is an upgrade guide for 2.x → 3.0.** The 1.x → 2.0 jump had a
+  605-line guide in the nav; the largest set of breaking changes since 2.0 had
+  only this changelog, organised by category — which answers "what changed" and
+  not the question an upgrader actually brings, *"what will break, and when will
+  I find out?"*. [Upgrade Guide (2.x → 3.0)](UPGRADE-3.0.md) is organised by
+  **when the failure reaches you**: the build stops, nothing fails until a
+  request arrives, your clients start getting refused, your own code changes
+  behaviour, your SDL changes. It opens with five `rg` commands that triage a
+  project in about a minute, because three of these changes do not fail the
+  build and one of them is a gate the reader wrote that was never running.
+  Every message in it was produced by executing the code on 3.0.0 and compared
+  against the same code on 2.2.0 — which is how the two corrections above were
+  found. It also names the three diff hunks that **look** like breaking changes
+  and are not, so nobody edits working code because of them.
 - **Nothing told you to validate the WebSocket handshake's `Origin`, and the
   example project did not.** A handshake is an ordinary HTTP request: the
   browser sends cookies with it and **CORS does not apply**, so any other site
