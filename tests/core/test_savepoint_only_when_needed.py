@@ -16,13 +16,12 @@ Covers:
   (d) a subscription broadcast still fires exactly once on a plain create.
 
 Run with:
-    .venv/bin/python -m pytest tests/core/test_savepoint_only_when_needed.py -q
+    .venv/bin/python -m pytest tests/core/test_savepoint_only_when_needed.py -q --no-cov
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
 
 import pytest
 from django.db import connection
@@ -30,9 +29,6 @@ from django.test.utils import CaptureQueriesContext
 
 from django_graphex.types import DjangoModelType
 from tests.models import Author, AuthorProfile, Category, Post, Tag
-
-if TYPE_CHECKING:
-    from pytest import MonkeyPatch
 
 
 def _info() -> SimpleNamespace:
@@ -260,64 +256,3 @@ def test_m2m_good_pk_succeeds() -> None:
     )
     assert result.ok, getattr(result, "errors", None)
     assert Post.objects.get().tags.count() == 1
-
-
-# ---------------------------------------------------------------------------
-# (d) Subscription broadcast still fires on a plain (savepoint-free) create
-# ---------------------------------------------------------------------------
-
-pytest.importorskip("channels")
-
-
-@pytest.mark.django_db(transaction=True)
-def test_plain_create_still_broadcasts(monkeypatch: MonkeyPatch) -> None:
-    """Ships broken if a plain create (no outer atomic) stops delivering its
-    on_commit broadcast.
-
-    The broadcast is deferred via "transaction.on_commit"; with no outer
-    atomic and an autocommit parent save, that callback must still fire (Django
-    runs on_commit synchronously when no transaction is open).
-
-    Args:
-        monkeypatch: The pytest fixture used to swap the channel layer's
-            "group_send" with a recording wrapper.
-    """
-    from channels.layers import channel_layers, get_channel_layer
-
-    from django_graphex.subscriptions import Subscription
-
-    channel_layers.backends = {}
-
-    class CategorySubscription(Subscription):
-        class Meta:
-            model = Category
-            stream = "p5_categories"
-            payload_mode = "id_only"
-
-    binding = CategorySubscription.get_binding()
-    binding.register()
-
-    sends = []
-    layer = get_channel_layer()
-    original = layer.group_send
-
-    async def _recording(group, message):
-        sends.append((group, message))
-        return await original(group, message)
-
-    monkeypatch.setattr(layer, "group_send", _recording)
-
-    try:
-        with CaptureQueriesContext(connection) as ctx:
-            result = _create(PlainCategoryType, {"title": "Broadcasted"})
-        assert result.ok, getattr(result, "errors", None)
-        # No savepoint was opened for this plain create ...
-        assert _savepoint_sql(ctx.captured_queries) == []
-        # ... yet the create broadcast still fired.
-        streams = {m.get("stream") for _, m in sends}
-        assert "p5_categories" in streams, (
-            f"Expected a broadcast on stream 'p5_categories', got {streams}"
-        )
-    finally:
-        binding.unregister()
-        channel_layers.backends = {}

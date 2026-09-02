@@ -6,7 +6,7 @@ Tests:
 - Unknown attr access via _MetaView raises AttributeError naming the attr
 - _MetaView delegates known attrs to the underlying Options object
 
-Run: .venv/bin/python -m pytest tests/core/test_options.py -q
+Run: .venv/bin/python -m pytest tests/core/test_options.py -q --no-cov
 """
 
 from __future__ import annotations

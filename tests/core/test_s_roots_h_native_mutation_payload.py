@@ -21,7 +21,7 @@ PARAMOUNT guards (both asserted here):
 
 Run:
     .venv/bin/python -m pytest -q \
-        tests/core/test_s_roots_h_native_mutation_payload.py -o addopts=""
+        tests/core/test_s_roots_h_native_mutation_payload.py --no-cov
 """
 
 from __future__ import annotations

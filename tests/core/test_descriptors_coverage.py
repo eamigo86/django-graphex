@@ -18,7 +18,7 @@ branches by asserting their ACTUAL behaviour (not coverage no-ops):
 - "NativeField.resolver" property.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_descriptors_coverage.py -q -o addopts=""
+    tests/core/test_descriptors_coverage.py -q --no-cov
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ Tests:
 - base_types.py:factory_type unchanged (graphene path still works).
 - Input delegates to Phase 2 (no-op in WU-A; just don't break).
 
-Run: .venv/bin/python -m pytest -q tests/core/test_factory.py
+Run: .venv/bin/python -m pytest -q tests/core/test_factory.py --no-cov
 """
 
 from __future__ import annotations

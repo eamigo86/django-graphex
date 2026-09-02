@@ -9,8 +9,8 @@ B10 _nested_list_object_field result type carries extensions['gdx'] with
     results_field_name so WU6a resolver + WU6b window-prefetch can read it.
 
 Run:
-    .venv/bin/python -m pytest tests/core/test_pagination_native.py \
-        -q -o addopts=""
+    .venv/bin/python -m pytest tests/core/test_pagination_native.py --no-cov \
+        -q --no-cov
 """
 
 from __future__ import annotations

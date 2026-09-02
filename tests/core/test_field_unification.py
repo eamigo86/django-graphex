@@ -19,7 +19,7 @@ Plus the two folded fixes:
   compiled "GraphQLField" (SDL "@deprecated") and "GraphQLArgument".
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_field_unification.py
+    .venv/bin/python -m pytest -q tests/core/test_field_unification.py --no-cov
 """
 
 from __future__ import annotations

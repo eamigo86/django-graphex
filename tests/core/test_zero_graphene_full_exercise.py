@@ -35,7 +35,7 @@ after the eventual uninstall too — with graphene absent the finder simply neve
 matches and the "not in sys.modules" assertions still hold.
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_zero_graphene_full_exercise.py
+    .venv/bin/python -m pytest -q tests/core/test_zero_graphene_full_exercise.py --no-cov
 """
 
 from __future__ import annotations

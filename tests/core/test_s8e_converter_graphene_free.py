@@ -40,7 +40,7 @@ graphene object (test contract + SDL byte-parity preserved); only the
 uninstall-blocking TOP-LEVEL graphene imports move to a lazy, gated accessor.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s8e_converter_graphene_free.py -q -o addopts=""
+    tests/core/test_s8e_converter_graphene_free.py -q --no-cov
 """
 
 from __future__ import annotations

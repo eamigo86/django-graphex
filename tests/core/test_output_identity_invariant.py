@@ -27,7 +27,7 @@ Both tests FAIL against the buggy dual-path apply:
 
 Run:
     .venv/bin/python -m pytest \
-        tests/core/test_output_identity_invariant.py -q -o addopts=""
+        tests/core/test_output_identity_invariant.py -q --no-cov
 """
 
 from __future__ import annotations

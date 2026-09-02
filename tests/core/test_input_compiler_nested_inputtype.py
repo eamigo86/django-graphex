@@ -35,7 +35,7 @@ Contract asserted here:
 These are model-free Pydantic "BaseModel" tests -- no Django settings needed.
 
 Run with:
-    .venv/bin/python -m pytest tests/core/test_input_compiler_nested_inputtype.py -x -v
+    .venv/bin/python -m pytest tests/core/test_input_compiler_nested_inputtype.py -x -v --no-cov
 """
 
 from __future__ import annotations

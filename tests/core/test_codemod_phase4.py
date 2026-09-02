@@ -14,7 +14,7 @@ Covers:
 - The "--dry-run" flag makes no changes to the filesystem.
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_codemod_phase4.py
+    .venv/bin/python -m pytest -q tests/core/test_codemod_phase4.py --no-cov
 """
 
 from __future__ import annotations

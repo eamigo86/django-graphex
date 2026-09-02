@@ -14,7 +14,7 @@ the correct graphql-core field through the EXISTING compiler entry points
 added to the compiler.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s_roots_a_descriptors.py -q -o addopts=""
+    tests/core/test_s_roots_a_descriptors.py -q --no-cov
 """
 
 from __future__ import annotations

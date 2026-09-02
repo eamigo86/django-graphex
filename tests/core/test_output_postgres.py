@@ -24,7 +24,7 @@ NOT installed in this test venv. The stand-in fields below therefore subclass
 plain "models.Field" and report the real internal-type strings, mirroring how
 the production classes identify themselves.
 
-Run: .venv/bin/python -m pytest -q tests/core/test_output_postgres.py
+Run: .venv/bin/python -m pytest -q tests/core/test_output_postgres.py --no-cov
 """
 
 from __future__ import annotations

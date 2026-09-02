@@ -2,7 +2,7 @@
 
 TDD RED phase: all tests are written first; they fail until the module is implemented.
 
-Run with: .venv/bin/python -m pytest tests/core/test_input_compiler.py -x -v
+Run with: .venv/bin/python -m pytest tests/core/test_input_compiler.py -x -v --no-cov
 
 No Django settings required for the bulk of these tests (model-free Pydantic models).
 """

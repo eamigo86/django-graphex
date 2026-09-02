@@ -1,7 +1,7 @@
 """Tests for core/compiler.py + core/bridge.py — golden SDL and functional gates.
 
 No Django settings required. No django_db markers.
-Run with: pytest tests/core/test_compiler_golden.py -x
+Run with: pytest tests/core/test_compiler_golden.py -x --no-cov
 
 normalize_sdl() definition (pinned before golden-SDL gate):
     - strip leading/trailing whitespace per line
@@ -782,7 +782,7 @@ class TestBridge:
         )
         # Note: Query also lacks gdx extension, so it should fail too
         schema = GraphQLSchema(query=query_type)
-        with pytest.raises((AssertionError, ValueError, TypeError, Exception)):
+        with pytest.raises(AssertionError, match="missing extensions\\['gdx'\\]"):
             assert_gdx_bridge(schema)
 
     def test_gdx_payload_reachable_from_type_extensions(self) -> None:
@@ -1026,7 +1026,7 @@ class TestCompilerCoverageBranches:
             fields=(FieldSpec(name="x", type=TypeRef(name="String")),),
         )
         # Pass other_spec as types but query_spec as query → MissingQuery not compiled
-        with pytest.raises((ValueError, KeyError, AssertionError, Exception)):
+        with pytest.raises(ValueError, match="query type 'MissingQuery'"):
             compile_schema(types=[other_spec], enums=[], query=query_spec)
 
 
@@ -1155,7 +1155,7 @@ class TestCompilerRefResolutionBranches:
             fields=(FieldSpec(name="do_it", type=TypeRef(name="String")),),
         )
         # Don't include mutation_spec in types
-        with pytest.raises((ValueError, Exception)):
+        with pytest.raises(ValueError, match="mutation type 'MissingMutation'"):
             compile_schema(
                 types=[query_spec],
                 enums=[],
@@ -1252,5 +1252,5 @@ class TestCompilerRefResolutionBranches:
         # When we try to access .fields, graphql-core calls the thunk
         # which calls _resolve_ref for "NonExistentType" → ValueError
         query_type = _TYPE_CACHE.get("Query")
-        with pytest.raises((ValueError, TypeError, Exception)):
+        with pytest.raises(TypeError, match="Query fields cannot be resolved"):
             _ = query_type.fields  # triggers the thunk

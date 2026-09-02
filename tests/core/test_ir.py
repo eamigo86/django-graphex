@@ -1,7 +1,7 @@
 """Tests for core/ir.py — pure-Python IR dataclasses.
 
 No Django settings required. No django_db markers.
-Run with: pytest tests/core/test_ir.py -x
+Run with: pytest tests/core/test_ir.py -x --no-cov
 """
 
 from __future__ import annotations

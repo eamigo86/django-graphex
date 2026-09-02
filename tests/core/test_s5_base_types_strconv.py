@@ -15,7 +15,7 @@ byte-equivalent by "tests/core/test_strconv.py"). This removes ONE graphene
 import line and proves "factory_type" naming is unchanged.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s5_base_types_strconv.py -q -o addopts=""
+    tests/core/test_s5_base_types_strconv.py -q --no-cov
 """
 
 from __future__ import annotations

@@ -13,7 +13,7 @@ stateless per "validate" call). These tests pin the memoization contract:
   (d) behavior is unchanged, a cached schema still validates payloads.
 
 Run with:
-    .venv/bin/python -m pytest tests/core/test_build_model_schema_cache.py -q
+    .venv/bin/python -m pytest tests/core/test_build_model_schema_cache.py -q --no-cov
 """
 
 from __future__ import annotations

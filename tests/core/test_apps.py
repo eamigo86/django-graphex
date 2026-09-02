@@ -1,7 +1,7 @@
 """Tests for the django_graphex.apps.DjangoGraphexConfig AppConfig.
 
 TDD RED phase: tests written before the module exists.
-Run with: .venv/bin/python -m pytest tests/core/test_apps.py -x -v
+Run with: .venv/bin/python -m pytest tests/core/test_apps.py -x -v --no-cov
 """
 
 from __future__ import annotations

@@ -20,7 +20,7 @@ unified "Field" and work in BOTH positions too. The separate "InputField"
 class and the 12 "*InputField" shortcuts no longer exist.
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_descriptors.py
+    .venv/bin/python -m pytest -q tests/core/test_descriptors.py --no-cov
 """
 
 from __future__ import annotations

@@ -21,7 +21,7 @@ The native container builds the full results/totalCount/pageInfo SDL without
 graphene.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_pagination_native_only.py -q -o addopts=""
+    tests/core/test_pagination_native_only.py -q --no-cov
 """
 
 from __future__ import annotations

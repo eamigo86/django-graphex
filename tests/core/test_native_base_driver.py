@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import pytest
 from graphql import GraphQLBoolean
+from pydantic import PydanticUserError
 from pydantic._internal._model_construction import ModelMetaclass
 
 # ---------------------------------------------------------------------------
@@ -164,7 +165,7 @@ def test_invalid_meta_type_raises() -> None:
         def __init_subclass_with_meta__(cls, **options):
             pass
 
-    with pytest.raises(Exception, match="Meta"):
+    with pytest.raises(PydanticUserError, match="non-annotated attribute"):
 
         class Sub(Base):
             Meta = "not a class or dict"
