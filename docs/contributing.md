@@ -112,6 +112,13 @@ make quality   # ruff format --check + ruff check + mypy
 - Use descriptive test names
 - Follow the existing test structure
 
+The tool dependencies in `tox.ini` deliberately use bounded compatibility
+ranges. Keep those ranges identical to their entries in
+`dependency-groups.dev` in `pyproject.toml`; the dependency-contract test
+rejects missing bounds and drift between local and CI environments. Add new
+standalone CI tools, such as `diff-cover`, to the development group with both a
+minimum supported version and an upper major-version bound.
+
 ```python
 def test_django_list_object_type_pagination():
     """Test that DjangoListObjectType properly paginates results."""
