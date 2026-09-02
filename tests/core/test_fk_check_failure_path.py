@@ -111,7 +111,7 @@ def _update(type_cls: type[DjangoModelType], data: dict) -> object:
 
 @pytest.mark.django_db
 def test_happy_create_issues_no_fk_existence_select() -> None:
-    """A valid create must not issue an FK ``exists()`` probe beforehand.
+    """A valid create must not issue an FK "exists()" probe beforehand.
 
     If this fails, the happy path would regress to issuing an eager
     "SELECT" against the FK's table before every create, reintroducing the
@@ -192,7 +192,7 @@ def test_bad_fk_update_returns_same_error_payload() -> None:
 
 @pytest.mark.django_db
 def test_happy_update_issues_no_fk_existence_select() -> None:
-    """A valid update must not issue an FK ``exists()`` probe beforehand.
+    """A valid update must not issue an FK "exists()" probe beforehand.
 
     If this fails, the update path would regress to issuing an eager
     "SELECT" against the FK's table before every update, reintroducing the

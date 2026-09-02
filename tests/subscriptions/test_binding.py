@@ -128,7 +128,12 @@ def test_signal_without_channel_layer_does_not_serialize(
     django_user_model: type[AbstractUser],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A dropped signal must not pay full-payload serialization or ORM-query cost."""
+    """Verify dropped signals avoid serialization and ORM-query cost.
+
+    Args:
+        django_user_model: Active Django user model class.
+        monkeypatch: Pytest fixture used to disable the channel layer.
+    """
     monkeypatch.setattr(bindings, "get_channel_layer", lambda: None)
     UserSubscription.get_binding()
 
@@ -146,7 +151,12 @@ def test_broadcast_compatibility_wrapper_sends_current_snapshot(
     django_user_model: type[AbstractUser],
     captured_group_sends: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    """Direct ``broadcast(action, instance)`` callers retain synchronous delivery."""
+    """Verify direct broadcast callers retain synchronous delivery.
+
+    Args:
+        django_user_model: Active Django user model class.
+        captured_group_sends: Messages captured from the channel layer.
+    """
     binding = UserSubscription.get_binding()
     user = django_user_model.objects.create(username="manual")
     captured_group_sends.clear()

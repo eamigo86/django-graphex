@@ -202,7 +202,12 @@ def test_create_then_update_preserves_each_signal_time_snapshot(
     captured_group_sends: list[tuple[str, dict[str, Any]]],
     _arm_indexed_full_save_binding: SubscriptionBinding,
 ) -> None:
-    """Create and update events must retain their own payload and index values."""
+    """Verify create and update events retain signal-time snapshots.
+
+    Args:
+        captured_group_sends: Messages captured from the channel layer.
+        _arm_indexed_full_save_binding: Registered indexed subscription fixture.
+    """
     with transaction.atomic():
         instance = HookModel.objects.create(text="first")
         real_pk = instance.pk
@@ -248,7 +253,12 @@ def test_create_then_delete_preserves_create_pk_snapshot(
     captured_group_sends: list[tuple[str, dict[str, Any]]],
     _arm_idonly_binding: SubscriptionBinding,
 ) -> None:
-    """A deferred create must not observe the pk cleared by a later delete."""
+    """Verify a deferred create retains the pk cleared by a later delete.
+
+    Args:
+        captured_group_sends: Messages captured from the channel layer.
+        _arm_idonly_binding: Registered id-only subscription fixture.
+    """
     with transaction.atomic():
         instance = BasicModel.objects.create(text="short-lived")
         real_pk = instance.pk
@@ -272,7 +282,15 @@ def test_multiple_save_snapshots_are_discarded_on_rollback(
     captured_group_sends: list[tuple[str, dict[str, Any]]],
     _arm_indexed_full_save_binding: SubscriptionBinding,
 ) -> None:
-    """Rollback must discard every snapshot queued by repeated post_save signals."""
+    """Verify rollback discards snapshots from repeated post-save signals.
+
+    Args:
+        captured_group_sends: Messages captured from the channel layer.
+        _arm_indexed_full_save_binding: Registered indexed subscription fixture.
+
+    Raises:
+        ValueError: Intentionally raised inside the transaction to force rollback.
+    """
     with pytest.raises(ValueError, match="force snapshot rollback"):
         with transaction.atomic():
             instance = HookModel.objects.create(text="first")
@@ -459,7 +477,7 @@ def test_committed_delete_indexed_subscription_emits_index_scoped_groups(
     appending the coarse-index and per-pk-index group names, or if any message
     loses its real pk.
 
-    Exercises the indexed branch in ``_fan_out_snapshot`` that calls:
+    Exercises the indexed branch in "_fan_out_snapshot" that calls:
 
         group_names.append(cls._group_name("delete", index=index))
         group_names.append(cls._group_name("delete", id=pk_snapshot, index=index))
