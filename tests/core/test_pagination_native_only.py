@@ -36,15 +36,15 @@ import pytest
 
 # --------------------------------------------------------------------------- #
 # Shared seed: build a schema with a limit/offset AND a cursor paginated list   #
-# field. Co-located inline (NOT render_native_sdl) to avoid the global-registry  #
-# TagListType leak (#1611 item 3).                                              #
+# field. Co-located inline (NOT render_native_sdl) and bound to a fresh registry #
+# pair so repeated calls cannot leak same-named containers into global state.   #
 # --------------------------------------------------------------------------- #
 def _build_paginated_schema() -> tuple[object, str]:
     """Build a DjangoGraphQLSchema with limit/offset + cursor list fields.
 
-    Returns ``(schema, sdl)``. Uses unique container ``Meta.name`` values so it
-    can be called from this module without colliding with other test schemas in
-    the shared global output registry.
+    Returns ``(schema, sdl)``. Uses a fresh schema-scoped registry pair so each
+    call can keep the stable container ``Meta.name`` values required by the SDL
+    assertions without colliding through process-global type identities.
     """
     from graphql import print_schema
 
@@ -54,28 +54,53 @@ def _build_paginated_schema() -> tuple[object, str]:
         CursorGraphqlPagination,
         LimitOffsetGraphqlPagination,
     )
+    from django_graphex.registry import Registry
     from django_graphex.schema import DjangoGraphQLSchema
     from django_graphex.types import DjangoListObjectType
+    from tests._schema_isolation import isolated_pair
     from tests.models import BasicModel
+
+    local_registry = Registry()
 
     class _S7LimitOffset(DjangoListObjectType):
         class Meta:
             model = BasicModel
             name = "S7LimitOffsetContainer"
             pagination = LimitOffsetGraphqlPagination(default_limit=5)
+            registry = local_registry
 
     class _S7Cursor(DjangoListObjectType):
         class Meta:
             model = BasicModel
             name = "S7CursorContainer"
             pagination = CursorGraphqlPagination(ordering="id")
+            registry = local_registry
 
     class _S7Query(ObjectType):
         limit_offset = DjangoListObjectField(_S7LimitOffset)
         cursor = DjangoListObjectField(_S7Cursor)
 
-    schema = DjangoGraphQLSchema(query=_S7Query)
+    schema = DjangoGraphQLSchema(
+        query=_S7Query, registries=isolated_pair(local_registry)
+    )
     return schema, print_schema(schema.graphql_schema)
+
+
+def test_paginated_schema_builder_uses_an_isolated_registry() -> None:
+    """The repeatable schema fixture must not use process-global type slots.
+
+    The helper is called by several tests.  Registering a fresh, same-named
+    container in the default registry on every call can leave an older
+    container reachable through an already-cached relation graph.  Python 3.14
+    exposed that ordering bug as two distinct S7CursorContainer instances
+    in one schema.
+    """
+    from django_graphex.core.base import default_schema_registries
+
+    schema, _sdl = _build_paginated_schema()
+
+    assert schema._registries is not default_schema_registries()
+    assert schema.graphql_schema.extensions["gdx_registry"] is schema._registries
 
 
 # --------------------------------------------------------------------------- #
