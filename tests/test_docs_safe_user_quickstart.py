@@ -144,6 +144,24 @@ def test_types_guide_keeps_user_examples_read_only() -> None:
     assert ".objects.create_user(" in text
 
 
+def test_index_and_type_reference_keep_accounts_out_of_generated_writes() -> None:
+    """Entry-point and API reference must reinforce the safe account boundary.
+
+    This test protects the corresponding regression contract.
+    """
+    index = (ROOT / "docs/index.md").read_text(encoding="utf-8")
+    api = (ROOT / "docs/api/types.md").read_text(encoding="utf-8")
+    for text in (index, api):
+        assert "AuthenticatedGraphQLView" in text
+        assert '"CACHE_ACTIVE": False' in text
+        assert ".objects.create_user(" in text
+    assert "get_user_model" in index
+    assert "class UserMutation(DjangoModelMutation)" not in index
+    assert all(name in index for name in USER_FIELDS)
+    assert "class UserType(DjangoModelType)" not in api
+    assert "class UserInput(DjangoInputObjectType)" not in api
+
+
 def test_safe_user_sdl_has_no_sensitive_fields_or_generic_crud(
     safe_contract: SimpleNamespace,
 ) -> None:
