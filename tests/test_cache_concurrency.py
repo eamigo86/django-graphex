@@ -241,8 +241,8 @@ class BumpVsServeOrderingTest(TestCase):
         view = _view()
         view_instance = GraphQLView(schema=minimal_cache_schema)
 
-        # The identity for pk=50 as computed by GraphQLView.cache_key_prefix.
-        identity = "u50"
+        # The default scope shares one version namespace across identities.
+        identity = "global"
 
         errors: list = []
         barrier_1 = threading.Barrier(2, timeout=5)
@@ -342,8 +342,8 @@ class BumpVsServeOrderingTest(TestCase):
 #: Version tokens observed at the exact moment the mutation transaction commits.
 _COMMIT_TIME_VERSIONS: list[Any] = []
 
-#: The version-counter cache key for a fully anonymous request ("anon").
-_ANON_VERSION_KEY = GraphQLView._CACHE_VERSION_KEY_TEMPLATE.format(identity="anon")
+#: The version-counter cache key used by the default global scope.
+_GLOBAL_VERSION_KEY = GraphQLView._CACHE_VERSION_KEY_TEMPLATE.format(identity="global")
 
 
 class _ProbeQ(ObjectType):
@@ -388,7 +388,7 @@ class _ProbeMut(Mutation):
             A new instance with "ok" set to True.
         """
         transaction.on_commit(
-            lambda: _COMMIT_TIME_VERSIONS.append(cache.get(_ANON_VERSION_KEY))
+            lambda: _COMMIT_TIME_VERSIONS.append(cache.get(_GLOBAL_VERSION_KEY))
         )
         return cls(ok=True)
 
@@ -438,7 +438,7 @@ class BumpLandsAfterMutationCommitTest(TransactionTestCase):
         at that point), so the probe would observe the ALREADY advanced token —
         the bump-before-commit TOCTOU window of issue #60a.
         """
-        cache.set(_ANON_VERSION_KEY, 5, timeout=None)
+        cache.set(_GLOBAL_VERSION_KEY, 5, timeout=None)
         view = GraphQLView.as_view(schema=_probe_schema)
 
         response = view(graphql_post(RequestFactory(), "mutation { doThing { ok } }"))
@@ -449,7 +449,7 @@ class BumpLandsAfterMutationCommitTest(TransactionTestCase):
             "— the bump is not deferred past the commit (issue #60a TOCTOU "
             f"window): observed {_COMMIT_TIME_VERSIONS!r}, expected [5]"
         )
-        assert cache.get(_ANON_VERSION_KEY) == 6, (
+        assert cache.get(_GLOBAL_VERSION_KEY) == 6, (
             "The mutation did not invalidate the cache namespace: version is "
-            f"{cache.get(_ANON_VERSION_KEY)!r}, expected 6"
+            f"{cache.get(_GLOBAL_VERSION_KEY)!r}, expected 6"
         )

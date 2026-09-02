@@ -49,7 +49,7 @@ from django_graphex.views import (
 _SECRET_PERM = "auth.view_permission"
 
 #: Version-counter cache key for the anonymous identity partition.
-_ANON_VERSION_KEY = "_graphql_cacheversion_anon"
+_GLOBAL_VERSION_KEY = "_graphql_cacheversion_global"
 
 
 class _Query(ObjectType):
@@ -265,7 +265,7 @@ class _Bump(Mutation):
             A new instance with "ok" set to True.
         """
         _OBSERVED["in_atomic_block"] = connection.in_atomic_block
-        _OBSERVED["version"] = caches["default"].get(_ANON_VERSION_KEY)
+        _OBSERVED["version"] = caches["default"].get(_GLOBAL_VERSION_KEY)
         return cls(ok=True)
 
 
@@ -323,7 +323,7 @@ class MutationVersionBumpOrderingTests(TransactionTestCase):
         view = GraphQLView(schema=_mutation_schema)
 
         view.dispatch(self._post("{ hello }"))
-        seeded = caches["default"].get(_ANON_VERSION_KEY)
+        seeded = caches["default"].get(_GLOBAL_VERSION_KEY)
         self.assertEqual(int(seeded), 1)
 
         response = view.dispatch(self._post("mutation { doThing { ok } }"))
@@ -336,7 +336,7 @@ class MutationVersionBumpOrderingTests(TransactionTestCase):
             "the version bump fired before the mutation body — the #60a TOCTOU "
             "window is still open",
         )
-        self.assertEqual(int(caches["default"].get(_ANON_VERSION_KEY)), 2)
+        self.assertEqual(int(caches["default"].get(_GLOBAL_VERSION_KEY)), 2)
 
 
 class _Book(ObjectType):

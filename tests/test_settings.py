@@ -32,6 +32,7 @@ class SettingsTest(TestCase):
             "MAX_PAGE_SIZE": None,
             "CACHE_ACTIVE": False,
             "CACHE_TIMEOUT": 300,
+            "CACHE_INVALIDATION_SCOPE": "global",
         }
         for setting_name, expected in expected_defaults.items():
             self.assertTrue(hasattr(graphql_api_settings, setting_name), setting_name)
@@ -45,6 +46,7 @@ class SettingsTest(TestCase):
             "MAX_PAGE_SIZE": 100,
             "CACHE_ACTIVE": True,
             "CACHE_TIMEOUT": 600,
+            "CACHE_INVALIDATION_SCOPE": "identity",
         }
     )
     def test_custom_settings(self) -> None:
@@ -62,6 +64,7 @@ class SettingsTest(TestCase):
         self.assertEqual(s.MAX_PAGE_SIZE, 100)
         self.assertIs(s.CACHE_ACTIVE, True)
         self.assertEqual(s.CACHE_TIMEOUT, 600)
+        self.assertEqual(s.CACHE_INVALIDATION_SCOPE, "identity")
 
     def test_settings_accessibility(self) -> None:
         """Assert the settings object is importable and exposes attributes.

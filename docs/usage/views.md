@@ -64,14 +64,20 @@ only when you either keep the stricter default or fold every contextual value
 into `cache_key_prefix` / `fetch_cache_key`. Cookie-bearing mutations still
 invalidate cached reads after their execution.
 
-Invalidation uses a **version counter**: a mutation advances the issuing caller's
-counter instead of calling `cache.clear()`, so it never flushes the whole cache.
-That counter is stored permanently — it has to outlive
-the responses it namespaces — and a permanent key whose name an unauthenticated
-caller picks is a leak, since the `Authorization` header is unverified input that
-a client can vary per request.
+Invalidation uses a **version counter** instead of calling `cache.clear()`, so it
+never flushes unrelated application keys. The default
+`CACHE_INVALIDATION_SCOPE="global"` shares that counter across GraphQL response
+identities: a mutation by one caller invalidates cached reads for all callers.
+Responses remain isolated by their full identity.
 
-So the counter's namespace is **bucketed for unauthenticated identities**: a
+`CACHE_INVALIDATION_SCOPE="identity"` opts into the narrower 3.0 policy, where
+a mutation advances only the issuing caller's counter. Use it only when writes
+cannot affect shared data. Under that policy, the counter is stored permanently
+— it has to outlive the responses it namespaces — and a permanent key whose
+name an unauthenticated caller picks is a leak, since the `Authorization` header
+is unverified input that a client can vary per request.
+
+In identity scope the counter's namespace is **bucketed for unauthenticated identities**: a
 fixed number of buckets (64), never one per credential. Authenticated callers
 (bounded by your user table) and the single shared `anon` partition keep their
 exact namespace. The trade is deliberate:

@@ -26,6 +26,7 @@ DJANGO_GRAPHEX = {
     # --- Response cache ---------------------------------------------------- #
     "CACHE_ACTIVE": False,
     "CACHE_TIMEOUT": 300,
+    "CACHE_INVALIDATION_SCOPE": "global",
     "CLEAN_RESPONSE": False,
 
     # --- Document cache (parse + validate) ---------------------------------- #
@@ -101,6 +102,7 @@ part of `DJANGO_GRAPHEX` like everything else.
 |---|---|---|
 | `CACHE_ACTIVE` | `False` | Enable response caching in `GraphQLView`. |
 | `CACHE_TIMEOUT` | `300` | Cache TTL in seconds. |
+| `CACHE_INVALIDATION_SCOPE` | `"global"` | Mutation invalidation policy. `"global"` advances one shared GraphQL version so every identity sees shared writes; `"identity"` preserves the narrower 3.0 per-identity policy. Any other value raises `ImproperlyConfigured`. |
 | `CLEAN_RESPONSE` | `False` | Strip `null` values from the response payload. Introspection responses are exempt — see [AST-based introspection detection](security.md#ast-based-introspection-detection-clean_response). |
 
 ### Security: per-user cache isolation
@@ -114,13 +116,18 @@ When `CACHE_ACTIVE` is `True`, `GraphQLView` partitions cached responses by requ
 - **Anonymous requests without cookies** — share a single `"anon"` partition.
 - **Requests with cookies** — bypass response caching by default. Anonymous does not mean context-free: carts, sessions, tenants, locale and feature flags can all be cookie-dependent.
 
-**Mutation invalidation (scoped, not global):**
+**Mutation invalidation:**
 
-A mutation advances a per-user version counter in the cache instead of calling `cache.clear()`.  This means:
+A mutation advances a GraphQL version counter instead of calling
+`cache.clear()`. `CACHE_INVALIDATION_SCOPE="global"` is the safe default: user
+A's mutation invalidates cached reads belonging to user B and anonymous/token
+identities as well. The response key still carries the full identity, so bodies
+remain isolated.
 
-- The issuing user's cached reads are invalidated (subsequent reads see fresh data).
-- Other users' cached entries are **not** affected.
-- Non-GraphQL cache entries (e.g. keys set by application code) are **not** affected.
+`CACHE_INVALIDATION_SCOPE="identity"` restores the 3.0 behavior in which only
+the issuing identity (or unauthenticated bucket) advances. Choose it only for
+fully identity-private data; shared writes can otherwise leave other callers'
+cached reads stale. Neither mode affects non-GraphQL cache entries.
 
 **Customising the identity key:**
 

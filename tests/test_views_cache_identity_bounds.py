@@ -38,7 +38,13 @@ from django_graphex.core import ObjectType, field
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.views import GraphQLView
 
-_CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
+_CACHE_ON = {
+    "DJANGO_GRAPHEX": {
+        "CACHE_ACTIVE": True,
+        "CACHE_TIMEOUT": 60,
+        "CACHE_INVALIDATION_SCOPE": "identity",
+    }
+}
 
 #: How many distinct "Authorization" headers the bound test sends. It only has
 #: to exceed "_CACHE_VERSION_BUCKETS" by enough that an unbucketed
