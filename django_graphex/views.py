@@ -1276,9 +1276,7 @@ class BaseGraphQLView(View):
             ):
                 with transaction.atomic():
                     result = execute(schema, document, **execute_options)
-                    rolled_back = (
-                        getattr(request, MUTATION_ERRORS_FLAG, False) is True
-                    )
+                    rolled_back = getattr(request, MUTATION_ERRORS_FLAG, False) is True
                     if rolled_back:
                         transaction.set_rollback(True)
                 if not rolled_back:
