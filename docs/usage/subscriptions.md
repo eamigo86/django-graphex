@@ -401,8 +401,8 @@ Channels delivers only to that group -- no group enumeration is involved.
 - **Good index fields are high-cardinality** equality keys (FKs like `owner`,
   `tenant`, `room`). A low-cardinality boolean would only create two groups and
   buy nothing.
-- **Independent of `payload_mode`.** The index reads the live instance, not the
-  payload, so it works in id-only mode too.
+- **Independent of `payload_mode`.** The index is captured from the live instance
+  at signal time, not derived from the payload, so it works in id-only mode too.
 - The full filter is still applied on delivery, so indexing is purely a routing
   optimization -- correctness never depends on it.
 
@@ -1141,6 +1141,11 @@ Subscription broadcasts (`_on_save`, `_on_delete`) are now deferred via
   broadcast delivery is instant for standalone saves.
 - **Nested `atomic()` blocks**: callbacks accumulate until the outermost
   transaction commits, matching Django's standard `on_commit` semantics.
+- **Signal-time snapshots**: each `post_save` / `post_delete` captures its primary
+  key, routing index and payload before registering the callback. Saving the same
+  Python object again — or deleting it, which clears its pk — cannot rewrite an
+  earlier event while the transaction is still open. Every `post_save` remains a
+  separate event; changes are not coalesced.
 
 !!! note "Test setup"
     Django's `TestCase` wraps every test in a transaction that is rolled back

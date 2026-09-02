@@ -236,9 +236,9 @@ def test_id_only_delete_broadcast_is_keyed_by_the_real_primary_key(
 ) -> None:
     """A delete notification must carry the real pk field name, not "id".
 
-    Contract: this test ships broken if "_broadcast_delete" keys the id-only
-    payload by the literal "id" -- the delete event then delivers a null on the
-    non-nullable primary-key field exactly as the save path did.
+    Contract: this test ships broken if the detached delete snapshot keys the
+    id-only payload by the literal "id" -- the delete event then delivers a null
+    on the non-nullable primary-key field exactly as the save path did.
 
     Args:
         captured_group_sends: The (group, message) pairs recorded for every

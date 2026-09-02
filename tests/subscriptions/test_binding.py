@@ -124,6 +124,57 @@ def test_broadcast_without_channel_layer_is_silent(
     binding.broadcast("create", django_user_model(username="erin", pk=999))
 
 
+def test_signal_without_channel_layer_does_not_serialize(
+    django_user_model: type[AbstractUser],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify dropped signals avoid serialization and ORM-query cost.
+
+    Args:
+        django_user_model: Active Django user model class.
+        monkeypatch: Pytest fixture used to disable the channel layer.
+    """
+    monkeypatch.setattr(bindings, "get_channel_layer", lambda: None)
+    UserSubscription.get_binding()
+
+    with mock.patch.object(
+        subscription_mod,
+        "serialize_instance",
+        wraps=subscription_mod.serialize_instance,
+    ) as spy:
+        django_user_model.objects.create(username="no-layer")
+
+    assert spy.call_count == 0
+
+
+def test_broadcast_compatibility_wrapper_sends_current_snapshot(
+    django_user_model: type[AbstractUser],
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Verify direct broadcast callers retain synchronous delivery.
+
+    Args:
+        django_user_model: Active Django user model class.
+        captured_group_sends: Messages captured from the channel layer.
+    """
+    binding = UserSubscription.get_binding()
+    user = django_user_model.objects.create(username="manual")
+    captured_group_sends.clear()
+
+    user.username = "manual-updated"
+    binding.broadcast("update", user)
+
+    groups = {group for group, _ in captured_group_sends}
+    assert groups == {
+        "auth.user.users-update",
+        f"auth.user.users-update-{user.pk}",
+    }
+    assert all(
+        message["payload"]["data"]["username"] == "manual-updated"
+        for _, message in captured_group_sends
+    )
+
+
 def test_unregister_stops_broadcasts(
     django_user_model: type[AbstractUser],
     captured_group_sends: list[tuple[str, dict[str, Any]]],
