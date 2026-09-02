@@ -419,7 +419,7 @@ on every axis it can reach, both arms of the relation hatch, and the two
 settings that ship on:
 
 ```bash
-make test          # 51 passed
+make test          # runs the complete playground suite
 ```
 
 Several of them assert the **verbatim** answer strings this page and the

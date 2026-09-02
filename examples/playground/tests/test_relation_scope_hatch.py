@@ -25,7 +25,7 @@ quietly come back is a demo teaching the opposite of what it says:
 Run them from this directory:
 
     cd examples/playground
-    DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q
+    DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q --no-migrations
 """
 
 from __future__ import annotations
