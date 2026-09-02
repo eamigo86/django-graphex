@@ -1570,6 +1570,27 @@ class GraphQLView(BaseGraphQLView):
             return f"t{h}"
         return _ANON_CACHE_IDENTITY
 
+    def should_cache_query(self, request: HttpRequest) -> bool:
+        """Return whether this query's context is safe for response caching.
+
+        Cookies are contextual identity even when "request.user" is
+        anonymous: sessions, carts, feature flags, locale and tenant routing
+        can all change a resolver result.  Because neither the cookie jar nor a
+        session key is part of the default cache key, cookie-bearing requests
+        fail closed and execute normally.
+
+        Subclasses may override this hook, but an override that returns "True"
+        for contextual requests must also extend "cache_key_prefix" or
+        "fetch_cache_key" with every value that can affect the response.
+
+        Args:
+            request: The incoming query request.
+
+        Returns:
+            "True" when the response may be read from and written to cache.
+        """
+        return not bool(request.COOKIES)
+
     #: Sentinel used by ``dispatch`` to distinguish a cache miss from a cached
     #: falsy value (e.g. an empty-body response).  Using ``cache.get(key)``
     #: with a default of ``None`` and then checking ``if not response:`` would
@@ -1919,6 +1940,8 @@ class GraphQLView(BaseGraphQLView):
             return self._execute_uncached_and_invalidate(
                 request, _cache, version_identity, *args, **kwargs
             )
+        if not self.should_cache_query(request):
+            return self.super_call(request, *args, **kwargs)
 
         version = self._get_cache_version(_cache, version_identity)
         # ``_cache_key_signature`` is empty on the base view (byte-identical to

@@ -111,7 +111,8 @@ When `CACHE_ACTIVE` is `True`, `GraphQLView` partitions cached responses by requ
 
 - **Authenticated requests** — partitioned by `request.user.pk`.  Each user has an independent cache namespace.
 - **Token-authenticated requests** (e.g. `Authorization: Bearer …` with no resolved `request.user`) — partitioned by a short hash of the `Authorization` header.
-- **Anonymous requests** — all share a single `"anon"` partition.  Anonymous responses contain no private data so sharing is safe.
+- **Anonymous requests without cookies** — share a single `"anon"` partition.
+- **Requests with cookies** — bypass response caching by default. Anonymous does not mean context-free: carts, sessions, tenants, locale and feature flags can all be cookie-dependent.
 
 **Mutation invalidation (scoped, not global):**
 
@@ -138,6 +139,11 @@ class MyView(GraphQLView):
 ```
 
 The `fetch_cache_key` staticmethod (which hashes the request body) remains separately overridable; the two are composed in `dispatch` so overriding either one does not break the other.
+
+`GraphQLView.should_cache_query(request)` is the eligibility hook. Its default
+returns `False` for every cookie-bearing query. An override may be stricter; if
+it opts contextual requests back in, the identity or body key must include every
+session, tenant, locale or cookie value that can affect the response.
 
 ## Document cache (parse + validate)
 
