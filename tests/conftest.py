@@ -48,6 +48,30 @@ except ImportError:
     HAS_CHANNELS = False
 
 
+def _database_settings() -> dict[str, str]:
+    """Return the selected test database configuration.
+
+    SQLite stays the zero-setup default. PostgreSQL is deliberately opt-in so
+    the dedicated CI job cannot accidentally report success against SQLite.
+    """
+    backend = os.environ.get("GDX_TEST_DATABASE", "sqlite").strip().lower()
+    if backend == "sqlite":
+        return {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}
+    if backend == "postgres":
+        return {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("POSTGRES_DB", "django_graphex"),
+            "USER": os.environ.get("POSTGRES_USER", "postgres"),
+            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "postgres"),
+            "HOST": os.environ.get("POSTGRES_HOST", "127.0.0.1"),
+            "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+        }
+    raise RuntimeError(
+        "GDX_TEST_DATABASE must be either 'sqlite' or 'postgres'; "
+        f"received {backend!r}."
+    )
+
+
 def pytest_configure(config: "pytest.Config") -> None:
     """Configure Django settings for the suite and apply distribution-smoke options.
 
@@ -73,9 +97,7 @@ def pytest_configure(config: "pytest.Config") -> None:
         CHANNEL_LAYERS=channel_layers,
         ALLOWED_HOSTS=["*"],
         DEBUG_PROPAGATE_EXCEPTIONS=True,
-        DATABASES={
-            "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}
-        },
+        DATABASES={"default": _database_settings()},
         SITE_ID=1,
         SECRET_KEY="not very secret in tests",
         USE_I18N=True,

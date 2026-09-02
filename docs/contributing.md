@@ -266,17 +266,24 @@ uv run pytest tests/test_fields.py -s --pdb
 
 ### Database Setup
 
-The tests use a SQLite database by default. For testing with other databases:
+SQLite remains the zero-setup default. Before publication, CI also runs the
+transaction contract against **PostgreSQL 17** with Python 3.12 and Django 6.0.
+To reproduce that gate against a local PostgreSQL service:
 
 ```bash
-# PostgreSQL
-export DATABASE_URL=postgres://user:pass@localhost/test_db
-uv run pytest
-
-# MySQL
-export DATABASE_URL=mysql://user:pass@localhost/test_db
-uv run pytest
+GDX_TEST_DATABASE=postgres \
+POSTGRES_DB=django_graphex \
+POSTGRES_USER=postgres \
+POSTGRES_PASSWORD=postgres \
+POSTGRES_HOST=127.0.0.1 \
+POSTGRES_PORT=5432 \
+uv run pytest -q --no-migrations --no-cov \
+  tests/integration/test_postgresql_transactions.py
 ```
+
+Every test in that module asserts `connection.vendor == "postgresql"`, so a
+misconfigured run cannot silently pass on SQLite. MySQL is not part of this
+reduced release gate.
 
 ## Code Review Process
 

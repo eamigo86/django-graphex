@@ -169,6 +169,51 @@ jobs:
         fail_ci_if_error: false
         verbose: true
 
+  postgresql:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: django_graphex
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+        - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d django_graphex"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      GDX_TEST_DATABASE: postgres
+      POSTGRES_DB: django_graphex
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: '5432'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      with:
+        enable-cache: true
+        cache-suffix: postgresql
+
+    - name: Run PostgreSQL transaction contracts
+      run: |
+        uv sync --frozen
+        uv run python -c "import django; assert django.VERSION[:2] == (6, 0)"
+        uv run pytest --no-migrations \
+          tests/integration/test_postgresql_transactions.py --no-cov
+
   get-version:
     runs-on: ubuntu-latest
     outputs:
@@ -198,7 +243,7 @@ jobs:
         echo "Detected version: $VERSION"
 
   publish:
-    needs: [ test, lint-and-security, coverage, get-version ]
+    needs: [ test, lint-and-security, coverage, postgresql, get-version ]
     runs-on: ubuntu-latest
     # Publish only when a version tag is pushed, or when triggered manually.
     if: |
