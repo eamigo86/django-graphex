@@ -12,6 +12,132 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 3.1.0 — 2026-09-02
+
+**Audit-hardening release.** This release closes all 24 findings from the 3.0
+post-release audit across runtime correctness, security guidance, the test suite,
+release automation and benchmarks. The public GraphQL API remains compatible,
+but cache invalidation is deliberately safer by default.
+
+### What you need to act on
+
+- **Shared cached reads now invalidate globally.**
+  `CACHE_INVALIDATION_SCOPE="global"` is the new default, so a successful
+  mutation advances one shared GraphQL version and no identity keeps stale
+  shared data. Set it to `"identity"` only when every cached response is truly
+  private and the narrower 3.0 invalidation policy is intentional. Cache keys
+  now carry a `v2` format marker and the selected scope, so old entries cannot
+  reappear after the policy changes.
+- **Cookie-dependent queries bypass the response cache by default.** The new
+  protected `GraphQLView.should_cache_query(request)` hook rejects requests
+  with cookies because the standard key cannot represent session, cart, tenant,
+  locale or feature-flag state. An override may re-enable them only if its cache
+  key represents every varying part of that context. Executed mutations still
+  invalidate normally.
+- **CRUD permission hooks remain synchronous.** If a `BasePermission` create,
+  update or delete hook returns an awaitable, django-graphex now closes it and
+  raises `ImproperlyConfigured` before any row is written. Subscription
+  authorization continues to support its documented async hooks.
+
+### Fixed
+
+- A syntactically valid mutation rejected with HTTP 405 or a validation error
+  used to advance the cache version even though no resolver ran. Invalidation
+  now occurs only after execution could have produced durable writes; atomic
+  rollbacks still leave the version unchanged.
+- Anonymous requests with different cookies could share a response through the
+  common `anon` identity. Cookie-bearing queries now skip both cache lookup and
+  storage, while cookie-free public queries can still share entries.
+- Subscription `on_commit` callbacks captured a mutable model instance. A
+  create followed by update or delete in one transaction could therefore
+  publish the final state twice or publish a create event with `pk=None`.
+  Callbacks now carry immutable per-save snapshots and emit nothing on rollback.
+- `CLEAN_RESPONSE` classified a multi-operation document by its first operation
+  instead of `operationName`; selected introspection responses now preserve
+  their required `null` and empty-list values.
+- Renamed subclasses of `MultiSelectField` now compile to list-shaped enum types
+  in both output and mutation input.
+- Query-cost analysis no longer treats a singular field as a collection merely
+  because it has an application argument named `limit`; multiplication applies
+  only to list-shaped GraphQL return types.
+
+### Documentation and example project
+
+- The authenticated-user quickstart is safe to copy: it projects only public
+  user fields, uses `AuthenticatedGraphQLView`, disables response caching in the
+  example, and implements registration with `create_user()` instead of generic
+  writes. Passwords are hashed and callers cannot assign staff, superuser,
+  group or permission state.
+- Mutation documentation now states that `permission_classes` on
+  `DjangoModelMutation` raises `ImproperlyConfigured`, describes generated
+  operations as Create/Update/Delete, and uses neutral models for generic CRUD.
+- The playground reset removes stale generated migrations while preserving
+  `__init__.py`, and its test commands consistently avoid local migration drift.
+  WebSockets now ship with explicit localhost/testserver origin defaults rather
+  than an effective allow-all configuration.
+- The verified [2.x → 3.0 upgrade guide](UPGRADE-3.0.md) is now published. It
+  documents and reproduces behavior that already shipped in 3.0; it is not a
+  claim that those 3.0 changes were introduced again in 3.1.
+
+### Test and release engineering
+
+- Channels-free runs keep collecting transaction/savepoint tests, broad
+  `pytest.raises(Exception)` contracts were replaced by exact failures, and
+  focused commands use `--no-cov`. CI enforces branch coverage and changed-line
+  coverage above 95%, while tox tools resolve inside explicit version bounds.
+- A PostgreSQL 17 gate now exercises foreign-key failures, nested rollbacks,
+  many-to-many rollback, autocommit and connection reuse against the real
+  backend instead of relying solely on SQLite.
+- Release automation builds the wheel and sdist once, smoke-tests the installed
+  wheel outside the checkout, audits that exact wheel, records checksums, and
+  carries the same immutable artifact to PyPI and the GitHub Release.
+- Tagged publication now waits for the complete test matrix, base install,
+  security/quality, coverage, PostgreSQL, documentation, playground and
+  distribution checks. Manual dispatch targets TestPyPI only; PyPI and Pages
+  publication remain tag-driven.
+
+### Benchmarks
+
+- The nested workload now enforces the documented 20 authors × 10 posts × 5
+  comments with exact IDs, order and content across all four libraries.
+- Every validation, SQL probe, warmup and timed mutation rolls back, so library
+  order cannot accumulate rows or bias later measurements.
+- Direct and transitive benchmark dependencies are pinned, offline replay has
+  explicit cache semantics, and Ariadne's Django adapter is a required input.
+- `python benchmarks/run_publish.py --authors 1000 2000 --runs 3` is the sole
+  canonical-results publisher. It recreates each database, rotates library
+  order, validates every run, computes medians and writes results atomically;
+  `run_all.sh` remains a non-publishing diagnostic.
+
+### Audit traceability
+
+| # | Area | Resolution in 3.1.0 |
+|---:|---|---|
+| 1 | Cache isolation | Cookie-dependent anonymous queries bypass response caching. |
+| 2 | Cache invalidation | Rejected or unexecuted mutations no longer advance versions. |
+| 3 | Documentation security | The `auth.User` quickstart uses safe projection, auth and registration. |
+| 4 | Release gates | Every validation job blocks tagged PyPI publication. |
+| 5 | Immutable artifact | PyPI and GitHub Release consume one checked wheel/sdist artifact. |
+| 6 | Subscriptions | Transaction callbacks publish immutable per-save snapshots. |
+| 7 | HTTP response cleaning | `operationName` selects whether introspection data is preserved. |
+| 8 | Type compilation | `MultiSelectField` subclasses stay list-shaped in output and input. |
+| 9 | Cache freshness | Global invalidation is default; identity scope remains opt-in. |
+| 10 | Query limits | Singular fields named `limit` no longer receive list multiplication. |
+| 11 | Permissions | Async CRUD permission hooks fail closed before writes. |
+| 12 | Packaging | A clean external environment tests the exact release wheel. |
+| 13 | Test suite | Core savepoint tests run without the optional Channels extra. |
+| 14 | Test suite | Exception contracts assert exact classes and messages. |
+| 15 | Coverage | Focused tests avoid false global gates; CI checks patch coverage. |
+| 16 | Tooling | Tox and development tools use explicit compatible bounds. |
+| 17 | PostgreSQL | Real-backend transaction integration is a release gate. |
+| 18 | Documentation | Mutation permission and generated-operation contracts are accurate. |
+| 19 | Playground | Reset and test workflows recover from stale local migrations. |
+| 20 | Playground security | Default WebSocket origins are restricted to local hosts. |
+| 21 | Benchmarks | Nested results must satisfy the full 20×10×5 contract. |
+| 22 | Benchmarks | Measured mutations roll back and cannot contaminate later runs. |
+| 23 | Benchmarks | Environments are pinned and support deterministic offline replay. |
+| 24 | Benchmarks | Validated three-run medians are published atomically. |
+
 ## 3.0.0 — 2026-08-27
 
 **Security release, and the largest set of breaking changes since 2.0.** Read
