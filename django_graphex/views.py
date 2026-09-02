@@ -2041,8 +2041,10 @@ class GraphQLView(BaseGraphQLView):
         return view
 
     @staticmethod
-    def _is_introspection_document(document: Any) -> bool:
-        """Return True when the document is an introspection query.
+    def _is_introspection_document(
+        document: Any, operation_name: str | None = None
+    ) -> bool:
+        """Return True when the selected operation is an introspection query.
 
         Detects introspection by inspecting the AST rather than matching the raw
         query string. A document is treated as introspection when ALL of its
@@ -2052,6 +2054,7 @@ class GraphQLView(BaseGraphQLView):
 
         Args:
             document: A parsed graphql-core "DocumentNode".
+            operation_name: The operation selected by the request, if named.
 
         Returns:
             True when every top-level selection is a meta-field ("__schema" /
@@ -2059,28 +2062,19 @@ class GraphQLView(BaseGraphQLView):
         """
         if document is None:
             return False
-        from graphql.language.ast import FieldNode, OperationDefinitionNode
+        from graphql.language.ast import FieldNode
 
-        for definition in document.definitions:
-            if not isinstance(definition, OperationDefinitionNode):
-                continue
-            selections = getattr(
-                getattr(definition, "selection_set", None), "selections", ()
-            )
-            if not selections:
-                continue
-            # If any top-level selection is NOT a meta-field, it's not introspection.
-            for selection in selections:
-                if isinstance(selection, FieldNode):
-                    if selection.name.value not in ("__schema", "__type"):
-                        return False
-                # InlineFragment / FragmentSpread at top level are unusual; treat
-                # conservatively (not pure introspection).
-                else:
-                    return False
-            # All selections were meta-fields for this operation — it's introspection.
-            return True
-        return False
+        operation = get_operation_ast(document, operation_name)
+        selections = getattr(
+            getattr(operation, "selection_set", None), "selections", ()
+        )
+        if not selections:
+            return False
+        return all(
+            isinstance(selection, FieldNode)
+            and selection.name.value in ("__schema", "__type")
+            for selection in selections
+        )
 
     def get_response(
         self, request: HttpRequest, data: Any, show_graphiql: bool = False
@@ -2143,7 +2137,7 @@ class GraphQLView(BaseGraphQLView):
             # startswith("\n  query IntrospectionQuery") string match.
             if (
                 graphql_api_settings.CLEAN_RESPONSE
-                and not self._is_introspection_document(parsed_document)
+                and not self._is_introspection_document(parsed_document, operation_name)
             ):
                 if response.get("data", None):
                     response["data"] = clean_dict(response["data"])

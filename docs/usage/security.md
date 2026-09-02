@@ -436,6 +436,8 @@ top-level selections are `__schema` or `__type` fields, regardless of the
 query's textual format. This correctly handles compact inline queries
 (`{ __schema { types { name } } }`), differently-indented or re-formatted
 clients, and `__type` queries.
+For documents containing multiple operations, the exemption follows the
+request's `operationName`; the order of operations in the document has no effect.
 
 ## Query depth & cost limits
 
