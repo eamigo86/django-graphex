@@ -33,9 +33,6 @@ _graphql_v2_{scope}_{version_identity}_{version}_{identity}_{body_hash}
 | `{identity}` | `cache_key_prefix(request)` | Isolates responses by user identity (see below) |
 | `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of `request.body`; for GET requests (where the body is empty) the hash also incorporates the `query`, `variables`, and `operationName` query-string parameters | Distinguishes different queries / variable sets |
 
-`AuthenticatedGraphQLView` inserts its permission signature before the body
-hash when permission-scoped schemas are active.
-
 ---
 
 ## Per-user isolation
@@ -67,11 +64,9 @@ identities — see
 When a mutation is detected, the view **increments a version counter** stored in
 the cache rather than calling `cache.clear()`.
 
-By default, `CACHE_INVALIDATION_SCOPE="global"`: every GraphQL response identity
-reads the same version counter. A mutation from user A therefore makes cached
-queries for user B, anonymous callers and token callers unreachable. The
-response key still includes the full identity, so global **invalidation** never
-means global response sharing.
+By default, `CACHE_INVALIDATION_SCOPE="global"`: every GraphQL response identity reads
+the same counter, so one mutation invalidates user, anonymous and token reads. The
+response key still includes full identity; global invalidation never shares bodies.
 
 Set `CACHE_INVALIDATION_SCOPE="identity"` to preserve the narrower 3.0 policy:
 
@@ -82,9 +77,8 @@ DJANGO_GRAPHEX = {
 }
 ```
 
-Identity scope is appropriate only when mutations affect data private to the
-issuing identity. Shared models can otherwise remain stale for every other
-identity until their TTL expires.
+Identity scope is only safe when mutations affect identity-private data; shared
+models can otherwise remain stale for other callers until their TTL expires.
 
 Both policies have two important properties:
 

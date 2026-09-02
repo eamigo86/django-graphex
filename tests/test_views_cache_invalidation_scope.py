@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """Response-cache invalidation scope is global by default and versioned."""
 
-from typing import Any
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
-from django.http import HttpRequest, HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
 
 from django_graphex.settings import graphql_api_settings
@@ -17,9 +15,14 @@ from tests.cache_helpers import CACHE_ON, graphql_post, minimal_cache_schema
 
 @override_settings(**CACHE_ON)
 class GlobalInvalidationScopeTest(TestCase):
-    """A mutation invalidates cached reads across every response identity."""
+    """Validate cross-identity invalidation.
+    Preserve identity isolation in versioned response keys.
+    """
 
     def setUp(self) -> None:
+        """Prepare isolated callers and cache state.
+        Bind the shared minimal schema to the view.
+        """
         self.factory = RequestFactory()
         self.user_a = User(pk=1, username="alice")
         self.user_b = User(pk=2, username="bob")
@@ -32,21 +35,19 @@ class GlobalInvalidationScopeTest(TestCase):
             self.view(request)
 
     def _assert_query_reexecutes(self, user: User | None) -> None:
-        original = GraphQLView.super_call
-        calls = 0
-
-        def counting_call(
-            view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
-        ) -> HttpResponse:
-            nonlocal calls
-            calls += 1
-            return original(view, request, *args, **kwargs)
-
-        with patch.object(GraphQLView, "super_call", counting_call):
+        with patch.object(
+            GraphQLView,
+            "super_call",
+            autospec=True,
+            side_effect=GraphQLView.super_call,
+        ) as call:
             self.view(graphql_post(self.factory, "{ hello }", user=user))
-        self.assertEqual(calls, 1)
+        self.assertEqual(call.call_count, 1)
 
     def test_user_mutation_invalidates_other_response_identities(self) -> None:
+        """Invalidate user and anonymous reads.
+        Advance the shared version after another user mutates.
+        """
         for user in (self.user_b, None):
             cache.clear()
             self.view(graphql_post(self.factory, "{ hello }", user=user))
@@ -54,6 +55,9 @@ class GlobalInvalidationScopeTest(TestCase):
             self._assert_query_reexecutes(user)
 
     def test_response_key_uses_v2_scope_and_version_namespace(self) -> None:
+        """Version keys and encode their scope.
+        Keep the full response identity in both policies.
+        """
         cases = (
             ("global", "_graphql_v2_global_global_1_u2_"),
             ("identity", "_graphql_v2_identity_u2_1_u2_"),
@@ -70,24 +74,26 @@ class GlobalInvalidationScopeTest(TestCase):
                 ),
             ):
                 cache.clear()
-                stored: list[str] = []
-                original_set = cache.set
-
-                def record(key: str, value: Any, *args: Any, **kwargs: Any) -> Any:
-                    stored.append(key)
-                    return original_set(key, value, *args, **kwargs)
-
-                with patch.object(cache, "set", record):
+                with patch.object(cache, "set", wraps=cache.set) as setter:
                     self.view(graphql_post(self.factory, "{ hello }", user=self.user_b))
-                response_keys = [k for k in stored if k.startswith("_graphql_v2_")]
+                response_keys = [
+                    call.args[0]
+                    for call in setter.call_args_list
+                    if call.args[0].startswith("_graphql_v2_")
+                ]
                 self.assertEqual(len(response_keys), 1)
                 self.assertIn(fragment, response_keys[0])
 
 
 class InvalidationScopeSettingTest(TestCase):
-    """Reject misspelled invalidation policies instead of silently drifting."""
+    """Validate the invalidation-scope setting.
+    Reject misspellings instead of silently drifting.
+    """
 
     @override_settings(DJANGO_GRAPHEX={"CACHE_INVALIDATION_SCOPE": "tenant"})
     def test_invalid_scope_raises_improperly_configured(self) -> None:
+        """Reject unsupported invalidation policies.
+        Name the setting in the configuration error.
+        """
         with self.assertRaisesMessage(ImproperlyConfigured, "CACHE_INVALIDATION_SCOPE"):
             _ = graphql_api_settings.CACHE_INVALIDATION_SCOPE
