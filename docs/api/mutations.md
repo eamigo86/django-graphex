@@ -15,10 +15,10 @@ class DjangoModelMutation(ObjectType)
 Configure mutations through a nested `Meta` class:
 
 ```python
-class UserMutation(DjangoModelMutation):
+class CustomerMutation(DjangoModelMutation):
     class Meta:
-        model = User
-        description = "User CRUD operations"
+        model = Customer
+        description = "Customer CRUD operations"
 ```
 
 ### Meta Options
@@ -191,23 +191,23 @@ Get all mutation fields (create, delete, update).
 
     ```python
     from django_graphex.mutation import DjangoModelMutation
-    from .models import User
+    from .models import Customer
 
-    class UserMutation(DjangoModelMutation):
+    class CustomerMutation(DjangoModelMutation):
         class Meta:
-            model = User
-            description = "User CRUD operations"
+            model = Customer
+            description = "Customer CRUD operations"
     ```
 
 === "With Field Control"
 
     ```python
-    class UserMutation(DjangoModelMutation):
+    class CustomerMutation(DjangoModelMutation):
         class Meta:
-            model = User
-            exclude_fields = ('password', 'is_staff', 'is_superuser')
-            input_field_name = 'user_data'
-            output_field_name = 'user'
+            model = Customer
+            exclude_fields = ('internal_notes', 'credit_limit')
+            input_field_name = 'customer_data'
+            output_field_name = 'customer'
     ```
 
 === "With Nested Fields"
@@ -215,9 +215,9 @@ Get all mutation fields (create, delete, update).
     ```python
     from .models import Address, Profile
 
-    class UserMutation(DjangoModelMutation):
+    class CustomerMutation(DjangoModelMutation):
         class Meta:
-            model = User
+            model = Customer
             # each nested field maps to its related Django model
             nested_fields = {
                 'profile': Profile,
@@ -230,9 +230,9 @@ Get all mutation fields (create, delete, update).
     ```python
     from django_graphex.core import BooleanField
 
-    class UserMutation(DjangoModelMutation):
+    class CustomerMutation(DjangoModelMutation):
         class Meta:
-            model = User
+            model = Customer
 
         class Arguments:
             send_email = BooleanField(
@@ -254,7 +254,7 @@ Get all mutation fields (create, delete, update).
     ```python
     from pydantic import BaseModel, field_validator
 
-    class UserValidation(BaseModel):
+    class CustomerValidation(BaseModel):
         @field_validator("email", check_fields=False)
         @classmethod
         def corporate_only(cls, value):
@@ -262,12 +262,12 @@ Get all mutation fields (create, delete, update).
                 raise ValueError("Only corporate email addresses are accepted.")
             return value
 
-    class UserMutation(DjangoModelMutation):
+    class CustomerMutation(DjangoModelMutation):
         class Meta:
-            model = User
+            model = Customer
             # supply a Pydantic model with extra validators; the derived
             # model fields extend it
-            pydantic_model = UserValidation
+            pydantic_model = CustomerValidation
     ```
 
 ### Schema Integration
@@ -279,9 +279,9 @@ Get all mutation fields (create, delete, update).
     from django_graphex.schema import DjangoGraphQLSchema
 
     class Mutation(ObjectType):
-        create_user = UserMutation.CreateField()
-        update_user = UserMutation.UpdateField()
-        delete_user = UserMutation.DeleteField()
+        create_customer = CustomerMutation.CreateField()
+        update_customer = CustomerMutation.UpdateField()
+        delete_customer = CustomerMutation.DeleteField()
 
     schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
@@ -293,7 +293,7 @@ Get all mutation fields (create, delete, update).
     from django_graphex.schema import DjangoGraphQLSchema
 
     class Mutation(ObjectType):
-        create_user, delete_user, update_user = UserMutation.MutationFields()
+        create_customer, delete_customer, update_customer = CustomerMutation.MutationFields()
 
     schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
@@ -303,10 +303,10 @@ Get all mutation fields (create, delete, update).
 #### Create Mutation
 
 ```graphql
-mutation CreateUser($userData: UserInput!) {
-  createUser(newUser: $userData) {
+mutation CreateCustomer($customerData: CustomerInput!) {
+  createCustomer(newCustomer: $customerData) {
     ok
-    user {
+    customer {
       id
       username
       email
@@ -322,10 +322,10 @@ mutation CreateUser($userData: UserInput!) {
 #### Update Mutation
 
 ```graphql
-mutation UpdateUser($userData: UserInput!) {
-  updateUser(newUser: $userData) {
+mutation UpdateCustomer($customerData: CustomerInput!) {
+  updateCustomer(newCustomer: $customerData) {
     ok
-    user {
+    customer {
       id
       username
       email
@@ -342,9 +342,9 @@ mutation UpdateUser($userData: UserInput!) {
 
 ```graphql
 mutation DeleteUser($id: ID!) {
-  deleteUser(id: $id) {
+  deleteCustomer(id: $id) {
     ok
-    user {
+    customer {
       id
       username
     }
@@ -363,9 +363,9 @@ mutation DeleteUser($id: ID!) {
 ```json
 {
   "data": {
-    "createUser": {
+    "createCustomer": {
       "ok": true,
-      "user": {
+      "customer": {
         "id": "1",
         "username": "john_doe",
         "email": "john@example.com"
@@ -381,9 +381,9 @@ mutation DeleteUser($id: ID!) {
 ```json
 {
   "data": {
-    "createUser": {
+    "createCustomer": {
       "ok": false,
-      "user": null,
+      "customer": null,
       "errors": [
         {
           "field": "username",
@@ -486,9 +486,9 @@ requests.post(
 ```python
 from graphql import GraphQLError
 
-class UserMutation(DjangoModelMutation):
+class CustomerMutation(DjangoModelMutation):
     class Meta:
-        model = User
+        model = Customer
 
     @classmethod
     def create(cls, root, info, **kwargs):
@@ -496,7 +496,7 @@ class UserMutation(DjangoModelMutation):
         if not user.is_authenticated:
             raise GraphQLError("Authentication required")
 
-        if not user.has_perm('auth.add_user'):
+        if not user.has_perm('crm.add_customer'):
             raise GraphQLError("Permission denied")
 
         return super().create(root, info, **kwargs)
@@ -508,9 +508,9 @@ class UserMutation(DjangoModelMutation):
 from django.core.exceptions import ValidationError
 from django_graphex.errors import ErrorType
 
-class UserMutation(DjangoModelMutation):
+class CustomerMutation(DjangoModelMutation):
     class Meta:
-        model = User
+        model = Customer
 
     @classmethod
     def create(cls, root, info, **kwargs):
@@ -555,15 +555,15 @@ from django_graphex.errors import ErrorType
 ### Security Considerations
 
 ```python
-class UserMutation(DjangoModelMutation):
+class CustomerMutation(DjangoModelMutation):
     class Meta:
-        model = User
-        # Don't expose sensitive operations
-        exclude_fields = ('is_superuser', 'user_permissions', 'groups')
+        model = Customer
+        # Don't expose server-owned business fields.
+        exclude_fields = ('internal_notes', 'credit_limit')
 
     @classmethod
     def create(cls, root, info, **kwargs):
-        if not info.context.user.has_perm('auth.add_user'):
+        if not info.context.user.has_perm('crm.add_customer'):
             raise GraphQLError("Permission denied")
         return super().create(root, info, **kwargs)
 ```

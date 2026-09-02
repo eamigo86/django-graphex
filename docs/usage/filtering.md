@@ -730,9 +730,10 @@ has no read operations, so there the scope governs `update` and `delete` only.
     `get_queryset` / `filter_queryset` answer *which rows exist for this
     caller*. `permission_classes` / `authorize` answer *may this caller perform
     this action* — and those live on `DjangoModelType` alone.
-    `DjangoModelMutation` does **not** check them; declaring
-    `permission_classes` on one has no effect. Use `DjangoModelType` when you
-    need per-action authorization, or gate the mutation at the schema root.
+    `DjangoModelMutation` rejects either attribute at class definition with
+    `ImproperlyConfigured`; a silent no-op would look protected while allowing
+    every caller through. Use `DjangoModelType` when you need per-action
+    authorization, or gate the mutation at the schema root.
 
 !!! danger "Upgrade note — fixed in 2.2.0"
     2.1.0 and earlier applied this scope on the read path only: `update` and
