@@ -116,9 +116,17 @@ arrives between the start of the mutation and its commit therefore sees the
 pre-mutation version key and correctly hits (or misses) pre-mutation cache
 entries — it never caches pre-mutation data at the new, post-mutation version.
 
-If the mutation's transaction is rolled back, `on_commit` is never invoked and
-the version counter is **not** advanced.  Only successful mutations invalidate
-the cache.
+The cache layer does not invalidate merely because a document parses as a
+mutation. A mutation rejected by the transport (for example, a mutation sent by
+GET) or by GraphQL validation never reaches execution and does **not** advance
+the counter.
+
+If an `ATOMIC_MUTATIONS` transaction is explicitly rolled back, the execution
+marker is not published and the counter is **not** advanced. In non-atomic mode,
+reaching execution is sufficient to invalidate even when a later resolver
+returns an error: an earlier resolver may already have committed a write.
+`transaction.on_commit` still defers the bump when the application wraps the
+whole request in a transaction, so a request-level rollback discards it.
 
 When `ATOMIC_MUTATIONS` is off (no open transaction), Django executes
 `on_commit` immediately after the current statement, so behaviour is unchanged
@@ -215,8 +223,8 @@ following are always passed through to the underlying view uncached:
 
 | Reason | Detail |
 |--------|--------|
-| **Batch requests** | A batch body is a JSON list; individual operations cannot be cached meaningfully. |
-| **Multipart/form-data** | `parse_body` reads `request.POST` for this content type, consuming the WSGI stream. A subsequent read of `request.body` (needed to compute the cache key) raises `RawPostDataException`. Bypassing avoids an HTTP 500. Multipart GraphQL is used almost exclusively for file-upload mutations which are not idempotent queries. |
+| **Batch requests** | A batch body is a JSON list; individual responses are not cached. If any operation executes a potentially durable mutation, the namespace is still invalidated once after the batch. |
+| **Multipart/form-data** | `parse_body` reads `request.POST` for this content type, consuming the WSGI stream. A subsequent read of `request.body` (needed to compute the cache key) raises `RawPostDataException`. Responses bypass the cache, but an executed upload mutation still invalidates the namespace. |
 | **Mutations** | Mutations advance the version counter instead of being cached. |
 | **GraphiQL renders** | A request the view would answer with the GraphiQL page (`graphiql=True` and the client prefers `text/html`) is never cached. The cache key is built from the request body / query-string parameters, not from content negotiation, so a cached HTML page and the JSON answer for the same query would otherwise share one slot and whoever warmed it would decide what every later client received. The GraphiQL page is a static render, so caching it buys nothing. |
 
