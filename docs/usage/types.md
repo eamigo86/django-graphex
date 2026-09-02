@@ -1471,6 +1471,36 @@ class Profile(models.Model):
 The enum member's *description* carries the original label, so the
 human-readable text is never lost.
 
+### `MultiSelectField` { #multiselectfield }
+
+When the optional `django-multiselectfield` package is installed, a
+`MultiSelectField` is a **list of the generated choice enum**, not one enum
+value. Detection uses `isinstance`, so a renamed subclass keeps the same shape
+in output and generated create/update input:
+
+```python
+from multiselectfield import MultiSelectField
+
+
+class FeatureFlagsField(MultiSelectField):
+    pass
+
+
+class Account(models.Model):
+    flags = FeatureFlagsField(choices=(("beta", "Beta"), ("dark", "Dark")))
+```
+
+```graphql
+type AccountType { flags: [AccountFlagsEnum] }
+input AccountCreateInput { flags: [AccountFlagsEnum] }
+input AccountUpdateInput { flags: [AccountFlagsEnum] }
+```
+
+`django-multiselectfield` remains optional: install it only when the model uses
+that field. Without the package, importing django-graphex adds no runtime
+dependency. The development and integration environments install it only to
+exercise this optional adapter.
+
 ## Field type conversion reference
 
 How Django model fields map to GraphQL **output** types:
