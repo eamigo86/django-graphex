@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import gc
 import types as _types
+import warnings
 from typing import TYPE_CHECKING, Any
 
+import pytest
+from django.core.exceptions import ImproperlyConfigured
 from graphql import ExecutionResult, graphql_sync
 
 from django_graphex.core import ObjectType
@@ -213,6 +217,99 @@ def test_custom_per_action_permission(db: None, monkeypatch: MonkeyPatch) -> Non
     assert _denied(_execute(_CREATE, _ctx(_anon)))  # create denied
 
 
+@pytest.mark.parametrize("permission_result", [True, False])
+def test_async_permission_hook_fails_closed_without_warning(
+    db: None, monkeypatch: MonkeyPatch, permission_result: bool
+) -> None:
+    """Async CRUD permission hooks are rejected before their action executes.
+
+    This test protects the corresponding regression contract.
+
+    Args:
+        db: Pytest fixture enabling database access.
+        monkeypatch: Pytest fixture used to isolate process state.
+        permission_result: The async permission result under test.
+    """
+
+    class AsyncCreatePermission(BasePermission):
+        async def has_create_permission(
+            self, info: Any, model: Any, **kwargs: Any
+        ) -> bool:
+            return permission_result
+
+    monkeypatch.setattr(HookType, "permission_classes", [AsyncCreatePermission])
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        result = _execute(_CREATE, _ctx(_anon))
+        gc.collect()
+
+    assert result.errors
+    assert isinstance(result.errors[0].original_error, ImproperlyConfigured)
+    assert "must be synchronous" in result.errors[0].message
+    assert HookModel.objects.count() == 0
+    assert not any("never awaited" in str(item.message) for item in captured)
+
+
+def test_future_like_permission_result_is_cancelled(monkeypatch: MonkeyPatch) -> None:
+    """Non-coroutine awaitables are cancelled before configuration failure.
+
+    This test protects the corresponding regression contract.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate process state.
+    """
+
+    class CancellableAwaitable:
+        cancelled = False
+
+        def __await__(self):
+            yield
+            return True
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    pending = CancellableAwaitable()
+
+    class FuturePermission(BasePermission):
+        def has_create_permission(self, info: Any, model: Any, **kwargs: Any) -> Any:
+            return pending
+
+    monkeypatch.setattr(HookType, "permission_classes", [FuturePermission])
+
+    with pytest.raises(ImproperlyConfigured, match="must be synchronous"):
+        HookType.check_permissions(_ctx(_anon), "create")
+
+    assert pending.cancelled is True
+
+
+def test_opaque_awaitable_permission_result_still_fails_closed(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Awaitables without cleanup hooks still trigger configuration failure.
+
+    This test protects the corresponding regression contract.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate process state.
+    """
+
+    class OpaqueAwaitable:
+        def __await__(self):
+            yield
+            return True
+
+    class OpaquePermission(BasePermission):
+        def has_create_permission(self, info: Any, model: Any, **kwargs: Any) -> Any:
+            return OpaqueAwaitable()
+
+    monkeypatch.setattr(HookType, "permission_classes", [OpaquePermission])
+
+    with pytest.raises(ImproperlyConfigured, match="must be synchronous"):
+        HookType.check_permissions(_ctx(_anon), "create")
+
+
 # -- ready-made classes (unit) ----------------------------------------------- #
 def test_ready_made_permissions() -> None:
     """Assert the built-in permission classes gate list/create as documented.
@@ -301,8 +398,6 @@ def test_is_admin_requires_every_flag() -> None:
 # --------------------------------------------------------------------------- #
 # DjangoModelPermissions (DRF-style mapping to Django model permissions)
 # --------------------------------------------------------------------------- #
-import pytest  # noqa: E402
-
 _ALL_ACTIONS = ("create", "update", "delete", "retrieve", "list", "subscribe")
 
 #: action -> expected codenames for HookModel (app_label "tests"). Composite
