@@ -64,6 +64,12 @@ if TYPE_CHECKING:
 #: response can roll back an ATOMIC_MUTATIONS transaction.
 MUTATION_ERRORS_FLAG = "graphene_mutation_has_errors"
 
+#: Request attribute set once a mutation has reached execution and its work may
+#: be durable.  The response-cache layer reads this marker after the base view
+#: returns; merely parsing a mutation is not enough because GET rejection and
+#: validation failures never run a resolver and therefore cannot stale data.
+_CACHE_MUTATION_EXECUTED_FLAG = "_django_graphex_cache_mutation_executed"
+
 #: Header a caller must send to POST one of the CORS-simple content types. The
 #: name is not on the CORS-safelist, so a cross-origin request carrying it is
 #: forced through a preflight — which is what actually stops the attack; the
@@ -1260,20 +1266,31 @@ class BaseGraphQLView(View):
                     self.execution_context_class
                 )
 
-            if (
+            is_mutation = (
                 operation_ast is not None
                 and operation_ast.operation == OperationType.MUTATION
-                and (
-                    graphql_api_settings.ATOMIC_MUTATIONS is True
-                    or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
-                )
+            )
+            if is_mutation and (
+                graphql_api_settings.ATOMIC_MUTATIONS is True
+                or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
             ):
                 with transaction.atomic():
                     result = execute(schema, document, **execute_options)
-                    if getattr(request, MUTATION_ERRORS_FLAG, False) is True:
+                    rolled_back = (
+                        getattr(request, MUTATION_ERRORS_FLAG, False) is True
+                    )
+                    if rolled_back:
                         transaction.set_rollback(True)
+                if not rolled_back:
+                    setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
                 return result
 
+            # Non-atomic execution may have committed work before a later
+            # resolver reports an error, so mark it immediately before handing
+            # control to graphql-core.  Atomic execution is marked only after
+            # its transaction exits without an explicit rollback above.
+            if is_mutation:
+                setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
             return execute(schema, document, **execute_options)
         except Exception as e:
             return ExecutionResult(errors=[e])
@@ -1773,6 +1790,28 @@ class GraphQLView(BaseGraphQLView):
 
         return response
 
+    def _execute_uncached_and_invalidate(
+        self,
+        request: HttpRequest,
+        _cache: Any,
+        version_identity: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute without response caching and invalidate after real mutation work.
+
+        The execution marker is set inside ``execute_graphql_request`` only
+        after validation and transport checks pass.  A ``finally`` is safe here:
+        a non-atomic resolver may persist before raising, while an atomic
+        rollback never sets the marker.  An outer request transaction still
+        controls durability because ``_bump_cache_version`` uses ``on_commit``.
+        """
+        try:
+            return self.super_call(request, *args, **kwargs)
+        finally:
+            if getattr(request, _CACHE_MUTATION_EXECUTED_FLAG, False):
+                self._bump_cache_version(_cache, version_identity)
+
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Fetch queried data from GraphQL and return the cached response.
 
@@ -1823,28 +1862,9 @@ class GraphQLView(BaseGraphQLView):
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
 
-        # Batch requests contain a list body — caching individual operations
-        # inside a batch is not meaningful (each op may be different), and the
-        # body-is-a-list would cause AttributeError in get_operation_ast /
-        # fetch_cache_key which assume a dict body.  Bypass the cache entirely.
-        if self.batch:
-            return self.super_call(request, *args, **kwargs)
-
-        # Multipart/form-data requests bypass the cache to avoid
-        # RawPostDataException: parse_body reads request.POST (consuming the
-        # WSGI stream) so request.body is no longer accessible for cache-key
-        # hashing.  Fall through to super_call uncached (issue #53a).
-        content_type = self.get_content_type(request)
-        if content_type == "multipart/form-data":
-            return self.super_call(request, *args, **kwargs)
-
-        # A request that may render GraphiQL bypasses the cache entirely: the
-        # cache key is content-negotiation blind, so an HTML render and the JSON
-        # answer for the same query share one slot and whoever warms it decides
-        # what everybody else receives.  A GraphiQL render is a static page —
-        # caching it buys nothing.
-        if self.graphiql and self.request_wants_html(request):
-            return self.super_call(request, *args, **kwargs)
+        # RequestFactory-based callers may deliberately reuse a request object.
+        # Never let execution state from a prior dispatch leak into this one.
+        setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, False)
 
         _cache = caches["default"]
         identity = self.cache_key_prefix(request)
@@ -1852,6 +1872,35 @@ class GraphQLView(BaseGraphQLView):
         # namespace is bucketed, because that key is permanent and an
         # unauthenticated caller must not be able to choose its name.
         version_identity = self._cache_version_identity(request, identity)
+
+        # Batch requests contain a list body — caching individual operations
+        # inside a batch is not meaningful (each op may be different), and the
+        # body-is-a-list would cause AttributeError in get_operation_ast /
+        # fetch_cache_key which assume a dict body.  Bypass the cache entirely.
+        if self.batch:
+            return self._execute_uncached_and_invalidate(
+                request, _cache, version_identity, *args, **kwargs
+            )
+
+        # Multipart/form-data requests bypass the cache to avoid
+        # RawPostDataException: parse_body reads request.POST (consuming the
+        # WSGI stream) so request.body is no longer accessible for cache-key
+        # hashing.  Fall through to super_call uncached (issue #53a).
+        content_type = self.get_content_type(request)
+        if content_type == "multipart/form-data":
+            return self._execute_uncached_and_invalidate(
+                request, _cache, version_identity, *args, **kwargs
+            )
+
+        # A request that may render GraphiQL bypasses the cache entirely: the
+        # cache key is content-negotiation blind, so an HTML render and the JSON
+        # answer for the same query share one slot and whoever warms it decides
+        # what everybody else receives.  A GraphiQL render is a static page —
+        # caching it buys nothing.
+        if self.graphiql and self.request_wants_html(request):
+            return self._execute_uncached_and_invalidate(
+                request, _cache, version_identity, *args, **kwargs
+            )
         try:
             operation_ast = self.get_operation_ast(request)
         except HttpError:
@@ -1869,19 +1918,9 @@ class GraphQLView(BaseGraphQLView):
             # so it must never be answered from — or stored in — the cache.
             return self.super_call(request, *args, **kwargs)
         if operation == "mutation":
-            try:
-                return self.super_call(request, *args, **kwargs)
-            finally:
-                # Scheduled AFTER the mutation has run.  Scheduling it before
-                # made the ``transaction.on_commit`` deferral inert: the atomic
-                # block ``ATOMIC_MUTATIONS`` opens lives INSIDE ``super_call``
-                # (see ``execute_graphql_request``), so at that point there was
-                # no open transaction and Django ran the bump immediately —
-                # re-opening the very #60a TOCTOU window it was meant to close.
-                # Here the mutation's own transaction has already committed, and
-                # under ``ATOMIC_REQUESTS`` the request-level block is still
-                # open so the bump remains deferred to its commit.
-                self._bump_cache_version(_cache, version_identity)
+            return self._execute_uncached_and_invalidate(
+                request, _cache, version_identity, *args, **kwargs
+            )
 
         version = self._get_cache_version(_cache, version_identity)
         # ``_cache_key_signature`` is empty on the base view (byte-identical to
