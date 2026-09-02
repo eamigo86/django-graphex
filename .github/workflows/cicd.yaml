@@ -123,11 +123,24 @@ jobs:
     - name: Run security checks
       run: uvx --with tox-uv tox -e security
 
-    - name: Audit the built release artifact
-      # pip-audit in `tox -e security` only sees the editable dev install and
-      # skips django-graphex itself. This builds the wheel and audits its
-      # declared transitive closure so release-artifact vulnerabilities are caught.
-      run: uvx --with tox-uv tox -e release-audit
+    - name: Smoke-test and audit a wheel outside the checkout
+      run: |
+        DIST_DIR="$RUNNER_TEMP/django-graphex-wheel-dist" \
+          SMOKE_ENV="$RUNNER_TEMP/django-graphex-wheel-smoke" \
+          SMOKE_CWD="$RUNNER_TEMP/django-graphex-wheel-cwd"
+        uv build --wheel --out-dir "$DIST_DIR"
+        WHEEL="$(find "$DIST_DIR" -maxdepth 1 -type f -name '*.whl' -print -quit)"
+        test -n "$WHEEL"
+        uv venv "$SMOKE_ENV"
+        uv pip install --python "$SMOKE_ENV/bin/python" "$WHEEL"
+        mkdir -p "$SMOKE_CWD"
+        cd "$SMOKE_CWD"
+        env -u PYTHONPATH "$SMOKE_ENV/bin/python" \
+          "$GITHUB_WORKSPACE/scripts/check_wheel_install.py" "$GITHUB_WORKSPACE"
+        cd "$GITHUB_WORKSPACE"
+        uv run --isolated --no-project --with 'pip>=25,<27' \
+          --with 'pip-audit>=2.10.1,<3' \
+          python scripts/release_audit.py "$WHEEL"
 
   coverage:
     runs-on: ubuntu-latest

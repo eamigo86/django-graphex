@@ -61,11 +61,8 @@ make quality
 # Security checks (bandit + pip-audit on the dev environment)
 make security
 
-# Audit the BUILT release artifact's transitive dependencies. pip-audit in
-# `make security` only sees the editable dev install and skips django-graphex
-# itself; this builds the wheel and audits the dependency closure that would
-# actually ship to PyPI. Runs in CI on every push/PR (lint-and-security job).
-make release-audit
+# Audit an existing wheel without rebuilding it (CI supplies the wheel path)
+uv run tox -e release-audit -- /path/to/django_graphex-*.whl
 
 # Format code
 make format
@@ -286,6 +283,15 @@ misconfigured run cannot silently pass on SQLite. MySQL is not part of this
 reduced release gate.
 
 ## Code Review Process
+
+## Installed-wheel release gate
+
+CI installs the candidate wheel under `$RUNNER_TEMP` and executes its smoke
+check from outside the repository checkout with `PYTHONPATH` removed. The gate
+requires an import from `site-packages`, matching package metadata, `py.typed`,
+a base install without Channels, `django.setup()`, schema compilation, and a
+real GraphQL query. The dependency audit receives that same prebuilt wheel and
+does not rebuild it.
 
 ### What We Look For
 
