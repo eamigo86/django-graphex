@@ -133,16 +133,16 @@ def test_release_audit_rejects_missing_or_non_wheel_input(tmp_path: Path) -> Non
 def test_ci_smoke_installs_and_audits_one_external_wheel() -> None:
     """Run the hosted wheel contract outside the checkout.
 
-    The same prebuilt wheel must reach both smoke and dependency audit scripts.
+    The release job must pass its selected wheel to smoke and audit scripts.
     """
     workflow = (ROOT / ".github/workflows/cicd.yaml").read_text(encoding="utf-8")
-    assert 'DIST_DIR="$RUNNER_TEMP/django-graphex-wheel-dist"' in workflow
     assert 'SMOKE_CWD="$RUNNER_TEMP/django-graphex-wheel-cwd"' in workflow
-    assert 'uv pip install --python "$SMOKE_ENV/bin/python" "$WHEEL"' in workflow
+    wheel = "${{ steps.distribution.outputs.wheel }}"
+    assert f'uv pip install --python "$SMOKE_ENV/bin/python" "{wheel}"' in workflow
     assert 'cd "$SMOKE_CWD"' in workflow
     assert 'env -u PYTHONPATH "$SMOKE_ENV/bin/python"' in workflow
     assert 'check_wheel_install.py" "$GITHUB_WORKSPACE"' in workflow
-    assert 'release_audit.py "$WHEEL"' in workflow
+    assert f'release_audit.py "{wheel}"' in workflow
 
 
 def test_release_docs_describe_external_no_rebuild_contract() -> None:

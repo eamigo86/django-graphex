@@ -123,25 +123,6 @@ jobs:
     - name: Run security checks
       run: uvx --with tox-uv tox -e security
 
-    - name: Smoke-test and audit a wheel outside the checkout
-      run: |
-        DIST_DIR="$RUNNER_TEMP/django-graphex-wheel-dist" \
-          SMOKE_ENV="$RUNNER_TEMP/django-graphex-wheel-smoke" \
-          SMOKE_CWD="$RUNNER_TEMP/django-graphex-wheel-cwd"
-        uv build --wheel --out-dir "$DIST_DIR"
-        WHEEL="$(find "$DIST_DIR" -maxdepth 1 -type f -name '*.whl' -print -quit)"
-        test -n "$WHEEL"
-        uv venv "$SMOKE_ENV"
-        uv pip install --python "$SMOKE_ENV/bin/python" "$WHEEL"
-        mkdir -p "$SMOKE_CWD"
-        cd "$SMOKE_CWD"
-        env -u PYTHONPATH "$SMOKE_ENV/bin/python" \
-          "$GITHUB_WORKSPACE/scripts/check_wheel_install.py" "$GITHUB_WORKSPACE"
-        cd "$GITHUB_WORKSPACE"
-        uv run --isolated --no-project --with 'pip>=25,<27' \
-          --with 'pip-audit>=2.10.1,<3' \
-          python scripts/release_audit.py "$WHEEL"
-
   coverage:
     runs-on: ubuntu-latest
     steps:
@@ -255,8 +236,71 @@ jobs:
 
         echo "Detected version: $VERSION"
 
+  release-artifact:
+    needs: [ get-version ]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      with:
+        enable-cache: true
+        cache-suffix: release-artifact
+
+    - name: Build package once
+      run: uv build
+
+    - name: Require exactly one wheel and one sdist
+      id: distribution
+      run: |
+        mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
+        mapfile -t SDISTS < <(find dist -maxdepth 1 -type f -name '*.tar.gz' | sort)
+        test "${#WHEELS[@]}" -eq 1
+        test "${#SDISTS[@]}" -eq 1
+        echo "wheel=${WHEELS[0]}" >> "$GITHUB_OUTPUT"
+        echo "sdist=${SDISTS[0]}" >> "$GITHUB_OUTPUT"
+
+    - name: Smoke-test installed wheel outside checkout
+      run: |
+        SMOKE_ENV="$RUNNER_TEMP/django-graphex-wheel-smoke"
+        SMOKE_CWD="$RUNNER_TEMP/django-graphex-wheel-cwd"
+        uv venv "$SMOKE_ENV"
+        uv pip install --python "$SMOKE_ENV/bin/python" "${{ steps.distribution.outputs.wheel }}"
+        mkdir -p "$SMOKE_CWD"
+        cd "$SMOKE_CWD"
+        env -u PYTHONPATH "$SMOKE_ENV/bin/python" \
+          "$GITHUB_WORKSPACE/scripts/check_wheel_install.py" "$GITHUB_WORKSPACE"
+
+    - name: Audit prebuilt wheel dependencies
+      run: |
+        uv run --isolated --no-project --with 'pip>=25,<27' \
+          --with 'pip-audit>=2.10.1,<3' \
+          python scripts/release_audit.py "${{ steps.distribution.outputs.wheel }}"
+
+    - name: Generate checksums
+      run: |
+        cd dist
+        sha256sum \
+          "$(basename '${{ steps.distribution.outputs.wheel }}')" \
+          "$(basename '${{ steps.distribution.outputs.sdist }}')" \
+          > SHA256SUMS
+
+    - name: Upload immutable Python distribution
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: python-dist
+        path: dist/*
+        if-no-files-found: error
+
   publish:
-    needs: [ test, lint-and-security, coverage, postgresql, get-version ]
+    needs: [ test, lint-and-security, coverage, postgresql, get-version, release-artifact ]
     runs-on: ubuntu-latest
     # Publish only when a version tag is pushed, or when triggered manually.
     if: |
@@ -266,16 +310,20 @@ jobs:
       name: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging' }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      with:
-        fetch-depth: 0
-
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
         enable-cache: true
         cache-suffix: publish
+
+    - name: Download immutable Python distribution
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: python-dist
+        path: dist
+
+    - name: Verify distribution checksums
+      run: cd dist && sha256sum -c SHA256SUMS
 
     - name: Determine target repository
       id: target_repo
@@ -301,19 +349,16 @@ jobs:
         fi
         echo "Tag matches package version: $PKG_VERSION"
 
-    - name: Build package
-      run: uv build
-
     - name: Publish to PyPI
       if: steps.target_repo.outputs.repository == 'pypi'
-      run: uv publish --token ${{ secrets.PYPI_TOKEN }}
+      run: uv publish dist/*.whl dist/*.tar.gz --token ${{ secrets.PYPI_TOKEN }}
 
     - name: Publish to TestPyPI
       if: steps.target_repo.outputs.repository == 'testpypi'
-      run: uv publish --publish-url https://test.pypi.org/legacy/ --token ${{ secrets.TESTPYPI_TOKEN }}
+      run: uv publish dist/*.whl dist/*.tar.gz --publish-url https://test.pypi.org/legacy/ --token ${{ secrets.TESTPYPI_TOKEN }}
 
   create-release:
-    needs: [ publish, get-version ]
+    needs: [ publish, get-version, release-artifact ]
     runs-on: ubuntu-latest
     # Only cut a GitHub Release for a real version tag.
     if: |
@@ -359,6 +404,15 @@ jobs:
 
         **Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...$TAG_NAME
         EOF
+
+    - name: Download immutable Python distribution
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: python-dist
+        path: dist
+
+    - name: Verify distribution checksums
+      run: cd dist && sha256sum -c SHA256SUMS
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
