@@ -256,7 +256,7 @@ DJANGO_GRAPHEX = {
 | `MAX_QUERY_COST` | `None` | Reject queries whose estimated cost exceeds this (`CostLimitValidationRule`). `None` is the **only** way to disable the budget; `0` or a negative value raises `ImproperlyConfigured`. |
 | `EXPOSE_QUERY_COST` | `False` | Add `extensions.cost` (`requestedCost` / `maxCost`) to responses. Combine with `MAX_QUERY_COST=None` for a non-blocking observation mode. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Cost multiplier for a list field whose page size is unknown (no literal/variable value and no `MAX_PAGE_SIZE` cap). |
-| `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names treated as a list's page size when costing a field. |
+| `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names treated as a real list field's page size when costing a field. |
 
 See [Query Optimization](query-optimization.md) and [Security](security.md) for the depth/cost guides.
 

@@ -106,7 +106,9 @@ cost(field) = own_cost + multiplier × Σ cost(children)
   `first` / `last` argument), clamped to `0` at the low end and capped at
   `MAX_PAGE_SIZE`; `1` otherwise. A zero or negative page size is rejected at
   runtime, so it contributes no children — and it can never *subtract* cost
-  from a sibling field.
+  from a sibling field. Those argument names multiply only real GraphQL lists
+  and django-graphex list containers; a singular business field may use an
+  argument such as `limit` without being treated as a list.
 
 It follows fragments, so they can't be used to under-count.
 
@@ -132,7 +134,7 @@ DJANGO_GRAPHEX = {
 | `MAX_PAGE_SIZE` | `None` | Caps every list multiplier (also a pagination setting). |
 | `DEFAULT_PAGE_SIZE` | `None` | Fallback multiplier for an unbounded list when `MAX_PAGE_SIZE` is not set. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Last-resort multiplier when neither `MAX_PAGE_SIZE` nor `DEFAULT_PAGE_SIZE` is set; triggers a `RuntimeWarning`. |
-| `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a field's page size. |
+| `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a real list field's page size. |
 
 Declare per-type weights with `Meta.complexity`, so expensive types eat more of
 the budget:
