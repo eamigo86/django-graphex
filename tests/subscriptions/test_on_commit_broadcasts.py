@@ -467,6 +467,32 @@ def _arm_indexed_binding() -> Generator[SubscriptionBinding, None, None]:
     binding.unregister()
 
 
+def test_broadcast_wrapper_preserves_id_only_index_routing(
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+    _arm_indexed_binding: SubscriptionBinding,
+) -> None:
+    """Verify direct id-only broadcasts retain index-scoped routing.
+
+    Args:
+        captured_group_sends: Messages captured from the channel layer.
+        _arm_indexed_binding: Registered indexed subscription binding.
+    """
+    instance = HookModel(pk=7, text="indexed-val")
+    _arm_indexed_binding.broadcast("update", instance)
+
+    groups = {group for group, _ in captured_group_sends}
+    index = {"text": "indexed-val"}
+    assert groups == {
+        _IndexedDeleteSubscription._group_name("update"),
+        _IndexedDeleteSubscription._group_name("update", id=7),
+        _IndexedDeleteSubscription._group_name("update", index=index),
+        _IndexedDeleteSubscription._group_name("update", id=7, index=index),
+    }
+    assert all(
+        message["payload"]["data"] == {"id": 7} for _, message in captured_group_sends
+    )
+
+
 def test_committed_delete_indexed_subscription_emits_index_scoped_groups(
     captured_group_sends: list[tuple[str, dict[str, Any]]],
     _arm_indexed_binding: SubscriptionBinding,
