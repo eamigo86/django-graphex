@@ -191,11 +191,10 @@ class SubscriptionBinding:
             data_snapshot = None
 
         transaction.on_commit(
-            lambda action=action,
-            pk_snapshot=pk_snapshot,
-            index_snapshot=index_snapshot,
-            data_snapshot=data_snapshot: self._broadcast_snapshot(
-                action, pk_snapshot, index_snapshot, data_snapshot
+            lambda action=action, pk_snapshot=pk_snapshot, index_snapshot=index_snapshot, data_snapshot=data_snapshot: (
+                self._broadcast_snapshot(
+                    action, pk_snapshot, index_snapshot, data_snapshot
+                )
             )
         )
 

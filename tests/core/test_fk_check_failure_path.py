@@ -128,8 +128,7 @@ def test_happy_create_issues_no_fk_existence_select() -> None:
     assert ok, obj
     fk_probes = _fk_existence_probes(ctx.captured_queries, Author)
     assert not fk_probes, (
-        "Happy-path create must not issue an FK SELECT 1 probe; got: "
-        f"{fk_probes}"
+        f"Happy-path create must not issue an FK SELECT 1 probe; got: {fk_probes}"
     )
 
 

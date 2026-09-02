@@ -234,12 +234,14 @@ def test_create_then_update_preserves_each_signal_time_snapshot(
     assert coarse_messages["update"]["payload"]["data"]["text"] == "second"
 
     groups = {group for group, _ in sends}
-    assert _IndexedFullSaveSubscription._group_name(
-        "create", index={"text": "first"}
-    ) in groups
-    assert _IndexedFullSaveSubscription._group_name(
-        "update", index={"text": "second"}
-    ) in groups
+    assert (
+        _IndexedFullSaveSubscription._group_name("create", index={"text": "first"})
+        in groups
+    )
+    assert (
+        _IndexedFullSaveSubscription._group_name("update", index={"text": "second"})
+        in groups
+    )
 
 
 def test_create_then_delete_preserves_create_pk_snapshot(
@@ -262,8 +264,7 @@ def test_create_then_delete_preserves_create_pk_snapshot(
     assert create_messages
     assert all(message["pk"] == real_pk for message in create_messages)
     assert all(
-        message["payload"]["data"] == {"id": real_pk}
-        for message in create_messages
+        message["payload"]["data"] == {"id": real_pk} for message in create_messages
     )
 
 
