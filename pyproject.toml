@@ -50,6 +50,8 @@ dev = [
     "pytest-cov>=7.0.0,<8",
     "pytest-asyncio>=1.0,<2",
     "factory-boy>=3.3.0,<4",
+    # Optional model-field adapter, exercised only in development/integration.
+    "django-multiselectfield>=1.0,<2",
     # Subscriptions (optional extra) — needed to exercise the subscription suite
     "channels>=4.0,<5.0",
     "daphne>=4.0,<5.0",  # provides channels.testing helpers (WebsocketCommunicator)

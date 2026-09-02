@@ -18,8 +18,12 @@ These tests assert exactly those contracts.
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
 import pytest
 from django.db import models
+from django.test.utils import isolate_apps
 from graphql import (
     GraphQLEnumType,
     GraphQLList,
@@ -101,16 +105,23 @@ def test_output_choices_enum_values_are_raw() -> None:
 # (c) MultiSelectField -> GraphQLList(enum).                                   #
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
-def test_output_multiselect_choices_is_list_of_enum() -> None:
+def test_output_multiselect_choices_is_list_of_enum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Assert that a MultiSelectField choices field compiles to a list of enum.
 
     If this fails, a multi-select choices field would compile to a bare
     enum (or scalar) instead of a GraphQLList wrapping the enum type.
+
+    Args:
+        monkeypatch: Pytest fixture used to simulate an absent optional package.
     """
     from django_graphex.core.output_compiler import _to_graphql_field
 
-    # multiselectfield is an optional dependency; the converter detects it by
-    # class name when the package is absent. Mirror that with a local subclass.
+    # multiselectfield is an optional dependency; force the absent-package path
+    # so this contract is independent of the active test environment.
+    monkeypatch.setitem(sys.modules, "multiselectfield", None)
+
     class MultiSelectField(models.CharField):
         pass
 
@@ -126,6 +137,95 @@ def test_output_multiselect_choices_is_list_of_enum() -> None:
         f"MultiSelectField output must be a list, got {list_type!r}"
     )
     assert isinstance(_unwrap(list_type.of_type), GraphQLEnumType)
+
+
+@pytest.mark.parametrize("input_for", ["create", "update"])
+@pytest.mark.django_db
+@isolate_apps()
+def test_multiselect_subclass_is_list_enum_on_input_and_output(
+    monkeypatch: pytest.MonkeyPatch, input_for: str
+) -> None:
+    """Keep a renamed MultiSelectField subclass list-shaped everywhere.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the optional integration.
+        input_for: Generated CRUD input mode under test.
+    """
+
+    class MultiSelectField(models.CharField):
+        pass
+
+    module = ModuleType("multiselectfield")
+    module.MultiSelectField = MultiSelectField
+    monkeypatch.setitem(sys.modules, "multiselectfield", module)
+
+    class RenamedMultiSelectField(MultiSelectField):
+        pass
+
+    class MultiSelectItem(models.Model):
+        tags = RenamedMultiSelectField(
+            max_length=20, choices=[("a", "Alpha"), ("b", "Beta")]
+        )
+
+        class Meta:
+            app_label = "multiselect_test"
+
+    from django_graphex.core.output_compiler import _to_graphql_field
+    from django_graphex.types import DjangoInputObjectType
+
+    registry = Registry()
+    input_registry = registry
+    input_kind = input_for
+    field = MultiSelectItem._meta.get_field("tags")
+    output = _to_graphql_field(field, registry, graphene_registry=registry)
+
+    class MultiSelectItemInput(DjangoInputObjectType):
+        class Meta:
+            model = MultiSelectItem
+            registry = input_registry
+            input_for = input_kind
+
+    output_type = _unwrap(output["tags"].type)
+    input_type = _unwrap(
+        MultiSelectItemInput._meta.graphql_input_type.fields["tags"].type
+    )
+
+    assert isinstance(output_type, GraphQLList)
+    assert isinstance(_unwrap(output_type.of_type), GraphQLEnumType)
+    assert isinstance(input_type, GraphQLList)
+    assert isinstance(_unwrap(input_type.of_type), GraphQLEnumType)
+
+
+def test_multiselect_missing_dependency_inside_installed_package_is_not_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not use the fallback when an installed integration misses a dependency.
+
+    Args:
+        monkeypatch: Pytest fixture used to inject the broken integration.
+
+    Raises:
+        ModuleNotFoundError: Simulated and asserted by the test.
+    """
+    module = ModuleType("multiselectfield")
+
+    def __getattr__(name: str) -> object:
+        if name == "MultiSelectField":
+            raise ModuleNotFoundError(
+                "missing multiselectfield dependency",
+                name="multiselectfield_dependency",
+            )
+        raise AttributeError(name)
+
+    module.__getattr__ = __getattr__  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "multiselectfield", module)
+
+    from django_graphex.converter import is_multiselect_field
+
+    with pytest.raises(
+        ModuleNotFoundError, match="missing multiselectfield dependency"
+    ):
+        is_multiselect_field(object())
 
 
 # --------------------------------------------------------------------------- #

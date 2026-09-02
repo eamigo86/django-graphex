@@ -2099,7 +2099,7 @@ def _resolve_native_choices_input_fields(
     from django_graphex.core.input_compiler import ChoicesInputField
 
     from ._strconv import to_camel_case
-    from .converter import build_choices_enum_type
+    from .converter import build_choices_enum_type, is_multiselect_field
     from .utils import is_required
 
     is_create = input_for == "create"
@@ -2114,13 +2114,12 @@ def _resolve_native_choices_input_fields(
         enum_type = build_choices_enum_type(field, registry)
         if enum_type is None:
             continue
-        is_multiselect = type(field).__name__ == "MultiSelectField"
         specs.append(
             ChoicesInputField(
                 out_name=field.name,
                 alias=to_camel_case(field.name),
                 enum_type=enum_type,
-                is_list=is_multiselect,
+                is_list=is_multiselect_field(field),
                 required=is_create and is_required(field),
             )
         )
