@@ -48,7 +48,13 @@ from django_graphex.core import Mutation, ObjectType, field
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.views import GraphQLView
 
-_CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
+_CACHE_ON = {
+    "DJANGO_GRAPHEX": {
+        "CACHE_ACTIVE": True,
+        "CACHE_TIMEOUT": 60,
+        "CACHE_INVALIDATION_SCOPE": "identity",
+    }
+}
 
 #: How many candidate credentials to hash while looking for a bucket collision.
 #: Only has to comfortably exceed "_CACHE_VERSION_BUCKETS" for the birthday

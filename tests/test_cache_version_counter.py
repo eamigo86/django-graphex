@@ -444,14 +444,10 @@ class ColdKeyHealTest(TestCase):
             if k.startswith("_graphql_") and "cacheversion" not in k
         ]
         for key in response_keys:
-            # Key format: _graphql_{identity}_{version}_{hash}
-            # identity can be 'anon', 'u1', 't<hex>' etc. — split carefully.
-            # Strip the fixed prefix; last 64 chars are the sha256 hash.
-            without_prefix = key[len("_graphql_") :]
-            remainder = without_prefix[: -64 - 1]  # drop underscore before hash
-            # remainder is "{identity}_{version}" — split on last underscore.
-            last_underscore = remainder.rfind("_")
-            version_part = remainder[last_underscore + 1 :]
+            # v2 shape: _graphql_v2_{scope}_{version_namespace}_{version}_...
+            parts = key.split("_")
+            self.assertEqual(parts[2], "v2", key)
+            version_part = parts[5]
             self.assertNotEqual(
                 version_part,
                 "0",

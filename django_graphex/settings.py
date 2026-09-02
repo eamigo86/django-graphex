@@ -36,6 +36,9 @@ DEFAULTS = {
     "CLEAN_RESPONSE": False,  # strip null values from the response payload
     "CACHE_ACTIVE": False,  # enable per-request response caching in GraphQLView
     "CACHE_TIMEOUT": 300,  # response cache TTL in seconds (default 5 min)
+    # "global" invalidates every GraphQL response identity after a mutation;
+    # "identity" preserves the narrower 3.0 per-identity policy.
+    "CACHE_INVALIDATION_SCOPE": "global",
     # In-process bound (per LRU) for the parse+validate document cache. graphql-
     # core re-parses and re-validates the identical document on every request; a
     # small replayed document set makes both memoizable. The parse cache maps
@@ -211,6 +214,12 @@ LIMIT_MINIMUMS = {
     ),
 }
 
+#: Enumerated settings whose misspelling would silently select an undefined
+#: security/correctness policy if accepted verbatim.
+SETTING_CHOICES = {
+    "CACHE_INVALIDATION_SCOPE": frozenset({"global", "identity"}),
+}
+
 
 class _BaseAPISettings:
     """Read a namespaced Django setting with defaults and import strings.
@@ -276,6 +285,8 @@ class _BaseAPISettings:
             value = _perform_import(value, attr)
         if attr in LIMIT_MINIMUMS:
             _validate_limit(value, attr, self.setting_name)
+        if attr in SETTING_CHOICES:
+            _validate_choice(value, attr, self.setting_name)
         setattr(self, attr, value)
         return value
 
@@ -343,6 +354,27 @@ def _validate_limit(value: Any, key: str, setting_name: str) -> None:
     raise ImproperlyConfigured(
         "{}['{}'] = {!r} is below the minimum of {}, so it cannot mean what "
         "it says. {}".format(setting_name, key, value, minimum, remedy)
+    )
+
+
+def _validate_choice(value: Any, key: str, setting_name: str) -> None:
+    """Refuse a value outside an enumerated setting's supported policies.
+
+    Args:
+        value: The resolved setting value.
+        key: The setting key being read (a key of ``SETTING_CHOICES``).
+        setting_name: The Django setting namespace (for the message).
+
+    Raises:
+        ImproperlyConfigured: When ``value`` is not a supported choice.
+    """
+    choices = SETTING_CHOICES[key]
+    if isinstance(value, str) and value in choices:
+        return
+    raise ImproperlyConfigured(
+        "{}['{}'] = {!r} is invalid. Choose one of: {}.".format(
+            setting_name, key, value, ", ".join(sorted(choices))
+        )
     )
 
 

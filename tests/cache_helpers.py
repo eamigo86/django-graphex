@@ -123,6 +123,15 @@ minimal_cache_schema = DjangoGraphQLSchema(
 #: Override-settings dict for tests that require CACHE_ACTIVE=True.
 CACHE_ON = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 60}}
 
+#: Response caching with the 3.0 per-identity invalidation policy.
+CACHE_ON_IDENTITY = {
+    "DJANGO_GRAPHEX": {
+        "CACHE_ACTIVE": True,
+        "CACHE_TIMEOUT": 60,
+        "CACHE_INVALIDATION_SCOPE": "identity",
+    }
+}
+
 #: Override-settings dict for tests that need a longer CACHE_TIMEOUT (e.g.
 #: to exercise TTL-skew bugs where CACHE_TIMEOUT > backend default 300 s).
 CACHE_ON_LONG_TIMEOUT = {"DJANGO_GRAPHEX": {"CACHE_ACTIVE": True, "CACHE_TIMEOUT": 600}}

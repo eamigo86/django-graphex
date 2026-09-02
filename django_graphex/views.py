@@ -1162,12 +1162,12 @@ class BaseGraphQLView(View):
     def _cache_key_signature(self, request: Any) -> str:
         """Return the per-request segment folded into the response-cache key.
 
-        The base view returns the empty string, so its cache key is unchanged
-        (identity + version + body hash). Subclasses that serve a per-request
+        The base view returns the empty string, so its v2 cache key has no
+        signature segment. Subclasses that serve a per-request
         schema (see :meth:`_graphql_schema_for`) override this to return a token
         that varies with the served schema — otherwise two callers who share an
         identity partition but see DIFFERENT schemas could read each other's
-        cached response bodies. An empty return keeps the key byte-identical.
+        cached response bodies.
 
         Args:
             request: The incoming HTTP request.
@@ -1430,6 +1430,9 @@ DEFAULT_VALIDATION_RULES = (
 #: applies to the rest.
 _ANON_CACHE_IDENTITY = "anon"
 
+#: Shared counter namespace used by the default global invalidation policy.
+_GLOBAL_CACHE_VERSION_IDENTITY = "global"
+
 
 class GraphQLView(BaseGraphQLView):
     """Enhanced GraphQL view: response caching + depth/cost rules + cost payload.
@@ -1597,13 +1600,10 @@ class GraphQLView(BaseGraphQLView):
     #: treat a legitimately cached empty response as a miss.
     _CACHE_MISS = object()
 
-    #: Template for the namespace version counter cache key. ``{identity}`` is
-    #: substituted with the value returned by ``_cache_version_identity``, NOT
-    #: with ``cache_key_prefix`` itself: an AUTHENTICATED caller keeps its own
-    #: namespace, so a mutation by user A does not flush user B's cache, while
-    #: an anonymous caller is folded into one of ``_CACHE_VERSION_BUCKETS``
-    #: shared namespaces. Response entries are keyed by the FULL identity
-    #: either way — see ``_cache_version_identity`` for what bucketing spends.
+    #: Template for a namespace version-counter key. ``{identity}`` receives
+    #: the scope-selected version namespace: ``global`` by default, or the
+    #: identity/bucket selected by the 3.0-compatible ``identity`` policy.
+    #: Response entries carry the FULL identity under both policies.
     _CACHE_VERSION_KEY_TEMPLATE = "_graphql_cacheversion_{identity}"
 
     #: How many version namespaces an UNAUTHENTICATED caller can reach. The
@@ -1658,7 +1658,9 @@ class GraphQLView(BaseGraphQLView):
         to be unguessable, which it cannot be while it is derived from the
         identity it namespaces. A latency-sensitive token client should
         authenticate: an authenticated identity is not bucketed at all.
-        "tests/test_views_cache_bucket_invalidation.py" pins both halves.
+        This method is used only by ``CACHE_INVALIDATION_SCOPE='identity'``;
+        the default global scope does not expose caller-chosen counter names.
+        ``tests/test_views_cache_bucket_invalidation.py`` pins both halves.
 
         Args:
             request: The incoming HTTP request, read for its authentication
@@ -1679,6 +1681,23 @@ class GraphQLView(BaseGraphQLView):
         # Prefixed with the anon partition name so a bucket can never collide
         # with an authenticated ``u{pk}`` namespace.
         return f"{_ANON_CACHE_IDENTITY}{bucket}"
+
+    def _cache_version_namespace(
+        self, request: HttpRequest, identity: str, scope: str
+    ) -> str:
+        """Return the version-counter namespace selected by invalidation scope.
+
+        Args:
+            request: The incoming request, used by identity bucketing.
+            identity: The full response identity.
+            scope: The validated ``CACHE_INVALIDATION_SCOPE`` value.
+
+        Returns:
+            The shared global namespace, or the 3.0 identity/bucket namespace.
+        """
+        if scope == "global":
+            return _GLOBAL_CACHE_VERSION_IDENTITY
+        return self._cache_version_identity(request, identity)
 
     def _get_cache_version(self, _cache: Any, identity: str) -> str:
         """Return the current namespace version token for *identity*.
@@ -1718,7 +1737,7 @@ class GraphQLView(BaseGraphQLView):
         return str(version)
 
     def _bump_cache_version(self, _cache: Any, identity: str) -> None:
-        """Invalidate the issuing user's cached responses by advancing their version token.
+        """Invalidate a selected response namespace by advancing its version token.
 
         Callers MUST invoke this AFTER the mutation has been executed (see
         ``dispatch``): scheduling it beforehand made the deferral below inert,
@@ -1768,8 +1787,8 @@ class GraphQLView(BaseGraphQLView):
         Truly unexpected backend errors (e.g. connection failure) are not
         suppressed and propagate normally.
 
-        Only the requesting user's namespace is touched; other users' cache
-        entries carry a different identity prefix and are not affected.
+        The caller selects either the shared global namespace or an identity
+        namespace. No unrelated Django cache key is cleared in either mode.
 
         Args:
             _cache: The Django cache backend instance.
@@ -1837,15 +1856,16 @@ class GraphQLView(BaseGraphQLView):
         When "CACHE_ACTIVE" is True:
 
         * Cache keys are partitioned by user identity (see "cache_key_prefix") so
-          one user's cached response is never served to another user.
+          one user's cached response is never served to another user. Their v2
+          shape also records invalidation scope, counter namespace and version.
         * Mutations advance a namespace version counter instead of calling
           "cache.clear()", which would flush unrelated cache entries shared by
           other users or other cache clients. The counter is advanced AFTER the
           mutation has run, so a concurrent reader can never cache pre-mutation
-          data under the new version (issue #60a). Its namespace is bucketed for
-          identities an unauthenticated caller can vary, because the counter key
-          is permanent — see "_cache_version_identity". The response entry keeps
-          the FULL identity either way, so the isolation above is unaffected.
+          data under the new version (issue #60a). The default shared namespace
+          invalidates every GraphQL identity; the opt-in identity policy buckets
+          namespaces an unauthenticated caller can vary. Response entries keep
+          the FULL identity either way, so isolation is unaffected.
         * A request that would render GraphiQL (the view serves it and the client
           prefers HTML) bypasses the cache entirely, so an HTML page and the JSON
           answer for the same query never share a cache slot.
@@ -1887,10 +1907,13 @@ class GraphQLView(BaseGraphQLView):
 
         _cache = caches["default"]
         identity = self.cache_key_prefix(request)
-        # The response entry keeps the FULL identity; only the version counter's
-        # namespace is bucketed, because that key is permanent and an
-        # unauthenticated caller must not be able to choose its name.
-        version_identity = self._cache_version_identity(request, identity)
+        invalidation_scope = graphql_api_settings.CACHE_INVALIDATION_SCOPE
+        # The response entry keeps the FULL identity. The default version
+        # namespace is global; identity mode applies bounded bucketing because
+        # its permanent counter name can otherwise be caller-controlled.
+        version_identity = self._cache_version_namespace(
+            request, identity, invalidation_scope
+        )
 
         # Batch requests contain a list body — caching individual operations
         # inside a batch is not meaningful (each op may be different), and the
@@ -1944,18 +1967,24 @@ class GraphQLView(BaseGraphQLView):
             return self.super_call(request, *args, **kwargs)
 
         version = self._get_cache_version(_cache, version_identity)
-        # ``_cache_key_signature`` is empty on the base view (byte-identical to
-        # today) and, on ``AuthenticatedGraphQLView`` with ``PERMISSION_SCOPED_
+        # ``_cache_key_signature`` is empty on the base view and, on
+        # ``AuthenticatedGraphQLView`` with ``PERMISSION_SCOPED_
         # SCHEMA`` active, the caller's permission signature. Folding it in keeps
         # a low-permission caller from ever reading a high-permission caller's
         # cached body for the same query (their pruned schemas — and therefore
         # their responses — differ).
         signature = self._cache_key_signature(request)
-        cache_key = (
-            f"_graphql_{identity}_{version}_{signature}_{self.fetch_cache_key(request)}"
-            if signature
-            else f"_graphql_{identity}_{version}_{self.fetch_cache_key(request)}"
-        )
+        cache_key_parts = [
+            "_graphql_v2",
+            invalidation_scope,
+            version_identity,
+            version,
+            identity,
+        ]
+        if signature:
+            cache_key_parts.append(signature)
+        cache_key_parts.append(self.fetch_cache_key(request))
+        cache_key = "_".join(cache_key_parts)
         response = _cache.get(cache_key, self._CACHE_MISS)
 
         if response is self._CACHE_MISS:

@@ -21,15 +21,20 @@ The view uses Django's `"default"` cache backend.  Any backend Django supports
 Each cached entry is stored under a key of the form:
 
 ```
-_graphql_{identity}_{version}_{body_hash}
+_graphql_v2_{scope}_{version_identity}_{version}_{identity}_{body_hash}
 ```
 
 | Component | Source | Purpose |
 |-----------|--------|---------|
-| `_graphql_` | fixed prefix | Namespaces GraphQL entries inside a shared Django cache |
+| `_graphql_v2_` | fixed, versioned prefix | Namespaces GraphQL entries and prevents reuse of keys written by the 3.0 policy |
+| `{scope}` | `CACHE_INVALIDATION_SCOPE` | Records whether invalidation is `global` or `identity` |
+| `{version_identity}` | selected counter namespace | `global` by default; the identity/bucket namespace in legacy mode |
+| `{version}` | current counter value | Makes older responses unreachable after invalidation |
 | `{identity}` | `cache_key_prefix(request)` | Isolates responses by user identity (see below) |
-| `{version}` | version counter for the identity's **invalidation bucket** | Lets mutations invalidate a bucket's entries without a global flush |
 | `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of `request.body`; for GET requests (where the body is empty) the hash also incorporates the `query`, `variables`, and `operationName` query-string parameters | Distinguishes different queries / variable sets |
+
+`AuthenticatedGraphQLView` inserts its permission signature before the body
+hash when permission-scoped schemas are active.
 
 ---
 
@@ -57,22 +62,40 @@ identities — see
 
 ---
 
-## Mutation invalidation (scoped, not global)
+## Mutation invalidation
 
 When a mutation is detected, the view **increments a version counter** stored in
 the cache rather than calling `cache.clear()`.
 
-This has two important properties:
+By default, `CACHE_INVALIDATION_SCOPE="global"`: every GraphQL response identity
+reads the same version counter. A mutation from user A therefore makes cached
+queries for user B, anonymous callers and token callers unreachable. The
+response key still includes the full identity, so global **invalidation** never
+means global response sharing.
 
-1. **Only the issuing caller's invalidation bucket is invalidated.**  For an
-   authenticated user, and for the fully-anonymous partition, the bucket is that
-   identity alone — user B's cached reads are unaffected when user A sends a
-   mutation.  For a **token-only** identity the bucket is shared; see below.
-2. **Unrelated cache entries survive.**  Keys set by other parts of your
+Set `CACHE_INVALIDATION_SCOPE="identity"` to preserve the narrower 3.0 policy:
+
+```python
+DJANGO_GRAPHEX = {
+    "CACHE_ACTIVE": True,
+    "CACHE_INVALIDATION_SCOPE": "identity",
+}
+```
+
+Identity scope is appropriate only when mutations affect data private to the
+issuing identity. Shared models can otherwise remain stale for every other
+identity until their TTL expires.
+
+Both policies have two important properties:
+
+1. **Response isolation remains per identity.** A caller never receives another
+   caller's body, regardless of invalidation scope.
+2. **Unrelated cache entries survive.** Keys set by other parts of your
    application (sessions, page fragments, etc.) are not touched.
 
-### Bucketing for unauthenticated identities
+### Bucketing for unauthenticated identities in `identity` scope
 
+This subsection applies only when `CACHE_INVALIDATION_SCOPE="identity"`.
 The version counter is stored permanently (see
 [Version-counter key TTL](#version-counter-key-ttl)), and the `t{hash}` identity
 is derived from a **caller-supplied** `Authorization` header that nothing has
@@ -110,8 +133,8 @@ their exact namespace.
     consideration on a public token-only endpoint: put a request limit in front
     of your GraphQL view, or authenticate the client.
 
-If a token-only client is latency-sensitive, authenticate it: an authenticated
-identity gets its own counter back and is not bucketed at all.
+If a token-only client is latency-sensitive in identity scope, authenticate it:
+an authenticated identity gets its own counter and is not bucketed at all.
 
 ### Post-commit invalidation (TOCTOU safety)
 
