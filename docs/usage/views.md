@@ -42,19 +42,27 @@ same setting. Turn it off with `REQUIRE_CSRF_HEADER=False` — see
 
 ### Response caching and cache identity
 
-With `CACHE_ACTIVE` on, `GraphQLView` caches query responses (never mutations,
-never batches, never multipart, never a GraphiQL render). Every entry is
+With `CACHE_ACTIVE` on, `GraphQLView` caches eligible query responses (never
+mutations, batches, multipart, cookie-bearing queries or a GraphiQL render).
+Every entry is
 namespaced by a **cache identity** from `cache_key_prefix`:
 
 | Request | Identity |
 |---|---|
 | Authenticated | `u<pk>` |
 | Anonymous with an `Authorization` header | `t<sha256 of the header, 16 hex>` |
-| Anonymous with no credential | `anon` |
+| Anonymous with no credential or cookies | `anon` |
 
 Two callers with different identities never share a response entry, which is
 what keeps one caller's body from being served to another. Override
 `cache_key_prefix` to partition on something else (a session key, a tenant id).
+
+Cookie-bearing queries bypass the response cache by default. Anonymous does
+**not** imply public: session carts, tenants, locale and feature flags often live
+in cookies and are invisible to the default key. Override `should_cache_query`
+only when you either keep the stricter default or fold every contextual value
+into `cache_key_prefix` / `fetch_cache_key`. Cookie-bearing mutations still
+invalidate cached reads after their execution.
 
 Invalidation uses a **version counter**: a mutation advances the issuing caller's
 counter instead of calling `cache.clear()`, so it never flushes the whole cache.
