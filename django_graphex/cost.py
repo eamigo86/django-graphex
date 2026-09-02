@@ -221,6 +221,9 @@ class _CostAnalyzer:
 
     def _list_multiplier(self, node: FieldNode, field_def: Any) -> int:
         """Return the page-size multiplier for a (possibly list) field."""
+        if not self._is_list_field(field_def):
+            return 1
+
         max_page_size = _settings_value("MAX_PAGE_SIZE")
 
         size = self._page_size_argument(node)
@@ -229,9 +232,6 @@ class _CostAnalyzer:
             # never become a negative multiplier that subtracts sibling cost.
             size = max(size, 0)
             return min(size, max_page_size) if max_page_size else size
-
-        if not self._is_list_field(field_def):
-            return 1
 
         if max_page_size:
             return int(max_page_size)
@@ -271,9 +271,14 @@ class _CostAnalyzer:
             node_type = node_type.of_type
         if isinstance(node_type, GraphQLList):
             return True
-        # Library list wrappers aren't GraphQLList but expose a page-size arg.
-        args = getattr(field_def, "args", None) or {}
-        return any(name in args for name in self._pagination_args)
+        # A DjangoListObjectType is an object container (results + count), not a
+        # GraphQLList. Its native metadata identifies that wrapper explicitly;
+        # an arbitrary business field named ``limit`` must not imply list shape.
+        try:
+            meta = _native_gdx_meta(node_type)
+        except AttributeError:
+            return False
+        return bool(getattr(meta, "results_field_name", None))
 
     @staticmethod
     def _warn_unbounded() -> None:
