@@ -27,21 +27,21 @@ class GlobalInvalidationScopeTest(TestCase):
         cache.clear()
 
     def _mutation(self, user: User) -> None:
-        request = graphql_post(
-            self.factory, "mutation { doThing { ok } }", user=user
-        )
+        request = graphql_post(self.factory, "mutation { doThing { ok } }", user=user)
         with self.captureOnCommitCallbacks(execute=True):
             self.view(request)
 
     def _assert_query_reexecutes(self, user: User | None) -> None:
         original = GraphQLView.super_call
         calls = 0
+
         def counting_call(
             view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
         ) -> HttpResponse:
             nonlocal calls
             calls += 1
             return original(view, request, *args, **kwargs)
+
         with patch.object(GraphQLView, "super_call", counting_call):
             self.view(graphql_post(self.factory, "{ hello }", user=user))
         self.assertEqual(calls, 1)
@@ -59,23 +59,26 @@ class GlobalInvalidationScopeTest(TestCase):
             ("identity", "_graphql_v2_identity_u2_1_u2_"),
         )
         for scope, fragment in cases:
-            with self.subTest(scope=scope), self.settings(
-                DJANGO_GRAPHEX={
-                    "CACHE_ACTIVE": True,
-                    "CACHE_TIMEOUT": 60,
-                    "CACHE_INVALIDATION_SCOPE": scope,
-                }
+            with (
+                self.subTest(scope=scope),
+                self.settings(
+                    DJANGO_GRAPHEX={
+                        "CACHE_ACTIVE": True,
+                        "CACHE_TIMEOUT": 60,
+                        "CACHE_INVALIDATION_SCOPE": scope,
+                    }
+                ),
             ):
                 cache.clear()
                 stored: list[str] = []
                 original_set = cache.set
+
                 def record(key: str, value: Any, *args: Any, **kwargs: Any) -> Any:
                     stored.append(key)
                     return original_set(key, value, *args, **kwargs)
+
                 with patch.object(cache, "set", record):
-                    self.view(
-                        graphql_post(self.factory, "{ hello }", user=self.user_b)
-                    )
+                    self.view(graphql_post(self.factory, "{ hello }", user=self.user_b))
                 response_keys = [k for k in stored if k.startswith("_graphql_v2_")]
                 self.assertEqual(len(response_keys), 1)
                 self.assertIn(fragment, response_keys[0])

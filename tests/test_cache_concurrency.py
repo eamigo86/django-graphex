@@ -343,9 +343,7 @@ class BumpVsServeOrderingTest(TestCase):
 _COMMIT_TIME_VERSIONS: list[Any] = []
 
 #: The version-counter cache key used by the default global scope.
-_GLOBAL_VERSION_KEY = GraphQLView._CACHE_VERSION_KEY_TEMPLATE.format(
-    identity="global"
-)
+_GLOBAL_VERSION_KEY = GraphQLView._CACHE_VERSION_KEY_TEMPLATE.format(identity="global")
 
 
 class _ProbeQ(ObjectType):
