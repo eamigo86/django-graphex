@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import async_to_sync
@@ -166,33 +167,22 @@ class SubscriptionBinding:
         created: bool,
         **kwargs: Any,
     ) -> None:
-        # Capture the action and a snapshot of the pk before deferring.
-        # The instance is captured by the closure — its in-memory state is
-        # consistent at signal time, and the serializer reads only already-set
-        # attributes.  Deferring via on_commit guarantees the broadcast fires
-        # only after the surrounding transaction commits; if the transaction
-        # rolls back, the callback is discarded and subscribers receive no
-        # phantom notification.  When no transaction is open, on_commit runs
-        # the callback immediately (auto-commit behaviour is unchanged).
         action = "create" if created else "update"
-        transaction.on_commit(lambda: self.broadcast(action, instance))
+        self._defer_snapshot(action, instance)
 
     def _on_delete(self, sender: Any, instance: Model, **kwargs: Any) -> None:
-        # Snapshot the pk and (in serialize mode) the full payload *at signal
-        # time*, before deferring to on_commit.  Django nulls instance.pk at the
-        # end of Model.delete() — before the on_commit callback fires — so any
-        # code that reads instance.pk inside the deferred lambda would see None.
-        #
-        # Two things happen at signal time that are correct here:
-        #   * instance.pk is still set (the signal fires before the ORM clears it).
-        #   * Scalar fields are still present on the in-memory instance.
-        #   * M2M rows have already been cascade-deleted, so the payload
-        #     serialization returns empty M2M lists — acceptable for a delete notification.
-        #
-        # Note: post_delete fires while the DELETE is still inside the open
-        # transaction; the callback runs only after the transaction commits, so
-        # subscribers never receive phantom notifications for rolled-back deletes.
-        pk_snapshot = instance.pk
+        self._defer_snapshot("delete", instance)
+
+    def _defer_snapshot(self, action: str, instance: Model) -> None:
+        """Capture event state without retaining the mutable model instance."""
+        if get_channel_layer() is None:
+            transaction.on_commit(
+                lambda action=action: self._warn_missing_channel_layer(action)
+            )
+            return
+
+        pk_snapshot = deepcopy(instance.pk)
+        index_snapshot = deepcopy(self.subscription_cls._instance_index(instance))
         if self.subscription_cls._payload_is_full():
             data_snapshot: dict[str, Any] | None = (
                 self.subscription_cls._serialize_payload(instance)
@@ -201,35 +191,47 @@ class SubscriptionBinding:
             data_snapshot = None
 
         transaction.on_commit(
-            lambda: self._broadcast_delete(instance, pk_snapshot, data_snapshot)
+            lambda action=action,
+            pk_snapshot=pk_snapshot,
+            index_snapshot=index_snapshot,
+            data_snapshot=data_snapshot: self._broadcast_snapshot(
+                action, pk_snapshot, index_snapshot, data_snapshot
+            )
+        )
+
+    def _warn_missing_channel_layer(self, action: str) -> None:
+        """Log an event dropped because Channels is not configured."""
+        logger.warning(
+            "No channel layer configured; dropping %s notification for %s.",
+            action,
+            self.model_label,
         )
 
     # -- broadcast ----------------------------------------------------------
-    def _broadcast_delete(
+    def _broadcast_snapshot(
         self,
-        instance: Model,
+        action: str,
         pk_snapshot: Any,
+        index_snapshot: dict[str, Any] | None,
         data_snapshot: dict[str, Any] | None,
     ) -> None:
-        """Broadcast a delete notification using a pre-captured pk and payload.
+        """Broadcast pre-captured state after commit without a model instance.
 
-        Called from the on_commit callback registered by "_on_delete". All
-        pk-dependent values are derived from "pk_snapshot" (captured at signal
-        time) rather than from "instance.pk", which Django sets to "None"
-        during "Model.delete()" before the callback fires.
+        Every value comes from the signal-time snapshot, so a later save or
+        delete of the same Python object cannot rewrite an earlier event.
 
         Args:
-            instance: The (now pk-less) model instance — used only for index
-                field extraction via "_instance_index", which reads non-pk
-                fields and is therefore safe to call with a pk-less instance.
-            pk_snapshot: The primary key captured at post_delete signal time.
+            action: The create, update or delete action captured at signal time.
+            pk_snapshot: The primary key captured at signal time.
+            index_snapshot: The routing index captured at signal time.
             data_snapshot: Pre-serialized payload (non-None when
                 "payload_mode='full'"), or "None" for id-only mode.
         """
         channel_layer = get_channel_layer()
         if channel_layer is None:  # pragma: no cover - misconfiguration guard
             logger.warning(
-                "No channel layer configured; dropping delete notification for %s.",
+                "No channel layer configured; dropping %s notification for %s.",
+                action,
                 self.model_label,
             )
             return
@@ -243,20 +245,21 @@ class SubscriptionBinding:
             data = {self.model._meta.pk.name: pk_snapshot}
 
         payload = {
-            "action": "delete",
+            "action": action,
             "model": self.model_label,
             "data": data,
         }
 
         cls = self.subscription_cls
         group_names = [
-            cls._group_name("delete"),
-            cls._group_name("delete", id=pk_snapshot),
+            cls._group_name(action),
+            cls._group_name(action, id=pk_snapshot),
         ]
-        index = cls._instance_index(instance)
-        if index:
-            group_names.append(cls._group_name("delete", index=index))
-            group_names.append(cls._group_name("delete", id=pk_snapshot, index=index))
+        if index_snapshot:
+            group_names.append(cls._group_name(action, index=index_snapshot))
+            group_names.append(
+                cls._group_name(action, id=pk_snapshot, index=index_snapshot)
+            )
 
         for group_name in group_names:
             message = {
