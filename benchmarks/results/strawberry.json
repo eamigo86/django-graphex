@@ -12,7 +12,25 @@
     "platform": "macOS-26.6.2-arm64-arm-64bit",
     "cpu_count": 16
   },
-  "schema_import_ms": 98.0007,
+  "dataset": {
+    "authors": 1000,
+    "posts_per_author": 10,
+    "comments_per_post": 5
+  },
+  "provenance": {
+    "commit": "6b63005cc761e906a2ddb7f4a223d6e26dfb8afc",
+    "measurement_tree": "aad6d31c1532bdd235ccfb8207a24f2bca279520",
+    "delivery_base_commit": "4d595f1c4822d37a520a188892a943caa744f2ea",
+    "constraints_sha256": "741430d3404acf7500fbc89743f085490bcd8316c378faedbabc58d38e08d461"
+  },
+  "schema_import_ms": 98.6952,
+  "schema_rebuild_samples_ms": [
+    5.9372,
+    6.3666,
+    6.0542,
+    5.7294,
+    6.2665
+  ],
   "surface": {
     "Author": [
       "bio",
@@ -41,73 +59,64 @@
   },
   "ops": {
     "flat_list": {
-      "mean_ms": 2.0696,
-      "p50_ms": 1.9126,
-      "p95_ms": 2.5757,
-      "min_ms": 1.6196,
-      "stddev_ms": 1.0434,
+      "mean_ms": 1.7979,
+      "p50_ms": 1.6711,
+      "p95_ms": 2.0706,
+      "min_ms": 1.6006,
+      "stddev_ms": 0.8665,
       "iterations": 100,
       "sql_queries": 1
     },
     "nested": {
-      "mean_ms": 27.0915,
-      "p50_ms": 24.9494,
-      "p95_ms": 45.1222,
-      "min_ms": 23.4497,
-      "stddev_ms": 6.2439,
+      "mean_ms": 31.1985,
+      "p50_ms": 28.8277,
+      "p95_ms": 45.7148,
+      "min_ms": 28.0827,
+      "stddev_ms": 5.9941,
       "iterations": 100,
       "sql_queries": 3
     },
     "single": {
-      "mean_ms": 0.983,
-      "p50_ms": 0.9622,
-      "p95_ms": 1.0755,
-      "min_ms": 0.9227,
-      "stddev_ms": 0.0852,
+      "mean_ms": 1.1251,
+      "p50_ms": 0.9593,
+      "p95_ms": 1.1182,
+      "min_ms": 0.9172,
+      "stddev_ms": 1.3843,
       "iterations": 100,
       "sql_queries": 1
     },
     "filtered": {
-      "mean_ms": 2.2333,
-      "p50_ms": 2.1199,
-      "p95_ms": 3.0407,
-      "min_ms": 1.9522,
-      "stddev_ms": 0.3602,
+      "mean_ms": 2.0947,
+      "p50_ms": 1.986,
+      "p95_ms": 2.8779,
+      "min_ms": 1.91,
+      "stddev_ms": 0.2855,
       "iterations": 100,
       "sql_queries": 1
     },
     "create_comment": {
-      "mean_ms": 1.7822,
-      "p50_ms": 1.5508,
-      "p95_ms": 2.5025,
-      "min_ms": 1.3912,
-      "stddev_ms": 1.2752,
+      "mean_ms": 1.3375,
+      "p50_ms": 1.2425,
+      "p95_ms": 2.1215,
+      "min_ms": 1.1846,
+      "stddev_ms": 0.2749,
       "iterations": 100,
       "sql_queries": 8
     }
   },
-  "schema_rebuild_samples_ms": [
-    6.3032,
-    6.1252,
-    5.6729,
-    5.8733,
-    6.4422
-  ],
   "aggregation": {
     "runs": 3,
-    "ops": "median across runs of each statistic",
+    "ops": "median across runs of each timing statistic",
     "schema_import_ms": {
-      "reported": "median of the three runs",
+      "reported": "median",
       "samples": [
-        96.426,
-        98.0007,
-        101.5933
-      ],
-      "note": "Cold import of the library, its dependency tree and one schema build. run_all.sh warms every virtualenv before measuring any of them, which removed the bias that used to favour graphex (the seeding step runs under the graphex interpreter)."
+        94.2173,
+        98.6952,
+        103.4029
+      ]
     },
     "schema_rebuild_samples_ms": {
-      "reported": "the middle run's series, raw and in order",
-      "note": "A within-process DIAGNOSTIC, not a cross-library comparison. Re-executing the declarations perturbs each library's process state differently: django-graphex climbs across the series, ariadne is flat. Read it down one column only."
+      "reported": "middle import run's raw series"
     }
   }
 }
