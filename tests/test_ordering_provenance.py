@@ -286,8 +286,7 @@ class ServerDefaultOrderingTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create two authors whose hidden "bio" values order them.
 
-        Returns:
-            None.
+        Their names make the configured ordering observable in the response.
         """
         Author.objects.create(name="alpha", bio="b")
         Author.objects.create(name="beta", bio="a")
@@ -295,8 +294,7 @@ class ServerDefaultOrderingTests(TestCase):
     def test_configured_default_on_projected_away_column_still_serves(self) -> None:
         """A server-side default ordering must not be gated by the projection.
 
-        Returns:
-            None.
+        The response follows the operator-selected hidden-column order.
         """
         result = graphql_sync(
             prov_schema.graphql_schema,
@@ -312,8 +310,7 @@ class ServerDefaultOrderingTests(TestCase):
     def test_client_ordering_on_projected_away_column_is_still_rejected(self) -> None:
         """The allowlist still applies to the argument a client supplies.
 
-        Returns:
-            None.
+        A projected-away column remains unavailable for client ordering.
         """
         result = graphql_sync(
             prov_schema.graphql_schema,
@@ -325,8 +322,7 @@ class ServerDefaultOrderingTests(TestCase):
     def test_client_repeating_the_default_is_still_rejected(self) -> None:
         """Echoing the configured default back must not bypass the allowlist.
 
-        Returns:
-            None.
+        Provenance comes from the argument, even when its value matches.
         """
         result = graphql_sync(
             prov_schema.graphql_schema,
@@ -347,8 +343,7 @@ class DivergentAllowlistStampTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create one author with two posts of differing view counts.
 
-        Returns:
-            None.
+        The differing counts expose any accidental ordering by hidden views.
         """
         author = Author.objects.create(name="writer", bio="")
         Post.objects.create(title="low", author=author, views=1)
@@ -357,8 +352,7 @@ class DivergentAllowlistStampTests(TestCase):
     def test_hidden_column_is_not_orderable_when_the_node_registers_late(self) -> None:
         """A late-registered projecting node type must still gate the ordering.
 
-        Returns:
-            None.
+        The served node projection rejects its hidden views column.
         """
         result = graphql_sync(
             div_schema.graphql_schema,
@@ -383,8 +377,7 @@ class SharedPaginatorInstanceTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create two authors whose "bio" order differs from their name order.
 
-        Returns:
-            None.
+        Opposing orders expose allowlist leakage between the containers.
         """
         Author.objects.create(name="alpha", bio="z")
         Author.objects.create(name="beta", bio="a")
@@ -392,8 +385,7 @@ class SharedPaginatorInstanceTests(TestCase):
     def test_the_hiding_container_still_rejects_its_own_hidden_column(self) -> None:
         """The bio-hiding list must not inherit the other list's wider allowlist.
 
-        Returns:
-            None.
+        Its own projection rejects client ordering by biography.
         """
         result = graphql_sync(
             share_bio_schema.graphql_schema,
@@ -408,8 +400,7 @@ class SharedPaginatorInstanceTests(TestCase):
     def test_the_exposing_container_still_allows_that_same_column(self) -> None:
         """The name-hiding list must not inherit the other list's narrower allowlist.
 
-        Returns:
-            None.
+        Its own projection still permits client ordering by biography.
         """
         result = graphql_sync(
             share_name_schema.graphql_schema,
@@ -437,8 +428,7 @@ class ServerGeneratedTiebreakTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create one author with two posts inserted out of title order.
 
-        Returns:
-            None.
+        Their primary keys provide the deterministic fallback ordering.
         """
         author = Author.objects.create(name="writer", bio="")
         Post.objects.create(title="b", author=author, views=1)
@@ -447,8 +437,7 @@ class ServerGeneratedTiebreakTests(TestCase):
     def test_empty_client_ordering_falls_back_to_the_pk_without_raising(self) -> None:
         """An ordering argument that normalizes to nothing must not fail the page.
 
-        Returns:
-            None.
+        The paginator may safely substitute its generated primary-key tiebreak.
         """
         paginator = LimitOffsetGraphqlPagination(default_limit=10, max_limit=20)
         # What a child type that projects its pk away stamps: "id" is absent.
@@ -462,8 +451,7 @@ class ServerGeneratedTiebreakTests(TestCase):
     def test_a_real_client_term_outside_the_allowlist_still_raises(self) -> None:
         """Exempting the generated tiebreak must not exempt the argument itself.
 
-        Returns:
-            None.
+        A real client term outside the allowlist still raises an error.
         """
         paginator = LimitOffsetGraphqlPagination(default_limit=10, max_limit=20)
         paginator.ordering_allowed_attnames = {"title"}
