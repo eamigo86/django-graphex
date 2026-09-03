@@ -57,10 +57,13 @@ class NestedFilterCommentType(DjangoObjectType):
         filter_fields = {"body": ("exact", "icontains")}
 
     @filter_field(GraphQLString)
-    def search(cls, queryset: Any, info: Any, value: str) -> Any:
+    def search(
+        cls: type[NestedFilterCommentType], queryset: Any, info: Any, value: str
+    ) -> Any:
         """Filter comments whose body contains "value".
 
         Args:
+            cls: The object type class that owns the filter.
             queryset: The queryset being filtered.
             info: The GraphQL resolve info for the current request.
             value: The substring supplied by the caller.
@@ -89,10 +92,13 @@ class NestedFilterPostType(DjangoObjectType):
         filter_fields = {"title": ("exact", "icontains")}
 
     @filter_field(GraphQLString)
-    def search(cls, queryset: Any, info: Any, value: str) -> Any:
+    def search(
+        cls: type[NestedFilterPostType], queryset: Any, info: Any, value: str
+    ) -> Any:
         """Filter posts whose title contains "value".
 
         Args:
+            cls: The object type class that owns the filter.
             queryset: The queryset being filtered.
             info: The GraphQL resolve info for the current request.
             value: The substring supplied by the caller.

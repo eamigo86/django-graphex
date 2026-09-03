@@ -183,17 +183,15 @@ class TestDjangoModelTypeReservedNameCollision:
     def test_reserved_name_on_django_model_type_raises(
         self, reserved_name: str
     ) -> None:
-        """Ship-broken contract: defining a DjangoModelType with a
-        @filter_field whose name matches a reserved pagination/ordering
-        argument must raise ImproperlyConfigured at class-creation time.
+        """Require reserved filter names to fail during model-type creation.
 
         Args:
             reserved_name: The reserved argument name under test (parametrized
                 over "limit", "offset", "ordering", "page", "page_size").
 
-        Note: DjangoModelType does NOT accept 'registry' in Meta — use only the
-        options it explicitly recognises to avoid a false positive from
-        _check_unknown_options which runs before the reserved-name guard.
+        Notes:
+            DjangoModelType does not accept registry in Meta. Using only its
+            recognized options avoids failing before the reserved-name guard.
         """
 
         def _make_bad_type():
