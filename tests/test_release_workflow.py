@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/cicd.yaml"
+MANUAL_DOCS = ROOT / ".github/workflows/docs.yml"
 RELEASE_DOCS = ROOT / "docs/releasing.md"
 DOCS_CONFIG = ROOT / "zensical.yml"
 
@@ -75,3 +76,94 @@ def test_immutable_artifact_contract_is_published_in_the_docs() -> None:
         "must not rebuild",
     ):
         assert requirement in documentation
+
+
+def test_publish_waits_for_every_release_gate() -> None:
+    """Publication cannot bypass tests, packaging, docs, or example-project gates.
+
+    This test protects the corresponding regression contract.
+    """
+    publish = _job("publish")
+    needs_match = re.search(r"needs: \[([^]]+)]", publish)
+    assert needs_match
+    actual = {item.strip() for item in needs_match.group(1).split(",")}
+    assert actual == {
+        "test",
+        "base-install",
+        "lint-and-security",
+        "coverage",
+        "postgresql",
+        "docs-build",
+        "playground",
+        "release-artifact",
+        "get-version",
+    }
+
+
+def test_docs_are_built_before_publish_and_deployed_afterward() -> None:
+    """Pages deploys the documentation artifact already validated before PyPI.
+
+    This test protects the corresponding regression contract.
+    """
+    workflow = _workflow()
+    docs = _job("docs-build")
+    deploy = _job("deploy-docs")
+    assert workflow.index("  docs-build:") < workflow.index("  publish:")
+    assert "zensical build --clean" in docs
+    assert "actions/upload-pages-artifact@" in docs
+    assert "needs: [ publish, docs-build ]" in deploy
+    assert "actions/deploy-pages@" in deploy
+    assert "zensical build" not in deploy
+    assert "actions/checkout@" not in deploy
+
+
+def test_pages_deployment_exists_only_in_tag_release_workflow() -> None:
+    """The manual docs check cannot bypass successful tagged publication.
+
+    This test protects the corresponding regression contract.
+    """
+    manual = MANUAL_DOCS.read_text(encoding="utf-8")
+    assert "actions/deploy-pages@" not in manual
+    assert "actions/upload-pages-artifact@" not in manual
+    assert "name: docs-preview" in manual
+
+
+def test_manual_publish_is_testpypi_only_and_tags_are_production_only() -> None:
+    """Manual runs stay in staging while only a version tag can reach PyPI.
+
+    This test protects the corresponding regression contract.
+    """
+    workflow = _workflow()
+    dispatch = workflow.split("  workflow_dispatch:", 1)[1].split(
+        "\n\npermissions:", 1
+    )[0]
+    publish = _job("publish")
+    assert "inputs:" not in dispatch
+    assert "github.event.inputs" not in publish
+    assert (
+        "startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging'" in publish
+    )
+    assert re.search(
+        r"name: Publish to PyPI\n\s+if: startsWith\(github\.ref, 'refs/tags/v'\)",
+        publish,
+    )
+    assert re.search(
+        r"name: Publish to TestPyPI\n\s+if: github\.event_name == 'workflow_dispatch'",
+        publish,
+    )
+
+
+def test_tag_version_is_rejected_before_the_artifact_build() -> None:
+    """A mismatched tag fails in get-version before any releasable bytes exist.
+
+    This test protects the corresponding regression contract.
+    """
+    workflow = _workflow()
+    version = _job("get-version")
+    publish = _job("publish")
+    assert "GITHUB_REF_NAME#v" in version
+    assert "does not match pyproject.toml version" in version
+    assert "GITHUB_REF_NAME#v" not in publish
+    assert workflow.index("Verify tag matches the package version") < workflow.index(
+        "uv build"
+    )

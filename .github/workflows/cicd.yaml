@@ -14,15 +14,6 @@ on:
     # PRs targeting a release tracker branch get the same checks as PRs to main.
     - 'v*.*.*'
   workflow_dispatch:
-    inputs:
-      repository:
-        description: "Choose repository to publish"
-        required: true
-        default: "testpypi"
-        type: choice
-        options:
-        - testpypi
-        - pypi
 
 permissions:
   contents: write
@@ -236,6 +227,18 @@ jobs:
 
         echo "Detected version: $VERSION"
 
+    - name: Verify tag matches the package version
+      if: startsWith(github.ref, 'refs/tags/v')
+      env:
+        PACKAGE_VERSION: ${{ steps.get_version.outputs.version }}
+      run: |
+        TAG_VERSION="${GITHUB_REF_NAME#v}"
+        if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+          echo "::error::Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${PACKAGE_VERSION}."
+          exit 1
+        fi
+        echo "Tag matches package version: $PACKAGE_VERSION"
+
   release-artifact:
     needs: [ get-version ]
     runs-on: ubuntu-latest
@@ -299,8 +302,72 @@ jobs:
         path: dist/*
         if-no-files-found: error
 
+  docs-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      with:
+        enable-cache: true
+        cache-suffix: docs-build
+
+    - name: Install locked documentation dependencies
+      run: uv sync --frozen
+
+    - name: Set docs copyright year to the build year
+      run: |
+        sed -i -E "s/(Copyright &copy; )[0-9]{4}/\1$(date -u +%Y)/" zensical.yml
+
+    - name: Build documentation
+      run: uv run zensical build --clean -f zensical.yml
+
+    - name: Setup Pages for a tagged release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+
+    - name: Upload tagged documentation artifact
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+      with:
+        path: ./site
+
+  playground:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/playground
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      with:
+        enable-cache: true
+        cache-suffix: playground
+
+    - name: Run playground end-to-end tests
+      run: uv run --group test pytest -q --no-migrations
+
   publish:
-    needs: [ test, lint-and-security, coverage, postgresql, get-version, release-artifact ]
+    needs: [ test, base-install, lint-and-security, coverage, postgresql, docs-build, playground, release-artifact, get-version ]
     runs-on: ubuntu-latest
     # Publish only when a version tag is pushed, or when triggered manually.
     if: |
@@ -325,36 +392,12 @@ jobs:
     - name: Verify distribution checksums
       run: cd dist && sha256sum -c SHA256SUMS
 
-    - name: Determine target repository
-      id: target_repo
-      run: |
-        # A pushed tag publishes to PyPI; a manual run uses the chosen repo.
-        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-          REPO="${{ github.event.inputs.repository }}"
-        else
-          REPO="pypi"
-        fi
-
-        echo "repository=$REPO" >> $GITHUB_OUTPUT
-        echo "Publishing to: $REPO"
-
-    - name: Verify the tag matches the package version
-      if: startsWith(github.ref, 'refs/tags/v')
-      run: |
-        TAG_VERSION="${GITHUB_REF_NAME#v}"
-        PKG_VERSION="${{ needs.get-version.outputs.version }}"
-        if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-          echo "::error::Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${PKG_VERSION}."
-          exit 1
-        fi
-        echo "Tag matches package version: $PKG_VERSION"
-
     - name: Publish to PyPI
-      if: steps.target_repo.outputs.repository == 'pypi'
+      if: startsWith(github.ref, 'refs/tags/v')
       run: uv publish dist/*.whl dist/*.tar.gz --token ${{ secrets.PYPI_TOKEN }}
 
     - name: Publish to TestPyPI
-      if: steps.target_repo.outputs.repository == 'testpypi'
+      if: github.event_name == 'workflow_dispatch'
       run: uv publish dist/*.whl dist/*.tar.gz --publish-url https://test.pypi.org/legacy/ --token ${{ secrets.TESTPYPI_TOKEN }}
 
   create-release:
@@ -433,9 +476,8 @@ jobs:
         echo "🔗 https://github.com/${{ github.repository }}/releases/tag/v${{ needs.get-version.outputs.version }}"
 
   deploy-docs:
-    # Build and publish the documentation to GitHub Pages, but only after the
-    # package was successfully published to PyPI for this version tag.
-    needs: [ publish ]
+    # Deploy the artifact already built and validated before PyPI publication.
+    needs: [ publish, docs-build ]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -450,33 +492,6 @@ jobs:
       cancel-in-progress: false
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-      with:
-        enable-cache: true
-        cache-suffix: deploy-docs
-
-    - name: Install dependencies
-      run: uv sync --frozen
-
-    - name: Set docs copyright year to the build year
-      run: |
-        sed -i -E "s/(Copyright &copy; )[0-9]{4}/\1$(date -u +%Y)/" zensical.yml
-
-    - name: Build documentation
-      run: uv run zensical build --clean -f zensical.yml
-
-    - name: Setup Pages
-      uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
-
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
-      with:
-        path: ./site
-
     - name: Deploy to GitHub Pages
       id: deployment
       uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
