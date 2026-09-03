@@ -49,7 +49,7 @@ _POST_SUB_QUERY = (
 async def _sse_frames(response):
     """Iterate an SSE response's frames as text, dropping comment chunks.
 
-    The stream opens with a bare ``:`` comment line so the ASGI server flushes
+    The stream opens with a bare : comment line so the ASGI server flushes
     the status line and headers before the first event. A comment is not a
     frame, so tests that read frames skip it.
 
@@ -69,10 +69,10 @@ async def _sse_frames(response):
 def _fresh_channel_layer():
     """Reset the in-memory channel layer between tests (no group leakage).
 
-    The playground configures a single ``InMemoryChannelLayer`` (a process-wide
-    singleton returned by ``channels.layers.get_channel_layer()``). BOTH the
+    The playground configures a single InMemoryChannelLayer (a process-wide
+    singleton returned by channels.layers.get_channel_layer()). BOTH the
     subscribe side (the consumer / SSE source) and the produce side
-    (``SubscriptionBinding.broadcast`` via ``post_save``) resolve their layer
+    (SubscriptionBinding.broadcast via post_save) resolve their layer
     through that same call, so they already share one layer — no patching needed.
     We just clear its groups/queues before each test so a prior test's
     subscriber cannot receive this test's broadcast and vice-versa.

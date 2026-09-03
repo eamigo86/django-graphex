@@ -42,8 +42,8 @@ import pytest
 def _build_paginated_schema() -> tuple[object, str]:
     """Build a DjangoGraphQLSchema with limit/offset + cursor list fields.
 
-    Returns ``(schema, sdl)``. Uses a fresh schema-scoped registry pair so each
-    call can keep the stable container ``Meta.name`` values required by the SDL
+    Returns (schema, sdl). Uses a fresh schema-scoped registry pair so each
+    call can keep the stable container Meta.name values required by the SDL
     assertions without colliding through process-global type identities.
     """
     from graphql import print_schema
@@ -331,12 +331,12 @@ def _container_block(sdl: str, type_name: str) -> str:
 
 
 def _normalize_results_element(block: str) -> str:
-    """Replace the ``results(...): [<ElementType>]`` node-type name with a stable
-    ``[NODE]`` placeholder.
+    """Replace the results(...): [<ElementType>] node-type name with a stable
+    [NODE] placeholder.
 
     The element (node) type NAME is determined by the SHARED GLOBAL output
-    registry's prior state (it may render as ``BasicModelGenericType``,
-    ``LocalType``, etc. depending on which OTHER test registered ``BasicModel``'s
+    registry's prior state (it may render as BasicModelGenericType,
+    LocalType, etc. depending on which OTHER test registered BasicModel's
     node type first — the B5 / #1611-item-3 global-registry leak). S-page-7 does
     NOT change the element type; it controls the pagination CONTAINER shape
     (results ARGS + totalCount + pageInfo + CursorPageInfo). Normalizing the

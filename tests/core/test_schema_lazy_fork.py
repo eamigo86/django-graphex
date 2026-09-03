@@ -44,11 +44,11 @@ import pytest  # noqa: E402
 def _isolate_global_registries():
     """Snapshot + restore the process-global output registries around each test.
 
-    These tests intentionally declare THROWAWAY ``DjangoObjectType`` /
-    ``DjangoListObjectType`` subclasses (in custom registries) to build forked
-    schemas. A ``DjangoObjectType`` class-def writes its instance into the
+    These tests intentionally declare THROWAWAY DjangoObjectType /
+    DjangoListObjectType subclasses (in custom registries) to build forked
+    schemas. A DjangoObjectType class-def writes its instance into the
     process-global shared output registry (last-wins) and appends to the global
-    ``_gdx_output_registry`` app-ready compile list. Without cleanup these
+    _gdx_output_registry app-ready compile list. Without cleanup these
     throwaway types would leak into LATER tests' default-pair schema builds and
     cause spurious cross-test duplicate-name collisions (the #1590 global
     contamination at full-suite scale). Snapshot the global state before the test
@@ -78,16 +78,16 @@ def _isolate_global_registries():
 def _build_schema_over_post(*, type_name_author: str, type_name_post: str):
     """Build a fresh (graphene Registry + forked SchemaRegistries) schema.
 
-    Declares an ``Author`` + ``Post`` (Post has an FK ``author`` -> Author, a
-    genuine relation field) in a brand-new graphene ``Registry`` AND a brand-new
-    NON-default ``SchemaRegistries`` pair, then builds a ``DjangoGraphQLSchema``
-    bound to that pair. Returns ``(schema, AuthorType, PostType, pair)``.
+    Declares an Author + Post (Post has an FK author -> Author, a
+    genuine relation field) in a brand-new graphene Registry AND a brand-new
+    NON-default SchemaRegistries pair, then builds a DjangoGraphQLSchema
+    bound to that pair. Returns (schema, AuthorType, PostType, pair).
 
-    The SAME ``type_name_*`` are used by BOTH callers, so the two schemas declare
+    The SAME type_name_* are used by BOTH callers, so the two schemas declare
     same-NAMED types over the same MODELS in distinct registries — exactly the
     cross-schema duplicate-name scenario B5 must make coexist.
 
-    v2.0: the root is a native ``django_graphex.ObjectType`` (the graphene-root
+    v2.0: the root is a native django_graphex.ObjectType (the graphene-root
     compile capability was removed, decision #1603).
     """
     from django_graphex.core import ObjectType as _NativeRoot
@@ -134,9 +134,9 @@ def _build_schema_over_post(*, type_name_author: str, type_name_post: str):
 
 
 def _invalidate_relation_caches(schema) -> None:
-    """Force every object type's lazy ``fields`` thunk to re-evaluate.
+    """Force every object type's lazy fields thunk to re-evaluate.
 
-    graphql-core's ``GraphQLObjectType.fields`` is a ``@cached_property``; the
+    graphql-core's GraphQLObjectType.fields is a @cached_property; the
     native root compiler warms it at BUILD time, which masks the cross-schema
     relation leak (a thunk caches the CORRECT instance before a later schema
     overwrites the global slot). Dropping the cache forces the thunk to

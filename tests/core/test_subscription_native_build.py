@@ -47,11 +47,11 @@ pytestmark = pytest.mark.skipif(
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
 class _BlockGraphene:
-    """A ``sys.meta_path`` finder that raises when graphene is (re-)imported.
+    """A sys.meta_path finder that raises when graphene is (re-)imported.
 
-    Installed AFTER graphene is purged from ``sys.modules`` so any fresh
-    ``import graphene`` (or ``from graphene...``) during the guarded block raises
-    ``ModuleNotFoundError`` — proving the guarded code path does not import
+    Installed AFTER graphene is purged from sys.modules so any fresh
+    import graphene (or from graphene...) during the guarded block raises
+    ModuleNotFoundError — proving the guarded code path does not import
     graphene.
     """
 

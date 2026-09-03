@@ -501,9 +501,9 @@ print("ZERO_GRAPHENE_GATE_OK")
 def _run_gate_subprocess() -> subprocess.CompletedProcess:
     """Run the zero-graphene full-runtime exercise in a clean subprocess.
 
-    A fresh process guarantees a pristine ``sys.modules`` and an isolated global
+    A fresh process guarantees a pristine sys.modules and an isolated global
     output registry (sidestepping #1611 item 3), so the
-    ``'graphene' not in sys.modules`` assertions are trustworthy.
+    'graphene' not in sys.modules assertions are trustworthy.
     """
     env = dict(os.environ)
     env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
