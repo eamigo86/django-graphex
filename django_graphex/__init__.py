@@ -21,11 +21,11 @@ from importlib.metadata import PackageNotFoundError, version
 
 
 def _version_from_pyproject() -> str:
-    """Read the project version straight from ``pyproject.toml``.
+    """Read the project version straight from pyproject.toml.
 
     Used only as a fallback for source checkouts that were never installed via
-    pip (build metadata absent, but ``pyproject.toml`` present in the tree).
-    Never used for an installed package — ``pyproject.toml`` is not shipped in
+    pip (build metadata absent, but pyproject.toml present in the tree).
+    Never used for an installed package — pyproject.toml is not shipped in
     the wheel.
     """
     import pathlib
