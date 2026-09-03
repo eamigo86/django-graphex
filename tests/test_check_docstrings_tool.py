@@ -43,6 +43,25 @@ def _load_checker() -> ModuleType:
 checker = _load_checker()
 
 
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run a deterministic Git command in a temporary repository.
+
+    Args:
+        repo: Repository working directory.
+        args: Git arguments after the executable name.
+
+    Returns:
+        result: The successful completed process.
+    """
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def codes_for(
     source: str,
     filename: str = "sample.py",
@@ -747,6 +766,132 @@ def test_check_file_read_failure_is_fail_closed(
 
     assert [violation.code for violation in violations] == ["DOC902"]
     assert "source read failure" in violations[0].message
+
+
+def test_ratchet_module_owner_requires_a_docstring_line_change() -> None:
+    """Select module debt only when its own docstring range changes.
+
+    A change to an ordinary top-level statement must not select the module.
+    """
+    source = '"""Module with `legacy` debt."""\n\nvalue = 1\n'
+
+    assert checker.check_content_source(source, changed_lines={3}) == []
+    violations = checker.check_content_source(source, changed_lines={1})
+    assert [(item.code, item.lineno) for item in violations] == [("DOC201", 1)]
+
+
+def test_cli_diff_ratchet_covers_touched_and_new_owners(tmp_path: Path) -> None:
+    """The Git ratchet checks exact owners and fails closed on new bad files.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.name", "Docstring Tests")
+    _git(repo, "config", "user.email", "tests@example.invalid")
+
+    original = (
+        '"""Module with `untouched` debt."""\n\n\n'
+        "def _untouched() -> int:\n"
+        '    """Return `untouched` debt."""\n'
+        "    return 0\n\n\n"
+        "def _private() -> int:\n"
+        '    """Return `private` debt."""\n'
+        "    return 1\n\n\n"
+        "def outer() -> int:\n"
+        '    """Return `outer` debt."""\n'
+        "    def nested() -> int:\n"
+        '        """Return `nested` debt."""\n'
+        "        return 2\n"
+        "    return 3\n\n\n"
+        "class Container:\n"
+        '    """Hold `class` debt."""\n'
+        "    value = 4\n\n"
+        "    def __str__(self) -> str:\n"
+        '        """Return `dunder` debt."""\n'
+        '        return "5"\n'
+    )
+    legacy = repo / "legacy.py"
+    legacy.write_text(original)
+    deleted = repo / "deleted.py"
+    deleted.write_text('"""Deleted `legacy` debt."""\n')
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "test: add legacy debt")
+    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    updated = (
+        original.replace("return 1", "return 10")
+        .replace("return 2", "return 20")
+        .replace("return 3", "return 30")
+        .replace("value = 4", "value = 40")
+        .replace('return "5"', 'return "50"')
+    )
+    legacy.write_text(updated)
+    deleted.unlink()
+    new_file = repo / "new.py"
+    new_file.write_text(
+        '"""New module."""\n\n\ndef _new() -> None:\n'
+        '    """Contain `new` debt."""\n'
+        "    return None\n"
+    )
+    invalid = repo / "invalid.py"
+    invalid.write_text("def broken(:\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "test: change selected owners")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), ".", "--diff-base", base],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+
+    expected_lines = [
+        lineno
+        for lineno, line in enumerate(updated.splitlines(), start=1)
+        if line.lstrip().startswith(
+            (
+                "def _private",
+                "def outer",
+                "def nested",
+                "class Container",
+                "def __str__",
+            )
+        )
+    ]
+    assert result.returncode == 1
+    assert result.stdout.count(": DOC201 ") == 6
+    for lineno in expected_lines:
+        assert f"legacy.py:{lineno}: DOC201" in result.stdout
+    assert "new.py:4: DOC201" in result.stdout
+    assert "invalid.py:1: DOC901 source parse failure" in result.stdout
+    assert "legacy.py:1: DOC201" not in result.stdout
+    assert "legacy.py:4: DOC201" not in result.stdout
+    assert "deleted.py" not in result.stdout
+
+
+def test_cli_diff_failure_is_fail_closed() -> None:
+    """An invalid diff base produces DOC903 and a non-zero CLI exit.
+
+    The ratchet cannot silently pass when Git cannot resolve its comparison.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            ".",
+            "--diff-base",
+            "definitely-not-a-ref",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "<diff>:1: DOC903 diff inspection failure" in result.stdout
 
 
 if __name__ == "__main__":
