@@ -46,19 +46,17 @@ class TestTheRunningProcessOwnsItsCoverageDataFile:
     """
 
     def test_the_data_file_is_not_at_the_repo_root(self) -> None:
-        """A repo-root data file is what makes a sibling run a collision.
+        """Keep coverage data outside the repository root.
 
-        Returns:
-            None.
+        A root-level data file lets sibling test runs collide.
         """
         data_file = Path(os.environ["COVERAGE_FILE"])
         assert data_file.parent != _REPO_ROOT
 
     def test_the_directory_carries_this_process_id(self) -> None:
-        """Two concurrent runs therefore sweep two different directories.
+        """Record the current process ID in the coverage directory.
 
-        Returns:
-            None.
+        Concurrent runs therefore sweep different directories.
         """
         data_file = Path(os.environ["COVERAGE_FILE"])
         assert str(os.getpid()) in data_file.parent.name
@@ -73,10 +71,9 @@ class TestOwnershipIsCheckedAgainstTheCurrentProcess:
     """
 
     def test_an_inherited_value_is_replaced(self) -> None:
-        """A child pytest must not write into its parent's directory.
+        """Replace a coverage path inherited from a parent process.
 
-        Returns:
-            None.
+        A child pytest must not write into its parent's directory.
         """
         other = os.getpid() + 1
         parent = f"/tmp/django-graphex-coverage-{other}/.coverage"  # noqa: S108
@@ -87,10 +84,9 @@ class TestOwnershipIsCheckedAgainstTheCurrentProcess:
         assert environ[OWNER_ENV] == str(os.getpid())
 
     def test_this_processs_own_value_is_kept(self) -> None:
-        """Re-entering the helper must not mint a second directory.
+        """Retain the coverage path owned by the current process.
 
-        Returns:
-            None.
+        Re-entering the helper must not mint a second directory.
         """
         environ = dict(os.environ)
         assert (
@@ -103,9 +99,6 @@ class TestOwnershipIsCheckedAgainstTheCurrentProcess:
 
         It carries no owner stamp, which is what tells it apart from an
         inherited one.
-
-        Returns:
-            None.
         """
         environ = {"COVERAGE_FILE": "/tmp/operator-chose-this"}  # noqa: S108
         assert isolate_coverage_data_file(environ, os.getpid()) is None
