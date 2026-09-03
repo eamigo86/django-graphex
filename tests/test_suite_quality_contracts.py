@@ -6,8 +6,13 @@ from pathlib import Path
 TESTS_ROOT = Path(__file__).parent
 RETIRED_DOCSTRING_RATCHETS = frozenset(
     {
+        Path("test_docstring_benchmark_app.py"),
         Path("test_docstring_benchmark_ariadne.py"),
         Path("test_docstring_benchmark_graphene.py"),
+        Path("test_docstring_benchmark_graphex.py"),
+        Path("test_docstring_benchmark_harness.py"),
+        Path("test_docstring_benchmark_strawberry.py"),
+        Path("test_docstring_playground.py"),
     }
 )
 
