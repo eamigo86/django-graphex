@@ -45,7 +45,7 @@ def _info() -> SimpleNamespace:
 def _fk_existence_probes(
     queries: list[dict[str, str]], related_model: type
 ) -> list[str]:
-    """Return Django ``QuerySet.exists()`` probes for a related model pk."""
+    """Return Django QuerySet.exists() probes for a related model pk."""
     table = connection.ops.quote_name(related_model._meta.db_table)
     pk_column = connection.ops.quote_name(related_model._meta.pk.column)
     return [

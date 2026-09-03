@@ -36,11 +36,11 @@ import pytest
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
 class _BlockGraphene:
-    """A ``sys.meta_path`` finder that raises when graphene is (re-)imported.
+    """A sys.meta_path finder that raises when graphene is (re-)imported.
 
-    Installed AFTER graphene is purged from ``sys.modules`` so any fresh
-    ``import graphene`` (or ``from graphene...``) during the guarded block raises
-    ``ModuleNotFoundError`` — proving the guarded code path does not import
+    Installed AFTER graphene is purged from sys.modules so any fresh
+    import graphene (or from graphene...) during the guarded block raises
+    ModuleNotFoundError — proving the guarded code path does not import
     graphene.
     """
 
@@ -60,14 +60,14 @@ class _BlockGraphene:
 
 
 def _purge_graphene_modules() -> dict:
-    """Remove graphene from ``sys.modules``; return the purged modules.
+    """Remove graphene from sys.modules; return the purged modules.
 
-    The caller MUST restore the returned mapping via ``sys.modules.update(...)``
-    in a ``finally`` block. Leaving graphene purged would poison the SHARED
+    The caller MUST restore the returned mapping via sys.modules.update(...)
+    in a finally block. Leaving graphene purged would poison the SHARED
     graphene module identity for the rest of the suite — a later lazily-built
-    graphene subclass (e.g. ``GenericPaginationField``) would subclass a FRESH
+    graphene subclass (e.g. GenericPaginationField) would subclass a FRESH
     graphene module while a sibling test imports a different one, breaking
-    ``issubclass`` (the #1611 / B5 harness-fragility trap).
+    issubclass (the #1611 / B5 harness-fragility trap).
     """
     saved = {
         name: mod
@@ -80,7 +80,7 @@ def _purge_graphene_modules() -> dict:
 
 
 def _arg_sdl(arg) -> str:
-    """Render a single ``GraphQLArgument`` to its SDL fragment.
+    """Render a single GraphQLArgument to its SDL fragment.
 
     Wraps the arg in a throwaway query field and extracts the parenthesised
     arg fragment so the comparison is purely the arg type + default rendering.

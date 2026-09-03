@@ -24,16 +24,16 @@ import pytest
 
 
 def _make_django_type(name: str, base: type, meta_attrs: dict, **extra) -> type:
-    """Build a ``DjangoObjectType`` / ``DjangoListObjectType`` subclass dynamically.
+    """Build a DjangoObjectType / DjangoListObjectType subclass dynamically.
 
-    S6b re-parented these types onto the native (Pydantic ``ModelMetaclass``)
-    base, so the bare ``type(name, (Base,), {"Meta": type("Meta", (), attrs)})``
-    idiom now crashes: pydantic's ``inspect_namespace`` reads
-    ``namespace['__module__']`` (KeyError when absent) and only ignores a nested
-    ``Meta`` class when ``Meta.__qualname__.startswith(f"{namespace['__qualname__']}.")``.
-    The 3-arg ``type()`` form does NOT auto-inject ``__module__`` / ``__qualname__``
-    (unlike a real ``class`` statement), so we inject them and re-stamp the nested
-    ``Meta`` qualname — the same fix ``base_types.factory_type`` applies in prod.
+    S6b re-parented these types onto the native (Pydantic ModelMetaclass)
+    base, so the bare type(name, (Base,), {"Meta": type("Meta", (), attrs)})
+    idiom now crashes: pydantic's inspect_namespace reads
+    namespace['__module__'] (KeyError when absent) and only ignores a nested
+    Meta class when Meta.__qualname__.startswith(f"{namespace['__qualname__']}.").
+    The 3-arg type() form does NOT auto-inject __module__ / __qualname__
+    (unlike a real class statement), so we inject them and re-stamp the nested
+    Meta qualname — the same fix base_types.factory_type applies in prod.
     """
     meta = type("Meta", (), meta_attrs)
     meta.__qualname__ = f"{name}.Meta"
@@ -49,9 +49,9 @@ def _make_django_type(name: str, base: type, meta_attrs: dict, **extra) -> type:
 def _build_native_nested_schema(pagination=None):
     """Compile a native GraphQLSchema: authors -> posts (nested paginated list).
 
-    Returns a ``graphql.GraphQLSchema`` assembled by ``compile_native_root``
-    (NOT graphene.Schema). The ``posts`` field is a
-    ``DjangoNestedListObjectField`` over the reverse FK ``Author.posts``.
+    Returns a graphql.GraphQLSchema assembled by compile_native_root
+    (NOT graphene.Schema). The posts field is a
+    DjangoNestedListObjectField over the reverse FK Author.posts.
     """
     from graphql import GraphQLSchema
 
@@ -100,7 +100,7 @@ def _build_native_nested_schema(pagination=None):
 
 
 def _seed(num_authors=3, posts_each=8):
-    """Create ``num_authors`` authors each with ``posts_each`` posts."""
+    """Create num_authors authors each with posts_each posts."""
     from tests.models import Author, Post
 
     authors = []

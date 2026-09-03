@@ -20,7 +20,7 @@ from django_graphex.subscriptions.transports.sse import subscription_sse_view
 
 
 def _build_native_schema():
-    """Assemble a native subscription schema (a ``post`` SubscriptionField)."""
+    """Assemble a native subscription schema (a post SubscriptionField)."""
     from graphql import GraphQLBoolean
 
     from django_graphex.core import ObjectType, field
