@@ -1777,38 +1777,38 @@ def _nested_input_perms(
     """Return the permissions a parent's nested input field for a child requires.
 
     It is the composite default for the verbs the nested surface actually
-    enables, and NOT simply ``required_perms_for(child, input_for)``: a nested
-    payload's ``id`` is OPTIONAL on an UPDATE input, so omitting it CREATES a
+    enables, and NOT simply required_perms_for(child, input_for): a nested
+    payload's id is OPTIONAL on an UPDATE input, so omitting it CREATES a
     child row. Stamping the parent's verb alone left a caller who holds
-    ``change_child`` but not ``add_child`` with the child's own create root
+    change_child but not add_child with the child's own create root
     pruned away while the identical create stayed reachable through the parent's
     update payload -- the same front-door / back-door shape the stamp exists to
-    close. The CREATE input carries no ``id`` at all, so it stays a create
+    close. The CREATE input carries no id at all, so it stays a create
     surface only.
 
-    The ``required_perms`` of every host that SERVES one of those verbs is then
+    The required_perms of every host that SERVES one of those verbs is then
     UNIONED onto that default, never substituted for it. The override can
     therefore only ever ADD a requirement, which is what makes it safe in both
     directions. Honouring it as a REPLACEMENT read a READ label as a licence to
-    WRITE: an ordinary read host declaring ``required_perms =
-    ["app.view_child"]``, the most common shape there is, collapsed the nested
+    WRITE: an ordinary read host declaring required_perms =
+    ["app.view_child"], the most common shape there is, collapsed the nested
     write stamp to a view permission. Ignoring it outright was the mirror image:
-    a WRITE host declaring a stricter label (say ``["app.manage_child"]``) never
-    reached the nested surface, so a caller holding only ``add_child`` wrote
+    a WRITE host declaring a stricter label (say ["app.manage_child"]) never
+    reached the nested surface, so a caller holding only add_child wrote
     child rows through the parent that the child's own root -- pruned away from
     that caller's schema -- refuses.
 
     The label follows the same operation rule the allowance axis follows (see
-    ``nested.hosts_serving``): a host that does not generate the verb the nested
+    nested.hosts_serving): a host that does not generate the verb the nested
     field enables has no say over it, so a delete-only host's destructive label
     no longer deletes the nested CREATE field for a caller who may legitimately
     write the child.
 
     This runs LAZILY, in the parent input's field thunk, from the same host list
-    and at the same moment as the projection in ``nested_child_input``. Resolved
+    and at the same moment as the projection in nested_child_input. Resolved
     eagerly at the parent's class-definition time it read a DIFFERENT host list
     than the projection did: a child host declared after the parent had its
-    ``exclude_fields`` honoured and its ``required_perms`` silently dropped,
+    exclude_fields honoured and its required_perms silently dropped,
     and the late-host guard -- which keys off the thunk-time watermark -- never
     fired for it.
 
@@ -1842,22 +1842,22 @@ def _resolve_native_nested_input_fields(
     input_for: str,
     nested_fields: Any,
 ) -> tuple[Any, ...]:
-    """Resolve ``Meta.nested_fields`` into native nested object-input specs.
+    """Resolve Meta.nested_fields into native nested object-input specs.
 
-    Mirrors the legacy graphene nested converters (``convert_*`` with
-    ``nested_field=True``) on the native input path: each ``{field: ChildModel}``
-    entry becomes a ``NestedInputField`` wrapping the CHILD model's compiled
-    ``GraphQLInputObjectType`` as built FOR THIS PARENT (see
-    ``nested_child_input``). Relation kind decides the shape exactly as graphene
+    Mirrors the legacy graphene nested converters (convert_* with
+    nested_field=True) on the native input path: each {field: ChildModel}
+    entry becomes a NestedInputField wrapping the CHILD model's compiled
+    GraphQLInputObjectType as built FOR THIS PARENT (see
+    nested_child_input). Relation kind decides the shape exactly as graphene
     did:
 
-    * forward FK / reverse-O2O (to-one) -> single ``<Child>`` object input,
-    * M2M / reverse-FK (to-many) -> ``[<Child>!]`` list input.
+    * forward FK / reverse-O2O (to-one) -> single <Child> object input,
+    * M2M / reverse-FK (to-many) -> [<Child>!] list input.
 
     The child input type is BUILT LAZILY (via a thunk) inside the parent's own
-    ``fields`` thunk, so a self-referential nested model
-    (``nested_fields={"children": Self}``) terminates: the child is built with
-    EMPTY ``nested_fields`` (its own relation stays the scalar ``[ID!]``
+    fields thunk, so a self-referential nested model
+    (nested_fields={"children": Self}) terminates: the child is built with
+    EMPTY nested_fields (its own relation stays the scalar [ID!]
     surface), so no unbounded recursion.
 
     Args:
@@ -1865,10 +1865,10 @@ def _resolve_native_nested_input_fields(
         registry: The active type registry (it owns the child-input memo).
         input_for: The operation ("create" or "update"); the child input is
             looked up for the same operation.
-        nested_fields: The ``Meta.nested_fields`` mapping (or empty/falsy).
+        nested_fields: The Meta.nested_fields mapping (or empty/falsy).
 
     Returns:
-        A tuple of ``NestedInputField`` specs (empty when there is nothing to
+        A tuple of NestedInputField specs (empty when there is nothing to
         inject).
     """
     from django_graphex.core.input_compiler import NestedInputField
@@ -1940,21 +1940,21 @@ def _resolve_native_relation_input_fields(
     input_for: str,
     nested_parent_model: type[Model] | None = None,
 ) -> tuple[Any, ...]:
-    """Resolve a model's Django relations into ``ID`` / ``[ID]`` input specs.
+    """Resolve a model's Django relations into ID / [ID] input specs.
 
     Mirrors the legacy graphene non-nested relation converters on the native
     input path so a mutation input exposes relations as id references:
 
-    * forward FK / forward O2O -> single ``ID`` (``ID!`` when the FK is required
-      and ``input_for == "create"``); these REPLACE the raw pk scalar the
-      pydantic model emitted for the same attribute (e.g. ``author: Int!`` ->
-      ``author: ID!``).
-    * M2M -> ``[ID!]`` list (REPLACES the pydantic ``list[int]`` scalar surface).
-    * reverse FK (to-many) -> ``[ID!]`` list, INJECTED (the pydantic model does
+    * forward FK / forward O2O -> single ID (ID! when the FK is required
+      and input_for == "create"); these REPLACE the raw pk scalar the
+      pydantic model emitted for the same attribute (e.g. author: Int! ->
+      author: ID!).
+    * M2M -> [ID!] list (REPLACES the pydantic list[int] scalar surface).
+    * reverse FK (to-many) -> [ID!] list, INJECTED (the pydantic model does
       not carry reverse relations).
-    * reverse O2O -> single ``ID``, INJECTED.
+    * reverse O2O -> single ID, INJECTED.
 
-    graphql-core's ``ID`` scalar coerces both string and integer literals, so a
+    graphql-core's ID scalar coerces both string and integer literals, so a
     client may send the related pk either way; the snake out_name routes it to
     the resolver where pydantic coerces it to the model's pk type. The
     auto-created MTI parent-link O2O is skipped (it is Django-internal).
@@ -1967,7 +1967,7 @@ def _resolve_native_relation_input_fields(
             parent is rendered OPTIONAL (the FK is injected at save time).
 
     Returns:
-        A tuple of ``RelationInputField`` specs (empty when the model has no
+        A tuple of RelationInputField specs (empty when the model has no
         introspectable relations).
     """
     from django.db import models as _dj_models
@@ -2071,20 +2071,20 @@ def _resolve_native_choices_input_fields(
     registry: Registry,
     input_for: str,
 ) -> tuple[Any, ...]:
-    """Resolve a model's choices fields into native ``GraphQLEnumType`` input specs.
+    """Resolve a model's choices fields into native GraphQLEnumType input specs.
 
     S-input-5 (choices INPUT off graphene): the choices field's INPUT surface
-    becomes the SHARED native ``GraphQLEnumType`` (the SAME canonical enum the
-    OUTPUT + FILTER-INPUT paths resolve, S-enum-1) instead of the ``String``
+    becomes the SHARED native GraphQLEnumType (the SAME canonical enum the
+    OUTPUT + FILTER-INPUT paths resolve, S-enum-1) instead of the String
     fallback the input compiler would otherwise emit from the pydantic Enum
-    annotation. This is built GRAPHENE-FREE via ``converter.build_choices_enum_type``
-    (``input_flag=None`` so it shares the OUTPUT slot — one enum per
-    ``(model, field)`` across output + filter-input + mutation input).
+    annotation. This is built GRAPHENE-FREE via converter.build_choices_enum_type
+    (input_flag=None so it shares the OUTPUT slot — one enum per
+    (model, field) across output + filter-input + mutation input).
 
-    A ``MultiSelectField`` renders ``[Enum]`` (mirroring the converter's
-    ``DjangoListField(enum)`` branch); a plain choices field renders a single
-    ``Enum`` (``Enum!`` when required on create). Non-editable / auto fields and
-    fields without usable choices are skipped (the enum builder returns ``None``).
+    A MultiSelectField renders [Enum] (mirroring the converter's
+    DjangoListField(enum) branch); a plain choices field renders a single
+    Enum (Enum! when required on create). Non-editable / auto fields and
+    fields without usable choices are skipped (the enum builder returns None).
 
     Args:
         model: The Django model the input is built for.
@@ -2093,7 +2093,7 @@ def _resolve_native_choices_input_fields(
             to "create".
 
     Returns:
-        A tuple of ``ChoicesInputField`` specs (empty when the model has no
+        A tuple of ChoicesInputField specs (empty when the model has no
         choices fields).
     """
     from django_graphex.core.input_compiler import ChoicesInputField
@@ -2138,31 +2138,31 @@ class DjangoInputObjectType(NativeInputType):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Run the graphene-free ObjectType driver WITHOUT InputType registration.
 
-        S6c re-parents ``DjangoInputObjectType`` off graphene ``InputObjectType``
-        onto the native ``InputType`` base (the Pydantic engine: same
-        ``ConfigDict`` / ``ModelMetaclass`` / ``ignored_types`` surface). But
-        ``DjangoInputObjectType`` is MODEL-driven, not annotation-driven: its
-        ``graphql_input_type`` is compiled from a generated Pydantic model
-        (``build_model_schema(model)``) inside ``__init_subclass_with_meta__``,
-        and the driver assigns its OWN ``_meta`` (a ``NativeObjectTypeOptions``
+        S6c re-parents DjangoInputObjectType off graphene InputObjectType
+        onto the native InputType base (the Pydantic engine: same
+        ConfigDict / ModelMetaclass / ignored_types surface). But
+        DjangoInputObjectType is MODEL-driven, not annotation-driven: its
+        graphql_input_type is compiled from a generated Pydantic model
+        (build_model_schema(model)) inside __init_subclass_with_meta__,
+        and the driver assigns its OWN _meta (a NativeObjectTypeOptions
         carrying that compiled type).
 
-        Native ``InputType.__init_subclass__`` is designed for PLAIN
-        annotation-driven inputs (``class SearchInput(InputType): query: str``):
-        it appends every subclass to ``_gdx_input_registry`` and OVERWRITES
-        ``cls._meta`` with an empty ``_GdxInputMeta`` so ``compile_all_inputs()``
-        can compile it from ``model_fields`` at app-ready. For a model-driven
-        ``DjangoInputObjectType`` subclass that behavior is HARMFUL: it would (a)
-        clobber the driver's ``_meta.graphql_input_type`` (read at
+        Native InputType.__init_subclass__ is designed for PLAIN
+        annotation-driven inputs (class SearchInput(InputType): query: str):
+        it appends every subclass to _gdx_input_registry and OVERWRITES
+        cls._meta with an empty _GdxInputMeta so compile_all_inputs()
+        can compile it from model_fields at app-ready. For a model-driven
+        DjangoInputObjectType subclass that behavior is HARMFUL: it would (a)
+        clobber the driver's _meta.graphql_input_type (read at
         mutation.py / DjangoModelType arg-building time) and (b) re-compile an
         EMPTY input type at app-ready (no annotations) under a DUPLICATE name.
 
-        So this class bypasses ``InputType.__init_subclass__`` and dispatches the
-        ObjectType graphene-free driver directly via ``NativeObjectType``. That
-        runs the ``__init_subclass_with_meta__`` chain (the DjangoInputObjectType
-        driver builds + assigns its own ``_meta``) and does NOT touch the input
-        registry. The native ``InputType`` Pydantic ``ConfigDict`` is still
-        inherited (the base IS ``InputType``), so the type keeps the input
+        So this class bypasses InputType.__init_subclass__ and dispatches the
+        ObjectType graphene-free driver directly via NativeObjectType. That
+        runs the __init_subclass_with_meta__ chain (the DjangoInputObjectType
+        driver builds + assigns its own _meta) and does NOT touch the input
+        registry. The native InputType Pydantic ConfigDict is still
+        inherited (the base IS InputType), so the type keeps the input
         engine's alias/camelCase config — only the registration side effect is
         skipped.
         """
@@ -3761,32 +3761,32 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         field (mutation.py) and graphene's own DjangoModelType mutation shape:
 
         1. **Output is the PAYLOAD, not the node.** Graphene mounts
-           ``cls._meta.mutation_output`` (= ``cls``) as the field type, so the SDL
-           is ``create(...): <ThisType>`` where ``<ThisType>`` is the wrapper
-           carrying ``ok`` / ``errors`` + the output field (the node).  The prior
-           code used ``_meta.output_type._meta.graphql_output_type`` (the bare
-           node) — ``ok`` / ``errors`` were unqueryable.  We now compile ``cls``
+           cls._meta.mutation_output (= cls) as the field type, so the SDL
+           is create(...): <ThisType> where <ThisType> is the wrapper
+           carrying ok / errors + the output field (the node).  The prior
+           code used _meta.output_type._meta.graphql_output_type (the bare
+           node) — ok / errors were unqueryable.  We now compile cls
            itself (a plain graphene ObjectType subclass) via
-           ``_compile_plain_object_type`` → the payload GraphQLObjectType.
+           _compile_plain_object_type → the payload GraphQLObjectType.
         2. **camelCase wire arg keys.** graphql-core does NOT auto-camelCase arg
            names; the dict keys must be the camelCase WIRE names while each
-           GraphQLArgument keeps ``out_name`` = the snake Python kwarg (already
-           set when the arg was built in ``__init_subclass_with_meta__``).
+           GraphQLArgument keeps out_name = the snake Python kwarg (already
+           set when the arg was built in __init_subclass_with_meta__).
         3. **Registration.** The built field is stored in
-           ``_NATIVE_FIELD_REGISTRY[(model, operation, "native")]`` so the native
-           root compiler's ``_collect_root_attrs`` (gated on registry membership)
+           _NATIVE_FIELD_REGISTRY[(model, operation, "native")] so the native
+           root compiler's _collect_root_attrs (gated on registry membership)
            mounts it onto the native Mutation root.  The SAME instance is cached
            and returned on repeat calls so the mounted field IS the registered
            field (identity), exactly like the DjangoModelMutation path.
 
         Args:
-            operation: One of ``"create"``, ``"delete"``, or ``"update"``.
+            operation: One of "create", "delete", or "update".
 
         Returns:
-            A ``GraphQLField`` whose ``.type`` is the compiled mutation payload,
-            whose ``.args`` are ``GraphQLArgument`` instances keyed by camelCase
-            wire names, and whose ``.resolve`` is the corresponding classmethod
-            (adapted via ``_adapt_self``).
+            A GraphQLField whose .type is the compiled mutation payload,
+            whose .args are GraphQLArgument instances keyed by camelCase
+            wire names, and whose .resolve is the corresponding classmethod
+            (adapted via _adapt_self).
         """
         from graphql import GraphQLField as _GQLField
 
@@ -3892,17 +3892,17 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         The native mutation field is built ONCE and cached per class + operation
         (identity-stable so the mounted field is the registered one). A caller-
-        supplied ``deprecation_reason`` must therefore NOT mutate the shared cached
-        field — return a shallow ``GraphQLField`` copy carrying the reason instead,
+        supplied deprecation_reason must therefore NOT mutate the shared cached
+        field — return a shallow GraphQLField copy carrying the reason instead,
         preserving every other attribute (type / args / resolver / description /
-        extensions). ``None`` returns the field unchanged.
+        extensions). None returns the field unchanged.
 
         Args:
-            field: The compiled graphql-core ``GraphQLField``.
-            deprecation_reason: The deprecation reason, or ``None`` for no change.
+            field: The compiled graphql-core GraphQLField.
+            deprecation_reason: The deprecation reason, or None for no change.
 
         Returns:
-            The field unchanged (``None`` reason) or a deprecated copy.
+            The field unchanged (None reason) or a deprecated copy.
         """
         if deprecation_reason is None:
             return field
