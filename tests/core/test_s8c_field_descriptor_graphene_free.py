@@ -226,7 +226,7 @@ def _build_field_kind_schema():
     Mirrors the public API: a root with a single-object field, a list-object
     field, a plain filtered-list field, a paginated filtered-list field, plus a
     nested-list field and a mutation payload field. The compiled SDL is the
-    silent-drop oracle: a field whose ``.type`` the compiler cannot read vanishes.
+    silent-drop oracle: a field whose .type the compiler cannot read vanishes.
     """
     from django.contrib.auth.models import User
     from graphql import print_schema
