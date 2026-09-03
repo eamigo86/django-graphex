@@ -124,6 +124,26 @@ def test_quick_start_docs_do_not_generate_auth_user_crud() -> None:
         assert "only_fields" in text and all(name in text for name in USER_FIELDS)
 
 
+def test_types_guide_keeps_user_examples_read_only() -> None:
+    """Keep generated writes off Django's account model.
+
+    This test protects the corresponding documentation contract.
+    """
+    text = (ROOT / "docs/usage/types.md").read_text(encoding="utf-8")
+    section = text.index("## DjangoObjectType")
+    start = text.index("```python", section)
+    user_block = text[start : text.index("```", start + 3)]
+    assert all(f'"{name}"' in user_block for name in USER_FIELDS)
+    assert all(name not in user_block for name in ("password", "is_staff", "email"))
+    assert "class UserModelType(DjangoModelType)" not in text
+    assert "class UserRegistrationInput(DjangoInputObjectType)" not in text
+    assert "create_user = UserModelType.CreateField" not in text
+    assert "get_user_model" in user_block
+    assert "AuthenticatedGraphQLView" in text
+    assert '"CACHE_ACTIVE": False' in text
+    assert ".objects.create_user(" in text
+
+
 def test_safe_user_sdl_has_no_sensitive_fields_or_generic_crud(
     safe_contract: SimpleNamespace,
 ) -> None:
