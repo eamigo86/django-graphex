@@ -35,8 +35,8 @@ from importlib.metadata import PackageNotFoundError, version
 
 from ariadne import MutationType, ObjectType, QueryType, make_executable_schema
 from ariadne_django.views import GraphQLView
-
 from benchapp.models import Comment, Post
+from contract import validate_response
 
 # --------------------------------------------------------------------------- #
 # Schema definition language (SDL)                                            #
@@ -190,43 +190,23 @@ SINGLE_POST_ID = 5000
 
 
 def _validate_flat_list(resp):
-    assert "errors" not in resp, resp.get("errors")
-    items = resp["data"]["posts"]
-    assert len(items) == 50, f"expected 50 posts, got {len(items)}"
-    first = items[0]
-    assert {"id", "title", "status", "viewsCount"} <= set(first), first
+    validate_response("ariadne", "flat_list", resp)
 
 
 def _validate_nested(resp):
-    assert "errors" not in resp, resp.get("errors")
-    authors = resp["data"]["authors"]
-    assert len(authors) == 20, f"expected 20 authors, got {len(authors)}"
-    posts = authors[0]["posts"]
-    assert len(posts) >= 1, "expected nested posts on the first author"
-    comments = posts[0]["comments"]
-    assert len(comments) >= 1, "expected nested comments on the first post"
-    assert "text" in comments[0], comments[0]
+    validate_response("ariadne", "nested", resp)
 
 
 def _validate_single(resp):
-    assert "errors" not in resp, resp.get("errors")
-    post = resp["data"]["post"]
-    assert post is not None, "post not found"
-    assert post["title"], "post title is empty"
-    assert post["author"]["name"], "author name is empty"
+    validate_response("ariadne", "single", resp)
 
 
 def _validate_filtered(resp):
-    assert "errors" not in resp, resp.get("errors")
-    items = resp["data"]["posts"]
-    assert len(items) >= 1, "expected at least one filtered post"
+    validate_response("ariadne", "filtered", resp)
 
 
 def _validate_create_comment(resp):
-    assert "errors" not in resp, resp.get("errors")
-    payload = resp["data"]["createComment"]
-    assert payload["ok"], payload
-    assert payload["comment"]["id"], "created comment has no id"
+    validate_response("ariadne", "create_comment", resp)
 
 
 OPERATIONS = {

@@ -24,6 +24,9 @@ argument descriptor. This file mirrors examples/playground/blog/schema.py.
 
 from importlib.metadata import PackageNotFoundError, version
 
+from benchapp.models import Author, Comment, Post
+from contract import validate_response
+
 from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListObjectField, DjangoObjectField
 from django_graphex.mutation import DjangoModelMutation
@@ -32,7 +35,6 @@ from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoListObjectType, DjangoObjectType
 from django_graphex.views import GraphQLView
 
-from benchapp.models import Author, Comment, Post
 
 # --------------------------------------------------------------------------- #
 # Object types                                                                #
@@ -150,43 +152,23 @@ SINGLE_POST_ID = 5000
 
 
 def _validate_flat_list(resp):
-    assert "errors" not in resp, resp.get("errors")
-    items = resp["data"]["posts"]["results"]
-    assert len(items) == 50, f"expected 50 posts, got {len(items)}"
-    first = items[0]
-    assert {"id", "title", "status", "viewsCount"} <= set(first), first
+    validate_response("graphex", "flat_list", resp)
 
 
 def _validate_nested(resp):
-    assert "errors" not in resp, resp.get("errors")
-    authors = resp["data"]["authors"]["results"]
-    assert len(authors) == 20, f"expected 20 authors, got {len(authors)}"
-    posts = authors[0]["posts"]["results"]
-    assert len(posts) >= 1, "expected nested posts on the first author"
-    comments = posts[0]["comments"]["results"]
-    assert len(comments) >= 1, "expected nested comments on the first post"
-    assert "text" in comments[0], comments[0]
+    validate_response("graphex", "nested", resp)
 
 
 def _validate_single(resp):
-    assert "errors" not in resp, resp.get("errors")
-    post = resp["data"]["post"]
-    assert post is not None, "post not found"
-    assert post["title"], "post title is empty"
-    assert post["author"]["name"], "author name is empty"
+    validate_response("graphex", "single", resp)
 
 
 def _validate_filtered(resp):
-    assert "errors" not in resp, resp.get("errors")
-    items = resp["data"]["posts"]["results"]
-    assert len(items) >= 1, "expected at least one filtered post"
+    validate_response("graphex", "filtered", resp)
 
 
 def _validate_create_comment(resp):
-    assert "errors" not in resp, resp.get("errors")
-    payload = resp["data"]["commentCreate"]
-    assert payload["ok"], payload
-    assert payload["comment"]["id"], "created comment has no id"
+    validate_response("graphex", "create_comment", resp)
 
 
 OPERATIONS = {

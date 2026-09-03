@@ -38,10 +38,10 @@ from typing import Optional
 
 import strawberry
 import strawberry_django
+from benchapp.models import Author, Comment, Post
+from contract import validate_response
 from strawberry.django.views import GraphQLView
 from strawberry_django.optimizer import DjangoOptimizerExtension
-
-from benchapp.models import Author, Comment, Post
 
 
 # --------------------------------------------------------------------------- #
@@ -174,42 +174,23 @@ SINGLE_POST_ID = 5000
 
 
 def _validate_flat_list(resp):
-    assert "errors" not in resp, resp.get("errors")
-    items = resp["data"]["posts"]
-    assert len(items) == 50, f"expected 50 posts, got {len(items)}"
-    first = items[0]
-    assert {"id", "title", "status", "viewsCount"} <= set(first), first
+    validate_response("strawberry", "flat_list", resp)
 
 
 def _validate_nested(resp):
-    assert "errors" not in resp, resp.get("errors")
-    authors = resp["data"]["authors"]
-    assert len(authors) == 20, f"expected 20 authors, got {len(authors)}"
-    posts = authors[0]["posts"]
-    assert len(posts) >= 1, "expected nested posts on the first author"
-    comments = posts[0]["comments"]
-    assert len(comments) >= 1, "expected nested comments on the first post"
-    assert "text" in comments[0], comments[0]
+    validate_response("strawberry", "nested", resp)
 
 
 def _validate_single(resp):
-    assert "errors" not in resp, resp.get("errors")
-    post = resp["data"]["post"]
-    assert post is not None, "post not found"
-    assert post["title"], "post title is empty"
-    assert post["author"]["name"], "author name is empty"
+    validate_response("strawberry", "single", resp)
 
 
 def _validate_filtered(resp):
-    assert "errors" not in resp, resp.get("errors")
-    items = resp["data"]["posts"]
-    assert len(items) >= 1, "expected at least one filtered post"
+    validate_response("strawberry", "filtered", resp)
 
 
 def _validate_create_comment(resp):
-    assert "errors" not in resp, resp.get("errors")
-    payload = resp["data"]["createComment"]
-    assert payload["id"], "created comment has no id"
+    validate_response("strawberry", "create_comment", resp)
 
 
 OPERATIONS = {

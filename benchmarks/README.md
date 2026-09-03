@@ -167,9 +167,9 @@ LIB_VERSIONS    # dict: installed package name -> version string
 | Key              | What it exercises            | Semantic definition (same for all libs)                                                              | validate() asserts                                        |
 | ---------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
 | `flat_list`      | Scalar list, no relations    | First **50** posts, scalar fields only: `id, title, status, viewsCount`                               | exactly **50** items, those four fields present            |
-| `nested`         | The **N+1 stressor**         | **20** authors, each with **10** posts, each with **5** comments (`text`)                              | 20 authors; nested posts arrive; nested comments arrive    |
+| `nested`         | The **N+1 stressor**         | **20** authors, each with **10** posts, each with **5** comments (`text`)                              | exact IDs, order, content and 20×10×5 cardinality          |
 | `single`         | One object by id + relation  | One post by a **fixed mid-range pk** (`5000`), with `title` + `author.name`                            | title non-empty; author name non-empty                    |
-| `filtered`       | Filtered list                | Posts whose title contains **`post 42`** (seed guarantees **111** matches: >5, <200), limit **50**    | at least **1** item                                        |
+| `filtered`       | Filtered list                | Posts whose title contains **`post 42`** (seed guarantees **111** matches: >5, <200), limit **50**    | exact first **50** matching IDs and titles                 |
 | `create_comment` | Mutation                     | Create a `Comment` on post pk `5000`, returning its `id`                                               | returned `id` present / mutation ok                        |
 
 The seed produces posts titled `Post 0` .. `Post 9999`, so `icontains "post 42"`
@@ -303,7 +303,7 @@ intended way to disagree with the published table.
 | Categories | 20     |                                                  |
 | Tags       | 100    |                                                  |
 | Posts      | 10,000 | 10/author, ~80% published, `views_count` random |
-| Comments   | 30,000 | 3/post                                           |
+| Comments   | 50,000 | 5/post                                           |
 | Post↔Tag   | 30,000 | ~3 tags/post (M2M through table)                 |
 
 Deterministic (`random.Random(42)`), pks contiguous `1..N` on a fresh DB, so the
