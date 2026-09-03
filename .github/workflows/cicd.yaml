@@ -136,15 +136,7 @@ jobs:
         git fetch --no-tags origin main:refs/remotes/origin/main
         BASE_COMMIT="$(git merge-base origin/main HEAD)"
         git diff --check "$BASE_COMMIT"..HEAD
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          RATCHET_BASE="${{ github.event.pull_request.base.sha }}"
-        else
-          RATCHET_BASE="${{ github.event.before }}"
-        fi
-        if [[ -z "$RATCHET_BASE" || "$RATCHET_BASE" =~ ^0+$ ]]; then
-          RATCHET_BASE="$(git rev-parse HEAD^)"
-        fi
-        python3 scripts/check_docstrings.py . --diff-base "$RATCHET_BASE"
+        python3 scripts/check_docstrings.py . --strict-public --strict-content
 
   coverage:
     runs-on: ubuntu-latest

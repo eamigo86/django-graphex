@@ -3,7 +3,7 @@
 
 This stdlib-only tool enforces the author-mandated docstring convention across
 public modules, classes, functions and methods. It gates a repo-wide
-remediation and is designed to later run unchanged in CI.
+remediation and runs unchanged in CI.
 
 The convention has three parts:
     A. Complete Google-style docstrings on public API surface (module, class,
@@ -26,7 +26,6 @@ import argparse
 import ast
 import fnmatch
 import re
-import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -45,7 +44,6 @@ RULE_MESSAGES: dict[str, str] = {
     "DOC201": "backtick in docstring",
     "DOC901": "source parse failure",
     "DOC902": "source read failure",
-    "DOC903": "diff inspection failure",
 }
 
 # Default directory/file globs that are never scanned.
@@ -75,15 +73,6 @@ _ARG_ENTRY_RE = re.compile(r"^\s+(\*{0,2}[A-Za-z_]\w*)(?:\s+\((.+)\))?\s*:")
 
 # A trailing noqa pragma naming DOC codes (comma-separated codes accepted).
 _NOQA_RE = re.compile(r"#\s*noqa:\s*(DOC[0-9, ]+)", re.IGNORECASE)
-
-_DIFF_HUNK_RE = re.compile(
-    rb"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@",
-    re.MULTILINE,
-)
-
-
-class _DiffError(RuntimeError):
-    """Signal that Git could not produce a trustworthy source diff."""
 
 
 class Violation(NamedTuple):
@@ -620,7 +609,6 @@ def _check_docstring_content(
 def _check_strict_content(
     tree: ast.Module,
     source_lines: list[str],
-    changed_lines: set[int] | None = None,
 ) -> list[Violation]:
     """Check DOC201 on every docstring owner in the syntax tree.
 
@@ -630,7 +618,6 @@ def _check_strict_content(
     Args:
         tree: The parsed module syntax tree.
         source_lines: The file's source lines, for reading definition pragmas.
-        changed_lines: Current-file lines changed by Git, or None for all.
 
     Returns:
         violations: DOC201 violations from every documented owner.
@@ -642,37 +629,6 @@ def _check_strict_content(
         ast.AsyncFunctionDef,
     )
     owners = [owner for owner in ast.walk(tree) if isinstance(owner, owner_types)]
-    if changed_lines is not None:
-        definitions = [owner for owner in owners if not isinstance(owner, ast.Module)]
-        bounds: dict[ast.AST, tuple[int, int]] = {}
-        for owner in definitions:
-            decorators = getattr(owner, "decorator_list", [])
-            starts = [owner.lineno, *(item.lineno for item in decorators)]
-            bounds[owner] = (min(starts), owner.end_lineno or owner.lineno)
-
-        touched: set[ast.AST] = set()
-        module_doc = tree.body[0] if ast.get_docstring(tree, clean=False) else None
-        module_bounds = (
-            (module_doc.lineno, module_doc.end_lineno or module_doc.lineno)
-            if module_doc is not None
-            else None
-        )
-        for lineno in changed_lines:
-            candidates = [
-                owner
-                for owner in definitions
-                if bounds[owner][0] <= lineno <= bounds[owner][1]
-            ]
-            if candidates:
-                touched.add(
-                    min(
-                        candidates,
-                        key=lambda owner: bounds[owner][1] - bounds[owner][0],
-                    )
-                )
-            elif module_bounds and module_bounds[0] <= lineno <= module_bounds[1]:
-                touched.add(tree)
-        owners = [owner for owner in owners if owner in touched]
 
     violations: list[Violation] = []
     for owner in owners:
@@ -689,29 +645,6 @@ def _check_strict_content(
             and any("`" in line for line in lines)
         ):
             violations.append(_make("DOC201", lineno))
-    return violations
-
-
-def check_content_source(
-    source: str,
-    *,
-    changed_lines: set[int] | None = None,
-) -> list[Violation]:
-    """Check DOC201 for all or only diff-selected docstring owners.
-
-    Args:
-        source: Python source text to analyze.
-        changed_lines: Current-file lines changed by Git, or None for all.
-
-    Returns:
-        violations: DOC201 violations sorted by owner line.
-
-    Raises:
-        SyntaxError: When the source cannot be parsed.
-    """
-    tree = ast.parse(source)
-    violations = _check_strict_content(tree, source.splitlines(), changed_lines)
-    violations.sort(key=lambda item: (item.lineno, item.code))
     return violations
 
 
@@ -1054,8 +987,6 @@ def check_file(
     *,
     strict_content: bool = False,
     strict_public: bool = False,
-    content_only: bool = False,
-    changed_lines: set[int] | None = None,
 ) -> list[Violation]:
     """Check a single file on disk against the convention.
 
@@ -1063,8 +994,6 @@ def check_file(
         path: The path to the Python file to check.
         strict_content: Whether DOC201 covers every docstring owner.
         strict_public: Whether the exact public API contract is enforced.
-        content_only: Whether to run only the strict content engine.
-        changed_lines: Current-file lines changed by Git, or None for all.
 
     Returns:
         violations: All violations found, including inspection failures.
@@ -1081,8 +1010,6 @@ def check_file(
             )
         ]
     try:
-        if content_only:
-            return check_content_source(source, changed_lines=changed_lines)
         return check_source(
             source,
             str(path),
@@ -1141,67 +1068,6 @@ def _iter_python_files(root: Path, patterns: list[str]) -> list[Path]:
     return found
 
 
-def _git_diff(args: list[str]) -> bytes:
-    """Run Git for ratchet discovery or raise a fail-closed error."""
-    result = subprocess.run(
-        ["git", *args],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise _DiffError(detail or "git diff failed")
-    return result.stdout
-
-
-def _changed_python_lines(base: str) -> dict[Path, set[int] | None]:
-    """Return added files and changed current-file lines since a Git base."""
-    revision = f"{base}...HEAD"
-
-    def paths_for(diff_filter: str) -> list[Path]:
-        raw = _git_diff(
-            [
-                "diff",
-                "--name-only",
-                "-z",
-                "--no-renames",
-                f"--diff-filter={diff_filter}",
-                revision,
-                "--",
-                "*.py",
-            ]
-        )
-        return [
-            Path(item.decode("utf-8", errors="surrogateescape"))
-            for item in raw.split(b"\0")
-            if item
-        ]
-
-    changes: dict[Path, set[int] | None] = {path: None for path in paths_for("A")}
-    for path in paths_for("M"):
-        patch = _git_diff(
-            ["diff", "--unified=0", "--no-renames", revision, "--", str(path)]
-        )
-        lines: set[int] = set()
-        for match in _DIFF_HUNK_RE.finditer(patch):
-            start = int(match.group(1))
-            count = int(match.group(2) or b"1")
-            lines.update(range(start, start + count))
-            if count == 0 and start > 0:
-                lines.add(start)
-        changes[path] = lines
-    return changes
-
-
-def _path_in_roots(path: Path, roots: list[Path]) -> bool:
-    """Report whether a repository-relative path is under a requested root."""
-    candidate = path.resolve()
-    return any(
-        candidate == root.resolve() or root.resolve() in candidate.parents
-        for root in roots
-    )
-
-
 def _format_summary(counts: Counter[str]) -> list[str]:
     """Build the per-rule summary table lines.
 
@@ -1254,17 +1120,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--strict-content",
         action="store_true",
-        help="Apply DOC201 to every docstring owner during migration.",
+        help="Apply DOC201 to every docstring owner.",
     )
     parser.add_argument(
         "--strict-public",
         action="store_true",
-        help="Apply the exact public API contract during migration.",
-    )
-    parser.add_argument(
-        "--diff-base",
-        metavar="REF",
-        help="Apply DOC201 only to owners changed since a Git merge base.",
+        help="Apply the exact public API contract.",
     )
     return parser.parse_args(argv)
 
@@ -1280,28 +1141,10 @@ def main(argv: list[str] | None = None) -> int:
         exit_code: 0 when no violations were found, 1 otherwise.
     """
     args = _parse_args(sys.argv[1:] if argv is None else argv)
-    changes: dict[Path, set[int] | None] | None = None
-    if args.diff_base:
-        try:
-            changes = _changed_python_lines(args.diff_base)
-        except _DiffError as exc:
-            diff_counts = Counter({"DOC903": 1})
-            if not args.stats:
-                print(f"<diff>:1: DOC903 {RULE_MESSAGES['DOC903']}: {exc}")
-            for line in _format_summary(diff_counts):
-                print(line)
-            return 1
-        roots = [Path(raw) for raw in args.paths]
-        files = [
-            path
-            for path in sorted(changes)
-            if _path_in_roots(path, roots) and not _is_excluded(path, args.exclude)
-        ]
-    else:
-        patterns = list(DEFAULT_EXCLUDES) + list(args.exclude)
-        files = []
-        for raw in args.paths:
-            files.extend(_iter_python_files(Path(raw), patterns))
+    patterns = list(DEFAULT_EXCLUDES) + list(args.exclude)
+    files = []
+    for raw in args.paths:
+        files.extend(_iter_python_files(Path(raw), patterns))
 
     counts: Counter[str] = Counter()
     output_lines: list[str] = []
@@ -1312,8 +1155,6 @@ def main(argv: list[str] | None = None) -> int:
             path,
             strict_content=args.strict_content,
             strict_public=args.strict_public,
-            content_only=changes is not None,
-            changed_lines=changes[path] if changes is not None else None,
         ):
             counts[violation.code] += 1
             output_lines.append(

@@ -55,6 +55,9 @@ def test_changelog_publishes_upgrade_guide() -> None:
     """
     notes = _release_notes()
     assert "[2.x → 3.0 upgrade guide](UPGRADE-3.0.md)" in notes
+    assert notes.count("#146") == 1
+    requirements = "Google-style|type hints|backticks|--strict-public|--strict-content"
+    assert all(requirement in notes for requirement in requirements.split("|"))
 
 
 @pytest.mark.parametrize("finding", range(1, 25))

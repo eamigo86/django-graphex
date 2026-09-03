@@ -101,21 +101,25 @@ make quality   # ruff format --check + ruff check + mypy
 
 ### Documentation Standards
 
-- All public classes and methods must have docstrings
-- Use Google-style docstrings
-- Include examples in docstrings where helpful
-- Keep documentation up-to-date with code changes
+The permanent repository contract has three parts:
 
-During the progressive no-backtick migration, maintainers can run the checker
-with `--strict-content` to apply DOC201 to every docstring owner. This opt-in is
-temporary: the final gate will enforce the rule globally without a permanent
-baseline. CI uses a merge-base ratchet so only changed owners and new Python
-files must be clean while untouched debt remains; the ratchet is removed at
-zero debt rather than preserving counts or suppressions.
-Use `--strict-public` during migration; the legacy default stays until debt is
-clear. Public means importable modules, non-underscore top-level names, private
-top-level names in `__all__`, and non-private class members. Strict `Args:` must
-be non-empty and exact, including `*args` and `**kwargs`.
+- A. **Complete public Google style.** Every public module, class, function, and
+  method has a complete Google-style docstring with exact, non-empty sections.
+  Public includes importable modules, non-underscore or `__all__` exports, and
+  non-private class members; `Args:` also covers `*args` and `**kwargs`.
+- B. **Signature-owned types.** Parameters and returns have type hints; `Args:`,
+  `Returns:` or `Yields:`, and `Raises:` describe behavior without repeating types.
+- C. **Plain-text docstrings.** No docstring contains a backtick, including
+  private, nested, and dunder owners.
+
+Run the same full-tree gate CI uses:
+
+```bash
+python3 scripts/check_docstrings.py . --strict-public --strict-content
+```
+
+The `.` scope includes runtime, scripts, tests, benchmarks, and
+examples/playground; environments, caches, site output, and migrations are excluded.
 
 #### Strict result sections
 
