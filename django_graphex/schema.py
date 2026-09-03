@@ -82,13 +82,13 @@ class DenyAllRegistry(frozenset):
 def _auth_middleware_configured() -> bool:
     """Check that the AuthenticatedFieldsMiddleware is configured.
 
-    Reads ``settings.DJANGO_GRAPHEX['MIDDLEWARE']`` only. This is a best-effort
+    Reads settings.DJANGO_GRAPHEX['MIDDLEWARE'] only. This is a best-effort
     check.
 
-    BREAKING CHANGE (2.0, S2): the legacy ``settings.GRAPHENE`` namespace is no
-    longer consulted — consistent with the single ``DJANGO_GRAPHEX`` settings
-    reader. A project still configuring the middleware under ``GRAPHENE`` must
-    rename the namespace to ``DJANGO_GRAPHEX``.
+    BREAKING CHANGE (2.0, S2): the legacy settings.GRAPHENE namespace is no
+    longer consulted — consistent with the single DJANGO_GRAPHEX settings
+    reader. A project still configuring the middleware under GRAPHENE must
+    rename the namespace to DJANGO_GRAPHEX.
     """
     graphex_conf = getattr(settings, "DJANGO_GRAPHEX", None) or {}
     middleware_entries = list(graphex_conf.get("MIDDLEWARE", []) or [])
@@ -334,9 +334,9 @@ class DjangoGraphQLSchema:
     def __str__(self) -> str:
         """Render the schema's SDL.
 
-        Mirrors ``graphene.Schema.__str__`` (which returned
-        ``print_schema(self.graphql_schema)``) so SDL tooling that did
-        ``str(schema)`` keeps working without the graphene base.
+        Mirrors graphene.Schema.__str__ (which returned
+        print_schema(self.graphql_schema)) so SDL tooling that did
+        str(schema) keeps working without the graphene base.
         """
         from graphql.utilities import print_schema
 
@@ -352,58 +352,58 @@ class DjangoGraphQLSchema:
         registries: Any = None,
         **kwargs: Any,
     ) -> Any:
-        """Assemble a graphql-core ``GraphQLSchema`` from the native root compiler.
+        """Assemble a graphql-core GraphQLSchema from the native root compiler.
 
         BYPASSES graphene.Schema for the graphql_schema: each merged root is
-        either ALREADY a native ``GraphQLObjectType`` (the C12 field-union case,
-        produced by ``_merge_root`` under native) or a graphene root class
-        (short-circuit cases) compiled here into a native ``GraphQLObjectType``
-        whose field types are the canonical native instances (``extensions['gdx']``,
+        either ALREADY a native GraphQLObjectType (the C12 field-union case,
+        produced by _merge_root under native) or a graphene root class
+        (short-circuit cases) compiled here into a native GraphQLObjectType
+        whose field types are the canonical native instances (extensions['gdx'],
         identity-stable), eliminating the duplicate-name TypeError the first WU2
         attempt hit.
 
         Args:
-            query: The merged query root — a native ``GraphQLObjectType`` or a
-                graphene root class (required, never ``None`` here).
+            query: The merged query root — a native GraphQLObjectType or a
+                graphene root class (required, never None here).
             mutation: The merged mutation root (native type, graphene class, or
-                ``None``).
+                None).
             subscription: The merged subscription root (native type, graphene
-                class, or ``None``).
+                class, or None).
             protected_fields: The frozenset of protected top-level field names to
-                store on ``schema.extensions['gdx_protected_fields']`` (C14).
-            registries: The ``SchemaRegistries`` pair to compile each root against
-                (item-b, B3); ``None`` -> the global default pair (byte-identical).
-                Threaded into ``compile_native_root`` for the graphene-root
+                store on schema.extensions['gdx_protected_fields'] (C14).
+            registries: The SchemaRegistries pair to compile each root against
+                (item-b, B3); None -> the global default pair (byte-identical).
+                Threaded into compile_native_root for the graphene-root
                 short-circuit cases, and stowed on
-                ``schema.extensions['gdx_registry']`` ALONGSIDE
-                ``gdx_protected_fields`` so the polymorphic ``resolve_type`` can
+                schema.extensions['gdx_registry'] ALONGSIDE
+                gdx_protected_fields so the polymorphic resolve_type can
                 scope its registry read per-schema at query time (B4).
             **kwargs: Extra graphene.Schema kwargs. Two are consumed here and
-                forwarded to ``GraphQLSchema`` EXACTLY as graphene does:
+                forwarded to GraphQLSchema EXACTLY as graphene does:
 
-                * ``directives`` — forwarded as ``GraphQLSchema(..., directives=
-                  <list>)``: a non-None list REPLACES the graphql-core spec
+                * directives — forwarded as GraphQLSchema(..., directives=
+                  <list>): a non-None list REPLACES the graphql-core spec
                   built-ins, so the native SDL's directive block matches
-                  graphene's byte-for-byte (e.g. ``directives=all_directives``).
-                  ``None`` keeps graphql-core's ``specified_directives`` default.
-                * ``types`` — a list of graphene type CLASSES of types to FORCE
+                  graphene's byte-for-byte (e.g. directives=all_directives).
+                  None keeps graphql-core's specified_directives default.
+                * types — a list of graphene type CLASSES of types to FORCE
                   into the schema even when UNREFERENCED by any field. graphene's
-                  ``graphene.Schema`` threads ``types=`` through its ``TypeMap``
-                  into ``GraphQLSchema(..., types=<list>)``; native must do the
+                  graphene.Schema threads types= through its TypeMap
+                  into GraphQLSchema(..., types=<list>); native must do the
                   same or unreferenced types are SILENTLY dropped from the SDL (a
                   parity divergence). Each graphene class is mapped to its
                   CANONICAL native graphql-core type (see
-                  ``_native_types_for_forwarding``) so the same type referenced by
-                  a field AND listed in ``types=`` does not duplicate-name.
-                  ``None`` / empty keeps graphql-core's defaults.
+                  _native_types_for_forwarding) so the same type referenced by
+                  a field AND listed in types= does not duplicate-name.
+                  None / empty keeps graphql-core's defaults.
 
         Returns:
-            A ``graphql.GraphQLSchema``.
+            A graphql.GraphQLSchema.
 
         Raises:
             NotImplementedError: Propagated from the native root compiler for a
                 field kind whose native builder does not exist yet, OR from
-                ``types=`` forwarding for a graphene type kind with no clean
+                types= forwarding for a graphene type kind with no clean
                 native mapping. NEVER swallowed by a graphene fallback.
         """
         from graphql import GraphQLObjectType, GraphQLSchema
@@ -424,8 +424,8 @@ class DjangoGraphQLSchema:
         def _root_name(root: Any, default: str) -> str:
             """Use the root's GraphQL type name (class name by default).
 
-            graphene names the root after ``_meta.name`` and renders an explicit
-            ``schema { query: <Name> }`` block; matching that name keeps the
+            graphene names the root after _meta.name and renders an explicit
+            schema { query: <Name> } block; matching that name keeps the
             native SDL byte-identical to graphene.
             """
             if root is None:
@@ -436,7 +436,7 @@ class DjangoGraphQLSchema:
             return meta_name or getattr(root, "__name__", None) or default
 
         def _native_root(root: Any, default: str) -> Any:
-            """Return the native ``GraphQLObjectType`` for a merged root.
+            """Return the native GraphQLObjectType for a merged root.
 
             Already-native roots (the C12 union) pass through unchanged; graphene
             root classes (short-circuit cases) are compiled on the spot.
@@ -533,20 +533,20 @@ class DjangoGraphQLSchema:
 
     @staticmethod
     def _compute_label_set(*roots: Any) -> frozenset[str]:
-        """Return the union of every ``gdx_required_perms`` on the roots' fields.
+        """Return the union of every gdx_required_perms on the roots' fields.
 
         The label-set is the projection target for the P1 pruner: a user's live
         permissions are intersected with THIS set to derive a stable signature.
-        A plain field stamps a ``frozenset``; a subscription field stamps a
-        per-action ``dict`` whose values are flattened in. Untagged (public)
+        A plain field stamps a frozenset; a subscription field stamps a
+        per-action dict whose values are flattened in. Untagged (public)
         fields contribute nothing.
 
         Args:
-            *roots: The compiled native root ``GraphQLObjectType`` instances
-                (Query / Mutation / Subscription); ``None`` roots are skipped.
+            *roots: The compiled native root GraphQLObjectType instances
+                (Query / Mutation / Subscription); None roots are skipped.
 
         Returns:
-            A ``frozenset`` of all stamped permission codenames.
+            A frozenset of all stamped permission codenames.
         """
         labels: set[str] = set()
         for root in roots:
@@ -568,37 +568,37 @@ class DjangoGraphQLSchema:
         types: Any,
         registries: Any = None,
     ) -> list[Any] | None:
-        """Map graphene ``types=`` entries to their canonical native types.
+        """Map graphene types= entries to their canonical native types.
 
-        graphene's ``types=`` is a list of graphene type CLASSES of types to
-        FORCE into the schema even when unreferenced. graphql-core's ``types=``
-        expects ``GraphQLNamedType`` INSTANCES, so each entry is mapped to its
+        graphene's types= is a list of graphene type CLASSES of types to
+        FORCE into the schema even when unreferenced. graphql-core's types=
+        expects GraphQLNamedType INSTANCES, so each entry is mapped to its
         canonical native graphql-core equivalent — the SAME instance the rest of
         the schema uses, so a type both referenced by a field AND listed here
         does not duplicate-name:
 
-        * an entry already a graphql-core ``GraphQLNamedType`` (object type,
+        * an entry already a graphql-core GraphQLNamedType (object type,
           scalar, enum, …) → passed through unchanged;
-        * a ``DjangoObjectType`` / ``DjangoListObjectType`` (carries the canonical
-          ``_meta.graphql_output_type``) → that canonical instance (identity-
+        * a DjangoObjectType / DjangoListObjectType (carries the canonical
+          _meta.graphql_output_type) → that canonical instance (identity-
           stable; NOT recompiled);
-        * a plain ``graphene.ObjectType`` (not a django-graphex output type) →
-          compiled via the memoized ``_compile_plain_object_type`` (the SAME
+        * a plain graphene.ObjectType (not a django-graphex output type) →
+          compiled via the memoized _compile_plain_object_type (the SAME
           instance the dispatch path uses, so no duplicate-name);
-        * a graphene scalar / enum class (its ``_meta.name`` resolves in
-          ``GDX_SCALAR_MAP``) → the canonical native scalar singleton;
+        * a graphene scalar / enum class (its _meta.name resolves in
+          GDX_SCALAR_MAP) → the canonical native scalar singleton;
         * any other kind (input / interface / union / unmapped scalar) → a clear
-          ``NotImplementedError`` naming the type and its kind. NO silent drop:
+          NotImplementedError naming the type and its kind. NO silent drop:
           dropping a forwarded type is exactly the SDL divergence this method
           fixes, so an unhandled kind fails loudly rather than diverging.
 
         Args:
-            types: The raw ``types=`` value from ``graphene.Schema`` kwargs
-                (a list of graphene type classes, or ``None``).
+            types: The raw types= value from graphene.Schema kwargs
+                (a list of graphene type classes, or None).
 
         Returns:
-            A list of native ``GraphQLNamedType`` instances, or ``None`` when
-            ``types`` is empty/``None`` (so graphql-core keeps its defaults).
+            A list of native GraphQLNamedType instances, or None when
+            types is empty/None (so graphql-core keeps its defaults).
 
         Raises:
             NotImplementedError: For a graphene type kind with no clean native
@@ -685,7 +685,7 @@ class DjangoGraphQLSchema:
         """Union a public root with its private counterpart.
 
         Native field-union (C12): performs the union DIRECTLY on the compiled
-        native roots and RAISES ``ValueError`` on a field-name collision between
+        native roots and RAISES ValueError on a field-name collision between
         public and private — the inverse-MRO security hazard graphene silently
         shadowed (one root quietly overriding the other). The (still-graphene)
         root CLASSES are accepted as input and compiled here; the graphene
@@ -701,18 +701,18 @@ class DjangoGraphQLSchema:
         Args:
             name: The GraphQL name for the merged root ("Query" / "Mutation" /
                 "Subscription").
-            public: The public root ObjectType class (or ``None``).
-            private: The private root ObjectType class (or ``None``).
-            registries: The ``SchemaRegistries`` pair to compile both sides of a
-                genuine union against (item-b, B3); ``None`` -> the global default
+            public: The public root ObjectType class (or None).
+            private: The private root ObjectType class (or None).
+            registries: The SchemaRegistries pair to compile both sides of a
+                genuine union against (item-b, B3); None -> the global default
                 pair (byte-identical). Short-circuit cases return the graphene
                 root class unchanged (compiled later by
-                ``_build_native_graphql_schema`` with the same pair).
+                _build_native_graphql_schema with the same pair).
 
         Returns:
-            A native ``GraphQLObjectType`` for the genuine union, or the graphene
+            A native GraphQLObjectType for the genuine union, or the graphene
             root class for short-circuit cases (compiled later by
-            ``_build_native_graphql_schema``), or ``None``.
+            _build_native_graphql_schema), or None.
 
         Raises:
             ValueError: When public and private declare a field with the same
