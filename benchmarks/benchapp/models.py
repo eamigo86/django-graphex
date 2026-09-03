@@ -11,7 +11,7 @@ Relational shape (chosen to exercise the classic GraphQL N+1 stressor):
                   |
                   *--* Comment
 
-`Post.status` is a plain CharField with choices (draft/published); each library
+Post.status is a plain CharField with choices (draft/published); each library
 maps it to whatever it maps CharFields-with-choices to (enum or string) — the
 benchmark only ever reads it as a scalar, so representation differences are
 irrelevant to fairness.
@@ -21,6 +21,11 @@ from django.db import models
 
 
 class Author(models.Model):
+    """Represent an author in the shared benchmark dataset.
+
+    Authors own the posts used by nested read workloads.
+    """
+
     name = models.CharField(max_length=100)
     email = models.EmailField()
     bio = models.TextField(blank=True, default="")
@@ -30,9 +35,19 @@ class Author(models.Model):
 
 
 class Category(models.Model):
+    """Group benchmark posts under a stable category.
+
+    Categories exercise the optional post relation shared by every adapter.
+    """
+
     name = models.CharField(max_length=100, unique=True)
 
     class Meta:
+        """Configure the plural display name for categories.
+
+        The option avoids Django's naive pluralization.
+        """
+
         verbose_name_plural = "categories"
 
     def __str__(self):
@@ -40,6 +55,11 @@ class Category(models.Model):
 
 
 class Tag(models.Model):
+    """Represent a reusable tag attached to benchmark posts.
+
+    Tags provide the shared many-to-many workload.
+    """
+
     name = models.CharField(max_length=50, unique=True)
 
     def __str__(self):
@@ -47,7 +67,17 @@ class Tag(models.Model):
 
 
 class Post(models.Model):
+    """Represent a benchmark post and its related content.
+
+    Posts form the central object for read, filter, and relation workloads.
+    """
+
     class Status(models.TextChoices):
+        """Enumerate the draft and published benchmark states.
+
+        The values remain stable across all adapter schemas.
+        """
+
         DRAFT = "draft", "Draft"
         PUBLISHED = "published", "Published"
 
@@ -75,6 +105,11 @@ class Post(models.Model):
 
 
 class Comment(models.Model):
+    """Represent a comment belonging to one benchmark post.
+
+    Comments exercise nested to-many reads and filtered pagination.
+    """
+
     post = models.ForeignKey(
         Post, on_delete=models.CASCADE, related_name="comments"
     )

@@ -1,8 +1,8 @@
-"""Root URLconf: mount the active library's GraphQL view at ``/graphql/``.
+"""Root URLconf: mount the active library's GraphQL view at /graphql/.
 
-The active library is selected by the ``BENCH_LIB`` env var. We import
-``libs/<BENCH_LIB>/bench_schema.py`` dynamically and mount its exported
-``graphql_view`` — a ready-to-use Django view callable each library provides
+The active library is selected by the BENCH_LIB env var. We import
+libs/<BENCH_LIB>/bench_schema.py dynamically and mount its exported
+graphql_view — a ready-to-use Django view callable each library provides
 via the shared operation contract (see benchmarks/README.md).
 """
 
