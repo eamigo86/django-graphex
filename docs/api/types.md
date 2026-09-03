@@ -105,9 +105,24 @@ The `DjangoObjectType` is configured through a nested `Meta` class:
 class UserType(DjangoObjectType):
     class Meta:
         model = User
-        only_fields = ('id', 'username', 'email')
+        only_fields = ('id', 'username', 'first_name', 'last_name')
         filter_fields = {'username': ('exact', 'icontains')}
 ```
+
+!!! warning "Keep Django account types read-only"
+    The `User` projection above is deliberately allow-listed. Mount account
+    reads through `AuthenticatedGraphQLView` and disable response caching on
+    this session-aware path:
+
+    ```python title="settings.py"
+    DJANGO_GRAPHEX = {"CACHE_ACTIVE": False}
+    ```
+
+    Do not generate create, update or delete fields for Django's user model.
+    Put registration in a purpose-built mutation with a narrow input and call
+    `User.objects.create_user(username=..., password=...)`; omit staff,
+    superuser, group and permission inputs. See the executable
+    [Quick Start](../quickstart.md).
 
 ### Meta Options
 
@@ -196,6 +211,7 @@ scope excludes is reported as missing — the ID comes straight from the caller.
         class Meta:
             model = User
             description = "User account type"
+            only_fields = ('id', 'username', 'first_name', 'last_name')
     ```
 
 === "With Filtering"
@@ -204,11 +220,11 @@ scope excludes is reported as missing — the ID comes straight from the caller.
     class UserType(DjangoObjectType):
         class Meta:
             model = User
+            only_fields = ('id', 'username', 'first_name', 'last_name')
             filter_fields = {
                 'username': ('exact', 'icontains'),
-                'email': ('exact', 'icontains'),
-                'is_active': ('exact',),
-                'date_joined': ('gte', 'lte'),
+                'first_name': ('exact', 'icontains'),
+                'last_name': ('exact', 'icontains'),
             }
     ```
 
@@ -218,7 +234,7 @@ scope excludes is reported as missing — the ID comes straight from the caller.
     class UserType(DjangoObjectType):
         class Meta:
             model = User
-            only_fields = ('id', 'username', 'email', 'first_name', 'last_name')
+            only_fields = ('id', 'username', 'first_name', 'last_name')
             # Alternative: exclude_fields = ('password', 'user_permissions')
     ```
 
@@ -228,6 +244,7 @@ scope excludes is reported as missing — the ID comes straight from the caller.
     class UserType(DjangoObjectType):
         class Meta:
             model = User
+            only_fields = ('id', 'username', 'first_name', 'last_name')
 
         @classmethod
         def get_queryset(cls, queryset, info):
@@ -254,11 +271,11 @@ class DjangoInputObjectType(InputType)  # InputType = django_graphex.core
 Configure input types through the `Meta` class:
 
 ```python
-class UserInput(DjangoInputObjectType):
+class ArticleInput(DjangoInputObjectType):
     class Meta:
-        model = User
+        model = Article
         input_for = 'create'
-        only_fields = ('username', 'email', 'first_name', 'last_name')
+        only_fields = ('title', 'body', 'status')
 ```
 
 ### Meta Options
@@ -301,29 +318,29 @@ Get the type when the unmounted type is mounted.
     ```python
     from django_graphex.types import DjangoInputObjectType
 
-    class UserCreateInput(DjangoInputObjectType):
+    class ArticleCreateInput(DjangoInputObjectType):
         class Meta:
-            model = User
+            model = Article
             input_for = 'create'
-            only_fields = ('username', 'email', 'first_name', 'last_name', 'password')
+            only_fields = ('title', 'body', 'status')
     ```
 
 === "Update Input"
 
     ```python
-    class UserUpdateInput(DjangoInputObjectType):
+    class ArticleUpdateInput(DjangoInputObjectType):
         class Meta:
-            model = User
+            model = Article
             input_for = 'update'
-            exclude_fields = ('password', 'date_joined')
+            exclude_fields = ('internal_notes',)
     ```
 
 === "Delete Input"
 
     ```python
-    class UserDeleteInput(DjangoInputObjectType):
+    class ArticleDeleteInput(DjangoInputObjectType):
         class Meta:
-            model = User
+            model = Article
             input_for = 'delete'
     ```
 
@@ -334,9 +351,9 @@ Get the type when the unmounted type is mounted.
 === "With Nested Fields"
 
     ```python
-    class UserInput(DjangoInputObjectType):
+    class ArticleInput(DjangoInputObjectType):
         class Meta:
-            model = User
+            model = Article
             input_for = 'create'
             # {accessor name: child model} — the relations to expand
             # into nested input objects
@@ -545,9 +562,9 @@ class DjangoModelType(ObjectType)
 Configure model types with automatic CRUD operations:
 
 ```python
-class UserType(DjangoModelType):
+class ArticleType(DjangoModelType):
     class Meta:
-        model = User
+        model = Article
         pagination = LimitOffsetGraphqlPagination(default_limit=25)
 ```
 
@@ -714,25 +731,24 @@ checks. A permission denies on **any falsy return value** (`False`, `None`,
 
     ```python
     from django_graphex.types import DjangoModelType
-    from .models import User
+    from .models import Article
 
-    class UserType(DjangoModelType):
+    class ArticleType(DjangoModelType):
         class Meta:
-            model = User
-            description = "User type"
+            model = Article
+            description = "Article type"
     ```
 
 === "With Pagination and Filtering"
 
     ```python
-    class UserType(DjangoModelType):
+    class ArticleType(DjangoModelType):
         class Meta:
-            model = User
+            model = Article
             pagination = LimitOffsetGraphqlPagination(default_limit=30)
             filter_fields = {
-                'username': ('exact', 'icontains'),
-                'email': ('exact', 'icontains'),
-                'is_active': ('exact',),
+                'title': ('exact', 'icontains'),
+                'status': ('exact',),
             }
     ```
 
@@ -744,11 +760,11 @@ checks. A permission denies on **any falsy return value** (`False`, `None`,
 
     class Query(ObjectType):
         # Generate both fields automatically
-        user, users = UserType.QueryFields()
+        article, articles = ArticleType.QueryFields()
 
         # Or create individual fields
-        user_list = UserType.ListField()
-        single_user = UserType.RetrieveField()
+        article_list = ArticleType.ListField()
+        single_article = ArticleType.RetrieveField()
 
     schema = DjangoGraphQLSchema(query=Query)
     ```
@@ -789,6 +805,7 @@ class UserType(DjangoObjectType):
     class Meta:
         model = User
         registry = custom_registry
+        only_fields = ('id', 'username', 'first_name', 'last_name')
 ```
 
 ## Advanced Usage
@@ -804,6 +821,7 @@ class UserType(DjangoObjectType):
 
     class Meta:
         model = User
+        only_fields = ('id', 'username', 'first_name', 'last_name')
 
     def resolve_full_name(self, info):
         return f"{self.first_name} {self.last_name}"
@@ -818,6 +836,7 @@ class UserType(DjangoObjectType):
 class UserType(DjangoObjectType):
     class Meta:
         model = User
+        only_fields = ('id', 'username', 'first_name', 'last_name')
 
     @classmethod
     def __init_subclass_with_meta__(cls, **options):
@@ -833,9 +852,9 @@ class UserType(DjangoObjectType):
 class UserType(DjangoObjectType):
     class Meta:
         model = User
+        only_fields = ('id', 'username', 'first_name', 'last_name')
         filter_fields = {
             'username': ('exact', 'icontains'),
-            'email': ('exact',),
         }
 
     @classmethod
@@ -857,6 +876,7 @@ class UserType(DjangoObjectType):
 class UserType(DjangoObjectType):
     class Meta:
         model = User
+        only_fields = ('id', 'username', 'first_name', 'last_name')
 
     @classmethod
     def is_type_of(cls, root, info):
@@ -876,6 +896,7 @@ class UserType(DjangoObjectType):
 
     class Meta:
         model = User
+        only_fields = ('id', 'username', 'first_name', 'last_name')
 
     def resolve_avatar_url(self, info):
         try:
@@ -903,11 +924,8 @@ class UserType(DjangoObjectType):
 class UserType(DjangoObjectType):
     class Meta:
         model = User
-        # Don't expose sensitive fields
-        exclude_fields = (
-            'password', 'user_permissions',
-            'groups', 'is_superuser'
-        )
+        # Allow-list the complete public account surface.
+        only_fields = ('id', 'username', 'first_name', 'last_name')
 
     @classmethod
     def get_queryset(cls, queryset, info):
