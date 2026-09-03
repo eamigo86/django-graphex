@@ -35,14 +35,14 @@ from tests.models import EnumCollisionItemA
 
 
 def _unwrap(gql_type):
-    """Strip a leading ``GraphQLNonNull`` wrapper."""
+    """Strip a leading GraphQLNonNull wrapper."""
     while isinstance(gql_type, GraphQLNonNull):
         gql_type = gql_type.of_type
     return gql_type
 
 
 def _canonical_enum_name(model, field_name):
-    """Return the canonical ``to_camel_case(app_obj_field_Enum)`` enum name."""
+    """Return the canonical to_camel_case(app_obj_field_Enum) enum name."""
     from django_graphex._strconv import to_camel_case
 
     meta = model._meta

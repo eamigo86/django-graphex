@@ -259,8 +259,8 @@ def instantiate_middleware(middlewares: Any) -> Any:
     Args:
         middlewares: An iterable of middleware classes or instances.
 
-    Returns:
-        A generator yielding one middleware instance per input entry.
+    Yields:
+        One middleware instance per input entry.
     """
     for middleware in middlewares:
         if inspect.isclass(middleware):
@@ -326,12 +326,12 @@ _VALIDATE_CACHE: "weakref.WeakKeyDictionary[Any, OrderedDict[tuple, tuple]]" = (
 def _document_cache_maxsize() -> int:
     """Return the configured document-cache bound (0 disables both caches).
 
-    Read per call (never memoized at import) so ``override_settings`` in tests —
+    Read per call (never memoized at import) so override_settings in tests —
     and a live settings reload — take effect immediately.
 
-    ``None`` means "unbounded", the same as it does for every sibling limit in
-    the namespace (``MAX_BATCH_SIZE``, ``MAX_REQUEST_BODY_SIZE``,
-    ``MAX_QUERY_DEPTH``, ``MAX_PAGE_SIZE``). It is reported as ``sys.maxsize`` so
+    None means "unbounded", the same as it does for every sibling limit in
+    the namespace (MAX_BATCH_SIZE, MAX_REQUEST_BODY_SIZE,
+    MAX_QUERY_DEPTH, MAX_PAGE_SIZE). It is reported as sys.maxsize so
     the callers stay plain integer comparisons: an LRU can never hold that many
     entries, so the eviction loop never runs.
     """
@@ -1149,13 +1149,13 @@ class BaseGraphQLView(View):
 
         The base view always serves the FULL configured schema. Subclasses may
         override this single choke point to select a per-request schema (both
-        ``validate`` and ``execute`` read the value it returns).
+        validate and execute read the value it returns).
 
         Args:
             request: The incoming HTTP request.
 
         Returns:
-            The ``GraphQLSchema`` to validate and execute against.
+            The schema to validate and execute against.
         """
         return self.schema.graphql_schema
 
@@ -1164,7 +1164,7 @@ class BaseGraphQLView(View):
 
         The base view returns the empty string, so its v2 cache key has no
         signature segment. Subclasses that serve a per-request
-        schema (see :meth:`_graphql_schema_for`) override this to return a token
+        schema (see _graphql_schema_for) override this to return a token
         that varies with the served schema — otherwise two callers who share an
         identity partition but see DIFFERENT schemas could read each other's
         cached response bodies.
@@ -1658,9 +1658,9 @@ class GraphQLView(BaseGraphQLView):
         to be unguessable, which it cannot be while it is derived from the
         identity it namespaces. A latency-sensitive token client should
         authenticate: an authenticated identity is not bucketed at all.
-        This method is used only by ``CACHE_INVALIDATION_SCOPE='identity'``;
+        This method is used only when CACHE_INVALIDATION_SCOPE is identity;
         the default global scope does not expose caller-chosen counter names.
-        ``tests/test_views_cache_bucket_invalidation.py`` pins both halves.
+        tests/test_views_cache_bucket_invalidation.py pins both halves.
 
         Args:
             request: The incoming HTTP request, read for its authentication
@@ -1690,7 +1690,7 @@ class GraphQLView(BaseGraphQLView):
         Args:
             request: The incoming request, used by identity bucketing.
             identity: The full response identity.
-            scope: The validated ``CACHE_INVALIDATION_SCOPE`` value.
+            scope: The validated CACHE_INVALIDATION_SCOPE value.
 
         Returns:
             The shared global namespace, or the 3.0 identity/bucket namespace.
@@ -1702,27 +1702,27 @@ class GraphQLView(BaseGraphQLView):
     def _get_cache_version(self, _cache: Any, identity: str) -> str:
         """Return the current namespace version token for *identity*.
 
-        If no version exists yet, initialise it to ``1`` (integer) and persist
-        it with ``timeout=None`` (never expires independently of its response
+        If no version exists yet, initialise it to 1 (integer) and persist
+        it with timeout=None (never expires independently of its response
         entries).  Seeding with an integer — rather than a UUID hex string —
-        ensures that ``cache.incr`` works atomically on all standard backends
+        ensures that cache.incr works atomically on all standard backends
         (Redis, Memcached, LocMemCache) without first deleting and re-setting
         the key.
 
-        The initial value is ``1`` (not ``0``) so the first bump goes to ``2``,
-        ensuring that version ``0`` is never used as a live cache key (closes the
+        The initial value is 1 (not 0) so the first bump goes to 2,
+        ensuring that version 0 is never used as a live cache key (closes the
         ambiguous zero-state described in issue #60c).
 
-        The key is stored with ``timeout=None`` (permanent) to prevent the
+        The key is stored with timeout=None (permanent) to prevent the
         version counter from expiring before its associated response entries when
-        ``CACHE_TIMEOUT`` exceeds the backend's own default TTL (issue #60b).
+        CACHE_TIMEOUT exceeds the backend's own default TTL (issue #60b).
 
         Args:
             _cache: The Django cache backend instance.
-            identity: The per-request identity token from ``cache_key_prefix``.
+            identity: The per-request identity token from cache_key_prefix.
 
         Returns:
-            The current version as a string (``"1"``, ``"2"``, …).  Integer
+            The current version as a string ("1", "2", …).  Integer
             versions stringify fine and compose cleanly into the cache key.
         """
         version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
@@ -1740,22 +1740,22 @@ class GraphQLView(BaseGraphQLView):
         """Invalidate a selected response namespace by advancing its version token.
 
         Callers MUST invoke this AFTER the mutation has been executed (see
-        ``dispatch``): scheduling it beforehand made the deferral below inert,
-        because ``ATOMIC_MUTATIONS`` opens its atomic block inside
-        ``execute_graphql_request`` — later than this call — so ``on_commit``
+        dispatch): scheduling it beforehand made the deferral below inert,
+        because ATOMIC_MUTATIONS opens its atomic block inside
+        execute_graphql_request — later than this call — so on_commit
         found no open transaction and ran the bump immediately.
 
-        The bump is deferred via ``transaction.on_commit`` so it only fires once
+        The bump is deferred via transaction.on_commit so it only fires once
         the mutation's database write is durable.  This eliminates the
         bump-before-commit TOCTOU window (issue #60a) where a concurrent query
         could cache pre-mutation data at the new version key.  If the surrounding
-        transaction is rolled back, ``on_commit`` is never invoked, so a failed
+        transaction is rolled back, on_commit is never invoked, so a failed
         mutation does not advance the counter.  When there is no open transaction
-        (``ATOMIC_MUTATIONS`` is off) Django executes ``on_commit`` immediately
+        (ATOMIC_MUTATIONS is off) Django executes on_commit immediately
         after the current statement — behaviour is unchanged for that case.
 
         Residual microsecond window (audit rank 10 — ACCEPTABLE).  There is a
-        tiny gap between the moment ``on_commit`` is SCHEDULED (here) and the
+        tiny gap between the moment on_commit is SCHEDULED (here) and the
         moment it actually FIRES (right after the DB commit).  A concurrent reader
         that commits and reads in that sub-millisecond window could momentarily
         miss the bumped version.  This is correctness-SAFE: the data is already
@@ -1767,22 +1767,22 @@ class GraphQLView(BaseGraphQLView):
         re-check or a distributed lock) around the read path — not needed for
         correctness, only to shave the rare extra miss.
 
-        Uses ``cache.incr`` for an atomic increment on Redis / Memcached /
-        LocMemCache.  Because the key is seeded with integer ``1`` by
-        ``_get_cache_version``, ``incr`` always finds an integer value and
+        Uses cache.incr for an atomic increment on Redis / Memcached /
+        LocMemCache.  Because the key is seeded with integer 1 by
+        _get_cache_version, incr always finds an integer value and
         succeeds on all standard backends.  Two recoverable failure modes are
-        caught and healed by resetting the key to integer ``1`` (not ``0``) so
+        caught and healed by resetting the key to integer 1 (not 0) so
         the next bump never produces the ambiguous zero-state (issue #60c):
 
-        * ``ValueError`` — the key has expired (Django's documented behaviour
+        * ValueError — the key has expired (Django's documented behaviour
           for a missing key on all standard backends).
-        * ``TypeError`` — the key exists but holds a non-integer value (e.g. a
+        * TypeError — the key exists but holds a non-integer value (e.g. a
           uuid-hex string from an older deploy).  LocMemCache raises
-          ``TypeError`` in this case; healing it to ``1`` lets the next incr
+          TypeError in this case; healing it to 1 lets the next incr
           succeed on every backend.
 
-        The heal value is stored with ``timeout=None`` to match the seed policy
-        in ``_get_cache_version`` (issue #60b).
+        The heal value is stored with timeout=None to match the seed policy
+        in _get_cache_version (issue #60b).
 
         Truly unexpected backend errors (e.g. connection failure) are not
         suppressed and propagate normally.
@@ -1792,7 +1792,7 @@ class GraphQLView(BaseGraphQLView):
 
         Args:
             _cache: The Django cache backend instance.
-            identity: The per-request identity token from ``cache_key_prefix``.
+            identity: The per-request identity token from cache_key_prefix.
         """
         version_key = self._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
 
@@ -1838,11 +1838,11 @@ class GraphQLView(BaseGraphQLView):
     ) -> Any:
         """Execute without response caching and invalidate after real mutation work.
 
-        The execution marker is set inside ``execute_graphql_request`` only
-        after validation and transport checks pass.  A ``finally`` is safe here:
+        The execution marker is set inside execute_graphql_request only
+        after validation and transport checks pass.  A finally is safe here:
         a non-atomic resolver may persist before raising, while an atomic
         rollback never sets the marker.  An outer request transaction still
-        controls durability because ``_bump_cache_version`` uses ``on_commit``.
+        controls durability because _bump_cache_version uses on_commit.
         """
         try:
             return self.super_call(request, *args, **kwargs)
@@ -2276,19 +2276,19 @@ class AuthenticatedGraphQLView(GraphQLView):
     def _graphql_schema_for(self, request: HttpRequest) -> Any:
         """Select the per-request schema, pruned to the caller's permissions.
 
-        When ``PERMISSION_SCOPED_SCHEMA`` is False (default, read per-request) the
+        When PERMISSION_SCOPED_SCHEMA is False (default, read per-request) the
         FULL schema is served unchanged — byte-identical to the base view. When
         True, an ACTIVE superuser still gets the FULL schema (no signature); every
         other user gets the LRU-cached schema pruned to their permission
         signature. If that pruned schema has an EMPTY Query root (every root field
         was pruned) the request is denied with the endpoint's generic 403 —
-        raised HERE, before ``validate``/``execute``, so no field existence leaks.
+        raised HERE, before validate/execute, so no field existence leaks.
 
         Args:
-            request: The incoming HTTP request (its ``user`` drives pruning).
+            request: The incoming HTTP request (its user drives pruning).
 
         Returns:
-            The full or per-request-pruned ``GraphQLSchema``.
+            The full or per-request-pruned schema.
 
         Raises:
             HttpError: A generic 403 when the caller's pruned Query root is empty.
@@ -2307,23 +2307,24 @@ class AuthenticatedGraphQLView(GraphQLView):
     def _cache_key_signature(self, request: HttpRequest) -> str:
         """Return the caller's permission signature for the response-cache key.
 
-        This mirrors :meth:`_graphql_schema_for`'s selection so the cache key
+        This mirrors the selection in _graphql_schema_for, so the cache key
         varies with the schema the caller actually validates/executes against:
 
-        - ``PERMISSION_SCOPED_SCHEMA`` False (default): returns ``""`` — the key
-          is byte-identical to the base view (feature inert).
-        - An ACTIVE superuser: returns ``""`` — they always get the FULL schema
-          (no signature computed), so their key needs no signature segment.
+        - PERMISSION_SCOPED_SCHEMA False (default): returns an empty string, so
+          the key is byte-identical to the base view (feature inert).
+        - An ACTIVE superuser: returns an empty string because they always get
+          the FULL schema (no signature computed), so their key needs no
+          signature segment.
         - Any other caller: returns the SHA-256 permission signature (the same
-          projection the LRU keys on: ``perms ∩ schema label-set``), so two
+          projection the LRU keys on: perms ∩ schema label-set), so two
           callers who share a cache identity but hold DIFFERENT relevant perms
           never collide on one cached response body.
 
         Args:
-            request: The incoming HTTP request (its ``user`` drives the signature).
+            request: The incoming HTTP request (its user drives the signature).
 
         Returns:
-            The permission signature, or ``""`` when no signature applies.
+            The permission signature, or an empty string when none applies.
         """
         if not graphql_api_settings.PERMISSION_SCOPED_SCHEMA:
             return ""
@@ -2372,7 +2373,7 @@ class AuthenticatedGraphQLView(GraphQLView):
     def _forbidden_response(self, request: HttpRequest) -> HttpResponse:
         """Return the endpoint's generic 403 (single source of the message).
 
-        Every endpoint-level denial (``permission_classes``, ``API_ACCESS_GROUP``,
+        Every endpoint-level denial (permission_classes, API_ACCESS_GROUP,
         empty pruned root) shares this exact body so none of them leaks its cause.
         """
         return HttpResponse(
@@ -2385,10 +2386,10 @@ class AuthenticatedGraphQLView(GraphQLView):
 
     @staticmethod
     def _passes_access_group(request: HttpRequest, group_name: str) -> bool:
-        """Return whether ``request.user`` may access the group-gated endpoint.
+        """Return whether request.user may access the group-gated endpoint.
 
         An active superuser always passes (hardcoded invariant). Otherwise the
-        user must be authenticated and belong to ``group_name``. A missing or
+        user must be authenticated and belong to group_name. A missing or
         anonymous user is denied (fail-closed).
         """
         user = getattr(request, "user", None)

@@ -160,12 +160,12 @@ def _compile_one(
     *,
     skip_gdx: bool = False,
 ) -> GraphQLObjectType:
-    """Compile a single model class to a ``GraphQLObjectType``.
+    """Compile a single model class to a GraphQLObjectType.
 
-    Registers a placeholder stub in ``_in_progress[id(model_cls)]`` BEFORE
+    Registers a placeholder stub in _in_progress[id(model_cls)] BEFORE
     building the fields thunk so mutual recursion terminates:
 
-    - A → B → A: when B is compiled, A's stub is already in ``_in_progress``,
+    - A → B → A: when B is compiled, A's stub is already in _in_progress,
       B's field thunk finds the stub and uses it — no re-entry into A's compile.
 
     Args:
@@ -173,7 +173,7 @@ def _compile_one(
         model_cls: The model class being compiled.
         related_models: Model classes referenced via relation fields.
         registry: The registry holding already-compiled types.
-        skip_gdx: If True, omit ``extensions["gdx"]`` (for error-path tests).
+        skip_gdx: If True, omit extensions["gdx"] (for error-path tests).
     """
     # Return already-compiled type immediately
     existing = registry.get_compiled(model_cls)
@@ -484,13 +484,13 @@ def compile_all_outputs() -> None:
 
 
 def _forked_interfaces_thunk(meta: Any, class_inst: Any, registries: Any) -> Any:
-    """Return the ``interfaces=`` value a forked object type must carry.
+    """Return the interfaces= value a forked object type must carry.
 
-    A class-def ``GraphQLObjectType`` compiles its implemented interfaces against
+    A class-def GraphQLObjectType compiles its implemented interfaces against
     the DEFAULT interface cache (the class body cannot know which pair a later
     schema will use). Copying that compiled list onto the fork mixes namespaces:
-    a root ``field(SomeInterface)`` in the SAME forked schema compiles a SECOND,
-    pair-local ``GraphQLInterfaceType`` with the same name, and graphql-core
+    a root field(SomeInterface) in the SAME forked schema compiles a SECOND,
+    pair-local GraphQLInterfaceType with the same name, and graphql-core
     rejects the schema with "Schema must contain uniquely named types".
 
     So the declared interface CLASSES are re-compiled through the pair's own
@@ -498,14 +498,14 @@ def _forked_interfaces_thunk(meta: Any, class_inst: Any, registries: Any) -> Any
     interface field still terminates, mirroring the class-def contract.
 
     Args:
-        meta: The output class' ``_meta`` (carries the declared ``interfaces``).
-        class_inst: The class-def ``GraphQLObjectType`` used as the fallback when
+        meta: The output class' _meta (carries the declared interfaces).
+        class_inst: The class-def GraphQLObjectType used as the fallback when
             nothing interface-shaped was declared.
-        registries: The ``SchemaRegistries`` pair the fork belongs to.
+        registries: The SchemaRegistries pair the fork belongs to.
 
     Returns:
         A zero-argument thunk returning this pair's compiled interfaces, or the
-        class-def interface list (possibly ``None``) when none were declared.
+        class-def interface list (possibly None) when none were declared.
     """
     declared = tuple(getattr(meta, "interfaces", None) or ())
     if not declared:
@@ -531,11 +531,11 @@ def _forked_interfaces_thunk(meta: Any, class_inst: Any, registries: Any) -> Any
 def _fork_output_class(
     cls: Any, entry: Any, registries: Any, output_registry: Any, graphene_registry: Any
 ) -> GraphQLObjectType:
-    """Build (or return) the FORKED ``GraphQLObjectType`` for *cls* in *registries*.
+    """Build (or return) the FORKED GraphQLObjectType for *cls* in *registries*.
 
-    item-b (B5): the single-entry fork builder shared by ``compile_outputs_into``
-    (the eager pass) and ``fork_output_class`` (the on-demand path for lazily
-    auto-created ``<Model>ListType`` containers reached during thunk eval). Builds
+    item-b (B5): the single-entry fork builder shared by compile_outputs_into
+    (the eager pass) and fork_output_class (the on-demand path for lazily
+    auto-created <Model>ListType containers reached during thunk eval). Builds
     a pair-local instance whose thunk closes over THIS pair's registries, copies
     the class-def gdx payload (R4), and registers it in the pair's caches.
 

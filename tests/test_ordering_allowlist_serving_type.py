@@ -107,8 +107,7 @@ class FlatPaginatedFieldRanksByTheServingTypeTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create one post so the list has a row to rank.
 
-        Returns:
-            None.
+        The related author makes the foreign-key ordering path available.
         """
         author = Author.objects.create(name="a", bio="")
         Post.objects.create(title="t", author=author)
@@ -116,8 +115,7 @@ class FlatPaginatedFieldRanksByTheServingTypeTests(TestCase):
     def test_the_relation_makes_the_key_orderable_while_it_is_published(self) -> None:
         """The contrast that makes the next assertion about provenance.
 
-        Returns:
-            None.
+        Publishing the relation keeps its foreign-key column orderable.
         """
         result = graphql_sync(
             serving_schema.graphql_schema,
@@ -133,8 +131,6 @@ class FlatPaginatedFieldRanksByTheServingTypeTests(TestCase):
         narrowed schema has to be a schema of its own or the two tests would
         depend on the order they run in.
 
-        Returns:
-            None.
         """
         narrowed = DjangoGraphQLSchema(query=ServingQuery, registries=isolated_pair(_R))
         narrowed.graphql_schema.type_map["ServingPostType"].fields.pop("author")

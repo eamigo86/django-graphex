@@ -48,17 +48,17 @@ from .models import Author, BasicModel, Post
 
 
 class _StubRegistry:
-    """Minimal registry for ``_to_graphql_field`` (scalars never touch it)."""
+    """Minimal registry for _to_graphql_field (scalars never touch it)."""
 
     def get_compiled(self, model_cls):
         return None
 
 
 def _native_scalar(field, name="probe"):
-    """Run the NATIVE scalar conversion for ``field`` and return its scalar.
+    """Run the NATIVE scalar conversion for field and return its scalar.
 
-    Drives ``_to_graphql_field`` (the live native equivalent of the retired
-    graphene scalar dispatchers), unwraps ``GraphQLNonNull``, and returns the
+    Drives _to_graphql_field (the live native equivalent of the retired
+    graphene scalar dispatchers), unwraps GraphQLNonNull, and returns the
     underlying graphql-core scalar.
     """
     if not getattr(field, "name", None):
@@ -71,12 +71,12 @@ def _native_scalar(field, name="probe"):
 
 
 def _is_lazy_closure(obj):
-    """True for a converter result that defers to a lazy ``get_type()`` closure.
+    """True for a converter result that defers to a lazy get_type() closure.
 
     Converter paths not yet migrated off graphene still return a graphene
-    ``Dynamic`` whose ``get_type()`` must be called. Detect it structurally
-    (duck-typed ``get_type`` on a graphene-module object) so this file imports no
-    graphene symbol; migrated relation converters return a ``NativeRelationField``
+    Dynamic whose get_type() must be called. Detect it structurally
+    (duck-typed get_type on a graphene-module object) so this file imports no
+    graphene symbol; migrated relation converters return a NativeRelationField
     instead, which the caller treats verbatim.
     """
     from django_graphex.core.descriptors import NativeRelationField
@@ -89,13 +89,13 @@ def _is_lazy_closure(obj):
 
 
 def _is_dead_scalar(obj):
-    """True when ``obj`` is the converter's dead-scalar sentinel.
+    """True when obj is the converter's dead-scalar sentinel.
 
     S-del-backend-11: the PostgreSQL ArrayField / RangeField converters are now
-    graphene-free — they return the ``_DEAD_SCALAR`` sentinel (the native OUTPUT
-    compiler derives every field from ``model._meta`` and has no ArrayField /
+    graphene-free — they return the _DEAD_SCALAR sentinel (the native OUTPUT
+    compiler derives every field from model._meta and has no ArrayField /
     RangeField entry, so the descriptor is OMITTED). Assert the native sentinel
-    instead of the retired graphene ``List`` wrapper.
+    instead of the retired graphene List wrapper.
     """
     from django_graphex.converter import _DEAD_SCALAR
 

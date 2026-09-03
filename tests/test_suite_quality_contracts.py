@@ -4,6 +4,44 @@ import ast
 from pathlib import Path
 
 TESTS_ROOT = Path(__file__).parent
+RETIRED_DOCSTRING_RATCHETS = frozenset(
+    {
+        Path("test_docstring_benchmark_app.py"),
+        Path("test_docstring_benchmark_ariadne.py"),
+        Path("test_docstring_benchmark_graphene.py"),
+        Path("test_docstring_benchmark_graphex.py"),
+        Path("test_docstring_benchmark_harness.py"),
+        Path("test_docstring_benchmark_strawberry.py"),
+        Path("test_docstring_core_base.py"),
+        Path("test_docstring_directives_core.py"),
+        Path("test_docstring_directives_string.py"),
+        Path("test_docstring_input_compiler.py"),
+        Path("test_docstring_migrate_2_0.py"),
+        Path("test_docstring_native_test_helpers.py"),
+        Path("test_docstring_output_compiler.py"),
+        Path("test_docstring_pagination.py"),
+        Path("test_docstring_playground.py"),
+        Path("test_docstring_release_scripts.py"),
+        Path("test_docstring_release_tools.py"),
+        Path("test_docstring_runtime_conversion.py"),
+        Path("test_docstring_runtime_internals_a.py"),
+        Path("test_docstring_runtime_internals_b.py"),
+        Path("test_docstring_runtime_public.py"),
+        Path("test_docstring_schema_compiler_part1.py"),
+        Path("test_docstring_schema_compiler_part2.py"),
+        Path("test_docstring_schema_facade.py"),
+        Path("test_docstring_schema_pruner_contract.py"),
+        Path("test_docstring_test_converter_helpers.py"),
+        Path("test_docstring_test_public_filters.py"),
+        Path("test_docstring_test_public_infra.py"),
+        Path("test_docstring_test_public_ordering.py"),
+        Path("test_docstring_types_part1.py"),
+        Path("test_docstring_types_part2.py"),
+        Path("test_docstring_utils_part1.py"),
+        Path("test_docstring_utils_part2.py"),
+        Path("test_docstring_views.py"),
+    }
+)
 
 
 def _test_files() -> list[Path]:
@@ -22,6 +60,30 @@ def _is_pytest_call(node: ast.AST, method: str) -> bool:
         and node.func.value.id == "pytest"
         and node.func.attr == method
     )
+
+
+def test_retired_docstring_ratchets_stay_deleted() -> None:
+    """Prevent one-off ratchet contracts from returning after global enforcement.
+
+    Add each retired contract path to the shared set as cleanup progresses.
+    """
+    offenders = sorted(
+        str(relative_path)
+        for relative_path in RETIRED_DOCSTRING_RATCHETS
+        if (TESTS_ROOT / relative_path).exists()
+    )
+    assert offenders == [], f"retired docstring ratchets still exist: {offenders}"
+
+
+def test_one_off_docstring_ratchets_are_fully_retired() -> None:
+    """Require all docstring contracts to use the permanent checker.
+
+    The permanent checker name deliberately does not match the retired-file glob.
+    """
+    checker = TESTS_ROOT / "test_check_docstrings_tool.py"
+    offenders = sorted(path.name for path in TESTS_ROOT.glob("test_docstring_*.py"))
+    assert checker.is_file(), "permanent docstring checker is missing"
+    assert offenders == [], f"one-off docstring ratchets still exist: {offenders}"
 
 
 def test_core_modules_do_not_importorskip_during_collection() -> None:  # noqa: DOC001

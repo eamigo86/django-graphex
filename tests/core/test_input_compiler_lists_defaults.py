@@ -52,11 +52,11 @@ from django_graphex.core.input_compiler import compile_input_type
 def _sdl(
     model: type[BaseModel], *, name: str, emit_defaults: bool | None = None
 ) -> str:
-    """Compile ``model`` and return the rendered input-type SDL.
+    """Compile model and return the rendered input-type SDL.
 
-    ``emit_defaults=True`` simulates the hand-authored ``InputType`` population
-    (which surfaces user-declared defaults into the SDL); the default (``None``)
-    auto-detects and, for a plain ``BaseModel``, does NOT emit defaults —
+    emit_defaults=True simulates the hand-authored InputType population
+    (which surfaces user-declared defaults into the SDL); the default (None)
+    auto-detects and, for a plain BaseModel, does NOT emit defaults —
     mirroring the Django-model-derived mutation path.
     """
     return print_type(compile_input_type(model, name=name, emit_defaults=emit_defaults))
@@ -69,11 +69,11 @@ def _exec_arg(
     query: str,
     emit_defaults: bool | None = None,
 ) -> tuple:
-    """Build a one-field Query whose arg is ``model`` and run ``query``.
+    """Build a one-field Query whose arg is model and run query.
 
-    Returns ``(errors, captured_dict)`` where ``captured_dict`` is the coerced
-    argument value graphql-core delivered to the resolver (snake ``out_name``
-    keys, defaults already filled in when ``emit_defaults`` surfaces them).
+    Returns (errors, captured_dict) where captured_dict is the coerced
+    argument value graphql-core delivered to the resolver (snake out_name
+    keys, defaults already filled in when emit_defaults surfaces them).
     """
     inp = compile_input_type(model, name=name, emit_defaults=emit_defaults)
     captured: dict = {}

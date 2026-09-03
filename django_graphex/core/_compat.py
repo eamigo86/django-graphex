@@ -33,24 +33,24 @@ def _adapt_self(
     fn: Callable[..., Any],
     owner: type | None = None,  # reserved for future use (logging, context)
 ) -> Callable[..., Any]:
-    """Adapt a ``self``-first callable to the ``(root, info, **kw)`` protocol.
+    """Adapt a self-first callable to the (root, info, **kw) protocol.
 
     Inspection rules:
-    1. If ``fn`` is a bound method (``inspect.ismethod(fn)`` is ``True``),
+    1. If fn is a bound method (inspect.ismethod(fn) is True),
        return it **unmodified** — classmethods are already correct.
-    2. Examine the first positional parameter via ``inspect.signature(fn)``.
-       If it is named ``"self"``, wrap ``fn`` in a shim that:
-       - Calls the underlying function as ``fn(root, info, **kw)`` so existing
+    2. Examine the first positional parameter via inspect.signature(fn).
+       If it is named "self", wrap fn in a shim that:
+       - Calls the underlying function as fn(root, info, **kw) so existing
          behaviour is preserved under the native runtime.
-       - Emits ``DeprecationWarning`` on every call to prompt migration.
-    3. In all other cases, return ``fn`` unmodified.
+       - Emits DeprecationWarning on every call to prompt migration.
+    3. In all other cases, return fn unmodified.
 
     Args:
         fn: The callable to inspect and optionally wrap.
         owner: The class that owns the callable (reserved; currently unused).
 
     Returns:
-        The original ``fn`` or a shim that wraps it.
+        The original fn or a shim that wraps it.
     """
     # Rule 1: bound classmethods — always passthrough
     if inspect.ismethod(fn):

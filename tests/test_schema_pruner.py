@@ -462,11 +462,11 @@ def test_named_input_type_survives_for_kept_field_arg() -> None:
 # 1.2b — interface implementers reachable ONLY through the interface
 # --------------------------------------------------------------------------- #
 def _interface_only_schema() -> GraphQLSchema:
-    """A ``Node`` interface with two implementers (``Pub`` / ``Sec``) reachable
-    ONLY via ``Query.node: Node`` — never returned directly by any field.
+    """A Node interface with two implementers (Pub / Sec) reachable
+    ONLY via Query.node: Node — never returned directly by any field.
 
     graphql-core keeps only root-reachable types plus whatever is listed in
-    ``types=``; without a ``types=`` forward the implementers vanish from the
+    types=; without a types= forward the implementers vanish from the
     (pruned) type map even though the interface itself survives.
     """
     node = GraphQLInterfaceType("Node", {"id": GraphQLField(GraphQLString)})
@@ -545,9 +545,9 @@ def test_interface_only_implementers_validate_clean() -> None:
 
 
 def _interface_gated_implementer_schema() -> GraphQLSchema:
-    """A ``Node`` interface with two implementers reachable only via it. ``Sec``
-    carries an extra perm-gated field ``secName`` on top of a public ``label``;
-    ``Pub`` is fully public.
+    """A Node interface with two implementers reachable only via it. Sec
+    carries an extra perm-gated field secName on top of a public label;
+    Pub is fully public.
     """
     node = GraphQLInterfaceType("Node", {"id": GraphQLField(GraphQLString)})
     pub = GraphQLObjectType(

@@ -12,7 +12,7 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
-## 3.1.0 — 2026-09-02
+## 3.1.0 — 2026-09-03
 
 **Audit-hardening release.** This release closes all 24 findings from the 3.0
 post-release audit across runtime correctness, security guidance, the test suite,
@@ -81,6 +81,10 @@ but cache invalidation is deliberately safer by default.
 
 ### Test and release engineering
 
+- [#146](https://github.com/eamigo86/django-graphex/issues/146) adds the global CI gate: public APIs require
+  complete Google-style contracts and type hints without repeated types, every
+  docstring is free of backticks, and CI combines `--strict-public` with
+  `--strict-content` without a changed-owner ratchet.
 - Channels-free runs keep collecting transaction/savepoint tests, broad
   `pytest.raises(Exception)` contracts were replaced by exact failures, and
   focused commands use `--no-cov`. CI enforces branch coverage and changed-line

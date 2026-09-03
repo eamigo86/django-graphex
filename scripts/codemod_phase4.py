@@ -1,43 +1,18 @@
 #!/usr/bin/env python
-"""Phase 4 codemod: migrate graphene.Mutation subclasses to django_graphex.
+"""Migrate graphene.Mutation subclasses to django_graphex.
 
-Rewrites performed (IDEMPOTENT — safe to run multiple times):
+The idempotent Phase 4 codemod rewrites Mutation imports and replaces a
+graphene.Mutation base with the django-graphex Mutation class. Within Mutation
+subclasses, it renames the first self parameter of mutate and resolver methods
+to root. The native Arguments container name remains unchanged.
 
-1. Import rewrites
-   - ``from graphene import Mutation`` → ``from django_graphex import Mutation``
-   - ``graphene.Mutation`` as a base class → bare ``Mutation``
-     (adds ``from django_graphex import Mutation`` if not already present)
+Use --dry-run to preview changes, --show-diff to print a unified diff, or
+--apply to update Python files in place. Directory targets process every Python
+file below them.
 
-2. Inside ``Mutation`` subclasses only (parent-class check prevents false positives):
-   - First parameter ``self`` → ``root`` in ``def mutate(…)`` and
-     ``def resolve_*(…)`` methods
-
-Note: ``class Arguments:`` is the native v2.0 arguments container name (unified
-with DjangoModelMutation), so it is left UNCHANGED — the codemod does not rename it.
-
-Usage::
-
-    # Preview only (no files written):
-    python scripts/codemod_phase4.py --dry-run path/to/mutations.py
-
-    # Show a unified diff without writing:
-    python scripts/codemod_phase4.py --show-diff path/to/mutations.py
-
-    # Apply changes in-place:
-    python scripts/codemod_phase4.py --apply path/to/mutations.py
-
-    # Process every .py file under a directory:
-    python scripts/codemod_phase4.py --apply path/to/project/
-
-Implementation note
--------------------
-``libcst`` is NOT available in this environment; the transform is performed on
-the raw token/line level using ``ast`` for *analysis* (detecting Mutation
-subclasses and their line ranges) and a simple line-rewriting pass for the
-actual text surgery.  This keeps the output byte-for-byte stable: only the
-targeted lines are touched; all other formatting (blank lines, comments,
-indentation style) is preserved.  Because only targeted lines are rewritten,
-running the codemod twice produces identical output (idempotency).
+The implementation uses the standard AST for analysis and a line-level rewrite
+for text changes. Only targeted lines change, leaving formatting intact and
+making repeated runs idempotent.
 """
 
 from __future__ import annotations
@@ -65,11 +40,10 @@ _GRAPHENE_MUTATION_ATTR = "graphene.Mutation"
 
 
 def _is_mutation_base(node: ast.expr) -> bool:
-    """Return True if *node* (a base-class expression) refers to a Mutation.
+    """Return whether a base-class expression refers to Mutation.
 
-    Recognised forms:
-    - ``Mutation``            (bare name — from graphene/django_graphex import)
-    - ``graphene.Mutation``   (attribute access)
+    Recognized forms are a bare Mutation name and graphene.Mutation attribute
+    access.
     """
     if isinstance(node, ast.Name):
         return node.id in _MUTATION_NAMES
@@ -86,7 +60,7 @@ def _collect_mutation_class_ranges(tree: ast.Module) -> list[tuple[int, int]]:
     """Return [(start_line, end_line), ...] for every Mutation subclass.
 
     Lines are 1-based and inclusive.  Only top-level and module-level nested
-    classes are scanned; deeply nested classes that happen to name ``Mutation``
+    classes are scanned; deeply nested classes that happen to name Mutation
     as a base are intentionally out of scope for a first-pass codemod.
     """
     ranges: list[tuple[int, int]] = []
@@ -137,13 +111,13 @@ def _transform_import_line(
     need_gdx_mutation: list[bool],
     already_has_gdx_mutation: bool,
 ) -> str | None:
-    """Rewrite a ``from graphene import Mutation`` line.
+    """Rewrite a graphene Mutation import line.
 
     Returns:
     - New line string if a replacement was made.
-    - ``None`` if no change needed.
+    - None if no change is needed.
 
-    Side-effect: sets ``need_gdx_mutation[0] = True`` when graphene.Mutation
+    Side effect: marks the first need_gdx_mutation entry when graphene.Mutation
     is found in a base-class position (handled separately in caller).
     """
     m = _RE_FROM_GRAPHENE_MUTATION.match(line)
@@ -188,6 +162,12 @@ def transform_source(src: str) -> str:  # noqa: C901 (complexity justified)
 
     The transform is IDEMPOTENT: applying it to already-transformed source
     returns the source unchanged.
+
+    Args:
+        src: Python source to transform.
+
+    Returns:
+        The transformed source, or the original source when no rewrite applies.
     """
     # Parse with ast to find Mutation subclass line ranges
     try:
@@ -286,7 +266,13 @@ def process_file(
 ) -> bool:
     """Transform *path* in-place (unless *dry_run* is True).
 
-    Returns True if any change would be / was made.
+    Args:
+        path: Python file to transform.
+        dry_run: Whether to report changes without writing the file.
+        show_diff: Whether to print a unified diff.
+
+    Returns:
+        True when a change was made or would be made.
     """
     src = path.read_text(encoding="utf-8")
     result = transform_source(src)
@@ -318,7 +304,13 @@ def process_path(
 ) -> int:
     """Process *target* (file or directory tree).
 
-    Returns the number of files changed (or that would change).
+    Args:
+        target: Python file or directory tree to process.
+        dry_run: Whether to report changes without writing files.
+        show_diff: Whether to print unified diffs.
+
+    Returns:
+        The number of files changed or that would change.
     """
     if target.is_file():
         return 1 if process_file(target, dry_run=dry_run, show_diff=show_diff) else 0
@@ -339,7 +331,14 @@ def process_path(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse CLI args and run the Phase 4 codemod over the given paths."""
+    """Run the Phase 4 codemod command.
+
+    Args:
+        argv: Optional command-line arguments, excluding the executable name.
+
+    Returns:
+        A successful process status.
+    """
     import argparse
 
     parser = argparse.ArgumentParser(

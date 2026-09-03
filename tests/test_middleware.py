@@ -36,8 +36,7 @@ class PrefixGraphQLDirective(BaseExtraGraphQLDirective):
         """Get arguments for the prefix directive.
 
         Returns:
-            dict[str, GraphQLArgument]: A mapping with a single "with"
-            argument used as the prefix text.
+            A mapping with a single "with" argument used as the prefix text.
         """
         return {"with": GraphQLArgument(GraphQLString)}
 
@@ -61,8 +60,8 @@ class PrefixGraphQLDirective(BaseExtraGraphQLDirective):
             **kwargs: Additional resolver keyword arguments, ignored here.
 
         Returns:
-            Any: The value prefixed with "with" (or "p_" by default) when it
-            is a string, otherwise the value unchanged.
+            The value prefixed with "with" (or "p_" by default) when it is a
+            string, otherwise the value unchanged.
         """
         if not isinstance(value, str):
             return value

@@ -356,6 +356,7 @@ class DateGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The formatted date string for string values, otherwise a

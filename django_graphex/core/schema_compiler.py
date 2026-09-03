@@ -58,25 +58,25 @@ _DEFERRED_FIELD_KINDS: dict[str, str] = {}
 def _rendered_field_name(field: Any, attr_name: str) -> str:
     """Return the wire name graphene would render for a declared field.
 
-    graphene's ``MountedType`` carries an explicit ``name`` attribute (the
-    ``name=`` kwarg, e.g. ``CustomDate(name="date")``). When set, graphene uses
+    graphene's MountedType carries an explicit name attribute (the
+    name= kwarg, e.g. CustomDate(name="date")). When set, graphene uses
     it VERBATIM as the final SDL field name — NO camelCase pass is applied (the
-    explicit name is already the wire name). When unset (``None``), graphene
-    camelCases the snake_case attribute name under ``auto_camelcase=True``.
+    explicit name is already the wire name). When unset (None), graphene
+    camelCases the snake_case attribute name under auto_camelcase=True.
 
     Mirroring this is REQUIRED for full-schema SDL parity: the test schema
-    declares ``date_ = CustomDate(name="date")`` / ``datetime_`` / ``time_`` to
+    declares date_ = CustomDate(name="date") / datetime_ / time_ to
     dodge the Python keyword-collision trailing underscore; graphene renders
-    ``date`` / ``datetime`` / ``time`` while a naive ``to_camel_case(attr)``
-    would render ``date_`` / ``datetime_`` / ``time_`` — an SDL divergence.
+    date / datetime / time while a naive to_camel_case(attr)
+    would render date_ / datetime_ / time_ — an SDL divergence.
 
     Args:
-        field: The mounted graphene field (may expose an explicit ``.name``).
+        field: The mounted graphene field (may expose an explicit .name).
         attr_name: The snake_case attribute name under which the field is
             declared on the root.
 
     Returns:
-        The explicit ``field.name`` when set, else ``to_camel_case(attr_name)``.
+        The explicit field.name when set, else to_camel_case(attr_name).
     """
     explicit = getattr(field, "name", None)
     if explicit:
@@ -85,21 +85,21 @@ def _rendered_field_name(field: Any, attr_name: str) -> str:
 
 
 def _stamp_required_perms(gql_field: GraphQLField, perms: Any) -> GraphQLField:
-    """Stamp ``extensions["gdx_required_perms"]`` on a built root field (P0).
+    """Stamp extensions["gdx_required_perms"] on a built root field (P0).
 
     Records the permissions a caller must hold to see this field, so the P1
-    pruner can rebuild a per-signature schema. The value is a ``frozenset`` for
-    CRUD / declared / mutation fields, or a per-action ``dict{action: frozenset}``
-    for subscription fields. Uses the SAME ``extensions`` merge idiom as the
-    ``gdx_mutation_source`` precedent (mutation.py) so the label rides the field
+    pruner can rebuild a per-signature schema. The value is a frozenset for
+    CRUD / declared / mutation fields, or a per-action dict{action: frozenset}
+    for subscription fields. Uses the SAME extensions merge idiom as the
+    gdx_mutation_source precedent (mutation.py) so the label rides the field
     verbatim through a clone.
 
     Args:
         gql_field: The compiled graphql-core field to label.
-        perms: The composite perms (a ``frozenset`` or per-action ``dict``).
+        perms: The composite perms (a frozenset or per-action dict).
 
     Returns:
-        The same field, with its ``extensions`` merged in place.
+        The same field, with its extensions merged in place.
     """
     gql_field.extensions = {
         **(gql_field.extensions or {}),
@@ -113,14 +113,14 @@ def _label_model_field(
 ) -> GraphQLField:
     """Stamp composite perms on a CRUD model field (retrieve / list).
 
-    An explicit ``descriptor.required_perms`` override (P0 opt-in) wins; else the
-    perms come from the composite table keyed by the field's model + ``action``.
+    An explicit descriptor.required_perms override (P0 opt-in) wins; else the
+    perms come from the composite table keyed by the field's model + action.
 
     Args:
         gql_field: The compiled graphql-core field.
-        descriptor: The ``Django*Field`` descriptor (exposes ``.model`` and an
-            optional ``.required_perms`` override).
-        action: The CRUD action the field represents (``retrieve`` / ``list``).
+        descriptor: The Django*Field descriptor (exposes .model and an
+            optional .required_perms override).
+        action: The CRUD action the field represents (retrieve / list).
 
     Returns:
         The labeled field.
@@ -136,26 +136,26 @@ def _label_model_field(
 
 
 def _collect_root_attrs(root: type) -> dict[str, Any]:
-    """Collect native mutation ``GraphQLField`` attributes the metaclass dropped.
+    """Collect native mutation GraphQLField attributes the metaclass dropped.
 
-    The ``ObjectType`` metaclass does NOT mount raw graphql-core
-    ``GraphQLField`` objects (e.g. native mutation fields returned by
-    ``DjangoModelType.CreateField()``): they stay as plain class attributes in
-    ``__dict__`` but never enter ``_meta.fields``. Walk the MRO so subclassed
+    The ObjectType metaclass does NOT mount raw graphql-core
+    GraphQLField objects (e.g. native mutation fields returned by
+    DjangoModelType.CreateField()): they stay as plain class attributes in
+    __dict__ but never enter _meta.fields. Walk the MRO so subclassed
     roots still surface them; the most-derived class wins on name collisions.
 
-    Membership in ``_NATIVE_FIELD_REGISTRY`` (not a blanket
-    ``isinstance(value, GraphQLField)`` scan) is the gate: a recovered attribute
+    Membership in _NATIVE_FIELD_REGISTRY (not a blanket
+    isinstance(value, GraphQLField) scan) is the gate: a recovered attribute
     is treated as a native mutation field ONLY when it is one of the exact
-    ``GraphQLField`` instances the mutation machinery registered. This prevents
-    an unrelated user-declared raw ``GraphQLField`` class attribute from being
+    GraphQLField instances the mutation machinery registered. This prevents
+    an unrelated user-declared raw GraphQLField class attribute from being
     silently mounted onto the native root.
 
     Args:
         root: The graphene root ObjectType class.
 
     Returns:
-        Mapping of attribute name → ``GraphQLField`` for every dropped native
+        Mapping of attribute name → GraphQLField for every dropped native
         mutation field found on the root (and its bases).
     """
     from django_graphex.mutation import (
@@ -181,29 +181,29 @@ def _collect_root_attrs(root: type) -> dict[str, Any]:
 
 
 def _collect_dropped_native_fields(root: type) -> dict[str, Any]:
-    """Recover ``NativeMountedField`` attrs the graphene root metaclass dropped.
+    """Recover NativeMountedField attrs the graphene root metaclass dropped.
 
-    S8c silent-drop guard: the ``Django*Field`` classes are re-parented off graphene
-    ``Field`` onto ``NativeMountedField``. graphene's ObjectType metaclass collects
-    fields via ``yank_fields_from_attrs``, which keeps ONLY graphene
-    ``MountedType`` / ``UnmountedType`` instances — so a ``NativeMountedField``
-    declared on a graphene root (e.g. ``class Query(graphene.ObjectType):
-    users = DjangoFilterListField(UserType)``) NEVER reaches ``_meta.fields`` and
+    S8c silent-drop guard: the Django*Field classes are re-parented off graphene
+    Field onto NativeMountedField. graphene's ObjectType metaclass collects
+    fields via yank_fields_from_attrs, which keeps ONLY graphene
+    MountedType / UnmountedType instances — so a NativeMountedField
+    declared on a graphene root (e.g. class Query(graphene.ObjectType):
+    users = DjangoFilterListField(UserType)) NEVER reaches _meta.fields and
     would vanish from the compiled schema.
 
     This walks the root MRO (base-first, most-derived wins on a name collision —
-    graphene parity) and recovers every class-body ``NativeMountedField`` so the
-    native root compiler can mount it. A native ``ObjectType`` root already
-    surfaces these via ``_mount_descriptor_fields`` (so they are in ``_meta.fields``
+    graphene parity) and recovers every class-body NativeMountedField so the
+    native root compiler can mount it. A native ObjectType root already
+    surfaces these via _mount_descriptor_fields (so they are in _meta.fields
     and not re-added here); this recovery is purely for the transitional
     graphene-root public API. Returns the recovered fields ordered by graphene
-    ``creation_counter`` so declaration order (hence SDL field order) is preserved.
+    creation_counter so declaration order (hence SDL field order) is preserved.
 
     Args:
         root: The root ObjectType class (graphene or native).
 
     Returns:
-        An ordered ``{attr_name: NativeMountedField}`` mapping for every dropped
+        An ordered {attr_name: NativeMountedField} mapping for every dropped
         native field, sorted by declaration order.
     """
     from django_graphex.core.descriptors import NativeMountedField
@@ -221,19 +221,19 @@ def _collect_dropped_native_fields(root: type) -> dict[str, Any]:
 def _is_subscription_field(field: Any) -> bool:
     """Return whether *field* is a subscription root field (WU7).
 
-    Duck-typed (NOT a hard ``import django_graphex.subscriptions``) so the native
-    root compiler never pulls the optional ``[subscriptions]`` extra (Channels)
+    Duck-typed (NOT a hard import django_graphex.subscriptions) so the native
+    root compiler never pulls the optional [subscriptions] extra (Channels)
     onto the base build path. A subscription root field is a graphene-mounted
-    field whose ``type`` is a ``Subscription`` subclass carrying the native
-    compile-path method ``_build_native_field`` (added by WU6). The class name
-    gate (``SubscriptionField``) avoids matching an unrelated field that happens
+    field whose type is a Subscription subclass carrying the native
+    compile-path method _build_native_field (added by WU6). The class name
+    gate (SubscriptionField) avoids matching an unrelated field that happens
     to expose a callable of that name.
 
     Args:
         field: A graphene-mounted root field.
 
     Returns:
-        ``True`` when *field* is a ``SubscriptionField`` whose target class
+        True when *field* is a SubscriptionField whose target class
         builds a native subscription field.
     """
     if type(field).__name__ != "SubscriptionField":
@@ -245,21 +245,21 @@ def _is_subscription_field(field: Any) -> bool:
 def _build_object_field(
     field: Any, registries: SchemaRegistries | None = None
 ) -> GraphQLField:
-    """Build a native ``GraphQLField`` for a ``DjangoObjectField`` (single object).
+    """Build a native GraphQLField for a DjangoObjectField (single object).
 
-    The field TYPE is the canonical native ``GraphQLObjectType`` stored on the
-    target ``DjangoObjectType._meta.graphql_output_type`` — the SAME instance the
+    The field TYPE is the canonical native GraphQLObjectType stored on the
+    target DjangoObjectType._meta.graphql_output_type — the SAME instance the
     shared output registry holds (identity-stable). The resolver is wired via the
-    field's own ``wrap_resolve`` so it is NOT a dead no-op.
+    field's own wrap_resolve so it is NOT a dead no-op.
 
     Args:
-        field: A ``DjangoObjectField`` instance (graphene-mounted).
-        registries: The ``SchemaRegistries`` pair (threaded for uniformity; the
-            canonical instance is read from ``_meta``). Defaults to the global
+        field: A DjangoObjectField instance (graphene-mounted).
+        registries: The SchemaRegistries pair (threaded for uniformity; the
+            canonical instance is read from _meta). Defaults to the global
             pair (byte-identical, item-b B1).
 
     Returns:
-        A graphql-core ``GraphQLField``.
+        A graphql-core GraphQLField.
     """
     from django_graphex.core._args import to_graphql_argument
     from django_graphex.core.base import resolved_output_type
@@ -299,20 +299,20 @@ def _build_scalar_field(
     field_name: str | None = None,
     registries: SchemaRegistries | None = None,
 ) -> GraphQLField:
-    """Convert a plain graphene scalar field to a graphql-core ``GraphQLField``.
+    """Convert a plain graphene scalar field to a graphql-core GraphQLField.
 
     Args:
-        field: A plain ``graphene.Field`` whose mounted type is a scalar/enum.
+        field: A plain graphene.Field whose mounted type is a scalar/enum.
         source_cls: The source ObjectType class declaring the field; used to
-            recover a ``resolve_<field_name>`` parent resolver (graphene parity).
-        field_name: The snake_case field name (for the ``resolve_<name>`` lookup).
-        registries: The ``SchemaRegistries`` pair the current build compiles
+            recover a resolve_<field_name> parent resolver (graphene parity).
+        field_name: The snake_case field name (for the resolve_<name> lookup).
+        registries: The SchemaRegistries pair the current build compiles
             against, threaded into the wrapped-type compile so an inner
             django-graphex output type resolves to THIS pair's forked instance;
             defaults to the global pair (byte-identical, item-b B1).
 
     Returns:
-        A graphql-core ``GraphQLField``.
+        A graphql-core GraphQLField.
     """
     # Resolve the (possibly native-wrapped) field type. A bare scalar leaf goes
     # through ``_unwrap_graphql_type`` verbatim (byte-identical to the historical
@@ -350,17 +350,17 @@ def _build_scalar_field(
 def _get_unbound_function(func: Any) -> Any:
     """Return *func* unbound from its owning class (graphene-free inline).
 
-    Replaces ``graphene.utils.get_unbound_function.get_unbound_function`` (S-args-8
+    Replaces graphene.utils.get_unbound_function.get_unbound_function (S-args-8
     follow-up, decision #1603 — CLEAN BREAK). graphene's helper is a trivial 3-line
-    routine: a bound method (``__self__`` is truthy) is returned as-is, while a
-    method retrieved off a CLASS via ``getattr`` (``func.__self__`` is falsy /
-    absent) is unwrapped to its plain ``__func__`` so graphql-core can call it as a
-    bare ``(root, info, **kw)`` resolver. Inlined here so a pure-native root with a
-    ``resolve_<name>`` method no longer pulls graphene at compile time.
+    routine: a bound method (__self__ is truthy) is returned as-is, while a
+    method retrieved off a CLASS via getattr (func.__self__ is falsy /
+    absent) is unwrapped to its plain __func__ so graphql-core can call it as a
+    bare (root, info, **kw) resolver. Inlined here so a pure-native root with a
+    resolve_<name> method no longer pulls graphene at compile time.
 
     Args:
         func: A callable, typically a method object fetched via
-            ``getattr(cls, "resolve_<name>")``.
+            getattr(cls, "resolve_<name>").
 
     Returns:
         The function unbound from its class when applicable, else *func* verbatim.
@@ -374,13 +374,13 @@ def _resolver_for(source_cls: type | None, field_name: str | None) -> Any:
     """Return the parent resolver for a field, or the default resolver.
 
     Mirrors graphene's TypeMap wiring: the source ObjectType's
-    ``resolve_<field_name>`` (unbound) when declared, else graphql-core's default
-    attribute/dict resolver. ``field.wrap_resolve`` still prefers a field-level
+    resolve_<field_name> (unbound) when declared, else graphql-core's default
+    attribute/dict resolver. field.wrap_resolve still prefers a field-level
     resolver over this fallback.
 
     Args:
-        source_cls: The ObjectType class declaring the field (may be ``None``).
-        field_name: The snake_case field name (may be ``None``).
+        source_cls: The ObjectType class declaring the field (may be None).
+        field_name: The snake_case field name (may be None).
 
     Returns:
         The parent resolver callable.
@@ -412,22 +412,22 @@ def _resolve_registries(registries: SchemaRegistries | None) -> SchemaRegistries
 
 
 def _is_plain_object_type(graphene_cls: Any) -> bool:
-    """Return whether *graphene_cls* is a plain ``graphene.ObjectType`` subclass.
+    """Return whether *graphene_cls* is a plain graphene.ObjectType subclass.
 
     "Plain" excludes the django-graphex output container/model types
-    (``DjangoObjectType`` / ``DjangoListObjectType``), which carry their own
-    canonical ``_meta.graphql_output_type`` and are compiled by the output
+    (DjangoObjectType / DjangoListObjectType), which carry their own
+    canonical _meta.graphql_output_type and are compiled by the output
     registry — NOT on-the-fly here. It also excludes scalars/enums (handled by
-    ``_build_scalar_field``) and non-class field types (wrappers).
+    _build_scalar_field) and non-class field types (wrappers).
 
     Args:
-        graphene_cls: The mounted field ``type`` (``field.type``).
+        graphene_cls: The mounted field type (field.type).
 
     Returns:
-        ``True`` when the field type is a native plain ``ObjectType`` (the
-        S-ROOTS-b marker — e.g. ``ErrorType``) that is NOT a django-graphex
-        container/model output type, a union/interface, or an ``InputType``.
-        A leftover ``graphene.ObjectType`` is rejected (v2.0 is native-only;
+        True when the field type is a native plain ObjectType (the
+        S-ROOTS-b marker — e.g. ErrorType) that is NOT a django-graphex
+        container/model output type, a union/interface, or an InputType.
+        A leftover graphene.ObjectType is rejected (v2.0 is native-only;
         the graphene-root compile path was removed).
     """
     import inspect
@@ -483,29 +483,29 @@ def _is_plain_object_type(graphene_cls: Any) -> bool:
 def _compile_plain_object_type(
     graphene_cls: type, registries: SchemaRegistries | None = None
 ) -> GraphQLObjectType:
-    """Compile a plain ``graphene.ObjectType`` to a native type (memoized).
+    """Compile a plain graphene.ObjectType to a native type (memoized).
 
     Single-instance, on-the-fly. Each declared field becomes a native field:
-    - a nested plain ``graphene.ObjectType`` field recurses through this builder
-      (so ``Field(Plain)`` chains compile fully native, never falling into the
+    - a nested plain graphene.ObjectType field recurses through this builder
+      (so Field(Plain) chains compile fully native, never falling into the
       scalar arm);
-    - a ``DjangoObjectType`` / ``DjangoListObjectType`` field reuses its
-      canonical ``_meta.graphql_output_type``;
-    - anything else is a scalar/enum converted via ``_unwrap_graphql_type``.
+    - a DjangoObjectType / DjangoListObjectType field reuses its
+      canonical _meta.graphql_output_type;
+    - anything else is a scalar/enum converted via _unwrap_graphql_type.
 
     Resolvers are wired EXACTLY like graphene's TypeMap: the field's own
-    ``resolver`` wins; otherwise the source class' ``resolve_<name>`` method (if
+    resolver wins; otherwise the source class' resolve_<name> method (if
     any) or graphql-core's default attribute/dict resolver. The compiled type
-    carries ``extensions['gdx']`` (D8) with the source graphene class so
-    dual-backend read-sites can recover ``resolve_<field>`` methods.
+    carries extensions['gdx'] (D8) with the source graphene class so
+    dual-backend read-sites can recover resolve_<field> methods.
 
     Args:
-        graphene_cls: A plain ``graphene.ObjectType`` subclass.
-        registries: The ``SchemaRegistries`` pair owning the plain-object cache
+        graphene_cls: A plain graphene.ObjectType subclass.
+        registries: The SchemaRegistries pair owning the plain-object cache
             namespace; defaults to the global pair (byte-identical, item-b B1/B2).
 
     Returns:
-        The canonical (memoized) native ``GraphQLObjectType`` for *graphene_cls*.
+        The canonical (memoized) native GraphQLObjectType for *graphene_cls*.
     """
     registries = _resolve_registries(registries)
     cache = registries.plain_object_cache
@@ -542,17 +542,17 @@ def _compile_plain_object_type(
 
 
 def _native_field_declared_django_type(field: Any) -> type | None:
-    """Return the DECLARED ``DjangoObjectType`` class behind a ``NativeField``.
+    """Return the DECLARED DjangoObjectType class behind a NativeField.
 
-    item-b (B7): ``field(SomeDjangoObjectType)`` builds a ``NativeField`` whose
-    ``.type`` property EAGERLY resolves the class-def ``graphql_output_type`` (a
-    graphql-core ``GraphQLObjectType``), losing the class reference the fork needs
+    item-b (B7): field(SomeDjangoObjectType) builds a NativeField whose
+    .type property EAGERLY resolves the class-def graphql_output_type (a
+    graphql-core GraphQLObjectType), losing the class reference the fork needs
     to resolve a PAIR-LOCAL instance. The class is still on the descriptor's
-    ``_declared_type`` slot; recover it so the root compiler can route the field
-    through ``_build_django_output_field`` (which forks via ``resolved_output_type``).
+    _declared_type slot; recover it so the root compiler can route the field
+    through _build_django_output_field (which forks via resolved_output_type).
 
-    Returns ``None`` for any field that is not a ``NativeField`` carrying a bare
-    ``DjangoObjectType`` / ``DjangoListObjectType`` class (so the existing
+    Returns None for any field that is not a NativeField carrying a bare
+    DjangoObjectType / DjangoListObjectType class (so the existing
     dispatch is unchanged for every other field kind).
     """
     import inspect
@@ -568,13 +568,13 @@ def _native_field_declared_django_type(field: Any) -> type | None:
 
 
 class _NativeDjangoFieldView:
-    """Adapt a ``NativeField`` so ``_build_django_output_field`` sees the CLASS type.
+    """Adapt a NativeField so _build_django_output_field sees the CLASS type.
 
-    item-b (B7): ``_build_django_output_field`` reads ``field.type`` and routes it
-    through ``_plain_django_output_type`` (which needs a CLASS to fork). A
-    ``NativeField.type`` is the already-compiled class-def instance, so this thin
-    view exposes the declared ``DjangoObjectType`` class as ``.type`` while
-    delegating ``args`` / ``description`` / ``wrap_resolve`` to the real field —
+    item-b (B7): _build_django_output_field reads field.type and routes it
+    through _plain_django_output_type (which needs a CLASS to fork). A
+    NativeField.type is the already-compiled class-def instance, so this thin
+    view exposes the declared DjangoObjectType class as .type while
+    delegating args / description / wrap_resolve to the real field —
     so the fork resolves the pair-local instance and the resolver wiring is
     preserved verbatim.
     """
@@ -602,9 +602,9 @@ class _NativeDjangoFieldView:
 def _is_forked_pair(registries: Any) -> bool:
     """Return whether *registries* is a FORKED (non-default) pair (item-b B5/B6).
 
-    A forked pair is one whose ``compile_outputs_into`` populated
-    ``output_instances`` with pair-local instances. The default pair leaves that
-    map empty/``None``, so this is ``False`` for the single/default-schema path
+    A forked pair is one whose compile_outputs_into populated
+    output_instances with pair-local instances. The default pair leaves that
+    map empty/None, so this is False for the single/default-schema path
     (byte-identical: no re-fork, the class-def payload is reused verbatim).
     """
     return bool(getattr(registries, "output_instances", None))
@@ -615,17 +615,17 @@ def _maybe_refork_mutation_field(
 ) -> GraphQLField:
     """Re-fork a native mutation field's payload into *registries* when forked.
 
-    item-b (B6): a ``DjangoModelMutation`` builds its payload
-    ``GraphQLObjectType`` ONCE at class-def time, pinning its output-field thunk
-    (e.g. ``post: PostGenericType``) to the registry pair the class was defined
+    item-b (B6): a DjangoModelMutation builds its payload
+    GraphQLObjectType ONCE at class-def time, pinning its output-field thunk
+    (e.g. post: PostGenericType) to the registry pair the class was defined
     under — the GLOBAL pair. When that field is mounted into a FORKED schema
-    (a distinct ``SchemaRegistries`` pair), the pinned payload's output field
+    (a distinct SchemaRegistries pair), the pinned payload's output field
     still resolves to the GLOBAL node, so a relation from it reaches another
     schema's same-named instance — the R1 crux that
-    ``assert_schema_pair_isolation`` raises on.
+    assert_schema_pair_isolation raises on.
 
     The fix: in a forked build, RE-COMPILE the payload via the pair's
-    plain-object cache (``_compile_plain_object_type(source_cls, registries)``)
+    plain-object cache (_compile_plain_object_type(source_cls, registries))
     so every output/relation thunk closes over THIS schema's forked nodes, then
     return a shallow copy of the field carrying the re-forked payload type (args
     + resolver + description preserved verbatim).
@@ -634,9 +634,9 @@ def _maybe_refork_mutation_field(
     single/default-schema path byte-identical.
 
     Args:
-        field: A mounted graphql-core ``GraphQLField`` (possibly a native mutation
-            field carrying ``extensions['gdx_mutation_source']``).
-        registries: The schema's ``SchemaRegistries`` pair.
+        field: A mounted graphql-core GraphQLField (possibly a native mutation
+            field carrying extensions['gdx_mutation_source']).
+        registries: The schema's SchemaRegistries pair.
 
     Returns:
         The field unchanged (default pair, or a non-mutation field), or a copy
@@ -662,15 +662,15 @@ def _maybe_refork_mutation_field(
 def _compile_plain_object_fields(
     graphene_cls: type, registries: SchemaRegistries | None = None
 ) -> dict[str, GraphQLField]:
-    """Build the native field dict for a plain ``graphene.ObjectType`` subclass.
+    """Build the native field dict for a plain graphene.ObjectType subclass.
 
     Args:
-        graphene_cls: A plain ``graphene.ObjectType`` subclass.
-        registries: The ``SchemaRegistries`` pair threaded into recursive field
+        graphene_cls: A plain graphene.ObjectType subclass.
+        registries: The SchemaRegistries pair threaded into recursive field
             compilation; defaults to the global pair (byte-identical, item-b B1).
 
     Returns:
-        A ``{wire_name: GraphQLField}`` dict, keyed by the explicit ``name=``
+        A {wire_name: GraphQLField} dict, keyed by the explicit name=
         when one is declared and by the camelCased attribute name otherwise.
     """
     registries = _resolve_registries(registries)
@@ -689,18 +689,18 @@ def _compile_plain_object_fields(
 
 
 def _guard_output_default(field_name: str, field: Any) -> None:
-    """Raise ``TypeError`` when an INPUT-only ``default=`` is set on an OUTPUT field.
+    """Raise TypeError when an INPUT-only default= is set on an OUTPUT field.
 
-    ``default=`` on a unified :class:`~django_graphex.core.descriptors.Field` only
+    default= on a unified Field only
     makes sense in an argument (INPUT) position. Declared in an OUTPUT position (a
     root or a payload/ObjectType body) it is a mistake — fail LOUD rather than
     silently ignore it (feasibility risk #2). Called from BOTH output choke points:
-    the ``compile_native_root`` field loop and :func:`compile_declared_field`.
+    the compile_native_root field loop and compile_declared_field.
 
     Args:
         field_name: The declared field name (for the error message).
-        field: The declared field descriptor (read via ``getattr``; a non-``Field``
-            descriptor with no ``_default`` is a no-op).
+        field: The declared field descriptor (read via getattr; a non-Field
+            descriptor with no _default is a no-op).
     """
     from django_graphex.core.descriptors import _UNSET
 
@@ -798,31 +798,31 @@ def _compile_wrapped_field_type(
 ) -> Any:
     """Compile a (possibly wrapped) graphene field type to a graphql-core type.
 
-    Unwraps graphene ``List`` / ``NonNull`` structures, preserving the wrapper
+    Unwraps graphene List / NonNull structures, preserving the wrapper
     shape, and dispatches the inner leaf to the correct compiler:
 
-    - an inner plain ``graphene.ObjectType`` (e.g. ``ErrorType``) compiles
-      on-the-fly via ``_compile_plain_object_type`` (single-instance, memoized);
-    - an inner ``DjangoObjectType`` / ``DjangoListObjectType`` reuses its
-      canonical ``_meta.graphql_output_type``;
-    - any other leaf (scalar/enum) goes through ``_unwrap_graphql_type``.
+    - an inner plain graphene.ObjectType (e.g. ErrorType) compiles
+      on-the-fly via _compile_plain_object_type (single-instance, memoized);
+    - an inner DjangoObjectType / DjangoListObjectType reuses its
+      canonical _meta.graphql_output_type;
+    - any other leaf (scalar/enum) goes through _unwrap_graphql_type.
 
-    This is what lets a mutation-payload field like ``errors: [ErrorType]`` —
-    a ``graphene.List`` (transitional) OR a native ``NativeList`` (S-ROOTS-c)
+    This is what lets a mutation-payload field like errors: [ErrorType] —
+    a graphene.List (transitional) OR a native NativeList (S-ROOTS-c)
     wrapping a plain ObjectType — compile natively instead of raising a
-    ``GDX_SCALAR_MAP`` KeyError on ``ErrorType``.
+    GDX_SCALAR_MAP KeyError on ErrorType.
 
-    DUAL-CURRENCY wrappers (S-ROOTS-c): the native ``NativeList`` / ``NativeNonNull``
+    DUAL-CURRENCY wrappers (S-ROOTS-c): the native NativeList / NativeNonNull
     descriptors (descriptors.py) are LAZY carriers — graphql-core's
-    ``GraphQLList`` / ``GraphQLNonNull`` cannot wrap an uncompiled ``ObjectType``
-    class eagerly, so ``errors = field(NativeList(ErrorType))`` defers the inner
+    GraphQLList / GraphQLNonNull cannot wrap an uncompiled ObjectType
+    class eagerly, so errors = field(NativeList(ErrorType)) defers the inner
     compile to here. They are recursed exactly like the graphene wrappers (same
-    ``.of_type`` read-contract), preserving the wrapper shape.
+    .of_type read-contract), preserving the wrapper shape.
 
     Args:
-        field_type: The mounted field ``type`` — a graphene ``Structure`` wrapper,
-            a native ``NativeList`` / ``NativeNonNull`` wrapper, or a leaf class.
-        registries: The ``SchemaRegistries`` pair threaded into the inner leaf
+        field_type: The mounted field type — a graphene Structure wrapper,
+            a native NativeList / NativeNonNull wrapper, or a leaf class.
+        registries: The SchemaRegistries pair threaded into the inner leaf
             compile; defaults to the global pair (byte-identical, item-b B1).
 
     Returns:
@@ -864,20 +864,20 @@ def _polymorphic_field_type(
 ) -> Any | None:
     """Return the compiled graphql-core abstract type for a union/interface field.
 
-    DEFECT #8: a ``DjangoUnionType`` / ``DjangoInterfaceType`` field (e.g.
-    ``payment = Field(PaymentUnion)``) compiles to a graphql-core
-    ``GraphQLUnionType`` / ``GraphQLInterfaceType`` via the memoized polymorphic
-    compiler — NOT a plain ``GraphQLObjectType``. Returns ``None`` for any
+    DEFECT #8: a DjangoUnionType / DjangoInterfaceType field (e.g.
+    payment = Field(PaymentUnion)) compiles to a graphql-core
+    GraphQLUnionType / GraphQLInterfaceType via the memoized polymorphic
+    compiler — NOT a plain GraphQLObjectType. Returns None for any
     non-polymorphic field type so the caller's normal dispatch continues.
 
     Args:
-        field_type: The mounted field ``type``.
-        registries: The ``SchemaRegistries`` pair owning the union/interface
+        field_type: The mounted field type.
+        registries: The SchemaRegistries pair owning the union/interface
             cache namespace; defaults to the global pair (byte-identical, item-b
             B1/B2).
 
     Returns:
-        A ``GraphQLUnionType`` / ``GraphQLInterfaceType`` or ``None``.
+        A GraphQLUnionType / GraphQLInterfaceType or None.
     """
     import inspect
 
@@ -899,22 +899,22 @@ def _plain_django_output_type(
 ) -> GraphQLObjectType | None:
     """Return the native output type for a django-graphex output field.
 
-    A plain ObjectType may reference a ``DjangoObjectType`` /
-    ``DjangoListObjectType`` whose native type lives on
-    ``_meta.graphql_output_type``. Reuse it (identity-stable) instead of
-    recompiling. Returns ``None`` for non-django types.
+    A plain ObjectType may reference a DjangoObjectType /
+    DjangoListObjectType whose native type lives on
+    _meta.graphql_output_type. Reuse it (identity-stable) instead of
+    recompiling. Returns None for non-django types.
 
     item-b (B5): when *registries* is a non-default pair that forked this class,
     return the FORKED instance instead of the class-def one (default pair / no
     fork -> the class-def instance -> byte-identical).
 
     Args:
-        field_type: The mounted field ``type``.
-        registries: The ``SchemaRegistries`` pair (forked resolution); ``None``
+        field_type: The mounted field type.
+        registries: The SchemaRegistries pair (forked resolution); None
             -> the class-def instance (byte-identical).
 
     Returns:
-        The container ``GraphQLObjectType`` (forked or canonical) or ``None``.
+        The container GraphQLObjectType (forked or canonical) or None.
     """
     import inspect
 
@@ -936,24 +936,24 @@ def _build_plain_object_field(
     field_name: str | None = None,
     registries: SchemaRegistries | None = None,
 ) -> GraphQLField:
-    """Build a native ``GraphQLField`` for a plain ``graphene.ObjectType`` field.
+    """Build a native GraphQLField for a plain graphene.ObjectType field.
 
     Compiles the field's target plain ObjectType on-the-fly (single-instance,
     memoized) and converts the field's args. The resolver is wired via the
-    field's own ``wrap_resolve`` so a field-level resolver still wins; otherwise
-    the source class' ``resolve_<field_name>`` (graphene parity) or graphql-core's
+    field's own wrap_resolve so a field-level resolver still wins; otherwise
+    the source class' resolve_<field_name> (graphene parity) or graphql-core's
     default attribute/dict resolver.
 
     Args:
-        field: A ``graphene.Field`` whose ``type`` is a plain ``graphene.ObjectType``.
+        field: A graphene.Field whose type is a plain graphene.ObjectType.
         source_cls: The ObjectType class declaring the field (for the
-            ``resolve_<field_name>`` parent-resolver lookup).
+            resolve_<field_name> parent-resolver lookup).
         field_name: The snake_case field name.
-        registries: The ``SchemaRegistries`` pair owning the plain-object cache;
+        registries: The SchemaRegistries pair owning the plain-object cache;
             defaults to the global pair (byte-identical, item-b B1).
 
     Returns:
-        A graphql-core ``GraphQLField``.
+        A graphql-core GraphQLField.
     """
     from django_graphex.core._args import to_graphql_argument
 
@@ -984,25 +984,25 @@ def _build_django_output_field(
     field_name: str | None = None,
     registries: SchemaRegistries | None = None,
 ) -> GraphQLField:
-    """Build a native ``GraphQLField`` for a plain ``Field(DjangoObjectType)`` root.
+    """Build a native GraphQLField for a plain Field(DjangoObjectType) root.
 
-    Reuses the target ``DjangoObjectType`` / ``DjangoListObjectType``'s canonical
-    ``_meta.graphql_output_type`` (identity-stable). The resolver is wired via the
-    field's own ``wrap_resolve`` so a field-level resolver wins; otherwise the
-    source class' ``resolve_<field_name>`` (graphene parity) or the default
+    Reuses the target DjangoObjectType / DjangoListObjectType's canonical
+    _meta.graphql_output_type (identity-stable). The resolver is wired via the
+    field's own wrap_resolve so a field-level resolver wins; otherwise the
+    source class' resolve_<field_name> (graphene parity) or the default
     attribute/dict resolver.
 
     Args:
-        field: A ``graphene.Field`` whose ``type`` is a ``DjangoObjectType`` /
-            ``DjangoListObjectType``.
+        field: A graphene.Field whose type is a DjangoObjectType /
+            DjangoListObjectType.
         source_cls: The ObjectType class declaring the field.
         field_name: The snake_case field name.
-        registries: The ``SchemaRegistries`` pair (threaded for uniformity with
-            the other ``_build_*_field`` helpers; the canonical instance is read
-            from ``_meta``). Defaults to the global pair (byte-identical, B1).
+        registries: The SchemaRegistries pair (threaded for uniformity with
+            the other _build_*_field helpers; the canonical instance is read
+            from _meta). Defaults to the global pair (byte-identical, B1).
 
     Returns:
-        A graphql-core ``GraphQLField``.
+        A graphql-core GraphQLField.
     """
     from django_graphex.core._args import to_graphql_argument
 
@@ -1032,24 +1032,24 @@ def _build_polymorphic_field(
     field_name: str | None = None,
     registries: SchemaRegistries | None = None,
 ) -> GraphQLField:
-    """Build a native ``GraphQLField`` for a union/interface root field (DEFECT #8).
+    """Build a native GraphQLField for a union/interface root field (DEFECT #8).
 
-    The field type is the compiled ``GraphQLUnionType`` / ``GraphQLInterfaceType``
-    (memoized). The resolver is wired via the field's own ``wrap_resolve`` so a
-    field-level resolver still wins; otherwise the source class' ``resolve_<name>``
+    The field type is the compiled GraphQLUnionType / GraphQLInterfaceType
+    (memoized). The resolver is wired via the field's own wrap_resolve so a
+    field-level resolver still wins; otherwise the source class' resolve_<name>
     (graphene parity) or graphql-core's default attribute/dict resolver.
 
     Args:
-        field: A ``graphene.Field`` whose ``type`` is a ``DjangoUnionType`` /
-            ``DjangoInterfaceType``.
+        field: A graphene.Field whose type is a DjangoUnionType /
+            DjangoInterfaceType.
         source_cls: The ObjectType class declaring the field (for the
-            ``resolve_<field_name>`` parent-resolver lookup).
+            resolve_<field_name> parent-resolver lookup).
         field_name: The snake_case field name.
-        registries: The ``SchemaRegistries`` pair owning the union/interface
+        registries: The SchemaRegistries pair owning the union/interface
             cache; defaults to the global pair (byte-identical, item-b B1).
 
     Returns:
-        A graphql-core ``GraphQLField`` whose type is the polymorphic abstract type.
+        A graphql-core GraphQLField whose type is the polymorphic abstract type.
     """
     from django_graphex.core._args import to_graphql_argument
 
@@ -1074,25 +1074,25 @@ def _build_polymorphic_field(
 def _filter_arg(
     field: Any, registries: SchemaRegistries | None = None
 ) -> dict[str, GraphQLArgument]:
-    """Return the native ``filter`` arg dict for a list field, or ``{}``.
+    """Return the native filter arg dict for a list field, or {}.
 
-    The native ``<Model>FilterInput`` is built by the WU3 native filter input
-    builder and stored on the field's ``filter_type`` attribute (set in the
-    field's ``__init__`` via the graphene builder for the graphene path) — but
+    The native <Model>FilterInput is built by the WU3 native filter input
+    builder and stored on the field's filter_type attribute (set in the
+    field's __init__ via the graphene builder for the graphene path) — but
     the GRAPHENE filter type is NOT usable as a native arg. We rebuild the native
-    input here from the field's declared ``fields`` + ``custom_filters`` via the
-    native backend so the arg is a real ``GraphQLInputObjectType`` whose coerced
-    value (snake out_name keys) flows straight into ``to_q``.
+    input here from the field's declared fields + custom_filters via the
+    native backend so the arg is a real GraphQLInputObjectType whose coerced
+    value (snake out_name keys) flows straight into to_q.
 
     Args:
-        field: A list field carrying ``filter_backend`` / ``fields`` /
-            ``custom_filters`` (set by ``_build_filter_arg``).
-        registries: The ``SchemaRegistries`` pair owning the filter-input cache;
+        field: A list field carrying filter_backend / fields /
+            custom_filters (set by _build_filter_arg).
+        registries: The SchemaRegistries pair owning the filter-input cache;
             defaults to the global pair (byte-identical, item-b B1/B2).
 
     Returns:
-        ``{"filter": GraphQLArgument(<Model>FilterInput)}`` when filterable
-        fields are declared, else ``{}``.
+        {"filter": GraphQLArgument(<Model>FilterInput)} when filterable
+        fields are declared, else {}.
     """
     declared_fields = getattr(field, "fields", None)
     custom_filters = getattr(field, "custom_filters", None) or []
@@ -1157,24 +1157,24 @@ def _list_container_output_type(
 ) -> GraphQLObjectType:
     """Return the native container type for a list-object field.
 
-    Reuses the WU1b list-container ``graphql_output_type`` (identity-stable,
-    carries ``extensions['gdx']``). NEVER rebuilds a second container instance.
+    Reuses the WU1b list-container graphql_output_type (identity-stable,
+    carries extensions['gdx']). NEVER rebuilds a second container instance.
 
     item-b (B5): resolves to THIS schema's FORKED container instance when a
     non-default pair is in play; default pair -> the class-def container ->
     byte-identical.
 
     Args:
-        field: A ``DjangoListObjectField`` (or subclass) whose ``type`` is a
-            ``DjangoListObjectType``.
-        registries: The ``SchemaRegistries`` pair (forked container resolution);
+        field: A DjangoListObjectField (or subclass) whose type is a
+            DjangoListObjectType.
+        registries: The SchemaRegistries pair (forked container resolution);
             defaults to the global pair (byte-identical).
 
     Returns:
-        The container ``GraphQLObjectType`` (forked or canonical).
+        The container GraphQLObjectType (forked or canonical).
 
     Raises:
-        RuntimeError: When the container has no compiled ``graphql_output_type``
+        RuntimeError: When the container has no compiled graphql_output_type
             (compile_all_outputs() must run before native root compilation).
     """
     from django_graphex.core.base import resolved_output_type
@@ -1206,22 +1206,22 @@ def _list_container_output_type(
 def _build_list_object_field(
     field: Any, registries: SchemaRegistries | None = None
 ) -> GraphQLField:
-    """Build a native ``GraphQLField`` for a ``DjangoListObjectField``.
+    """Build a native GraphQLField for a DjangoListObjectField.
 
-    The output type is the WU1b list-container (``results`` + ``totalCount``
-    [+ ``pageInfo``]); the container's ``results`` field carries the pagination
+    The output type is the WU1b list-container (results + totalCount
+    [+ pageInfo]); the container's results field carries the pagination
     args + slicing resolver (wired in types.py WU6a). The list field itself
-    carries the ``filter`` arg (when filterable) and a resolver that filters the
-    queryset and returns a ``DjangoListObjectBase`` — the page slicing then
+    carries the filter arg (when filterable) and a resolver that filters the
+    queryset and returns a DjangoListObjectBase — the page slicing then
     happens on the container's results field.
 
     Args:
-        field: A ``DjangoListObjectField`` (or ``DjangoNestedListObjectField``).
-        registries: The ``SchemaRegistries`` pair owning the filter-input cache;
+        field: A DjangoListObjectField (or DjangoNestedListObjectField).
+        registries: The SchemaRegistries pair owning the filter-input cache;
             defaults to the global pair (byte-identical, item-b B1/B2).
 
     Returns:
-        A graphql-core ``GraphQLField``.
+        A graphql-core GraphQLField.
     """
     registries = _resolve_registries(registries)
     output_type = _list_container_output_type(field, registries)
@@ -1239,19 +1239,19 @@ def _build_list_object_field(
 
 
 def _unwrap_to_node_type(field: Any) -> Any:
-    """Unwrap a list field's ``type`` to the inner ``DjangoObjectType`` node.
+    """Unwrap a list field's type to the inner DjangoObjectType node.
 
-    ``DjangoFilterListField.type`` is a ``NativeList`` (possibly wrapping a
-    ``NativeNonNull``) around the node ``DjangoObjectType`` (S8c). graphql-core
-    ``GraphQLList`` / ``GraphQLNonNull`` wrappers may also be present in mixed
+    DjangoFilterListField.type is a NativeList (possibly wrapping a
+    NativeNonNull) around the node DjangoObjectType (S8c). graphql-core
+    GraphQLList / GraphQLNonNull wrappers may also be present in mixed
     states. Peel every wrapper to reach the node class that carries
-    ``_meta.graphql_output_type``.
+    _meta.graphql_output_type.
 
     Args:
-        field: A list field whose ``type`` wraps a ``DjangoObjectType``.
+        field: A list field whose type wraps a DjangoObjectType.
 
     Returns:
-        The inner node type class (carrying ``_meta``).
+        The inner node type class (carrying _meta).
     """
     from django_graphex.core.descriptors import NativeList, NativeNonNull
 
@@ -1317,22 +1317,22 @@ def _rescoped_paginate_field(field: Any, node_type: Any, node_output: Any) -> An
 def _build_filter_list_field(
     field: Any, registries: SchemaRegistries | None = None
 ) -> GraphQLField:
-    """Build a native ``GraphQLField`` for a plain filtered list field.
+    """Build a native GraphQLField for a plain filtered list field.
 
-    Covers ``DjangoFilterListField`` (no pagination → ``[Node]``) and
-    ``DjangoFilterPaginateListField`` (filter + in-resolver pagination →
-    ``[Node!]``). The output type mirrors the graphene shape: a
-    ``GraphQLList`` of the node's canonical ``graphql_output_type``. Pagination
+    Covers DjangoFilterListField (no pagination → [Node]) and
+    DjangoFilterPaginateListField (filter + in-resolver pagination →
+    [Node!]). The output type mirrors the graphene shape: a
+    GraphQLList of the node's canonical graphql_output_type. Pagination
     args (when present) are added directly to the field; filtering + slicing
-    happen inside the field's own ``list_resolver`` (reused via ``wrap_resolve``).
+    happen inside the field's own list_resolver (reused via wrap_resolve).
 
     Args:
-        field: A ``DjangoFilterListField`` or ``DjangoFilterPaginateListField``.
-        registries: The ``SchemaRegistries`` pair owning the filter-input cache;
+        field: A DjangoFilterListField or DjangoFilterPaginateListField.
+        registries: The SchemaRegistries pair owning the filter-input cache;
             defaults to the global pair (byte-identical, item-b B1/B2).
 
     Returns:
-        A graphql-core ``GraphQLField``.
+        A graphql-core GraphQLField.
     """
     from django_graphex.core.base import resolved_output_type
 

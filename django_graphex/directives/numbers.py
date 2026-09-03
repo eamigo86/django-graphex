@@ -29,8 +29,8 @@ __all__ = (
 def _to_float(value: Any, directive_name: str) -> float:
     """Coerce *value* to float, raising GraphQLError on failure.
 
-    Shared guard used by all numeric directives to prevent raw ``ValueError``
-    or ``TypeError`` from escaping to the GraphQL client.
+    Shared guard used by all numeric directives to convert implementation
+    exceptions into GraphQL errors before they reach the client.
 
     Args:
         value: The field value to coerce.
@@ -100,6 +100,7 @@ class FloorGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The floored value, or None when the value is None.
@@ -134,6 +135,7 @@ class CeilGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The ceiled value, or None when the value is None.
@@ -182,6 +184,7 @@ class RoundGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The rounded value, or None when the value is None.
@@ -220,6 +223,7 @@ class AbsGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The absolute value, or None when the value is None.

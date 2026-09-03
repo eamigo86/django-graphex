@@ -1,65 +1,28 @@
 #!/usr/bin/env python
-"""django-graphex v1.x -> v2.0 migration codemod.
+"""Migrate django-graphex v1 projects to the native v2 schema APIs.
 
-v2.0 removed the legacy **graphene** backend ENTIRELY (decision: full excision).
-``graphene`` is no longer a dependency and is never imported, even on a full
-build + mutations + subscriptions + pagination. The native graphql-core +
-Pydantic path is the only path.
+Version 2 removed the legacy Graphene backend and dependency. This codemod
+therefore analyzes Python source without importing Graphene and offers two
+complementary migration paths.
 
-This codemod helps you move a project off graphene. It has two modes of
-operation per construct:
+The safe mechanical path folds a GRAPHENE settings dictionary into the single
+DJANGO_GRAPHEX namespace and repoints bundled middleware strings to their v2
+submodules. Pass --show-diff to preview these changes or --apply to write them.
+Existing DJANGO_GRAPHEX values win during a key collision, and repeated runs are
+idempotent.
 
-1. MECHANICAL REWRITE (safe, automated with ``--apply``)
-   - The schema/middleware settings namespace ``GRAPHENE = {...}`` is folded into
-     the SINGLE ``DJANGO_GRAPHEX = {...}`` namespace (django-graphex unified its
-     two settings dicts in v2.0):
-       * if the module has no ``DJANGO_GRAPHEX`` dict yet, ``GRAPHENE`` is simply
-         renamed to ``DJANGO_GRAPHEX``;
-       * if a ``DJANGO_GRAPHEX`` dict already exists, the ``GRAPHENE`` keys are
-         MERGED into it (DJANGO_GRAPHEX wins on the rare key collision) and the
-         old ``GRAPHENE`` assignment is dropped.
-   - Bundled-middleware settings-strings are repointed from the removed flat
-     package-root path to their submodule path, e.g.
-     ``"django_graphex.GraphQLDirectiveMiddleware"`` ->
-     ``"django_graphex.middleware.GraphQLDirectiveMiddleware"`` and the security
-     middlewares -> ``"django_graphex.security.<Name>"`` (v2.0 dropped the root
-     re-exports, so the flat dotted path no longer resolves).
+The report-only path flags schema constructs that need a deliberate native API
+port: Graphene arguments, object types, schemas, and field descriptors. These
+constructs are never rewritten automatically because their replacements are not
+one-to-one token substitutions.
 
-2. REPORT-AND-FLAG (always; never auto-rewritten because the native shape is not
-   a 1:1 token swap)
-   - ``graphene.Argument(...)`` inside a ``Mutation`` arguments container
-     (``class Arguments`` — the native v2.0 name — or the legacy repo ``class
-     args``) → native ``graphql.GraphQLArgument(...)`` (v2.0 raises ``TypeError``
-     for non-native args — CLEAN BREAK).
-   - ``graphene.ObjectType`` schema roots → ``from django_graphex.core import ObjectType``.
-   - ``graphene.Schema(...)`` → ``django_graphex.schema.DjangoGraphQLSchema(...)``.
-   - graphene field descriptors (``graphene.String()`` / ``graphene.Field(...)``
-     on a type body) → ``field(GraphQLString)`` / native ``field(...)``.
+See docs/UPGRADE-2.0.md for the full before-and-after guide.
 
-See ``docs/UPGRADE-2.0.md`` for the full before/after migration guide.
+Example usage:
 
-Usage::
-
-    # Report only (default; no files written) — recommended first pass:
     python scripts/migrate_2_0.py path/to/project/
-
-    # Show what the mechanical settings rewrite WOULD change (unified diff):
     python scripts/migrate_2_0.py --show-diff path/to/settings.py
-
-    # Apply the mechanical GRAPHENE -> DJANGO_GRAPHEX settings rewrite in place
-    # (graphene constructs are still reported, never auto-rewritten):
     python scripts/migrate_2_0.py --apply path/to/project/
-
-Implementation note
--------------------
-``libcst`` is not assumed present, and — critically — ``graphene`` is uninstalled
-in v2.0, so this script NEVER imports graphene. It operates purely on source
-text: ``ast`` for *analysis* (locating graphene constructs and their line
-numbers, and the ``GRAPHENE`` / ``DJANGO_GRAPHEX`` settings dicts). The
-mechanical transform folds ``GRAPHENE = {...}`` into ``DJANGO_GRAPHEX = {...}``:
-a plain rename when no target dict exists, or a key merge when it does. All other
-formatting is preserved and the rewrite is idempotent (a module with no
-``GRAPHENE`` dict is returned unchanged).
 """
 
 from __future__ import annotations
@@ -112,7 +75,10 @@ _MIDDLEWARE_PATH_REWRITES = (
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class Finding:
-    """A graphene construct v2.0 no longer accepts, with porting guidance."""
+    """Describe a Graphene construct that requires manual migration.
+
+    Each finding records its location, source text, and native porting guidance.
+    """
 
     kind: str
     line: int
@@ -123,7 +89,10 @@ class Finding:
 
 @dataclass
 class RunResult:
-    """Aggregate outcome of a :func:`run` invocation."""
+    """Collect the analysis and rewrite outcomes from one run.
+
+    The lists distinguish manual findings, written files, and previewed files.
+    """
 
     findings: list[Finding] = dataclass_field(default_factory=list)
     rewritten_files: list[str] = dataclass_field(default_factory=list)
@@ -193,7 +162,7 @@ _GRAPHENE_FIELD_DESCRIPTORS = frozenset(
 # AST helpers                                                                  #
 # --------------------------------------------------------------------------- #
 def _is_graphene_attr(node: ast.AST, attr: str | None = None) -> bool:
-    """True if ``node`` is ``graphene.<attr>`` (or any ``graphene.X`` if attr is None)."""
+    """Return whether a node is a matching Graphene attribute."""
     if not isinstance(node, ast.Attribute):
         return False
     if not (isinstance(node.value, ast.Name) and node.value.id == "graphene"):
@@ -202,12 +171,10 @@ def _is_graphene_attr(node: ast.AST, attr: str | None = None) -> bool:
 
 
 def _base_is_graphene(base: ast.AST, name: str, native_names: frozenset[str]) -> bool:
-    """True if a class base is the GRAPHENE ``<name>`` (qualified or bare).
+    """Return whether a class base names the requested Graphene type.
 
-    A bare ``<name>`` base counts as graphene only when it was imported from
-    graphene (``from graphene import ObjectType``) — NOT when it is the NATIVE
-    ``django_graphex`` symbol of the same name (``from django_graphex import
-    ObjectType``), which is the v2.0 replacement.
+    A bare name counts as Graphene only when it was imported from Graphene, not
+    when it resolves to the native django_graphex symbol of the same name.
     """
     if _is_graphene_attr(base, name):
         return True
@@ -216,7 +183,7 @@ def _base_is_graphene(base: ast.AST, name: str, native_names: frozenset[str]) ->
 
 
 def _module_imports_graphene(tree: ast.Module) -> bool:
-    """True if the module imports graphene (so bare ``ObjectType`` bases count)."""
+    """Return whether the module imports Graphene."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             if any(a.name.split(".")[0] == "graphene" for a in node.names):
@@ -228,10 +195,10 @@ def _module_imports_graphene(tree: ast.Module) -> bool:
 
 
 def _native_imported_names(tree: ast.Module) -> frozenset[str]:
-    """Names imported from ``django_graphex`` (the native API, NOT graphene).
+    """Return names imported from the native django_graphex API.
 
-    Used to disambiguate a bare ``ObjectType`` / ``Mutation`` base: if it came
-    from ``django_graphex`` it is already the v2.0 form and must NOT be flagged.
+    The names disambiguate bare ObjectType and Mutation bases that are already
+    using the v2 API and must not be flagged as Graphene constructs.
     """
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -254,9 +221,17 @@ def _snippet(source_lines: list[str], lineno: int) -> str:
 # Analysis (report-and-flag) — pure source string in, findings out.            #
 # --------------------------------------------------------------------------- #
 def analyze_source(source: str, *, path: str = "<source>") -> list[Finding]:
-    """Find graphene constructs v2.0 rejects. Returns findings sorted by line.
+    """Find Graphene constructs rejected by the v2 schema APIs.
 
-    Never imports graphene — works entirely on the parsed AST of ``source``.
+    The analysis parses source without importing Graphene. Invalid Python
+    produces no findings.
+
+    Args:
+        source: Python source code to inspect.
+        path: Source path recorded in each finding.
+
+    Returns:
+        Findings sorted by source line and kind.
     """
     try:
         tree = ast.parse(source)
@@ -325,11 +300,10 @@ def analyze_source(source: str, *, path: str = "<source>") -> list[Finding]:
 
 
 def _flag_mutation_args(mutation: ast.ClassDef, add) -> None:
-    """Flag every ``graphene.Argument(...)`` in a Mutation arguments container.
+    """Flag each Graphene argument in a mutation arguments container.
 
-    The container is the inner class named either ``Arguments`` (the native v2.0
-    name, also graphene's canonical name) or ``args`` (the legacy repo shape), so
-    both graphene-canonical and legacy-repo mutations are flagged.
+    Both the canonical inner Arguments class and the legacy lowercase args class
+    are recognized.
     """
     for stmt in mutation.body:
         if isinstance(stmt, ast.ClassDef) and stmt.name in ("args", "Arguments"):
@@ -346,7 +320,7 @@ def _flag_mutation_args(mutation: ast.ClassDef, add) -> None:
 def _module_assignment(
     tree: ast.Module, name: str
 ) -> ast.Assign | ast.AnnAssign | None:
-    """Return the LAST module-level assignment to ``name`` (a dict target), if any."""
+    """Return the last module-level assignment to a named target, if any."""
     found: ast.Assign | ast.AnnAssign | None = None
     for node in tree.body:  # module level only
         if isinstance(node, ast.Assign):
@@ -366,7 +340,7 @@ def _dict_value(node: ast.Assign | ast.AnnAssign) -> ast.Dict | None:
 
 
 def _rename_only(source: str, target_lines: set[int]) -> tuple[str, bool]:
-    """Rename the ``GRAPHENE =`` assignment target line(s) to ``DJANGO_GRAPHEX``."""
+    """Rename legacy settings assignment targets on selected lines."""
     out_lines: list[str] = []
     changed = False
     for i, line in enumerate(source.splitlines(keepends=True), start=1):
@@ -387,12 +361,10 @@ def _rename_only(source: str, target_lines: set[int]) -> tuple[str, bool]:
 def _dict_entries(
     source: str, dict_node: ast.Dict
 ) -> list[tuple[str | None, str, str]]:
-    """Extract ``(key_literal, key_source, value_source)`` for each dict entry.
+    """Extract literal keys and preserved source for dictionary entries.
 
-    ``key_literal`` is the literal string key when the key is a constant string
-    (used for collision detection), else ``None``. ``key_source`` /
-    ``value_source`` preserve the exact source text so non-literal values
-    (import expressions, tuples, …) survive the merge verbatim.
+    Literal string keys support collision detection. Preserved key and value
+    source keeps nonliteral expressions intact during a settings merge.
     """
     entries: list[tuple[str | None, str, str]] = []
     for key, value in zip(dict_node.keys, dict_node.values):
@@ -412,19 +384,18 @@ def _dict_entries(
 
 
 def _fold_settings_namespace(source: str) -> tuple[str, bool]:
-    """Fold the legacy ``GRAPHENE = {...}`` settings dict into ``DJANGO_GRAPHEX``.
+    """Fold the legacy Graphene settings into DJANGO_GRAPHEX.
 
     Two cases (django-graphex unified its two settings namespaces in v2.0):
 
-    * No ``DJANGO_GRAPHEX`` dict in the module → the ``GRAPHENE =`` assignment
-      target is renamed to ``DJANGO_GRAPHEX`` (a conservative, line-anchored
-      rename; values are preserved verbatim).
-    * A ``DJANGO_GRAPHEX`` dict already exists → the ``GRAPHENE`` keys are MERGED
-      into it (the existing ``DJANGO_GRAPHEX`` value wins on a key collision) and
-      the old ``GRAPHENE`` assignment block is removed.
+    * Without a DJANGO_GRAPHEX dictionary, the GRAPHENE assignment target is
+      renamed to DJANGO_GRAPHEX through a conservative, line-anchored
+      rename; values are preserved verbatim.
+    * With an existing DJANGO_GRAPHEX dictionary, legacy keys are merged into it.
+      Existing values win on collisions, and the legacy assignment is removed.
 
-    ``DJANGO_GRAPHEX`` is never matched as a legacy target. Returns
-    ``(new_source, changed)``; a module with no ``GRAPHENE`` dict is unchanged.
+    The canonical namespace is never matched as a legacy target. A module with
+    no legacy dictionary is returned unchanged.
     """
     # AST gate: only rewrite when there is a real module-level ``GRAPHENE``
     # assignment target (avoids touching the token inside strings/comments).
@@ -514,10 +485,8 @@ def _fold_settings_namespace(source: str) -> tuple[str, bool]:
 def _repoint_middleware_paths(source: str) -> tuple[str, bool]:
     """Repoint bundled-middleware settings-strings to their v2.0 submodule path.
 
-    Rewrites the removed flat root path ``django_graphex.<Name>`` wherever it
-    appears (the schema ``MIDDLEWARE`` list, Django's ``MIDDLEWARE``, …). A pure
-    literal substitution; idempotent (an already-submodule path never contains
-    the flat substring).
+    The literal substitution applies wherever a removed flat root path appears
+    and remains idempotent for paths already using the correct submodule.
     """
     changed = False
     for flat, submodule in _MIDDLEWARE_PATH_REWRITES:
@@ -528,18 +497,17 @@ def _repoint_middleware_paths(source: str) -> tuple[str, bool]:
 
 
 def rewrite_source(source: str) -> tuple[str, bool]:
-    """Apply every mechanical (safe, automated) v1.x -> v2.0 settings rewrite.
+    """Apply every safe automated v1-to-v2 settings rewrite.
 
-    1. Fold the legacy ``GRAPHENE = {...}`` namespace into the single
-       ``DJANGO_GRAPHEX = {...}`` (rename when no target dict exists, key MERGE
-       when it does — :func:`_fold_settings_namespace`).
-    2. Repoint bundled-middleware settings-strings from the removed flat root
-       path to their submodule path — :func:`_repoint_middleware_paths` — so
-       ``"django_graphex.GraphQLDirectiveMiddleware"`` (which no longer resolves
-       in v2.0) becomes ``"django_graphex.middleware.GraphQLDirectiveMiddleware"``.
+    The transformation folds the legacy settings namespace into DJANGO_GRAPHEX
+    and repoints bundled middleware strings from removed flat paths to their
+    v2 submodules.
 
-    Returns ``(new_source, changed)``; a module needing neither rewrite is
-    returned unchanged. Idempotent.
+    Args:
+        source: Python source code to rewrite.
+
+    Returns:
+        Rewritten source and whether either transformation changed it.
     """
     source, folded = _fold_settings_namespace(source)
     source, repointed = _repoint_middleware_paths(source)
@@ -550,7 +518,14 @@ def rewrite_source(source: str) -> tuple[str, bool]:
 # Reporting                                                                    #
 # --------------------------------------------------------------------------- #
 def format_report(findings: list[Finding]) -> str:
-    """Render findings as an actionable human report."""
+    """Render findings as an actionable human report.
+
+    Args:
+        findings: Migration findings to group and explain.
+
+    Returns:
+        Human-readable migration guidance.
+    """
     if not findings:
         return "No graphene constructs detected. Source is v2.0-ready.\n"
 
@@ -589,9 +564,19 @@ def _iter_python_files(paths: list[str]):
 def run(paths: list[str], *, apply: bool = False) -> RunResult:
     """Analyze (and optionally rewrite) the given files / directories.
 
-    - Always: analyze every ``.py`` file and collect graphene-construct findings.
-    - With ``apply=True``: rewrite the mechanical ``GRAPHENE -> DJANGO_GRAPHEX``
-      settings namespace in place. graphene constructs are NEVER auto-rewritten.
+    Every Python file is analyzed for Graphene constructs. When apply is true,
+    safe settings and middleware rewrites are written in place; reported schema
+    constructs are never rewritten automatically.
+
+    Args:
+        paths: Files or directories to inspect recursively.
+        apply: Whether to write safe mechanical rewrites.
+
+    Returns:
+        Findings and the files rewritten or eligible for rewriting.
+
+    Raises:
+        OSError: If an in-place rewrite cannot be written.
     """
     result = RunResult()
     for file_path in _iter_python_files(paths):
@@ -628,7 +613,17 @@ def _show_diff(paths: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point. Returns 1 when manual porting is still required."""
+    """Run the migration command-line interface.
+
+    Args:
+        argv: Optional arguments excluding the executable name.
+
+    Returns:
+        One when manual porting remains, otherwise zero.
+
+    Raises:
+        SystemExit: If command-line arguments are invalid.
+    """
     parser = argparse.ArgumentParser(
         description="django-graphex v1.x -> v2.0 migration codemod.",
     )

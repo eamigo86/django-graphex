@@ -40,7 +40,7 @@ class JSONScalar:
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
-        """Return a permissive ``any`` core schema (accept any JSON value)."""
+        """Return a permissive any core schema (accept any JSON value)."""
         return core_schema.any_schema()
 
 
@@ -61,7 +61,7 @@ class IDScalar:
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
-        """Return a permissive ``any`` core schema (accept string or numeric ids)."""
+        """Return a permissive any core schema (accept string or numeric ids)."""
         return core_schema.any_schema()
 
 
@@ -97,7 +97,7 @@ class FileScalar:
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
-        """Accept a ``File`` instance, else validate as a constrained storage path."""
+        """Accept a File instance, else validate as a constrained storage path."""
 
         def validate(value: Any, next_: Any) -> Any:
             if isinstance(value, File):
@@ -118,7 +118,7 @@ class FileScalar:
 
 @functools.lru_cache(maxsize=None)
 def _file_scalar(max_length: int | None) -> type[FileScalar]:
-    """Return the ``FileScalar`` subclass carrying this column width.
+    """Return the FileScalar subclass carrying this column width.
 
     Cached so the same width always yields the SAME class object, keeping the
     derived Pydantic schemas comparable and the schema cache effective.
@@ -206,7 +206,7 @@ def _scalar_type(field: models.Field) -> Any:
 
 
 def _choices_enum(field: models.Field) -> type[enum.Enum]:
-    """Build an ``Enum`` from a field's choices (values; lazy strings coerced)."""
+    """Build an Enum from a field's choices (values; lazy strings coerced)."""
     members: dict[str, Any] = {}
     used: set[str] = set()
     for value, _label in field.flatchoices:
@@ -230,7 +230,7 @@ def _python_type(field: models.Field) -> Any:
 
 
 def _field_def(field: models.Field, partial: bool) -> tuple[Any, Any]:
-    """Return a Pydantic ``(annotation, FieldInfo)`` for a concrete model field."""
+    """Return a Pydantic (annotation, FieldInfo) for a concrete model field."""
     py_type = _python_type(field)
 
     constraints: dict[str, Any] = {}

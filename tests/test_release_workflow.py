@@ -9,6 +9,7 @@ ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/cicd.yaml"
 MANUAL_DOCS = ROOT / ".github/workflows/docs.yml"
 RELEASE_DOCS = ROOT / "docs/releasing.md"
+CONTRIBUTING_DOCS = ROOT / "docs/contributing.md"
 DOCS_CONFIG = ROOT / "zensical.yml"
 
 
@@ -107,13 +108,29 @@ def test_release_branch_has_a_cumulative_diff_check_gate() -> None:
     The gate compares HEAD with the shared main-branch merge base, rather than
     checking only the latest child PR, and must block publication.
     """
+    command = "python3 scripts/check_docstrings.py . --strict-public --strict-content"
     diff_check = _job("diff-check")
     publish = _job("publish")
+    documentation = CONTRIBUTING_DOCS.read_text(encoding="utf-8")
 
     assert "fetch-depth: 0" in diff_check
     assert "git merge-base origin/main HEAD" in diff_check
     assert 'git diff --check "$BASE_COMMIT"..HEAD' in diff_check
     assert "diff-check" in publish.split("needs: [", 1)[1].split("]", 1)[0]
+    assert command in diff_check
+    assert "RATCHET_BASE" not in diff_check
+    assert "--diff-base" not in diff_check
+    assert command in documentation
+    requirements = "|".join(
+        (
+            "A. **Complete public Google style.**",
+            "B. **Signature-owned types.**",
+            "C. **Plain-text docstrings.**",
+            "benchmarks",
+            "examples/playground",
+        )
+    )
+    assert all(item in documentation for item in requirements.split("|"))
 
 
 def test_docs_are_built_before_publish_and_deployed_afterward() -> None:

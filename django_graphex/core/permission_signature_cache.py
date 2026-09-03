@@ -84,21 +84,21 @@ def permission_signature(perms: frozenset[str], label_set: frozenset[str]) -> st
 
 
 class _SignatureSchemaCache:
-    """Thread-safe bounded LRU mapping ``(full schema, signature) -> pruned``.
+    """Thread-safe bounded LRU mapping (full schema, signature) -> pruned.
 
-    A module-level singleton (:data:`_CACHE`) backs :func:`pruned_schema_for`;
+    A module-level singleton (_CACHE) backs pruned_schema_for;
     tests instantiate their own for isolation. Reads are lock-light (a fast
     pre-check); a cold key is built under the lock with a double-check so
     concurrent first-requests build exactly once.
 
-    Entries are keyed by ``(id(full), signature)`` — NOT the signature alone —
-    because two DIFFERENT ``full`` schemas can share a permission signature
+    Entries are keyed by (id(full), signature) — NOT the signature alone —
+    because two DIFFERENT full schemas can share a permission signature
     (most starkly a permission-less user, whose relevant-perm projection is
-    empty for every schema, so the signature is ``sha256("")`` regardless of
+    empty for every schema, so the signature is sha256("") regardless of
     schema). Keying on the signature alone let one schema's pruned variant be
     served for an unrelated schema — a correctness bug for any deployment
     routing more than one schema through the cache. A weak reference to the
-    source ``full`` is kept alongside each entry so that a recycled ``id`` (a
+    source full is kept alongside each entry so that a recycled id (a
     fresh schema object reusing a garbage-collected schema's address) is
     detected on read and rebuilt rather than served stale.
     """
@@ -108,11 +108,11 @@ class _SignatureSchemaCache:
 
         Args:
             maxsize: A fixed LRU bound for this instance; when None the bound
-                follows the ``PERMISSION_SCHEMA_CACHE_MAXSIZE`` setting, read
+                follows the PERMISSION_SCHEMA_CACHE_MAXSIZE setting, read
                 on every eviction pass. The module singleton is built at
                 import, so capturing the setting here would freeze it for the
                 life of the process and make it unreachable from
-                ``override_settings``.
+                override_settings.
         """
         self._maxsize = maxsize
         # Key: (id(full), signature). Value: (weakref-or-None to full, pruned).
@@ -163,11 +163,11 @@ class _SignatureSchemaCache:
         from the LRU (built lazily under the lock on a miss).
 
         Args:
-            user: The request user (needs ``is_superuser`` / ``is_active`` and
-                ``get_all_permissions()``).
-            full: The labeled FULL ``GraphQLSchema``.
+            user: The request user (needs is_superuser / is_active and
+                get_all_permissions()).
+            full: The labeled FULL GraphQLSchema.
             prune: Optional prune callable override (defaults to
-                ``schema_pruner.prune_schema``); injectable for tests.
+                schema_pruner.prune_schema); injectable for tests.
 
         Returns:
             The FULL schema for an active superuser, else the cached/lazily-built
@@ -200,15 +200,15 @@ class _SignatureSchemaCache:
             return built
 
     def _get(self, key: "tuple[int, str]", full: GraphQLSchema) -> GraphQLSchema | None:
-        """Return a cached schema (refreshing recency) or ``None`` on a miss.
+        """Return a cached schema (refreshing recency) or None on a miss.
 
         Args:
-            key: The composite ``(id(full), signature)`` cache key.
-            full: The source schema, used to detect a recycled ``id`` collision.
+            key: The composite (id(full), signature) cache key.
+            full: The source schema, used to detect a recycled id collision.
 
         Returns:
             The cached pruned schema, or None on a miss (including a recycled
-            ``id`` whose weak reference no longer resolves to *full*).
+            id whose weak reference no longer resolves to *full*).
         """
         with self._lock:
             cached = self._live_entry(key, full)
@@ -221,7 +221,7 @@ class _SignatureSchemaCache:
     ) -> GraphQLSchema | None:
         """Return the entry for *key* only if it truly belongs to *full*.
 
-        Guards against ``id`` recycling: an entry whose stored weak reference no
+        Guards against id recycling: an entry whose stored weak reference no
         longer resolves to *full* is treated as a miss and dropped. That covers
         both a reference pointing at a different live schema and a DEAD one —
         the source was garbage-collected and a new object took its address,
@@ -230,7 +230,7 @@ class _SignatureSchemaCache:
         pre-weakref behaviour of trusting the key.
 
         Args:
-            key: The composite ``(id(full), signature)`` cache key.
+            key: The composite (id(full), signature) cache key.
             full: The schema the caller is requesting a pruned variant for.
 
         Returns:
@@ -261,16 +261,16 @@ class _SignatureSchemaCache:
 def _safe_ref(obj: Any) -> "weakref.ref[Any] | None":
     """Return a weak reference to *obj*, or None when it cannot be referenced.
 
-    A weak reference lets the cache detect ``id`` recycling (a fresh schema
+    A weak reference lets the cache detect id recycling (a fresh schema
     reusing a garbage-collected schema's address) without pinning the schema in
     memory. Objects that do not support weak references still cache correctly —
     they simply forgo the recycling guard.
 
     Args:
-        obj: The object to weakly reference (a source ``GraphQLSchema``).
+        obj: The object to weakly reference (a source GraphQLSchema).
 
     Returns:
-        A ``weakref.ref`` to *obj*, or None if *obj* is not weak-referenceable.
+        A weakref.ref to *obj*, or None if *obj* is not weak-referenceable.
     """
     try:
         return weakref.ref(obj)

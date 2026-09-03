@@ -84,17 +84,17 @@ SEED_TYPE_NAMES: dict[Any, str] = {
 
 
 def _build_native_seed_schema() -> Any:
-    """Build the seed :class:`DjangoGraphQLSchema` on the native backend.
+    """Build the seed :class:DjangoGraphQLSchema on the native backend.
 
     Registers the FULL node-type closure (so every relation resolves) and a
     Query exposing one single-object field per node. Returns the
-    ``DjangoGraphQLSchema`` instance (``str(schema)`` renders its SDL).
+    DjangoGraphQLSchema instance (str(schema) renders its SDL).
 
-    The node types use explicit class statements (NOT ``type(...)``) because the
-    ``DjangoObjectType`` (pydantic) metaclass requires a class-statement ``Meta``
+    The node types use explicit class statements (NOT type(...)) because the
+    DjangoObjectType (pydantic) metaclass requires a class-statement Meta
     rather than a dynamically attached one. They share one local
-    :class:`Registry` so every relation thunk resolves against the same closure;
-    pinning ``Meta.name`` keeps the SDL fragment names stable and aligned with
+    :class:Registry so every relation thunk resolves against the same closure;
+    pinning Meta.name keeps the SDL fragment names stable and aligned with
     the graphene baseline.
     """
     from django_graphex.core import ObjectType
@@ -234,10 +234,10 @@ def extract_enum_block(sdl: str, enum_name: str) -> str:
 
 
 def _extract_block(sdl: str, keyword: str, name: str) -> str:
-    """Extract a single ``<keyword> <name> {{ ... }}`` block, brace-balanced.
+    """Extract a single <keyword> <name> {{ ... }} block, brace-balanced.
 
     Captures the (optional) description line immediately preceding the header so
-    a leading ``\"\"\"...\"\"\"`` block-description travels with the block.
+    a leading \"\"\"...\"\"\" block-description travels with the block.
     """
     lines = sdl.splitlines()
     header_idx = None

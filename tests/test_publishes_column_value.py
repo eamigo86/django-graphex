@@ -1297,8 +1297,6 @@ class TestARelationRenderedByAnotherModelsTypeStillServesTheKey(TestCase):
         Two filler authors push the real one off "1", so the id the response
         carries cannot be mistaken for the post's.
 
-        Returns:
-            None.
         """
         Author.objects.create(name="filler-one", bio="")
         Author.objects.create(name="filler-two", bio="")
@@ -1308,8 +1306,7 @@ class TestARelationRenderedByAnotherModelsTypeStillServesTheKey(TestCase):
     def test_the_relation_hands_out_the_targets_real_key(self) -> None:
         """The response carries the author's own primary key.
 
-        Returns:
-            None.
+        The rendering type does not replace the related row's identity.
         """
         result = graphql_sync(
             foreign_render_schema.graphql_schema,
@@ -1323,8 +1320,7 @@ class TestARelationRenderedByAnotherModelsTypeStillServesTheKey(TestCase):
     def test_the_predicate_agrees_the_key_is_published(self) -> None:
         """So the foreign key column stays orderable and filterable.
 
-        Returns:
-            None.
+        The predicate follows the value the relation actually publishes.
         """
         node = ForeignRenderPostType._meta.graphql_output_type
         assert publishes_column_value(node, Post._meta.get_field("author"))

@@ -443,11 +443,11 @@ async def test_group_discard_runs_even_on_abnormal_teardown() -> None:  # noqa: 
 
 
 class _FakeChannelLayer:
-    """A minimal channel layer whose ``group_discard`` raises on chosen groups.
+    """A minimal channel layer whose group_discard raises on chosen groups.
 
-    Reproduces the production ``RedisChannelLayer`` failure mode that the
-    ``InMemoryChannelLayer`` test backend masks: a transient error raised by one
-    ``group_discard`` mid-sweep. Tracks membership so the test can assert which
+    Reproduces the production RedisChannelLayer failure mode that the
+    InMemoryChannelLayer test backend masks: a transient error raised by one
+    group_discard mid-sweep. Tracks membership so the test can assert which
     groups were actually discarded (none must leak past the failing one).
     """
 

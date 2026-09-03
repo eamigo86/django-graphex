@@ -101,10 +101,46 @@ make quality   # ruff format --check + ruff check + mypy
 
 ### Documentation Standards
 
-- All public classes and methods must have docstrings
-- Use Google-style docstrings
-- Include examples in docstrings where helpful
-- Keep documentation up-to-date with code changes
+The permanent repository contract has three parts:
+
+- A. **Complete public Google style.** Every public module, class, function, and
+  method has a complete Google-style docstring with exact, non-empty sections.
+  Public includes importable modules, non-underscore or `__all__` exports, and
+  non-private class members; `Args:` also covers `*args` and `**kwargs`.
+- B. **Signature-owned types.** Parameters and returns have type hints; `Args:`,
+  `Returns:` or `Yields:`, and `Raises:` describe behavior without repeating types.
+- C. **Plain-text docstrings.** No docstring contains a backtick, including
+  private, nested, and dunder owners.
+
+Run the same full-tree gate CI uses:
+
+```bash
+python3 scripts/check_docstrings.py . --strict-public --strict-content
+```
+
+The `.` scope includes runtime, scripts, tests, benchmarks, and
+examples/playground; environments, caches, site output, and migrations are excluded.
+
+#### Strict result sections
+
+Use `Returns:` for ordinary non-`None` results and `Yields:` for generators.
+Functions annotated as `None`, `NoReturn`, or `Never` have neither section.
+Required result and `Raises:` sections must be non-empty; exceptions raised by
+nested functions or classes belong to those nested owners. Keep every type in
+the signature only—section entries describe names and behavior:
+
+```python
+def iter_ids(limit: int) -> Iterator[int]:
+    """Yield identifiers up to a limit.
+
+    Args:
+        limit: Maximum number of identifiers.
+
+    Yields:
+        item: One identifier.
+    """
+    yield from range(limit)
+```
 
 ### Testing Standards
 

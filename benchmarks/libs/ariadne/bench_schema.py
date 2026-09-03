@@ -1,34 +1,15 @@
-"""ariadne (latest) implementation of the benchmark operation contract.
+"""Implement the shared benchmark contract with Ariadne.
 
-ariadne is **schema-first**: you write the GraphQL SDL by hand, then bind plain
-Python resolvers to it with ``make_executable_schema``. This module follows the
-library's documented, recommended production shape:
+The adapter defines the schema in GraphQL SDL and binds plain Python resolvers
+with Ariadne's schema-first helpers. Automatic name conversion maps GraphQL
+camel case fields to Django model attributes, while ordinary queryset slicing
+and filters implement the workload without custom optimization.
 
-  * The schema is one SDL string. Field and argument names are ``camelCase`` in
-    the SDL (idiomatic GraphQL), and ``make_executable_schema(...,
-    convert_names_case=True)`` maps them to the models' ``snake_case`` Python
-    attributes automatically. In ariadne 1.x this is the recommended replacement
-    for the old ``snake_case_fallback_resolvers`` — it is the library's own
-    documented default-name integration, so we enable it (noted per the fairness
-    rule: this is ariadne's recommended default, not a hand-rolled optimization).
-  * ``QueryType`` / ``MutationType`` / ``ObjectType`` carry the resolvers.
-  * Resolvers are plain, idiomatic Django ORM calls: queryset slicing for the
-    limit/offset, ``icontains`` for the filter, ``.get()`` for a single object.
-  * **Nested resolvers access the relation per parent object**
-    (``author.posts.all()[:limit]``, ``post.comments.all()[:limit]``), exactly
-    as ariadne's docs show relation resolvers. ariadne ships **no** ORM query
-    optimizer and its DataLoader story is opt-in (not part of the recommended
-    default schema), so the ``nested`` operation N+1s. That is the honest,
-    idiomatic ariadne result and we deliberately do NOT hand-add a dataloader
-    (that would be an exotic optimization the library does not apply by default).
-
-Django integration: the official ``ariadne-django`` package installs and works
-on the pinned Django, so we mount its ``GraphQLView`` — a standard Django
-class-based view that runs ``graphql_sync`` (correct for Django + sqlite). No
-hand-rolled view is needed.
-
-Exports the three contract symbols: ``graphql_view``, ``OPERATIONS``,
-``LIB_VERSIONS`` (plus ``schema`` for tooling).
+Nested resolvers deliberately access each parent's relation independently.
+Ariadne does not provide an automatic ORM optimizer, so the resulting N+1
+behavior is part of the fair out-of-the-box comparison. The official Django
+integration serves the executable schema. The module exports graphql_view,
+OPERATIONS, LIB_VERSIONS, and schema for the benchmark harness and tooling.
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -121,7 +102,26 @@ def _slice(qs, limit, offset):
 
 # ---- Query root ----------------------------------------------------------- #
 @query.field("posts")
-def resolve_posts(_, __, *, limit, offset=None, title_contains=None):
+def resolve_posts(
+    _: object,
+    __: object,
+    *,
+    limit: int,
+    offset: int | None = None,
+    title_contains: str | None = None,
+) -> list[Post]:
+    """Resolve the ordered post list for flat and filtered workloads.
+
+    Args:
+        _: Root query value supplied by Ariadne.
+        __: Execution context supplied by Ariadne.
+        limit: Maximum number of posts to return.
+        offset: Number of posts to skip before collecting results.
+        title_contains: Optional case-insensitive title fragment.
+
+    Returns:
+        The selected posts in database identifier order.
+    """
     # convert_names_case=True lowercases the SDL arg `titleContains` -> `title_contains`.
     qs = Post.objects.order_by("id")
     if title_contains is not None:
@@ -130,36 +130,121 @@ def resolve_posts(_, __, *, limit, offset=None, title_contains=None):
 
 
 @query.field("authors")
-def resolve_authors(_, __, *, limit, offset=None):
+def resolve_authors(
+    _: object,
+    __: object,
+    *,
+    limit: int,
+    offset: int | None = None,
+) -> list["Author"]:
+    """Resolve the ordered author list for the nested workload.
+
+    Args:
+        _: Root query value supplied by Ariadne.
+        __: Execution context supplied by Ariadne.
+        limit: Maximum number of authors to return.
+        offset: Number of authors to skip before collecting results.
+
+    Returns:
+        The selected authors in database identifier order.
+    """
     from benchapp.models import Author
 
     return _slice(Author.objects.order_by("id"), limit, offset)
 
 
 @query.field("post")
-def resolve_post(_, __, *, id):
+def resolve_post(_: object, __: object, *, id: int | str) -> Post | None:
+    """Resolve one post from its database identifier.
+
+    Args:
+        _: Root query value supplied by Ariadne.
+        __: Execution context supplied by Ariadne.
+        id: Database identifier requested by the operation.
+
+    Returns:
+        The matching post, or None when it does not exist.
+    """
     return Post.objects.filter(pk=id).first()
 
 
 # ---- Nested relation resolvers (per-object access; honest N+1) ------------ #
 @author_type.field("posts")
-def resolve_author_posts(author, _, *, limit, offset=None):
+def resolve_author_posts(
+    author: "Author",
+    _: object,
+    *,
+    limit: int,
+    offset: int | None = None,
+) -> list[Post]:
+    """Resolve one author's ordered posts for the nested workload.
+
+    Args:
+        author: Parent author selected by the query.
+        _: Execution context supplied by Ariadne.
+        limit: Maximum number of posts to return.
+        offset: Number of posts to skip before collecting results.
+
+    Returns:
+        The selected posts in database identifier order.
+    """
     return _slice(author.posts.order_by("id"), limit, offset)
 
 
 @post_type.field("comments")
-def resolve_post_comments(post, _, *, limit, offset=None):
+def resolve_post_comments(
+    post: Post,
+    _: object,
+    *,
+    limit: int,
+    offset: int | None = None,
+) -> list[Comment]:
+    """Resolve one post's ordered comments for the nested workload.
+
+    Args:
+        post: Parent post selected by the query.
+        _: Execution context supplied by Ariadne.
+        limit: Maximum number of comments to return.
+        offset: Number of comments to skip before collecting results.
+
+    Returns:
+        The selected comments in database identifier order.
+    """
     return _slice(post.comments.order_by("id"), limit, offset)
 
 
 @post_type.field("author")
-def resolve_post_author(post, _):
+def resolve_post_author(post: Post, _: object) -> "Author":
+    """Resolve the author related to a post.
+
+    Args:
+        post: Parent post selected by the query.
+        _: Execution context supplied by Ariadne.
+
+    Returns:
+        The author associated with the post.
+    """
     return post.author
 
 
 # ---- Mutation ------------------------------------------------------------- #
 @mutation.field("createComment")
-def resolve_create_comment(_, __, *, input):
+def resolve_create_comment(
+    _: object,
+    __: object,
+    *,
+    input: dict[str, int | str],
+) -> dict[str, bool | Comment]:
+    """Create a comment for the mutation workload.
+
+    Args:
+        _: Root mutation value supplied by Ariadne.
+        __: Execution context supplied by Ariadne.
+        input: Validated mutation fields after name conversion.
+
+    Returns:
+        The created comment and successful mutation state.
+    """
     # convert_names_case=True converts input field keys too: authorName -> author_name.
     comment = Comment.objects.create(
         post_id=input["post"],

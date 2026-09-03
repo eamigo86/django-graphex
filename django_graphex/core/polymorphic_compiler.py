@@ -108,11 +108,11 @@ def is_interface_type(cls: Any) -> bool:
 def _member_output_type(
     member_cls: Any, registries: SchemaRegistries | None = None
 ) -> GraphQLObjectType:
-    """Return the ``GraphQLObjectType`` for a union/interface member.
+    """Return the GraphQLObjectType for a union/interface member.
 
-    The member is a ``DjangoObjectType`` whose native type lives on
-    ``_meta.graphql_output_type`` (built at the member's class-def time, populated
-    by ``compile_all_outputs``). Reuse it (NEVER recompile) so the union member is
+    The member is a DjangoObjectType whose native type lives on
+    _meta.graphql_output_type (built at the member's class-def time, populated
+    by compile_all_outputs). Reuse it (NEVER recompile) so the union member is
     the SAME instance the schema resolves objects to.
 
     item-b (B5): under a non-default (forked) pair, return the member's FORKED
@@ -120,16 +120,16 @@ def _member_output_type(
     pair / no fork -> the class-def instance -> byte-identical).
 
     Args:
-        member_cls: A ``DjangoObjectType`` subclass (a union member or interface
+        member_cls: A DjangoObjectType subclass (a union member or interface
             implementor).
-        registries: The ``SchemaRegistries`` pair (forked member resolution);
-            ``None`` -> the class-def instance (byte-identical).
+        registries: The SchemaRegistries pair (forked member resolution);
+            None -> the class-def instance (byte-identical).
 
     Returns:
-        The member's ``GraphQLObjectType`` (forked or canonical).
+        The member's GraphQLObjectType (forked or canonical).
 
     Raises:
-        RuntimeError: When the member has no compiled ``graphql_output_type``
+        RuntimeError: When the member has no compiled graphql_output_type
             (its class-def native compile must have run first).
     """
     from django_graphex.core.base import resolved_output_type
@@ -145,18 +145,18 @@ def _member_output_type(
 
 
 def _make_resolve_type(polymorphic_cls: Any) -> Any:
-    """Build the graphql-core ``resolve_type`` for a union/interface.
+    """Build the graphql-core resolve_type for a union/interface.
 
-    graphql-core calls ``resolve_type(value, info, abstract_type)`` and accepts a
-    return of a ``GraphQLObjectType``, a type NAME (str), or ``None``. The
-    polymorphic class' own ``resolve_type(instance, info)`` returns the registered
-    ``DjangoObjectType`` for the row's concrete model; we map that to its GraphQL
+    graphql-core calls resolve_type(value, info, abstract_type) and accepts a
+    return of a GraphQLObjectType, a type NAME (str), or None. The
+    polymorphic class' own resolve_type(instance, info) returns the registered
+    DjangoObjectType for the row's concrete model; we map that to its GraphQL
     type NAME so graphql-core resolves to the right member instance (returning the
     name avoids any identity mismatch between the member's compiled instance and
-    the one threaded into ``GraphQLUnionType.types``).
+    the one threaded into GraphQLUnionType.types).
 
-    A ``TypeError`` from the polymorphic ``resolve_type`` (an unregistered member
-    model) PROPAGATES — a silent ``None`` would surface as the opaque "Abstract
+    A TypeError from the polymorphic resolve_type (an unregistered member
+    model) PROPAGATES — a silent None would surface as the opaque "Abstract
     type must resolve to an Object type" graphql-core error far from the cause.
     """
 

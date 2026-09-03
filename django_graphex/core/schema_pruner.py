@@ -124,14 +124,15 @@ class _Pruner:
     def run(self) -> GraphQLSchema:
         """Build and return the pruned schema.
 
-        ``GraphQLSchema`` keeps only root-reachable types plus whatever is
-        forwarded via ``types=``. A surviving object type that implements a
-        surviving interface but is never returned DIRECTLY by any field (only
-        via the interface) would otherwise fall out of the pruned ``type_map``,
-        leaving ``possible_types`` empty and breaking inline-fragment queries.
+        GraphQLSchema keeps only root-reachable types plus whatever is forwarded
+        via the types argument. A surviving object type that implements a surviving
+        interface but is never returned DIRECTLY by any field (only via the
+        interface) would otherwise fall out of the pruned type map, leaving its
+        possible types empty and breaking inline-fragment queries.
         We forward the CLONES (not the source instances — identity must stay
-        within the pruned universe) of those implementers via ``types=``, so the
-        interface keeps its implementers exactly like the FULL schema does.
+        within the pruned universe) of those implementers through the types
+        argument, so the interface keeps its implementers exactly like the FULL
+        schema does.
         """
         self._compute_filtered_fields()
         self._compute_survivors()
@@ -154,7 +155,7 @@ class _Pruner:
     def _forwarded_implementer_clones(self) -> list[GraphQLObjectType]:
         """Return the surviving object-type clones to force into the schema.
 
-        Mirrors ``DjangoGraphQLSchema._native_types_for_forwarding``: an object
+        Mirrors DjangoGraphQLSchema._native_types_for_forwarding: an object
         type that implements a SURVIVING interface must stay in the type map
         even when no surviving field returns it directly. Only SURVIVORS are
         forwarded (the survivor set is the source of truth) — a type the
@@ -200,12 +201,12 @@ class _Pruner:
     def _field_permitted(self, gql_field: GraphQLField) -> bool:
         """Return whether *gql_field* clears the caller's permissions.
 
-        An explicit ``gdx_required_perms`` stamp always wins: a plain
-        ``frozenset`` must be a subset of *granted*, and a subscription
-        per-action ``dict`` is permitted iff at least one action-value survives.
+        An explicit gdx_required_perms stamp always wins: a plain permission set
+        must be a subset of *granted*, and a subscription action mapping is
+        permitted iff at least one action-value survives.
 
         An UNTAGGED field falls back to the IMPLICIT label of its output type
-        (:func:`~django_graphex.core.perm_labels.implicit_perms_for_type`). Only
+        from perm_labels.implicit_perms_for_type. Only
         the generated CRUD / mutation / subscription ROOT fields are stamped at
         compile time; relation and nested-list fields are built deep inside the
         output compiler with no permission context, so without this fallback
@@ -229,7 +230,7 @@ class _Pruner:
         The FULL schema is handed along so an interface's label is the union
         over the implementors this schema mounts rather than over every one
         registered in the process. It must be the same schema
-        ``perm_labels.implicit_label_set`` was built from — the caller
+        perm_labels.implicit_label_set was built from — the caller
         intersects the granted permissions with that label set before this runs,
         so a label the two disagree about is stripped and the field disappears
         for everyone.
@@ -238,7 +239,7 @@ class _Pruner:
             gtype: The field's (possibly list- / non-null-wrapped) output type.
 
         Returns:
-            The target model's read permissions, or ``None`` when the output
+            The target model's read permissions, or None when the output
             type is not a generated model-backed type.
         """
         named = get_named_type(gtype)
@@ -250,7 +251,8 @@ class _Pruner:
     def _surviving_actions(self, perms: dict[str, Any]) -> set[str]:
         """Return the subscribe action-values whose perms the caller holds.
 
-        ``all_actions`` survives only when every single action-value survives.
+        The all_actions value survives only when every single action-value
+        survives.
         """
         singles = {
             action
@@ -332,9 +334,9 @@ class _Pruner:
 
         Leaf types (scalars / enums) are always live — only composite object /
         interface / union types can be pruned to empty in an OUTPUT position
-        (the input side has its own emptiness rule, ``_input_survives``). A
+        (the input side has its own emptiness rule, _input_survives). A
         field's output type is always a named (possibly wrapped) type, so
-        ``get_named_type`` never yields ``None`` here.
+        get_named_type never yields None here.
         """
         named = get_named_type(gtype)
         if is_object_type(named) or is_interface_type(named) or is_union_type(named):
@@ -343,7 +345,7 @@ class _Pruner:
 
     # -- phase 2: clone-on-write rebuild ------------------------------------ #
     def _clone_root(self, root: Any) -> GraphQLObjectType | None:
-        """Clone a root type, or return ``None`` when it did not survive."""
+        """Clone a root type, or return None when it did not survive."""
         if root is None or root.name not in self._survivors:
             return None
         return self._clone_named(root)
@@ -396,17 +398,17 @@ class _Pruner:
         """Clone an input object type, dropping the fields the caller may not use.
 
         Only NESTED-object input fields carry an explicit
-        ``gdx_required_perms`` stamp, so every input field that exists today is
+        gdx_required_perms stamp, so every input field that exists today is
         unaffected. Dropping one is safe: a nested input field is never NonNull
         at the parent level.
 
         A type that loses EVERY field is not cloned at all — the fixpoint has
-        already dropped it from the survivors, and ``_field_survives`` has
+        already dropped it from the survivors, and _field_survives has
         already removed the argument (and with it the root field) that referenced
         it. This method is therefore only ever reached for a type with at least
         one surviving field, and it needs no per-field survivor filter of its
         own: the only stamped input fields are the nested-child ones, and a
-        nested child input is built with ``nested_fields={}``, so it carries no
+        nested child input is built without nested fields, so it carries no
         stamp and can never itself be pruned to empty. No input object in the
         generated universe references an emptied input object.
         """
@@ -419,18 +421,18 @@ class _Pruner:
         return type(gtype)(**kwargs)
 
     def _filter_key_survives(self, gtype: Any, ifield: Any) -> bool:
-        """Return whether a filter input's key still names something the clone serves.
+        """Return whether a filter key still names something the clone serves.
 
-        The projection boundary is not only ``Meta.only_fields`` -- a PRUNE
+        The projection boundary is not only Meta.only_fields -- a PRUNE
         publishes less than the schema it clones, and the ordering axis already
         re-derives its allowlist against the clone
-        (:func:`_rescope_paginated_resolver`). The filter argument rode through
-        verbatim, so a caller who lost the ``author`` relation kept
-        ``filter: {author: {name: {icontains: ...}}}``: a prefix oracle over a
+        through _rescope_paginated_resolver. The filter argument rode through
+        verbatim, so a caller who lost the author relation kept
+        filter input for the author's name: a prefix oracle over a
         model the pruned SDL does not mount.
 
-        Only a generated ``<Model>FilterInput`` carries a model on its ``gdx``
-        payload; every other input object (the per-field ``<Field>Lookups``, the
+        Only a generated model filter input carries a model on its gdx payload;
+        every other input object (the per-field lookup inputs and the
         mutation inputs) has no column to measure and rides through untouched.
 
         Evaluated INSIDE the input clone's field thunk, which is what lets it
@@ -458,12 +460,12 @@ class _Pruner:
     def _serving_clones(self, model: Any) -> list[Any]:
         """Return the pruned NODE clones that serve a model's rows.
 
-        A ``<Model>ListType`` container carries the same model on its payload
-        but publishes only ``results`` and a count, so the projection boundary
-        is measured on the node it paginates and containers are skipped here.
+        A model list container carries the same model on its payload but
+        publishes only results and a count, so the projection boundary is measured
+        on the node it paginates and containers are skipped here.
 
-        More than one node type per model is normal (two ``DjangoObjectType``s
-        over one model share the single ``<Model>FilterInput`` name), so the key
+        More than one node type per model is normal (two Django object types
+        over one model share the single model filter input name), so the key
         has to clear ALL of them -- the same union rule the build-time guard
         applies.
 
@@ -506,7 +508,7 @@ class _Pruner:
         """Return whether an input field clears the caller's permissions.
 
         Only the EXPLICIT stamp is tested -- never the output-type implicit
-        fallback ``_field_permitted`` applies -- so an unlabeled input field
+        fallback in _field_permitted applies -- so an unlabeled input field
         stays exactly as public as it is today.
 
         Args:
@@ -535,11 +537,11 @@ class _Pruner:
     def _rebuild_field(self, gql_field: GraphQLField) -> GraphQLField:
         """Clone a field, remapping its output type and pruning its action enum.
 
-        ``subscribe`` / ``deprecation_reason`` / ``description`` / ``extensions``
-        ride through ``to_kwargs()`` verbatim. So did ``resolve`` — and a
+        The subscribe, deprecation reason, description, and extensions values
+        ride through to_kwargs() verbatim. So did resolve — and a
         paginating results resolver carries the FULL schema's ordering allowlist
         inside it, which is a pre-prune answer to a post-prune question; see
-        ``_rescope_paginated_resolver``.
+        _rescope_paginated_resolver.
         """
         kwargs = gql_field.to_kwargs()
         kwargs["type_"] = self._remap_type(gql_field.type)
@@ -565,7 +567,7 @@ class _Pruner:
     ) -> Any:
         """Clone an argument, remapping its type and pruning the action enum.
 
-        The subscription ``action`` argument's enum is rebuilt to keep only the
+        The subscription action argument's enum is rebuilt to keep only the
         surviving action-values; every other argument type is remapped verbatim.
         """
         kwargs = arg.to_kwargs()

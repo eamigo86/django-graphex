@@ -27,7 +27,19 @@ def _load_constraints(path: Path) -> dict[str, str]:
 def render_verified_freeze(
     installed: Iterable[Distribution], constraints: Mapping[str, str], lib: str
 ) -> str:
-    """Return a stable freeze, rejecting packages outside the canonical lock."""
+    """Render a deterministic freeze after validating the canonical lock.
+
+    Args:
+        installed: Distributions installed in the active environment.
+        constraints: Package names mapped to their canonical versions.
+        lib: Benchmark library named in validation errors.
+
+    Returns:
+        Sorted frozen requirements with one package per line.
+
+    Raises:
+        SystemExit: If an installed dependency falls outside the canonical lock.
+    """
     rows = []
     for dist in installed:
         name = _normalize(dist.metadata["Name"])
@@ -39,7 +51,11 @@ def render_verified_freeze(
 
 
 def main() -> None:
-    """Validate the active environment and print its deterministic freeze."""
+    """Validate the active environment and print its deterministic freeze.
+
+    Raises:
+        SystemExit: If installed dependencies differ from canonical constraints.
+    """
     constraints_path = Path(sys.argv[1])
     sys.stdout.write(
         render_verified_freeze(

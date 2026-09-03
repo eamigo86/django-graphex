@@ -24,7 +24,7 @@ import sys
 
 
 class _BlockGraphene:
-    """A ``sys.meta_path`` finder that raises when graphene is (re-)imported."""
+    """A sys.meta_path finder that raises when graphene is (re-)imported."""
 
     def find_module(self, name, path=None):  # noqa: D401 - finder protocol
         if name == "graphene" or name.startswith("graphene."):
@@ -42,10 +42,10 @@ class _BlockGraphene:
 
 
 def _purge_graphene_modules() -> dict:
-    """Remove graphene from ``sys.modules``; return the purged modules.
+    """Remove graphene from sys.modules; return the purged modules.
 
-    The caller MUST restore the returned mapping via ``sys.modules.update(...)``
-    in a ``finally`` block (the #1611 / B5 module-identity-leak trap).
+    The caller MUST restore the returned mapping via sys.modules.update(...)
+    in a finally block (the #1611 / B5 module-identity-leak trap).
     """
     saved = {
         name: mod
