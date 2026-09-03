@@ -11,14 +11,29 @@ from pathlib import Path
 
 
 def expected_version(project_root: Path) -> str:
-    """Return the release version declared by the source metadata."""
+    """Return the release version declared by the source metadata.
+
+    Args:
+        project_root: Repository root containing the project metadata.
+
+    Returns:
+        version: Version declared for the project.
+    """
     pyproject = project_root / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     return str(data["project"]["version"])
 
 
 def assert_outside_checkout(module_file: Path, project_root: Path) -> None:
-    """Reject an import resolved from the source checkout."""
+    """Reject an import resolved from the source checkout.
+
+    Args:
+        module_file: Resolved path of the imported package module.
+        project_root: Repository root that imports must avoid.
+
+    Raises:
+        RuntimeError: If the import came from the source checkout.
+    """
     try:
         module_file.resolve().relative_to(project_root.resolve())
     except ValueError:
@@ -27,7 +42,15 @@ def assert_outside_checkout(module_file: Path, project_root: Path) -> None:
 
 
 def assert_distribution_contract(module_file: Path, version: str) -> None:
-    """Validate metadata, typing marker, and the base dependency boundary."""
+    """Validate metadata, typing marker, and the base dependency boundary.
+
+    Args:
+        module_file: Resolved path of the installed package module.
+        version: Expected package metadata version.
+
+    Raises:
+        RuntimeError: If any installed-wheel contract is violated.
+    """
     installed_version = metadata.version("django-graphex")
     if installed_version != version:
         raise RuntimeError(
@@ -40,7 +63,11 @@ def assert_distribution_contract(module_file: Path, version: str) -> None:
 
 
 def assert_graphql_smoke() -> None:
-    """Initialize Django, compile a minimal schema, and execute a query."""
+    """Initialize Django, compile a minimal schema, and execute a query.
+
+    Raises:
+        RuntimeError: If the installed package cannot execute the query.
+    """
     from django.conf import settings
 
     if not settings.configured:
@@ -76,7 +103,14 @@ def assert_graphql_smoke() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run all installed-wheel contracts."""
+    """Run all installed-wheel contracts.
+
+    Args:
+        argv: Optional command-line arguments excluding the program name.
+
+    Returns:
+        status: Process exit status for the smoke check.
+    """
     arguments = sys.argv[1:] if argv is None else argv
     if len(arguments) != 1:
         print("usage: check_wheel_install.py PROJECT_ROOT", file=sys.stderr)
