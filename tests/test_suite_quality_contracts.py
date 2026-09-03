@@ -4,6 +4,12 @@ import ast
 from pathlib import Path
 
 TESTS_ROOT = Path(__file__).parent
+RETIRED_DOCSTRING_RATCHETS = frozenset(
+    {
+        Path("test_docstring_benchmark_ariadne.py"),
+        Path("test_docstring_benchmark_graphene.py"),
+    }
+)
 
 
 def _test_files() -> list[Path]:
@@ -22,6 +28,19 @@ def _is_pytest_call(node: ast.AST, method: str) -> bool:
         and node.func.value.id == "pytest"
         and node.func.attr == method
     )
+
+
+def test_retired_docstring_ratchets_stay_deleted() -> None:
+    """Prevent one-off ratchet contracts from returning after global enforcement.
+
+    Add each retired contract path to the shared set as cleanup progresses.
+    """
+    offenders = sorted(
+        str(relative_path)
+        for relative_path in RETIRED_DOCSTRING_RATCHETS
+        if (TESTS_ROOT / relative_path).exists()
+    )
+    assert offenders == [], f"retired docstring ratchets still exist: {offenders}"
 
 
 def test_core_modules_do_not_importorskip_during_collection() -> None:  # noqa: DOC001
