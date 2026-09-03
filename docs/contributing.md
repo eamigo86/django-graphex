@@ -109,7 +109,9 @@ make quality   # ruff format --check + ruff check + mypy
 During the progressive no-backtick migration, maintainers can run the checker
 with `--strict-content` to apply DOC201 to every docstring owner. This opt-in is
 temporary: the final gate will enforce the rule globally without a permanent
-baseline.
+baseline. CI uses a merge-base ratchet so only changed owners and new Python
+files must be clean while untouched debt remains; the ratchet is removed at
+zero debt rather than preserving counts or suppressions.
 
 ### Testing Standards
 
