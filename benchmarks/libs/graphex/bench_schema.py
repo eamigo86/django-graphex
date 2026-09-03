@@ -1,25 +1,8 @@
-"""django-graphex v2 reference implementation of the benchmark operation contract.
+"""Define the canonical django-graphex benchmark schema and operations.
 
-This is the CANONICAL implementation the other three libraries are compared
-against. It uses django-graphex idiomatically:
-
-  * ``DjangoObjectType`` with ``only_fields`` + ``filter_fields`` for the leaf
-    types. ``only_fields`` matches the other libraries' explicit field lists and
-    is a security boundary: a projected column is unreadable, unorderable and
-    unfilterable through the type.
-  * ``DjangoListObjectType`` + ``LimitOffsetGraphqlPagination`` for the
-    ``results {} / totalCount`` list wrapper (used by flat_list, nested,
-    filtered).
-  * ``DjangoListObjectField`` / ``DjangoObjectField`` on the Query root.
-  * A ``DjangoModelMutation`` for ``create_comment``.
-  * ``GraphQLView`` from ``django_graphex.views``.
-
-The module exports the three symbols the shared contract requires:
-``graphql_view``, ``OPERATIONS``, ``LIB_VERSIONS`` (plus ``schema`` for tooling).
-
-Import notes (v2 current API): types/descriptors come from ``django_graphex.core``;
-mutation arguments live on ``class Arguments``; the unified ``Field`` doubles as an
-argument descriptor. This file mirrors examples/playground/blog/schema.py.
+The projected fields, pagination shapes, mutation, and exported operation map
+match the shared cross-library contract. The module also exposes the compiled
+schema, view, and installed library versions used by benchmark tooling.
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -53,14 +36,34 @@ from django_graphex.views import GraphQLView
 # because ``AuthorType`` below publishes the author's key.                     #
 # --------------------------------------------------------------------------- #
 class CommentType(DjangoObjectType):
+    """Expose the projected comment fields used by benchmark operations.
+
+    The available filters match the shared cross-library schema.
+    """
+
     class Meta:
+        """Configure the comment model, projection, and filters.
+
+        The projection keeps schema construction comparable across libraries.
+        """
+
         model = Comment
         only_fields = ("id", "author_name", "text", "is_approved", "created_at")
         filter_fields = {"id": ("exact",), "text": ("icontains",)}
 
 
 class PostType(DjangoObjectType):
+    """Expose the projected post fields used by benchmark operations.
+
+    The available filters support the shared flat and filtered workloads.
+    """
+
     class Meta:
+        """Configure the post model, projection, and filters.
+
+        The projection includes the relations required by nested workloads.
+        """
+
         model = Post
         only_fields = (
             "id",
@@ -81,26 +84,66 @@ class PostType(DjangoObjectType):
 
 
 class CommentListType(DjangoListObjectType):
+    """Provide the paginated comment list used by nested operations.
+
+    Results use the shared comment cardinality and stable ordering.
+    """
+
     class Meta:
+        """Configure the comment list model and pagination policy.
+
+        The default limit matches the shared nested-operation contract.
+        """
+
         model = Comment
         pagination = LimitOffsetGraphqlPagination(default_limit=5, ordering="id")
 
 
 class PostListType(DjangoListObjectType):
+    """Provide the paginated post list used by benchmark operations.
+
+    Results use the shared post cardinality and stable ordering.
+    """
+
     class Meta:
+        """Configure the post list model and pagination policy.
+
+        The default limit matches the shared nested-operation contract.
+        """
+
         model = Post
         pagination = LimitOffsetGraphqlPagination(default_limit=10, ordering="id")
 
 
 class AuthorType(DjangoObjectType):
+    """Expose the projected author fields used by nested operations.
+
+    The available filters match the shared cross-library schema.
+    """
+
     class Meta:
+        """Configure the author model, projection, and filters.
+
+        The projection includes posts for the nested benchmark workload.
+        """
+
         model = Author
         only_fields = ("id", "name", "email", "bio", "posts")
         filter_fields = {"id": ("exact",), "name": ("icontains",)}
 
 
 class AuthorListType(DjangoListObjectType):
+    """Provide the paginated author list used by nested operations.
+
+    Results use the shared author cardinality and stable ordering.
+    """
+
     class Meta:
+        """Configure the author list model and pagination policy.
+
+        The default limit matches the shared nested-operation contract.
+        """
+
         model = Author
         pagination = LimitOffsetGraphqlPagination(default_limit=20, ordering="id")
 
@@ -109,7 +152,17 @@ class AuthorListType(DjangoListObjectType):
 # Mutation: create_comment                                                    #
 # --------------------------------------------------------------------------- #
 class CommentMutation(DjangoModelMutation):
+    """Expose the create-comment mutation used by the write workload.
+
+    Only creation is enabled to match the shared benchmark contract.
+    """
+
     class Meta:
+        """Configure the comment model and allowed mutation operation.
+
+        The mutation intentionally exposes only the create path.
+        """
+
         model = Comment
         model_operations = ("create",)
 
@@ -118,6 +171,11 @@ class CommentMutation(DjangoModelMutation):
 # Query root                                                                  #
 # --------------------------------------------------------------------------- #
 class Query(ObjectType):
+    """Expose the read fields required by benchmark operations.
+
+    The root supports single-post, post-list, and author-list workloads.
+    """
+
     # single object by id
     post = DjangoObjectField(PostType)
     # paginated + filterable list wrappers (results {} / totalCount)
@@ -134,6 +192,11 @@ compile_all_outputs()
 
 
 class Mutation(ObjectType):
+    """Expose the write field required by the benchmark contract.
+
+    The root provides the canonical create-comment operation.
+    """
+
     comment_create = CommentMutation.CreateField()
 
 
