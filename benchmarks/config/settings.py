@@ -1,14 +1,14 @@
 """Single Django settings module shared by all four benchmarked libraries.
 
-The ONLY thing that varies per library is the value of the ``BENCH_LIB`` env var,
+The ONLY thing that varies per library is the value of the BENCH_LIB env var,
 which selects:
-  * which extra INSTALLED_APPS entry (if any) the library needs, via ``LIB_APPS``;
-  * which ``libs/<BENCH_LIB>/bench_schema.py`` module ``config.urls`` mounts.
+  * which extra INSTALLED_APPS entry (if any) the library needs, via LIB_APPS;
+  * which libs/<BENCH_LIB>/bench_schema.py module config.urls mounts.
 
 Everything else — database, DEBUG, models, seed — is identical across libraries.
 Fairness rule: no per-library tuning of Django itself lives here. Each library's
 idiomatic knobs (query optimizer, dataloaders, etc.) live in its own
-``bench_schema.py``, never in this settings module.
+bench_schema.py, never in this settings module.
 """
 
 import os

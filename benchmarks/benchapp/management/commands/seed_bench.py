@@ -1,7 +1,7 @@
 """Deterministic bulk seed for the GraphQL benchmark.
 
-Everything is generated from ``random.Random(42)`` so every library benchmarks
-against a byte-identical database. Rows are created with ``bulk_create`` in
+Everything is generated from random.Random(42) so every library benchmarks
+against a byte-identical database. Rows are created with bulk_create in
 batches to keep the whole seed well under two minutes.
 
 Scale:
@@ -13,7 +13,7 @@ Scale:
    ~30,000 post-tag links (~3 tags per post, via the M2M through table)
 
 The seed is idempotent-by-truncation: it clears the tables first so re-running
-``run_all.sh`` always starts from the same state.
+run_all.sh always starts from the same state.
 """
 
 import random
@@ -35,9 +35,19 @@ BATCH = 2_000
 
 
 class Command(BaseCommand):
+    """Seed the shared benchmark database deterministically.
+
+    Every adapter receives the same relation shape and generated values.
+    """
+
     help = "Seed the benchmark database with a deterministic blog dataset."
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: object) -> None:
+        """Register benchmark seed command options.
+
+        Args:
+            parser: Argument parser supplied by Django.
+        """
         parser.add_argument(
             "--authors",
             type=int,
@@ -49,7 +59,13 @@ class Command(BaseCommand):
         )
 
     @transaction.atomic
-    def handle(self, *args, **options):
+    def handle(self, *args: object, **options: object) -> None:
+        """Replace benchmark rows with one deterministic dataset.
+
+        Args:
+            *args: Unused positional command arguments.
+            **options: Parsed command options, including the author count.
+        """
         rng = random.Random(SEED)
         n_authors = options["authors"]
 
