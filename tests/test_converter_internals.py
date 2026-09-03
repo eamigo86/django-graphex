@@ -42,21 +42,21 @@ from .models import Author, Post
 
 
 class _StubRegistry:
-    """Minimal registry for ``_to_graphql_field`` (scalars never touch it)."""
+    """Minimal registry for _to_graphql_field (scalars never touch it)."""
 
     def get_compiled(self, model_cls):
         return None
 
 
 def _is_lazy_closure(obj):
-    """True for a converter result that defers to a lazy ``get_type()`` closure.
+    """True for a converter result that defers to a lazy get_type() closure.
 
     Some converter paths that have NOT yet been migrated off graphene (e.g. the
-    ``GenericRelation`` INPUT branch, ``converter.py``) still return a graphene
-    ``Dynamic`` whose ``get_type()`` must be called to read the resolved field.
-    Detect it structurally (duck-typed ``get_type`` on a non-native object) so
+    GenericRelation INPUT branch, converter.py) still return a graphene
+    Dynamic whose get_type() must be called to read the resolved field.
+    Detect it structurally (duck-typed get_type on a non-native object) so
     this test file imports no graphene symbol; the migrated relation converters
-    return a ``NativeRelationField`` instead, which this helper returns verbatim.
+    return a NativeRelationField instead, which this helper returns verbatim.
     """
     from django_graphex.core.descriptors import NativeRelationField
 
