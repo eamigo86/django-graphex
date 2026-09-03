@@ -219,8 +219,11 @@ the first response. Every one of those requests is rolled back independently.
 ## Running it
 
 ```bash
-# 1. Build one isolated venv per library (same Django, Python 3.12).
+# 1. Recreate the four environments from the exact constraints.
 ./setup_envs.sh                 # or: ./setup_envs.sh graphex
+
+# Strict offline replay (fails if uv's local cache/runtime is incomplete).
+BENCH_OFFLINE=1 ./setup_envs.sh
 
 # 2. Fresh DB + seed once, then run every available library's harness.
 ./run_all.sh                    # or: ./run_all.sh graphex
@@ -260,6 +263,13 @@ done
 Leave `BENCH_PREFIX` out and the loop writes `results/<lib>.json` — the
 1,000-author names — with 2,000-author numbers inside them. That is the one
 mistake this recipe cannot detect for you, because both seeds are valid runs.
+
+Python is fixed to the canonical `3.12.11` patch release. Each artifact records
+the measured Git commit and the SHA-256 of
+`constraints.txt`. `versions.env` pins direct inputs; `constraints.txt` is the
+union of the four complete environment freezes. `setup_envs.sh` rejects any
+installed transitive version not present in that freeze. This makes a second
+recreation byte-identical at the package/version level.
 
 ## Layout
 
