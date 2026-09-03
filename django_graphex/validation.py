@@ -38,7 +38,7 @@ __all__ = ("DepthLimitValidationRule",)
 
 
 class _Constraint(NamedTuple):
-    """An active depth budget: ``limit`` levels are allowed below ``origin``."""
+    """Represent an active depth budget below its origin."""
 
     limit: int
     origin: int
@@ -46,18 +46,17 @@ class _Constraint(NamedTuple):
 
 
 def _type_max_depth(named_type: GraphQLNamedType) -> int | None:
-    """Return the ``max_depth`` declared on a type, or ``None``.
+    """Return the maximum depth declared on a type, when configured.
 
-    Reads it via the ``_gdx_meta`` shim, which tries
-    ``graphene_type._meta`` first (graphene path) and falls back to
-    ``extensions["gdx"]._meta`` (native path).  This ensures both backends
+    Reads it via the internal metadata shim, which tries the Graphene metadata
+    first and falls back to the native extension metadata. This ensures both backends
     work through a single read-site.
 
     Args:
         named_type: The unwrapped (named) graphql-core type.
 
     Returns:
-        The non-negative depth limit, or ``None`` when not configured/invalid.
+        The non-negative depth limit, or None when not configured or invalid.
     """
     try:
         meta = _native_gdx_meta(named_type)
@@ -102,6 +101,7 @@ class DepthLimitValidationRule(ValidationRule):
 
         Args:
             node: The operation definition AST node.
+            *_args: Additional visitor arguments supplied by graphql-core.
         """
         schema = self.context.schema
         root_type = {

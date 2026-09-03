@@ -372,6 +372,7 @@ class CostLimitValidationRule(ValidationRule):
 
         Args:
             node: The operation definition AST node.
+            *_args: Additional visitor arguments supplied by graphql-core.
         """
         max_cost = _settings_value("MAX_QUERY_COST")
         if not max_cost:
