@@ -107,9 +107,9 @@ class Command(BaseCommand):
         writing a summary line to stdout.
 
         Args:
-            args: Positional arguments forwarded by Django's command runner
+            *args: Positional arguments forwarded by Django's command runner
                 (unused).
-            options: Parsed option values, including "authors", "posts",
+            **options: Parsed option values, including "authors", "posts",
                 "comments", "notes" and "scale".
         """
         n_authors = max(1, options["authors"] * options["scale"])
