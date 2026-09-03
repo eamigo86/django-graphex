@@ -31,18 +31,18 @@ def _unwrap(attr: Any) -> Any:
 
 
 def _collect(host_cls: type) -> tuple[dict[str, Callable], Callable | None]:
-    """Collect ``validate_<field>`` and ``validate`` callables down the MRO.
+    """Collect validate_<field> and validate callables down the MRO.
 
     The most-derived definition of each name wins (subclasses override bases).
-    The walk stops at ``BaseModel``: every host inherits it, and its deprecated
-    ``validate`` classmethod is pydantic's own entry point, not a user hook.
+    The walk stops at BaseModel: every host inherits it, and its deprecated
+    validate classmethod is pydantic's own entry point, not a user hook.
     Collecting it gave every validator-free host a synthetic validator model
-    that called ``BaseModel.validate`` on each save — a deprecation warning per
+    that called BaseModel.validate on each save — a deprecation warning per
     write, and a re-validation of the payload against the HOST type that a host
     with required fields would reject outright.
 
     Returns:
-        A ``({field: fn}, object_fn_or_None)`` tuple.
+        A ({field: fn}, object_fn_or_None) tuple.
     """
     field_fns: dict[str, Callable] = {}
     object_fn: Callable | None = None
@@ -66,7 +66,7 @@ def _collect(host_cls: type) -> tuple[dict[str, Callable], Callable | None]:
 
 
 def _field_wrapper(fn: Callable, host_cls: type) -> Callable:
-    """Wrap a user ``validate_<field>`` as a Pydantic field-validator classmethod."""
+    """Wrap a user validate_<field> as a Pydantic field-validator classmethod."""
 
     def _validator(cls: type, value: Any) -> Any:
         return fn(host_cls, value)
@@ -75,9 +75,9 @@ def _field_wrapper(fn: Callable, host_cls: type) -> Callable:
 
 
 def _object_wrapper(fn: Callable, host_cls: type) -> Callable:
-    """Wrap a user ``validate`` as a Pydantic ``model_validator(mode="after")``.
+    """Wrap a user validate as a Pydantic model_validator(mode="after").
 
-    Exposes the set fields as a ``dict`` (DRF's ``validate(self, data)`` shape) and
+    Exposes the set fields as a dict (DRF's validate(self, data) shape) and
     writes any returned keys back onto the model so transforms persist.
     """
 
