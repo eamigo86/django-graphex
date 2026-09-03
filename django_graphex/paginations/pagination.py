@@ -128,9 +128,9 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
 
     Cursor components are serialised as strings inside the opaque token, so the
     in-memory keyset comparison must convert them back to the row's own value
-    type (int, date, etc.) before comparing — otherwise ``"10" < "2"`` (lexical)
-    is wrong and ``int``/``date`` vs ``str`` raises ``TypeError``. This keeps the
-    in-memory path in parity with the DB path, whose ``filter`` coerces the same
+    type (int, date, etc.) before comparing — otherwise "10" < "2" (lexical)
+    is wrong and int/date vs str raises TypeError. This keeps the
+    in-memory path in parity with the DB path, whose filter coerces the same
     string back to the field's runtime type. Unsupported samples and any failed
     coercion fall back to the raw string (lenient, matching the DB path).
 
@@ -139,7 +139,7 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
         sample: A live value read from a row, used only for its type.
 
     Returns:
-        *raw* coerced to ``type(sample)`` when possible, else *raw* unchanged.
+        *raw* coerced to type(sample) when possible, else *raw* unchanged.
     """
     if sample is None or not isinstance(raw, str):
         return raw
@@ -175,31 +175,31 @@ def _normalize_ordering_term(term: str) -> str:
     """Normalize a single ordering term to snake_case, preserving direction.
 
     GraphQL exposes every field NAME in camelCase on the wire, so a client that
-    reads ``createdAt`` in a type reasonably passes ``ordering: "createdAt"``.
-    Django's ORM (and the model ``_meta.concrete_fields`` allowlist) speaks
+    reads createdAt in a type reasonably passes ordering: "createdAt".
+    Django's ORM (and the model _meta.concrete_fields allowlist) speaks
     snake_case attnames, so the two spellings must converge to the SAME term.
 
-    The leading ``-``/``+`` direction prefix is stripped, the bare term is run
-    through :func:`~django_graphex._strconv.to_snake_case` (idempotent on
+    The leading -/+ direction prefix is stripped, the bare term is run
+    through to_snake_case (idempotent on
     snake_case input), and the direction is re-attached in the ONLY spelling
-    Django's ORM understands: a single leading ``-`` for descending, nothing at
-    all for ascending. An explicit ``+`` therefore disappears here, so the
-    validated term is byte-identical to the one handed to ``order_by``. This is
+    Django's ORM understands: a single leading - for descending, nothing at
+    all for ascending. An explicit + therefore disappears here, so the
+    validated term is byte-identical to the one handed to order_by. This is
     the ONE canonical conversion point every consumer routes through so the DB
     path, the in-memory path, and the window-prefetch pre-check never diverge.
 
-    A repeated prefix (``--name``, ``+-name``) is rejected rather than
+    A repeated prefix (--name, +-name) is rejected rather than
     normalized: no ordering convention assigns it a meaning, so any mapping
     would silently sort by something the client did not ask for, and letting it
-    through reaches Django's ``FieldError``, whose message enumerates every
+    through reaches Django's FieldError, whose message enumerates every
     column of the model (CWE-209).
 
     Args:
-        term: A single ordering term, optionally prefixed with ``-`` or ``+``.
+        term: A single ordering term, optionally prefixed with - or +.
 
     Returns:
         The direction-preserving snake_case form of *term*, descending terms
-        keeping a single leading ``-``. An empty/falsy term is returned
+        keeping a single leading -. An empty/falsy term is returned
         unchanged.
 
     Raises:
@@ -218,9 +218,9 @@ def _normalize_ordering_term(term: str) -> str:
 def _split_ordering(ordering: str | list[str]) -> list[str]:
     """Split an ordering value into normalized, non-empty snake_case terms.
 
-    Accepts either a comma-separated string (``"createdAt,-authorId"``) or an
+    Accepts either a comma-separated string ("createdAt,-authorId") or an
     iterable of terms and returns the list of individual terms, each normalized
-    via :func:`_normalize_ordering_term`. Whitespace and empty entries are
+    via _normalize_ordering_term. Whitespace and empty entries are
     dropped, matching the historical parsing used across the paginators.
 
     Args:
@@ -242,7 +242,7 @@ def _normalize_ordering(ordering: Any) -> Any:
     A falsy value is returned unchanged. A single-term string stays a string; a
     multi-term (comma-containing) string stays a comma-joined string; a list
     stays a list. Keeping the shape lets each caller feed the result straight
-    into its existing ``order_by`` branch (single term vs. splat) without
+    into its existing order_by branch (single term vs. splat) without
     behaviour changes beyond the snake_case conversion.
 
     Args:
@@ -448,10 +448,10 @@ def _validate_ordering_terms(
     ordering value into the cursor.
 
     Args:
-        model: The Django model class whose ``_meta.concrete_fields`` defines the
+        model: The Django model class whose _meta.concrete_fields defines the
             column universe.
         ordering: A comma-separated ordering string or a list of ordering terms.
-            Leading ``-``/``+`` direction prefixes are stripped before comparison.
+            Leading -/+ direction prefixes are stripped before comparison.
         allowed: The attnames the GraphQL type exposes, or "None" to allow every
             concrete column. "None" is what a hand-constructed paginator carries,
             so a caller with no type behind it keeps the model-wide allowlist.
@@ -586,7 +586,7 @@ def _apply_ordering(qs: Any, ordering: Any, allowed: set[str] | None = None) -> 
     queryset is validated against the allowed attnames BEFORE "order_by" so an
     invalid term raises the clean "Invalid ordering field" error instead of
     Django's "FieldError", whose message enumerates every column of the model
-    (CWE-209); an in-memory list is sorted by :func:`_inmemory_order`.
+    (CWE-209); an in-memory list is sorted by _inmemory_order.
 
     Args:
         qs: The queryset or list of model instances to order.
@@ -668,34 +668,34 @@ class BaseDjangoGraphqlPagination:
         maximum: int | None,
         param_label: str | None = None,
     ) -> int | None:
-        """Return the effective page size, with ``maximum`` as a hard ceiling.
+        """Return the effective page size, with maximum as a hard ceiling.
 
-        Resolution order is ``requested`` -> ``default`` -> ``maximum``; the
-        result is always clamped at ``maximum`` when one is set. This makes a
+        Resolution order is requested -> default -> maximum; the
+        result is always clamped at maximum when one is set. This makes a
         configured maximum a real ceiling even when the client omits the
         page-size argument (it falls back to the maximum instead of returning an
-        unbounded queryset). ``None`` is returned only when ``requested``,
-        ``default`` and ``maximum`` are all unset -- i.e. no pagination is
+        unbounded queryset). None is returned only when requested,
+        default and maximum are all unset -- i.e. no pagination is
         configured, preserving the historical "return everything" behavior.
 
         Args:
-            requested: The page size the client asked for (may be ``None``).
-            default: The configured default page size (may be ``None``).
-            maximum: The configured maximum page size (may be ``None``).
-            param_label: When given (e.g. ``"limit"``/``"first"``/``"page size"``),
-                a zero/negative page size is surfaced as a clean ``GraphQLError``
-                naming that argument instead of a bare ``ValueError`` (which would
+            requested: The page size the client asked for (may be None).
+            default: The configured default page size (may be None).
+            maximum: The configured maximum page size (may be None).
+            param_label: When given (e.g. "limit"/"first"/"page size"),
+                a zero/negative page size is surfaced as a clean GraphQLError
+                naming that argument instead of a bare ValueError (which would
                 escape the resolver as an HTTP 500). Mirrors the negative-offset
                 guard's error convention.
 
         Returns:
-            The effective, clamped page size, or ``None`` when unbounded.
+            The effective, clamped page size, or None when unbounded.
 
         Raises:
             GraphQLError: If the resolved size is zero or negative and
-                ``param_label`` is provided (bad client input).
+                param_label is provided (bad client input).
             ValueError: If the resolved size is zero or negative and no
-                ``param_label`` is provided (internal callers).
+                param_label is provided (internal callers).
         """
         value = requested if requested is not None else default
         if value is None:
@@ -1410,7 +1410,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
 
     @staticmethod
     def _encode_row_cursor(row: Any, field_name: str) -> str:
-        """Encode a boundary *row* into a composite ``(value, pk)`` cursor.
+        """Encode a boundary *row* into a composite (value, pk) cursor.
 
         Args:
             row: The boundary model instance.
@@ -1560,27 +1560,27 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         return field, bare, descending
 
     def _order_terms(self, order_term: str, descending: bool) -> tuple[Any, str]:
-        """Return the ``order_by`` terms with deterministic NULL placement + pk.
+        """Return the order_by terms with deterministic NULL placement + pk.
 
         The pk is always appended so rows sharing the same ordering value have a
         stable, repeatable order — the precondition for a tie-safe keyset cursor.
-        The pk direction mirrors the ordering direction (``-pk`` when descending)
-        so the composite ``(value, pk)`` boundary advances monotonically.
+        The pk direction mirrors the ordering direction (-pk when descending)
+        so the composite (value, pk) boundary advances monotonically.
 
-        NULL placement is pinned to match the in-memory path's ``_sort_key``
+        NULL placement is pinned to match the in-memory path's _sort_key
         (which sorts NULLs LAST ascending, FIRST descending): the primary term is
-        expressed as ``F(field).asc(nulls_last=True)`` /
-        ``F(field).desc(nulls_first=True)`` so the DB and in-memory sequences over
+        expressed as F(field).asc(nulls_last=True) /
+        F(field).desc(nulls_first=True) so the DB and in-memory sequences over
         NULL-bearing data are identical. Without an explicit clause the backends
         disagree (SQLite/SQLite nulls-first vs. PostgreSQL nulls-last ascending),
         which would silently break DB/in-memory parity and cursor determinism.
 
         Args:
-            order_term: The primary ordering term (may carry a ``-``/``+`` prefix).
+            order_term: The primary ordering term (may carry a -/+ prefix).
             descending: Whether the primary ordering is descending.
 
         Returns:
-            A ``(order_by_expr, pk_term)`` pair for ``qs.order_by(*terms)``.
+            A (order_by_expr, pk_term) pair for qs.order_by(*terms).
         """
         from django.db.models import F
 
@@ -1596,16 +1596,16 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
     def _keyset_predicate(
         field_name: str, descending: bool, value: Any, pk: Any
     ) -> Any:
-        """Build the compound keyset ``Q`` predicate for "rows after the cursor".
+        """Build the compound keyset Q predicate for "rows after the cursor".
 
-        Ascending order advances when ``field > value`` OR (``field == value`` AND
-        ``pk > pk``); descending mirrors this with ``lt``. This compound boundary
+        Ascending order advances when field > value OR (field == value AND
+        pk > pk); descending mirrors this with lt. This compound boundary
         is what makes tied ordering values safe: the pk tiebreak resumes exactly
         after the boundary row instead of skipping every other tied row.
 
         NULL boundaries are handled explicitly so the predicate stays consistent
-        with the deterministic NULL placement of :meth:`_order_terms` (ascending
-        -> NULLs last, descending -> NULLs first) — SQL ``field > NULL`` is never
+        with the deterministic NULL placement of _order_terms (ascending
+        -> NULLs last, descending -> NULLs first) — SQL field > NULL is never
         true, so a plain comparison would drop every page after a NULL boundary.
         The isnull-aware branches are:
 
@@ -1625,7 +1625,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             pk: The boundary row's primary key.
 
         Returns:
-            A Django ``Q`` object selecting the rows strictly after the boundary.
+            A Django Q object selecting the rows strictly after the boundary.
         """
         from django.db.models import Q
 
@@ -1663,7 +1663,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
     ) -> bool:
         """Return whether *obj* sorts strictly after the composite cursor boundary.
 
-        Mirrors :meth:`_keyset_predicate` for the in-memory (prefetch-cache) path
+        Mirrors _keyset_predicate for the in-memory (prefetch-cache) path
         so both paths agree on which rows follow a tied boundary.
 
         Args:
@@ -1674,7 +1674,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             pk: The boundary row's primary key (as decoded from the cursor).
 
         Returns:
-            ``True`` when *obj* comes after the boundary in the ordered sequence.
+            True when *obj* comes after the boundary in the ordered sequence.
         """
         obj_value = getattr(obj, field_name, None)
         obj_pk = getattr(obj, "pk", None)
@@ -1766,7 +1766,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
     ) -> int:
         """Find the index of the first row after the composite cursor boundary.
 
-        The match compares each row against the decoded ``(value, pk)`` boundary
+        The match compares each row against the decoded (value, pk) boundary
         using the same keyset logic as the DB path, so tied ordering values
         resume at the correct pk instead of being skipped. Because it scans by
         boundary comparison (not exact equality), a boundary row that is no
@@ -1853,8 +1853,8 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
 
         The composite keyset predicate needs a pk tiebreak; a legacy value-only
         cursor has none, so this reproduces the historical plain-value boundary
-        (``field > value`` ascending, ``field < value`` descending). A NULL
-        boundary value can never satisfy a ``> / <`` comparison, so it selects the
+        (field > value ascending, field < value descending). A NULL
+        boundary value can never satisfy a > / < comparison, so it selects the
         appropriate NULL-relative group instead (the trailing NULL group when
         ascending with NULLs last; the whole non-NULL body when descending with
         NULLs first) — deterministic placement without a tiebreak.
@@ -1865,7 +1865,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             value: The boundary ordering value ("None" for a NULL boundary).
 
         Returns:
-            A Django ``Q`` object selecting the rows after the value boundary.
+            A Django Q object selecting the rows after the value boundary.
         """
         from django.db.models import Q
 
@@ -1880,9 +1880,9 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
     def _inmemory_keyset_order(
         items: Iterable[Any], field_name: str, descending: bool
     ) -> list[Any]:
-        """Order in-memory rows by ``(ordering value, pk)`` with a stable tiebreak.
+        """Order in-memory rows by (ordering value, pk) with a stable tiebreak.
 
-        Produces the same sequence the DB path gets from ``order_by(field, "pk")``:
+        Produces the same sequence the DB path gets from order_by(field, "pk"):
         the primary ordering value, then the pk as the deterministic tie-breaker
         (both flipped when descending). Applying the least-significant key (pk)
         first and the primary key last leans on Python's stable sort to build the
