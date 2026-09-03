@@ -1,4 +1,8 @@
-"""String manipulation GraphQL directives."""
+"""Provide GraphQL directives for transforming string-compatible field values.
+
+The directives share consistent null handling and preserve GraphQL errors for
+invalid client-supplied formatting options.
+"""
 
 from __future__ import annotations
 
@@ -60,14 +64,14 @@ _FORMAT_SPEC_BODY_RE = re.compile(
 def _extract_width_precision(spec: str) -> tuple[int, int]:
     """Extract the numeric width and precision from a Python format mini-language spec.
 
-    Handles the optional ``[[fill]align]`` prefix correctly so that a digit
-    fill character (e.g. ``0<1000000f``) does not bypass the width check.
+    Handles the optional fill-and-align prefix correctly so that a digit fill
+    character, such as 0<1000000f, does not bypass the width check.
 
     Args:
-        spec: A Python format spec string as supplied to the ``@number`` directive.
+        spec: A Python format spec string supplied to the @number directive.
 
     Returns:
-        A ``(width, precision)`` tuple of integers (0 when absent).
+        The width and precision, using zero when either is absent.
     """
     body = spec
     # Strip optional [[fill]align]: if the second character is an align char
@@ -212,6 +216,7 @@ class DefaultGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The "to" argument when the value is None or the empty string, else
@@ -263,6 +268,7 @@ class Base64GraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The base64 encoded or decoded string, or None when empty.
@@ -332,6 +338,7 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The value formatted with the given Python format spec, or the value
@@ -411,6 +418,7 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The value formatted as currency prefixed with the symbol, or the
@@ -453,6 +461,7 @@ class LowercaseGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The lowercased string.
@@ -483,6 +492,7 @@ class UppercaseGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The uppercased string.
@@ -514,6 +524,7 @@ class CapitalizeGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The capitalized string.
@@ -544,6 +555,7 @@ class CamelCaseGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The camelCased string.
@@ -574,6 +586,7 @@ class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The snake_cased string.
@@ -606,6 +619,7 @@ class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The kebab-cased string.
@@ -636,6 +650,7 @@ class SwapCaseGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The string with swapped character cases.
@@ -681,6 +696,7 @@ class StripGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The string with the requested characters stripped.
@@ -712,6 +728,7 @@ class TitleCaseGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The titlecased string.
@@ -759,6 +776,7 @@ class CenterGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The centered string padded to the requested width, or None when the
@@ -837,6 +855,7 @@ class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The string with occurrences of "old" replaced by "new", or None
@@ -895,6 +914,7 @@ class TruncateGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The string shortened to "length" characters with "end" appended, the
@@ -940,6 +960,7 @@ class SlugifyGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             The URL-safe slug produced by Django's "slugify".
