@@ -22,12 +22,11 @@ What it measures, per library:
      libraries declare the SAME fields; recording them puts that claim in the
      artifact where a reader can diff it instead of trusting the README.
 
-``create_comment`` is run LAST (it mutates the DB). All requests go through
-``django.test.Client`` POSTing to ``/graphql/`` — no network, fully deterministic.
+``create_comment`` is run LAST, and every request is rolled back. All requests
+go through ``django.test.Client`` POSTing to ``/graphql/`` — no network.
 
-Output: results/<lib>.json, or results/<BENCH_PREFIX><lib>.json when
-``BENCH_PREFIX`` is set (``BENCH_PREFIX=2x_`` writes the doubled-dataset
-artifacts ``docs/why.md`` publishes).
+Output defaults to ignored ``scratch/<lib>.json``. ``run_publish.py`` assigns a
+raw-run directory and is the only command that replaces canonical results.
 """
 
 import hashlib
@@ -45,11 +44,9 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 BENCH_LIB = os.environ.setdefault("BENCH_LIB", "graphex")
-# Which SEED the run measures is the caller's business, not something this file
-# can detect, so the artifact name carries it: BENCH_PREFIX=2x_ writes
-# results/2x_<lib>.json, the doubled-dataset artifacts docs/why.md cites. Empty
-# by default, so run_all.sh keeps writing results/<lib>.json byte-identically.
+# Optional filename prefix for manual scratch diagnostics.
 BENCH_PREFIX = os.environ.get("BENCH_PREFIX", "")
+BENCH_AUTHORS = int(os.environ.get("BENCH_AUTHORS", "1000"))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 WARMUP = 15
@@ -267,6 +264,11 @@ def main() -> None:
             "platform": platform.platform(),
             "cpu_count": os.cpu_count(),
         },
+        "dataset": {
+            "authors": BENCH_AUTHORS,
+            "posts_per_author": 10,
+            "comments_per_post": 5,
+        },
         "provenance": _provenance(),
         # The cold first import: library + dependency tree + one schema build.
         # Cold-cache sensitive, so only comparable when every library's
@@ -283,8 +285,8 @@ def main() -> None:
         "ops": results,
     }
 
-    out_dir = BASE_DIR / "results"
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path(os.environ.get("BENCH_OUTPUT_DIR", BASE_DIR / "scratch"))
+    out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{BENCH_PREFIX}{BENCH_LIB}.json"
     out_path.write_text(json.dumps(output, indent=2))
     sys.stdout.write(json.dumps(output, indent=2) + "\n")

@@ -23,6 +23,7 @@ results/*
 # Ad-hoc profiler scripts and dumps (written against a point-in-time code
 # state; not part of the documented benchmark contract)
 profiles/
+scratch/
 
 # Django migrations are generated at run time (fresh, deterministic)
 benchapp/migrations/
