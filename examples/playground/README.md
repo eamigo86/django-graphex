@@ -381,6 +381,12 @@ cd examples/playground
 DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations
 ```
 
+The shipped `ALLOWED_HOSTS` contains only `127.0.0.1`, `localhost`, and
+`testserver`. This keeps `AllowedHostsOriginValidator` effective for the
+session-authenticated WebSocket endpoint. If you expose the playground through
+a tunnel or proxy, add that hostname explicitly — do not replace the list with
+`["*"]`.
+
 ---
 
 ## Example GraphQL operations

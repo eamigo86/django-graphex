@@ -22,10 +22,9 @@ from django.urls import path  # noqa: E402
 def build_websocket_application() -> AllowedHostsOriginValidator:
     """Build the routed WebSocket app, Origin-validated and session-authenticated.
 
-    Built by a function rather than at import time so a test can rebuild it
-    under a different ALLOWED_HOSTS -- this settings file uses "*", which makes
-    the Origin validator accept everything, so a test that did not rebuild it
-    would pass with or without the wrapper.
+    Built by a function so tests and deployments can construct the stack after
+    Django loads their explicit ALLOWED_HOSTS values. The playground deliberately
+    ships no wildcard: otherwise the outer validator would accept every Origin.
 
     Layers, outermost first:
 
