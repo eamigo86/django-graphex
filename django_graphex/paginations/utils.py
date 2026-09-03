@@ -30,23 +30,23 @@ def _paginate_list_base(
     root: Any,
     **kwargs: Any,
 ) -> Any:
-    """Slice a ``DjangoListObjectBase`` page, honoring ``already_paginated``.
+    """Slice a DjangoListObjectBase page, honoring already_paginated.
 
     Backend-neutral pagination logic shared by the graphene
-    ``GenericPaginationField`` and the native ``NativePaginationField``. When the
+    GenericPaginationField and the native NativePaginationField. When the
     root rows were already DB-sliced by the window-prefetch path
-    (``already_paginated=True``) they are returned in order WITHOUT a second
+    (already_paginated=True) they are returned in order WITHOUT a second
     slice (the no-double-pagination coordination, design C3/D6). Otherwise the
-    paginator slices ``root.results`` using the supplied pagination kwargs.
+    paginator slices root.results using the supplied pagination kwargs.
 
     Args:
-        paginator: The paginator instance providing ``paginate_queryset``.
+        paginator: The paginator instance providing paginate_queryset.
         root: The resolver root; pagination only applies to a
-            ``DjangoListObjectBase``.
+            DjangoListObjectBase.
         **kwargs: The pagination arguments from the query (limit/offset/page/...).
 
     Returns:
-        The sliced results, or ``None`` when ``root`` is not a list base.
+        The sliced results, or None when root is not a list base.
     """
     if isinstance(root, DjangoListObjectBase):
         # When already_paginated is True the rows are already the DB-sliced page
@@ -81,7 +81,7 @@ class NativePaginationField:
     paginator_instance: Any = _dc_field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        """Reconcile the ``paginator`` / ``paginator_instance`` aliases."""
+        """Reconcile the paginator / paginator_instance aliases."""
         if self.paginator is None and self.paginator_instance is not None:
             self.paginator = self.paginator_instance
         if self.paginator_instance is None:

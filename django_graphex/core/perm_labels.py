@@ -59,7 +59,7 @@ _SUBSCRIBE_VERBS: dict[str, tuple[str, ...]] = {
 
 
 def _codename(model: type[Model], verb: str) -> str:
-    """Return the ``{app_label}.{verb}_{model_name}`` codename for *model*."""
+    """Return the {app_label}.{verb}_{model_name} codename for *model*."""
     opts = model._meta
     return f"{opts.app_label}.{verb}_{opts.model_name}"
 
