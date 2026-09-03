@@ -391,8 +391,8 @@ def project_tree(tmp_path: Path) -> Path:
         tmp_path: Pytest's per-test temporary directory.
 
     Returns:
-        Path: The temporary directory containing "settings.py" and
-        "schema.py" seeded with the module-level fixtures.
+        The temporary directory containing "settings.py" and "schema.py"
+        seeded with the module-level fixtures.
     """
     (tmp_path / "settings.py").write_text(SETTINGS_FIXTURE, encoding="utf-8")
     (tmp_path / "schema.py").write_text(SCHEMA_FIXTURE, encoding="utf-8")
