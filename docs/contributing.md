@@ -58,7 +58,7 @@ make test-all
 # Code quality checks
 make quality
 
-# Security checks (bandit + pip-audit on the dev environment)
+# Security checks (Bandit + the frozen runtime dependency closure)
 make security
 
 # Audit an existing wheel without rebuilding it (CI supplies the wheel path)
@@ -79,6 +79,10 @@ make docs-serve
 # Clean build artifacts
 make clean
 ```
+
+The security environment exports the frozen runtime dependency closure from
+`uv.lock` before running `pip-audit`. Development-only packages are excluded,
+so findings describe what applications install rather than tox's audit tools.
 
 ## Code Standards
 
