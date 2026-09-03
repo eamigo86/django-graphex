@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -35,6 +37,18 @@ EXPECTED_SQL = {
     "ariadne": dict(zip(OPERATIONS, (1, 221, 2, 1, 1), strict=True)),
 }
 METRICS = ("mean_ms", "p50_ms", "p95_ms", "min_ms", "stddev_ms")
+DELIVERY_BASE_COMMIT = "4d595f1c4822d37a520a188892a943caa744f2ea"
+CANONICAL_RESULTS = {
+    f"{prefix}{lib}.json": (lib, authors)
+    for prefix, authors in (("", 1000), ("2x_", 2000))
+    for lib in LIBRARIES
+}
+PROVENANCE_FIELDS = {
+    "commit": 40,
+    "measurement_tree": 40,
+    "delivery_base_commit": 40,
+    "constraints_sha256": 64,
+}
 
 
 def _validate_runs(lib: str, runs: list[dict], authors: int) -> None:
@@ -44,7 +58,11 @@ def _validate_runs(lib: str, runs: list[dict], authors: int) -> None:
         assert run["lib"] == lib
         assert run["versions"] == EXPECTED_VERSIONS[lib], f"version contract drift: {lib}"
         assert run["surface"] == EXPECTED_SURFACE, f"surface contract drift: {lib}"
-        assert run["dataset"] == {"authors": authors, "posts_per_author": 10, "comments_per_post": 5}
+        assert run["dataset"] == {
+            "authors": authors,
+            "posts_per_author": 10,
+            "comments_per_post": 5,
+        }, f"dataset/cardinality contract drift: {lib}"
         assert set(run["ops"]) == set(OPERATIONS), f"operation contract drift: {lib}"
         for operation, expected in EXPECTED_SQL[lib].items():
             stats = run["ops"][operation]
@@ -52,6 +70,71 @@ def _validate_runs(lib: str, runs: list[dict], authors: int) -> None:
             assert stats["iterations"] == 100
     for key in stable:
         assert all(run[key] == runs[0][key] for run in runs), f"unstable {key}: {lib}"
+
+
+def validate_canonical_results(
+    results_dir: Path = BASE_DIR / "results",
+    *,
+    constraints_path: Path = BASE_DIR / "constraints.txt",
+    repo_root: Path = BASE_DIR.parent,
+) -> None:
+    """Validate tracked medians without resolving the local measurement commit.
+
+    Args:
+        results_dir: Directory containing the eight canonical JSON artifacts.
+        constraints_path: Dependency freeze used by the recorded measurements.
+        repo_root: Full-history Git checkout used for delivery ancestry checks.
+
+    Raises:
+        AssertionError: A result, provenance field, freeze, or ancestry check failed.
+    """
+    paths = {path.name: path for path in results_dir.glob("*.json")}
+    assert set(paths) == set(CANONICAL_RESULTS), (
+        "canonical results must contain exactly eight expected artifacts"
+    )
+
+    artifacts = []
+    for name, (lib, authors) in CANONICAL_RESULTS.items():
+        artifact = json.loads(paths[name].read_text())
+        _validate_runs(lib, [artifact] * 3, authors)
+        assert artifact.get("aggregation", {}).get("runs") == 3, (
+            f"three-run aggregation contract drift: {name}"
+        )
+        artifacts.append(artifact)
+
+    provenance = artifacts[0]["provenance"]
+    assert all(item["provenance"] == provenance for item in artifacts), (
+        "canonical artifacts must share one provenance"
+    )
+    assert set(provenance) == set(PROVENANCE_FIELDS), (
+        "canonical provenance fields do not match the contract"
+    )
+    for field, length in PROVENANCE_FIELDS.items():
+        assert re.fullmatch(rf"[0-9a-f]{{{length}}}", provenance[field]), (
+            f"{field} must be a full lowercase hexadecimal SHA"
+        )
+
+    digest = hashlib.sha256(constraints_path.read_bytes()).hexdigest()
+    assert provenance["constraints_sha256"] == digest, (
+        "canonical constraints digest does not match constraints.txt"
+    )
+    delivery_base = provenance["delivery_base_commit"]
+    assert delivery_base == DELIVERY_BASE_COMMIT, (
+        "canonical artifacts do not name the approved public delivery base"
+    )
+
+    checks = (
+        (["git", "cat-file", "-e", f"{delivery_base}^{{commit}}"], "does not exist"),
+        (
+            ["git", "merge-base", "--is-ancestor", delivery_base, "HEAD"],
+            "is not an ancestor of HEAD",
+        ),
+    )
+    for command, failure in checks:
+        result = subprocess.run(
+            command, cwd=repo_root, text=True, capture_output=True, check=False
+        )
+        assert result.returncode == 0, f"public delivery base {failure}"
 
 
 def _aggregate_runs(lib: str, runs: list[dict], *, authors: int) -> dict:
@@ -144,7 +227,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--authors", type=int, nargs="+", default=[1000, 2000])
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--validate-existing", action="store_true")
     args = parser.parse_args()
+    if args.validate_existing:
+        validate_canonical_results()
+        return
     if set(args.authors) != {1000, 2000} or args.runs < 3 or args.runs % 2 == 0:
         parser.error("canonical publication requires authors 1000 2000 and an odd runs >= 3")
     scratch = BASE_DIR / "scratch" / "publish"
