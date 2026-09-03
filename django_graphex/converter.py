@@ -46,14 +46,14 @@ if TYPE_CHECKING:
 class _DeadScalarSentinel:
     """Marker returned by SCALAR converters (the native OUTPUT/INPUT path).
 
-    The native OUTPUT compiler (``native/output_compiler.compile_output_fields``)
-    reads ``model._meta`` DIRECTLY and maps each Django scalar field to a native
+    The native OUTPUT compiler (native/output_compiler.compile_output_fields)
+    reads model._meta DIRECTLY and maps each Django scalar field to a native
     scalar (DateField->GdxDate, BinaryField->GraphQLString, CharField->
     GraphQLString, …). It NEVER reads a per-field DESCRIPTOR from the converter —
-    so building one would be DEAD work. Each SCALAR ``convert_django_field``
-    dispatcher therefore returns this sentinel, and ``construct_fields`` OMITS the
+    so building one would be DEAD work. Each SCALAR convert_django_field
+    dispatcher therefore returns this sentinel, and construct_fields OMITS the
     field from the produced dict — a PER-FIELD-TYPE skip (#1552): GFK, the relation
-    markers, and the nested-list (``_nested_list_object_field``) descriptors are
+    markers, and the nested-list (_nested_list_object_field) descriptors are
     NOT scalars and so are KEPT, never returning this sentinel.
 
     Scalars unconditionally return this sentinel — no per-field descriptor is
@@ -108,7 +108,7 @@ COMPILED_NAME_PATTERN = re.compile(NAME_PATTERN)
 
 
 def _is_valid_name(name: str) -> bool:
-    """Return whether ``name`` is a usable, non-empty GraphQL enum name."""
+    """Return whether name is a usable, non-empty GraphQL enum name."""
     return bool(name) and bool(COMPILED_NAME_PATTERN.match(name))
 
 
@@ -1010,9 +1010,9 @@ _CONTENTTYPES_CONVERTERS_REGISTERED = False
 def _ensure_contenttypes_converters_registered() -> None:
     """Register the contenttypes field converters on first use (lazy import).
 
-    Importing ``django.contrib.contenttypes.fields`` is deferred until after the
-    app registry is ready so that importing ``django_graphex`` never loads the
-    ``ContentType`` model prematurely. The registration is performed once and the
+    Importing django.contrib.contenttypes.fields is deferred until after the
+    app registry is ready so that importing django_graphex never loads the
+    ContentType model prematurely. The registration is performed once and the
     result memoized in a module flag.
     """
     global _CONTENTTYPES_CONVERTERS_REGISTERED

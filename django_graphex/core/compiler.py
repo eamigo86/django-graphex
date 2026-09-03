@@ -61,9 +61,9 @@ def _reset_cache() -> None:
 
 
 def _resolve_ref(ref: TypeRef) -> Any:
-    """Resolve a ``TypeRef`` to a live ``graphql-core`` type.
+    """Resolve a TypeRef to a live graphql-core type.
 
-    Looks up the named type in ``_TYPE_CACHE`` (which is seeded with scalars
+    Looks up the named type in _TYPE_CACHE (which is seeded with scalars
     before compilation begins).
     """
     named = _TYPE_CACHE.get(ref.name)
@@ -98,10 +98,10 @@ def _resolve_ref(ref: TypeRef) -> Any:
 
 
 def _make_field_thunk(spec: TypeSpec) -> Any:
-    """Return a thunk that builds the fields dict for a ``GraphQLObjectType``.
+    """Return a thunk that builds the fields dict for a GraphQLObjectType.
 
     Fields are built lazily (inside the thunk) so mutual recursion is safe:
-    by the time the thunk executes, all type placeholders are in ``_TYPE_CACHE``.
+    by the time the thunk executes, all type placeholders are in _TYPE_CACHE.
     """
 
     def _thunk(_spec: TypeSpec = spec) -> dict[str, GraphQLField]:

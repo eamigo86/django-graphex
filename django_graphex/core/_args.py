@@ -29,22 +29,22 @@ from django_graphex._strconv import to_snake_case
 
 
 def _unwrap_graphql_type(gtype: Any) -> Any:
-    """Resolve a field/arg ``type`` to the equivalent graphql-core type.
+    """Resolve a field/arg type to the equivalent graphql-core type.
 
-    The expected currency is an already-built graphql-core ``GraphQLType`` (a
-    scalar / object / enum / input, OR a ``GraphQLList`` / ``GraphQLNonNull``
-    wrapper around one). It is returned VERBATIM: the native ``field()`` helper
+    The expected currency is an already-built graphql-core GraphQLType (a
+    scalar / object / enum / input, OR a GraphQLList / GraphQLNonNull
+    wrapper around one). It is returned VERBATIM: the native field() helper
     and the native scalar singletons already produce real graphql-core types, so
     there is nothing to convert.
 
     Args:
-        gtype: A graphql-core ``GraphQLType``.
+        gtype: A graphql-core GraphQLType.
 
     Returns:
         The corresponding graphql-core type object (returned as-is).
 
     Raises:
-        TypeError: If ``gtype`` is not a graphql-core type.
+        TypeError: If gtype is not a graphql-core type.
     """
     # A graphql-core type is already in the target shape.
     # Returned as-is (List/NonNull wrappers included).
@@ -66,15 +66,15 @@ def _unwrap_graphql_type(gtype: Any) -> Any:
 
 
 def _guard_django_model_field(value: Any, name: str | None = None) -> None:
-    """Raise a LOUD ``TypeError`` when *value* is a ``django.db.models.Field``.
+    """Raise a LOUD TypeError when *value* is a django.db.models.Field.
 
-    The most likely mistake this catches: importing ``CharField`` from
-    ``django.db.models`` instead of ``django_graphex.core`` and declaring it where
-    a GraphQL descriptor / arg is expected. Django ``Field`` is imported LAZILY so
-    the lazy-defer convention (no top-level ``django`` import) is preserved.
+    The most likely mistake this catches: importing CharField from
+    django.db.models instead of django_graphex.core and declaring it where
+    a GraphQL descriptor / arg is expected. Django Field is imported LAZILY so
+    the lazy-defer convention (no top-level django import) is preserved.
 
     This guard fires INDEPENDENTLY at two sites (design decision #4): here (the
-    ``native_arg`` path, for a ``class Arguments`` body) and in ``core/base.py``
+    native_arg path, for a class Arguments body) and in core/base.py
     (the ObjectType-body descriptor-collection loop). It is intentionally NOT
     deduplicated so each entry point fails loud on its own.
 

@@ -80,20 +80,20 @@ def native_factory_type(op: str, base: type, *args: Any, **kwargs: Any) -> type:
 
 
 def _make_output_type(base: type, **kwargs: Any) -> type:
-    """Build a native output type class from ``base``.
+    """Build a native output type class from base.
 
     The generated class carries:
-    - ``_gdx_model``: the Django model class (if provided).
-    - ``_gdx_name``: the resolved GraphQL type name.
-    - ``_gdx_options``: dict of all kwargs (for the registry compiler).
+    - _gdx_model: the Django model class (if provided).
+    - _gdx_name: the resolved GraphQL type name.
+    - _gdx_options: dict of all kwargs (for the registry compiler).
 
     Args:
         base: Base class to derive from.
-        **kwargs: Configuration options including ``model``, ``name``,
-                  ``only_fields``, ``exclude_fields``, ``registry``, etc.
+        **kwargs: Configuration options including model, name,
+                  only_fields, exclude_fields, registry, etc.
 
     Returns:
-        A new class that subclasses ``base``.
+        A new class that subclasses base.
     """
     model = kwargs.get("model")
     name = kwargs.get("name")
@@ -119,26 +119,26 @@ def _make_output_type(base: type, **kwargs: Any) -> type:
 
 
 def _make_list_type(base: type, **kwargs: Any) -> type:
-    """Build a native list type class from ``base``.
+    """Build a native list type class from base.
 
     The generated class carries:
-    - ``_gdx_list_fields``: frozenset of the three standard field names.
-    - ``_gdx_results_field_name``: the resolved results field name.
-    - ``_gdx_model``: the Django model class (if provided).
-    - ``_gdx_options``: dict of all kwargs.
+    - _gdx_list_fields: frozenset of the three standard field names.
+    - _gdx_results_field_name: the resolved results field name.
+    - _gdx_model: the Django model class (if provided).
+    - _gdx_options: dict of all kwargs.
 
     The three standard fields (per Phase 3 spec):
-    1. ``results_field_name`` — configurable, defaults to ``"results"``.
-    2. ``totalCount`` — total record count for pagination.
-    3. ``pageInfo`` — pagination cursor/offset metadata.
+    1. results_field_name — configurable, defaults to "results".
+    2. totalCount — total record count for pagination.
+    3. pageInfo — pagination cursor/offset metadata.
 
     Args:
         base: Base class to derive from.
-        **kwargs: Configuration options including ``model``, ``name``,
-                  ``results_field_name``, ``pagination``, ``queryset``, etc.
+        **kwargs: Configuration options including model, name,
+                  results_field_name, pagination, queryset, etc.
 
     Returns:
-        A new class that subclasses ``base``.
+        A new class that subclasses base.
     """
     model = kwargs.get("model")
     name = kwargs.get("name")
