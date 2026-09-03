@@ -119,6 +119,7 @@ nav:
     - Directives: api/directives.md
   - Development:
     - Contributing: contributing.md
+    - Release process: releasing.md
     - Changelog: changelog.md
 
 extra:
