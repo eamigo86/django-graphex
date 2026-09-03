@@ -10,7 +10,7 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 VERSION = "3.1.0"
-RELEASE_HEADING = "## 3.1.0 — 2026-09-02"
+RELEASE_HEADING = "## 3.1.0 — 2026-09-03"
 
 
 def _release_notes() -> str:

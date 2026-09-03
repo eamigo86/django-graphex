@@ -12,7 +12,7 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
-## 3.1.0 — 2026-09-02
+## 3.1.0 — 2026-09-03
 
 **Audit-hardening release.** This release closes all 24 findings from the 3.0
 post-release audit across runtime correctness, security guidance, the test suite,
