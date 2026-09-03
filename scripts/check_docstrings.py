@@ -70,6 +70,9 @@ _SECTION_HEADER_RE = re.compile(r"^\s*([A-Z][A-Za-z]+):\s*$")
 # A "name (type):" entry, used to flag a type repeated inside a typed section.
 _TYPE_IN_DOC_RE = re.compile(r"^\s*\w+ \([^)]*\):")
 
+# A Google Args entry, including the conventional *args/**kwargs spelling.
+_ARG_ENTRY_RE = re.compile(r"^\s+(\*{0,2}[A-Za-z_]\w*)(?:\s+\([^)]*\))?\s*:")
+
 # A trailing noqa pragma naming DOC codes (comma-separated codes accepted).
 _NOQA_RE = re.compile(r"#\s*noqa:\s*(DOC[0-9, ]+)", re.IGNORECASE)
 
@@ -241,6 +244,38 @@ def _params_beyond_self(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[st
     return names
 
 
+def _strict_params(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    receiver: str | None,
+) -> list[str]:
+    """List exact Args entry names after removing a real method receiver."""
+    args = node.args
+    positional = args.posonlyargs + args.args
+    names = [item.arg for item in positional]
+    if receiver is not None and names and names[0] == receiver:
+        names = names[1:]
+    names.extend(item.arg for item in args.kwonlyargs)
+    if args.vararg is not None:
+        names.append(f"*{args.vararg.arg}")
+    if args.kwarg is not None:
+        names.append(f"**{args.kwarg.arg}")
+    return names
+
+
+def _strict_receiver(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """Return self or cls only when it is the callable's real receiver."""
+    decorators = _decorator_names(node)
+    if "staticmethod" in decorators:
+        return None
+    positional = node.args.posonlyargs + node.args.args
+    expected = "cls" if "classmethod" in decorators else "self"
+    if positional and positional[0].arg == expected:
+        return expected
+    return None
+
+
 def _unannotated_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Report whether any checkable parameter lacks a type annotation.
 
@@ -266,6 +301,32 @@ def _unannotated_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     if args.kwarg is not None and args.kwarg.annotation is None:
         return True
     return False
+
+
+def _args_entries(lines: list[str]) -> list[str] | None:
+    """Return entries from the exact Args section, or None when absent."""
+    in_args = False
+    entries: list[str] = []
+    for line in lines:
+        header = _SECTION_HEADER_RE.match(line)
+        if header:
+            if in_args:
+                break
+            in_args = header.group(1) == "Args"
+            continue
+        if in_args:
+            match = _ARG_ENTRY_RE.match(line)
+            if match:
+                entries.append(match.group(1))
+    return entries if in_args else None
+
+
+def _has_exact_args(lines: list[str], params: list[str]) -> bool:
+    """Report whether Args is non-empty and matches the signature exactly."""
+    entries = _args_entries(lines)
+    if entries is None:
+        return not params and not _has_section(lines, {"Arguments"})
+    return bool(entries) and Counter(entries) == Counter(params)
 
 
 def _return_is_nonnone(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -498,15 +559,21 @@ def check_content_source(
     return violations
 
 
-def _module_is_reexport_stub(tree: ast.Module, filename: str) -> bool:
+def _module_is_reexport_stub(
+    tree: ast.Module,
+    filename: str,
+    *,
+    strict_public: bool = False,
+) -> bool:
     """Report whether a module is a short __init__.py re-export stub.
 
-    Such stubs (fewer than 10 statements) are exempt from the module-docstring
-    requirement.
+    Legacy mode uses the original size heuristic. Strict public mode instead
+    requires every statement to be an import or a static __all__ declaration.
 
     Args:
         tree: The parsed module AST.
         filename: The file name, used to detect __init__.py.
+        strict_public: Whether to classify by syntax rather than statement count.
 
     Returns:
         stub: True when the module is an exempt re-export stub.
@@ -514,7 +581,49 @@ def _module_is_reexport_stub(tree: ast.Module, filename: str) -> bool:
     if Path(filename).name != "__init__.py":
         return False
     statements = [stmt for stmt in tree.body if not _is_expr_docstring(stmt)]
+    if strict_public:
+        return bool(statements) and all(
+            isinstance(stmt, (ast.Import, ast.ImportFrom)) or _is_all_declaration(stmt)
+            for stmt in statements
+        )
     return len(statements) < 10
+
+
+def _all_value(stmt: ast.stmt) -> ast.expr | None:
+    """Return the value assigned to __all__, when statically visible."""
+    if isinstance(stmt, ast.Assign):
+        assigned = any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in stmt.targets
+        )
+        return stmt.value if assigned else None
+    if isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
+        if isinstance(stmt.target, ast.Name) and stmt.target.id == "__all__":
+            return stmt.value
+    return None
+
+
+def _is_all_declaration(stmt: ast.stmt) -> bool:
+    """Report whether a statement declares a static __all__ collection."""
+    value = _all_value(stmt)
+    return isinstance(value, (ast.List, ast.Tuple, ast.Set)) and all(
+        isinstance(item, ast.Constant) and isinstance(item.value, str)
+        for item in value.elts
+    )
+
+
+def _explicit_exports(tree: ast.Module) -> set[str]:
+    """Collect statically declared string names from module __all__."""
+    exports: set[str] = set()
+    for stmt in tree.body:
+        value = _all_value(stmt)
+        if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            exports.update(
+                item.value
+                for item in value.elts
+                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+            )
+    return exports
 
 
 def _is_expr_docstring(stmt: ast.stmt) -> bool:
@@ -536,12 +645,19 @@ def _is_expr_docstring(stmt: ast.stmt) -> bool:
 def _check_callable(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     source_lines: list[str],
+    *,
+    strict_public: bool = False,
+    is_method: bool = False,
+    force_public: bool = False,
 ) -> list[Violation]:
     """Check one public function or method against the convention.
 
     Args:
         node: The function or method definition to check.
         source_lines: The file's source lines, for reading the def-line noqa.
+        strict_public: Whether to enforce the exact public contract.
+        is_method: Whether the callable is a direct class member.
+        force_public: Whether __all__ explicitly exports a private name.
 
     Returns:
         violations: The violations found for this callable.
@@ -549,9 +665,12 @@ def _check_callable(
     violations: list[Violation] = []
     name = node.name
     is_init = name == "__init__"
-    params = _params_beyond_self(node)
+    receiver = _strict_receiver(node) if strict_public and is_method else None
+    params = (
+        _strict_params(node, receiver) if strict_public else _params_beyond_self(node)
+    )
 
-    if not _is_public_name(name) and not is_init:
+    if not _is_public_name(name) and not is_init and not force_public:
         return violations
     if is_init and not params:
         # __init__ with only self is exempt from the docstring requirement.
@@ -562,27 +681,30 @@ def _check_callable(
     decorators = _decorator_names(node)
     is_overload = "overload" in decorators
     is_setter = "setter" in decorators
-    exempt_args_returns = is_overload or is_setter
+    exempt_args = is_overload or (is_setter and not strict_public)
+    exempt_returns = is_overload or is_setter
+    missing_hints = _missing_hints(node, strict_public=strict_public, receiver=receiver)
 
     lines = _docstring_lines(node)
     if lines is None:
         if "DOC001" not in suppressed:
             violations.append(_make("DOC001", node.lineno))
         # Still report missing hints even without a docstring.
-        if "DOC101" not in suppressed and _missing_hints(node):
+        if "DOC101" not in suppressed and missing_hints:
             violations.append(_make("DOC101", node.lineno))
         return violations
 
     if not _is_multiline_doc(lines) and "DOC002" not in suppressed:
         violations.append(_make("DOC002", node.lineno))
 
-    if not exempt_args_returns:
+    if not exempt_args:
         if (
-            params
-            and not _has_section(lines, {"Args", "Arguments"})
-            and "DOC003" not in suppressed
-        ):
+            not _has_exact_args(lines, params)
+            if strict_public
+            else params and not _has_section(lines, {"Args", "Arguments"})
+        ) and "DOC003" not in suppressed:
             violations.append(_make("DOC003", node.lineno))
+    if not exempt_returns:
         if (
             _return_is_nonnone(node)
             and not _has_section(lines, {"Returns", "Yields"})
@@ -597,7 +719,7 @@ def _check_callable(
     ):
         violations.append(_make("DOC005", node.lineno))
 
-    if "DOC101" not in suppressed and _missing_hints(node):
+    if "DOC101" not in suppressed and missing_hints:
         violations.append(_make("DOC101", node.lineno))
 
     for code in _check_docstring_content(lines, suppressed):
@@ -606,28 +728,50 @@ def _check_callable(
     return violations
 
 
-def _missing_hints(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _missing_hints(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    strict_public: bool = False,
+    receiver: str | None = None,
+) -> bool:
     """Report whether the callable is missing any required type hint.
 
     Args:
         node: The function or method definition to check.
+        strict_public: Whether only a real receiver is exempt.
+        receiver: The validated strict-mode receiver name, if any.
 
     Returns:
         missing: True when a param or the return annotation is absent.
     """
-    if _unannotated_params(node):
+    if strict_public:
+        args = node.args
+        checkable = list(args.posonlyargs + args.args)
+        if receiver is not None and checkable and checkable[0].arg == receiver:
+            checkable = checkable[1:]
+        checkable.extend(args.kwonlyargs)
+        checkable.extend(item for item in (args.vararg, args.kwarg) if item is not None)
+        if any(item.annotation is None for item in checkable):
+            return True
+    elif _unannotated_params(node):
         return True
     if node.returns is None:
         return True
     return False
 
 
-def _check_class(node: ast.ClassDef, source_lines: list[str]) -> list[Violation]:
+def _check_class(
+    node: ast.ClassDef,
+    source_lines: list[str],
+    *,
+    strict_public: bool = False,
+) -> list[Violation]:
     """Check a public class node and its direct method members.
 
     Args:
         node: The class definition to check.
         source_lines: The file's source lines, for reading def-line noqa.
+        strict_public: Whether to enforce the exact public contract on members.
 
     Returns:
         violations: The violations found for the class and its methods.
@@ -646,9 +790,15 @@ def _check_class(node: ast.ClassDef, source_lines: list[str]) -> list[Violation]
 
     for member in node.body:
         if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            violations.extend(_check_callable(member, source_lines))
+            violations.extend(
+                _check_callable(
+                    member, source_lines, strict_public=strict_public, is_method=True
+                )
+            )
         elif isinstance(member, ast.ClassDef) and _is_public_name(member.name):
-            violations.extend(_check_class(member, source_lines))
+            violations.extend(
+                _check_class(member, source_lines, strict_public=strict_public)
+            )
     return violations
 
 
@@ -657,6 +807,7 @@ def check_source(
     filename: str = "<string>",
     *,
     strict_content: bool = False,
+    strict_public: bool = False,
 ) -> list[Violation]:
     """Check Python source text against the docstring convention.
 
@@ -668,6 +819,7 @@ def check_source(
         source: The Python source text to analyze.
         filename: The file name, used for module-name heuristics.
         strict_content: Whether DOC201 covers every docstring owner.
+        strict_public: Whether the exact public API contract is enforced.
 
     Returns:
         violations: All violations found, sorted by line then code.
@@ -684,7 +836,11 @@ def check_source(
     if (
         non_doc_stmts
         and module_doc is None
-        and not _module_is_reexport_stub(tree, filename)
+        and not _module_is_reexport_stub(
+            tree,
+            filename,
+            strict_public=strict_public,
+        )
     ):
         violations.append(_make("DOC001", 1))
     elif module_doc is not None:
@@ -692,11 +848,23 @@ def check_source(
         for code in _check_docstring_content(doc_lines, set()):
             violations.append(_make(code, 1))
 
+    exports = _explicit_exports(tree) if strict_public else set()
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            violations.extend(_check_callable(node, source_lines))
-        elif isinstance(node, ast.ClassDef) and _is_public_name(node.name):
-            violations.extend(_check_class(node, source_lines))
+            violations.extend(
+                _check_callable(
+                    node,
+                    source_lines,
+                    strict_public=strict_public,
+                    force_public=node.name in exports,
+                )
+            )
+        elif isinstance(node, ast.ClassDef) and (
+            _is_public_name(node.name) or node.name in exports
+        ):
+            violations.extend(
+                _check_class(node, source_lines, strict_public=strict_public)
+            )
 
     if strict_content:
         for violation in _check_strict_content(tree, source_lines):
@@ -711,6 +879,7 @@ def check_file(
     path: Path,
     *,
     strict_content: bool = False,
+    strict_public: bool = False,
     content_only: bool = False,
     changed_lines: set[int] | None = None,
 ) -> list[Violation]:
@@ -719,6 +888,7 @@ def check_file(
     Args:
         path: The path to the Python file to check.
         strict_content: Whether DOC201 covers every docstring owner.
+        strict_public: Whether the exact public API contract is enforced.
         content_only: Whether to run only the strict content engine.
         changed_lines: Current-file lines changed by Git, or None for all.
 
@@ -739,7 +909,12 @@ def check_file(
     try:
         if content_only:
             return check_content_source(source, changed_lines=changed_lines)
-        return check_source(source, str(path), strict_content=strict_content)
+        return check_source(
+            source,
+            str(path),
+            strict_content=strict_content,
+            strict_public=strict_public,
+        )
     except SyntaxError as exc:
         return [
             Violation(
@@ -908,6 +1083,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Apply DOC201 to every docstring owner during migration.",
     )
     parser.add_argument(
+        "--strict-public",
+        action="store_true",
+        help="Apply the exact public API contract during migration.",
+    )
+    parser.add_argument(
         "--diff-base",
         metavar="REF",
         help="Apply DOC201 only to owners changed since a Git merge base.",
@@ -957,6 +1137,7 @@ def main(argv: list[str] | None = None) -> int:
         for violation in check_file(
             path,
             strict_content=args.strict_content,
+            strict_public=args.strict_public,
             content_only=changes is not None,
             changed_lines=changes[path] if changes is not None else None,
         ):

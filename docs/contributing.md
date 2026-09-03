@@ -112,6 +112,10 @@ temporary: the final gate will enforce the rule globally without a permanent
 baseline. CI uses a merge-base ratchet so only changed owners and new Python
 files must be clean while untouched debt remains; the ratchet is removed at
 zero debt rather than preserving counts or suppressions.
+Use `--strict-public` during migration; the legacy default stays until debt is
+clear. Public means importable modules, non-underscore top-level names, private
+top-level names in `__all__`, and non-private class members. Strict `Args:` must
+be non-empty and exact, including `*args` and `**kwargs`.
 
 ### Testing Standards
 
