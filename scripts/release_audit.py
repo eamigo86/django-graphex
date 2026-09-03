@@ -14,7 +14,17 @@ def _run(command: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Install and audit one existing wheel without rebuilding source."""
+    """Install and audit one existing wheel without rebuilding source.
+
+    Args:
+        argv: Optional command-line arguments excluding the program name.
+
+    Returns:
+        status: Process exit status for the audit.
+
+    Raises:
+        CalledProcessError: If installation or dependency auditing fails.
+    """
     arguments = sys.argv[1:] if argv is None else argv
     if len(arguments) != 1:
         print("usage: release_audit.py WHEEL", file=sys.stderr)
