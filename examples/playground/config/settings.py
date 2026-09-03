@@ -6,7 +6,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "playground-not-secret"  # noqa: S105 - local playground only
 DEBUG = True
-ALLOWED_HOSTS = ["*"]
+# Keep the WebSocket Origin validator meaningful even in development. Add a
+# hostname explicitly when exposing the playground through a tunnel/proxy.
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 
 INSTALLED_APPS = [
     # `daphne` first so `manage.py runserver` serves ASGI (http + websocket).
