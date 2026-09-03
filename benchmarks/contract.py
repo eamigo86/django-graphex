@@ -112,7 +112,16 @@ def _validate_create(data: dict, library: str) -> None:
 
 
 def validate_response(library: str, operation: str, response: dict) -> None:
-    """Validate the complete deterministic result, not merely its first branch."""
+    """Validate a response against the complete deterministic contract.
+
+    Args:
+        library: Benchmark adapter that produced the response.
+        operation: Shared operation whose result is being validated.
+        response: Decoded GraphQL response payload.
+
+    Raises:
+        AssertionError: If the response violates the shared result contract.
+    """
     assert library in LIBRARIES, f"unsupported benchmark library: {library}"
     assert "errors" not in response, response.get("errors")
     data = response["data"]

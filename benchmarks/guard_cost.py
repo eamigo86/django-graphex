@@ -1,22 +1,21 @@
-"""Measure what the projection security boundary costs inside the graphex run.
+"""Measure projection security overhead inside the GraphEx benchmark.
 
 docs/why.md publishes a number for the guard, and a number nobody can reproduce
-is a number nobody should believe. This script produces it: it wraps
-``core.output_compiler.publishes_column_value`` -- the ONE predicate the
-ordering and filtering projection guards share -- with a counting timer, then
-measures the same two regions ``harness.py`` measures.
+is a number nobody should believe. This script wraps the shared
+publishes_column_value predicate with a counting timer, then measures the same
+schema-build and nested-request regions as harness.py.
 
     BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \\
       .venv-graphex/bin/python guard_cost.py
 
-The guard total it reports is an UPPER bound: the timer's own two
-``perf_counter_ns`` calls are inside the measured span, so roughly 0.1 us of
-every call belongs to the instrument rather than to the predicate. That bias is
-left in deliberately -- a security cost should be over-stated, never under.
+The reported guard total is an upper bound. The timer's two perf_counter_ns
+calls are inside the measured span, so roughly 0.1 microseconds of every call
+belongs to the instrument rather than to the predicate. That bias deliberately
+overstates rather than understates the security cost.
 
-Two bindings are patched, not one. ``paginations.pagination`` imports the
-predicate at module level, so patching only the defining module would miss
-every ordering-allowlist call and report a per-request cost of zero.
+Both the defining module and the pagination module binding are patched. Patching
+only the definition would miss ordering-allowlist calls and report zero cost per
+request.
 """
 
 import importlib
@@ -56,7 +55,10 @@ def _snapshot() -> tuple[int, float]:
 
 
 def main() -> None:
-    """Run both measurements and print one JSON object to stdout."""
+    """Measure schema-build and nested-request guard costs.
+
+    The resulting JSON report is written to standard output.
+    """
     import django
 
     django.setup()
