@@ -200,6 +200,41 @@ class CostEngineTest(TestCase):
         self.assertEqual(_cost(schema, q), 1)
 
     @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
+    def test_pagination_named_argument_only_multiplies_list_returns(self) -> None:
+        """Ensure a business argument named limit does not imply list semantics.
+
+        A singular object keeps its structural cost while a real GraphQL list
+        multiplies the nested selection by the requested page size.
+        """
+        nested = GraphQLObjectType(
+            "LimitNested", {"value": GraphQLField(GraphQLString)}
+        )
+        box = GraphQLObjectType("LimitBox", {"nested": GraphQLField(nested)})
+        schema = GraphQLSchema(
+            query=GraphQLObjectType(
+                "LimitQuery",
+                {
+                    "singular": GraphQLField(
+                        box, args={"limit": GraphQLArgument(GraphQLInt)}
+                    ),
+                    "many": GraphQLField(
+                        GraphQLList(box),
+                        args={"limit": GraphQLArgument(GraphQLInt)},
+                    ),
+                },
+            )
+        )
+
+        self.assertEqual(
+            _cost(schema, "{ singular(limit: 100) { nested { value } } }"),
+            2,
+        )
+        self.assertEqual(
+            _cost(schema, "{ many(limit: 4) { nested { value } } }"),
+            5,
+        )
+
+    @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
     def test_type_complexity_overrides_default_weight(self) -> None:
         """Assert a type's declared complexity overrides the default field weight.
 

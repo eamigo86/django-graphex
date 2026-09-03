@@ -19,8 +19,11 @@ relations → nested list types). It is the building block every other type and
 field resolves to.
 
 ```python
+from django.contrib.auth import get_user_model
+
 from django_graphex.types import DjangoObjectType
-from django.contrib.auth.models import User
+
+User = get_user_model()
 
 class UserType(DjangoObjectType):
     class Meta:
@@ -31,8 +34,7 @@ class UserType(DjangoObjectType):
         # projection for `User` on this page: every later sample that lists,
         # filters or orders users is bound by exactly these columns.
         only_fields = (
-            "id", "username", "email", "first_name", "last_name",
-            "date_joined", "is_active",
+            "id", "username", "first_name", "last_name",
         )
         # Enables `filter:` when this type is used as a (nested) list.
         filter_fields = {"username": ("exact", "icontains")}
@@ -43,6 +45,36 @@ single object by id, as the node of a [`DjangoListObjectType`](#djangolistobject
 or as the output of a [mutation](mutations.md). Relations on the model are exposed
 as nested lists with the uniform `results` / `totalCount` shape — see
 [Nested lists](nested-lists.md).
+
+!!! warning "Django accounts are not generic CRUD resources"
+    Keep the four-field projection above behind an authenticated endpoint and
+    leave response caching disabled unless its key includes every identity and
+    tenant dependency:
+
+    ```python
+    from django.urls import path
+
+    from django_graphex.views import AuthenticatedGraphQLView
+
+    urlpatterns = [
+        path("graphql/", AuthenticatedGraphQLView.as_view(schema=schema)),
+    ]
+
+    DJANGO_GRAPHEX = {"CACHE_ACTIVE": False}
+    ```
+
+    Registration is a separate, purpose-built mutation. Accept only the
+    credentials your flow needs and call Django's manager so the password is
+    hashed; do not expose privilege flags through a generated input:
+
+    ```python
+    user = get_user_model().objects.create_user(
+        username=username,
+        password=password,
+    )
+    ```
+
+    See the [Quick Start](../quickstart.md) for the complete executable schema.
 
 ### Custom per-field filter arguments — `@filter_field`
 
@@ -447,12 +479,11 @@ class UserListType(DjangoListObjectType):
         model = User
         pagination = LimitOffsetGraphqlPagination(
             default_limit=25,
-            ordering="-date_joined"
+            ordering="username"
         )
         filter_fields = {
             "username": ("exact", "icontains"),
-            "email": ("exact", "icontains"),
-            "is_active": ("exact",),
+            "first_name": ("exact", "icontains"),
         }
 ```
 
@@ -484,15 +515,14 @@ class UserListType(DjangoListObjectType):
         pagination = LimitOffsetGraphqlPagination(
             default_limit=20,
             max_limit=100,
-            ordering=("-date_joined", "username")
+            ordering=("username", "first_name")
         )
 
         # Filtering
         filter_fields = {
             "username": ("exact", "icontains", "istartswith"),
-            "email": ("exact", "icontains"),
-            "date_joined": ("exact", "gte", "lte"),
-            "is_active": ("exact",),
+            "first_name": ("exact", "icontains"),
+            "last_name": ("exact", "icontains"),
             # No "groups" entry. Filtering through a relation needs the TARGET
             # to be published too, and `Group` has no registered
             # `DjangoObjectType` here, so the compiler drops the relation and
@@ -501,7 +531,7 @@ class UserListType(DjangoListObjectType):
         }
 
         # Custom queryset
-        queryset = User.objects.select_related('profile')
+        queryset = User.objects.all()
 
         # Field restrictions: NOT here. `UserType` is already registered for
         # `User` (top of this page), so this container reuses that node type and
@@ -791,15 +821,15 @@ Creates input types for mutations based on Django models.
 
 ```python
 from django_graphex.types import DjangoInputObjectType
-from django.contrib.auth.models import User
+from myapp.models import Article
 
-class UserInput(DjangoInputObjectType):
+class ArticleInput(DjangoInputObjectType):
     class Meta:
-        description = "User input for mutations"
-        model = User
-        only_fields = ("username", "email", "first_name", "last_name")
+        description = "Article input for mutations"
+        model = Article
+        only_fields = ("title", "body", "status")
         # or exclude specific fields
-        # exclude_fields = ("password", "date_joined", "last_login")
+        # exclude_fields = ("internal_notes",)
 ```
 
 ### Advanced Configuration
@@ -810,21 +840,21 @@ with `only_fields` / `exclude_fields` and a `description`:
 ```python
 from django_graphex.types import DjangoInputObjectType
 
-class UserCreateInput(DjangoInputObjectType):
-    """Input for creating new users"""
+class ArticleCreateInput(DjangoInputObjectType):
+    """Input for creating an article."""
 
     class Meta:
-        model = User
-        only_fields = ("username", "email", "first_name", "last_name", "password")
-        description = "Input type for user creation"
+        model = Article
+        only_fields = ("title", "body", "status")
+        description = "Input type for article creation"
 
-class UserUpdateInput(DjangoInputObjectType):
-    """Input for updating existing users"""
+class ArticleUpdateInput(DjangoInputObjectType):
+    """Input for updating an existing article."""
 
     class Meta:
-        model = User
-        only_fields = ("email", "first_name", "last_name")
-        description = "Input type for user updates"
+        model = Article
+        only_fields = ("title", "body", "status")
+        description = "Input type for article updates"
 ```
 
 !!! note "Input bodies are model-derived"
@@ -892,29 +922,28 @@ form still works as a low-level substrate — see
     [Subscriptions](subscriptions.md#from-a-djangomodeltype-one-definition).
 
 ```python
-from django.contrib.auth.models import User
+from myapp.models import Article
 from django_graphex.types import DjangoModelType
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 
-class UserModelType(DjangoModelType):
+class ArticleType(DjangoModelType):
     class Meta:
-        description = "User model type with auto-generated operations"
-        model = User
+        description = "Article type with auto-generated operations"
+        model = Article
         pagination = LimitOffsetGraphqlPagination(
             default_limit=25,
-            ordering="-date_joined"
+            ordering="-published_at"
         )
         filter_fields = {
-            "username": ("exact", "icontains"),
-            "email": ("exact", "icontains"),
-            "is_active": ("exact",),
+            "title": ("exact", "icontains"),
+            "status": ("exact",),
         }
 ```
 
 !!! note "Custom base queryset"
 
     Pass a `Meta.queryset` to scope every retrieve/list to a base queryset
-    (e.g. `queryset = User.objects.filter(is_active=True)`). It is honored by the
+    (e.g. `queryset = Article.objects.filter(status="published")`). It is honored by the
     generated `RetrieveField()` / `ListField()`.
 
     The declared queryset is a **template**: it is evaluated once, at class
@@ -1124,24 +1153,24 @@ returns a single-object lookup (by `id`, routed through the type's
 `get_queryset` / `filter_queryset` hooks) and `ListField()` returns the
 paginated + filtered list with the uniform `results` / `totalCount` shape.
 `QueryFields()` is the shorthand that returns both at once. The GraphQL field
-names come from the attribute names you assign them to (`user_retrieve` →
-`userRetrieve`):
+names come from the attribute names you assign them to (`article_retrieve` →
+`articleRetrieve`):
 
 ```python
 from django_graphex.core import ObjectType
 
 class Query(ObjectType):
     # Generate both retrieve and list queries automatically
-    user_retrieve, user_list = UserModelType.QueryFields(
-        description='User queries'
+    article_retrieve, article_list = ArticleType.QueryFields(
+        description='Article queries'
     )
 
     # Or define them separately
-    user_detail = UserModelType.RetrieveField(
-        description='Get single user by ID'
+    article_detail = ArticleType.RetrieveField(
+        description='Get one article by ID'
     )
-    user_list_custom = UserModelType.ListField(
-        description='List users with filtering and pagination'
+    article_list_custom = ArticleType.ListField(
+        description='List articles with filtering and pagination'
     )
 ```
 
@@ -1172,14 +1201,14 @@ from django_graphex.core import ObjectType
 
 class Mutation(ObjectType):
     # Generate all CRUD mutations
-    user_create, user_delete, user_update = UserModelType.MutationFields(
-        description='User CRUD operations'
+    article_create, article_delete, article_update = ArticleType.MutationFields(
+        description='Article write operations'
     )
 
     # Or define them separately
-    create_user = UserModelType.CreateField(description='Create new user')
-    delete_user = UserModelType.DeleteField(description='Delete user')
-    update_user = UserModelType.UpdateField(description='Update user')
+    create_article = ArticleType.CreateField(description='Create an article')
+    delete_article = ArticleType.DeleteField(description='Delete an article')
+    update_article = ArticleType.UpdateField(description='Update an article')
 ```
 
 Both shorthands return **only the operations
@@ -1204,17 +1233,17 @@ alongside `new_<model>`, using the same
 from django_graphex.core import BooleanField
 from django_graphex.types import DjangoModelType
 
-class UserModelType(DjangoModelType):
+class ArticleType(DjangoModelType):
     class Arguments:
         dry_run = BooleanField(description="Validate only; do not save")
 
     class Meta:
-        model = User
+        model = Article
 ```
 
 ```graphql
 mutation {
-  userCreate(newUser: { username: "ada" }, dryRun: true) { ok }
+  articleCreate(newArticle: { title: "Draft" }, dryRun: true) { ok }
 }
 ```
 
@@ -1471,6 +1500,36 @@ class Profile(models.Model):
 The enum member's *description* carries the original label, so the
 human-readable text is never lost.
 
+### `MultiSelectField` { #multiselectfield }
+
+When the optional `django-multiselectfield` package is installed, a
+`MultiSelectField` is a **list of the generated choice enum**, not one enum
+value. Detection uses `isinstance`, so a renamed subclass keeps the same shape
+in output and generated create/update input:
+
+```python
+from multiselectfield import MultiSelectField
+
+
+class FeatureFlagsField(MultiSelectField):
+    pass
+
+
+class Account(models.Model):
+    flags = FeatureFlagsField(choices=(("beta", "Beta"), ("dark", "Dark")))
+```
+
+```graphql
+type AccountType { flags: [AccountFlagsEnum] }
+input AccountCreateInput { flags: [AccountFlagsEnum] }
+input AccountUpdateInput { flags: [AccountFlagsEnum] }
+```
+
+`django-multiselectfield` remains optional: install it only when the model uses
+that field. Without the package, importing django-graphex adds no runtime
+dependency. The development and integration environments install it only to
+exercise this optional adapter.
+
 ## Field type conversion reference
 
 How Django model fields map to GraphQL **output** types:
@@ -1683,17 +1742,19 @@ Omitting `specs` leaves the column untouched; passing `specs: null` writes SQL
 class UserListType(DjangoListObjectType):
     class Meta:
         model = User
+```
 
-# ✅ For input validation
-class UserInput(DjangoInputObjectType):
+```python
+# ✅ For input validation on an ordinary application model
+class ArticleInput(DjangoInputObjectType):
     class Meta:
-        model = User
-        only_fields = ("username", "email")
+        model = Article
+        only_fields = ("title", "body")
 
 # ✅ For rapid prototyping
-class UserModelType(DjangoModelType):
+class ArticleType(DjangoModelType):
     class Meta:
-        model = User
+        model = Article
 ```
 
 ### 2. Use Descriptive Names
@@ -1733,11 +1794,13 @@ precisely why it has exactly one home.
 ### 4. Combine Types Strategically
 
 ```python
-# Use DjangoModelType for basic CRUD
-class UserModelType(DjangoModelType):
+# Use DjangoModelType for basic CRUD on ordinary application models
+class ArticleType(DjangoModelType):
     class Meta:
-        model = User
+        model = Article
+```
 
+```python
 # Use DjangoListObjectType for complex list logic
 class UserAnalyticsType(DjangoListObjectType):
     total_posts = IntField()          # a custom, computed output field
@@ -1747,15 +1810,21 @@ class UserAnalyticsType(DjangoListObjectType):
 
     def resolve_total_posts(self, info):
         return self.posts.count()
+```
 
+```python
 # Use DjangoInputObjectType for model-derived input; shape it with only_fields.
 # For a bespoke, non-model input argument, use a hand-written Mutation with a
 # Field / CharField argument instead (input bodies are model-derived).
-class UserRegistrationInput(DjangoInputObjectType):
+class ArticleImportInput(DjangoInputObjectType):
     class Meta:
-        model = User
-        only_fields = ("username", "email", "password")
+        model = Article
+        only_fields = ("title", "body", "status")
 ```
+
+For Django accounts, use the read-only projection and purpose-built
+`create_user()` registration shown in the [Quick Start](../quickstart.md);
+generic model persistence does not hash passwords.
 
 These examples assume the descriptor imports at the top of the module:
 

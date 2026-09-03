@@ -14,8 +14,13 @@ Covers:
   (e) A committed delete in payload_mode="full" mode does not raise an exception
       (regression: #69 — serialize_instance hit M2M on a pk-less instance).
   (f) A committed delete on an indexed subscription emits the index-scoped delete
-      group names (bindings.py:250-251 — the "if index:" branch in
-      "_broadcast_delete"), and every message carries the real (non-None) pk.
+      group names from the detached snapshot, and every message carries the
+      real (non-None) pk.
+  (g) Multiple saves of the same mutable instance in one transaction preserve
+      the pk, index and full payload that existed at each post_save signal.
+  (h) Create-then-delete in one transaction still publishes the create event
+      with the original pk instead of the pk Django clears during delete().
+  (i) Snapshots queued by multiple saves are all discarded on rollback.
 
 Django's test runner wraps every test in a transaction (TestCase) so
 on_commit callbacks never fire by default. We use:
@@ -50,6 +55,16 @@ class _IdOnlyDeleteSubscription(Subscription):
         payload_mode = "id_only"
 
 
+class _IndexedFullSaveSubscription(Subscription):
+    """Full-payload subscription used to prove save snapshots are immutable."""
+
+    class Meta:
+        model = HookModel
+        stream = "hookmodel_save_snapshots"
+        payload_mode = "full"
+        subscription_index_fields = ("text",)
+
+
 @pytest.fixture(autouse=True)
 def _arm_binding() -> None:
     """Ensure the UserSubscription binding is wired before each test."""
@@ -65,6 +80,15 @@ def _arm_idonly_binding() -> Generator[SubscriptionBinding, None, None]:
             _IdOnlyDeleteSubscription, unregistered again after the test.
     """
     binding = _IdOnlyDeleteSubscription.get_binding()
+    binding.register()
+    yield binding
+    binding.unregister()
+
+
+@pytest.fixture()
+def _arm_indexed_full_save_binding() -> Generator[SubscriptionBinding, None, None]:
+    """Wire the full-payload indexed subscription used by snapshot tests."""
+    binding = _IndexedFullSaveSubscription.get_binding()
     binding.register()
     yield binding
     binding.unregister()
@@ -167,6 +191,119 @@ def test_committed_save_broadcasts_exactly_once(
     assert len(captured_group_sends) == 2, (
         f"Expected exactly 2 group_sends after commit, got {len(captured_group_sends)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# (g-i) Deferred callbacks use immutable signal-time snapshots
+# ---------------------------------------------------------------------------
+
+
+def test_create_then_update_preserves_each_signal_time_snapshot(
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+    _arm_indexed_full_save_binding: SubscriptionBinding,
+) -> None:
+    """Verify create and update events retain signal-time snapshots.
+
+    Args:
+        captured_group_sends: Messages captured from the channel layer.
+        _arm_indexed_full_save_binding: Registered indexed subscription fixture.
+    """
+    with transaction.atomic():
+        instance = HookModel.objects.create(text="first")
+        real_pk = instance.pk
+        instance.text = "second"
+        instance.save(update_fields=["text"])
+
+    sends = [
+        (group, message)
+        for group, message in captured_group_sends
+        if message.get("stream") == "hookmodel_save_snapshots"
+    ]
+    coarse_sends = [
+        message
+        for group, message in sends
+        if group
+        == _IndexedFullSaveSubscription._group_name(message["payload"]["action"])
+    ]
+    assert [message["payload"]["action"] for message in coarse_sends] == [
+        "create",
+        "update",
+    ]
+    coarse_messages = {
+        message["payload"]["action"]: message for message in coarse_sends
+    }
+
+    assert coarse_messages["create"]["pk"] == real_pk
+    assert coarse_messages["create"]["payload"]["data"]["text"] == "first"
+    assert coarse_messages["update"]["pk"] == real_pk
+    assert coarse_messages["update"]["payload"]["data"]["text"] == "second"
+
+    groups = {group for group, _ in sends}
+    assert (
+        _IndexedFullSaveSubscription._group_name("create", index={"text": "first"})
+        in groups
+    )
+    assert (
+        _IndexedFullSaveSubscription._group_name("update", index={"text": "second"})
+        in groups
+    )
+
+
+def test_create_then_delete_preserves_create_pk_snapshot(
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+    _arm_idonly_binding: SubscriptionBinding,
+) -> None:
+    """Verify a deferred create retains the pk cleared by a later delete.
+
+    Args:
+        captured_group_sends: Messages captured from the channel layer.
+        _arm_idonly_binding: Registered id-only subscription fixture.
+    """
+    with transaction.atomic():
+        instance = BasicModel.objects.create(text="short-lived")
+        real_pk = instance.pk
+        instance.delete()
+
+    create_messages = [
+        message
+        for _, message in captured_group_sends
+        if message.get("stream") == "basic_delete_idonly"
+        and message["payload"]["action"] == "create"
+    ]
+
+    assert create_messages
+    assert all(message["pk"] == real_pk for message in create_messages)
+    assert all(
+        message["payload"]["data"] == {"id": real_pk} for message in create_messages
+    )
+
+
+def test_multiple_save_snapshots_are_discarded_on_rollback(
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+    _arm_indexed_full_save_binding: SubscriptionBinding,
+) -> None:
+    """Verify rollback discards snapshots from repeated post-save signals.
+
+    Args:
+        captured_group_sends: Messages captured from the channel layer.
+        _arm_indexed_full_save_binding: Registered indexed subscription fixture.
+
+    Raises:
+        ValueError: Intentionally raised inside the transaction to force rollback.
+    """
+    with pytest.raises(ValueError, match="force snapshot rollback"):
+        with transaction.atomic():
+            instance = HookModel.objects.create(text="first")
+            instance.text = "second"
+            instance.save(update_fields=["text"])
+            raise ValueError("force snapshot rollback")
+
+    sends = [
+        message
+        for _, message in captured_group_sends
+        if message.get("stream") == "hookmodel_save_snapshots"
+    ]
+    assert sends == []
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +441,9 @@ def test_committed_delete_serialize_mode_no_exception(
 class _IndexedDeleteSubscription(Subscription):
     """Indexed id-only subscription over HookModel (index field: text).
 
-    Used to exercise bindings.py:250-251 — the "if index:" branch inside
-    "_broadcast_delete" that appends the coarse-index and per-pk-index group
-    names when the subscription declares "subscription_index_fields".
+    Used to exercise the snapshot fan-out branch that appends the coarse-index
+    and per-pk-index group names when the subscription declares
+    "subscription_index_fields".
     """
 
     class Meta:
@@ -330,18 +467,43 @@ def _arm_indexed_binding() -> Generator[SubscriptionBinding, None, None]:
     binding.unregister()
 
 
+def test_broadcast_wrapper_preserves_id_only_index_routing(
+    captured_group_sends: list[tuple[str, dict[str, Any]]],
+    _arm_indexed_binding: SubscriptionBinding,
+) -> None:
+    """Verify direct id-only broadcasts retain index-scoped routing.
+
+    Args:
+        captured_group_sends: Messages captured from the channel layer.
+        _arm_indexed_binding: Registered indexed subscription binding.
+    """
+    instance = HookModel(pk=7, text="indexed-val")
+    _arm_indexed_binding.broadcast("update", instance)
+
+    groups = {group for group, _ in captured_group_sends}
+    index = {"text": "indexed-val"}
+    assert groups == {
+        _IndexedDeleteSubscription._group_name("update"),
+        _IndexedDeleteSubscription._group_name("update", id=7),
+        _IndexedDeleteSubscription._group_name("update", index=index),
+        _IndexedDeleteSubscription._group_name("update", id=7, index=index),
+    }
+    assert all(
+        message["payload"]["data"] == {"id": 7} for _, message in captured_group_sends
+    )
+
+
 def test_committed_delete_indexed_subscription_emits_index_scoped_groups(
     captured_group_sends: list[tuple[str, dict[str, Any]]],
     _arm_indexed_binding: SubscriptionBinding,
 ) -> None:
     """A committed delete on an indexed subscription must emit index-scoped group names.
 
-    Contract: this test ships broken if the "if index:" branch inside
-    _broadcast_delete (bindings.py:250-251) stops appending the coarse-index
-    and per-pk-index group names, or if any message loses its real pk.
+    Contract: this test ships broken if the indexed snapshot fan-out stops
+    appending the coarse-index and per-pk-index group names, or if any message
+    loses its real pk.
 
-    Exercises bindings.py:250-251 — the "if index:" branch in
-    "_broadcast_delete" that calls:
+    Exercises the indexed branch in "_fan_out_snapshot" that calls:
 
         group_names.append(cls._group_name("delete", index=index))
         group_names.append(cls._group_name("delete", id=pk_snapshot, index=index))
@@ -387,11 +549,11 @@ def test_committed_delete_indexed_subscription_emits_index_scoped_groups(
     # (i) Both index-scoped group names must be present (bindings.py:250-251).
     assert expected_index_group in groups, (
         f"Index-scoped group {expected_index_group!r} not in {groups!r}. "
-        "bindings.py:250 was not executed."
+        "The indexed snapshot branch was not executed."
     )
     assert expected_index_pk_group in groups, (
         f"Per-pk index-scoped group {expected_index_pk_group!r} not in {groups!r}. "
-        "bindings.py:251 was not executed."
+        "The indexed per-pk snapshot branch was not executed."
     )
 
     # (ii) Every message envelope must carry the real pk — not None.

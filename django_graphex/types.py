@@ -2099,7 +2099,7 @@ def _resolve_native_choices_input_fields(
     from django_graphex.core.input_compiler import ChoicesInputField
 
     from ._strconv import to_camel_case
-    from .converter import build_choices_enum_type
+    from .converter import build_choices_enum_type, is_multiselect_field
     from .utils import is_required
 
     is_create = input_for == "create"
@@ -2114,13 +2114,12 @@ def _resolve_native_choices_input_fields(
         enum_type = build_choices_enum_type(field, registry)
         if enum_type is None:
             continue
-        is_multiselect = type(field).__name__ == "MultiSelectField"
         specs.append(
             ChoicesInputField(
                 out_name=field.name,
                 alias=to_camel_case(field.name),
                 enum_type=enum_type,
-                is_list=is_multiselect,
+                is_list=is_multiselect_field(field),
                 required=is_create and is_required(field),
             )
         )
@@ -3465,15 +3464,33 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         Raises:
             GraphQLError: If any permission denies the action.
+            ImproperlyConfigured: If a permission hook returns an awaitable;
+                CRUD permission hooks are synchronous.
         """
         method_name = f"has_{action}_permission"
         for permission in cls.get_permissions():
             check = getattr(permission, method_name)
+            result = check(info, cls._meta.model, **supported_kwargs(check, kwargs))
+            if inspect.isawaitable(result):
+                # Coroutine objects warn when garbage-collected unawaited. Close
+                # them before failing; Future-like awaitables expose cancel
+                # instead. Never bridge with async_to_sync: CRUD authorization
+                # is deliberately a synchronous contract.
+                close = getattr(result, "close", None)
+                cancel = getattr(result, "cancel", None)
+                if callable(close):
+                    close()
+                elif callable(cancel):
+                    cancel()
+                raise ImproperlyConfigured(
+                    f"{type(permission).__name__}.{method_name} returned an "
+                    "awaitable; DjangoModelType permission hooks must be synchronous."
+                )
             # SECURITY: fail closed on ANY falsy result, not just the "False"
             # singleton. "return user and user.is_staff" -- the idiomatic
             # one-liner -- yields None/an empty value for an anonymous caller,
             # and an identity check would have granted the action.
-            if not check(info, cls._meta.model, **supported_kwargs(check, kwargs)):
+            if not result:
                 raise GraphQLError(
                     "You do not have permission to perform this action.",
                     extensions={"code": "PERMISSION_DENIED", "status_code": 403},

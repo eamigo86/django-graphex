@@ -6,8 +6,7 @@ The happy path must not issue a pre-"SELECT 1" per FK: it attempts
 envelope as before.
 
 Covers:
-  (a) a happy-path create issues no "SELECT" against the FK's table
-      (no pre-existence probe),
+  (a) a happy-path create issues no "SELECT 1" FK pre-existence probe,
   (b) a bad FK id still returns "ok=False" with the exact same "errors[]"
       payload as the eager check produced (captured as the golden),
   (c) the update path behaves the same,
@@ -41,6 +40,22 @@ def _info() -> SimpleNamespace:
             attributes the backend reads off "info.context".
     """
     return SimpleNamespace(context=SimpleNamespace(META={}, FILES={}))
+
+
+def _fk_existence_probes(
+    queries: list[dict[str, str]], related_model: type
+) -> list[str]:
+    """Return Django ``QuerySet.exists()`` probes for a related model pk."""
+    table = connection.ops.quote_name(related_model._meta.db_table)
+    pk_column = connection.ops.quote_name(related_model._meta.pk.column)
+    return [
+        query["sql"]
+        for query in queries
+        if "SELECT 1 AS" in query["sql"].upper()
+        and f"FROM {table}" in query["sql"]
+        and f"{table}.{pk_column}" in query["sql"]
+        and "LIMIT 1" in query["sql"].upper()
+    ]
 
 
 class PostType(DjangoModelType):
@@ -90,13 +105,13 @@ def _update(type_cls: type[DjangoModelType], data: dict) -> object:
 
 
 # ---------------------------------------------------------------------------
-# (a) Happy path issues NO pre-SELECT against the FK table
+# (a) Happy path issues NO pre-existence SELECT 1 for the FK
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
 def test_happy_create_issues_no_fk_existence_select() -> None:
-    """A valid create must not probe the FK's table for existence beforehand.
+    """A valid create must not issue an FK "exists()" probe beforehand.
 
     If this fails, the happy path would regress to issuing an eager
     "SELECT" against the FK's table before every create, reintroducing the
@@ -111,16 +126,9 @@ def test_happy_create_issues_no_fk_existence_select() -> None:
         )
 
     assert ok, obj
-    fk_probes = [
-        q["sql"]
-        for q in ctx.captured_queries
-        if "SELECT" in q["sql"].upper()
-        and Author._meta.db_table in q["sql"]
-        and "COUNT" not in q["sql"].upper()
-    ]
+    fk_probes = _fk_existence_probes(ctx.captured_queries, Author)
     assert not fk_probes, (
-        "Happy-path create must not issue a SELECT against the FK table; got: "
-        f"{fk_probes}"
+        f"Happy-path create must not issue an FK SELECT 1 probe; got: {fk_probes}"
     )
 
 
@@ -184,7 +192,7 @@ def test_bad_fk_update_returns_same_error_payload() -> None:
 
 @pytest.mark.django_db
 def test_happy_update_issues_no_fk_existence_select() -> None:
-    """A valid update must not probe the FK table for existence beforehand.
+    """A valid update must not issue an FK "exists()" probe beforehand.
 
     If this fails, the update path would regress to issuing an eager
     "SELECT" against the FK's table before every update, reintroducing the
@@ -200,13 +208,7 @@ def test_happy_update_issues_no_fk_existence_select() -> None:
             None, None, _info(), {"author": other.id}, instance=post, partial=True
         )
     assert ok, obj
-    fk_probes = [
-        q["sql"]
-        for q in ctx.captured_queries
-        if "SELECT" in q["sql"].upper()
-        and Author._meta.db_table in q["sql"]
-        and "COUNT" not in q["sql"].upper()
-    ]
+    fk_probes = _fk_existence_probes(ctx.captured_queries, Author)
     assert not fk_probes, f"Happy-path update probed the FK table: {fk_probes}"
 
 

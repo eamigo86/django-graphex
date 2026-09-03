@@ -71,6 +71,17 @@ class IsOwnerOrReadOnly(BasePermission):
         return info.context.user.is_authenticated
 ```
 
+!!! warning "CRUD permission hooks are synchronous"
+    Define `has_permission` and `has_<action>_permission` with `def`, not
+    `async def`. If a hook returns any awaitable, django-graphex closes or
+    cancels it and raises `ImproperlyConfigured` **before the operation runs**.
+    It never applies truthiness to a coroutine and never bridges it with
+    `async_to_sync`.
+
+    This differs intentionally from subscription hooks such as
+    `authorize_subscription`, whose delivery pipeline explicitly supports both
+    synchronous and asynchronous implementations.
+
 !!! warning "Any falsy value denies — you do not have to return `False`"
     The check fails closed on `False`, `None`, `0` and `""` alike, so the
     idiomatic one-liner is safe:
