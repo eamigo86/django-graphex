@@ -57,6 +57,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         # Unique cache key per matrix combo: jobs sharing a key race to save it
         # (only one can reserve it -> "Unable to reserve cache" warnings).
@@ -89,6 +90,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         cache-suffix: base-install
 
@@ -109,6 +111,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         cache-suffix: lint-and-security
 
@@ -159,6 +162,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         cache-suffix: coverage
 
@@ -218,6 +222,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         cache-suffix: postgresql
 
@@ -283,6 +288,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         cache-suffix: release-artifact
 
@@ -349,6 +355,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         cache-suffix: docs-build
 
@@ -389,6 +396,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         cache-suffix: playground
 
@@ -409,6 +417,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
+        version: "0.12.9"
         enable-cache: true
         cache-suffix: publish
 
