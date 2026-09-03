@@ -36,6 +36,7 @@ import platform
 import statistics
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -106,10 +107,35 @@ def _post(client, op):
         data=json.dumps(payload),
         content_type="application/json",
     )
-    assert resp.status_code == 200, (
-        f"HTTP {resp.status_code}: {resp.content[:500]!r}"
-    )
+    assert resp.status_code == 200, f"HTTP {resp.status_code}: {resp.content[:500]!r}"
     return json.loads(resp.content)
+
+
+def _isolated_post(client, op, *, timed=False, count_queries=False):
+    """Execute one request in a rollback-only transaction.
+
+    Transaction boundaries sit outside both the timer and query capture. This
+    leaves the database rows and SQLite sequence unchanged after every
+    validation, SQL probe, warmup and measured sample.
+    """
+    from django.db import connection, transaction
+    from django.test.utils import CaptureQueriesContext
+
+    with transaction.atomic():
+        query_context = (
+            CaptureQueriesContext(connection) if count_queries else nullcontext()
+        )
+        with query_context as captured:
+            started = time.perf_counter() if timed else None
+            response = _post(client, op)
+            elapsed_ms = (
+                (time.perf_counter() - started) * 1000.0
+                if started is not None
+                else None
+            )
+        transaction.set_rollback(True)
+    sql_queries = len(captured.captured_queries) if count_queries else None
+    return response, elapsed_ms, sql_queries
 
 
 _SURFACE_QUERY = """
@@ -160,7 +186,12 @@ def _stats(samples_ms):
     }
 
 
-def main():
+def main() -> None:
+    """Run the selected library's isolated benchmark and write its result.
+
+    Raises:
+        AssertionError: If an operation returns an invalid response.
+    """
     # 1) Django bootstrap first (populate the app registry). Not timed.
     import django
 
@@ -169,9 +200,7 @@ def main():
     # 2) Time the cold import and, separately, the schema build itself.
     schema_module, cold_import_ms, build_samples = _import_schema()
 
-    from django.db import connection
     from django.test import Client
-    from django.test.utils import CaptureQueriesContext
 
     operations = schema_module.OPERATIONS
     lib_versions = schema_module.LIB_VERSIONS
@@ -188,7 +217,7 @@ def main():
         op = operations[name]
 
         # First response: validate shape (abort loudly on wrong data).
-        first = _post(client, op)
+        first, _, _ = _isolated_post(client, op)
         try:
             op["validate"](first)
         except AssertionError as exc:
@@ -199,20 +228,17 @@ def main():
             raise
 
         # SQL query count: one extra instrumented iteration (excluded from timings).
-        with CaptureQueriesContext(connection) as ctx:
-            _post(client, op)
-        sql_queries = len(ctx.captured_queries)
+        _, _, sql_queries = _isolated_post(client, op, count_queries=True)
 
         # Warmup (untimed).
         for _ in range(WARMUP):
-            _post(client, op)
+            _isolated_post(client, op)
 
         # Timed iterations.
         samples_ms = []
         for _ in range(TIMED):
-            t0 = time.perf_counter()
-            _post(client, op)
-            samples_ms.append((time.perf_counter() - t0) * 1000.0)
+            _, elapsed_ms, _ = _isolated_post(client, op, timed=True)
+            samples_ms.append(elapsed_ms)
 
         stats = _stats(samples_ms)
         stats["sql_queries"] = sql_queries
