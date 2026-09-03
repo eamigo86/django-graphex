@@ -42,6 +42,8 @@ RULE_MESSAGES: dict[str, str] = {
     "DOC101": "missing type hint",
     "DOC102": "type repeated in docstring",
     "DOC201": "backtick in docstring",
+    "DOC901": "source parse failure",
+    "DOC902": "source read failure",
 }
 
 # Default directory/file globs that are never scanned.
@@ -387,6 +389,48 @@ def _check_docstring_content(lines: list[str], suppressed: set[str]) -> list[str
     return codes
 
 
+def _check_strict_content(
+    tree: ast.Module,
+    source_lines: list[str],
+) -> list[Violation]:
+    """Check DOC201 on every docstring owner in the syntax tree.
+
+    Unlike the legacy public-surface traversal, this covers private, nested,
+    and dunder definitions while leaving all other convention rules unchanged.
+
+    Args:
+        tree: The parsed module syntax tree.
+        source_lines: The file's source lines, for reading definition pragmas.
+
+    Returns:
+        violations: DOC201 violations from every documented owner.
+    """
+    violations: list[Violation] = []
+    owner_types = (
+        ast.Module,
+        ast.ClassDef,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+    )
+    for owner in ast.walk(tree):
+        if not isinstance(owner, owner_types):
+            continue
+        lineno = getattr(owner, "lineno", 1)
+        suppressed = (
+            set()
+            if isinstance(owner, ast.Module)
+            else _noqa_codes(source_lines[lineno - 1])
+        )
+        lines = _docstring_lines(owner)
+        if (
+            lines is not None
+            and "DOC201" not in suppressed
+            and any("`" in line for line in lines)
+        ):
+            violations.append(_make("DOC201", lineno))
+    return violations
+
+
 def _module_is_reexport_stub(tree: ast.Module, filename: str) -> bool:
     """Report whether a module is a short __init__.py re-export stub.
 
@@ -541,7 +585,12 @@ def _check_class(node: ast.ClassDef, source_lines: list[str]) -> list[Violation]
     return violations
 
 
-def check_source(source: str, filename: str = "<string>") -> list[Violation]:
+def check_source(
+    source: str,
+    filename: str = "<string>",
+    *,
+    strict_content: bool = False,
+) -> list[Violation]:
     """Check Python source text against the docstring convention.
 
     This is the programmatic entry point. Nested definitions inside functions
@@ -551,6 +600,7 @@ def check_source(source: str, filename: str = "<string>") -> list[Violation]:
     Args:
         source: The Python source text to analyze.
         filename: The file name, used for module-name heuristics.
+        strict_content: Whether DOC201 covers every docstring owner.
 
     Returns:
         violations: All violations found, sorted by line then code.
@@ -581,27 +631,46 @@ def check_source(source: str, filename: str = "<string>") -> list[Violation]:
         elif isinstance(node, ast.ClassDef) and _is_public_name(node.name):
             violations.extend(_check_class(node, source_lines))
 
+    if strict_content:
+        for violation in _check_strict_content(tree, source_lines):
+            if violation not in violations:
+                violations.append(violation)
+
     violations.sort(key=lambda v: (v.lineno, v.code))
     return violations
 
 
-def check_file(path: Path) -> list[Violation]:
+def check_file(path: Path, *, strict_content: bool = False) -> list[Violation]:
     """Check a single file on disk against the convention.
 
     Args:
         path: The path to the Python file to check.
+        strict_content: Whether DOC201 covers every docstring owner.
 
     Returns:
-        violations: All violations found in the file (empty on parse error).
+        violations: All violations found, including inspection failures.
     """
     try:
         source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
+    except (OSError, UnicodeDecodeError) as exc:
+        detail = str(exc) or type(exc).__name__
+        return [
+            Violation(
+                code="DOC902",
+                lineno=1,
+                message=f"{RULE_MESSAGES['DOC902']}: {detail}",
+            )
+        ]
     try:
-        return check_source(source, str(path))
-    except SyntaxError:
-        return []
+        return check_source(source, str(path), strict_content=strict_content)
+    except SyntaxError as exc:
+        return [
+            Violation(
+                code="DOC901",
+                lineno=exc.lineno or 1,
+                message=f"{RULE_MESSAGES['DOC901']}: {exc.msg}",
+            )
+        ]
 
 
 def _is_excluded(path: Path, patterns: list[str]) -> bool:
@@ -695,6 +764,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="List each scanned file before checking it.",
     )
+    parser.add_argument(
+        "--strict-content",
+        action="store_true",
+        help="Apply DOC201 to every docstring owner during migration.",
+    )
     return parser.parse_args(argv)
 
 
@@ -720,7 +794,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in files:
         if args.list_files:
             output_lines.append(f"# {path}")
-        for violation in check_file(path):
+        for violation in check_file(path, strict_content=args.strict_content):
             counts[violation.code] += 1
             output_lines.append(
                 f"{path}:{violation.lineno}: {violation.code} {violation.message}"

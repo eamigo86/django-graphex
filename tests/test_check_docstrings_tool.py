@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 
@@ -42,7 +43,12 @@ def _load_checker() -> ModuleType:
 checker = _load_checker()
 
 
-def codes_for(source: str, filename: str = "sample.py") -> list[str]:
+def codes_for(
+    source: str,
+    filename: str = "sample.py",
+    *,
+    strict_content: bool = False,
+) -> list[str]:
     """Run the checker on a source string and return the rule codes fired.
 
     This is the shared helper every rule test uses to assert presence or
@@ -51,11 +57,16 @@ def codes_for(source: str, filename: str = "sample.py") -> list[str]:
     Args:
         source: Python source text to analyze.
         filename: Virtual filename used for module-name heuristics.
+        strict_content: Whether content-only rules cover every docstring owner.
 
     Returns:
         codes: The rule codes (e.g. "DOC001") in the order reported.
     """
-    violations = checker.check_source(source, filename)
+    violations = checker.check_source(
+        source,
+        filename,
+        strict_content=strict_content,
+    )
     return [v.code for v in violations]
 
 
@@ -339,6 +350,34 @@ def test_private_function_is_exempt() -> None:
     """
     source = '"""Module."""\n\n\ndef _foo(a):\n    return a\n'
     assert codes_for(source) == []
+
+
+def test_strict_content_checks_private_nested_and_dunder_docstrings() -> None:
+    """Strict content mode reports backticks for every docstring owner.
+
+    Private functions, nested functions, and dunder methods are outside the
+    legacy public-surface rules, but DOC201 must cover them during migration.
+    """
+    source = (
+        '"""Module."""\n\n\n'
+        "def _private() -> None:\n"
+        '    """Use `private`.\n\n    Internal detail.\n    """\n'
+        "    return None\n\n\n"
+        "def outer() -> None:\n"
+        '    """Run outer.\n\n    Public detail.\n    """\n'
+        "    def nested() -> None:\n"
+        '        """Use `nested`.\n\n        Internal detail.\n        """\n'
+        "        return None\n"
+        "    return None\n\n\n"
+        "class Public:\n"
+        '    """Represent a value.\n\n    Public detail.\n    """\n'
+        "    def __str__(self) -> str:\n"
+        '        """Return `text`.\n\n        Internal detail.\n        """\n'
+        '        return "value"\n'
+    )
+
+    assert codes_for(source) == []
+    assert codes_for(source, strict_content=True).count("DOC201") == 3
 
 
 def test_nested_def_is_exempt() -> None:
@@ -638,6 +677,76 @@ def test_cli_default_excludes_pycache(tmp_path: Path) -> None:
         text=True,
     )
     assert result.returncode == 0, result.stdout
+
+
+def test_cli_strict_content_routes_to_all_docstring_owners(tmp_path: Path) -> None:
+    """The CLI opt-in enables DOC201 for a private docstring owner.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
+    private = tmp_path / "private.py"
+    private.write_text(
+        '"""Module."""\n\n\ndef _private() -> None:\n'
+        '    """Use `private`.\n\n    Internal detail.\n    """\n'
+        "    return None\n"
+    )
+
+    legacy = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), str(private)],
+        capture_output=True,
+        text=True,
+    )
+    strict = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), str(private), "--strict-content"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert legacy.returncode == 0, legacy.stdout + legacy.stderr
+    assert strict.returncode == 1
+    assert f"{private}:4: DOC201" in strict.stdout
+
+
+def test_cli_syntax_error_is_fail_closed(tmp_path: Path) -> None:
+    """Invalid Python produces a parse diagnostic and non-zero CLI exit.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+    """
+    invalid = tmp_path / "invalid.py"
+    invalid.write_text("def broken(:\n")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), str(invalid)],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert f"{invalid}:1: DOC901" in result.stdout
+    assert "source parse failure" in result.stdout
+
+
+def test_check_file_read_failure_is_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable file returns an explicit diagnostic through the API.
+
+    Args:
+        tmp_path: pytest temporary directory fixture.
+        monkeypatch: pytest attribute replacement fixture.
+    """
+    unreadable = tmp_path / "unreadable.py"
+    unreadable.write_text('"""Module."""\n')
+
+    monkeypatch.setattr(Path, "read_text", Mock(side_effect=OSError("blocked")))
+
+    violations = checker.check_file(unreadable)
+
+    assert [violation.code for violation in violations] == ["DOC902"]
+    assert "source read failure" in violations[0].message
 
 
 if __name__ == "__main__":
