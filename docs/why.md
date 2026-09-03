@@ -61,19 +61,15 @@ operations. The full harness lives in the repository — you can run it yourself
 Credibility is in the conditions, so let me state all of them up front.
 
 - **Identical runtime.** Same pinned **Python 3.12.11** and **Django 6.0.6**
-  across all four virtual environments. Latest PyPI versions of every library:
+  across all four virtual environments. Canonical pinned library versions:
   graphene-django 3.2.3 (+ graphene 3.4.3, django-filter 25.2),
   strawberry-graphql-django 0.86.4 (+ strawberry-graphql 0.320.1),
   ariadne 1.1.0 (+ ariadne-django 0.3.0). django-graphex is the one exception:
-  it is installed **editable from this repository**, not from PyPI. The
-  artifacts record `2.2.0`, which is the version string `pyproject.toml`
-  carried while the run happened — the code they measure is what shipped as
-  **3.0.0**, projection boundary and all. So the numbers include a guard the
-  published 2.2.0 tarball does not contain, and the label under-states rather
-  than over-states what was timed. The artifacts are not relabelled after the
-  fact, because a measurement record should say what it said.
+  it is installed **editable from this repository**, not from PyPI. These
+  artifacts measured django-graphex **3.1.0**, and record the exact source
+  commit plus the SHA-256 of the shared dependency constraints.
 - **Identical data.** The same Django models and the same seeded dataset for
-  everyone: **2,000 authors, 20,000 posts, 60,000 comments, 60,000 tag
+  everyone: **2,000 authors, 20,000 posts, 100,000 comments, 60,000 tag
   relations**, generated from a deterministic seed. That is the `--authors 2000`
   seed; `run_all.sh` seeds **half** of it by default (see *Reproduce it
   yourself*).
@@ -99,13 +95,19 @@ Credibility is in the conditions, so let me state all of them up front.
   invalid), and SQL counts captured via `CaptureQueriesContext`.
   macOS 26.5 arm64, 16 cores, SQLite.
 - **Three repetitions per library, per seed; every figure is the median.** One
-  run is not a measurement. Three runs of the *same* code minutes apart drift by
-  up to 8 % on this hardware, so a single sample cannot resolve a difference
-  smaller than that — and every artifact records which statistic it is under
-  `aggregation`. Nothing here is run on a busy machine: a run whose SQL counts
-  or `surface` move, or whose latencies rise uniformly across all four
-  libraries, is discarded rather than published, because a uniform rise across
-  libraries nobody changed is the machine talking, not the code.
+  run is not a measurement. Raw timings vary, so every artifact records the
+  source values and the reported statistic under `aggregation`. The publisher
+  rejects version, dataset, response, SQL, schema-surface, iteration-count or
+  provenance drift. It **does not reject a run because its timing is slower**:
+  timings are observations, not a gate.
+- **Mutations cannot contaminate the next sample.** Contract validation, SQL
+  probes, warmups and timed requests each run in a transaction forced to
+  rollback. Row counts and the database sequence are checked before and after
+  every library. Timing and published SQL counts cover only the GraphQL request,
+  not the harness's `BEGIN/ROLLBACK` boundary.
+- **The nested response is exact, not merely non-empty.** Every implementation
+  must return 20 authors, 10 posts per author and 5 comments per post, with the
+  expected IDs, ordering and content, before timing begins.
 
 ### The results
 
@@ -114,11 +116,11 @@ better on both.
 
 | Operation | django-graphex | graphene-django | strawberry | ariadne |
 | :-------- | :------------- | :-------------- | :--------- | :------ |
-| **flat_list** (50 rows) | **0.79 ms** · 1 SQL 🏆 | 1.73 ms · 2 SQL | 1.70 ms · 1 SQL | 1.24 ms · 1 SQL |
-| **nested** (20→10→5) | **12.26 ms** · **3 SQL** 🏆 | 58.18 ms · <span style="color: #e53935;">**442 SQL**</span> | 24.62 ms · 3 SQL | 39.46 ms · 221 SQL |
-| **single** object | **0.38 ms** · 1 SQL 🏆 | 0.95 ms · 2 SQL | 1.06 ms · 1 SQL | 0.91 ms · 2 SQL |
-| **filtered** (`icontains`) | **1.16 ms** · 1 SQL 🏆 | 5.17 ms · 2 SQL | 2.25 ms · 1 SQL | 1.62 ms · 1 SQL |
-| **create_comment** mutation | **0.58 ms** · 1 SQL 🏆 | 1.25 ms · 1 SQL | 2.00 ms · 8 SQL | 1.09 ms · 1 SQL |
+| **flat_list** (50 rows) | **0.82 ms** · 1 SQL 🏆 | 1.73 ms · 2 SQL | 1.64 ms · 1 SQL | 1.17 ms · 1 SQL |
+| **nested** (20→10→5) | **16.28 ms** · **3 SQL** 🏆 | 60.04 ms · <span style="color: #e53935;">**442 SQL**</span> | 28.98 ms · 3 SQL | 42.73 ms · 221 SQL |
+| **single** object | **0.41 ms** · 1 SQL 🏆 | 0.95 ms · 2 SQL | 0.96 ms · 1 SQL | 0.85 ms · 2 SQL |
+| **filtered** (`icontains`) | **1.16 ms** · 1 SQL 🏆 | 4.91 ms · 2 SQL | 2.02 ms · 1 SQL | 1.57 ms · 1 SQL |
+| **create_comment** mutation | 11.77 ms · 4 SQL | 0.98 ms · 1 SQL | 1.31 ms · 8 SQL | **0.83 ms** · 1 SQL 🏆 |
 
 ### Startup cost is a different question, so it gets a different row
 
@@ -133,16 +135,16 @@ process actually pays at startup:
 
 | Metric | django-graphex | graphene-django | strawberry | ariadne |
 | :----- | :------------- | :-------------- | :--------- | :------ |
-| **Cold import**, 2,000-author run | 9.17 ms | 9.90 ms | 106.50 ms | 48.71 ms |
-| *…at the 1,000-author seed* | *10.01 ms* | *10.70 ms* | *98.00 ms* | *43.97 ms* |
+| **Cold import**, 2,000-author run | 10.21 ms | 10.45 ms | 93.24 ms | 47.88 ms |
+| *…at the 1,000-author seed* | *9.30 ms* | *10.81 ms* | *98.70 ms* | *45.58 ms* |
 
 Read it as an **order of magnitude**: graphex and graphene-django
 indistinguishable around 10 ms, ariadne roughly 5× them, strawberry roughly
 10×. It still does **not** say which of the first two is faster, and it never
-could — the two are one millisecond apart on a metric whose run-to-run spread
-is 3–15 %. Earlier revisions of this page named opposite winners there, first
-graphene by 0.05 ms and then graphex by 1 ms; **both were beneath the
-instrument's resolution and neither should have been published.**
+could — the two are one millisecond apart while the eight canonical
+cold-import sample sets span roughly **9–24 %** from minimum to maximum relative
+to their median. Earlier revisions of this page named opposite winners there;
+neither should have been published.
 
 What that row does *not* measure is how fast each library compiles a schema.
 With the dependency tree already imported, rebuilding the same schema costs
@@ -161,9 +163,9 @@ across.
 under the graphex interpreter, which left graphex's imports hot while the other
 three were measured cold — a bias in graphex's favour on the one row where the
 libraries are closest. It now warms **every** virtualenv before measuring any of
-them. The spread on this row fell from 24–51 % to 3–15 % as a result. The
-per-operation rows never had the problem: p50 over 100 iterations after 15
-warmups is long past any import cost.
+them. Each canonical artifact retains all three import samples so you can
+inspect that spread directly. The per-operation rows never had the problem: p50
+over 100 iterations after 15 warmups is long past any import cost.
 
 Every operation cell above is the `p50_ms` / `sql_queries` pair sitting in
 `benchmarks/results/2x_<lib>.json` — each the **median of three runs**, recorded
@@ -180,59 +182,51 @@ graphene-django fires **442 SQL queries** where graphex fires **3** — a textbo
 N+1 explosion that graphex avoids by prefetching the relation tree. And here's
 the part that's easy to miss: this ran on **local SQLite**, which *understates*
 the gap. In production, against Postgres over a network, every one of those 442
-round-trips pays real latency. The 12 ms vs 58 ms you see here becomes a far
-wider chasm the moment there's a wire between your app and your database.
+round-trips pays real latency. The 16.28 ms vs 60.04 ms measured here becomes a
+far wider chasm the moment there's a wire between your app and your database.
 
 The **scaling story** is just as telling. Doubling the dataset (from 1,000 to
-2,000 authors) left graphex's filtered operation **flat: 1.19 ms → 1.16 ms** —
+2,000 authors) left graphex's filtered operation **flat: 1.13 ms → 1.16 ms** —
 it's `O(page)`: no unconditional `COUNT`, and a `LIKE` + `LIMIT` early exit.
 Over the same doubling, graphene-django's filtered operation climbed from
-**3.23 ms to 5.17 ms** — it's `O(table)`, because its count scans the whole
+**3.25 ms → 4.91 ms** — it's `O(table)`, because its count scans the whole
 thing. The lead doesn't just hold as your data grows; it *widens*.
 
 Every number in that paragraph is the `filtered` operation's **p50**, read from
 four tracked artifacts: `benchmarks/results/graphex.json` and
 `benchmarks/results/graphene.json` for 1,000 authors, and the `2x_` files beside
 them for 2,000 (`benchmarks/README.md` has the reseed recipe). graphex's pair
-*fell* by 0.03 ms across a doubling — which is noise, not an improvement, and is
-exactly why the claim here is **flat** rather than *faster*. graphene's rose by
-1.94 ms — sixty times that — and is not noise at all.
+rose by 0.03 ms across a doubling — which is noise, and is exactly why the claim
+here is **flat** rather than *slower*. graphene's rose by 1.66 ms, far beyond
+that noise.
 
 !!! warning "Honest caveats — because you should trust numbers that admit their limits"
     - **The cold-import row is still the weakest number on this page**, even
-      with its bias fixed. It is one sample per process; its spread across
-      repetitions is 3–15 %, so an order of magnitude is a finding there and a
-      millisecond is not, in *either* direction. The reasoning is stated in
-      full beside the table rather than buried here, including what the row
-      does not measure.
-    - **The rebuild series is a diagnostic, not a ranking, and it understates
-      graphex.** Its cost climbs across repeated in-process rebuilds where
-      ariadne's is flat, because an append-only registry of declared types
-      makes every rebuild re-walk all the dead generations — so the series runs
-      roughly 45 % above a clean build, and the first sample is the honest one.
-      A deployment pays none of it: that walk happens once per process, at
-      `AppConfig.ready()`. It is why the series ships as raw samples rather
-      than a comparable figure.
+      with its bias fixed. It is one sample per process; the current artifacts'
+      minimum-to-maximum spread is roughly 9–24 % relative to their medians, so
+      an order of magnitude is a finding there and a millisecond is not, in
+      *either* direction. The source samples are recorded under `aggregation`.
+    - **The rebuild series is a diagnostic, not a ranking.** graphex climbs
+      across repeated in-process rebuilds where ariadne is flatter, because an
+      append-only registry of declared types makes every rebuild re-walk dead
+      generations. A deployment pays none of that repeated-run effect: the walk
+      happens once per process, at `AppConfig.ready()`. It is why the series
+      ships as raw samples rather than a comparable figure.
     - **graphex's parse + validate cache shines on repeated documents** — which is
-      the real-world API pattern, where the same operations run over and over. A
-      cold *first* parse pays roughly 0.4–0.75 ms once, then it's amortized away.
+      the real-world API pattern, where the same operations run over and over.
     - **ariadne's numbers are hand-written raw resolvers.** That's idiomatic for
       ariadne, and it's fast — but it carries *none* of the framework services the
       other three provide out of the box: validated filter inputs, pagination
       wrappers, error envelopes. It's a fair comparison of what each tool *is*, not
       a like-for-like feature comparison.
-    - **The security guards are in these numbers, and they are invisible.** The
+    - **The security guards are in these numbers.** The
       [projection boundary](usage/types.md#projection-security-boundary) runs one
       shared predicate on two paths: the filter guard consults it while the
       schema builds, and the ordering allowlist consults it per request on the
-      nested window path. Counted and timed on the reference schema over three
-      runs: **46 calls costing 0.69–0.71 ms of a 9–12 ms schema build**, and
-      **17 calls costing about 0.015 ms per `nested` request — 0.13 % of that
-      operation**, against a run-to-run stddev of roughly 2.7 ms. Reproduce it
-      with `benchmarks/guard_cost.py` (same venv, same seeded database as the
-      table); the figure it prints is an upper bound, because the timer sits
-      inside the span it measures. There is no switch to turn the boundary off,
-      so nothing here is a "guards off" number and no A/B against one exists.
+      nested window path. `benchmarks/guard_cost.py` can profile that predicate
+      locally, but its diagnostic is not published as a canonical timing. There
+      is no switch to turn the boundary off, so nothing here is a "guards off"
+      number and no A/B against one exists.
 
 ### Reproduce it yourself
 
@@ -242,34 +236,36 @@ and so do the eight result artifacts every number on this page was read from —
 `results/<lib>.json` for the 1,000-author seed and `results/2x_<lib>.json` for
 the doubled one, tracked rather than gitignored precisely so you can open them
 before you run anything. The README there documents the full operation contract
-and the fairness rules; `./setup_envs.sh && ./run_all.sh` regenerates everything
-from scratch — venvs, database, seed, and the per-library result JSONs, which
-means it **overwrites** the tracked 1,000-author four. That is the point: run
-it, then `git diff benchmarks/results/` and see how far your machine lands from
-mine (a 16-core arm64 macOS 26.5 laptop on SQLite).
-
-`run_all.sh` seeds **1,000 authors**, half the dataset above. To reproduce the
-table exactly, seed the doubled set against a **fresh** database — the seed
-deletes rows but SQLite keeps counting primary keys, and the `single` operation
-addresses a fixed mid-range pk:
+and the fairness rules. Recreate the exact pinned environments, then run the
+validated median publisher from the repository root:
 
 ```bash
-cd benchmarks
-rm -f db.sqlite3
-BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
-  .venv-graphex/bin/python -m django migrate --run-syncdb
-BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
-  .venv-graphex/bin/python -m django seed_bench --authors 2000
-for lib in graphex graphene strawberry ariadne; do
-  BENCH_PREFIX=2x_ BENCH_LIB=$lib DJANGO_SETTINGS_MODULE=config.settings \
-    ".venv-$lib/bin/python" harness.py
-done
+cd benchmarks && ./setup_envs.sh && cd ..
+python benchmarks/run_publish.py --authors 1000 2000 --runs 3
 ```
 
-`BENCH_PREFIX=2x_` is what writes `results/2x_<lib>.json` — the very files the
-table above is read from. Without it the loop writes the 1,000-author names with
-2,000-author numbers inside them, and nothing complains: both seeds are valid
-runs, so only the caller knows which one this was.
+It recreates each seed, rotates library order, validates the response contract,
+versions, schema surface and SQL counts, then atomically publishes all eight
+medians. A failed raw run leaves the existing canonical artifacts untouched.
+
+The direct versions live in `benchmarks/versions.env`; the complete transitive
+freeze lives in `benchmarks/constraints.txt`. Every result stores `commit` and
+`measurement_tree` for the **actual local commit and tree that were measured**,
+plus `constraints_sha256` for the dependency graph. `delivery_base_commit` is
+only the public ancestor from which the JSON was delivered and validated; it is
+not the measured state and does **not** claim byte, tree or semantic equivalence
+with it. The benchmark README documents and CI validates that boundary without
+trying to resolve the local measurement commit.
+
+After priming uv's cache, replay without network access:
+
+```bash
+BENCH_OFFLINE=1 benchmarks/setup_envs.sh
+python benchmarks/run_publish.py --authors 1000 2000 --runs 3
+```
+
+Offline mode fails clearly when the cache lacks a required distribution instead
+of silently resolving a different environment.
 
 !!! note "One last, honest word"
     Every one of these libraries made different trade-offs, and every one serves
