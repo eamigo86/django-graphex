@@ -141,8 +141,8 @@ entries — it never caches pre-mutation data at the new, post-mutation version.
 
 The cache layer does not invalidate merely because a document parses as a
 mutation. A mutation rejected by the transport (for example, a mutation sent by
-GET) or by GraphQL validation never reaches execution and does **not** advance
-the counter.
+GET with **HTTP 405**) or by GraphQL validation never reaches execution and
+does **not** advance the counter.
 
 If an `ATOMIC_MUTATIONS` transaction is explicitly rolled back, the execution
 marker is not published and the counter is **not** advanced. In non-atomic mode,

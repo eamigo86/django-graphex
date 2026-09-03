@@ -15,6 +15,11 @@ django-graphex builds on graphql-core and Pydantic to make Django GraphQL APIs e
 3. **Allow using Directives on Queries and Fragments**
 4. **Optional GraphQL Subscriptions over Django Channels 4**
 
+!!! info "Upgrading to 3.1"
+    Start with the [3.0 → 3.1 upgrade guide](UPGRADE-3.1.md) for the cache and
+    permission changes, then read the published [3.1.0 changelog](changelog.md#310--2026-09-02)
+    for the complete 24-finding traceability table.
+
 !!! note "Subscription Support"
     GraphQL subscriptions now live here as the optional
     `django-graphex[subscriptions]` extra (built on Django Channels 4).

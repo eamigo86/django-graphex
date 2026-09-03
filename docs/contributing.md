@@ -108,8 +108,11 @@ make quality   # ruff format --check + ruff check + mypy
 
 ### Testing Standards
 
-- Write tests for all new features
-- Maintain or improve test coverage
+- Follow strict **RED → GREEN → REFACTOR** for code, documentation, workflows
+  and benchmark-harness changes.
+- Write tests for every feature and regression.
+- Keep branch coverage strictly above 95%; the root and changed-line floor is
+  **95.01%**.
 - Use descriptive test names
 - Follow the existing test structure
 
@@ -119,6 +122,31 @@ ranges. Keep those ranges identical to their entries in
 rejects missing bounds and drift between local and CI environments. Add new
 standalone CI tools, such as `diff-cover`, to the development group with both a
 minimum supported version and an upper major-version bound.
+
+### Test contract
+
+Focused RED/GREEN commands must disable the repository-wide coverage options:
+
+```bash
+uv run pytest -q --no-cov tests/test_your_feature.py
+```
+
+Never erase `addopts` with `-o addopts=""`. After the focused loop, run the full
+suite and enforce changed-line coverage from its report:
+
+```bash
+uv run pytest -q
+uvx 'diff-cover>=10.5.1,<11' coverage.xml \
+  --compare-branch=origin/main --fail-under=95.01
+```
+
+Assert the **exact exception** class and a stable message with `match=`; broad
+`pytest.raises(Exception)` checks can hide unrelated failures:
+
+```python
+with pytest.raises(ImproperlyConfigured, match="permission hook returned"):
+    build_schema()
+```
 
 ```python
 def test_django_list_object_type_pagination():
@@ -286,9 +314,24 @@ Every test in that module asserts `connection.vendor == "postgresql"`, so a
 misconfigured run cannot silently pass on SQLite. MySQL is not part of this
 reduced release gate.
 
-## Code Review Process
+## Release contract
 
-## Installed-wheel release gate
+Production publishing waits for the **complete validation graph**: the six
+Python/Django combinations, base install, quality/security, root and patch
+coverage, PostgreSQL 17, docs, playground and the release artifact.
+
+The release-artifact job builds one **immutable artifact** containing the wheel,
+sdist and `SHA256SUMS`. It checks the installed wheel outside the checkout,
+including its `site-packages` origin and `py.typed`, then every publisher reuses
+those bytes and must never rebuild them. See the full
+[release process](releasing.md).
+
+`workflow_dispatch` publishes only to TestPyPI. Production PyPI accepts only
+`refs/tags/v*` whose version matches `pyproject.toml`; Pages deploys the docs
+artifact validated before publication. A failed post-PyPI job is rerun for the
+same immutable tag—never move or recreate it.
+
+### Installed-wheel release gate
 
 CI installs the candidate wheel under `$RUNNER_TEMP` and executes its smoke
 check from outside the repository checkout with `PYTHONPATH` removed. The gate
@@ -296,6 +339,8 @@ requires an import from `site-packages`, matching package metadata, `py.typed`,
 a base install without Channels, `django.setup()`, schema compilation, and a
 real GraphQL query. The dependency audit receives that same prebuilt wheel and
 does not rebuild it.
+
+## Code Review Process
 
 ### What We Look For
 
