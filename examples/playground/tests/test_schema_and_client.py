@@ -91,6 +91,30 @@ def test_readme_nested_comments_query_validates() -> None:
     assert errors == [], [str(error) for error in errors]
 
 
+def test_auth_user_surface_is_read_only_and_minimal() -> None:
+    """The example must not publish credentials or privilege controls.
+
+    The registration mutation is purpose-built and exposes no generic User CRUD.
+    """
+    from blog.schema import schema
+
+    user_type = schema.graphql_schema.get_type("UserType")
+    assert user_type is not None
+    assert set(user_type.fields) == {"id", "username", "firstName", "lastName"}
+
+    register = schema.graphql_schema.mutation_type.fields["registerUser"]
+    assert set(register.args) == {"username", "password"}
+    assert not {
+        "isStaff",
+        "isSuperuser",
+        "groups",
+        "userPermissions",
+    } & set(register.args)
+
+    mutation_fields = set(schema.graphql_schema.mutation_type.fields)
+    assert not {"userCreate", "userUpdate", "userDelete"} & mutation_fields
+
+
 # --------------------------------------------------------------------------- #
 # 2) Permission smoke — protected field requires auth (through GraphQLView)    #
 # --------------------------------------------------------------------------- #
@@ -145,6 +169,62 @@ def test_authenticated_request_can_read_protected_field(
     assert not body.get("errors"), f"unexpected errors: {body.get('errors')}"
     assert body["data"]["me"]["username"] == "alice"
     assert str(body["data"]["me"]["id"]) == str(user.pk)
+
+
+@pytest.mark.django_db
+def test_secure_endpoint_rejects_anonymous_user_reads(client: Client) -> None:
+    """The endpoint-level auth gate must reject anonymous user reads with 403.
+
+    Args:
+        client: The Django test client issuing the anonymous request.
+    """
+    resp = client.post(
+        "/graphql/secure/",
+        data=json.dumps({"query": "{ me { id username firstName lastName } }"}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.django_db
+def test_public_registration_hashes_password_without_granting_privileges(
+    client: Client, django_user_model: type[AbstractBaseUser]
+) -> None:
+    """Registration delegates to create_user and cannot mint privileged users.
+
+    Args:
+        client: The Django test client issuing the registration mutation.
+        django_user_model: The active user model used to verify stored credentials.
+    """
+    resp = client.post(
+        "/graphql/",
+        data=json.dumps(
+            {
+                "query": """
+                    mutation {
+                      registerUser(username: "new-reader", password: "safe-password") {
+                        ok
+                        user { id username firstName lastName }
+                      }
+                    }
+                """
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert not body.get("errors"), body
+    assert body["data"]["registerUser"]["ok"] is True
+    assert body["data"]["registerUser"]["user"]["username"] == "new-reader"
+
+    user = django_user_model.objects.get(username="new-reader")
+    assert user.check_password("safe-password")
+    assert user.password != "safe-password"
+    assert user.is_staff is False
+    assert user.is_superuser is False
 
 
 @pytest.mark.django_db

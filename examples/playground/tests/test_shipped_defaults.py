@@ -69,6 +69,38 @@ def test_the_subscription_cap_ships_on() -> None:
     assert graphql_api_settings.MAX_SUBSCRIPTIONS_PER_CONNECTION == 50
 
 
+def test_response_cache_starts_disabled_with_global_invalidation() -> None:
+    """The example opts out of caching and names the safe 3.1 invalidation mode.
+
+    This preserves secure defaults for the session-authenticated playground.
+    """
+    from django.conf import settings
+
+    assert settings.DJANGO_GRAPHEX["CACHE_ACTIVE"] is False
+    assert settings.DJANGO_GRAPHEX["CACHE_INVALIDATION_SCOPE"] == "global"
+
+
+def test_default_query_cache_hook_rejects_cookie_dependent_requests() -> None:
+    """Enabling caching later must still bypass session/cart cookie contexts.
+
+    Cookie-free reads remain eligible so the test covers both hook outcomes.
+    """
+    from django.test import RequestFactory
+
+    from django_graphex.views import GraphQLView
+
+    factory = RequestFactory()
+    view = GraphQLView()
+
+    assert view.should_cache_query(factory.get("/graphql/")) is True
+    assert (
+        view.should_cache_query(
+            factory.get("/graphql/", headers={"cookie": "cart=alice"})
+        )
+        is False
+    )
+
+
 @pytest.mark.django_db
 def test_a_form_encoded_post_without_the_header_is_refused(client: Client) -> None:
     """Assert a CORS-simple POST carrying no "X-Requested-With" is a 403.
