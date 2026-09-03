@@ -85,10 +85,10 @@ _FIELD_DESCRIPTOR_TYPES = (
 
 
 def _django_model_field_type() -> type | None:
-    """Return ``django.db.models.Field`` (imported lazily), or ``None`` if absent.
+    """Return django.db.models.Field (imported lazily), or None if absent.
 
     Imported LAZILY (design decision #4 — preserve the lazy-defer convention: no
-    top-level ``django.db`` import in ``base.py``). Tolerates ``ImportError`` so a
+    top-level django.db import in base.py). Tolerates ImportError so a
     non-Django import context degrades gracefully to "no guard" rather than
     crashing at module import.
     """
@@ -100,15 +100,15 @@ def _django_model_field_type() -> type | None:
 
 
 def _ignored_types_with_django_field() -> tuple[type, ...]:
-    """``_FIELD_DESCRIPTOR_TYPES`` plus ``django.db.models.Field`` for Pydantic.
+    """_FIELD_DESCRIPTOR_TYPES plus django.db.models.Field for Pydantic.
 
-    Adding Django's ``Field`` to Pydantic ``ignored_types`` stops Pydantic's
-    metaclass from raising its cryptic ``PydanticUserError`` ('non-annotated
-    attribute') the instant a ``name = models.CharField(...)`` lands on the body —
-    BEFORE ``__init_subclass__`` (and thus our loud guard) ever runs. With it
-    ignored, the class body evaluates and ``__init_subclass__``'s
-    ``_guard_django_model_field_on_body`` scan fires the LOUD, actionable
-    ``TypeError`` instead.
+    Adding Django's Field to Pydantic ignored_types stops Pydantic's
+    metaclass from raising its cryptic PydanticUserError ('non-annotated
+    attribute') the instant a name = models.CharField(...) lands on the body —
+    BEFORE __init_subclass__ (and thus our loud guard) ever runs. With it
+    ignored, the class body evaluates and __init_subclass__'s
+    _guard_django_model_field_on_body scan fires the LOUD, actionable
+    TypeError instead.
     """
     django_field = _django_model_field_type()
     if django_field is None:  # pragma: no cover - Django always present here
@@ -117,14 +117,14 @@ def _ignored_types_with_django_field() -> tuple[type, ...]:
 
 
 def _guard_django_model_field_on_body(name: str, value: object) -> None:
-    """Raise a LOUD ``TypeError`` for a ``django.db.models.Field`` on a type body.
+    """Raise a LOUD TypeError for a django.db.models.Field on a type body.
 
-    The ObjectType-body twin of ``_args._guard_django_model_field``: catches
-    ``name = models.CharField(max_length=10)`` on an ``ObjectType`` / ``Mutation``
-    class body (the likely mistake being an import from ``django.db.models``
-    instead of ``django_graphex.core``). Django ``Field`` is resolved LAZILY to
+    The ObjectType-body twin of _args._guard_django_model_field: catches
+    name = models.CharField(max_length=10) on an ObjectType / Mutation
+    class body (the likely mistake being an import from django.db.models
+    instead of django_graphex.core). Django Field is resolved LAZILY to
     preserve the lazy-defer convention. Intentionally NOT deduplicated with the
-    ``native_arg`` site (design decision #4) — each entry point fails on its own.
+    native_arg site (design decision #4) — each entry point fails on its own.
     """
     django_field = _django_model_field_type()
     if django_field is not None and isinstance(value, django_field):
@@ -137,25 +137,25 @@ def _guard_django_model_field_on_body(name: str, value: object) -> None:
 
 
 def _trim_docstring(docstring: str | None) -> str | None:
-    """Graphene-free re-implementation of ``graphene.utils.trim_docstring``.
+    """Graphene-free re-implementation of graphene.utils.trim_docstring.
 
-    graphene's helper is literally ``inspect.cleandoc(docstring) if docstring
-    else None`` (graphene/utils/trim_docstring.py). We must not import graphene
+    graphene's helper is literally inspect.cleandoc(docstring) if docstring
+    else None (graphene/utils/trim_docstring.py). We must not import graphene
     in the native runtime, so this replicates it byte-for-byte with the stdlib:
-    PEP 257 indentation cleanup via ``inspect.cleandoc``, returning ``None`` for
-    a falsy (``None`` / empty) docstring so ``_meta.description`` stays ``None``
+    PEP 257 indentation cleanup via inspect.cleandoc, returning None for
+    a falsy (None / empty) docstring so _meta.description stays None
     rather than an empty string (graphene parity).
     """
     return cleandoc(docstring) if docstring else None
 
 
 def _props(meta_cls: type) -> dict[str, Any]:
-    """Graphene-free re-implementation of ``graphene.utils.props.props``.
+    """Graphene-free re-implementation of graphene.utils.props.props.
 
-    Returns the user-declared attributes of a ``Meta`` class as a dict,
-    skipping the attributes every bare class already carries (``__dict__``,
-    ``__weakref__``, dunders, etc.). This matches graphene's behavior of
-    turning a ``class Meta: ...`` body into keyword options.
+    Returns the user-declared attributes of a Meta class as a dict,
+    skipping the attributes every bare class already carries (__dict__,
+    __weakref__, dunders, etc.). This matches graphene's behavior of
+    turning a class Meta: ... body into keyword options.
     """
 
     class _Old:
@@ -174,14 +174,14 @@ def _collect_descriptor_fields(cls: type) -> dict[str, Any]:
 
     Walks the MRO (base-first, so subclass declarations win on name collisions)
     and picks up every attribute whose VALUE is a NATIVE field descriptor
-    (``NativeMountedField`` / ``NativeField`` / a raw graphql-core ``GraphQLField``
-    — see ``_FIELD_DESCRIPTOR_TYPES``).
+    (NativeMountedField / NativeField / a raw graphql-core GraphQLField
+    — see _FIELD_DESCRIPTOR_TYPES).
 
-    The descriptors are returned AS-IS; the native compiler reads ``_meta.fields``
-    via ``getattr(...)`` and inspects each value's ``type`` / kind, so the raw
+    The descriptors are returned AS-IS; the native compiler reads _meta.fields
+    via getattr(...) and inspects each value's type / kind, so the raw
     descriptor is the right currency here. S8h dropped the graphene
-    ``UnmountedType`` / ``MountedType`` recognition (graphene descriptors on a
-    native type are no longer supported in 2.0; users migrate to ``field()``).
+    UnmountedType / MountedType recognition (graphene descriptors on a
+    native type are no longer supported in 2.0; users migrate to field()).
     """
     fields: dict[str, Any] = {}
     for base in reversed(cls.__mro__):
@@ -192,25 +192,25 @@ def _collect_descriptor_fields(cls: type) -> dict[str, Any]:
 
 
 def _mount_descriptor_fields(cls: type) -> dict[str, Any]:
-    """Collect class-body NATIVE field descriptors into ``{name: descriptor}``.
+    """Collect class-body NATIVE field descriptors into {name: descriptor}.
 
     Walks the MRO base-first (so a subclass declaration wins on a name collision)
-    and collects every NATIVE field descriptor: a ``NativeMountedField`` (the
-    re-parented ``Django*Field`` classes, e.g. ``DjangoListObjectField``), a
-    ``NativeField`` (a class-body ``field()`` declaration, e.g. the native
-    ``ErrorType``), or a raw graphql-core ``GraphQLField`` (a mounted mutation
-    field on a native root). Each is ALREADY field-shaped — it exposes ``.type`` /
-    ``.args`` / ``.wrap_resolve`` (the currency the native declared-field compiler
+    and collects every NATIVE field descriptor: a NativeMountedField (the
+    re-parented Django*Field classes, e.g. DjangoListObjectField), a
+    NativeField (a class-body field() declaration, e.g. the native
+    ErrorType), or a raw graphql-core GraphQLField (a mounted mutation
+    field on a native root). Each is ALREADY field-shaped — it exposes .type /
+    .args / .wrap_resolve (the currency the native declared-field compiler
     reads) — so it is merged in AS-IS.
 
-    S8h: the graphene-mount half (``yank_fields_from_attrs(base.__dict__,
-    _as=Field)``) was removed. It existed only to mount graphene ``UnmountedType``
-    / ``MountedType`` descriptors declared on a native type into a graphene
-    ``Field``; the 2.0 contract drops graphene-descriptor support, so that path is
-    dead and ``base.py`` is now graphene-free (no lazy graphene import either).
+    S8h: the graphene-mount half (yank_fields_from_attrs(base.__dict__,
+    _as=Field)) was removed. It existed only to mount graphene UnmountedType
+    / MountedType descriptors declared on a native type into a graphene
+    Field; the 2.0 contract drops graphene-descriptor support, so that path is
+    dead and base.py is now graphene-free (no lazy graphene import either).
     Recognizing the native currency here is the MOUNT half of the silent-drop
-    guard — without it a class-body ``field()`` / mounted ``GraphQLField`` would
-    vanish from ``_meta.fields``.
+    guard — without it a class-body field() / mounted GraphQLField would
+    vanish from _meta.fields.
     """
     fields: dict[str, Any] = {}
     for base in reversed(cls.__mro__):
@@ -226,9 +226,9 @@ def _mount_descriptor_fields(cls: type) -> dict[str, Any]:
 
 
 class _GdxGetItemMixin:
-    """Mixin that adds ``data["key"]`` access to Pydantic model instances.
+    """Mixin that adds data["key"] access to Pydantic model instances.
 
-    ``model_dump()`` is called once per ``__getitem__`` call, which is
+    model_dump() is called once per __getitem__ call, which is
     acceptable at resolve time (not a hot path).
     """
 
@@ -243,16 +243,16 @@ class _GdxGetItemMixin:
 
 @dataclass
 class _GdxInputOptions:
-    """Options object stored on ``InputType`` subclasses after compilation.
+    """Options object stored on InputType subclasses after compilation.
 
-    Accessed via ``cls._meta.graphql_input_type``.
+    Accessed via cls._meta.graphql_input_type.
     """
 
     graphql_input_type: Any = None  # set by compile_all_inputs()
 
 
 class _GdxInputMeta:
-    """Simple proxy over ``_GdxInputOptions`` to expose ``graphql_input_type``."""
+    """Simple proxy over _GdxInputOptions to expose graphql_input_type."""
 
     __slots__ = ("_opts",)
 
@@ -413,14 +413,14 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
     )
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Graphene-free ``SubclassWithMeta`` driver (see class docstring).
+        """Graphene-free SubclassWithMeta driver (see class docstring).
 
-        Mirrors ``graphene.utils.subclass_with_meta.SubclassWithMeta.__init_subclass__``
-        plus the field-collection ``ObjectType.__init_subclass_with_meta__`` did.
-        Runs for EVERY ``ObjectType`` subclass; for plain subclasses with no
-        ``Meta`` and no ``__init_subclass_with_meta__`` it is a clean no-op
-        (which is exactly what ``InputType`` and its subclasses need — they keep
-        their own Pydantic/``_meta`` flow untouched below).
+        Mirrors graphene.utils.subclass_with_meta.SubclassWithMeta.__init_subclass__
+        plus the field-collection ObjectType.__init_subclass_with_meta__ did.
+        Runs for EVERY ObjectType subclass; for plain subclasses with no
+        Meta and no __init_subclass_with_meta__ it is a clean no-op
+        (which is exactly what InputType and its subclasses need — they keep
+        their own Pydantic/_meta flow untouched below).
         """
         super().__init_subclass__(**kwargs)
 
@@ -486,40 +486,40 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
         _meta: Any = None,
         **_kwargs: Any,
     ) -> None:
-        """Graphene-free terminal of the ``__init_subclass_with_meta__`` chain.
+        """Graphene-free terminal of the __init_subclass_with_meta__ chain.
 
-        Collapses graphene's two-step ``ObjectType.__init_subclass_with_meta__``
-        + ``BaseType.__init_subclass_with_meta__`` chain into ONE graphene-free
-        endpoint, WITHOUT graphene's ``freeze()`` (the whole point of S6a/S6b is a
-        MUTABLE ``_meta`` so later slices plain-assign instead of the old
-        ``object.__setattr__`` workaround).
+        Collapses graphene's two-step ObjectType.__init_subclass_with_meta__
+        + BaseType.__init_subclass_with_meta__ chain into ONE graphene-free
+        endpoint, WITHOUT graphene's freeze() (the whole point of S6a/S6b is a
+        MUTABLE _meta so later slices plain-assign instead of the old
+        object.__setattr__ workaround).
 
-        Two call shapes reach here (both via ``super(cls, cls)`` dispatch in
-        ``__init_subclass__``, mirroring graphene's ``SubclassWithMeta``):
+        Two call shapes reach here (both via super(cls, cls) dispatch in
+        __init_subclass__, mirroring graphene's SubclassWithMeta):
 
         1. **Plain subclass** (no concrete driver in the MRO above this base): the
-           dispatcher calls this terminal directly with ``_meta=None``. We build a
-           fresh mutable ``NativeObjectTypeOptions``, collect class-body graphene
-           field descriptors into ``_meta.fields`` (graphene's
-           ``yank_fields_from_attrs`` equivalent), then set name/description and
-           assign. This is graphene ``ObjectType.__init_subclass_with_meta__``'s
-           job for a plain ``ObjectType``.
+           dispatcher calls this terminal directly with _meta=None. We build a
+           fresh mutable NativeObjectTypeOptions, collect class-body graphene
+           field descriptors into _meta.fields (graphene's
+           yank_fields_from_attrs equivalent), then set name/description and
+           assign. This is graphene ObjectType.__init_subclass_with_meta__'s
+           job for a plain ObjectType.
 
-        2. **Re-parented ``Django*`` driver** (``DjangoObjectType`` /
-           ``DjangoListObjectType`` and S6c-S6f): the driver builds its ``_meta``
+        2. **Re-parented Django* driver** (DjangoObjectType /
+           DjangoListObjectType and S6c-S6f): the driver builds its _meta
            fully (model/registry/fields/...) and ends with
-           ``super().__init_subclass_with_meta__(_meta=_meta, interfaces=...,
-           **options)``. Here ``_meta`` is non-None, so we MERGE any collected
+           super().__init_subclass_with_meta__(_meta=_meta, interfaces=...,
+           **options). Here _meta is non-None, so we MERGE any collected
            descriptor fields the driver did not already account for, default the
            interfaces, then set name/description and assign.
 
-        graphene's ``BaseType`` terminal does exactly: ``_meta.name = name or
-        cls.__name__``; ``_meta.description = description or
-        trim_docstring(cls.__doc__)``; ``freeze()``; ``cls._meta = _meta``. We
-        replicate that minus ``freeze()``. graphene's ``ObjectType`` step also
-        merges interface fields + yanked attrs and sets ``interfaces`` /
-        ``possible_types`` / ``default_resolver``; the native compiler reads
-        ``_meta.fields`` and ``_meta.interfaces``, so we replicate the
+        graphene's BaseType terminal does exactly: _meta.name = name or
+        cls.__name__; _meta.description = description or
+        trim_docstring(cls.__doc__); freeze(); cls._meta = _meta. We
+        replicate that minus freeze(). graphene's ObjectType step also
+        merges interface fields + yanked attrs and sets interfaces /
+        possible_types / default_resolver; the native compiler reads
+        _meta.fields and _meta.interfaces, so we replicate the
         field-merge + interface-default and leave possible_types/default_resolver
         at their Options defaults.
         """
@@ -621,11 +621,11 @@ _gdx_input_registry: list[type["InputType"]] = []
 
 @dataclass
 class _GdxOutputEntry:
-    """Registration record stored in ``_gdx_output_registry``.
+    """Registration record stored in _gdx_output_registry.
 
-    Created by ``DjangoObjectType.__init_subclass_with_meta__`` (and the
-    ``DjangoListObjectType`` equivalent).
-    ``compile_all_outputs()`` reads these entries to perform the deferred
+    Created by DjangoObjectType.__init_subclass_with_meta__ (and the
+    DjangoListObjectType equivalent).
+    compile_all_outputs() reads these entries to perform the deferred
     compilation at app-ready time.
     """
 
@@ -854,7 +854,7 @@ def is_forking() -> bool:
 class _forking_build:
     """Context manager that marks a forked-schema build in progress (B5).
 
-    Raises ``_forking_depth`` for the duration so class-def auto-creation of
+    Raises _forking_depth for the duration so class-def auto-creation of
     pair-scoped types skips the GLOBAL registry writes. Re-entrant (depth-counted)
     so nested fork operations are safe.
     """
@@ -933,15 +933,15 @@ class InputType(ObjectType):
     """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Register the subclass and attach its input ``_meta``.
+        """Register the subclass and attach its input _meta.
 
-        ``super().__init_subclass__()`` runs the ``ObjectType`` graphene-free
-        driver first (a clean no-op for plain ``InputType`` subclasses: no
-        ``Meta``, no ``__init_subclass_with_meta__``, no graphene descriptors).
-        That driver may seed a ``NativeObjectTypeOptions`` ``_meta``; this method
-        then OVERWRITES it with the input-specific ``_GdxInputMeta`` so the
-        existing ``cls._meta.graphql_input_type`` flow (populated later by
-        ``compile_all_inputs``) is unchanged. The InputType behavior is therefore
+        super().__init_subclass__() runs the ObjectType graphene-free
+        driver first (a clean no-op for plain InputType subclasses: no
+        Meta, no __init_subclass_with_meta__, no graphene descriptors).
+        That driver may seed a NativeObjectTypeOptions _meta; this method
+        then OVERWRITES it with the input-specific _GdxInputMeta so the
+        existing cls._meta.graphql_input_type flow (populated later by
+        compile_all_inputs) is unchanged. The InputType behavior is therefore
         identical to before S6a.
         """
         super().__init_subclass__(**kwargs)
