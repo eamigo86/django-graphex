@@ -132,3 +132,16 @@ def test_flat_contract_rejects_partial_fixture() -> None:
     }
     with pytest.raises(AssertionError, match="expected 50 posts"):
         validate_response("strawberry", "flat_list", response)
+
+
+def test_create_contract_uses_the_active_doubled_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Derive the expected mutation ID from the selected seed size.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate process state.
+    """
+    monkeypatch.setenv("BENCH_AUTHORS", "2000")
+    response = {"data": {"createComment": {"id": "100001"}}}
+    validate_response("strawberry", "create_comment", response)

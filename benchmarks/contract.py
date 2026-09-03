@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import os
 
 LIBRARIES = {"graphex", "graphene", "strawberry", "ariadne"}
 POSTS_PER_AUTHOR = 10
@@ -11,6 +12,10 @@ NESTED_AUTHORS = 20
 FLAT_POSTS = 50
 TOTAL_POSTS = 10_000
 SINGLE_POST_ID = 5_000
+
+
+def _seeded_comment_count() -> int:
+    return int(os.environ.get("BENCH_AUTHORS", "1000")) * POSTS_PER_AUTHOR * COMMENTS_PER_POST
 
 
 def _pk(value: object) -> int:
@@ -103,7 +108,7 @@ def _validate_create(data: dict, library: str) -> None:
     if library != "strawberry":
         assert payload["ok"], payload
         payload = payload["comment"]
-    assert _pk(payload["id"]) == TOTAL_POSTS * COMMENTS_PER_POST + 1
+    assert _pk(payload["id"]) == _seeded_comment_count() + 1
 
 
 def validate_response(library: str, operation: str, response: dict) -> None:

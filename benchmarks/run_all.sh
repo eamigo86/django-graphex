@@ -26,8 +26,6 @@ echo ">> Seeding (this should take well under 2 minutes)"
 time BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
   "$GRAPHEX_PY" -m django seed_bench
 
-mkdir -p "$HERE/results"
-
 # Warm EVERY virtualenv equally before measuring any of them. The seeding above
 # runs under the graphex interpreter, which leaves graphex's imports and file
 # cache hot while the others are still cold -- and ``schema_import_ms`` is a
@@ -56,8 +54,10 @@ for lib in ${LIBS[@]}; do
   fi
   echo
   echo "=== Running harness for $lib ==="
-  BENCH_LIB="$lib" DJANGO_SETTINGS_MODULE=config.settings "$venv_py" harness.py
+  BENCH_LIB="$lib" BENCH_AUTHORS=1000 \
+    BENCH_OUTPUT_DIR="$HERE/scratch/run_all" \
+    DJANGO_SETTINGS_MODULE=config.settings "$venv_py" harness.py
 done
 
 echo
-echo ">> Done. Results in $HERE/results/"
+echo ">> Done. Diagnostic results in $HERE/scratch/run_all/"

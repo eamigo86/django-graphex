@@ -184,7 +184,7 @@ the timer and SQL capture, so isolation does not become part of the result.
 ## What the harness records
 
 `harness.py` runs inside a library's venv (`BENCH_LIB` selects it) and writes
-`results/<lib>.json`:
+`scratch/<lib>.json` unless the publisher assigns a raw-run directory:
 
 ```jsonc
 {
@@ -225,10 +225,13 @@ the first response. Every one of those requests is rolled back independently.
 # Strict offline replay (fails if uv's local cache/runtime is incomplete).
 BENCH_OFFLINE=1 ./setup_envs.sh
 
-# 2. Fresh DB + seed once, then run every available library's harness.
+# 2. Diagnostic single run (ignored scratch output; never canonical).
 ./run_all.sh                    # or: ./run_all.sh graphex
 
-# Results land in results/<lib>.json
+# 3. Publish from the repository root after every invariant passes.
+(cd .. && python benchmarks/run_publish.py --authors 1000 2000 --runs 3)
+
+# Diagnostic results land in scratch/run_all/<lib>.json.
 ```
 
 Run a single library manually:
@@ -237,32 +240,12 @@ Run a single library manually:
 BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings .venv-graphex/bin/python harness.py
 ```
 
-The published table in [`docs/why.md`](../docs/why.md) uses the **doubled**
-dataset (`--authors 2000`), which `run_all.sh` does not seed. Reseeding for it
-requires a **fresh database**, not just `seed_bench --authors 2000`: the command
-deletes rows but SQLite keeps counting primary keys, so the `single` operation's
-fixed pk `5000` would address a row that no longer exists and every library's
-`validate()` would abort.
-
-`BENCH_PREFIX` is what makes this recipe produce the artifacts the page cites
-rather than overwriting the 1,000-author four: the harness cannot tell which
-seed it is measuring, so the caller names the file.
-
-```bash
-rm -f db.sqlite3
-BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
-  .venv-graphex/bin/python -m django migrate --run-syncdb
-BENCH_LIB=graphex DJANGO_SETTINGS_MODULE=config.settings \
-  .venv-graphex/bin/python -m django seed_bench --authors 2000
-for lib in graphex graphene strawberry ariadne; do
-  BENCH_PREFIX=2x_ BENCH_LIB=$lib DJANGO_SETTINGS_MODULE=config.settings \
-    ".venv-$lib/bin/python" harness.py
-done
-```
-
-Leave `BENCH_PREFIX` out and the loop writes `results/<lib>.json` — the
-1,000-author names — with 2,000-author numbers inside them. That is the one
-mistake this recipe cannot detect for you, because both seeds are valid runs.
+The publisher recreates the database for each seed, warms every environment,
+runs three repetitions with a rotating library order, and verifies versions,
+dataset identity, the complete response contract, surface, SQL counts and
+provenance. Only after all 24 raw runs pass does it median the timing statistics
+and replace the eight canonical JSON files. Raw runs stay under ignored
+`scratch/publish/`; a failure leaves every existing canonical file untouched.
 
 Python is fixed to the canonical `3.12.11` patch release. Each artifact records
 the measured Git commit and the SHA-256 of
@@ -278,7 +261,9 @@ benchmarks/
 ├── .gitignore
 ├── README.md                         # this file (contract + fairness rules)
 ├── setup_envs.sh                     # per-lib venvs, identical Django pin
-├── run_all.sh                        # fresh DB, seed once, run all harnesses
+├── constraints.txt                   # exact union freeze for all four venvs
+├── run_all.sh                        # diagnostic single run -> scratch/
+├── run_publish.py                    # validated median publisher -> results/
 ├── harness.py                        # the measurement loop (runs in a lib venv)
 ├── guard_cost.py                     # what the projection boundary costs (docs/why.md cites it)
 ├── config/
@@ -304,9 +289,8 @@ not a citation, and these files are 1.7 kB each — cheap honesty.
 
 `.gitignore` therefore ignores `results/*` and re-includes exactly those eight.
 Anything else you leave in there (summaries, ad-hoc reruns) stays ignored.
-Re-running `run_all.sh` **overwrites** the tracked 1,000-author four with your
-own machine's numbers, which will show up as a plain `git diff` — that is the
-intended way to disagree with the published table.
+`run_all.sh` can never overwrite these files. Only `run_publish.py`, after both
+datasets and every invariant pass, replaces the canonical set.
 
 ## Seeded dataset
 
