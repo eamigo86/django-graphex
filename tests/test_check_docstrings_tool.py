@@ -67,6 +67,7 @@ def codes_for(
     filename: str = "sample.py",
     *,
     strict_content: bool = False,
+    strict_public: bool = False,
 ) -> list[str]:
     """Run the checker on a source string and return the rule codes fired.
 
@@ -77,6 +78,7 @@ def codes_for(
         source: Python source text to analyze.
         filename: Virtual filename used for module-name heuristics.
         strict_content: Whether content-only rules cover every docstring owner.
+        strict_public: Whether the opt-in exact public contract is enforced.
 
     Returns:
         codes: The rule codes (e.g. "DOC001") in the order reported.
@@ -85,6 +87,7 @@ def codes_for(
         source,
         filename,
         strict_content=strict_content,
+        strict_public=strict_public,
     )
     return [v.code for v in violations]
 
@@ -477,11 +480,10 @@ def test_property_getter_requires_returns() -> None:
     assert "DOC004" in codes_for(source)
 
 
-def test_property_setter_is_exempt_from_returns() -> None:
-    """A property setter is exempt from Args and Returns requirements.
+def test_property_setter_strict_public_requires_args_not_returns() -> None:
+    """A setter requires Args only when the strict public mode is enabled.
 
-    Setter signatures carry a value parameter and a None return that should
-    not be flagged.
+    Its None return remains exempt from DOC004 in both modes.
     """
     source = (
         '"""Module."""\n\n\n'
@@ -509,6 +511,122 @@ def test_property_setter_is_exempt_from_returns() -> None:
     codes = codes_for(source)
     assert "DOC003" not in codes
     assert "DOC004" not in codes
+    strict = codes_for(source, strict_public=True)
+    assert "DOC003" in strict
+    assert {"DOC004", "DOC101"}.isdisjoint(strict)
+
+
+def test_strict_public_checks_private_symbol_exported_in_all() -> None:
+    """Strict mode checks private top-level names exported in __all__.
+
+    Explicit exports define public surface regardless of naming."""
+    source = (
+        '"""Module."""\n\n'
+        '__all__ = ["_exported"]\n\n\n'
+        "def _exported(value):\n"
+        "    return value\n"
+    )
+
+    assert codes_for(source) == []
+    assert {"DOC001", "DOC101"}.issubset(codes_for(source, strict_public=True))
+
+
+def test_strict_public_module_function_self_is_not_a_receiver() -> None:
+    """A module-level self parameter requires a hint and Args entry.
+
+    Only methods can own receivers."""
+    source = (
+        '"""Module."""\n\n\n'
+        "def render(self) -> None:\n"
+        '    """Render the value.\n\n    More detail.\n    """\n'
+        "    return None\n"
+    )
+
+    assert codes_for(source) == []
+    strict = codes_for(source, strict_public=True)
+    assert "DOC003" in strict
+    assert "DOC101" in strict
+
+
+def test_strict_public_staticmethod_self_is_not_a_receiver() -> None:
+    """A staticmethod self parameter requires a hint and Args entry.
+
+    Static methods have no implicit receiver."""
+    source = (
+        '"""Module."""\n\n\n'
+        "class Parser:\n"
+        '    """Parse values.\n\n    More detail.\n    """\n'
+        "    @staticmethod\n"
+        "    def parse(self) -> None:\n"
+        '        """Parse one value.\n\n        More detail.\n        """\n'
+        "        return None\n"
+    )
+
+    assert codes_for(source) == []
+    strict = codes_for(source, strict_public=True)
+    assert "DOC003" in strict
+    assert "DOC101" in strict
+
+
+@pytest.mark.parametrize(
+    "args_section",
+    [
+        "    Args:\n        first: The first value.",
+        "    Arguments:\n        first: First.\n        second: Second.",
+        "    Args:\n",
+        "    Args:\n        first: First.\n        second: Second.\n        extra: Extra.",
+    ],
+    ids=["incomplete", "arguments-alias", "empty", "extra"],
+)
+def test_strict_public_rejects_inexact_args_sections(args_section: str) -> None:
+    """Reject an Args section that does not match the signature exactly.
+
+    Args:
+        args_section: Candidate Args section body."""
+    source = (
+        '"""Module."""\n\n\n'
+        "def combine(first: int, second: int) -> None:\n"
+        f'    """Combine values.\n\n{args_section}\n    """\n'
+        "    return None\n"
+    )
+
+    assert "DOC003" not in codes_for(source)
+    assert "DOC003" in codes_for(source, strict_public=True)
+
+
+def test_strict_public_args_include_variadic_parameter_names() -> None:
+    """Exact Args validation includes both variadic parameter spellings.
+
+    Star prefixes remain part of the documented names."""
+    source = (
+        '"""Module."""\n\n\n'
+        "def collect(*args: object, **kwargs: object) -> None:\n"
+        '    """Collect values.\n\n    Args:\n'
+        "        *args: Positional values.\n"
+        '        **kwargs: Keyword values.\n    """\n'
+        "    return None\n"
+    )
+
+    assert "DOC003" not in codes_for(source, strict_public=True)
+
+
+def test_strict_public_distinguishes_real_reexport_stub() -> None:
+    """Strict mode identifies stubs by syntax, never statement count.
+
+    Executable assignments make an initializer a real module."""
+    imports = "".join(f"from .mod{i} import Name{i}\n" for i in range(12))
+    false_stub = "from .mod import Name\nvalue = 1\n"
+
+    assert "DOC001" not in codes_for(
+        imports,
+        filename="__init__.py",
+        strict_public=True,
+    )
+    assert "DOC001" in codes_for(
+        false_stub,
+        filename="__init__.py",
+        strict_public=True,
+    )
 
 
 def test_overload_is_exempt_from_args_returns() -> None:
@@ -598,7 +716,7 @@ def test_cli_self_check_is_clean() -> None:
     The tool must obey its own convention with no violations.
     """
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), str(SCRIPT_PATH)],
+        [sys.executable, str(SCRIPT_PATH), str(SCRIPT_PATH), "--strict-public"],
         capture_output=True,
         text=True,
     )
