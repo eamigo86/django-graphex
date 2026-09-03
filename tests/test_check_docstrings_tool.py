@@ -162,7 +162,7 @@ def test_complete_function_docstring_is_clean() -> None:
         '    """\n'
         "    return a * 2\n"
     )
-    assert codes_for(source) == []
+    assert codes_for(source) == codes_for(source, strict_public=True) == []
 
 
 def test_missing_args_section_fires_doc003() -> None:
@@ -627,6 +627,170 @@ def test_strict_public_distinguishes_real_reexport_stub() -> None:
         filename="__init__.py",
         strict_public=True,
     )
+
+
+def test_strict_public_requires_yields_for_generator() -> None:
+    """A generator uses a non-empty Yields section, never Returns.
+
+    The legacy alias remains accepted outside strict mode.
+    """
+    source = (
+        '"""Module."""\n\nfrom collections.abc import Iterator\n\n\n'
+        "def values() -> Iterator[int]:\n"
+        '    """Yield values.\n\n    Returns:\n        item: One value.\n    """\n'
+        "    yield 1\n"
+    )
+
+    assert "DOC004" not in codes_for(source)
+    assert "DOC004" in codes_for(source, strict_public=True)
+    valid = source.replace("Returns:", "Yields:")
+    assert "DOC004" not in codes_for(valid, strict_public=True)
+
+
+def test_strict_public_rejects_yields_for_regular_return() -> None:
+    """A regular return requires Returns rather than the legacy Yields alias.
+
+    Strict mode selects the section from callable structure.
+    """
+    source = (
+        '"""Module."""\n\n\ndef value() -> int:\n'
+        '    """Return a value.\n\n    Yields:\n        result: The value.\n    """\n'
+        "    return 1\n"
+    )
+
+    assert "DOC004" not in codes_for(source)
+    assert "DOC004" in codes_for(source, strict_public=True)
+
+
+@pytest.mark.parametrize("annotation", ["NoReturn", "typing.Never"])
+def test_strict_public_terminal_return_needs_no_result_section(
+    annotation: str,
+) -> None:
+    """NoReturn and Never callables require no Returns or Yields section.
+
+    Args:
+        annotation: Terminal return annotation spelling.
+    """
+    source = (
+        '"""Module."""\n\nimport typing\nfrom typing import NoReturn\n\n\n'
+        f"def stop() -> {annotation}:\n"
+        '    """Stop execution.\n\n    Raises:\n'
+        '        RuntimeError: Always raised.\n    """\n'
+        '    raise RuntimeError("stop")\n'
+    )
+
+    assert "DOC004" in codes_for(source)
+    strict = codes_for(source, strict_public=True)
+    assert {"DOC004", "DOC005", "DOC101"}.isdisjoint(strict)
+
+
+@pytest.mark.parametrize(
+    ("signature", "section", "body"),
+    [
+        ("def value() -> int:", "Returns", "    return 1"),
+        (
+            "def values() -> Iterator[int]:",
+            "Yields",
+            "    yield 1",
+        ),
+    ],
+)
+def test_strict_public_rejects_empty_result_sections(
+    signature: str,
+    section: str,
+    body: str,
+) -> None:
+    """Strict Returns and Yields sections contain meaningful body text.
+
+    Args:
+        signature: Callable signature under test.
+        section: Empty result-section name.
+        body: Callable body matching the result behavior.
+    """
+    source = (
+        '"""Module."""\n\nfrom collections.abc import Iterator\n\n\n'
+        f"{signature}\n"
+        f'    """Produce a value.\n\n    {section}:\n    """\n'
+        f"{body}\n"
+    )
+
+    assert "DOC004" not in codes_for(source)
+    assert "DOC004" in codes_for(source, strict_public=True)
+
+
+def test_strict_public_ignores_raises_in_nested_scopes() -> None:
+    """Nested functions and classes do not impose Raises on their owner.
+
+    Each nested scope owns its own exceptions.
+    """
+    source = (
+        '"""Module."""\n\n\ndef outer() -> None:\n'
+        '    """Run the outer operation.\n\n    More detail.\n    """\n'
+        "    def nested() -> None:\n"
+        '        raise ValueError("nested")\n'
+        "    class Nested:\n"
+        "        def method(self) -> None:\n"
+        '            raise TypeError("nested class")\n'
+        "    return None\n"
+    )
+
+    assert "DOC005" in codes_for(source)
+    assert "DOC005" not in codes_for(source, strict_public=True)
+
+
+def test_strict_public_requires_nonempty_raises() -> None:
+    """A direct raise requires meaningful Raises section content.
+
+    A bare header is incomplete Google style.
+    """
+    source = (
+        '"""Module."""\n\n\ndef fail() -> None:\n'
+        '    """Fail.\n\n    Raises:\n    """\n'
+        '    raise ValueError("bad")\n'
+    )
+
+    assert "DOC005" not in codes_for(source)
+    assert "DOC005" in codes_for(source, strict_public=True)
+
+
+@pytest.mark.parametrize(
+    "callable_source",
+    [
+        (
+            "def consume(*args: Annotated[object, Field(default_factory=tuple)]) -> None:\n"
+            '    """Consume values.\n\n    Args:\n'
+            "        *args (Annotated[object, Field(default_factory=tuple)]): Values.\n"
+            '    """\n'
+            "    return None\n"
+        ),
+        (
+            "def mapping() -> dict[str, int]:\n"
+            '    """Return a mapping.\n\n    Returns:\n'
+            '        dict[str, int]: The mapping.\n    """\n'
+            "    return {}\n"
+        ),
+        (
+            "def numbers() -> Iterator[int]:\n"
+            '    """Yield numbers.\n\n    Yields:\n'
+            '        int: One number.\n    """\n'
+            "    yield 1\n"
+        ),
+    ],
+)
+def test_strict_public_detects_structural_type_repetition(
+    callable_source: str,
+) -> None:
+    """Strict typed sections reject signature types repeated as prose.
+
+    Args:
+        callable_source: Callable with one structurally repeated type.
+    """
+    source = (
+        f'"""Module."""\n\nfrom collections.abc import Iterator\n\n\n{callable_source}'
+    )
+
+    assert "DOC102" not in codes_for(source)
+    assert "DOC102" in codes_for(source, strict_public=True)
 
 
 def test_overload_is_exempt_from_args_returns() -> None:
