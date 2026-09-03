@@ -26,8 +26,10 @@ EXPECTED_VERSIONS = {
     "strawberry": {"strawberry-graphql-django": "0.86.4", "django": "6.0.6", "strawberry-graphql": "0.320.1", "graphql-core": "3.2.11"},
     "ariadne": {"ariadne": "1.1.0", "ariadne-django": "0.3.0", "django": "6.0.6", "graphql-core": "3.2.11"},
 }
+# Query capture intentionally excludes the harness's outer BEGIN/ROLLBACK. The
+# GraphEx mutation owns SAVEPOINT, INSERT, deferred-FK PRAGMA and RELEASE.
 EXPECTED_SQL = {
-    "graphex": dict(zip(OPERATIONS, (1, 3, 1, 1, 1), strict=True)),
+    "graphex": dict(zip(OPERATIONS, (1, 3, 1, 1, 4), strict=True)),
     "graphene": dict(zip(OPERATIONS, (2, 442, 2, 2, 1), strict=True)),
     "strawberry": dict(zip(OPERATIONS, (1, 3, 1, 1, 8), strict=True)),
     "ariadne": dict(zip(OPERATIONS, (1, 221, 2, 1, 1), strict=True)),
