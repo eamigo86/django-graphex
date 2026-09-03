@@ -203,7 +203,10 @@ class PostType(DjangoObjectType):
     #   3. filter_queryset (see get_queryset below)    ← applied last
     @filter_field(GraphQLString, description="Full-text search over title and body")
     def search(
-        cls, queryset: QuerySet, info: GraphQLResolveInfo, value: str
+        cls: type["PostType"],
+        queryset: QuerySet,
+        info: GraphQLResolveInfo,
+        value: str,
     ) -> QuerySet:
         """Filter posts whose title OR body contains the search term.
 
@@ -213,6 +216,7 @@ class PostType(DjangoObjectType):
         must not be stacked with "@classmethod".
 
         Args:
+            cls: The PostType class that owns the filter.
             queryset: The base queryset to narrow, already scoped by
                 "get_queryset".
             info: The GraphQL resolve info for the current request.
@@ -1253,7 +1257,7 @@ class RegisterUser(Mutation):
         Args:
             root: The parent resolver value, unused for this root mutation.
             info: GraphQL execution information for the active operation.
-            kwargs: The validated username and password arguments.
+            **kwargs: The validated username and password arguments.
 
         Returns:
             registration: A successful payload containing the created user.
