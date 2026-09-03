@@ -106,6 +106,11 @@ make quality   # ruff format --check + ruff check + mypy
 - Include examples in docstrings where helpful
 - Keep documentation up-to-date with code changes
 
+During the progressive no-backtick migration, maintainers can run the checker
+with `--strict-content` to apply DOC201 to every docstring owner. This opt-in is
+temporary: the final gate will enforce the rule globally without a permanent
+baseline.
+
 ### Testing Standards
 
 - Follow strict **RED → GREEN → REFACTOR** for code, documentation, workflows
