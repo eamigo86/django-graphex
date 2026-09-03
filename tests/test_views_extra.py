@@ -155,7 +155,7 @@ class ExtraViewBranchesTest(TestCase):
         # Record the version token before mutation.
         from django_graphex.views import GraphQLView as _GV
 
-        identity = _GV.cache_key_prefix(seed_request)
+        identity = "global"
         version_key = _GV._CACHE_VERSION_KEY_TEMPLATE.format(identity=identity)
         version_before = _cache.get(version_key)
 

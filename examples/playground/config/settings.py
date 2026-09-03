@@ -6,7 +6,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "playground-not-secret"  # noqa: S105 - local playground only
 DEBUG = True
-ALLOWED_HOSTS = ["*"]
+# Keep the WebSocket Origin validator meaningful even in development. Add a
+# hostname explicitly when exposing the playground through a tunnel/proxy.
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 
 INSTALLED_APPS = [
     # `daphne` first so `manage.py runserver` serves ASGI (http + websocket).
@@ -187,9 +189,15 @@ DJANGO_GRAPHEX = {
     #                                        # degrade to the un-optimized base on
     #                                        # any optimizer exception and log a WARNING.
     # ---------------------------------------------------------------------------
-    # Response caching. Flip CACHE_ACTIVE to True to enable query-result caching:
-    #   "CACHE_ACTIVE": True,
-    #   "CACHE_TIMEOUT": 60,  # seconds
+    # Response caching starts OFF: authenticated/session-dependent reads must not
+    # become shared merely because a cache backend was configured. If enabled,
+    # GraphQLView.should_cache_query() still bypasses requests carrying cookies.
+    "CACHE_ACTIVE": False,
+    "CACHE_TIMEOUT": 60,  # seconds
+    # 3.1 invalidates cached reads for every identity after a successful
+    # mutation. Use "identity" only for fully private caches whose key includes
+    # every session/tenant dependency; it preserves the narrower 3.0 behaviour.
+    "CACHE_INVALIDATION_SCOPE": "global",
 }
 
 LANGUAGE_CODE = "en-us"

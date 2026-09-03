@@ -21,7 +21,7 @@ These tests are AST-based so a regression is caught even while graphene is still
 installed (it is not uninstalled until S8i).
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s8b_options_utils_graphene_free.py -q -o addopts=""
+    tests/core/test_s8b_options_utils_graphene_free.py -q --no-cov
 """
 
 from __future__ import annotations

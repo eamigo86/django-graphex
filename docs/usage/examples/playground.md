@@ -53,6 +53,33 @@ All the `Makefile` targets:
 | `make reset` | Drops `db.sqlite3`, re-migrates, re-seeds |
 | `make clean` | Removes the database and `__pycache__` caches |
 
+### Resetting the playground
+
+`make reset` is the recovery path when generated migrations no longer match the
+local SQLite database. It deletes `db.sqlite3` and only migration files matching
+`blog/migrations/0*.py`, preserves `blog/migrations/__init__.py`, removes
+migration bytecode, then regenerates, migrates and seeds.
+
+```bash
+make reset
+make test  # pytest runs with --no-migrations
+```
+
+The `--no-migrations` test option is deliberate: playground tests exercise the
+current models and must not depend on whatever generated migration happened to
+exist in a developer checkout.
+
+### WebSocket origin policy
+
+The shipped `ALLOWED_HOSTS` is exactly `127.0.0.1`, `localhost` and
+`testserver`. `AllowedHostsOriginValidator` applies that list to WebSocket
+handshakes, so a browser origin such as `evil.example` is rejected while the
+documented localhost and Django test-client origins connect.
+
+If you expose the playground through another development hostname, add that
+exact host. Do not replace the list with `"*"`: the socket uses session cookies,
+so an allow-all Origin policy would enable cross-site WebSocket requests.
+
 ## What the seed creates
 
 `python manage.py seed` (idempotent — it clears the demo tables first) loads:
@@ -419,7 +446,7 @@ on every axis it can reach, both arms of the relation hatch, and the two
 settings that ship on:
 
 ```bash
-make test          # 51 passed
+make test          # runs the complete playground suite
 ```
 
 Several of them assert the **verbatim** answer strings this page and the

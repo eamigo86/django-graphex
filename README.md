@@ -63,39 +63,65 @@ The base install never imports `channels`; only the `subscriptions` extra does.
 ## Quick start
 
 ```python
-from django.contrib.auth.models import User
-from django_graphex.fields import DjangoListObjectField
-from django_graphex.mutation import DjangoModelMutation
-from django_graphex.core import ObjectType
+from django.contrib.auth import get_user_model
+from django.urls import path
+from django_graphex.core import BooleanField, CharField, Field, Mutation, ObjectType
+from django_graphex.fields import DjangoListObjectField, DjangoObjectField
 from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.schema import DjangoGraphQLSchema
-from django_graphex.types import DjangoListObjectType
+from django_graphex.types import DjangoListObjectType, DjangoObjectType
+from django_graphex.views import AuthenticatedGraphQLView
+
+User = get_user_model()
+
+
+class UserType(DjangoObjectType):
+    class Meta:
+        model = User
+        only_fields = ("id", "username", "first_name", "last_name")
+        filter_fields = {"username": ("icontains", "exact")}
 
 
 class UserListType(DjangoListObjectType):
     class Meta:
         model = User
         pagination = LimitOffsetGraphqlPagination()
-        filter_fields = {"username": ("icontains", "exact"), "is_active": ("exact",)}
 
 
-class UserMutation(DjangoModelMutation):      # define once -> create/update/delete
-    class Meta:
-        model = User
+class RegisterUser(Mutation):
+    ok = BooleanField()
+    user = Field(UserType)
+
+    class Arguments:
+        username = CharField(required=True)
+        password = CharField(required=True)
+
+    @classmethod
+    def mutate(cls, root, info, username, password):
+        user = User.objects.create_user(username=username, password=password)
+        return cls(ok=True, user=user)
 
 
 class Query(ObjectType):
+    user = DjangoObjectField(UserType)
     users = DjangoListObjectField(UserListType)
 
 
 class Mutation(ObjectType):
-    user_create = UserMutation.CreateField()
-    user_update = UserMutation.UpdateField()
-    user_delete = UserMutation.DeleteField()
+    register_user = RegisterUser.Field()
 
 
 schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
+
+urlpatterns = [
+    path("graphql/", AuthenticatedGraphQLView.as_view(schema=schema, graphiql=True)),
+]
 ```
+
+`User` is deliberately **not** mounted through a generic model mutation:
+account creation must call `create_user()` so the password is hashed, and the
+client must never choose staff/superuser flags. Use generated mutations for
+ordinary application models; see the mutation guide.
 
 Query it with the nested `filter:` argument (`and` / `or` / `not`):
 
@@ -122,7 +148,7 @@ DJANGO_GRAPHEX = {
     # WARNING: cache keys are identity-salted per user (v1.2.1+), but shared
     # caches can still leak data if misconfigured. Review the caching guide
     # before enabling in production: docs/usage/caching.md
-    "CACHE_ACTIVE": True,
+    "CACHE_ACTIVE": False,
 }
 ```
 
@@ -152,7 +178,7 @@ schema = DjangoGraphQLSchema(query=Query, mutation=Mutation, directives=all_dire
 
 ## Playground
 
-A fully wired example project lives in [`examples/playground/`](examples/playground/). It exercises every major feature end-to-end — types, paginators, filtering, mutations, permissions, subscriptions, file uploads on both paths, the projection boundary on all three axes, and the query optimizer — and installs the library from this repo checkout (editable, no PyPI release needed). `make test` runs 51 end-to-end tests, several of which assert the verbatim answer strings its README quotes.
+A fully wired example project lives in [`examples/playground/`](examples/playground/). It exercises every major feature end-to-end — types, paginators, filtering, mutations, permissions, subscriptions, file uploads on both paths, the projection boundary on all three axes, and the query optimizer — and installs the library from this repo checkout (editable, no PyPI release needed). `make test` runs the end-to-end suite; several tests assert the verbatim answer strings its README quotes.
 
 ## Documentation
 

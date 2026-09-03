@@ -14,15 +14,6 @@ on:
     # PRs targeting a release tracker branch get the same checks as PRs to main.
     - 'v*.*.*'
   workflow_dispatch:
-    inputs:
-      repository:
-        description: "Choose repository to publish"
-        required: true
-        default: "testpypi"
-        type: choice
-        options:
-        - testpypi
-        - pypi
 
 permissions:
   contents: write
@@ -55,6 +46,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      with:
+        fetch-depth: 0
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -85,6 +78,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      with:
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -123,17 +118,29 @@ jobs:
     - name: Run security checks
       run: uvx --with tox-uv tox -e security
 
-    - name: Audit the built release artifact
-      # pip-audit in `tox -e security` only sees the editable dev install and
-      # skips django-graphex itself. This builds the wheel and audits its
-      # declared transitive closure so release-artifact vulnerabilities are caught.
-      run: uvx --with tox-uv tox -e release-audit
+  diff-check:
+    # Child PRs can be individually clean while their release branch accumulates
+    # whitespace errors. Always check the complete diff from main's merge base.
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      with:
+        fetch-depth: 0
+
+    - name: Check cumulative release diff
+      run: |
+        git fetch --no-tags origin main:refs/remotes/origin/main
+        BASE_COMMIT="$(git merge-base origin/main HEAD)"
+        git diff --check "$BASE_COMMIT"..HEAD
 
   coverage:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      with:
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -154,6 +161,11 @@ jobs:
         # double-measures and leaves an empty .coverage (~0% reported).
         uv run pytest
 
+    - name: Enforce changed-line coverage
+      env:
+        BASE_REF: ${{ github.base_ref || 'main' }}
+      run: uvx 'diff-cover>=10.5.1,<11' coverage.xml --compare-branch="origin/$BASE_REF" --fail-under=95.01
+
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
       with:
@@ -161,6 +173,51 @@ jobs:
         files: ./coverage.xml
         fail_ci_if_error: false
         verbose: true
+
+  postgresql:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: django_graphex
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+        - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d django_graphex"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      GDX_TEST_DATABASE: postgres
+      POSTGRES_DB: django_graphex
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: '5432'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      with:
+        enable-cache: true
+        cache-suffix: postgresql
+
+    - name: Run PostgreSQL transaction contracts
+      run: |
+        uv sync --frozen
+        uv run python -c "import django; assert django.VERSION[:2] == (6, 0)"
+        uv run pytest --no-migrations \
+          tests/integration/test_postgresql_transactions.py --no-cov
 
   get-version:
     runs-on: ubuntu-latest
@@ -190,8 +247,147 @@ jobs:
 
         echo "Detected version: $VERSION"
 
+    - name: Verify tag matches the package version
+      if: startsWith(github.ref, 'refs/tags/v')
+      env:
+        PACKAGE_VERSION: ${{ steps.get_version.outputs.version }}
+      run: |
+        TAG_VERSION="${GITHUB_REF_NAME#v}"
+        if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+          echo "::error::Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${PACKAGE_VERSION}."
+          exit 1
+        fi
+        echo "Tag matches package version: $PACKAGE_VERSION"
+
+  release-artifact:
+    needs: [ get-version ]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      with:
+        enable-cache: true
+        cache-suffix: release-artifact
+
+    - name: Build package once
+      run: uv build
+
+    - name: Require exactly one wheel and one sdist
+      id: distribution
+      run: |
+        mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
+        mapfile -t SDISTS < <(find dist -maxdepth 1 -type f -name '*.tar.gz' | sort)
+        test "${#WHEELS[@]}" -eq 1
+        test "${#SDISTS[@]}" -eq 1
+        echo "wheel=${WHEELS[0]}" >> "$GITHUB_OUTPUT"
+        echo "sdist=${SDISTS[0]}" >> "$GITHUB_OUTPUT"
+
+    - name: Smoke-test installed wheel outside checkout
+      run: |
+        SMOKE_ENV="$RUNNER_TEMP/django-graphex-wheel-smoke"
+        SMOKE_CWD="$RUNNER_TEMP/django-graphex-wheel-cwd"
+        uv venv "$SMOKE_ENV"
+        uv pip install --python "$SMOKE_ENV/bin/python" "${{ steps.distribution.outputs.wheel }}"
+        mkdir -p "$SMOKE_CWD"
+        cd "$SMOKE_CWD"
+        env -u PYTHONPATH "$SMOKE_ENV/bin/python" \
+          "$GITHUB_WORKSPACE/scripts/check_wheel_install.py" "$GITHUB_WORKSPACE"
+
+    - name: Audit prebuilt wheel dependencies
+      run: |
+        uv run --isolated --no-project --with 'pip>=25,<27' \
+          --with 'pip-audit>=2.10.1,<3' \
+          python scripts/release_audit.py "${{ steps.distribution.outputs.wheel }}"
+
+    - name: Generate checksums
+      run: |
+        cd dist
+        sha256sum \
+          "$(basename '${{ steps.distribution.outputs.wheel }}')" \
+          "$(basename '${{ steps.distribution.outputs.sdist }}')" \
+          > SHA256SUMS
+
+    - name: Upload immutable Python distribution
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: python-dist
+        path: dist/*
+        if-no-files-found: error
+
+  docs-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      with:
+        enable-cache: true
+        cache-suffix: docs-build
+
+    - name: Install locked documentation dependencies
+      run: uv sync --frozen
+
+    - name: Set docs copyright year to the build year
+      run: |
+        sed -i -E "s/(Copyright &copy; )[0-9]{4}/\1$(date -u +%Y)/" zensical.yml
+
+    - name: Build documentation
+      run: uv run zensical build --clean -f zensical.yml
+
+    - name: Setup Pages for a tagged release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+
+    - name: Upload tagged documentation artifact
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+      with:
+        path: ./site
+
+  playground:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/playground
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      with:
+        enable-cache: true
+        cache-suffix: playground
+
+    - name: Run playground end-to-end tests
+      run: uv run --group test pytest -q --no-migrations
+
   publish:
-    needs: [ test, lint-and-security, coverage, get-version ]
+    needs: [ test, base-install, lint-and-security, diff-check, coverage, postgresql, docs-build, playground, release-artifact, get-version ]
     runs-on: ubuntu-latest
     # Publish only when a version tag is pushed, or when triggered manually.
     if: |
@@ -201,54 +397,31 @@ jobs:
       name: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging' }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      with:
-        fetch-depth: 0
-
     - name: Install uv
       uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       with:
         enable-cache: true
         cache-suffix: publish
 
-    - name: Determine target repository
-      id: target_repo
-      run: |
-        # A pushed tag publishes to PyPI; a manual run uses the chosen repo.
-        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-          REPO="${{ github.event.inputs.repository }}"
-        else
-          REPO="pypi"
-        fi
+    - name: Download immutable Python distribution
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: python-dist
+        path: dist
 
-        echo "repository=$REPO" >> $GITHUB_OUTPUT
-        echo "Publishing to: $REPO"
-
-    - name: Verify the tag matches the package version
-      if: startsWith(github.ref, 'refs/tags/v')
-      run: |
-        TAG_VERSION="${GITHUB_REF_NAME#v}"
-        PKG_VERSION="${{ needs.get-version.outputs.version }}"
-        if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-          echo "::error::Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${PKG_VERSION}."
-          exit 1
-        fi
-        echo "Tag matches package version: $PKG_VERSION"
-
-    - name: Build package
-      run: uv build
+    - name: Verify distribution checksums
+      run: cd dist && sha256sum -c SHA256SUMS
 
     - name: Publish to PyPI
-      if: steps.target_repo.outputs.repository == 'pypi'
-      run: uv publish --token ${{ secrets.PYPI_TOKEN }}
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: uv publish dist/*.whl dist/*.tar.gz --token ${{ secrets.PYPI_TOKEN }}
 
     - name: Publish to TestPyPI
-      if: steps.target_repo.outputs.repository == 'testpypi'
-      run: uv publish --publish-url https://test.pypi.org/legacy/ --token ${{ secrets.TESTPYPI_TOKEN }}
+      if: github.event_name == 'workflow_dispatch'
+      run: uv publish dist/*.whl dist/*.tar.gz --publish-url https://test.pypi.org/legacy/ --token ${{ secrets.TESTPYPI_TOKEN }}
 
   create-release:
-    needs: [ publish, get-version ]
+    needs: [ publish, get-version, release-artifact ]
     runs-on: ubuntu-latest
     # Only cut a GitHub Release for a real version tag.
     if: |
@@ -295,6 +468,15 @@ jobs:
         **Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...$TAG_NAME
         EOF
 
+    - name: Download immutable Python distribution
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: python-dist
+        path: dist
+
+    - name: Verify distribution checksums
+      run: cd dist && sha256sum -c SHA256SUMS
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
       with:
@@ -314,9 +496,8 @@ jobs:
         echo "🔗 https://github.com/${{ github.repository }}/releases/tag/v${{ needs.get-version.outputs.version }}"
 
   deploy-docs:
-    # Build and publish the documentation to GitHub Pages, but only after the
-    # package was successfully published to PyPI for this version tag.
-    needs: [ publish ]
+    # Deploy the artifact already built and validated before PyPI publication.
+    needs: [ publish, docs-build ]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -331,33 +512,6 @@ jobs:
       cancel-in-progress: false
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-      with:
-        enable-cache: true
-        cache-suffix: deploy-docs
-
-    - name: Install dependencies
-      run: uv sync --frozen
-
-    - name: Set docs copyright year to the build year
-      run: |
-        sed -i -E "s/(Copyright &copy; )[0-9]{4}/\1$(date -u +%Y)/" zensical.yml
-
-    - name: Build documentation
-      run: uv run zensical build --clean -f zensical.yml
-
-    - name: Setup Pages
-      uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
-
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
-      with:
-        path: ./site
-
     - name: Deploy to GitHub Pages
       id: deployment
       uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5

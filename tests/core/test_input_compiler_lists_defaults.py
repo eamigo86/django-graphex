@@ -21,7 +21,7 @@ argument through "graphql_sync") tests. No Django settings required — the
 input models are model-free Pydantic "BaseModel" subclasses.
 
 Run with:
-    .venv/bin/python -m pytest tests/core/test_input_compiler_lists_defaults.py -x -v
+    .venv/bin/python -m pytest tests/core/test_input_compiler_lists_defaults.py -x -v --no-cov
 """
 
 from __future__ import annotations

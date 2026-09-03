@@ -42,28 +42,42 @@ same setting. Turn it off with `REQUIRE_CSRF_HEADER=False` — see
 
 ### Response caching and cache identity
 
-With `CACHE_ACTIVE` on, `GraphQLView` caches query responses (never mutations,
-never batches, never multipart, never a GraphiQL render). Every entry is
+With `CACHE_ACTIVE` on, `GraphQLView` caches eligible query responses (never
+mutations, batches, multipart, cookie-bearing queries or a GraphiQL render).
+Every entry is
 namespaced by a **cache identity** from `cache_key_prefix`:
 
 | Request | Identity |
 |---|---|
 | Authenticated | `u<pk>` |
 | Anonymous with an `Authorization` header | `t<sha256 of the header, 16 hex>` |
-| Anonymous with no credential | `anon` |
+| Anonymous with no credential or cookies | `anon` |
 
 Two callers with different identities never share a response entry, which is
 what keeps one caller's body from being served to another. Override
 `cache_key_prefix` to partition on something else (a session key, a tenant id).
 
-Invalidation uses a **version counter**: a mutation advances the issuing caller's
-counter instead of calling `cache.clear()`, so it never flushes the whole cache.
-That counter is stored permanently — it has to outlive
-the responses it namespaces — and a permanent key whose name an unauthenticated
-caller picks is a leak, since the `Authorization` header is unverified input that
-a client can vary per request.
+Cookie-bearing queries bypass the response cache by default. Anonymous does
+**not** imply public: session carts, tenants, locale and feature flags often live
+in cookies and are invisible to the default key. Override `should_cache_query`
+only when you either keep the stricter default or fold every contextual value
+into `cache_key_prefix` / `fetch_cache_key`. Cookie-bearing mutations still
+invalidate cached reads after their execution.
 
-So the counter's namespace is **bucketed for unauthenticated identities**: a
+Invalidation uses a **version counter** instead of calling `cache.clear()`, so it
+never flushes unrelated application keys. The default
+`CACHE_INVALIDATION_SCOPE="global"` shares that counter across GraphQL response
+identities: a mutation by one caller invalidates cached reads for all callers.
+Responses remain isolated by their full identity.
+
+`CACHE_INVALIDATION_SCOPE="identity"` opts into the narrower 3.0 policy, where
+a mutation advances only the issuing caller's counter. Use it only when writes
+cannot affect shared data. Under that policy, the counter is stored permanently
+— it has to outlive the responses it namespaces — and a permanent key whose
+name an unauthenticated caller picks is a leak, since the `Authorization` header
+is unverified input that a client can vary per request.
+
+In identity scope the counter's namespace is **bucketed for unauthenticated identities**: a
 fixed number of buckets (64), never one per credential. Authenticated callers
 (bounded by your user table) and the single shared `anon` partition keep their
 exact namespace. The trade is deliberate:

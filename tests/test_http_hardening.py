@@ -361,7 +361,7 @@ class TestASTIntrospectionDetection(TestCase):
         """
         self.factory = RequestFactory()
 
-    def _post(self, query: str) -> "HttpResponse":
+    def _post(self, query: str, operation_name: str | None = None) -> "HttpResponse":
         """POST a single GraphQL query string and return its response.
 
         Args:
@@ -371,7 +371,7 @@ class TestASTIntrospectionDetection(TestCase):
             response: The HTTP response returned by the view.
         """
         view = GraphQLView.as_view(schema=_schema)
-        body = json.dumps({"query": query})
+        body = json.dumps({"query": query, "operationName": operation_name})
         request = self.factory.post("/graphql/", body, content_type="application/json")
         return view(request)
 
@@ -454,6 +454,42 @@ class TestASTIntrospectionDetection(TestCase):
         response = self._post(differently_formatted)
         data = json.loads(response.content)
         self.assertIn("__schema", data["data"])
+
+    @override_settings(DJANGO_GRAPHEX={"CLEAN_RESPONSE": True})
+    def test_selected_introspection_operation_is_not_cleaned(self) -> None:
+        """operationName, not document order, determines the cleaning exemption.
+
+        This test protects the corresponding regression contract.
+        """
+        document = """
+            query Normal { hello maybe }
+            query Intro {
+              __type(name: "_Query") { name description interfaces { name } }
+            }
+        """
+
+        response = self._post(document, operation_name="Intro")
+        type_data = json.loads(response.content)["data"]["__type"]
+
+        self.assertIsNone(type_data["description"])
+        self.assertEqual(type_data["interfaces"], [])
+
+    @override_settings(DJANGO_GRAPHEX={"CLEAN_RESPONSE": True})
+    def test_selected_regular_operation_is_cleaned(self) -> None:
+        """A leading introspection operation must not exempt another operation.
+
+        This test protects the corresponding regression contract.
+        """
+        document = """
+            query Intro { __type(name: "Query") { name description } }
+            query Normal { hello maybe }
+        """
+
+        response = self._post(document, operation_name="Normal")
+        data = json.loads(response.content)["data"]
+
+        self.assertIn("hello", data)
+        self.assertNotIn("maybe", data)
 
 
 # ---------------------------------------------------------------------------

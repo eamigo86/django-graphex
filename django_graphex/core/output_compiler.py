@@ -332,22 +332,6 @@ def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
 # ---------------------------------------------------------------------------
 
 
-def _is_multiselect_field(field: Any) -> bool:
-    """Return True for a django-multiselectfield ``MultiSelectField``.
-
-    Detected via ``isinstance`` when the optional package is installed (covers
-    subclasses); falls back to a class-name check when the import fails, so the
-    compiler works without the optional dependency. Mirrors the converter's
-    detection (``converter.convert_django_field_with_choices``).
-    """
-    try:
-        from multiselectfield import MultiSelectField as _MSField  # noqa: PLC0415
-
-        return isinstance(field, _MSField)  # pragma: no cover
-    except ImportError:
-        return type(field).__name__ == "MultiSelectField"
-
-
 def _compile_choices_enum_field(
     field: Any,
     graphene_registry: Any,
@@ -367,7 +351,10 @@ def _compile_choices_enum_field(
     Returns ``None`` when the field has no usable choices (caller falls through
     to the scalar mapping).
     """
-    from django_graphex.converter import build_choices_enum_type  # noqa: PLC0415
+    from django_graphex.converter import (  # noqa: PLC0415
+        build_choices_enum_type,
+        is_multiselect_field,
+    )
 
     field_name: str = field.name if hasattr(field, "name") else field.attname
 
@@ -375,9 +362,7 @@ def _compile_choices_enum_field(
     if enum_type is None:
         return None
 
-    gql_type: Any = (
-        GraphQLList(enum_type) if _is_multiselect_field(field) else enum_type
-    )
+    gql_type: Any = GraphQLList(enum_type) if is_multiselect_field(field) else enum_type
 
     def _default_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
         if isinstance(root, dict):

@@ -1,9 +1,10 @@
 # django-graphex — Playground
 
-> **Targets django-graphex v2.2 — native `graphql-core` backend (no graphene).**
+> **Targets django-graphex v3.1 — native `graphql-core` backend (no graphene).**
 > Query-optimization, typed-GFK unions, `get_queryset` scoping + safe ordering,
 > native subscriptions (SSE + WS), and the 2.2 permission story: nested writes
-> authorized by the child, and a schema pruned to the caller.
+> authorized by the child, a schema pruned to the caller, safe account
+> registration, and the 3.1 response-cache contract.
 
 A small, runnable Django project that exercises most of `django-graphex`
 end-to-end: queries, all three paginators, filtering,
@@ -80,7 +81,7 @@ something:
 | Type | Column | What it would leak |
 |------|--------|--------------------|
 | `AuthorType` | `Author.bio` | Seeded prose — a value you can watch not come back |
-| `UserType` | `User.password` | The hash. `Author.user` reaches this type, so without the line `authors { results { user { password } } }` answers it to every **authenticated** caller. Anonymous callers are stopped one layer earlier by `resolve_user` — a second wall, not this one |
+| `UserType` | Every field except `id`, `username`, `first_name`, `last_name` | Password hashes, privilege flags, groups, permissions, login timestamps and unrelated reverse relations never enter the SDL. `only_fields` is safer here than trying to maintain a blacklist |
 | `CommentType` + `CommentModelType` | `Comment.internal_note` | A moderation scratchpad — hidden on **reads and writes alike**, so the column is missing from `CommentFilterInput`, from `commentCreate`'s input **and** from the nested `comments` input under `postWithCommentsCreate` |
 
 `tests/test_projection_boundary.py` pins every one of those. The full rule, its
@@ -196,7 +197,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DjangoUnionType` (typed GFK target) | ✅ | `schema.py` — `AttachmentTargetUnion` (`Meta.types`) + `AttachmentType.Meta.unions = {"target": …}` |
 | `DjangoInterfaceType` | doc | Covered in `docs/usage/types.md`; not in the playground (no shared abstract base fits Account/Invoice cleanly) |
 | `TextChoices` → GraphQL enum | ✅ | `Post.status` / `PostType` |
-| `only_fields` / `exclude_fields` as a **security boundary** | ✅ | `schema.py` — three columns: `AuthorType` hides `bio`, `UserType` hides `password`, `CommentType` + `CommentModelType` hide `internal_note` on **reads and writes alike** (including the nested child input). Each is unreadable, unorderable **and** unfilterable — see [The projection boundary](#the-projection-boundary) |
+| `only_fields` / `exclude_fields` as a **security boundary** | ✅ | `schema.py` — `UserType` allowlists only four safe profile fields; `AuthorType` hides `bio`; `CommentType` + `CommentModelType` hide `internal_note` on **reads and writes alike** (including the nested child input). Each excluded field is unreadable, unorderable **and** unfilterable — see [The projection boundary](#the-projection-boundary) |
 | Relation-scope hatch, to-**MANY** arm | ✅ | `schema.py` — `CategoryType.posts = DjangoFilterListField(PostType)` runs `PostType.get_queryset`; the auto-expanded `AuthorType.posts` container beside it does **not** — see [The relation-scope hatch](#the-relation-scope-hatch) |
 | Relation-scope hatch, to-**ONE** arm | ✅ | `schema.py` — `AuthorType.user = Field(UserType)` + `resolve_user`; a bare `resolve_user` with no declaration would be silently ignored |
 | `get_queryset` (per-request row scoping) | ✅ | `schema.py` — `PostType.get_queryset` hides drafts from anonymous callers. It is a **field-level** scope: read the hatch rows above before relying on it to hide relation-reachable rows |
@@ -278,7 +279,8 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `MAX_REQUEST_BODY_SIZE` | ✅ | `config/settings.py` — `20 * 1024 * 1024` (20 MB body guard, fires before JSON parse) |
 | `DATA_UPLOAD_MAX_MEMORY_SIZE` (Django's own) | ✅ | `config/settings.py` — raised to 20 MB to match. A base64 upload travels inside the JSON body, so Django's 2.5 MB default refuses a 5 MB file with an opaque HTML 400 before either library cap sees it. Multipart never needs it — it streams to disk |
 | **Response caching** | | |
-| `CACHE_ACTIVE` / `CACHE_TIMEOUT` | note | Commented in `config/settings.py` — uncomment to activate query-result caching |
+| `CACHE_ACTIVE` / `CACHE_TIMEOUT` | ✅ safe default | `CACHE_ACTIVE=False` is explicit in `config/settings.py`. If enabled later, the default `should_cache_query()` bypasses requests with cookies so session/cart context is not shared accidentally |
+| `CACHE_INVALIDATION_SCOPE` | ✅ | `"global"` is explicit: a successful mutation invalidates reads cached by every identity. `"identity"` preserves the narrower 3.0 mode and is only safe for fully private caches |
 | **Subscriptions** | | |
 | Public `Subscription` | ✅ | `PostSubscription` (stream `posts`), `CommentSubscription` (stream `comments`, per-subscriber `filter`) |
 | Private subscription via `DjangoModelType` | ✅ | `NoteModelType.SubscriptionField()` — gated by `AuthenticatedFieldsMiddleware` |
@@ -332,6 +334,11 @@ view (`config/urls.py`):
   frame is delivered.
 - **Schema + permission smoke** — the playground schema builds; a protected
   field (`me`) requires auth through `GraphQLView`/`AuthenticatedFieldsMiddleware`.
+- **Safe account boundary** — `UserType` exposes exactly four read-only fields,
+  `/graphql/secure/` rejects anonymous reads, and public `registerUser` hashes
+  the password while leaving `is_staff` and `is_superuser` false.
+- **3.1 cache defaults** — caching starts disabled, invalidation scope is global,
+  and the default cache hook refuses cookie-dependent queries.
 - **Permissions: nested + pruned** (`test_permissions_nested_and_scoped.py`) —
   the two demos above, over the wire: an anonymous caller denied `commentCreate`
   is denied the same write through `postWithCommentsCreate` (and the parent
@@ -381,9 +388,46 @@ cd examples/playground
 DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations
 ```
 
+The shipped `ALLOWED_HOSTS` contains only `127.0.0.1`, `localhost`, and
+`testserver`. This keeps `AllowedHostsOriginValidator` effective for the
+session-authenticated WebSocket endpoint. If you expose the playground through
+a tunnel or proxy, add that hostname explicitly — do not replace the list with
+`["*"]`.
+
 ---
 
 ## Example GraphQL operations
+
+### 0. Safe account registration and authenticated reads
+
+Account creation is a purpose-built mutation on the public `/graphql/`
+endpoint. It accepts **only** `username` and `password`, delegates to Django's
+`create_user()` (so the password is hashed), and cannot set staff/superuser,
+groups, or permissions:
+
+```graphql
+mutation {
+  registerUser(username: "reader", password: "correct-horse-battery-staple") {
+    ok
+    user { id username firstName lastName }
+  }
+}
+```
+
+There is deliberately no generated `userCreate`, `userUpdate`, or
+`userDelete`. Read the current user through `/graphql/secure/`, after logging in
+with a Django session:
+
+```graphql
+{
+  me { id username firstName lastName }
+}
+```
+
+`UserType.Meta.only_fields` is the last wall: even an authenticated caller
+cannot select `password`, `isStaff`, `isSuperuser`, groups, permissions, or
+login metadata. The public route remains available because it also hosts the
+registration demo; application user reads belong on the authenticated route.
 
 ### 1. Nested lists with all three paginators
 
@@ -809,7 +853,7 @@ Private (requires a logged-in session; otherwise `Authentication required.`):
 
 ```graphql
 {
-  me { id username isSuperuser }
+  me { id username firstName lastName }
   myNotes { totalCount results { id title } }
 }
 ```
@@ -979,15 +1023,35 @@ the defaults without the suite saying so.
 
 ---
 
+## Response cache defaults in 3.1
+
+The playground is safe before it is fast: `CACHE_ACTIVE` is explicitly
+`False`. If you turn it on, django-graphex 3.1 still skips cache reads and
+writes whenever `request.COOKIES` is non-empty. That prevents two anonymous
+shopping carts, tenants, or Django sessions from sharing one cached response.
+
+The configured invalidation scope is `"global"`: after a mutation actually
+starts executing, all django-graphex response-cache identities observe the new
+version. Rejected GET mutations, validation failures, and atomic rollbacks do
+not invalidate. The alternative `"identity"` preserves 3.0's per-identity
+counter and should only be used when every cache entry is private.
+
+If an application overrides the protected `GraphQLView.should_cache_query()`
+hook to cache cookie-bearing requests, its cache key must include **every**
+session and tenant dependency. Merely returning `True` recreates the cross-user
+cache leak that the 3.1 default closes.
+
+---
+
 ## Views
 
 | Route | View | Notes |
 |-------|------|-------|
-| `/graphql/` | `GraphQLView` | HTTP GraphQL + GraphiQL (queries + mutations) |
+| `/graphql/` | `GraphQLView` | Public demos and purpose-built `registerUser`; never generic User CRUD |
 | `/graphql/stream` | `subscription_sse_view` | Native Server-Sent Events subscription transport |
 | `/ws/graphql/` | `subscription_ws_consumer` | Native `graphql-transport-ws` WebSocket (see `config/asgi.py`) |
 | `/graphql/client/` | `SubscriptionClientView` | Browser client for the subscription flow (WS + SSE) |
-| `/graphql/secure/` | `AuthenticatedGraphQLView` | Same schema behind **view-level** HTTP 403 auth, and **pruned per caller** (`PERMISSION_SCOPED_SCHEMA`, [section 6](#6-a-schema-pruned-to-the-caller-22)) |
+| `/graphql/secure/` | `AuthenticatedGraphQLView` | Authenticated user reads behind **view-level** HTTP 403, and the same schema **pruned per caller** (`PERMISSION_SCOPED_SCHEMA`, [section 6](#6-a-schema-pruned-to-the-caller-22)) |
 
 `AuthenticatedGraphQLView` rejects unauthenticated requests before any query
 runs. Override `permission_classes` for custom gates:

@@ -112,6 +112,31 @@ def _is_valid_name(name: str) -> bool:
     return bool(name) and bool(COMPILED_NAME_PATTERN.match(name))
 
 
+def is_multiselect_field(field: Any) -> bool:
+    """Return whether a field is a django-multiselectfield field.
+
+    Prefer isinstance so renamed subclasses keep list semantics. When the
+    optional integration is unavailable, retain the historical exact-name
+    fallback without making it a runtime dependency.
+
+    Args:
+        field: The Django model field to inspect.
+
+    Returns:
+        is_multiselect: Whether the field uses multi-select list semantics.
+
+    Raises:
+        ImportError: If the installed integration cannot expose its field class.
+    """
+    try:
+        from multiselectfield import MultiSelectField  # noqa: PLC0415
+    except ModuleNotFoundError as exc:
+        if exc.name != "multiselectfield":
+            raise
+        return type(field).__name__ == "MultiSelectField"
+    return isinstance(field, MultiSelectField)
+
+
 def choice_enum_name(value: Any, label: Any) -> str:
     """Pick a readable GraphQL enum-member name for a (value, label) choice.
 

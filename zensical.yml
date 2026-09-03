@@ -83,6 +83,8 @@ nav:
     - Quick Start: quickstart.md
     - Why graphex?: why.md
     - Migration Guide: migration.md
+    - Upgrade Guide (3.0 → 3.1): UPGRADE-3.1.md
+    - Upgrade Guide (2.x → 3.0): UPGRADE-3.0.md
     - Upgrade Guide (1.x → 2.0): UPGRADE-2.0.md
   - User Guide:
     - Settings: usage/settings.md
@@ -118,6 +120,7 @@ nav:
     - Directives: api/directives.md
   - Development:
     - Contributing: contributing.md
+    - Release process: releasing.md
     - Changelog: changelog.md
 
 extra:

@@ -15,6 +15,11 @@ django-graphex builds on graphql-core and Pydantic to make Django GraphQL APIs e
 3. **Allow using Directives on Queries and Fragments**
 4. **Optional GraphQL Subscriptions over Django Channels 4**
 
+!!! info "Upgrading to 3.1"
+    Start with the [3.0 → 3.1 upgrade guide](UPGRADE-3.1.md) for the cache and
+    permission changes, then read the published [3.1.0 changelog](changelog.md#310--2026-09-02)
+    for the complete 24-finding traceability table.
+
 !!! note "Subscription Support"
     GraphQL subscriptions now live here as the optional
     `django-graphex[subscriptions]` extra (built on Django Channels 4).
@@ -52,20 +57,41 @@ django-graphex builds on graphql-core and Pydantic to make Django GraphQL APIs e
 ## Quick Example
 
 ```python title="Basic Usage"
-from django.contrib.auth.models import User
-from django_graphex.mutation import DjangoModelMutation
-from django_graphex.paginations import LimitOffsetGraphqlPagination
-from django_graphex.types import DjangoListObjectType
+from django.contrib.auth import get_user_model
+from django.urls import path
+from django_graphex.fields import DjangoObjectField
+from django_graphex.core import ObjectType
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoObjectType
+from django_graphex.views import AuthenticatedGraphQLView
 
-class UserListType(DjangoListObjectType):
+User = get_user_model()
+
+class UserType(DjangoObjectType):
     class Meta:
         model = User
-        pagination = LimitOffsetGraphqlPagination(default_limit=25)
+        only_fields = ("id", "username", "first_name", "last_name")
 
-class UserMutation(DjangoModelMutation):
-    class Meta:
-        model = User
+class Query(ObjectType):
+    user = DjangoObjectField(UserType)
+
+schema = DjangoGraphQLSchema(query=Query)
+urlpatterns = [
+    path("graphql/", AuthenticatedGraphQLView.as_view(schema=schema)),
+]
 ```
+
+Disable response caching on this authenticated, session-aware path:
+
+```python title="settings.py"
+DJANGO_GRAPHEX = {"CACHE_ACTIVE": False}
+```
+
+The account example is intentionally read-only. Registration belongs in a
+separate mutation that accepts only ordinary account data and calls
+`User.objects.create_user(username=..., password=...)`; never expose staff,
+superuser, group or permission inputs. The [Quick Start](quickstart.md) provides
+the executable version. Use generated CRUD for ordinary application models.
 
 ## Getting Started
 

@@ -22,7 +22,7 @@ output compiler, NOT from the skipped converter descriptors — so skipping must
 change a single byte of the SDL.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s_roots_d_converter_native_aware.py -q -o addopts=""
+    tests/core/test_s_roots_d_converter_native_aware.py -q --no-cov
 """
 
 from __future__ import annotations

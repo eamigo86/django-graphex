@@ -15,7 +15,7 @@ which this test never declares. The "get_unbound_function" import in
 "resolve_<name>" method (proven) — it is inlined in this slice.
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_native_root_graphene_free.py
+    .venv/bin/python -m pytest -q tests/core/test_native_root_graphene_free.py --no-cov
 """
 
 from __future__ import annotations

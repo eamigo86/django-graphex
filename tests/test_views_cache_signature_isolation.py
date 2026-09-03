@@ -8,8 +8,7 @@ high-permission user's cached response body for the SAME query body.
 
 Invariants under test (spec P4 — Response-Cache Signature Isolation, design D7):
 
-- Flag OFF: the composed cache key is byte-identical to today (no signature
-  folded), so the P4 change is inert when the feature is disabled.
+- Flag OFF: the composed v2 cache key has no permission-signature segment.
 - Flag ON: the key folds the signature; two users with DIFFERENT relevant perms
   produce DIFFERENT cache keys for the SAME query body.
 - The DISCRIMINATING case: user A (high perms) populates the cache with a query
@@ -44,7 +43,7 @@ _CACHE_AND_SCOPED = {
         "PERMISSION_SCOPED_SCHEMA": True,
     }
 }
-#: CACHE_ACTIVE on, scoped-schema OFF (the key must stay byte-identical to today).
+#: CACHE_ACTIVE on, scoped-schema OFF (the key has no permission signature).
 _CACHE_ONLY = {
     "DJANGO_GRAPHEX": {
         "CACHE_ACTIVE": True,
@@ -304,12 +303,12 @@ class ResponseCacheSignatureIsolationTest(TestCase):
             "Same-signature repeat query missed the cache (backend ran twice)",
         )
 
-    # 4. Flag OFF: the composed cache key MUST be byte-identical to a plain
-    #    identity+version+body key (no signature folded) — the P4 change is inert.
+    # 4. Flag OFF: the composed cache key MUST use the v2 base shape without a
+    #    permission-signature segment — the P4 change remains inert.
     @override_settings(**_CACHE_ONLY)
     def test_flag_off_cache_key_is_byte_identical(self) -> None:
         """Ship-broken contract: with the flag off, the composed cache key
-        must be byte-identical to the plain identity+version+body form (no
+        must use the plain v2 scope+namespace+version+identity+body form (no
         signature segment folded in), so the P4 change is inert.
         """
         query = "{ public }"
@@ -339,24 +338,24 @@ class ResponseCacheSignatureIsolationTest(TestCase):
 
         graphql_keys = _graphql_body_keys(stored_keys)
         self.assertEqual(len(graphql_keys), 1)
-        # With the flag OFF the key MUST equal the plain identity+version+body
-        # form used by the base view — no signature segment folded in. The
-        # shared-identity harness pins the identity to ``shared``.
+        # With the flag OFF the key MUST equal the v2 base form used by the
+        # base view — no signature segment folded in. The shared-identity
+        # harness pins the identity to ``shared``.
         parts = graphql_keys[0].split("_")
-        # "_graphql_shared_V_HASH" -> ["", "graphql", "shared", "V", "HASH"]
+        # _graphql_v2_global_global_V_shared_HASH
         self.assertEqual(
-            parts[:3],
-            ["", "graphql", "shared"],
+            parts[:7],
+            ["", "graphql", "v2", "global", "global", "1", "shared"],
             f"Flag OFF key changed shape: {graphql_keys[0]}",
         )
         self.assertEqual(
             len(parts),
-            5,
+            8,
             f"Flag OFF key gained an extra segment (signature leaked): {graphql_keys[0]}",
         )
 
     # 5. An active superuser folds NO signature (they always get the full
-    #    schema): their key stays the plain identity+version+body form.
+    #    schema): their key stays the plain v2 form without a signature.
     @override_settings(**_CACHE_AND_SCOPED)
     def test_superuser_folds_no_signature(self) -> None:
         """Ship-broken contract: an active superuser must fold no permission

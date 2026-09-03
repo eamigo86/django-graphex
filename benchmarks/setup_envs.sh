@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Create one isolated virtualenv per benchmarked library.
 #
-# Fairness rule enforced here: EVERY venv pins the SAME Django version — read
-# straight from the repo's own .venv so all four libraries run on identical
-# Django. Python is pinned to 3.12 (uv venv -p 3.12) to match the repo venv.
+# Fairness rule enforced here: every direct and transitive package is pinned to
+# the freeze that produced the canonical artifacts. BENCH_OFFLINE=1 forbids
+# network access and succeeds only when uv's local cache is complete.
 #
 # Usage:
 #   ./setup_envs.sh            # set up all four libraries
@@ -12,40 +12,63 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
-PYVER="3.12"
+CONSTRAINTS="$HERE/constraints.txt"
+# shellcheck source=versions.env
+source "$HERE/versions.env"
 
-# The single Django version every venv pins, read from the repo's own venv.
-DJANGO_VERSION="$("$REPO_ROOT/.venv/bin/python" -c 'import django; print(django.__version__)')"
-echo ">> Pinning Django==$DJANGO_VERSION (from repo .venv) on Python $PYVER for every library"
+UV_FLAGS=()
+if [[ "${BENCH_OFFLINE:-0}" == "1" ]]; then
+  UV_FLAGS+=(--offline)
+  export UV_PYTHON_DOWNLOADS=never
+  echo ">> Offline replay: uv may use its local cache only"
+fi
+
+install_pinned() {
+  local python="$1"
+  shift
+  if ! uv pip install "${UV_FLAGS[@]}" --python "$python" \
+      --constraint "$CONSTRAINTS" "$@"; then
+    if [[ "${BENCH_OFFLINE:-0}" == "1" ]]; then
+      echo "ERROR: offline benchmark cache is incomplete; no network fallback allowed" >&2
+    fi
+    return 1
+  fi
+}
+
+write_verified_freeze() {
+  local lib="$1"
+  local python="$2"
+  "$python" "$HERE/verify_freeze.py" "$CONSTRAINTS" "$lib" \
+    >"$HERE/.freeze-$lib.txt"
+}
 
 make_venv() {
   local lib="$1"
   local venv="$HERE/.venv-$lib"
   echo
   echo "=== Setting up $lib -> $venv ==="
-  uv venv -p "$PYVER" "$venv"
-  # Common baseline: identical Django in every venv.
-  uv pip install --python "$venv/bin/python" "Django==$DJANGO_VERSION"
+  rm -rf "$venv"
+  uv venv -p "$PYTHON_VERSION" "$venv"
 
   case "$lib" in
     graphex)
-      # Local editable install of django-graphex v2. channels is added because
-      # django_graphex.apps.ready() may touch the subscriptions package on
-      # app load; installing it keeps the app import clean.
-      uv pip install --python "$venv/bin/python" -e "$REPO_ROOT"
-      uv pip install --python "$venv/bin/python" channels || true
+      install_pinned "$venv/bin/python" "Django==$DJANGO_VERSION" \
+        "channels==$CHANNELS_VERSION" -e "$REPO_ROOT"
       ;;
     graphene)
-      uv pip install --python "$venv/bin/python" graphene-django
+      install_pinned "$venv/bin/python" "Django==$DJANGO_VERSION" \
+        "graphene-django==$GRAPHENE_DJANGO_VERSION" \
+        "django-filter==$DJANGO_FILTER_VERSION"
       ;;
     strawberry)
-      uv pip install --python "$venv/bin/python" strawberry-graphql-django
+      install_pinned "$venv/bin/python" "Django==$DJANGO_VERSION" \
+        "strawberry-graphql-django==$STRAWBERRY_DJANGO_VERSION" \
+        "strawberry-graphql==$STRAWBERRY_VERSION"
       ;;
     ariadne)
-      uv pip install --python "$venv/bin/python" ariadne
-      # Optional Django integration package; skip silently if it fails to install.
-      uv pip install --python "$venv/bin/python" ariadne-django \
-        || echo "   (ariadne-django not installed; ariadne bench_schema will wire the view by hand)"
+      install_pinned "$venv/bin/python" "Django==$DJANGO_VERSION" \
+        "ariadne==$ARIADNE_VERSION" \
+        "ariadne-django==$ARIADNE_DJANGO_VERSION"
       ;;
     *)
       echo "Unknown lib: $lib" >&2
@@ -53,14 +76,9 @@ make_venv() {
       ;;
   esac
 
+  write_verified_freeze "$lib" "$venv/bin/python"
   echo "--- Installed versions in $lib venv ---"
-  "$venv/bin/python" -c 'import django; print("django", django.__version__)'
-  case "$lib" in
-    graphex)    "$venv/bin/python" -c 'from importlib.metadata import version; print("django-graphex", version("django-graphex"))' ;;
-    graphene)   "$venv/bin/python" -c 'from importlib.metadata import version; print("graphene-django", version("graphene-django"))' ;;
-    strawberry) "$venv/bin/python" -c 'from importlib.metadata import version; print("strawberry-graphql-django", version("strawberry-graphql-django"))' ;;
-    ariadne)    "$venv/bin/python" -c 'from importlib.metadata import version; print("ariadne", version("ariadne"))' ;;
-  esac
+  cat "$HERE/.freeze-$lib.txt"
 }
 
 LIBS=("${@:-graphex graphene strawberry ariadne}")

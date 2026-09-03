@@ -64,6 +64,12 @@ if TYPE_CHECKING:
 #: response can roll back an ATOMIC_MUTATIONS transaction.
 MUTATION_ERRORS_FLAG = "graphene_mutation_has_errors"
 
+#: Request attribute set once a mutation has reached execution and its work may
+#: be durable.  The response-cache layer reads this marker after the base view
+#: returns; merely parsing a mutation is not enough because GET rejection and
+#: validation failures never run a resolver and therefore cannot stale data.
+_CACHE_MUTATION_EXECUTED_FLAG = "_django_graphex_cache_mutation_executed"
+
 #: Header a caller must send to POST one of the CORS-simple content types. The
 #: name is not on the CORS-safelist, so a cross-origin request carrying it is
 #: forced through a preflight — which is what actually stops the attack; the
@@ -1156,12 +1162,12 @@ class BaseGraphQLView(View):
     def _cache_key_signature(self, request: Any) -> str:
         """Return the per-request segment folded into the response-cache key.
 
-        The base view returns the empty string, so its cache key is unchanged
-        (identity + version + body hash). Subclasses that serve a per-request
+        The base view returns the empty string, so its v2 cache key has no
+        signature segment. Subclasses that serve a per-request
         schema (see :meth:`_graphql_schema_for`) override this to return a token
         that varies with the served schema — otherwise two callers who share an
         identity partition but see DIFFERENT schemas could read each other's
-        cached response bodies. An empty return keeps the key byte-identical.
+        cached response bodies.
 
         Args:
             request: The incoming HTTP request.
@@ -1260,20 +1266,29 @@ class BaseGraphQLView(View):
                     self.execution_context_class
                 )
 
-            if (
+            is_mutation = (
                 operation_ast is not None
                 and operation_ast.operation == OperationType.MUTATION
-                and (
-                    graphql_api_settings.ATOMIC_MUTATIONS is True
-                    or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
-                )
+            )
+            if is_mutation and (
+                graphql_api_settings.ATOMIC_MUTATIONS is True
+                or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
             ):
                 with transaction.atomic():
                     result = execute(schema, document, **execute_options)
-                    if getattr(request, MUTATION_ERRORS_FLAG, False) is True:
+                    rolled_back = getattr(request, MUTATION_ERRORS_FLAG, False) is True
+                    if rolled_back:
                         transaction.set_rollback(True)
+                if not rolled_back:
+                    setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
                 return result
 
+            # Non-atomic execution may have committed work before a later
+            # resolver reports an error, so mark it immediately before handing
+            # control to graphql-core.  Atomic execution is marked only after
+            # its transaction exits without an explicit rollback above.
+            if is_mutation:
+                setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
             return execute(schema, document, **execute_options)
         except Exception as e:
             return ExecutionResult(errors=[e])
@@ -1415,6 +1430,9 @@ DEFAULT_VALIDATION_RULES = (
 #: applies to the rest.
 _ANON_CACHE_IDENTITY = "anon"
 
+#: Shared counter namespace used by the default global invalidation policy.
+_GLOBAL_CACHE_VERSION_IDENTITY = "global"
+
 
 class GraphQLView(BaseGraphQLView):
     """Enhanced GraphQL view: response caching + depth/cost rules + cost payload.
@@ -1555,19 +1573,37 @@ class GraphQLView(BaseGraphQLView):
             return f"t{h}"
         return _ANON_CACHE_IDENTITY
 
+    def should_cache_query(self, request: HttpRequest) -> bool:
+        """Return whether this query's context is safe for response caching.
+
+        Cookies are contextual identity even when "request.user" is
+        anonymous: sessions, carts, feature flags, locale and tenant routing
+        can all change a resolver result.  Because neither the cookie jar nor a
+        session key is part of the default cache key, cookie-bearing requests
+        fail closed and execute normally.
+
+        Subclasses may override this hook, but an override that returns "True"
+        for contextual requests must also extend "cache_key_prefix" or
+        "fetch_cache_key" with every value that can affect the response.
+
+        Args:
+            request: The incoming query request.
+
+        Returns:
+            "True" when the response may be read from and written to cache.
+        """
+        return not bool(request.COOKIES)
+
     #: Sentinel used by ``dispatch`` to distinguish a cache miss from a cached
     #: falsy value (e.g. an empty-body response).  Using ``cache.get(key)``
     #: with a default of ``None`` and then checking ``if not response:`` would
     #: treat a legitimately cached empty response as a miss.
     _CACHE_MISS = object()
 
-    #: Template for the namespace version counter cache key. ``{identity}`` is
-    #: substituted with the value returned by ``_cache_version_identity``, NOT
-    #: with ``cache_key_prefix`` itself: an AUTHENTICATED caller keeps its own
-    #: namespace, so a mutation by user A does not flush user B's cache, while
-    #: an anonymous caller is folded into one of ``_CACHE_VERSION_BUCKETS``
-    #: shared namespaces. Response entries are keyed by the FULL identity
-    #: either way — see ``_cache_version_identity`` for what bucketing spends.
+    #: Template for a namespace version-counter key. ``{identity}`` receives
+    #: the scope-selected version namespace: ``global`` by default, or the
+    #: identity/bucket selected by the 3.0-compatible ``identity`` policy.
+    #: Response entries carry the FULL identity under both policies.
     _CACHE_VERSION_KEY_TEMPLATE = "_graphql_cacheversion_{identity}"
 
     #: How many version namespaces an UNAUTHENTICATED caller can reach. The
@@ -1622,7 +1658,9 @@ class GraphQLView(BaseGraphQLView):
         to be unguessable, which it cannot be while it is derived from the
         identity it namespaces. A latency-sensitive token client should
         authenticate: an authenticated identity is not bucketed at all.
-        "tests/test_views_cache_bucket_invalidation.py" pins both halves.
+        This method is used only by ``CACHE_INVALIDATION_SCOPE='identity'``;
+        the default global scope does not expose caller-chosen counter names.
+        ``tests/test_views_cache_bucket_invalidation.py`` pins both halves.
 
         Args:
             request: The incoming HTTP request, read for its authentication
@@ -1643,6 +1681,23 @@ class GraphQLView(BaseGraphQLView):
         # Prefixed with the anon partition name so a bucket can never collide
         # with an authenticated ``u{pk}`` namespace.
         return f"{_ANON_CACHE_IDENTITY}{bucket}"
+
+    def _cache_version_namespace(
+        self, request: HttpRequest, identity: str, scope: str
+    ) -> str:
+        """Return the version-counter namespace selected by invalidation scope.
+
+        Args:
+            request: The incoming request, used by identity bucketing.
+            identity: The full response identity.
+            scope: The validated ``CACHE_INVALIDATION_SCOPE`` value.
+
+        Returns:
+            The shared global namespace, or the 3.0 identity/bucket namespace.
+        """
+        if scope == "global":
+            return _GLOBAL_CACHE_VERSION_IDENTITY
+        return self._cache_version_identity(request, identity)
 
     def _get_cache_version(self, _cache: Any, identity: str) -> str:
         """Return the current namespace version token for *identity*.
@@ -1682,7 +1737,7 @@ class GraphQLView(BaseGraphQLView):
         return str(version)
 
     def _bump_cache_version(self, _cache: Any, identity: str) -> None:
-        """Invalidate the issuing user's cached responses by advancing their version token.
+        """Invalidate a selected response namespace by advancing its version token.
 
         Callers MUST invoke this AFTER the mutation has been executed (see
         ``dispatch``): scheduling it beforehand made the deferral below inert,
@@ -1732,8 +1787,8 @@ class GraphQLView(BaseGraphQLView):
         Truly unexpected backend errors (e.g. connection failure) are not
         suppressed and propagate normally.
 
-        Only the requesting user's namespace is touched; other users' cache
-        entries carry a different identity prefix and are not affected.
+        The caller selects either the shared global namespace or an identity
+        namespace. No unrelated Django cache key is cleared in either mode.
 
         Args:
             _cache: The Django cache backend instance.
@@ -1773,21 +1828,44 @@ class GraphQLView(BaseGraphQLView):
 
         return response
 
+    def _execute_uncached_and_invalidate(
+        self,
+        request: HttpRequest,
+        _cache: Any,
+        version_identity: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute without response caching and invalidate after real mutation work.
+
+        The execution marker is set inside ``execute_graphql_request`` only
+        after validation and transport checks pass.  A ``finally`` is safe here:
+        a non-atomic resolver may persist before raising, while an atomic
+        rollback never sets the marker.  An outer request transaction still
+        controls durability because ``_bump_cache_version`` uses ``on_commit``.
+        """
+        try:
+            return self.super_call(request, *args, **kwargs)
+        finally:
+            if getattr(request, _CACHE_MUTATION_EXECUTED_FLAG, False):
+                self._bump_cache_version(_cache, version_identity)
+
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Fetch queried data from GraphQL and return the cached response.
 
         When "CACHE_ACTIVE" is True:
 
         * Cache keys are partitioned by user identity (see "cache_key_prefix") so
-          one user's cached response is never served to another user.
+          one user's cached response is never served to another user. Their v2
+          shape also records invalidation scope, counter namespace and version.
         * Mutations advance a namespace version counter instead of calling
           "cache.clear()", which would flush unrelated cache entries shared by
           other users or other cache clients. The counter is advanced AFTER the
           mutation has run, so a concurrent reader can never cache pre-mutation
-          data under the new version (issue #60a). Its namespace is bucketed for
-          identities an unauthenticated caller can vary, because the counter key
-          is permanent — see "_cache_version_identity". The response entry keeps
-          the FULL identity either way, so the isolation above is unaffected.
+          data under the new version (issue #60a). The default shared namespace
+          invalidates every GraphQL identity; the opt-in identity policy buckets
+          namespaces an unauthenticated caller can vary. Response entries keep
+          the FULL identity either way, so isolation is unaffected.
         * A request that would render GraphiQL (the view serves it and the client
           prefers HTML) bypasses the cache entirely, so an HTML page and the JSON
           answer for the same query never share a cache slot.
@@ -1823,12 +1901,28 @@ class GraphQLView(BaseGraphQLView):
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
 
+        # RequestFactory-based callers may deliberately reuse a request object.
+        # Never let execution state from a prior dispatch leak into this one.
+        setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, False)
+
+        _cache = caches["default"]
+        identity = self.cache_key_prefix(request)
+        invalidation_scope = graphql_api_settings.CACHE_INVALIDATION_SCOPE
+        # The response entry keeps the FULL identity. The default version
+        # namespace is global; identity mode applies bounded bucketing because
+        # its permanent counter name can otherwise be caller-controlled.
+        version_identity = self._cache_version_namespace(
+            request, identity, invalidation_scope
+        )
+
         # Batch requests contain a list body — caching individual operations
         # inside a batch is not meaningful (each op may be different), and the
         # body-is-a-list would cause AttributeError in get_operation_ast /
         # fetch_cache_key which assume a dict body.  Bypass the cache entirely.
         if self.batch:
-            return self.super_call(request, *args, **kwargs)
+            return self._execute_uncached_and_invalidate(
+                request, _cache, version_identity, *args, **kwargs
+            )
 
         # Multipart/form-data requests bypass the cache to avoid
         # RawPostDataException: parse_body reads request.POST (consuming the
@@ -1836,7 +1930,9 @@ class GraphQLView(BaseGraphQLView):
         # hashing.  Fall through to super_call uncached (issue #53a).
         content_type = self.get_content_type(request)
         if content_type == "multipart/form-data":
-            return self.super_call(request, *args, **kwargs)
+            return self._execute_uncached_and_invalidate(
+                request, _cache, version_identity, *args, **kwargs
+            )
 
         # A request that may render GraphiQL bypasses the cache entirely: the
         # cache key is content-negotiation blind, so an HTML render and the JSON
@@ -1844,14 +1940,9 @@ class GraphQLView(BaseGraphQLView):
         # what everybody else receives.  A GraphiQL render is a static page —
         # caching it buys nothing.
         if self.graphiql and self.request_wants_html(request):
-            return self.super_call(request, *args, **kwargs)
-
-        _cache = caches["default"]
-        identity = self.cache_key_prefix(request)
-        # The response entry keeps the FULL identity; only the version counter's
-        # namespace is bucketed, because that key is permanent and an
-        # unauthenticated caller must not be able to choose its name.
-        version_identity = self._cache_version_identity(request, identity)
+            return self._execute_uncached_and_invalidate(
+                request, _cache, version_identity, *args, **kwargs
+            )
         try:
             operation_ast = self.get_operation_ast(request)
         except HttpError:
@@ -1869,33 +1960,31 @@ class GraphQLView(BaseGraphQLView):
             # so it must never be answered from — or stored in — the cache.
             return self.super_call(request, *args, **kwargs)
         if operation == "mutation":
-            try:
-                return self.super_call(request, *args, **kwargs)
-            finally:
-                # Scheduled AFTER the mutation has run.  Scheduling it before
-                # made the ``transaction.on_commit`` deferral inert: the atomic
-                # block ``ATOMIC_MUTATIONS`` opens lives INSIDE ``super_call``
-                # (see ``execute_graphql_request``), so at that point there was
-                # no open transaction and Django ran the bump immediately —
-                # re-opening the very #60a TOCTOU window it was meant to close.
-                # Here the mutation's own transaction has already committed, and
-                # under ``ATOMIC_REQUESTS`` the request-level block is still
-                # open so the bump remains deferred to its commit.
-                self._bump_cache_version(_cache, version_identity)
+            return self._execute_uncached_and_invalidate(
+                request, _cache, version_identity, *args, **kwargs
+            )
+        if not self.should_cache_query(request):
+            return self.super_call(request, *args, **kwargs)
 
         version = self._get_cache_version(_cache, version_identity)
-        # ``_cache_key_signature`` is empty on the base view (byte-identical to
-        # today) and, on ``AuthenticatedGraphQLView`` with ``PERMISSION_SCOPED_
+        # ``_cache_key_signature`` is empty on the base view and, on
+        # ``AuthenticatedGraphQLView`` with ``PERMISSION_SCOPED_
         # SCHEMA`` active, the caller's permission signature. Folding it in keeps
         # a low-permission caller from ever reading a high-permission caller's
         # cached body for the same query (their pruned schemas — and therefore
         # their responses — differ).
         signature = self._cache_key_signature(request)
-        cache_key = (
-            f"_graphql_{identity}_{version}_{signature}_{self.fetch_cache_key(request)}"
-            if signature
-            else f"_graphql_{identity}_{version}_{self.fetch_cache_key(request)}"
-        )
+        cache_key_parts = [
+            "_graphql_v2",
+            invalidation_scope,
+            version_identity,
+            version,
+            identity,
+        ]
+        if signature:
+            cache_key_parts.append(signature)
+        cache_key_parts.append(self.fetch_cache_key(request))
+        cache_key = "_".join(cache_key_parts)
         response = _cache.get(cache_key, self._CACHE_MISS)
 
         if response is self._CACHE_MISS:
@@ -1952,8 +2041,10 @@ class GraphQLView(BaseGraphQLView):
         return view
 
     @staticmethod
-    def _is_introspection_document(document: Any) -> bool:
-        """Return True when the document is an introspection query.
+    def _is_introspection_document(
+        document: Any, operation_name: str | None = None
+    ) -> bool:
+        """Return True when the selected operation is an introspection query.
 
         Detects introspection by inspecting the AST rather than matching the raw
         query string. A document is treated as introspection when ALL of its
@@ -1963,6 +2054,7 @@ class GraphQLView(BaseGraphQLView):
 
         Args:
             document: A parsed graphql-core "DocumentNode".
+            operation_name: The operation selected by the request, if named.
 
         Returns:
             True when every top-level selection is a meta-field ("__schema" /
@@ -1970,28 +2062,19 @@ class GraphQLView(BaseGraphQLView):
         """
         if document is None:
             return False
-        from graphql.language.ast import FieldNode, OperationDefinitionNode
+        from graphql.language.ast import FieldNode
 
-        for definition in document.definitions:
-            if not isinstance(definition, OperationDefinitionNode):
-                continue
-            selections = getattr(
-                getattr(definition, "selection_set", None), "selections", ()
-            )
-            if not selections:
-                continue
-            # If any top-level selection is NOT a meta-field, it's not introspection.
-            for selection in selections:
-                if isinstance(selection, FieldNode):
-                    if selection.name.value not in ("__schema", "__type"):
-                        return False
-                # InlineFragment / FragmentSpread at top level are unusual; treat
-                # conservatively (not pure introspection).
-                else:
-                    return False
-            # All selections were meta-fields for this operation — it's introspection.
-            return True
-        return False
+        operation = get_operation_ast(document, operation_name)
+        selections = getattr(
+            getattr(operation, "selection_set", None), "selections", ()
+        )
+        if not selections:
+            return False
+        return all(
+            isinstance(selection, FieldNode)
+            and selection.name.value in ("__schema", "__type")
+            for selection in selections
+        )
 
     def get_response(
         self, request: HttpRequest, data: Any, show_graphiql: bool = False
@@ -2054,7 +2137,7 @@ class GraphQLView(BaseGraphQLView):
             # startswith("\n  query IntrospectionQuery") string match.
             if (
                 graphql_api_settings.CLEAN_RESPONSE
-                and not self._is_introspection_document(parsed_document)
+                and not self._is_introspection_document(parsed_document, operation_name)
             ):
                 if response.get("data", None):
                     response["data"] = clean_dict(response["data"])

@@ -21,7 +21,7 @@ assert the native container is unchanged.
 
 Run:
     .venv/bin/python -m pytest \
-        tests/core/test_s_roots_e_pagination_collapse.py -q -o addopts=""
+        tests/core/test_s_roots_e_pagination_collapse.py -q --no-cov
 """
 
 from __future__ import annotations

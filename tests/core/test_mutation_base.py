@@ -9,7 +9,7 @@ Tests:
 - "from django_graphex import Mutation" works (public export).
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_mutation_base.py
+    .venv/bin/python -m pytest -q tests/core/test_mutation_base.py --no-cov
 """
 
 from __future__ import annotations

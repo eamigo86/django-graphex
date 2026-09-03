@@ -18,7 +18,7 @@ schema is all the setup the producer side needs.
 Run from this directory:
 
     cd examples/playground
-    DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q
+    DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q --no-migrations
 """
 
 from __future__ import annotations
@@ -479,27 +479,30 @@ async def test_the_websocket_route_validates_the_handshake_origin() -> None:
     Channels ships "AllowedHostsOriginValidator" for it, and "config/asgi.py"
     wraps the router in one.
 
-    ALLOWED_HOSTS is "*" in this dev settings file, which makes the validator
-    accept everything, so the test pins it against a REAL host list instead —
-    otherwise it would pass without the wrapper.
+    The shipped host list is intentionally explicit, so this test exercises the
+    application exactly as a reader runs it — no settings override can hide an
+    unsafe wildcard default.
     """
     from channels.testing import WebsocketCommunicator
     from config.asgi import build_websocket_application
-    from django.test import override_settings
+    from django.conf import settings
 
-    with override_settings(ALLOWED_HOSTS=["testserver"]):
-        app = build_websocket_application()
+    # pytest-django may append a second "testserver" while setting up the DB.
+    assert "*" not in settings.ALLOWED_HOSTS
+    assert set(settings.ALLOWED_HOSTS) == {"127.0.0.1", "localhost", "testserver"}
+    app = build_websocket_application()
 
-        foreign = WebsocketCommunicator(app, "/ws/graphql/")
-        foreign.scope["subprotocols"] = ["graphql-transport-ws"]
-        foreign.scope["headers"] = [(b"origin", b"https://evil.example")]
-        connected, _ = await foreign.connect()
-        assert not connected, "a foreign Origin must not complete the handshake"
-        await foreign.disconnect()
+    foreign = WebsocketCommunicator(app, "/ws/graphql/")
+    foreign.scope["subprotocols"] = ["graphql-transport-ws"]
+    foreign.scope["headers"] = [(b"origin", b"https://evil.example")]
+    connected, _ = await foreign.connect()
+    assert not connected, "a foreign Origin must not complete the handshake"
+    await foreign.disconnect()
 
+    for host in ("localhost", "testserver"):
         same = WebsocketCommunicator(app, "/ws/graphql/")
         same.scope["subprotocols"] = ["graphql-transport-ws"]
-        same.scope["headers"] = [(b"origin", b"http://testserver")]
+        same.scope["headers"] = [(b"origin", f"http://{host}".encode())]
         connected, _ = await same.connect()
-        assert connected, "the site's own Origin must still connect"
+        assert connected, f"the shipped host {host!r} must still connect"
         await same.disconnect()

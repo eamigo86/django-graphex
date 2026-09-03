@@ -7,7 +7,7 @@ Tests:
 - Cycle guard: placeholder registered BEFORE recursion.
 - Loop-capture correctness: thunks resolve to correct types.
 
-Run: .venv/bin/python -m pytest -q tests/core/test_registry_compiler.py
+Run: .venv/bin/python -m pytest -q tests/core/test_registry_compiler.py --no-cov
 """
 
 from __future__ import annotations

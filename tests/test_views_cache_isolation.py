@@ -28,7 +28,7 @@ from django_graphex.views import GraphQLView
 
 # Shared minimal schema and helpers avoid duplication across the ~9 cache/view
 # test files that previously defined identical scaffolding independently.
-from tests.cache_helpers import CACHE_ON, graphql_post
+from tests.cache_helpers import CACHE_ON, CACHE_ON_IDENTITY, graphql_post
 from tests.cache_helpers import minimal_cache_schema as _schema
 
 
@@ -218,7 +218,7 @@ class AnonSharingTest(TestCase):
         )
 
 
-@override_settings(**CACHE_ON)
+@override_settings(**CACHE_ON_IDENTITY)
 class MutationScopedInvalidationTest(TestCase):
     """#11b — Mutation MUST invalidate only the issuing user's namespace.
 

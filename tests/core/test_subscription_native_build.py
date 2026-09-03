@@ -25,18 +25,22 @@ So S-sub-6 = stop the graphene firings at subclass-def + mount, keep the
 "SubscriptionField" mount-seam NAME, and reconcile watch-item #6 (the
 subscription payload's choices field must render the canonical Enum, not String).
 
-Run: .venv/bin/python -m pytest tests/core/test_subscription_native_build.py -q
+Run: .venv/bin/python -m pytest tests/core/test_subscription_native_build.py -q --no-cov
 """
 
 from __future__ import annotations
 
 import sys
+from importlib.util import find_spec
 
 import pytest
 from django.db import models
 
-# The subscription engine needs the optional ``channels`` extra.
-pytest.importorskip("channels")
+# The module must still collect in the channels-free base-install environment.
+pytestmark = pytest.mark.skipif(
+    find_spec("channels") is None,
+    reason="requires the subscriptions extra",
+)
 
 
 # --------------------------------------------------------------------------- #

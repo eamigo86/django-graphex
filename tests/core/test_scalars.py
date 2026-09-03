@@ -3,7 +3,7 @@
 Covers the 7 custom scalar singletons and the GDX_SCALAR_MAP registry.
 
 No Django settings required. No django_db markers.
-Run with: pytest tests/core/test_scalars.py -x
+Run with: pytest tests/core/test_scalars.py -x --no-cov
 """
 
 import datetime

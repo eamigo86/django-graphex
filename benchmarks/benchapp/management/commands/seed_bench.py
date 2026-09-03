@@ -9,7 +9,7 @@ Scale:
        20 categories
       100 tags
    10,000 posts        (10 per author, ~80% published)
-   30,000 comments     (3 per post)
+   50,000 comments     (5 per post)
    ~30,000 post-tag links (~3 tags per post, via the M2M through table)
 
 The seed is idempotent-by-truncation: it clears the tables first so re-running
@@ -28,7 +28,7 @@ N_AUTHORS = 1_000
 N_CATEGORIES = 20
 N_TAGS = 100
 POSTS_PER_AUTHOR = 10
-COMMENTS_PER_POST = 3
+COMMENTS_PER_POST = 5
 TAGS_PER_POST = 3
 PUBLISHED_RATIO = 0.80
 BATCH = 2_000

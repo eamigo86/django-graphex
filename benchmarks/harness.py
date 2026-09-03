@@ -22,31 +22,31 @@ What it measures, per library:
      libraries declare the SAME fields; recording them puts that claim in the
      artifact where a reader can diff it instead of trusting the README.
 
-``create_comment`` is run LAST (it mutates the DB). All requests go through
-``django.test.Client`` POSTing to ``/graphql/`` — no network, fully deterministic.
+``create_comment`` is run LAST, and every request is rolled back. All requests
+go through ``django.test.Client`` POSTing to ``/graphql/`` — no network.
 
-Output: results/<lib>.json, or results/<BENCH_PREFIX><lib>.json when
-``BENCH_PREFIX`` is set (``BENCH_PREFIX=2x_`` writes the doubled-dataset
-artifacts ``docs/why.md`` publishes).
+Output defaults to ignored ``scratch/<lib>.json``. ``run_publish.py`` assigns a
+raw-run directory and is the only command that replaces canonical results.
 """
 
+import hashlib
 import json
 import os
 import platform
 import statistics
+import subprocess
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 BENCH_LIB = os.environ.setdefault("BENCH_LIB", "graphex")
-# Which SEED the run measures is the caller's business, not something this file
-# can detect, so the artifact name carries it: BENCH_PREFIX=2x_ writes
-# results/2x_<lib>.json, the doubled-dataset artifacts docs/why.md cites. Empty
-# by default, so run_all.sh keeps writing results/<lib>.json byte-identically.
+# Optional filename prefix for manual scratch diagnostics.
 BENCH_PREFIX = os.environ.get("BENCH_PREFIX", "")
+BENCH_AUTHORS = int(os.environ.get("BENCH_AUTHORS", "1000"))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 WARMUP = 15
@@ -106,10 +106,35 @@ def _post(client, op):
         data=json.dumps(payload),
         content_type="application/json",
     )
-    assert resp.status_code == 200, (
-        f"HTTP {resp.status_code}: {resp.content[:500]!r}"
-    )
+    assert resp.status_code == 200, f"HTTP {resp.status_code}: {resp.content[:500]!r}"
     return json.loads(resp.content)
+
+
+def _isolated_post(client, op, *, timed=False, count_queries=False):
+    """Execute one request in a rollback-only transaction.
+
+    Transaction boundaries sit outside both the timer and query capture. This
+    leaves the database rows and SQLite sequence unchanged after every
+    validation, SQL probe, warmup and measured sample.
+    """
+    from django.db import connection, transaction
+    from django.test.utils import CaptureQueriesContext
+
+    with transaction.atomic():
+        query_context = (
+            CaptureQueriesContext(connection) if count_queries else nullcontext()
+        )
+        with query_context as captured:
+            started = time.perf_counter() if timed else None
+            response = _post(client, op)
+            elapsed_ms = (
+                (time.perf_counter() - started) * 1000.0
+                if started is not None
+                else None
+            )
+        transaction.set_rollback(True)
+    sql_queries = len(captured.captured_queries) if count_queries else None
+    return response, elapsed_ms, sql_queries
 
 
 _SURFACE_QUERY = """
@@ -160,7 +185,24 @@ def _stats(samples_ms):
     }
 
 
-def main():
+def _provenance() -> dict[str, str]:
+    """Return the source revision and dependency-lock identity for this run."""
+    constraints = BASE_DIR / "constraints.txt"
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=BASE_DIR, text=True
+    ).strip()
+    return {
+        "commit": commit,
+        "constraints_sha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+    }
+
+
+def main() -> None:
+    """Run the selected library's isolated benchmark and write its result.
+
+    Raises:
+        AssertionError: If an operation returns an invalid response.
+    """
     # 1) Django bootstrap first (populate the app registry). Not timed.
     import django
 
@@ -169,9 +211,7 @@ def main():
     # 2) Time the cold import and, separately, the schema build itself.
     schema_module, cold_import_ms, build_samples = _import_schema()
 
-    from django.db import connection
     from django.test import Client
-    from django.test.utils import CaptureQueriesContext
 
     operations = schema_module.OPERATIONS
     lib_versions = schema_module.LIB_VERSIONS
@@ -188,7 +228,7 @@ def main():
         op = operations[name]
 
         # First response: validate shape (abort loudly on wrong data).
-        first = _post(client, op)
+        first, _, _ = _isolated_post(client, op)
         try:
             op["validate"](first)
         except AssertionError as exc:
@@ -199,20 +239,17 @@ def main():
             raise
 
         # SQL query count: one extra instrumented iteration (excluded from timings).
-        with CaptureQueriesContext(connection) as ctx:
-            _post(client, op)
-        sql_queries = len(ctx.captured_queries)
+        _, _, sql_queries = _isolated_post(client, op, count_queries=True)
 
         # Warmup (untimed).
         for _ in range(WARMUP):
-            _post(client, op)
+            _isolated_post(client, op)
 
         # Timed iterations.
         samples_ms = []
         for _ in range(TIMED):
-            t0 = time.perf_counter()
-            _post(client, op)
-            samples_ms.append((time.perf_counter() - t0) * 1000.0)
+            _, elapsed_ms, _ = _isolated_post(client, op, timed=True)
+            samples_ms.append(elapsed_ms)
 
         stats = _stats(samples_ms)
         stats["sql_queries"] = sql_queries
@@ -227,6 +264,12 @@ def main():
             "platform": platform.platform(),
             "cpu_count": os.cpu_count(),
         },
+        "dataset": {
+            "authors": BENCH_AUTHORS,
+            "posts_per_author": 10,
+            "comments_per_post": 5,
+        },
+        "provenance": _provenance(),
         # The cold first import: library + dependency tree + one schema build.
         # Cold-cache sensitive, so only comparable when every library's
         # virtualenv was warmed equally beforehand (run_all.sh does that).
@@ -242,8 +285,8 @@ def main():
         "ops": results,
     }
 
-    out_dir = BASE_DIR / "results"
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path(os.environ.get("BENCH_OUTPUT_DIR", BASE_DIR / "scratch"))
+    out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{BENCH_PREFIX}{BENCH_LIB}.json"
     out_path.write_text(json.dumps(output, indent=2))
     sys.stdout.write(json.dumps(output, indent=2) + "\n")

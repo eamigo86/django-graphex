@@ -11,8 +11,8 @@ assertion below was CONVERTED to read the native compiled type, preserving the
 original coverage (the types are model-coupled and produce the expected GraphQL
 fields).
 
-Run: .venv/bin/python -m pytest tests/test_base_types.py \
-    -q -o addopts=""
+Run: .venv/bin/python -m pytest tests/test_base_types.py --no-cov \
+    -q --no-cov
 """
 
 from django.test import TestCase

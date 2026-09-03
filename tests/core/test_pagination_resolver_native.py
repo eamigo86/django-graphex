@@ -17,7 +17,7 @@ Gate (per the Phase-5 plan, WU6a):
 
 Run:
     .venv/bin/python -m pytest \
-        tests/core/test_pagination_resolver_native.py -q -o addopts=""
+        tests/core/test_pagination_resolver_native.py -q --no-cov
 """
 
 from __future__ import annotations
