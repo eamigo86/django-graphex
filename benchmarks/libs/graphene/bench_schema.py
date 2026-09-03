@@ -1,35 +1,15 @@
-"""graphene-django implementation of the benchmark operation contract.
+"""Implement the shared benchmark contract with Graphene-Django.
 
-Semantically equivalent to the graphex reference (see benchmarks/README.md):
-same rows, same fields. Only the query SHAPE differs — this module uses
-graphene-django's documented, idiomatic building blocks:
+The adapter returns the same rows and fields as the Graphex reference while
+using Graphene-Django's idiomatic query shape. DjangoObjectType exposes each
+model, Relay connections provide list access, django-filter powers the filtered
+operation, a raw database identifier selects a single post, and a plain
+Graphene mutation creates comments.
 
-  * ``DjangoObjectType`` per model, exposing scalar + relation fields.
-  * Relay ``Node`` + ``DjangoConnectionField`` / ``DjangoFilterConnectionField``
-    for list access. Relay connections are graphene-django's recommended list
-    idiom (the docs' primary pattern), so ``first: N`` is how a graphene client
-    limits a list, and nested relations are traversed as nested connections.
-  * ``django-filter`` via ``DjangoFilterConnectionField`` + ``filterset_fields``
-    for the ``filtered`` operation. django-filter is graphene-django's
-    documented, recommended filtering integration — installing it is part of the
-    library's idiomatic setup, not an exotic optimization.
-  * A plain ``graphene.Field`` taking a raw database ``id`` for ``single``.
-    (Relay's ``Node.Field`` would demand an opaque global id, which is not what
-    the shared contract passes; a by-pk field is the honest equivalent of the
-    reference's ``post(id: 5000)``.)
-  * A ``graphene.Mutation`` (``relay.ClientIDMutation`` is optional; a plain
-    Mutation is the simplest documented form) for ``create_comment``.
-
-FAIRNESS NOTE — no hand-tuning: the nested operation traverses relations with
-graphene-django's default resolvers. graphene-django does NOT ship an automatic
-query optimizer by default (that lives in a separate optional package,
-``graphene-django-optimizer``, which is NOT installed here because it is not the
-library's own documented default). So ``nested`` will N+1 — that is the honest,
-out-of-the-box behavior of graphene-django and is exactly what the benchmark is
-meant to measure.
-
-Exports the three contract symbols: ``graphql_view``, ``OPERATIONS``,
-``LIB_VERSIONS`` (plus ``schema`` for tooling).
+The nested workload deliberately relies on default resolvers. Graphene-Django
+does not include automatic query optimization, so its expected N+1 behavior is
+part of the fair out-of-the-box comparison. The module exports graphql_view,
+OPERATIONS, LIB_VERSIONS, and schema for the benchmark harness and tooling.
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -47,14 +27,34 @@ from graphene_django.views import GraphQLView
 # Object types (Relay nodes — the graphene-django documented default)         #
 # --------------------------------------------------------------------------- #
 class CommentType(DjangoObjectType):
+    """Expose benchmark comments as Relay nodes.
+
+    The field set matches the shared response contract.
+    """
+
     class Meta:
+        """Map the comment model and fields to Relay.
+
+        The benchmark uses the default Graphene-Django mapping behavior.
+        """
+
         model = Comment
         fields = ("id", "author_name", "text", "is_approved", "created_at")
         interfaces = (relay.Node,)
 
 
 class PostType(DjangoObjectType):
+    """Expose benchmark posts and their relations as Relay nodes.
+
+    The type supports every list and single-post benchmark operation.
+    """
+
     class Meta:
+        """Map the post model, relations, and supported filters.
+
+        Filtering remains limited to fields exercised by the workload.
+        """
+
         model = Post
         fields = (
             "id",
@@ -73,7 +73,17 @@ class PostType(DjangoObjectType):
 
 
 class AuthorType(DjangoObjectType):
+    """Expose authors and their posts as Relay nodes.
+
+    Nested benchmark queries traverse the declared posts relation.
+    """
+
     class Meta:
+        """Map the author model and fields to Relay.
+
+        The benchmark keeps Graphene-Django's default relation resolvers.
+        """
+
         model = Author
         fields = ("id", "name", "email", "bio", "posts")
         interfaces = (relay.Node,)
@@ -83,7 +93,17 @@ class AuthorType(DjangoObjectType):
 # Mutation: create_comment (plain graphene Mutation — the simplest doc form)   #
 # --------------------------------------------------------------------------- #
 class CreateComment(graphene.Mutation):
+    """Create a comment through the shared mutation workload.
+
+    The mutation returns the created comment and a success indicator.
+    """
+
     class Arguments:
+        """Declare inputs required by the comment mutation.
+
+        Each input mirrors the variables in the shared operation contract.
+        """
+
         post_id = graphene.ID(required=True)
         author_name = graphene.String(required=True)
         text = graphene.String(required=True)
@@ -91,7 +111,24 @@ class CreateComment(graphene.Mutation):
     ok = graphene.Boolean()
     comment = graphene.Field(CommentType)
 
-    def mutate(self, info, post_id, author_name, text):
+    def mutate(
+        self,
+        info: object,
+        post_id: int | str,
+        author_name: str,
+        text: str,
+    ) -> "CreateComment":
+        """Persist a comment and return the mutation payload.
+
+        Args:
+            info: Resolver context supplied by Graphene.
+            post_id: Database identifier of the parent post.
+            author_name: Name attached to the new comment.
+            text: Comment body used by the workload.
+
+        Returns:
+            The payload containing the created comment and success state.
+        """
         comment = Comment.objects.create(
             post_id=post_id,
             author_name=author_name,
@@ -104,6 +141,11 @@ class CreateComment(graphene.Mutation):
 # Query root                                                                  #
 # --------------------------------------------------------------------------- #
 class Query(graphene.ObjectType):
+    """Expose the benchmark read operations through Graphene.
+
+    Relay connections serve list workloads and post serves raw identifiers.
+    """
+
     # single object by raw database pk (equivalent to the reference's post(id:))
     post = graphene.Field(PostType, id=graphene.ID(required=True))
 
@@ -113,11 +155,25 @@ class Query(graphene.ObjectType):
     posts = DjangoFilterConnectionField(PostType)
     authors = DjangoConnectionField(AuthorType)
 
-    def resolve_post(self, info, id):
+    def resolve_post(self, info: object, id: int | str) -> Post | None:
+        """Resolve one post from its database identifier.
+
+        Args:
+            info: Resolver context supplied by Graphene.
+            id: Database identifier requested by the operation.
+
+        Returns:
+            The matching post, or None when it does not exist.
+        """
         return Post.objects.filter(pk=id).first()
 
 
 class Mutation(graphene.ObjectType):
+    """Expose the benchmark mutation entry point.
+
+    The field delegates comment creation to CreateComment.
+    """
+
     create_comment = CreateComment.Field()
 
 
