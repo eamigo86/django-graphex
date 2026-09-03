@@ -81,16 +81,16 @@ _TYPE_WRAPPERS = (GraphQLNonNull, GraphQLList, NativeNonNull, NativeList)
 def _unwrap_type(current_type: Any) -> Any:
     """Peel list / non-null wrappers to reach the inner node type.
 
-    Mirrors the graphene ``Structure`` unwrap the field classes used before S8c,
-    but over the native wrapper currency (graphql-core ``GraphQLList`` /
-    ``GraphQLNonNull`` + lazy ``NativeList`` / ``NativeNonNull``). Every wrapper
-    exposes ``.of_type``, so the loop is uniform.
+    Mirrors the graphene Structure unwrap the field classes used before S8c,
+    but over the native wrapper currency (graphql-core GraphQLList /
+    GraphQLNonNull + lazy NativeList / NativeNonNull). Every wrapper
+    exposes .of_type, so the loop is uniform.
 
     Args:
-        current_type: A field ``.type`` (possibly wrapped).
+        current_type: A field .type (possibly wrapped).
 
     Returns:
-        The innermost wrapped type (the node class carrying ``_meta``).
+        The innermost wrapped type (the node class carrying _meta).
     """
     while isinstance(current_type, _TYPE_WRAPPERS):
         current_type = current_type.of_type
@@ -98,11 +98,11 @@ def _unwrap_type(current_type: Any) -> Any:
 
 
 def _id_argument() -> Any:
-    """Return the ``id: ID!`` argument for ``DjangoObjectField`` (graphene-free).
+    """Return the id: ID! argument for DjangoObjectField (graphene-free).
 
-    Replaces the graphene ``ID(required=True, description=...)`` extra-arg the
+    Replaces the graphene ID(required=True, description=...) extra-arg the
     field used to mount. The native compiler's
-    ``to_graphql_argument`` accepts a graphql-core ``GraphQLArgument``
+    to_graphql_argument accepts a graphql-core GraphQLArgument
     verbatim, so this is the byte-equivalent native currency.
     """
     from graphql import GraphQLArgument
@@ -131,7 +131,7 @@ except ImportError:  # pragma: no cover
     HStoreField = RangeField = _MissingType  # type: ignore[misc,assignment]
 
     class ArrayField(JSONField):  # type: ignore[no-redef]
-        """Test/no-postgres stand-in for ``ArrayField`` (backed by JSON)."""
+        """Test/no-postgres stand-in for ArrayField (backed by JSON)."""
 
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             """Capture the base field positional argument, like ArrayField."""
@@ -267,14 +267,14 @@ class DjangoListField(NativeMountedField):
 
 
 def _resolve_custom_filters(_type: Any) -> list:
-    """Resolve the ``@filter_field`` custom filters declared on a list type's node.
+    """Resolve the @filter_field custom filters declared on a list type's node.
 
-    The custom filters are declared on the node ``DjangoObjectType`` (stored as
-    ``_dgx_custom_filters``). A ``DjangoListObjectType`` wraps that node as its
-    ``_meta.baseType`` and does NOT carry ``_dgx_custom_filters`` directly, so we
-    fall back to the ``baseType`` lookup. This is the SINGLE source of truth for
+    The custom filters are declared on the node DjangoObjectType (stored as
+    _dgx_custom_filters). A DjangoListObjectType wraps that node as its
+    _meta.baseType and does NOT carry _dgx_custom_filters directly, so we
+    fall back to the baseType lookup. This is the SINGLE source of truth for
     custom-filter propagation across EVERY list-field path (flat, list-object,
-    AND nested) — keeping the native ``<Model>FilterInput`` shape identical on all
+    AND nested) — keeping the native <Model>FilterInput shape identical on all
     paths so graphql-core never sees two same-named-but-different filter inputs
     (#1571).
 
@@ -282,7 +282,7 @@ def _resolve_custom_filters(_type: Any) -> list:
         _type: The GraphQL object/list type carrying the model + filter config.
 
     Returns:
-        The list of ``(arg_name, method, metadata)`` triples, or ``[]``.
+        The list of (arg_name, method, metadata) triples, or [].
     """
     custom_filters = getattr(_type, "_dgx_custom_filters", None)
     if custom_filters is None:
@@ -294,20 +294,20 @@ def _resolve_custom_filters(_type: Any) -> list:
 def _build_filter_arg(field: NativeMountedField, _type: Any, fields: Any) -> None:
     """Record the filter configuration (backend, fields, custom filters) on a field.
 
-    Stores the resolved filter backend and the type's declared ``filter_fields``
+    Stores the resolved filter backend and the type's declared filter_fields
     on the field as backend-agnostic metadata. The native schema compiler
-    (``native.schema_compiler._filter_arg``) reads ``field.fields`` /
-    ``field.custom_filters`` / ``field.model`` and builds the native
-    ``<Model>FilterInput`` (``filtering.native_schema.build_filter_input_type``)
+    (native.schema_compiler._filter_arg) reads field.fields /
+    field.custom_filters / field.model and builds the native
+    <Model>FilterInput (filtering.native_schema.build_filter_input_type)
     when it mounts the field, so no GraphQL input type is constructed here.
 
-    Also picks up ``@filter_field``-decorated methods from the type so the native
+    Also picks up @filter_field-decorated methods from the type so the native
     compiler can inject them as scalar arguments in the filter input type.
 
     Args:
         field: The list field being configured.
         _type: The GraphQL object/list type carrying the model + filter config.
-        fields: An explicit ``filter_fields`` override, or None to use the
+        fields: An explicit filter_fields override, or None to use the
             type's declaration.
     """
     field.filter_backend = resolve_filter_backend()
