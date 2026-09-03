@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Assert that a *base* install of django-graphex stays channels-free.
+"""Assert that a base install of django-graphex stays channels-free.
 
-Run by the CI ``base-install`` job (no ``[subscriptions]`` extra installed). It
-proves AC1: the base package imports without channels, and importing the
-subscriptions subpackage without the extra raises a friendly error.
+The CI base-install job runs this script without the subscriptions extra. The
+check proves that the base package imports without channels and that importing
+the subscriptions subpackage without its extra raises a friendly error.
 """
 
 import importlib.util
