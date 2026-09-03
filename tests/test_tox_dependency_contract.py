@@ -95,6 +95,46 @@ def test_diff_cover_has_a_deliberate_dev_range() -> None:
     assert dev["diff-cover"] == ">=10.5.1,<11"
 
 
+def test_security_gate_audits_the_locked_runtime_dependencies() -> None:
+    """Audit the frozen runtime closure rather than tox's tool environment.
+
+    The exported requirements must exclude development-only dependencies and
+    pip-audit must consume that exact file without resolving a mutable set.
+    """
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(ROOT / "tox.ini")
+    section = parser["testenv:security"]
+    commands = [
+        line.strip() for line in section["commands"].splitlines() if line.strip()
+    ]
+
+    assert section["allowlist_externals"].split() == ["uv"]
+    assert commands == [
+        "bandit -r django_graphex/ -c pyproject.toml",
+        (
+            "uv export --frozen --no-dev --no-emit-project --no-annotate "
+            "--output-file {envtmpdir}/runtime-requirements.txt"
+        ),
+        (
+            "pip-audit --strict --disable-pip "
+            "--requirement {envtmpdir}/runtime-requirements.txt"
+        ),
+    ]
+    assert "--ignore-vuln" not in section["commands"]
+
+
+def test_security_gate_runtime_target_is_documented() -> None:
+    """Document which dependency closure the security gate audits.
+
+    This prevents the contributor guide from implying that dev tools are scanned.
+    """
+    documentation = (ROOT / "docs" / "contributing.md").read_text()
+
+    assert "frozen runtime dependency closure" in documentation
+    assert "Development-only packages are excluded" in documentation
+    assert "pip-audit on the dev environment" not in documentation
+
+
 def test_ruff_range_stays_with_formatter_compatible_minor() -> None:
     """Keep CI on the Ruff minor used to format the repository.
 
