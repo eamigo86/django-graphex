@@ -305,8 +305,7 @@ class BareResolveMethodIsInertTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create one post owned by one author.
 
-        Returns:
-            None.
+        The fixture exposes whether the bare resolver intercepts the relation.
         """
         author = Author.objects.create(name="hidden", bio="")
         Post.objects.create(title="p1", author=author)
@@ -314,8 +313,7 @@ class BareResolveMethodIsInertTests(TestCase):
     def test_bare_resolve_method_never_runs(self) -> None:
         """The relation is served despite a resolver that returns None.
 
-        Returns:
-            None.
+        The untouched call log confirms that the method remains inert.
         """
         _INERT_CALLS.clear()
         result = graphql_sync(
@@ -339,8 +337,7 @@ class DeclaredToOneHatchTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create one visible-author post and one hidden-author post.
 
-        Returns:
-            None.
+        The pair distinguishes rows retained and removed by the scope.
         """
         visible = Author.objects.create(name="visible", bio="")
         hidden = Author.objects.create(name="hidden", bio="")
@@ -350,8 +347,7 @@ class DeclaredToOneHatchTests(TestCase):
     def test_declared_relation_field_runs_the_scope(self) -> None:
         """The excluded author is nulled out while the allowed one survives.
 
-        Returns:
-            None.
+        This proves the declared relation field invokes the target scope.
         """
         result = graphql_sync(
             hatch_schema.graphql_schema,
@@ -376,8 +372,7 @@ class DeclaredToManyHatchTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create one author owning one public and one private post.
 
-        Returns:
-            None.
+        The title prefixes make the child queryset scope observable.
         """
         author = Author.objects.create(name="writer", bio="")
         Post.objects.create(title="pub1", author=author)
@@ -386,8 +381,7 @@ class DeclaredToManyHatchTests(TestCase):
     def test_declared_relation_list_runs_the_scope(self) -> None:
         """The scoped-out post must not reach the response through the parent.
 
-        Returns:
-            None.
+        Only the public child survives the hand-mounted relation list.
         """
         result = graphql_sync(
             many_schema.graphql_schema,
@@ -420,8 +414,7 @@ class DeclaredRelationClosesBothProjectionAxesTests(TestCase):
     def setUpTestData(cls) -> None:
         """Create two posts owned by two different authors.
 
-        Returns:
-            None.
+        Their distinct keys expose ordering and filtering through the relation.
         """
         visible = Author.objects.create(name="visible", bio="")
         hidden = Author.objects.create(name="hidden", bio="")
@@ -429,10 +422,9 @@ class DeclaredRelationClosesBothProjectionAxesTests(TestCase):
         Post.objects.create(title="scoped", author=hidden)
 
     def test_the_relations_column_leaves_the_ordering_allowlist(self) -> None:
-        """ "ordering: authorId" must be refused once the resolver is declared.
+        """Refuse "ordering: authorId" once the resolver is declared.
 
-        Returns:
-            None.
+        The declared relation no longer publishes its foreign-key column.
         """
         result = graphql_sync(
             hatch_schema.graphql_schema,
@@ -449,8 +441,6 @@ class DeclaredRelationClosesBothProjectionAxesTests(TestCase):
         and the reason has to include this one, or the reader reads "publish
         'author'" while looking at 'author' in their own "only_fields".
 
-        Returns:
-            None.
         """
         with pytest.raises(ImproperlyConfigured) as caught:
 
@@ -523,8 +513,7 @@ class DeclaredToManyHatchClosesTheFilterAxisTests(TestCase):
     def test_the_relation_is_no_longer_traversable_by_the_filter(self) -> None:
         """A "filter_fields" path through the to-MANY hatch stops the build.
 
-        Returns:
-            None.
+        The declaration blocks traversal that would bypass the child scope.
         """
         with pytest.raises(ImproperlyConfigured) as caught:
 
@@ -568,8 +557,6 @@ class DeclaredToManyHatchClosesTheFilterAxisTests(TestCase):
         key behind it to withdraw -- which is the whole difference between what
         this arm of the hatch costs and what the to-ONE one does.
 
-        Returns:
-            None.
         """
         Author.objects.create(name="zed", bio="")
         Author.objects.create(name="amy", bio="")
@@ -597,8 +584,7 @@ class DeclaredListObjectFieldClosesTheSameWayTests(TestCase):
     def test_a_declared_container_is_no_longer_traversable(self) -> None:
         """A "filter_fields" path through a declared container stops the build.
 
-        Returns:
-            None.
+        Container declarations close the same traversal boundary as list fields.
         """
         from django_graphex.fields import DjangoListObjectField
         from django_graphex.types import DjangoListObjectType
