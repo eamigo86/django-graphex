@@ -373,7 +373,7 @@ class MaskGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST/definition, unused here.
             root: The unused root value passed by the executor.
             info: The unused GraphQL resolve info passed by the executor.
-            kwargs: Additional executor-supplied keyword arguments, unused.
+            **kwargs: Additional executor-supplied keyword arguments, unused.
 
         Returns:
             masked: The value unchanged if falsy or shorter than "visible",
