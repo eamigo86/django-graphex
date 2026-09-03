@@ -18,7 +18,7 @@ schema is all the setup the producer side needs.
 Run from this directory:
 
     cd examples/playground
-    DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q
+    DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q --no-migrations
 """
 
 from __future__ import annotations

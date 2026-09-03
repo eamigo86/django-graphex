@@ -31,6 +31,8 @@ test: ## Run the playground end-to-end tests (WS + SSE round-trips, schema, clie
 
 reset: ## Drop the SQLite db and re-migrate + re-seed
 	rm -f db.sqlite3
+	find blog/migrations -maxdepth 1 -type f -name '0*.py' -delete
+	find blog/migrations -type d -name __pycache__ -prune -exec rm -rf {} +
 	$(MAKE) migrate
 	$(MAKE) seed
 

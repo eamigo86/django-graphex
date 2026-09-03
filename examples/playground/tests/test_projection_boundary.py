@@ -30,7 +30,7 @@ follows one section must not be contradicted by another.
 Run them from this directory:
 
     cd examples/playground
-    DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q
+    DJANGO_SETTINGS_MODULE=config.settings python -m pytest -q --no-migrations
 """
 
 from __future__ import annotations
