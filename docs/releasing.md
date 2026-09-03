@@ -22,3 +22,9 @@ This build-once flow means the bytes that were tested are the bytes that get
 published. If a consumer job fails, rerun the workflow for the same immutable
 tag; never replace an already published tag or artifact.
 
+## Cumulative release-branch diff check
+
+Every release run finds the shared merge base of `origin/main` and `HEAD`, then
+runs `git diff --check` across that complete range. This catches whitespace
+errors inherited from an earlier child PR instead of checking only the latest
+slice. The gate blocks publication alongside tests, security and coverage.
