@@ -57,16 +57,16 @@ _GFK_FIELD_TYPES: tuple[type, type, type] | None = None
 
 
 def _gfk_field_types() -> tuple[type, type, type]:
-    """Return ``(GenericForeignKey, GenericRel, GenericRelation)``, importing once.
+    """Return (GenericForeignKey, GenericRel, GenericRelation), importing once.
 
     The contenttypes field classes are imported lazily (not at module top) so
-    that importing ``django_graphex`` never loads the ``ContentType`` model
+    that importing django_graphex never loads the ContentType model
     before the app registry is ready. The resolved tuple is cached process-wide,
     so repeated calls on the optimizer hot path cost one global lookup.
 
     Returns:
         The three Django generic-relation field classes used by the optimizer's
-        ``isinstance`` checks.
+        isinstance checks.
     """
     global _GFK_FIELD_TYPES
     if _GFK_FIELD_TYPES is None:
@@ -81,17 +81,17 @@ def _gfk_field_types() -> tuple[type, type, type]:
 
 
 def _generic_foreign_key_type() -> type:
-    """Return the cached ``GenericForeignKey`` class (lazy import)."""
+    """Return the cached GenericForeignKey class (lazy import)."""
     return _gfk_field_types()[0]
 
 
 def _generic_rel_type() -> type:
-    """Return the cached ``GenericRel`` class (lazy import)."""
+    """Return the cached GenericRel class (lazy import)."""
     return _gfk_field_types()[1]
 
 
 def _generic_relation_type() -> type:
-    """Return the cached ``GenericRelation`` class (lazy import)."""
+    """Return the cached GenericRelation class (lazy import)."""
     return _gfk_field_types()[2]
 
 
@@ -417,18 +417,18 @@ def _get_custom_resolver(info: GraphQLResolveInfo) -> Any | None:
 def _get_field_optimize_hook(gql_type: Any, graphql_field_name: str) -> Any | None:
     """Resolve the optimize_<snake_field> hook on the PARENT source class, or None.
 
-    The hook is looked up on ``gql_type.graphene_type`` — the level-local parent
-    type resolved inside ``_walk_filtered_prefetches``.  Do NOT use
-    ``info.parent_type``; the walker is multi-level and ``gql_type`` tracks the
+    The hook is looked up on gql_type.graphene_type — the level-local parent
+    type resolved inside _walk_filtered_prefetches.  Do NOT use
+    info.parent_type; the walker is multi-level and gql_type tracks the
     correct parent type at each level.
 
     Args:
         gql_type: The GraphQL object type at the current walker position.
         graphql_field_name: The raw GraphQL field name (camelCase or snake_case)
-            used to derive ``optimize_<snake_field>``.
+            used to derive optimize_<snake_field>.
 
     Returns:
-        The callable (staticmethod / classmethod / function) or ``None`` when not
+        The callable (staticmethod / classmethod / function) or None when not
         declared.
     """
     if gql_type is None:
@@ -456,29 +456,29 @@ def _apply_field_hook(
 ) -> QuerySet:
     """Apply an optimize_<field> hook as a post-processor on a child QuerySet.
 
-    ``qs`` MUST already be a QuerySet (callers wrap bare strings first).
-    Returns a QuerySet — either the hook's result or the original ``qs`` on
+    qs MUST already be a QuerySet (callers wrap bare strings first).
+    Returns a QuerySet — either the hook's result or the original qs on
     guard failures.
 
     Behaviour:
-    - If ``hook`` is ``None``: no-op, returns ``qs`` unchanged.
-    - If hook returns a ``QuerySet``: returns it.
-    - If hook returns a non-``QuerySet``: emits WARNING, returns original ``qs`` (AC10).
+    - If hook is None: no-op, returns qs unchanged.
+    - If hook returns a QuerySet: returns it.
+    - If hook returns a non-QuerySet: emits WARNING, returns original qs (AC10).
     - If hook raises: the exception ALWAYS propagates from this helper (AC9).
       SAFE_MODE is NOT handled here — it is a COARSE boundary owned by
-      ``queryset_factory`` (see ``OPTIMIZER_SAFE_MODE`` try/except there).  When
-      ``OPTIMIZER_SAFE_MODE=True`` the propagated exception is caught by that
+      queryset_factory (see OPTIMIZER_SAFE_MODE try/except there).  When
+      OPTIMIZER_SAFE_MODE=True the propagated exception is caught by that
       boundary, degrading the WHOLE resolve to the un-optimized base queryset.
-      When ``OPTIMIZER_SAFE_MODE=False`` (default) the exception propagates to
+      When OPTIMIZER_SAFE_MODE=False (default) the exception propagates to
       the caller.  Catching here would produce per-field SAFE_MODE isolation,
       which the Phase E spec explicitly forbids as a deliverable.
 
     Args:
         qs: The optimizer-built child queryset.
-        hook: The resolved callable or ``None``.
+        hook: The resolved callable or None.
         info: The GraphQL resolve info (forwarded to the hook).
-        filter_value: The filter input for this field, or ``None``.
-        is_window: ``True`` only on the window path; ``False`` on all plain paths.
+        filter_value: The filter input for this field, or None.
+        is_window: True only on the window path; False on all plain paths.
 
     Returns:
         The (possibly hook-modified) queryset.
@@ -510,21 +510,21 @@ def _apply_plain_hook(
     """Apply an unfiltered-plain hook from *hook_map* to *item* (str or Prefetch).
 
     Used for SITE-A (top-level unfiltered prefetches) and SITE-B (re-rooted
-    children in ``_merge_filtered_prefetches``).
+    children in _merge_filtered_prefetches).
 
     If the item has no entry in *hook_map* the item is returned unchanged.
-    If the item is a bare string, it is wrapped into a ``Prefetch`` with the
+    If the item is a bare string, it is wrapped into a Prefetch with the
     model's default manager queryset before the hook is applied (ADR-E4).
 
     Args:
-        model: The Django model class (used for ``_default_manager.all()`` when
+        model: The Django model class (used for _default_manager.all() when
             wrapping a bare-string item).
-        item: A bare ORM lookup string or an existing ``Prefetch`` object.
-        hook_map: A ``{orm_lookup -> (graphene_type, hook_callable)}`` map.
+        item: A bare ORM lookup string or an existing Prefetch object.
+        hook_map: A {orm_lookup -> (graphene_type, hook_callable)} map.
         info: The GraphQL resolve info forwarded to the hook.
 
     Returns:
-        The (possibly hook-modified) item — always a ``Prefetch`` when a hook
+        The (possibly hook-modified) item — always a Prefetch when a hook
         fires, otherwise the original item unchanged.
     """
     lookup = item if isinstance(item, str) else item.prefetch_through
@@ -679,8 +679,8 @@ def _inline_fragment_applies(
     """Decide whether to descend into an inline fragment's selection set.
 
     GAP-5 defensive guard (a subset of future Track-2 union/interface routing).
-    The optimizer walkers used to descend through ``InlineFragmentNode``
-    TRANSPARENTLY, ignoring ``type_condition``.  Because ``find_field`` matches
+    The optimizer walkers used to descend through InlineFragmentNode
+    TRANSPARENTLY, ignoring type_condition.  Because find_field matches
     by name only, a fragment targeting a DIFFERENT concrete type than the one
     being walked would mis-attribute its fields against the current model's
     relation map.  This helper closes that hole while staying behaviour
@@ -688,44 +688,44 @@ def _inline_fragment_applies(
 
     Decision table:
 
-    - ``type_condition is None`` -> ``True`` (bare inline fragment; descend).
-    - condition name == current type's GraphQL name / source class ``__name__`` /
-      model ``__name__`` -> ``True`` (same type; descend).
+    - type_condition is None -> True (bare inline fragment; descend).
+    - condition name == current type's GraphQL name / source class __name__ /
+      model __name__ -> True (same type; descend).
     - current source class declares an INTERFACE whose name matches the
-      condition -> ``True`` (forward-compat, best-effort).
+      condition -> True (forward-compat, best-effort).
     - condition names a DIFFERENT concrete type AND a reliable GraphQL-type-name
-      identity is available -> ``False`` (SKIP; the fix).
-    - current type CANNOT be reliably determined at the call site -> ``True``
+      identity is available -> False (SKIP; the fix).
+    - current type CANNOT be reliably determined at the call site -> True
       (preserve today's transparent-descent behaviour; never make it worse).
 
     Forward-compat scope (best-effort, interfaces ONLY): the "current type
-    contains/implements the condition" branch recognises only ``Interface``
-    membership (via ``_meta.interfaces``).  ``Union``
+    contains/implements the condition" branch recognises only Interface
+    membership (via _meta.interfaces).  Union
     membership is NOT detected here — a Union member type carries no back-pointer
-    to its unions (only the Union exposes ``_meta.types``), so walking a concrete
-    member and meeting ``... on <Union>`` will SKIP, not descend.  Django
+    to its unions (only the Union exposes _meta.types), so walking a concrete
+    member and meeting ... on <Union> will SKIP, not descend.  Django
     multi-table-inheritance parent/child names are likewise not recognised.  All
     of this is inert today (no polymorphic output types are exposed) and never
     crashes; widening to unions/abstract parents is deferred to Track-2.
 
-    Reliability rule (critical): ``type_condition.name.value`` is a GraphQL TYPE
-    name (e.g. ``AccountType``), which normally does NOT equal the Django model
-    class name (e.g. ``Account``).  A model-name match can therefore only
+    Reliability rule (critical): type_condition.name.value is a GraphQL TYPE
+    name (e.g. AccountType), which normally does NOT equal the Django model
+    class name (e.g. Account).  A model-name match can therefore only
     CONFIRM "same type" (descend); it can never be the SOLE basis for a SKIP,
-    or every legitimate ``... on <Model>Type`` fragment would be dropped.  We
-    only skip when a GraphQL-type-name identity (``current_type_name`` or the
-    source class's ``_meta.name`` / ``__name__``) is present and the condition
+    or every legitimate ... on <Model>Type fragment would be dropped.  We
+    only skip when a GraphQL-type-name identity (current_type_name or the
+    source class's _meta.name / __name__) is present and the condition
     does not match any accepted name.
 
     Args:
-        inline_fragment_node: The ``InlineFragmentNode`` being considered.
+        inline_fragment_node: The InlineFragmentNode being considered.
         current_type_name: The GraphQL type name of the type being walked, if
-            known (e.g. ``graphene_type._meta.name`` or the GraphQLObjectType
+            known (e.g. graphene_type._meta.name or the GraphQLObjectType
             name).
         current_model: The Django model being walked, if known (enables a
-            best-effort POSITIVE match against the model class ``__name__``).
+            best-effort POSITIVE match against the model class __name__).
         current_graphene_type: The source class being walked, if known
-            (enables GraphQL-name + ``__name__`` match plus best-effort
+            (enables GraphQL-name + __name__ match plus best-effort
             interface lookup).
 
     Returns:
@@ -803,37 +803,37 @@ def _resolve_fragment_target(
     union_gql: Any,
     schema: Any,
 ) -> tuple[type[Model], Any, Any] | None:
-    """Resolve a ``... on ConcreteType`` inline fragment to its Django model.
+    """Resolve a ... on ConcreteType inline fragment to its Django model.
 
     The RESOLVE half of the two-stage Track-2 GFK-union routing (the FILTER half
-    is ``_inline_fragment_applies``).  Maps the fragment's ``type_condition``
-    GraphQL name (e.g. ``AccountType``) to the member model via the ONLY reliable
-    bridge: ``schema.get_type(name).graphene_type._meta.model``.  The GraphQL
-    type name (``AccountType``) is NOT the model name (``Account``), so a direct
+    is _inline_fragment_applies).  Maps the fragment's type_condition
+    GraphQL name (e.g. AccountType) to the member model via the ONLY reliable
+    bridge: schema.get_type(name).graphene_type._meta.model.  The GraphQL
+    type name (AccountType) is NOT the model name (Account), so a direct
     string comparison would be wrong — the schema lookup is mandatory.
 
-    CORRECTNESS PRIORITY: returns ``None`` on ANY miss and NEVER falls back to a
-    parent/owner model.  A wrong model -> wrong ``.only()`` columns -> a Django
-    ``FieldError`` at queryset evaluation under ``OPTIMIZE_ONLY_FIELDS`` (a
-    DATA-SHAPE bug, not a missed optimisation).  The caller skips a ``None``
+    CORRECTNESS PRIORITY: returns None on ANY miss and NEVER falls back to a
+    parent/owner model.  A wrong model -> wrong .only() columns -> a Django
+    FieldError at queryset evaluation under OPTIMIZE_ONLY_FIELDS (a
+    DATA-SHAPE bug, not a missed optimisation).  The caller skips a None
     bucket (it degrades to full-load) rather than mis-attribute.
 
-    Interfaces by design: if the condition names a ``DjangoInterfaceType``,
-    ``schema.get_type`` yields a ``GraphQLInterfaceType`` whose
-    ``graphene_type._meta.model`` is ``None`` -> this resolver returns ``None``.
+    Interfaces by design: if the condition names a DjangoInterfaceType,
+    schema.get_type yields a GraphQLInterfaceType whose
+    graphene_type._meta.model is None -> this resolver returns None.
     Interfaces are NEVER routed through GenericPrefetch in the MVP (ADR-7); the
     resolver is purpose-built for union members only.
 
     Args:
-        node: The ``InlineFragmentNode`` carrying the ``type_condition``.
-        union_gql: The union ``GraphQLUnionType`` the fragment lives under
+        node: The InlineFragmentNode carrying the type_condition.
+        union_gql: The union GraphQLUnionType the fragment lives under
             (accepted for symmetry / future validation; not dereferenced here).
-        schema: The ``GraphQLSchema`` (from ``info.schema``) used to look up the
-            condition's type.  ``None`` -> ``None`` (degrade, never crash).
+        schema: The GraphQLSchema (from info.schema) used to look up the
+            condition's type.  None -> None (degrade, never crash).
 
     Returns:
-        ``(member_model, member_gql, member_graphene_type)`` when the fragment
-        resolves cleanly to a single Django model, else ``None``.
+        (member_model, member_gql, member_graphene_type) when the fragment
+        resolves cleanly to a single Django model, else None.
     """
     type_condition = getattr(node, "type_condition", None)
     name = getattr(getattr(type_condition, "name", None), "value", None)
@@ -864,16 +864,16 @@ def _resolve_fragment_target(
 
 
 def _gql_source_class(gql_type: Any) -> Any:
-    """Return the source class a compiled ``GraphQLObjectType`` was built from.
+    """Return the source class a compiled GraphQLObjectType was built from.
 
-    A natively compiled type NEVER carries a plain ``graphene_type`` attribute:
-    the source class lives under ``extensions['gdx']._meta.graphene_type``,
-    which is what ``_gdx_graphene_type`` reads.  Reading the attribute directly
-    silently yields ``None``, and every consumer that needs ``_meta.interfaces``
+    A natively compiled type NEVER carries a plain graphene_type attribute:
+    the source class lives under extensions['gdx']._meta.graphene_type,
+    which is what _gdx_graphene_type reads.  Reading the attribute directly
+    silently yields None, and every consumer that needs _meta.interfaces
     (the inline-fragment guard) is then inert.
 
     Args:
-        gql_type: The ``GraphQLObjectType`` to resolve, or None.
+        gql_type: The GraphQLObjectType to resolve, or None.
 
     Returns:
         The source class, or None when it cannot be resolved.
@@ -886,18 +886,18 @@ def _gql_source_class(gql_type: Any) -> Any:
 
 
 def _inner_object_type(gql_type: Any, field_name: str) -> Any:
-    """Resolve the object type wrapped by ``field_name`` on ``gql_type``.
+    """Resolve the object type wrapped by field_name on gql_type.
 
-    Used for transparent wrapper descent: a ``DjangoListObjectType`` container
-    exposes the row type under ``results``, and selections written inside that
+    Used for transparent wrapper descent: a DjangoListObjectType container
+    exposes the row type under results, and selections written inside that
     field belong to the ROW type, not to the container.
 
     Args:
-        gql_type: The ``GraphQLObjectType`` owning the field, or None.
+        gql_type: The GraphQLObjectType owning the field, or None.
         field_name: The GraphQL field name to look through.
 
     Returns:
-        The wrapped ``GraphQLObjectType``, or None when it cannot be resolved.
+        The wrapped GraphQLObjectType, or None when it cannot be resolved.
     """
     if gql_type is None:
         return None
@@ -975,9 +975,9 @@ def _relation_field_map(
     Args:
         model: The Django model class to inspect.
         _cache: Optional request-scoped memoization dict shared across all
-            walker calls within a single ``_apply_optimizations`` invocation.
+            walker calls within a single _apply_optimizations invocation.
             When provided, repeated calls for the same model return the cached
-            result without re-calling ``_meta.get_fields()``.  ``None`` disables
+            result without re-calling _meta.get_fields().  None disables
             caching (backwards-compatible default).
 
     Returns:
@@ -1018,9 +1018,9 @@ def _concrete_field_map(
     Args:
         model: The Django model class to inspect.
         _cache: Optional request-scoped memoization dict shared across all
-            walker calls within a single ``_apply_optimizations`` invocation.
+            walker calls within a single _apply_optimizations invocation.
             When provided, repeated calls for the same model return the cached
-            result without re-calling ``_meta.get_fields()``.  ``None`` disables
+            result without re-calling _meta.get_fields().  None disables
             caching (backwards-compatible default).
 
     Returns:
@@ -1225,25 +1225,25 @@ def _collect_only_fields(
         _prefix: The dotted ORM path prefix for the current model.
         _only: The accumulating set of dotted only paths.
         annotated_names: snake_case field names of AnnotatedFields on the model's
-            GraphQL output type.  These leaves must NOT be added to ``.only()``
-            and must NOT trigger ``model_full=True``.
+            GraphQL output type.  These leaves must NOT be added to .only()
+            and must NOT trigger model_full=True.
         current_type_name: GraphQL type name of the type being walked, if known
-            (GAP-5 inline-fragment guard).  ``None`` falls back to model-name
+            (GAP-5 inline-fragment guard).  None falls back to model-name
             matching and otherwise preserves transparent descent.
         variable_values: The currently bound GraphQL variables, used to resolve
-            ``@skip`` / ``@include`` on each selection. ``None`` falls back to
-            the conservative "never skip" policy (same as passing ``{}``).
+            @skip / @include on each selection. None falls back to
+            the conservative "never skip" policy (same as passing {}).
         _fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).
-        current_gql_type: The ``GraphQLObjectType`` being walked, if known.
+            _relation_field_map).
+        current_gql_type: The GraphQLObjectType being walked, if known.
             Two things depend on it that a bare type NAME cannot supply: the
-            source class (``_meta.interfaces``, without which the guard cannot
-            recognise an ``... on <Interface>`` condition) and the wrapper
-            descent (a ``DjangoListObjectType`` container's ``results`` field
+            source class (_meta.interfaces, without which the guard cannot
+            recognise an ... on <Interface> condition) and the wrapper
+            descent (a DjangoListObjectType container's results field
             re-points the identity at the inner ROW type).  Passing the
-            container alone made every fragment inside ``results`` be judged
+            container alone made every fragment inside results be judged
             against the container, so its columns were dropped from the
-            ``.only()`` projection and reloaded one query per row.
+            .only() projection and reloaded one query per row.
 
     Returns:
         A sorted list of dotted "only" paths.
@@ -1419,18 +1419,18 @@ def _collect_only_fields_is_full_load(
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
     current_gql_type: Any = None,
 ) -> bool:
-    """Return True when ``_collect_only_fields`` would trigger the full-load path.
+    """Return True when _collect_only_fields would trigger the full-load path.
 
     Detects the case where the selection contains an unknown/computed leaf that
-    sets ``model_full=True`` in ``_collect_only_fields``.  Used by
-    ``_compute_child_only`` to decide whether to skip ``.only()`` for a prefetch
+    sets model_full=True in _collect_only_fields.  Used by
+    _compute_child_only to decide whether to skip .only() for a prefetch
     branch without needing to compare result sets.
 
     This is a private helper and MUST NOT be used outside this module.
 
-    INVARIANT: this walker and ``_collect_only_fields`` MUST make identical
+    INVARIANT: this walker and _collect_only_fields MUST make identical
     @skip / @include decisions — change them together. Both accept the same
-    ``variable_values`` parameter and thread it through every recursive call
+    variable_values parameter and thread it through every recursive call
     (fragment spread, inline fragment, wrapper field) so a directive bound to
     the same variables is honored identically by both walkers; otherwise they
     could disagree on whether an unknown leaf is even in scope.
@@ -1444,23 +1444,23 @@ def _collect_only_fields_is_full_load(
         current_type_name: GraphQL type name of the type being walked, if known.
             Required for the GAP-5 inline-fragment guard to SKIP a foreign-typed
             fragment (model name alone can never trigger a SKIP).  Threaded so
-            this full-load detector and ``_collect_only_fields`` agree on whether
+            this full-load detector and _collect_only_fields agree on whether
             a foreign fragment is in scope; otherwise the two walkers disagree
-            and a foreign fragment could silently veto ``.only()`` narrowing.
+            and a foreign fragment could silently veto .only() narrowing.
         variable_values: The currently bound GraphQL variables, used to resolve
-            ``@skip`` / ``@include`` on each selection exactly like the sibling
-            ``_collect_only_fields`` walker. ``None`` falls back to the
-            conservative "never skip" policy (same as passing ``{}``).
+            @skip / @include on each selection exactly like the sibling
+            _collect_only_fields walker. None falls back to the
+            conservative "never skip" policy (same as passing {}).
         _fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).
-        current_gql_type: The ``GraphQLObjectType`` being walked, if known.
-            Supplies the source class (``_meta.interfaces``) and the wrapper
+            _relation_field_map).
+        current_gql_type: The GraphQLObjectType being walked, if known.
+            Supplies the source class (_meta.interfaces) and the wrapper
             descent to the inner ROW type, exactly as in
-            ``_collect_only_fields``; threaded for the same walkers-must-agree
-            reason as ``current_type_name``.
+            _collect_only_fields; threaded for the same walkers-must-agree
+            reason as current_type_name.
 
     Returns:
-        True if any unknown leaf would trigger full-load for ``model``.
+        True if any unknown leaf would trigger full-load for model.
     """
     current_graphene_type = _gql_source_class(current_gql_type)
     rel_map = _relation_field_map(model, _fmap_cache)
@@ -1570,19 +1570,19 @@ def _leaf_model(
 ) -> type[Model]:
     """Walk a dotted ORM lookup through ALL relation kinds and return the leaf model.
 
-    Unlike ``_collect_only_fields``, which only traverses select_related segments,
+    Unlike _collect_only_fields, which only traverses select_related segments,
     this helper traverses PREFETCH relations too (reverse FK, M2M, GenericRelation)
-    so that a dotted top_plain lookup like ``posts__tags`` resolves to ``Tag``.
+    so that a dotted top_plain lookup like posts__tags resolves to Tag.
 
     GFK-target fields are never passed here (they are skipped in
-    ``_collect_prefetch_only_sets`` before any call to this function).
+    _collect_prefetch_only_sets before any call to this function).
 
     Args:
         model: The root model class.
-        lookup: A dotted ORM path, e.g. ``"posts"`` or ``"posts__tags"``.
+        lookup: A dotted ORM path, e.g. "posts" or "posts__tags".
         fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).  Threading it prevents redundant
-            ``_meta.get_fields()`` calls across the .only()-narrowing pass (#66).
+            _relation_field_map).  Threading it prevents redundant
+            _meta.get_fields() calls across the .only()-narrowing pass (#66).
 
     Returns:
         The Django model class at the end of the lookup chain.
@@ -1604,19 +1604,19 @@ def _compute_child_only(
     child_graphene_type: Any = None,
     fmap_cache: "dict[tuple[int, str], Any] | None" = None,
 ) -> PrefetchPlan | None:
-    """Compute the `.only()` column plan for a single prefetch child queryset.
+    """Compute the .only() column plan for a single prefetch child queryset.
 
-    Reuses ``_collect_only_fields`` as the single source of truth for requested
+    Reuses _collect_only_fields as the single source of truth for requested
     and mandatory columns.  A full-load signal (unknown/computed leaf) is
-    detected and returned as ``None`` — the caller leaves the lookup as a bare
+    detected and returned as None — the caller leaves the lookup as a bare
     string (full load).
 
     Also self-collects any AnnotatedField annotations declared on the child's
     source class (phase-d).  When an annotation is present, the plan is returned
-    even if ``OPTIMIZE_ONLY_FIELDS`` is off (annotate-only mode, empty only_cols).
+    even if OPTIMIZE_ONLY_FIELDS is off (annotate-only mode, empty only_cols).
 
-    The returned ``PrefetchPlan.child_select`` list contains the forward-FK head
-    paths that MUST accompany the ``.only()`` call to avoid re-introducing N+1
+    The returned PrefetchPlan.child_select list contains the forward-FK head
+    paths that MUST accompany the .only() call to avoid re-introducing N+1
     (GAP-1).
 
     Args:
@@ -1629,11 +1629,11 @@ def _compute_child_only(
             provided, enables AnnotatedField self-collection on the child.
         child_graphene_type: The source class for the child (optional).
         fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).  Threading it prevents redundant
-            ``_meta.get_fields()`` calls from the .only()-narrowing pass (#66).
+            _relation_field_map).  Threading it prevents redundant
+            _meta.get_fields() calls from the .only()-narrowing pass (#66).
 
     Returns:
-        A ``PrefetchPlan`` with the column and select_related lists, or ``None``
+        A PrefetchPlan with the column and select_related lists, or None
         to signal a full-load branch.
     """
     if sub_selection is None:
