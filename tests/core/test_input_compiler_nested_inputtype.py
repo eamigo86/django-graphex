@@ -66,11 +66,11 @@ from django_graphex.core.input_compiler import compile_input_type
 
 
 def _exec_outer(query: str, *, variable_values: dict | None = None) -> tuple:
-    """Run ``query`` against a one-field Query whose arg is the ``Outer`` input.
+    """Run query against a one-field Query whose arg is the Outer input.
 
-    Returns ``(errors, captured_dict)`` where ``captured_dict`` is the coerced
+    Returns (errors, captured_dict) where captured_dict is the coerced
     argument value graphql-core delivered to the resolver -- nested input
-    objects arrive as plain ``dict`` values keyed by the child ``out_name``.
+    objects arrive as plain dict values keyed by the child out_name.
     """
 
     class Inner(BaseModel):
