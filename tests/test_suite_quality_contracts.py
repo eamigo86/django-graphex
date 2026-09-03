@@ -14,8 +14,11 @@ RETIRED_DOCSTRING_RATCHETS = frozenset(
         Path("test_docstring_benchmark_strawberry.py"),
         Path("test_docstring_directives_core.py"),
         Path("test_docstring_directives_string.py"),
+        Path("test_docstring_migrate_2_0.py"),
         Path("test_docstring_pagination.py"),
         Path("test_docstring_playground.py"),
+        Path("test_docstring_release_scripts.py"),
+        Path("test_docstring_release_tools.py"),
     }
 )
 
