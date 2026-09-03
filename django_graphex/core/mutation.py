@@ -67,39 +67,39 @@ from django_graphex.core.base import ObjectType as NativeObjectType
 
 
 def _compile_args(args_cls: type) -> dict[str, Any]:
-    """Convert a ``class Arguments`` inner class to a ``dict[str, GraphQLArgument]``.
+    """Convert a class Arguments inner class to a dict[str, GraphQLArgument].
 
     Reads every non-underscore attribute of *args_cls* and normalises EACH through
-    the NATIVE arg API ``native_arg`` (S-args-8, decision #1603 — CLEAN BREAK off
-    graphene).  ``native_arg`` accepts three declaration currencies:
+    the NATIVE arg API native_arg (S-args-8, decision #1603 — CLEAN BREAK off
+    graphene).  native_arg accepts three declaration currencies:
 
-    - a graphql-core ``GraphQLArgument`` (``name = GraphQLArgument(GraphQLNonNull(
-      GraphQLString))``) — accepted VERBATIM, with ``out_name`` set to the
+    - a graphql-core GraphQLArgument (name = GraphQLArgument(GraphQLNonNull(
+      GraphQLString))) — accepted VERBATIM, with out_name set to the
       snake_case form of the declared (possibly camelCase) key when the user did
       not already supply one;
-    - a bare graphql-core type (``age = GraphQLInt``, ``tags = GraphQLList(...)``)
-      — wrapped in a ``GraphQLArgument`` for ergonomics;
-    - a zero-arg callable THUNK (``data = lambda: GraphQLArgument(GraphQLNonNull(
-      MyInput._meta.graphql_input_type))``) — called to resolve a deferred type
+    - a bare graphql-core type (age = GraphQLInt, tags = GraphQLList(...))
+      — wrapped in a GraphQLArgument for ergonomics;
+    - a zero-arg callable THUNK (data = lambda: GraphQLArgument(GraphQLNonNull(
+      MyInput._meta.graphql_input_type))) — called to resolve a deferred type
       (the native lazy form for an input-object arg whose compiled
-      ``GraphQLInputObjectType`` is not available at class-definition time; the
-      thunk fires here, at ``Field()`` build time, AFTER ``compile_all_inputs``).
+      GraphQLInputObjectType is not available at class-definition time; the
+      thunk fires here, at Field() build time, AFTER compile_all_inputs).
 
     CLEAN BREAK (no silent drops): every public attribute is routed through
-    ``native_arg``, which raises a clear ``TypeError`` naming the offending value
-    when it is not a native arg currency (e.g. a leftover ``graphene.Argument``).
-    Pre-S-args-8 the loop FILTERED to ``(GraphQLArgument, GraphQLType)`` and
-    SILENTLY SKIPPED anything else — so a stray ``graphene.Argument`` dropped the
-    arg with no error and the advertised clean break (= ``TypeError``) was
-    unreachable.  ``props`` already strips dunders / underscore helpers, so a
+    native_arg, which raises a clear TypeError naming the offending value
+    when it is not a native arg currency (e.g. a leftover graphene.Argument).
+    Pre-S-args-8 the loop FILTERED to (GraphQLArgument, GraphQLType) and
+    SILENTLY SKIPPED anything else — so a stray graphene.Argument dropped the
+    arg with no error and the advertised clean break (= TypeError) was
+    unreachable.  props already strips dunders / underscore helpers, so a
     private helper constant is never seen here; a genuine public arg declaration
     must be a native currency or it fails loudly.  graphene is NEVER imported.
 
     Args:
-        args_cls: The ``class Arguments`` inner class of a ``Mutation`` subclass.
+        args_cls: The class Arguments inner class of a Mutation subclass.
 
     Returns:
-        ``dict[str, GraphQLArgument]`` ready for ``GraphQLField(args=…)``.
+        dict[str, GraphQLArgument] ready for GraphQLField(args=…).
 
     Raises:
         TypeError: When any public attribute of *args_cls* is not a native arg
@@ -168,17 +168,17 @@ class Mutation(NativeObjectType):
 
     @classmethod
     def _resolve_mutate(cls) -> Any:
-        """Locate and adapt the ``mutate`` callable for this subclass.
+        """Locate and adapt the mutate callable for this subclass.
 
-        Walks the MRO to find ``mutate`` (skipping the bare ``Mutation`` base,
-        which defines none), unwraps ``staticmethod``, and adapts a ``self``-first
-        callable to the ``(root, info, **kw)`` protocol via ``_adapt_self``.
+        Walks the MRO to find mutate (skipping the bare Mutation base,
+        which defines none), unwraps staticmethod, and adapts a self-first
+        callable to the (root, info, **kw) protocol via _adapt_self.
 
         Returns:
-            The resolver callable ready for ``GraphQLField(resolve=…)``.
+            The resolver callable ready for GraphQLField(resolve=…).
 
         Raises:
-            AttributeError: When no ``mutate`` is defined anywhere in the MRO.
+            AttributeError: When no mutate is defined anywhere in the MRO.
         """
         mutate_fn = cls.__dict__.get("mutate", None)
         if mutate_fn is None:

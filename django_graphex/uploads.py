@@ -116,14 +116,14 @@ _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 def _estimate_decoded_size(b64_data: str) -> int:
     """Estimate the decoded byte length of a base64 string without decoding it.
 
-    Formula: ``len(stripped) * 3 // 4`` (strips whitespace first to be robust
+    Formula: len(stripped) * 3 // 4 (strips whitespace first to be robust
     against line-wrapped base64). The result may be 1–2 bytes over the true
     decoded length due to padding characters, which is intentionally
     conservative (safe to reject at the boundary).
 
     Args:
         b64_data: The raw base64 string (may contain whitespace/newlines).
-            Coerced to ``str`` so non-``str`` callers also work.
+            Coerced to str so non-str callers also work.
 
     Returns:
         Estimated decoded byte count.
@@ -136,18 +136,18 @@ def _estimate_decoded_size(b64_data: str) -> int:
 def _effective_max_size(max_size: int | None) -> int | None:
     """Return the effective upload size cap.
 
-    Priority: explicit ``max_size`` argument > ``MAX_UPLOAD_SIZE`` setting.
+    Priority: explicit max_size argument > MAX_UPLOAD_SIZE setting.
 
     Args:
-        max_size: The per-call override (bytes), or ``None`` to use the global
+        max_size: The per-call override (bytes), or None to use the global
             setting.
 
     Returns:
-        The effective cap in bytes, or ``None`` if no cap applies.
+        The effective cap in bytes, or None if no cap applies.
 
     Raises:
-        ImproperlyConfigured: When ``max_size`` is ``None`` **and**
-            ``MAX_UPLOAD_SIZE`` has not been configured. This prevents silent
+        ImproperlyConfigured: When max_size is None **and**
+            MAX_UPLOAD_SIZE has not been configured. This prevents silent
             unbounded uploads.
     """
     if max_size is not None:
