@@ -43,6 +43,7 @@ class ShuffleGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             A new list with the items in random order, or the value when
@@ -94,6 +95,7 @@ class SampleGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             A list of "k" randomly sampled items, or the value when empty.
@@ -130,6 +132,7 @@ class UniqueGraphQLDirective(BaseExtraGraphQLDirective):
             directive: The directive AST node.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: Additional resolver keyword arguments.
 
         Returns:
             A list with duplicates removed, or the value when it is empty.
