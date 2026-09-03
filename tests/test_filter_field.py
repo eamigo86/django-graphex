@@ -87,11 +87,15 @@ class PostSearchType(DjangoObjectType):
 
     @filter_field(GraphQLString, description="Full-text search")
     def search(
-        cls, queryset: "QuerySet[Any]", info: Any, value: str
+        cls: type[PostSearchType],
+        queryset: "QuerySet[Any]",
+        info: Any,
+        value: str,
     ) -> "QuerySet[Any]":
         """Filter the queryset to titles containing "value" (case-insensitive).
 
         Args:
+            cls: The object type class that owns the filter.
             queryset: The queryset being filtered.
             info: The GraphQL resolve info for the current request.
             value: The search substring supplied by the caller.
@@ -187,11 +191,15 @@ class PostIntFilterType(DjangoObjectType):
 
     @filter_field(GraphQLInt, description="Filter by min views")
     def min_views(
-        cls, queryset: "QuerySet[Any]", info: Any, value: int
+        cls: type[PostIntFilterType],
+        queryset: "QuerySet[Any]",
+        info: Any,
+        value: int,
     ) -> "QuerySet[Any]":
         """Filter the queryset to posts with at least "value" views.
 
         Args:
+            cls: The object type class that owns the filter.
             queryset: The queryset being filtered.
             info: The GraphQL resolve info for the current request.
             value: The minimum view count supplied by the caller.
@@ -254,11 +262,15 @@ class OrderedFilterType(DjangoObjectType):
 
     @filter_field(GraphQLString)
     def search(
-        cls, queryset: "QuerySet[Any]", info: Any, value: str
+        cls: type[OrderedFilterType],
+        queryset: "QuerySet[Any]",
+        info: Any,
+        value: str,
     ) -> "QuerySet[Any]":
         """Filter the queryset to titles containing "value", logging the call.
 
         Args:
+            cls: The object type class that owns the filter.
             queryset: The queryset being filtered.
             info: The GraphQL resolve info for the current request.
             value: The search substring supplied by the caller.
@@ -278,7 +290,7 @@ class OrderedFilterType(DjangoObjectType):
         Args:
             qs: The queryset being filtered.
             info: The GraphQL resolve info for the current request.
-            kwargs: Additional filter arguments, unused by this override.
+            **kwargs: Additional filter arguments, unused by this override.
 
         Returns:
             qs: The queryset filtered by "views__gte=10".
