@@ -71,7 +71,7 @@ _SECTION_HEADER_RE = re.compile(r"^\s*([A-Z][A-Za-z]+):\s*$")
 _TYPE_IN_DOC_RE = re.compile(r"^\s*\w+ \([^)]*\):")
 
 # A Google Args entry, including the conventional *args/**kwargs spelling.
-_ARG_ENTRY_RE = re.compile(r"^\s+(\*{0,2}[A-Za-z_]\w*)(?:\s+\([^)]*\))?\s*:")
+_ARG_ENTRY_RE = re.compile(r"^\s+(\*{0,2}[A-Za-z_]\w*)(?:\s+\((.+)\))?\s*:")
 
 # A trailing noqa pragma naming DOC codes (comma-separated codes accepted).
 _NOQA_RE = re.compile(r"#\s*noqa:\s*(DOC[0-9, ]+)", re.IGNORECASE)
@@ -329,6 +329,83 @@ def _has_exact_args(lines: list[str], params: list[str]) -> bool:
     return bool(entries) and Counter(entries) == Counter(params)
 
 
+def _section_body(lines: list[str], name: str) -> list[str] | None:
+    """Return one exact Google section body, or None when absent."""
+    active = False
+    body: list[str] = []
+    for line in lines:
+        header = _SECTION_HEADER_RE.match(line)
+        if header:
+            if active:
+                break
+            active = header.group(1) == name
+        elif active:
+            body.append(line)
+    return body if active else None
+
+
+def _has_nonempty_section(lines: list[str], name: str) -> bool:
+    """Report whether an exact section contains meaningful body text."""
+    body = _section_body(lines, name)
+    return body is not None and any(line.strip() for line in body)
+
+
+def _owner_nodes(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[ast.AST]:
+    """Collect descendants owned by a callable, excluding nested scopes."""
+    owned: list[ast.AST] = []
+    pending: list[ast.AST] = list(node.body)
+    while pending:
+        child = pending.pop()
+        owned.append(child)
+        if isinstance(
+            child,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            continue
+        pending.extend(ast.iter_child_nodes(child))
+    return owned
+
+
+def _annotation_expr(annotation: ast.expr | None) -> ast.expr | None:
+    """Resolve a string annotation to its expression when possible."""
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            return ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return annotation
+    return annotation
+
+
+def _annotation_name(annotation: ast.expr | None) -> str | None:
+    """Return the terminal name of a simple or qualified annotation."""
+    annotation = _annotation_expr(annotation)
+    if isinstance(annotation, ast.Name):
+        return annotation.id
+    if isinstance(annotation, ast.Attribute):
+        return annotation.attr
+    return None
+
+
+def _required_result_section(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """Select Returns, Yields, or no result section from callable structure."""
+    if _annotation_name(node.returns) in {"NoReturn", "Never"}:
+        return None
+    if any(
+        isinstance(child, (ast.Yield, ast.YieldFrom)) for child in _owner_nodes(node)
+    ):
+        return "Yields"
+    annotation = _annotation_expr(node.returns)
+    if annotation is None or (
+        isinstance(annotation, ast.Constant) and annotation.value is None
+    ):
+        return None
+    return "Returns"
+
+
 def _return_is_nonnone(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Report whether the return annotation is present and not None.
 
@@ -346,7 +423,11 @@ def _return_is_nonnone(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return True
 
 
-def _body_raises_nontrivially(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _body_raises_nontrivially(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    *,
+    strict_public: bool = False,
+) -> bool:
     """Report whether the body raises, excluding raise-NotImplementedError stubs.
 
     A body whose only statement is a bare raise NotImplementedError (or with an
@@ -355,6 +436,7 @@ def _body_raises_nontrivially(node: ast.FunctionDef | ast.AsyncFunctionDef) -> b
 
     Args:
         node: The function definition to inspect.
+        strict_public: Whether nested scopes are excluded from the owner.
 
     Returns:
         raises: True when a non-stub raise appears anywhere in the body.
@@ -363,7 +445,8 @@ def _body_raises_nontrivially(node: ast.FunctionDef | ast.AsyncFunctionDef) -> b
     real_body = body[1:] if _has_docstring_stmt(body) else body
     if len(real_body) == 1 and _is_notimplemented_raise(real_body[0]):
         return False
-    for child in ast.walk(node):
+    descendants = _owner_nodes(node) if strict_public else ast.walk(node)
+    for child in descendants:
         if isinstance(child, ast.Raise):
             if _is_notimplemented_raise_stmt(child):
                 continue
@@ -439,12 +522,82 @@ def _is_public_name(name: str) -> bool:
     return not name.startswith("_")
 
 
-def _check_docstring_content(lines: list[str], suppressed: set[str]) -> list[str]:
+def _documented_result_type(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    section: str,
+) -> ast.expr | None:
+    """Return the annotated type that a result section must not repeat."""
+    annotation = _annotation_expr(node.returns)
+    if section != "Yields" or not isinstance(annotation, ast.Subscript):
+        return annotation
+    containers = {
+        "AsyncGenerator",
+        "AsyncIterable",
+        "AsyncIterator",
+        "Generator",
+        "Iterable",
+        "Iterator",
+    }
+    if _annotation_name(annotation.value) not in containers:
+        return annotation
+    item = annotation.slice
+    if isinstance(item, ast.Tuple):
+        return item.elts[0] if item.elts else None
+    return item
+
+
+def _repeats_result_type(
+    lines: list[str],
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Report a leading Returns or Yields type matching the annotation."""
+    section = _required_result_section(node)
+    if section is None:
+        return False
+    expected = _documented_result_type(node, section)
+    if expected is None:
+        return False
+    expected_shape = ast.dump(expected, include_attributes=False)
+    for line in _section_body(lines, section) or []:
+        candidate, separator, _description = line.strip().partition(":")
+        if not separator:
+            continue
+        try:
+            expression = ast.parse(candidate.strip(), mode="eval").body
+        except SyntaxError:
+            continue
+        if ast.dump(expression, include_attributes=False) == expected_shape:
+            return True
+    return False
+
+
+def _strict_repeats_type(
+    lines: list[str],
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Report typed entries in strict Args, Returns, or Yields sections."""
+    for section in ("Args", "Returns", "Yields"):
+        for line in _section_body(lines, section) or []:
+            entry = _ARG_ENTRY_RE.match(line)
+            if entry is not None and entry.group(2) is not None:
+                return True
+    return _repeats_result_type(lines, node)
+
+
+def _check_docstring_content(
+    lines: list[str],
+    suppressed: set[str],
+    *,
+    node: ast.FunctionDef | ast.AsyncFunctionDef | None = None,
+    strict_public: bool = False,
+) -> list[str]:
     """Run the docstring-body checks (backticks and type-in-docstring).
 
     Args:
         lines: The docstring already split into lines.
         suppressed: Rule codes suppressed by a noqa pragma on the def line.
+        node: Callable whose result annotation may be repeated.
+        strict_public: Whether structural result-type checks are active.
 
     Returns:
         codes: The rule codes fired by the docstring body content.
@@ -458,6 +611,9 @@ def _check_docstring_content(lines: list[str], suppressed: set[str]) -> list[str
             if is_typed and _TYPE_IN_DOC_RE.match(line):
                 codes.append("DOC102")
                 break
+        else:
+            if strict_public and node is not None and _strict_repeats_type(lines, node):
+                codes.append("DOC102")
     return codes
 
 
@@ -682,7 +838,7 @@ def _check_callable(
     is_overload = "overload" in decorators
     is_setter = "setter" in decorators
     exempt_args = is_overload or (is_setter and not strict_public)
-    exempt_returns = is_overload or is_setter
+    exempt_returns = is_overload or (is_setter and not strict_public)
     missing_hints = _missing_hints(node, strict_public=strict_public, receiver=receiver)
 
     lines = _docstring_lines(node)
@@ -705,16 +861,29 @@ def _check_callable(
         ) and "DOC003" not in suppressed:
             violations.append(_make("DOC003", node.lineno))
     if not exempt_returns:
-        if (
-            _return_is_nonnone(node)
-            and not _has_section(lines, {"Returns", "Yields"})
-            and "DOC004" not in suppressed
-        ):
+        if strict_public:
+            result_section = _required_result_section(node)
+            if result_section is None:
+                invalid_result = _has_section(lines, {"Returns", "Yields"})
+            else:
+                other_section = "Returns" if result_section == "Yields" else "Yields"
+                invalid_result = not _has_nonempty_section(
+                    lines, result_section
+                ) or _has_section(lines, {other_section})
+        else:
+            invalid_result = _return_is_nonnone(node) and not _has_section(
+                lines, {"Returns", "Yields"}
+            )
+        if invalid_result and "DOC004" not in suppressed:
             violations.append(_make("DOC004", node.lineno))
 
     if (
-        _body_raises_nontrivially(node)
-        and not _has_section(lines, {"Raises"})
+        _body_raises_nontrivially(node, strict_public=strict_public)
+        and (
+            not _has_nonempty_section(lines, "Raises")
+            if strict_public
+            else not _has_section(lines, {"Raises"})
+        )
         and "DOC005" not in suppressed
     ):
         violations.append(_make("DOC005", node.lineno))
@@ -722,7 +891,12 @@ def _check_callable(
     if "DOC101" not in suppressed and missing_hints:
         violations.append(_make("DOC101", node.lineno))
 
-    for code in _check_docstring_content(lines, suppressed):
+    for code in _check_docstring_content(
+        lines,
+        suppressed,
+        node=node,
+        strict_public=strict_public,
+    ):
         violations.append(_make(code, node.lineno))
 
     return violations
