@@ -223,7 +223,13 @@ def _measure(authors: int, runs: int, scratch: Path) -> dict[str, list[dict]]:
 
 
 def main() -> None:
-    """Measure both canonical datasets and publish validated medians."""
+    """Measure both canonical datasets and publish validated medians.
+
+    The CLI rejects noncanonical cardinalities before replacing tracked results.
+
+    Raises:
+        SystemExit: If the requested cardinalities cannot produce canonical results.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--authors", type=int, nargs="+", default=[1000, 2000])
     parser.add_argument("--runs", type=int, default=3)

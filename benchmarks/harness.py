@@ -6,7 +6,7 @@ Invocation (done by run_all.sh, but you can run it manually):
 
 What it measures, per library:
 
-  1. schema_import_ms — wall time to import ``libs/<lib>/bench_schema.py``
+  1. schema_import_ms — wall time to import libs/<lib>/bench_schema.py
      (i.e. build the GraphQL schema). Captured once, around the import.
   2. Per operation (flat_list, nested, single, filtered, create_comment):
        * warmup: 15 untimed iterations
@@ -22,10 +22,10 @@ What it measures, per library:
      libraries declare the SAME fields; recording them puts that claim in the
      artifact where a reader can diff it instead of trusting the README.
 
-``create_comment`` is run LAST, and every request is rolled back. All requests
-go through ``django.test.Client`` POSTing to ``/graphql/`` — no network.
+create_comment is run LAST, and every request is rolled back. All requests go
+through django.test.Client POSTing to /graphql/ — no network.
 
-Output defaults to ignored ``scratch/<lib>.json``. ``run_publish.py`` assigns a
+Output defaults to ignored scratch/<lib>.json. run_publish.py assigns a
 raw-run directory and is the only command that replaces canonical results.
 """
 
@@ -61,7 +61,7 @@ MUTATING = {"create_comment"}
 def _import_schema():
     """Import the active library's bench_schema and time it two separate ways.
 
-    ``django.setup()`` must have already run: importing bench_schema pulls in the
+    django.setup() must have already run: importing bench_schema pulls in the
     Django models, which requires the app registry to be populated.
 
     The FIRST import pays two costs at once — loading the library and its
@@ -72,11 +72,11 @@ def _import_schema():
     compares the wrong thing, and it is the import half that is cold-cache
     sensitive and therefore noisy.
 
-    So the build is measured on its own: purge ``bench_schema`` from
-    ``sys.modules`` and re-import it. The dependency tree stays cached, so the
+    So the build is measured on its own: purge bench_schema from sys.modules and
+    re-import it. The dependency tree stays cached, so the
     re-import re-executes only the module body — the declarations and the
     schema constructor. Verified fresh, not a cache hit: in all four libraries
-    the rebuilt schema object, its ``GraphQLSchema``, its Author type and that
+    the rebuilt schema object, its GraphQLSchema, its Author type and that
     type's fields are all new objects.
     """
     import importlib
@@ -154,8 +154,8 @@ def _surface(client):
     running schema puts the answer in the result artifact, where a reader can
     diff it across libraries instead of taking the claim on trust.
 
-    Type names differ by library idiom (ariadne's SDL says ``Post``, the three
-    class-based libraries say ``PostType``), so both spellings are accepted.
+    Type names differ by library idiom: Ariadne's SDL says Post, while the three
+    class-based libraries say PostType. Both spellings are accepted.
 
     Args:
         client: A Django test client already pointed at the mounted GraphQL view.
