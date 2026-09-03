@@ -117,6 +117,27 @@ clear. Public means importable modules, non-underscore top-level names, private
 top-level names in `__all__`, and non-private class members. Strict `Args:` must
 be non-empty and exact, including `*args` and `**kwargs`.
 
+#### Strict result sections
+
+Use `Returns:` for ordinary non-`None` results and `Yields:` for generators.
+Functions annotated as `None`, `NoReturn`, or `Never` have neither section.
+Required result and `Raises:` sections must be non-empty; exceptions raised by
+nested functions or classes belong to those nested owners. Keep every type in
+the signature only—section entries describe names and behavior:
+
+```python
+def iter_ids(limit: int) -> Iterator[int]:
+    """Yield identifiers up to a limit.
+
+    Args:
+        limit: Maximum number of identifiers.
+
+    Yields:
+        item: One identifier.
+    """
+    yield from range(limit)
+```
+
 ### Testing Standards
 
 - Follow strict **RED → GREEN → REFACTOR** for code, documentation, workflows
