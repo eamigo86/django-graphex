@@ -259,8 +259,8 @@ def instantiate_middleware(middlewares: Any) -> Any:
     Args:
         middlewares: An iterable of middleware classes or instances.
 
-    Returns:
-        A generator yielding one middleware instance per input entry.
+    Yields:
+        One middleware instance per input entry.
     """
     for middleware in middlewares:
         if inspect.isclass(middleware):
