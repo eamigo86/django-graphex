@@ -1,36 +1,9 @@
-"""strawberry-graphql-django implementation of the benchmark operation contract.
+"""Define the Strawberry benchmark schema and shared operations.
 
-This is the strawberry-graphql-django counterpart to the django-graphex reference
-(libs/graphex/bench_schema.py). It is written in strawberry-django's own idiomatic,
-documented, recommended-for-production style:
-
-  * ``@strawberry_django.type(Model)`` with ``auto`` fields mapped straight from
-    the Django models.
-  * ``@strawberry_django.filter_type`` for the filtered list (title icontains).
-  * ``@strawberry_django.order`` for deterministic ``id`` ordering (parity with the
-    graphex reference, which orders every list by ``id``).
-  * ``pagination=True`` fields exposing strawberry-django's ``OffsetPaginationInput``
-    (``{ offset, limit }``) — the library's documented offset/limit idiom.
-  * ``strawberry_django.mutations.create`` for ``create_comment``.
-  * ``strawberry.django.views.GraphQLView`` (the SYNC view) for WSGI test-client
-    parity with the harness (which POSTs via ``django.test.Client``).
-
-RECOMMENDED PRODUCTION SETUP — the query optimizer:
-  ``strawberry_django.optimizer.DjangoOptimizerExtension`` is enabled on the schema.
-  This is strawberry-django's OWN documented, recommended default for production: it
-  inspects each GraphQL query and automatically applies ``select_related`` /
-  ``prefetch_related`` / ``only`` so nested selections do not trigger N+1 queries.
-  It is the direct analogue of the graphex reference's list/prefetch handling, so
-  enabling it keeps the benchmark fair (each library gets its own documented
-  optimizer). It is a stock extension, not a hand-tuned exotic optimization.
-
-The module exports the three symbols the shared contract requires:
-``graphql_view``, ``OPERATIONS``, ``LIB_VERSIONS`` (plus ``schema`` for tooling).
-
-Semantic equivalence with the graphex reference (see benchmarks/README.md) is
-preserved: same rows touched, same fields returned. Only the query SHAPE differs
-(``pagination: { limit }`` / ``order: { id: ASC }`` / ``filters: {...}`` instead of
-graphex's ``results(limit:, offset:, ordering:)`` wrapper).
+The adapter uses Strawberry Django's native pagination, filtering, ordering,
+mutation, and optimizer support while preserving the shared workload and result
+surface. It exposes the compiled schema, view, operations, and library versions
+used by benchmark tooling.
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -49,16 +22,31 @@ from strawberry_django.optimizer import DjangoOptimizerExtension
 # --------------------------------------------------------------------------- #
 @strawberry_django.order(Comment)
 class CommentOrder:
+    """Define deterministic comment ordering for benchmark queries.
+
+    The shared workload orders comments by their primary key.
+    """
+
     id: strawberry.auto
 
 
 @strawberry_django.order(Post)
 class PostOrder:
+    """Define deterministic post ordering for benchmark queries.
+
+    The shared workload orders posts by their primary key.
+    """
+
     id: strawberry.auto
 
 
 @strawberry_django.order(Author)
 class AuthorOrder:
+    """Define deterministic author ordering for benchmark queries.
+
+    The shared workload orders authors by their primary key.
+    """
+
     id: strawberry.auto
 
 
@@ -67,6 +55,11 @@ class AuthorOrder:
 # --------------------------------------------------------------------------- #
 @strawberry_django.filter_type(Post, lookups=True)
 class PostFilter:
+    """Expose the post filters required by benchmark operations.
+
+    The selected fields support the shared filtered-list workload.
+    """
+
     id: strawberry.auto
     title: strawberry.auto
     status: strawberry.auto
@@ -84,6 +77,11 @@ class PostFilter:
 # --------------------------------------------------------------------------- #
 @strawberry_django.type(Comment, order=CommentOrder)
 class CommentType:
+    """Expose the projected comment fields used by benchmark operations.
+
+    The declared surface matches the other benchmark adapters.
+    """
+
     id: strawberry.auto
     author_name: strawberry.auto
     text: strawberry.auto
@@ -93,6 +91,11 @@ class CommentType:
 
 @strawberry_django.type(Post, filters=PostFilter, order=PostOrder, pagination=True)
 class PostType:
+    """Expose the projected post fields used by benchmark operations.
+
+    Pagination, filters, and relations support the shared workloads.
+    """
+
     id: strawberry.auto
     title: strawberry.auto
     body: strawberry.auto
@@ -108,6 +111,11 @@ class PostType:
 
 @strawberry_django.type(Author, order=AuthorOrder, pagination=True)
 class AuthorType:
+    """Expose the projected author fields used by nested operations.
+
+    The posts relation provides the shared nested benchmark path.
+    """
+
     id: strawberry.auto
     name: strawberry.auto
     email: strawberry.auto
@@ -123,6 +131,11 @@ class AuthorType:
 # --------------------------------------------------------------------------- #
 @strawberry.type
 class Query:
+    """Expose the read fields required by benchmark operations.
+
+    The root supports single-post, post-list, and author-list workloads.
+    """
+
     # single object by pk (post(pk: 5000))
     post: Optional[PostType] = strawberry_django.field()
     # paginated + filterable + ordered list wrappers
@@ -135,6 +148,11 @@ class Query:
 # --------------------------------------------------------------------------- #
 @strawberry_django.input(Comment)
 class CommentCreateInput:
+    """Describe the input accepted by the create-comment workload.
+
+    The fields match the shared mutation variables.
+    """
+
     post: strawberry.auto
     author_name: strawberry.auto
     text: strawberry.auto
@@ -142,6 +160,11 @@ class CommentCreateInput:
 
 @strawberry.type
 class Mutation:
+    """Expose the write field required by the benchmark contract.
+
+    The root provides the canonical create-comment operation.
+    """
+
     create_comment: CommentType = strawberry_django.mutations.create(
         CommentCreateInput
     )
