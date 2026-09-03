@@ -26,7 +26,14 @@ RETIRED_DOCSTRING_RATCHETS = frozenset(
         Path("test_docstring_runtime_internals_a.py"),
         Path("test_docstring_runtime_internals_b.py"),
         Path("test_docstring_runtime_public.py"),
+        Path("test_docstring_schema_compiler_part1.py"),
+        Path("test_docstring_schema_compiler_part2.py"),
         Path("test_docstring_schema_facade.py"),
+        Path("test_docstring_schema_pruner_contract.py"),
+        Path("test_docstring_types_part1.py"),
+        Path("test_docstring_types_part2.py"),
+        Path("test_docstring_utils_part1.py"),
+        Path("test_docstring_utils_part2.py"),
         Path("test_docstring_views.py"),
     }
 )
