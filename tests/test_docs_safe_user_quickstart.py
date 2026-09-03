@@ -113,7 +113,7 @@ def test_quick_start_docs_do_not_generate_auth_user_crud() -> None:
 
     This test protects the corresponding regression contract.
     """
-    for relative in ("README.md",):
+    for relative in ("README.md", "docs/quickstart.md"):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "AuthenticatedGraphQLView" in text, relative
         assert "'CACHE_ACTIVE': False" in text or '"CACHE_ACTIVE": False' in text
