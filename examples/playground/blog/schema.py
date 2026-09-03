@@ -3,7 +3,8 @@
 - Public queries: single object, lists with the 3 paginations, filtering,
   nested lists (results/totalCount, N+1-safe), directives.
 - Private queries (require auth): "me" and "myNotes" (scoped to the user).
-- Mutations: Note create/update/delete via DjangoModelType + permissions.
+- Mutations: Note create/update/delete via DjangoModelType + permissions, plus
+  purpose-built account registration through Django's "create_user()".
 - Nested writes: "postWithCommentsCreate", gated by the child's own permission
   ("CommentModelType") the way 2.2.0 requires.
 - Subscriptions: public "postSubscription" and private "noteSubscription".
@@ -82,44 +83,19 @@ User = get_user_model()
 class UserType(DjangoObjectType):
     """GraphQL type for the auth user, exposed by the private "me" query.
 
-    Demonstrates a DjangoObjectType over the project user model with a small
-    filter allowlist, and the projection boundary on the one column where
-    getting it wrong is unforgivable: the password hash.
+    Demonstrates a read-only DjangoObjectType over the project user model. Its
+    allowlist keeps credentials, privilege flags and permission relations out
+    of the SDL rather than trying to blacklist each sensitive field.
     """
 
     class Meta:
-        """Bind the type to the user model, hide the hash, list the filters.
+        """Publish only identity/profile fields safe for authenticated reads.
 
-        "exclude_fields" projects "User.password" away. The library treats that
-        as a SECURITY boundary rather than an output shape — the same rule
-        "AuthorType" demonstrates on "bio", stated here on a column whose leak
-        would be a real incident. Without it the hash is published to every
-        AUTHENTICATED caller, because "Author.user" reaches this type:
-
-            { authors { results { user { password } } } }
-            Cannot query field 'password' on type 'UserType'.
-
-        An anonymous caller is stopped one layer earlier, by "resolve_user"
-        below — that is a SECOND wall, not this one. Two walls on one column is
-        the point: the projection is what still holds the day the resolver is
-        relaxed, and the resolver is what holds if a future type publishes the
-        column again.
-
-        Where the FILTER axis is concerned, this type is a lesson in itself.
-        The "filter_fields" below compile no input at all in this schema: no
-        field anywhere mounts a filtered list of users ("me" is a single
-        object), so "UserFilterInput" never reaches the type map. A
-        "filter_fields" entry is measured against the projection when the input
-        it belongs to is COMPILED — so on this type, unlike "AuthorType" or
-        "CommentType", naming "password" here would build cleanly and serve
-        nothing. Do not read that as permission: the moment a list of users is
-        mounted the entry compiles and the build fails.
-
-        Filtering allows an exact id lookup and a substring "username" lookup.
+        This projection keeps credentials and privilege controls out of the SDL.
         """
 
         model = User
-        exclude_fields = ("password",)
+        only_fields = ("id", "username", "first_name", "last_name")
         filter_fields = {"id": ("exact",), "username": ("icontains",)}
 
 
@@ -457,7 +433,7 @@ class AuthorType(DjangoObjectType):
            on the same type, and only you can say which half was meant.
 
         The same rule reaches further than "only_fields" / "exclude_fields":
-        "UserType" applies it to the password hash, "CommentType" to a
+        "UserType" allowlists four safe profile fields, "CommentType" hides a
         moderation note, and the "user" declaration above withdraws a relation's
         key by carrying a resolver. See
         "docs/usage/types.md#projection-security-boundary" for the canonical
@@ -1245,6 +1221,50 @@ class CreateCategory(Mutation):
         return cls(ok=True, category=category, error=None)
 
 
+class RegisterUser(Mutation):
+    """Create a normal Django account without exposing generic User CRUD.
+
+    Registration is deliberately hand-written: "create_user()" hashes the
+    password and Django supplies safe "False" defaults for both privilege
+    flags. The only accepted inputs are a username and password.
+    """
+
+    class Arguments:
+        """Credentials accepted by the public registration operation.
+
+        The input intentionally excludes every privilege and permission field.
+        """
+
+        username = CharField(required=True)
+        password = CharField(required=True)
+
+    ok = BooleanField()
+    user = Field(UserType)
+
+    @classmethod
+    def mutate(
+        cls,
+        root: Any,
+        info: GraphQLResolveInfo,
+        **kwargs: Any,
+    ) -> "RegisterUser":
+        """Hash the supplied password and return the safe user projection.
+
+        Args:
+            root: The parent resolver value, unused for this root mutation.
+            info: GraphQL execution information for the active operation.
+            kwargs: The validated username and password arguments.
+
+        Returns:
+            registration: A successful payload containing the created user.
+        """
+        user = get_user_model().objects.create_user(
+            username=kwargs["username"],
+            password=kwargs["password"],
+        )
+        return cls(ok=True, user=user)
+
+
 # --------------------------------------------------------------------------- #
 # File uploads. ONE column, "Document.attached_file", TWO ways to fill it.     #
 #                                                                              #
@@ -1462,9 +1482,8 @@ compile_all_outputs()
 class RootMutation(ObjectType):
     """Root mutation aggregating every mutation field in this schema.
 
-    Combines the auto-generated Note and Post/Comment CRUD fields with the two
-    hand-written mutations (category create and document upload) and the
-    nested-write demo.
+    Combines auto-generated CRUD for neutral domain models with purpose-built
+    account registration, category creation, document upload and nested writes.
     """
 
     note_create, note_delete, note_update = NoteModelType.MutationFields()
@@ -1476,6 +1495,10 @@ class RootMutation(ObjectType):
     comment_create, comment_delete, comment_update = CommentModelType.MutationFields()
     # Hand-written mutation using an explicit DjangoInputObjectType argument.
     create_category = CreateCategory.Field()
+    # Purpose-built account registration. Never replace with generic User CRUD:
+    # generic persistence neither expresses this input boundary nor guarantees
+    # Django's password hashing contract.
+    register_user = RegisterUser.Field()
     # Nested-write demo: single operation creates the Post + its Comment(s).
     post_with_comments_create = PostWithCommentsMutation.CreateField()
     # Multipart file upload (2.2.0). Both operations run the merge — see the
