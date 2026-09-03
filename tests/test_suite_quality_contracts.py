@@ -23,6 +23,8 @@ RETIRED_DOCSTRING_RATCHETS = frozenset(
         Path("test_docstring_release_scripts.py"),
         Path("test_docstring_release_tools.py"),
         Path("test_docstring_runtime_conversion.py"),
+        Path("test_docstring_runtime_internals_a.py"),
+        Path("test_docstring_runtime_internals_b.py"),
     }
 )
 
