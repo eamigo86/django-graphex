@@ -32,6 +32,9 @@ RETIRED_DOCSTRING_RATCHETS = frozenset(
         Path("test_docstring_schema_facade.py"),
         Path("test_docstring_schema_pruner_contract.py"),
         Path("test_docstring_test_converter_helpers.py"),
+        Path("test_docstring_test_public_filters.py"),
+        Path("test_docstring_test_public_infra.py"),
+        Path("test_docstring_test_public_ordering.py"),
         Path("test_docstring_types_part1.py"),
         Path("test_docstring_types_part2.py"),
         Path("test_docstring_utils_part1.py"),
@@ -70,6 +73,17 @@ def test_retired_docstring_ratchets_stay_deleted() -> None:
         if (TESTS_ROOT / relative_path).exists()
     )
     assert offenders == [], f"retired docstring ratchets still exist: {offenders}"
+
+
+def test_one_off_docstring_ratchets_are_fully_retired() -> None:
+    """Require all docstring contracts to use the permanent checker.
+
+    The permanent checker name deliberately does not match the retired-file glob.
+    """
+    checker = TESTS_ROOT / "test_check_docstrings_tool.py"
+    offenders = sorted(path.name for path in TESTS_ROOT.glob("test_docstring_*.py"))
+    assert checker.is_file(), "permanent docstring checker is missing"
+    assert offenders == [], f"one-off docstring ratchets still exist: {offenders}"
 
 
 def test_core_modules_do_not_importorskip_during_collection() -> None:  # noqa: DOC001
