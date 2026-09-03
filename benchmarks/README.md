@@ -254,6 +254,34 @@ union of the four complete environment freezes. `setup_envs.sh` rejects any
 installed transitive version not present in that freeze. This makes a second
 recreation byte-identical at the package/version level.
 
+### Provenance: measured state versus delivery state
+
+The coordinates in each canonical JSON answer different questions:
+
+- `commit` and `measurement_tree` identify the **actual local commit and tree
+  that were measured**. The commit is intentionally not required to resolve
+  from GitHub; the full tree SHA preserves the measured source identity.
+- `constraints_sha256` identifies the dependency freeze used by that run and
+  must equal the digest of the tracked `constraints.txt`.
+- `delivery_base_commit` is only the public ancestor from which the generated
+  JSON files were delivered and validated. It does **not** say that commit was
+  measured, nor claim byte, tree or semantic equivalence with the measured
+  state.
+
+The current delivery base
+(`4d595f1c4822d37a520a188892a943caa744f2ea`) contains post-measurement
+hardening in `contract.py`, `harness.py`, `setup_envs.sh`, `versions.env`, and
+the new `verify_freeze.py`. Those changes strengthen response validation,
+transaction isolation and offline replay; they do not retroactively move the
+measurements.
+
+CI checks this boundary, all eight result contracts, and Git ancestry from a
+full-history checkout without trying to resolve the local measurement commit:
+
+```bash
+python benchmarks/run_publish.py --validate-existing
+```
+
 ## Layout
 
 ```
