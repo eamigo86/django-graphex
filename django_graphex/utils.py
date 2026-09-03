@@ -1834,29 +1834,29 @@ def _collect_gfk_union_buckets(
     gql_type: Any,
     schema: Any,
 ) -> PrefetchPlan | None:
-    """Build a per-member ``generic_buckets`` plan for a union-typed GFK field.
+    """Build a per-member generic_buckets plan for a union-typed GFK field.
 
-    Implements ADR-4c.  Returns a ``PrefetchPlan`` whose ``generic_buckets`` maps
-    ``member_model -> per-member PrefetchPlan`` (each carrying its own narrowed
-    ``.only()`` columns), or ``None`` to DEGRADE to today's full-load bare-string
-    prefetch.  ``None`` is returned at every guard so that a non-union GFK, a
+    Implements ADR-4c.  Returns a PrefetchPlan whose generic_buckets maps
+    member_model -> per-member PrefetchPlan (each carrying its own narrowed
+    .only() columns), or None to DEGRADE to today's full-load bare-string
+    prefetch.  None is returned at every guard so that a non-union GFK, a
     missing schema, Django < 5.0, or any unresolved fragment never changes
     behaviour from the shipped full-load path.
 
     The version gate lives HERE (not at emission): on Django < 5.0 we return
-    ``None`` so no bucket plan is built and ``GenericPrefetch`` is never imported.
+    None so no bucket plan is built and GenericPrefetch is never imported.
 
     Args:
-        gfk_field: The ``GenericForeignKey`` field object.
+        gfk_field: The GenericForeignKey field object.
         name: The GraphQL field name as selected.
-        snake: The snake_cased field name (for ``gql_type.fields`` lookup).
-        sub_selection: The GraphQL ``SelectionSetNode`` for the GFK field.
+        snake: The snake_cased field name (for gql_type.fields lookup).
+        sub_selection: The GraphQL SelectionSetNode for the GFK field.
         fragments: Fragment definitions keyed by name.
-        gql_type: The ``GraphQLObjectType`` of the owner at this position.
-        schema: The ``GraphQLSchema`` for fragment-target resolution.
+        gql_type: The GraphQLObjectType of the owner at this position.
+        schema: The GraphQLSchema for fragment-target resolution.
 
     Returns:
-        A ``PrefetchPlan`` with populated ``generic_buckets``, or ``None``.
+        A PrefetchPlan with populated generic_buckets, or None.
     """
     # GUARD 1: without the owner GraphQL type we cannot find the field's union.
     if gql_type is None or sub_selection is None:
@@ -1955,17 +1955,17 @@ def _collect_prefetch_only_sets(
 ) -> dict[str, PrefetchPlan]:
     """Map each direct prefetch lookup to its child column plan.
 
-    Walks the GraphQL selection set mirroring ``recursive_params`` structure
+    Walks the GraphQL selection set mirroring recursive_params structure
     (handles fragments, inline fragments, wrapper fields).  For each field:
 
-    - GFK-target (``isinstance(field, GenericForeignKey)``) → skip (stays full-load
-      bare string).  **This check runs BEFORE** any ``get_related_model`` call
+    - GFK-target (isinstance(field, GenericForeignKey)) → skip (stays full-load
+      bare string).  **This check runs BEFORE** any get_related_model call
       (GAP-3 ordering invariant).
-    - ``kind == "select"`` → recurse with dotted prefix (discover nested prefetches
-      under a select_related path).  If the path is in ``promoted_lookups`` (it was
+    - kind == "select" → recurse with dotted prefix (discover nested prefetches
+      under a select_related path).  If the path is in promoted_lookups (it was
       promoted from select to prefetch due to an AnnotatedField child), also build a
       PrefetchPlan for the path itself so the annotation is injected on the child qs.
-    - ``kind == "prefetch"`` → call ``_compute_child_only``; omit if ``None`` (full-load).
+    - kind == "prefetch" → call _compute_child_only; omit if None (full-load).
 
     Args:
         model: The Django model class at the current position.
@@ -1978,18 +1978,18 @@ def _collect_prefetch_only_sets(
         promoted_lookups: Set of ORM lookup paths that were promoted from
             select_related to prefetch_related by the AnnotatedField promotion
             pass.  These paths need a PrefetchPlan even though their Django
-            relation kind is ``"select"``.
-        schema: The ``GraphQLSchema`` (from ``info.schema``), threaded ONLY for
-            the GFK-union routing branch so a ``... on ConcreteType`` fragment
-            can be resolved to its member model.  ``None`` (the default) keeps
+            relation kind is "select".
+        schema: The GraphQLSchema (from info.schema), threaded ONLY for
+            the GFK-union routing branch so a ... on ConcreteType fragment
+            can be resolved to its member model.  None (the default) keeps
             every non-GFK-union path byte-identical: the GFK branch degrades to
-            today's full-load ``continue`` whenever ``schema`` is ``None``.
+            today's full-load continue whenever schema is None.
         fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).  Threading it prevents redundant
-            ``_meta.get_fields()`` calls from the .only()-narrowing pass (#66).
+            _relation_field_map).  Threading it prevents redundant
+            _meta.get_fields() calls from the .only()-narrowing pass (#66).
 
     Returns:
-        The completed ``{dotted_lookup: PrefetchPlan}`` dict.
+        The completed {dotted_lookup: PrefetchPlan} dict.
     """
     if _out is None:
         _out = {}
@@ -2197,15 +2197,15 @@ def _collect_prefetch_only_sets(
 def _build_member_queryset(member_model: type[Model], plan: PrefetchPlan) -> QuerySet:
     """Build one narrowed queryset for a single GFK-union member bucket.
 
-    Mirrors the queryset assembly in ``_narrow_plain_prefetch`` (select_related →
+    Mirrors the queryset assembly in _narrow_plain_prefetch (select_related →
     alias → annotate → only), applied to the MEMBER model's default manager.
 
     Args:
         member_model: The concrete member model class for this content type.
-        plan: The per-member ``PrefetchPlan`` (its ``generic_buckets`` is empty).
+        plan: The per-member PrefetchPlan (its generic_buckets is empty).
 
     Returns:
-        The narrowed ``QuerySet`` for this member.
+        The narrowed QuerySet for this member.
     """
     qs = member_model._default_manager.all()
     if plan.child_select:
@@ -2220,10 +2220,10 @@ def _build_member_queryset(member_model: type[Model], plan: PrefetchPlan) -> Que
 
 
 def _content_type_or_none(model: type[Model], *, for_concrete_model: bool) -> Any:
-    """Return ``model``'s ``ContentType``, or ``None`` if it cannot be resolved.
+    """Return model's ContentType, or None if it cannot be resolved.
 
-    A member model whose ``ContentType`` cannot be looked up (e.g. abstract or
-    otherwise malformed) yields ``None`` so the caller drops that bucket and
+    A member model whose ContentType cannot be looked up (e.g. abstract or
+    otherwise malformed) yields None so the caller drops that bucket and
     degrades it to full-load, rather than crashing the whole resolve.
     """
     from django.contrib.contenttypes.models import ContentType
@@ -2245,37 +2245,37 @@ def _build_generic_prefetch(
     buckets: dict[type[Model], PrefetchPlan],
     gfk_field: Any = None,
 ):
-    """Assemble a ``GenericPrefetch`` from per-member narrowed buckets (Django 5.0+).
+    """Assemble a GenericPrefetch from per-member narrowed buckets (Django 5.0+).
 
     Implements the ADR-4c/ADR-5 emission with the critique-#1 content-type
-    de-duplication: Django's ``GenericForeignKey.get_prefetch_querysets`` keys
-    each queryset by ``get_content_type(model=qs.query.model,
-    for_concrete_model=self.for_concrete_model)`` and RAISES ``ValueError`` on a
+    de-duplication: Django's GenericForeignKey.get_prefetch_querysets keys
+    each queryset by get_content_type(model=qs.query.model,
+    for_concrete_model=self.for_concrete_model) and RAISES ValueError on a
     duplicate content type.  Two members over the SAME concrete table (proxy
     models / shared table) would collide, so we group buckets by content-type pk,
-    MERGE their ``.only()`` columns within a group, and emit exactly one queryset
+    MERGE their .only() columns within a group, and emit exactly one queryset
     per distinct content type.
 
     The de-dup MUST key by the SAME content type Django matches on — i.e. with
-    the GFK's own ``for_concrete_model`` (which DEFAULTS to ``True``,
-    ``django/contrib/contenttypes/fields.py``).  Keying by ``False`` while Django
-    matches by ``True`` would let two PROXY members of one concrete table slip
+    the GFK's own for_concrete_model (which DEFAULTS to True,
+    django/contrib/contenttypes/fields.py).  Keying by False while Django
+    matches by True would let two PROXY members of one concrete table slip
     through as distinct here, then collide inside Django -> the exact ValueError
     this de-dup exists to prevent.
 
-    The ``GenericPrefetch`` import is LAZY and LOCAL — this function is only ever
+    The GenericPrefetch import is LAZY and LOCAL — this function is only ever
     reached on Django 5.0+ (the bucket plan is built only there), so < 5.0 never
     imports it.
 
     Args:
-        lookup: The GFK relation-name string (arg 1 of ``GenericPrefetch``).
-        buckets: ``{member_model: per-member PrefetchPlan}`` to emit.
-        gfk_field: The owning ``GenericForeignKey`` (carries the
-            ``for_concrete_model`` flag Django keys on).  ``None`` falls back to
-            Django's default of ``True``, mirroring the GFK constructor default.
+        lookup: The GFK relation-name string (arg 1 of GenericPrefetch).
+        buckets: {member_model: per-member PrefetchPlan} to emit.
+        gfk_field: The owning GenericForeignKey (carries the
+            for_concrete_model flag Django keys on).  None falls back to
+            Django's default of True, mirroring the GFK constructor default.
 
     Returns:
-        A ``GenericPrefetch`` instance, or ``None`` if no usable bucket remains
+        A GenericPrefetch instance, or None if no usable bucket remains
         (caller degrades to the bare full-load string).
     """
     from django.contrib.contenttypes.prefetch import GenericPrefetch
@@ -2324,22 +2324,22 @@ def _narrow_plain_prefetch(
     only_map: dict[str, PrefetchPlan],
     fmap_cache: "dict[tuple[int, str], Any] | None" = None,
 ) -> str | Prefetch:
-    """Convert a plain-string prefetch lookup to a narrowed ``Prefetch`` if a plan exists.
+    """Convert a plain-string prefetch lookup to a narrowed Prefetch if a plan exists.
 
     Args:
         model: The root model class (used to resolve the leaf model for dotted
-            lookups via ``_leaf_model``).
+            lookups via _leaf_model).
         lookup: The plain-string prefetch lookup (may be dotted).
-        only_map: The ``{lookup: PrefetchPlan}`` map from
-            ``_collect_prefetch_only_sets``.
+        only_map: The {lookup: PrefetchPlan} map from
+            _collect_prefetch_only_sets.
         fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).  Threading it prevents redundant
-            ``_meta.get_fields()`` calls inside ``_leaf_model`` (#66).
+            _relation_field_map).  Threading it prevents redundant
+            _meta.get_fields() calls inside _leaf_model (#66).
 
     Returns:
-        The bare ``lookup`` string when no plan exists (full load), or a
-        ``Prefetch(lookup, queryset=...)`` with ``.only()`` (and optionally
-        ``.select_related()``) applied.
+        The bare lookup string when no plan exists (full load), or a
+        Prefetch(lookup, queryset=...) with .only() (and optionally
+        .select_related()) applied.
     """
     if lookup not in only_map:
         return lookup
@@ -2398,21 +2398,21 @@ def _nested_list_field_instance(field_def: Any) -> Any | None:
 def _resolve_results_paginator(
     results_field_def: Any,
 ) -> Any | None:
-    """Defensively resolve the paginator instance from a ``results`` field definition.
+    """Defensively resolve the paginator instance from a results field definition.
 
     Implements the G2 fail-loud guard (ADR-3 step 4): every attribute lookup is
     guarded so that a custom resolver (whose bound object is NOT a
-    ``GenericPaginationField``) returns ``None`` instead of raising
-    ``AttributeError``.  A bare attribute access would crash the whole query
-    with a 500 when ``OPTIMIZER_SAFE_MODE`` is ``False`` (the default).
+    GenericPaginationField) returns None instead of raising
+    AttributeError.  A bare attribute access would crash the whole query
+    with a 500 when OPTIMIZER_SAFE_MODE is False (the default).
 
     Args:
-        results_field_def: The GraphQL field definition for the ``results``
-            sub-field of a ``DjangoNestedListObjectField``.
+        results_field_def: The GraphQL field definition for the results
+            sub-field of a DjangoNestedListObjectField.
 
     Returns:
-        The ``BaseDjangoGraphqlPagination`` instance, or ``None`` if the
-        resolver is custom / not the default ``GenericPaginationField`` shape.
+        The BaseDjangoGraphqlPagination instance, or None if the
+        resolver is custom / not the default GenericPaginationField shape.
     """
     from .paginations.pagination import BaseDjangoGraphqlPagination
 
@@ -2439,24 +2439,24 @@ def _walk_window_params(
     sub_gql: GraphQLObjectType | None,
     info: GraphQLResolveInfo,
 ) -> tuple[Any, Any, Any, Any] | None:
-    """Extract window-slice parameters from a ``DjangoNestedListObjectField`` AST node.
+    """Extract window-slice parameters from a DjangoNestedListObjectField AST node.
 
-    Descends one level into the selection set to find the ``results`` sub-field,
-    extracts pagination kwargs via ``get_argument_values``, resolves the paginator
-    via the G2 fail-loud guard, and calls ``prefetch_window_slice``.
+    Descends one level into the selection set to find the results sub-field,
+    extracts pagination kwargs via get_argument_values, resolves the paginator
+    via the G2 fail-loud guard, and calls prefetch_window_slice.
 
-    Wired into the live ``_walk_filtered_prefetches`` path in C3.
+    Wired into the live _walk_filtered_prefetches path in C3.
 
     Args:
-        inst: The ``DjangoNestedListObjectField`` instance.
-        field: The ``FieldNode`` for the nested list field in the AST.
-        sub_gql: The ``GraphQLObjectType`` for the nested list type, or ``None``.
+        inst: The DjangoNestedListObjectField instance.
+        field: The FieldNode for the nested list field in the AST.
+        sub_gql: The GraphQLObjectType for the nested list type, or None.
         info: The GraphQL resolve info.
 
     Returns:
-        ``(slice_tuple, related_field, results_field_node, paginator)`` when
-        the window path is viable, or ``None`` to signal a fallback to
-        ``build_prefetch``.
+        (slice_tuple, related_field, results_field_node, paginator) when
+        the window path is viable, or None to signal a fallback to
+        build_prefetch.
     """
     if sub_gql is None or field.selection_set is None:
         return None
@@ -2531,10 +2531,10 @@ def _walk_filtered_prefetches(
         seen: A map of lookup to the set of row-set signatures requested at
             that lookup, mutated in place. Selections may share one Prefetch
             only when they all carry the same signature.
-        hook_map: A ``{orm_lookup -> (graphene_type, hook_callable)}`` map for
+        hook_map: A {orm_lookup -> (graphene_type, hook_callable)} map for
             unfiltered nested lists, mutated in place (Phase E AC2b).
         _fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).
+            _relation_field_map).
     """
     relation_map = _relation_field_map(model, _fmap_cache) if model is not None else {}
     # Pre-warm the concrete-field cache entry so the .only()-narrowing pass
@@ -2795,19 +2795,19 @@ def _walk_annotated_fields(
     """Walk a GraphQL selection set and collect AnnotatedField declarations.
 
     Handles FragmentSpread, InlineFragment, wrapper-field descent (DjangoListObjectType
-    ``results`` wrapper), and plain FieldNode.  Does NOT descend into relation
+    results wrapper), and plain FieldNode.  Does NOT descend into relation
     sub-selections — those are handled by the child-annotation path (§6).
 
     Args:
         gql_type: The GraphQLObjectType at the current position.
-        graphene_type: The matching source class (has ``_meta.fields``).
+        graphene_type: The matching source class (has _meta.fields).
         selection_set: The GraphQL SelectionSetNode to walk.
         info: The GraphQL resolve info (for fragments).
-        annotations: Accumulator dict for ``{ann_key: expression}``.
-        aliases: Accumulator dict for ``{alias_key: expression}``.
+        annotations: Accumulator dict for {ann_key: expression}.
+        aliases: Accumulator dict for {alias_key: expression}.
         names: Accumulator set of snake_case field names of selected AnnotatedFields.
         _fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).
+            _relation_field_map).
     """
     # Lazy import avoids the fields <-> utils circular import.
     from .fields import AnnotatedField  # noqa: PLC0415
@@ -2931,16 +2931,16 @@ def _collect_annotated_fields(
 ) -> tuple[dict, dict, set]:
     """Collect AnnotatedField annotations for selected fields on the return type.
 
-    Returns a 3-tuple ``(annotations, aliases, annotated_names)`` where:
-    - ``annotations``: ``{ann_key: expression}`` to pass to ``.annotate()``.
-    - ``aliases``: ``{alias_key: expression}`` to pass to ``.alias()``.
-    - ``annotated_names``: snake_case field names of selected AnnotatedFields
-      (used by ``.only()`` logic to skip these leaves).
+    Returns a 3-tuple (annotations, aliases, annotated_names) where:
+    - annotations: {ann_key: expression} to pass to .annotate().
+    - aliases: {alias_key: expression} to pass to .alias().
+    - annotated_names: snake_case field names of selected AnnotatedFields
+      (used by .only() logic to skip these leaves).
 
     Args:
         info: The GraphQL resolve info for the current field.
         _fmap_cache: Optional request-scoped memoization dict (see
-            ``_relation_field_map``).
+            _relation_field_map).
 
     Returns:
         A 3-tuple of (annotations dict, aliases dict, annotated_names set).
@@ -3072,16 +3072,16 @@ def _merge_filtered_prefetches(
     Prefetch) that lives under a filtered lookup into that filtered Prefetch's
     queryset, which also optimizes the deeper level.
 
-    Phase E SITE B: when ``hook_map`` is provided, unfiltered plain children
-    that are re-rooted here have their ``optimize_<field>`` hook applied
+    Phase E SITE B: when hook_map is provided, unfiltered plain children
+    that are re-rooted here have their optimize_<field> hook applied
     (ADR-E6).  Their stripped path is used as the Prefetch lookup while the
-    absolute path is used to index ``hook_map``.
+    absolute path is used to index hook_map.
 
     Args:
         prefetch_related: The accumulated plain prefetch lookup strings.
         filtered_prefetches: The filtered Prefetch objects for nested lists.
-        hook_map: A ``{orm_lookup -> (graphene_type, hook_callable)}`` map
-            from ``build_filtered_prefetches`` (Phase E AC2b SITE B).
+        hook_map: A {orm_lookup -> (graphene_type, hook_callable)} map
+            from build_filtered_prefetches (Phase E AC2b SITE B).
         info: The GraphQL resolve info, forwarded to the hook (Phase E).
 
     Returns:
@@ -3251,16 +3251,16 @@ def _apply_optimizations(
 ) -> QuerySet:
     """Apply select_related, prefetch_related and .only() to *base*.
 
-    This helper is extracted from ``queryset_factory`` so that the optional
-    ``OPTIMIZER_SAFE_MODE`` try/except boundary can wrap the entire block in
+    This helper is extracted from queryset_factory so that the optional
+    OPTIMIZER_SAFE_MODE try/except boundary can wrap the entire block in
     one place without duplication.
 
     Args:
         base: The starting queryset.
-        model: The Django model class for ``base``.
+        model: The Django model class for base.
         info: The GraphQL resolve info for the current field.
         kwargs: The resolver arguments, used to seed relation joins.
-        custom_used: Whether a custom resolver already supplied ``base``.
+        custom_used: Whether a custom resolver already supplied base.
 
     Returns:
         The optimized queryset (may be the same object or a new one).
@@ -3400,9 +3400,9 @@ def _apply_optimizations(
                 """Detect select_related paths that have an AnnotatedField child.
 
                 Recurses into every select_related sub-selection, carrying the
-                dotted ORM ``prefix`` so a deeper hop is matched against the
-                SAME lookup ``recursive_params`` emitted (e.g. ``post__author``,
-                not ``author``).  Without the descent an AnnotatedField two or
+                dotted ORM prefix so a deeper hop is matched against the
+                SAME lookup recursive_params emitted (e.g. post__author,
+                not author).  Without the descent an AnnotatedField two or
                 more forward-FK hops down is never promoted and resolves null.
                 """
                 if sel_set is None or depth > 3:
