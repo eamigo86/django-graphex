@@ -152,11 +152,11 @@ def _get_django_to_gql() -> dict:
 
 
 def _is_relation_field(field: Any) -> bool:
-    """Return True if ``field`` is a Django relation (FK, M2M, O2O, etc.).
+    """Return True if field is a Django relation (FK, M2M, O2O, etc.).
 
-    Primary check: ``isinstance`` against Django's RelatedField / ForeignObjectRel.
-    Fallback: ``field.is_relation`` attribute (covers exotic custom field types
-    that subclass neither but still declare the standard ``is_relation`` sentinel).
+    Primary check: isinstance against Django's RelatedField / ForeignObjectRel.
+    Fallback: field.is_relation attribute (covers exotic custom field types
+    that subclass neither but still declare the standard is_relation sentinel).
     """
     from django.db.models.fields.related import ForeignObjectRel, RelatedField
 
@@ -182,21 +182,21 @@ def _get_related_model(field: Any) -> type | None:
 def _is_many_relation(field: Any) -> bool:
     """Return True if this is a to-many relation (M2M, reverse FK, GenericRelation).
 
-    IMPORTANT: ``OneToOneRel`` (the reverse side of a forward ``OneToOneField``)
-    is a SUBCLASS of ``ManyToOneRel`` (``issubclass(OneToOneRel, ManyToOneRel)``
-    is True), so a naive ``isinstance(field, ManyToOneRel)`` check would
-    misclassify a reverse O2O as to-many and render it as a ``<Model>ListType``
+    IMPORTANT: OneToOneRel (the reverse side of a forward OneToOneField)
+    is a SUBCLASS of ManyToOneRel (issubclass(OneToOneRel, ManyToOneRel)
+    is True), so a naive isinstance(field, ManyToOneRel) check would
+    misclassify a reverse O2O as to-many and render it as a <Model>ListType
     container. graphene-django renders a reverse O2O as a SINGLE nullable Field
-    (``converter.convert_onetoone_field_to_djangomodel``, registered on
-    ``models.OneToOneRel``), NOT a list container. We must therefore EXCLUDE
-    ``OneToOneRel`` BEFORE the ``ManyToOneRel`` check so reverse O2O flows
-    through the to-ONE relation arm of ``_to_graphql_field``.
+    (converter.convert_onetoone_field_to_djangomodel, registered on
+    models.OneToOneRel), NOT a list container. We must therefore EXCLUDE
+    OneToOneRel BEFORE the ManyToOneRel check so reverse O2O flows
+    through the to-ONE relation arm of _to_graphql_field.
 
-    DEFECT B: a ``GenericRelation`` (django.contrib.contenttypes) is a to-MANY
-    relation rendered by graphene as the related model's ``<Model>ListType``
-    results/totalCount container (``converter.convert_generic_relation_to_object_list``
-    -> ``_nested_list_object_field``). It does NOT subclass any of the rel classes
-    below (it is a forward ``ForeignObject`` descriptor), so it must be matched
+    DEFECT B: a GenericRelation (django.contrib.contenttypes) is a to-MANY
+    relation rendered by graphene as the related model's <Model>ListType
+    results/totalCount container (converter.convert_generic_relation_to_object_list
+    -> _nested_list_object_field). It does NOT subclass any of the rel classes
+    below (it is a forward ForeignObject descriptor), so it must be matched
     explicitly — otherwise it falls through to the to-ONE arm and renders as a
     SINGLE object instead of the list container.
     """
@@ -232,7 +232,7 @@ def _is_many_relation(field: Any) -> bool:
 
 
 def _is_generic_foreign_key(field: Any) -> bool:
-    """Return True if ``field`` is a django.contrib.contenttypes GenericForeignKey."""
+    """Return True if field is a django.contrib.contenttypes GenericForeignKey."""
     from django.contrib.contenttypes.fields import GenericForeignKey
 
     return isinstance(field, GenericForeignKey)
@@ -243,16 +243,16 @@ _GFK_FLAT_TYPE: Any = None
 
 
 def _gfk_flat_resolver(attr_name: str):
-    """Build a resolver reading ``attr_name`` from the resolved content object.
+    """Build a resolver reading attr_name from the resolved content object.
 
-    Mirrors ``base_types.resolver`` used by graphene's ``GenericForeignKeyType``:
-    ``app_label`` -> ``instance._meta.app_label``, ``id`` -> ``instance.pk``,
-    ``model_name`` -> ``instance._meta.model.__name__``. A null content object
-    (unresolved / unregistered target) yields ``None`` for every sub-field.
+    Mirrors base_types.resolver used by graphene's GenericForeignKeyType:
+    app_label -> instance._meta.app_label, id -> instance.pk,
+    model_name -> instance._meta.model.__name__. A null content object
+    (unresolved / unregistered target) yields None for every sub-field.
 
-    The ``id`` arm reads ``root.pk`` (the primary key WHATEVER its column name),
-    not ``root.id``: a model with a custom primary key (e.g. a slug PK) has no
-    ``id`` attribute, so ``root.id`` raised ``AttributeError``. ``root.pk`` is
+    The id arm reads root.pk (the primary key WHATEVER its column name),
+    not root.id: a model with a custom primary key (e.g. a slug PK) has no
+    id attribute, so root.id raised AttributeError. root.pk is
     the pk on every model regardless of the pk field's name.
     """
 
@@ -271,11 +271,11 @@ def _gfk_flat_resolver(attr_name: str):
 
 
 def _get_gfk_flat_type() -> Any:
-    """Return the shared flat ``GenericForeignKeyType`` GraphQLObjectType (lazy).
+    """Return the shared flat GenericForeignKeyType GraphQLObjectType (lazy).
 
-    SDL parity: name ``GenericForeignKeyType``, fields ``appLabel: String``,
-    ``id: ID``, ``modelName: String`` — matching graphene's
-    ``base_types.GenericForeignKeyType``.
+    SDL parity: name GenericForeignKeyType, fields appLabel: String,
+    id: ID, modelName: String — matching graphene's
+    base_types.GenericForeignKeyType.
     """
     global _GFK_FLAT_TYPE
     if _GFK_FLAT_TYPE is None:
@@ -305,9 +305,9 @@ def _get_gfk_flat_type() -> Any:
 
 
 def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
-    """Compile a GenericForeignKey output field -> flat ``GenericForeignKeyType``.
+    """Compile a GenericForeignKey output field -> flat GenericForeignKeyType.
 
-    The field resolver reads the GFK accessor (e.g. ``note.content_object``) from
+    The field resolver reads the GFK accessor (e.g. note.content_object) from
     the parent row; a null / unregistered-target content object renders as null
     (the field and all its sub-fields are nullable, matching graphene).
     """
@@ -336,19 +336,19 @@ def _compile_choices_enum_field(
     field: Any,
     graphene_registry: Any,
 ) -> GraphQLField | None:
-    """Compile a choices field to a ``GraphQLField`` wrapping a ``GraphQLEnumType``.
+    """Compile a choices field to a GraphQLField wrapping a GraphQLEnumType.
 
     Builds (or fetches the shared) enum via the graphene-free canonical builder
-    ``converter.build_choices_enum_type``, which memoizes the enum in the
-    ``graphene_registry`` slot the native filter-input path also reads — so
-    OUTPUT and FILTER-INPUT share ONE enum instance per ``(model, field)``.
+    converter.build_choices_enum_type, which memoizes the enum in the
+    graphene_registry slot the native filter-input path also reads — so
+    OUTPUT and FILTER-INPUT share ONE enum instance per (model, field).
 
-    A ``MultiSelectField`` renders ``GraphQLList(enum)`` (mirroring the
-    converter's ``DjangoListField(enum)`` branch); a plain choices field renders
+    A MultiSelectField renders GraphQLList(enum) (mirroring the
+    converter's DjangoListField(enum) branch); a plain choices field renders
     the enum directly. OUTPUT scalars are always nullable (graphene #1494
-    parity), so the enum is NOT wrapped in ``GraphQLNonNull``.
+    parity), so the enum is NOT wrapped in GraphQLNonNull.
 
-    Returns ``None`` when the field has no usable choices (caller falls through
+    Returns None when the field has no usable choices (caller falls through
     to the scalar mapping).
     """
     from django_graphex.converter import (  # noqa: PLC0415
@@ -411,16 +411,16 @@ _RANGE_COMPOSITE_TYPES: dict[str, Any] = {}
 
 
 def _is_array_field(field: Any) -> bool:
-    """Return True for a PostgreSQL ``ArrayField`` (psycopg-free detection)."""
+    """Return True for a PostgreSQL ArrayField (psycopg-free detection)."""
     return field.get_internal_type() == "ArrayField"
 
 
 def _is_range_field(field: Any) -> bool:
-    """Return True for any PostgreSQL ``*RangeField`` (psycopg-free detection).
+    """Return True for any PostgreSQL *RangeField (psycopg-free detection).
 
-    Matches the abstract ``RangeField`` and every concrete subtype
-    (``IntegerRangeField``, ``DateTimeRangeField``, …): all report an internal
-    type ending in ``"RangeField"``.
+    Matches the abstract RangeField and every concrete subtype
+    (IntegerRangeField, DateTimeRangeField, …): all report an internal
+    type ending in "RangeField".
     """
     return field.get_internal_type().endswith("RangeField")
 
@@ -430,20 +430,20 @@ def _inner_output_type(
     registry: Any,
     graphene_registry: Any,
 ) -> Any | None:
-    """Resolve the GraphQL OUTPUT type for an ArrayField's ``base_field``.
+    """Resolve the GraphQL OUTPUT type for an ArrayField's base_field.
 
     Threads the base field through the SAME mapping rules the top-level scalar
     path uses, so an array's element type stays consistent with a standalone
     field of the same class:
 
-    * a nested ``ArrayField`` recurses → ``GraphQLList(GraphQLList(inner))``
-      (``[[Inner]]``);
-    * a base field with ``choices`` becomes the shared ``GraphQLEnumType`` via
-      the canonical ``build_choices_enum_type`` builder (``[Enum]``);
-    * any other base field maps through ``DJANGO_TO_GQL`` (``CharField`` →
-      ``String`` → ``[String]``; ``IntegerField`` → ``Int`` → ``[Int]``).
+    * a nested ArrayField recurses → GraphQLList(GraphQLList(inner))
+      ([[Inner]]);
+    * a base field with choices becomes the shared GraphQLEnumType via
+      the canonical build_choices_enum_type builder ([Enum]);
+    * any other base field maps through DJANGO_TO_GQL (CharField →
+      String → [String]; IntegerField → Int → [Int]).
 
-    Returns ``None`` when the base field type is unknown (the caller then drops
+    Returns None when the base field type is unknown (the caller then drops
     the whole array, matching the scalar path's "skip unknown" behaviour).
     """
     if _is_array_field(field):
@@ -477,9 +477,9 @@ def _compile_array_field(
     registry: Any,
     graphene_registry: Any,
 ) -> dict[str, GraphQLField]:
-    """Compile a PostgreSQL ``ArrayField`` → ``GraphQLList(<inner>)``.
+    """Compile a PostgreSQL ArrayField → GraphQLList(<inner>).
 
-    A nested array yields ``[[Inner]]`` (the inner type recurses). The list and
+    A nested array yields [[Inner]] (the inner type recurses). The list and
     its element are nullable, matching the OUTPUT nullability convention used by
     every other native scalar/relation field (#1494 parity — only the primary
     key is non-null on output). When the base field type is unknown the field is
@@ -506,20 +506,20 @@ def _compile_array_field(
 
 
 def _get_range_composite_type(bound_scalar: Any) -> Any:
-    """Return the shared composite Range ``GraphQLObjectType`` for a bound scalar.
+    """Return the shared composite Range GraphQLObjectType for a bound scalar.
 
-    DESIGN CHOICE (audit rank 7): a PostgreSQL ``RangeField`` renders as a
-    composite OUTPUT object ``{ lower, upper }`` typed by the range's element
-    scalar (e.g. an ``IntegerRangeField`` → ``{ lower: Int, upper: Int }``,
-    a ``DateTimeRangeField`` → ``{ lower: DateTime, upper: DateTime }``). This
+    DESIGN CHOICE (audit rank 7): a PostgreSQL RangeField renders as a
+    composite OUTPUT object { lower, upper } typed by the range's element
+    scalar (e.g. an IntegerRangeField → { lower: Int, upper: Int },
+    a DateTimeRangeField → { lower: DateTime, upper: DateTime }). This
     was chosen over a flat serialized string because it is the simplest FAITHFUL
     representation of a range: both endpoints stay individually typed and
-    queryable, and a ``psycopg`` ``Range`` object exposes ``.lower`` / ``.upper``
+    queryable, and a psycopg Range object exposes .lower / .upper
     directly, so the default resolver needs no parsing. Both bounds are nullable
     (a range may be unbounded on either side, and OUTPUT scalars follow the
     #1494 always-nullable rule). The type is memoized per bound scalar so all
-    ``Int`` ranges share one ``IntRange`` type, all ``Date`` ranges share one
-    ``DateRange`` type, etc.
+    Int ranges share one IntRange type, all Date ranges share one
+    DateRange type, etc.
     """
     key = bound_scalar.name
     cached = _RANGE_COMPOSITE_TYPES.get(key)
@@ -559,11 +559,11 @@ def _get_range_composite_type(bound_scalar: Any) -> Any:
 
 
 def _compile_range_field(field: Any) -> dict[str, GraphQLField]:
-    """Compile a PostgreSQL ``*RangeField`` → composite ``{ lower, upper }`` object.
+    """Compile a PostgreSQL *RangeField → composite { lower, upper } object.
 
-    See :func:`_get_range_composite_type` for the shape rationale. An unknown
-    range subtype (one not in :data:`_RANGE_INTERNAL_TO_BOUND`) falls back to a
-    ``String`` bound so the field is still rendered rather than dropped.
+    See _get_range_composite_type for the shape rationale. An unknown range
+    subtype absent from _RANGE_INTERNAL_TO_BOUND falls back to a String bound,
+    so the field is still rendered rather than dropped.
     """
     field_name: str = field.name if hasattr(field, "name") else field.attname
     camel_name: str = _to_camel_case(field_name)
@@ -596,23 +596,23 @@ def _to_graphql_field(
     registry: Any,
     graphene_registry: Any = None,
 ) -> dict[str, GraphQLField]:
-    """Map a single Django model field to a ``{camelCase_key: GraphQLField}`` dict.
+    """Map a single Django model field to a {camelCase_key: GraphQLField} dict.
 
     Returns a single-entry dict (keyed by camelCase field name) or an empty dict
     if the field cannot be mapped (unknown type, generic FK, etc.).
 
     Args:
         field: A Django model field instance.
-        registry: An object with ``get_compiled(model_cls)`` → GraphQLObjectType.
-        graphene_registry: The graphene ``Registry`` whose enum slot is SHARED
-            with the native filter-input path (``register_enum`` /
-            ``get_type_for_enum``). A choices field compiles to the SAME
-            ``GraphQLEnumType`` instance both paths resolve. May be ``None`` for
+        registry: An object with get_compiled(model_cls) → GraphQLObjectType.
+        graphene_registry: The graphene Registry whose enum slot is SHARED
+            with the native filter-input path (register_enum /
+            get_type_for_enum). A choices field compiles to the SAME
+            GraphQLEnumType instance both paths resolve. May be None for
             callers that never reach a choices field (the enum branch falls back
             to the scalar mapping when no shared registry is available).
 
     Returns:
-        A dict ``{camel_name: GraphQLField}`` (one entry) or ``{}`` if skipped.
+        A dict {camel_name: GraphQLField} (one entry) or {} if skipped.
     """
     field_name: str = field.name if hasattr(field, "name") else field.attname
     camel_name: str = _to_camel_case(field_name)
