@@ -81,6 +81,7 @@ dev = [
     "coverage[toml]>=7.13.0,<8",
     "pytest-randomly>=3.15,<4",
     "diff-cover>=10.5.1,<11",
+    "psycopg[binary]>=3.2,<4",
 ]
 
 [build-system]
@@ -177,6 +178,7 @@ skips = [
 [tool.pytest.ini_options]
 python_files = ["tests.py", "test_*.py", "*_tests.py", "bench_*.py"]
 testpaths = ["tests"]
+markers = ["postgresql: requires the opt-in PostgreSQL integration database"]
 asyncio_mode = "auto"
 addopts = [
     # Loaded during Config._preparse, which is the last point BEFORE pytest-cov
