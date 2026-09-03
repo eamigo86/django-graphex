@@ -30,10 +30,12 @@ Output: results/<lib>.json, or results/<BENCH_PREFIX><lib>.json when
 artifacts ``docs/why.md`` publishes).
 """
 
+import hashlib
 import json
 import os
 import platform
 import statistics
+import subprocess
 import sys
 import time
 from contextlib import nullcontext
@@ -186,6 +188,18 @@ def _stats(samples_ms):
     }
 
 
+def _provenance() -> dict[str, str]:
+    """Return the source revision and dependency-lock identity for this run."""
+    constraints = BASE_DIR / "constraints.txt"
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=BASE_DIR, text=True
+    ).strip()
+    return {
+        "commit": commit,
+        "constraints_sha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+    }
+
+
 def main() -> None:
     """Run the selected library's isolated benchmark and write its result.
 
@@ -253,6 +267,7 @@ def main() -> None:
             "platform": platform.platform(),
             "cpu_count": os.cpu_count(),
         },
+        "provenance": _provenance(),
         # The cold first import: library + dependency tree + one schema build.
         # Cold-cache sensitive, so only comparable when every library's
         # virtualenv was warmed equally beforehand (run_all.sh does that).
