@@ -9,7 +9,7 @@ Tests:
 
 Zero graphene imports required.
 
-Run: .venv/bin/python -m pytest tests/core/test_strconv.py -q
+Run: .venv/bin/python -m pytest tests/core/test_strconv.py -q --no-cov
 """
 
 from __future__ import annotations

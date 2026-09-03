@@ -26,7 +26,7 @@ appears in the compiled SDL with the right type / args, and that the SDL is
 byte-identical to the pre-S8c baseline.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s8c_field_descriptor_graphene_free.py -q -o addopts=""
+    tests/core/test_s8c_field_descriptor_graphene_free.py -q --no-cov
 """
 
 from __future__ import annotations

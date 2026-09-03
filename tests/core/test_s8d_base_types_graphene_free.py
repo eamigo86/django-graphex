@@ -30,7 +30,7 @@ Construct analysis (consumer-proven, see #1561 / S-ROOTS-d):
   "output_compiler._make_generic_foreign_key_type" and is unaffected.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s8d_base_types_graphene_free.py -q -o addopts=""
+    tests/core/test_s8d_base_types_graphene_free.py -q --no-cov
 """
 
 from __future__ import annotations

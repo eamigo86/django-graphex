@@ -11,8 +11,8 @@ Tests:
 Gate spec: Domain 1 §Compile-at-app-ready + §Circular-reference-guard
 
 Run:
-    .venv/bin/python -m pytest tests/core/test_global_output_registry.py \
-        -q -o addopts=""
+    .venv/bin/python -m pytest tests/core/test_global_output_registry.py --no-cov \
+        -q --no-cov
 """
 
 from __future__ import annotations

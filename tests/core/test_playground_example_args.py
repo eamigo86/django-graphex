@@ -15,7 +15,7 @@ and asserts the mutation args are PRESENT (not dropped) with the expected SDL:
     uploadDocument(name: String!, file: Base64FileInput!): UploadDocument
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_playground_example_args.py
+    .venv/bin/python -m pytest -q tests/core/test_playground_example_args.py --no-cov
 """
 
 from __future__ import annotations
@@ -23,13 +23,16 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
 
-# The playground settings mount daphne/channels; without the "subscriptions"
-# extra (base-install CI env) the spawned schema-build subprocess cannot boot.
-pytest.importorskip("daphne")
+# The module must collect without the optional playground transport dependency.
+pytestmark = pytest.mark.skipif(
+    find_spec("daphne") is None,
+    reason="requires daphne from the subscriptions development stack",
+)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _PLAYGROUND = _REPO_ROOT / "examples" / "playground"

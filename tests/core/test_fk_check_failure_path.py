@@ -16,7 +16,7 @@ Covers:
       rows persisted, and a good FK is a single INSERT with no boundary SQL.
 
 Run with:
-    .venv/bin/python -m pytest tests/core/test_fk_check_failure_path.py -q
+    .venv/bin/python -m pytest tests/core/test_fk_check_failure_path.py -q --no-cov
 """
 
 from __future__ import annotations

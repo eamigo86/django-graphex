@@ -24,7 +24,7 @@ SDL is byte-identical to the graphene original ("ok: Boolean",
 "errors: [ErrorType]").
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s_roots_c_ok_errors_native.py -q -o addopts=""
+    tests/core/test_s_roots_c_ok_errors_native.py -q --no-cov
 """
 
 from __future__ import annotations

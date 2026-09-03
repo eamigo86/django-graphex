@@ -22,7 +22,7 @@ This file is the S-args-8 contract:
     graphene.Argument declaration it replaces.
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_native_args_only.py
+    .venv/bin/python -m pytest -q tests/core/test_native_args_only.py --no-cov
 """
 
 from __future__ import annotations

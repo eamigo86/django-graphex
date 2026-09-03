@@ -12,7 +12,7 @@ The graphene-conversion cases ("graphene.Argument(graphene.String)" to
 declaration API ("native_arg") is covered by "test_native_args_only.py".
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_args.py
+    .venv/bin/python -m pytest -q tests/core/test_args.py --no-cov
 """
 
 from __future__ import annotations

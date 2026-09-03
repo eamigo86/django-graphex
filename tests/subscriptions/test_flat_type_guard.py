@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import pytest
 from graphql import (
+    GraphQLError,
     GraphQLField,
     GraphQLFieldResolver,
     GraphQLObjectType,
@@ -93,7 +94,7 @@ def test_live_resolver_rejected_at_build() -> None:
         "EventType",
         {"name": _field_with_resolver(live_resolver)},
     )
-    with pytest.raises(Exception, match="EventType") as exc_info:
+    with pytest.raises(GraphQLError, match="EventType") as exc_info:
         check_subscription_output_type(gql_type)
 
     # Error message must name the field too
@@ -146,7 +147,7 @@ def test_snake_closure_missing_sentinel_rejected() -> None:
         "EventType",
         {"isActive": _field_with_resolver(unmarked)},
     )
-    with pytest.raises(Exception, match="EventType"):
+    with pytest.raises(GraphQLError, match="EventType"):
         check_subscription_output_type(gql_type)
 
 
@@ -169,7 +170,7 @@ def test_none_resolver_rejected() -> None:
     # Confirm field.resolve is actually None
     assert gql_type.fields["name"].resolve is None
 
-    with pytest.raises(Exception, match="EventType"):
+    with pytest.raises(GraphQLError, match="EventType"):
         check_subscription_output_type(gql_type)
 
 
@@ -188,7 +189,7 @@ def test_default_field_resolver_rejected() -> None:
         "EventType",
         {"name": _field_with_resolver(default_field_resolver)},
     )
-    with pytest.raises(Exception, match="EventType"):
+    with pytest.raises(GraphQLError, match="EventType"):
         check_subscription_output_type(gql_type)
 
 
@@ -252,7 +253,7 @@ def test_check_subscription_schema_rejects_bad_type() -> None:
     )
     schema = GraphQLSchema(subscription=subscription_type)
 
-    with pytest.raises(Exception, match="MyEventType"):
+    with pytest.raises(GraphQLError, match="MyEventType"):
         check_subscription_schema(schema)
 
 

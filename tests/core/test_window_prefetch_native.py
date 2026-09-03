@@ -15,7 +15,7 @@ path, and the unbounded load defeats the optimizer.
 
 Run:
     .venv/bin/python -m pytest \
-        tests/core/test_window_prefetch_native.py -q -o addopts=""
+        tests/core/test_window_prefetch_native.py -q --no-cov
 """
 
 from __future__ import annotations

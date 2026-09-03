@@ -35,7 +35,7 @@ was RETIRED. See "tests/core/test_pagination_native_only.py". The graphene
 for the "__new__"-based graphene-backend tests only; they never fire on a build.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s8f_paginations_graphene_free.py -q -o addopts=""
+    tests/core/test_s8f_paginations_graphene_free.py -q --no-cov
 """
 
 from __future__ import annotations

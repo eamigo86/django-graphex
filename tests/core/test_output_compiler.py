@@ -8,7 +8,7 @@ Tests:
   (no loop-variable capture aliasing).
 - GdxMeta as Annotated OUTPUT-only metadata is not eager-instantiated.
 
-Run: .venv/bin/python -m pytest -q tests/core/test_output_compiler.py
+Run: .venv/bin/python -m pytest -q tests/core/test_output_compiler.py --no-cov
 """
 
 from __future__ import annotations

@@ -13,8 +13,8 @@ Tests (WU1b gate, task 1.7):
       mirroring test_output_identity_invariant.py pattern for list containers.
 
 Run:
-    .venv/bin/python -m pytest tests/core/test_list_output_type.py \
-        -q -o addopts=""
+    .venv/bin/python -m pytest tests/core/test_list_output_type.py --no-cov \
+        -q --no-cov
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Tests for core/base.py — ObjectType/InputType metaclass bases.
 
 TDD RED phase: written before the module exists.
-Run with: .venv/bin/python -m pytest tests/core/test_native_base.py -x -v
+Run with: .venv/bin/python -m pytest tests/core/test_native_base.py -x -v --no-cov
 """
 
 from __future__ import annotations

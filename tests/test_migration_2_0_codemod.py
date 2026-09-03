@@ -17,7 +17,7 @@ It operates purely on SOURCE STRINGS, so the graphene tokens below are built fro
 fragments / appear only inside string literals — never on a physical import line.
 
 Run:
-    .venv/bin/python -m pytest -q tests/test_migration_2_0_codemod.py
+    .venv/bin/python -m pytest -q tests/test_migration_2_0_codemod.py --no-cov
 """
 
 from __future__ import annotations

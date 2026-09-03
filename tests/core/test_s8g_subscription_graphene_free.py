@@ -26,16 +26,19 @@ stays graphene-free (asserted here + in
 """
 
 import ast
+from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
 
-# Requires the "subscriptions" extra; skip in the channels-free CI env.
-pytest.importorskip("channels")
+_SUB_MODULE = "django_graphex.subscriptions.subscription"
+sub_mod = import_module(_SUB_MODULE) if find_spec("channels") else None
 
-import django_graphex.subscriptions.subscription as sub_mod
+# Collect the module even in the channels-free base-install environment.
+pytestmark = pytest.mark.skipif(sub_mod is None, reason="requires subscriptions extra")
 
-_SUB_PATH = Path(sub_mod.__file__)
+_SUB_PATH = Path(sub_mod.__file__ or "") if sub_mod is not None else Path()
 
 
 def _toplevel_graphene_imports(path: Path) -> list[str]:

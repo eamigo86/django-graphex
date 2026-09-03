@@ -21,7 +21,7 @@ that the native output thunk consumes (the marker keeps the field in
 and the choices->enum conversion are backend-independent and are exercised
 through their original entry points.
 
-Run: .venv/bin/python -m pytest tests/test_converter.py -q -o addopts=""
+Run: .venv/bin/python -m pytest tests/test_converter.py -q --no-cov
 """
 
 from django.contrib.auth.models import User

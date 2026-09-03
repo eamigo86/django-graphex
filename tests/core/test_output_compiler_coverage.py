@@ -17,7 +17,7 @@ asserting their ACTUAL behaviour:
 - "compile_output_fields": "get_fields" exception fallback to concrete_fields.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_output_compiler_coverage.py -q -o addopts=""
+    tests/core/test_output_compiler_coverage.py -q --no-cov
 """
 
 from __future__ import annotations

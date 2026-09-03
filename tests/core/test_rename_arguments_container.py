@@ -12,7 +12,7 @@ Tests:
   ("cls.__dict__" override wins, empty default on the base).
 
 Run:
-    .venv/bin/python -m pytest -q tests/core/test_rename_arguments_container.py
+    .venv/bin/python -m pytest -q tests/core/test_rename_arguments_container.py --no-cov
 """
 
 from __future__ import annotations

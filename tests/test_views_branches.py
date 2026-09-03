@@ -23,6 +23,7 @@ from django_graphex.views import (
     MUTATION_ERRORS_FLAG,
     BaseGraphQLView,
     GraphQLView,
+    HttpError,
 )
 
 
@@ -458,7 +459,7 @@ class MoreBaseBranchesTest(TestCase):
         )
         # Force get_content_type -> application/json and a failing body.decode().
         request._body = _BadBody()
-        with pytest.raises(Exception):
+        with pytest.raises(HttpError, match="boom"):
             # parse_body raises HttpError -> dispatch turns it into a 400; here we
             # call parse_body to hit the decode-exception branch directly.
             view.parse_body(request)

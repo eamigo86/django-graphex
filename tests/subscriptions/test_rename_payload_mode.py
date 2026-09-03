@@ -19,7 +19,7 @@ Guards:
   ImproperlyConfigured naming both valid values.
 
 Run:
-    .venv/bin/python -m pytest -q tests/subscriptions/test_rename_payload_mode.py
+    .venv/bin/python -m pytest -q tests/subscriptions/test_rename_payload_mode.py --no-cov
 """
 
 from __future__ import annotations

@@ -447,7 +447,7 @@ async def test_validate_filters_rejects_undeclared_root() -> None:
     """
     layer = _RecordingLayer()
     spec = _spec(declared_fields=("id", "name"))
-    with pytest.raises(Exception):  # noqa: PT011 - GraphQLError or ValueError
+    with pytest.raises(ValueError, match="not a declared output field"):
         await _start_source(spec, layer, filters={"password__icontains": "x"})
     # Rejected during validation, BEFORE any group_add.
     assert layer.group_add_calls == []

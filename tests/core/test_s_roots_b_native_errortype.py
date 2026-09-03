@@ -23,7 +23,7 @@ the "errors" field IS present with element type = the ErrorType
 "GraphQLObjectType" (field + messages). It FAILS if ErrorType is mis-routed.
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_s_roots_b_native_errortype.py -q -o addopts=""
+    tests/core/test_s_roots_b_native_errortype.py -q --no-cov
 """
 
 from __future__ import annotations

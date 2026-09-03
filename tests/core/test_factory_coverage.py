@@ -13,7 +13,7 @@ the remaining name-derivation and error branches by asserting actual behavior:
 - the "input" op raises "NotImplementedError" (Phase 2 delegation boundary).
 
 Run: .venv/bin/python -m pytest \
-    tests/core/test_factory_coverage.py -q -o addopts=""
+    tests/core/test_factory_coverage.py -q --no-cov
 """
 
 from __future__ import annotations

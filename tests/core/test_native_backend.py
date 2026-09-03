@@ -2,7 +2,7 @@
 
 Verifies that the "normalize_sdl" utility is importable and functional.
 
-Run with: .venv/bin/python -m pytest tests/core/test_native_backend.py -x -v
+Run with: .venv/bin/python -m pytest tests/core/test_native_backend.py -x -v --no-cov
 """
 
 from __future__ import annotations
