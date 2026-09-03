@@ -225,11 +225,11 @@ class _BaseAPISettings:
     """Read a namespaced Django setting with defaults and import strings.
 
     Self-contained (no DRF dependency): mirrors the small slice of DRF's
-    ``APISettings`` the package used, so ``django-graphex`` imports
-    without ``djangorestframework`` installed. A subclass/instance reads one
-    Django setting namespace (``DJANGO_GRAPHEX``), resolving missing keys from
-    ``defaults`` and dotted import-path strings for keys listed in
-    ``import_strings``.
+    APISettings the package used, so django-graphex imports
+    without djangorestframework installed. A subclass/instance reads one
+    Django setting namespace (DJANGO_GRAPHEX), resolving missing keys from
+    defaults and dotted import-path strings for keys listed in
+    import_strings.
     """
 
     def __init__(
@@ -246,7 +246,7 @@ class _BaseAPISettings:
             defaults: The default values mapping.
             import_strings: Keys whose string values are import paths.
             setting_name: The Django setting namespace to read (e.g.
-                ``"DJANGO_GRAPHEX"``); also used in error messages.
+                "DJANGO_GRAPHEX"); also used in error messages.
         """
         if user_settings:
             self._user_settings = user_settings
@@ -271,8 +271,8 @@ class _BaseAPISettings:
             The (possibly import-resolved) setting value.
 
         Raises:
-            AttributeError: If ``attr`` is not a known setting.
-            ImproperlyConfigured: If ``attr`` is a limit set below the smallest
+            AttributeError: If attr is not a known setting.
+            ImproperlyConfigured: If attr is a limit set below the smallest
                 value that means anything.
         """
         if attr not in self.defaults:
@@ -293,10 +293,10 @@ class _BaseAPISettings:
     def reload(self) -> None:
         """Clear all cached setting values and re-read from Django on next access.
 
-        Called by ``reload_api_settings`` when ``setting_changed`` fires so that
-        ``override_settings(...)`` works correctly in tests without replacing the
-        singleton object (which would break any ``from .settings import
-        graphql_api_settings`` bindings held in other modules).
+        Called by reload_api_settings when setting_changed fires so that
+        override_settings(...) works correctly in tests without replacing the
+        singleton object (which would break any from .settings import
+        graphql_api_settings bindings held in other modules).
         """
         # Remove the cached _user_settings dict so the property re-reads from Django.
         self.__dict__.pop("_user_settings", None)
@@ -362,11 +362,11 @@ def _validate_choice(value: Any, key: str, setting_name: str) -> None:
 
     Args:
         value: The resolved setting value.
-        key: The setting key being read (a key of ``SETTING_CHOICES``).
+        key: The setting key being read (a key of SETTING_CHOICES).
         setting_name: The Django setting namespace (for the message).
 
     Raises:
-        ImproperlyConfigured: When ``value`` is not a supported choice.
+        ImproperlyConfigured: When value is not a supported choice.
     """
     choices = SETTING_CHOICES[key]
     if isinstance(value, str) and value in choices:
@@ -407,7 +407,7 @@ def _import_from_string(value: str, setting_name: str) -> Any:
     """Import an object from its dotted path.
 
     Args:
-        value: The dotted import path (``"pkg.module.Object"``).
+        value: The dotted import path ("pkg.module.Object").
         setting_name: The setting key (for error messages).
 
     Returns:
