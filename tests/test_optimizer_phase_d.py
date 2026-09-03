@@ -39,21 +39,21 @@ from ._schema_isolation import isolated_pair
 
 
 def _execute(schema, query):
-    """Execute *query* against a native ``DjangoGraphQLSchema`` (graphene-free).
+    """Execute *query* against a native DjangoGraphQLSchema (graphene-free).
 
-    Drop-in for the retired ``_execute(schema, query)``: returns the graphql-core
-    ``ExecutionResult`` (same ``.data`` / ``.errors`` shape graphene returned).
+    Drop-in for the retired _execute(schema, query): returns the graphql-core
+    ExecutionResult (same .data / .errors shape graphene returned).
     """
     return graphql_sync(schema.graphql_schema, query)
 
 
 def _gtype(name, bases, ns):
-    """Build a dynamic native type via ``type()`` with pydantic-safe namespace.
+    """Build a dynamic native type via type() with pydantic-safe namespace.
 
-    Native ``ObjectType`` / ``DjangoObjectType`` / ``DjangoListObjectType`` are
-    pydantic ``BaseModel`` subclasses; building them with ``type(name, bases, ns)``
-    requires ``ns['__module__']`` and a nested ``Meta`` whose ``__qualname__`` is
-    ``"<Outer>.Meta"`` (the value a ``class`` body produces).
+    Native ObjectType / DjangoObjectType / DjangoListObjectType are
+    pydantic BaseModel subclasses; building them with type(name, bases, ns)
+    requires ns['__module__'] and a nested Meta whose __qualname__ is
+    "<Outer>.Meta" (the value a class body produces).
     """
     ns = dict(ns)
     ns.setdefault("__module__", __name__)

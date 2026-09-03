@@ -55,7 +55,7 @@ from .models import BasicModel
 
 
 class _StubRegistry:
-    """Minimal registry for ``_to_graphql_field`` (scalars never touch it)."""
+    """Minimal registry for _to_graphql_field (scalars never touch it)."""
 
     def __init__(self):
         self._compiled = {}
@@ -68,10 +68,10 @@ class _StubRegistry:
 
 
 def _native_scalar(field):
-    """Run the NATIVE scalar conversion for ``field`` and return its scalar.
+    """Run the NATIVE scalar conversion for field and return its scalar.
 
-    Drives ``_to_graphql_field`` (the live native equivalent of the retired
-    graphene scalar dispatchers), unwraps ``GraphQLNonNull`` (only the pk is
+    Drives _to_graphql_field (the live native equivalent of the retired
+    graphene scalar dispatchers), unwraps GraphQLNonNull (only the pk is
     non-null on output), and returns the underlying graphql-core scalar.
     """
     field_map = _to_graphql_field(field, _StubRegistry())

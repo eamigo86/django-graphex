@@ -50,7 +50,7 @@ from .models import DummyModel, Tag
 # builds in the shared global output registry.                                  #
 # --------------------------------------------------------------------------- #
 class _AuthorBase(DummyModel):
-    """An author whose ``bio`` is NULLABLE (so ``bio: null`` can clear it)."""
+    """An author whose bio is NULLABLE (so bio: null can clear it)."""
 
     name = models.CharField(max_length=100)  # required
     bio = models.TextField(null=True, blank=True)
