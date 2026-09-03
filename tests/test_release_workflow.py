@@ -91,6 +91,7 @@ def test_publish_waits_for_every_release_gate() -> None:
         "test",
         "base-install",
         "lint-and-security",
+        "diff-check",
         "coverage",
         "postgresql",
         "docs-build",
@@ -98,6 +99,21 @@ def test_publish_waits_for_every_release_gate() -> None:
         "release-artifact",
         "get-version",
     }
+
+
+def test_release_branch_has_a_cumulative_diff_check_gate() -> None:
+    """Reject whitespace errors accumulated anywhere on the release branch.
+
+    The gate compares HEAD with the shared main-branch merge base, rather than
+    checking only the latest child PR, and must block publication.
+    """
+    diff_check = _job("diff-check")
+    publish = _job("publish")
+
+    assert "fetch-depth: 0" in diff_check
+    assert "git merge-base origin/main HEAD" in diff_check
+    assert 'git diff --check "$BASE_COMMIT"..HEAD' in diff_check
+    assert "diff-check" in publish.split("needs: [", 1)[1].split("]", 1)[0]
 
 
 def test_docs_are_built_before_publish_and_deployed_afterward() -> None:

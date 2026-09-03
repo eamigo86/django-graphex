@@ -118,6 +118,22 @@ jobs:
     - name: Run security checks
       run: uvx --with tox-uv tox -e security
 
+  diff-check:
+    # Child PRs can be individually clean while their release branch accumulates
+    # whitespace errors. Always check the complete diff from main's merge base.
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      with:
+        fetch-depth: 0
+
+    - name: Check cumulative release diff
+      run: |
+        git fetch --no-tags origin main:refs/remotes/origin/main
+        BASE_COMMIT="$(git merge-base origin/main HEAD)"
+        git diff --check "$BASE_COMMIT"..HEAD
+
   coverage:
     runs-on: ubuntu-latest
     steps:
@@ -371,7 +387,7 @@ jobs:
       run: uv run --group test pytest -q --no-migrations
 
   publish:
-    needs: [ test, base-install, lint-and-security, coverage, postgresql, docs-build, playground, release-artifact, get-version ]
+    needs: [ test, base-install, lint-and-security, diff-check, coverage, postgresql, docs-build, playground, release-artifact, get-version ]
     runs-on: ubuntu-latest
     # Publish only when a version tag is pushed, or when triggered manually.
     if: |
