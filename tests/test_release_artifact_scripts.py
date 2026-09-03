@@ -13,7 +13,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def _load_script(name: str) -> ModuleType:
-    """Load a repository script without making ``scripts`` a package."""
+    """Load a repository script without making scripts a package."""
     path = ROOT / "scripts" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader
