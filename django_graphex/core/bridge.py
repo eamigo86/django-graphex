@@ -98,11 +98,11 @@ _GDX_ALLOWLIST: frozenset[str] = frozenset(
 
 
 class _MetaView:
-    """Proxy that exposes ``GdxMeta`` fields as attributes.
+    """Proxy that exposes GdxMeta fields as attributes.
 
-    ``__getattr__`` raises ``AttributeError`` (NEVER returns ``None``) on any
-    attribute not in ``_GDX_ALLOWLIST``.  This hard-fails silent depth/cost
-    bugs caused by a missing attr silently returning ``None``.
+    __getattr__ raises AttributeError (NEVER returns None) on any
+    attribute not in _GDX_ALLOWLIST.  This hard-fails silent depth/cost
+    bugs caused by a missing attr silently returning None.
     """
 
     __slots__ = ("_spec",)
@@ -156,11 +156,11 @@ class GdxPayload:
 
     @property
     def _meta(self) -> _MetaView:
-        """Shim: ``type.extensions['gdx']._meta.max_depth`` keeps reading."""
+        """Shim: type.extensions['gdx']._meta.max_depth keeps reading."""
         return _MetaView(object.__getattribute__(self, "_gdx_meta"))
 
     def __repr__(self) -> str:
-        """Return a ``GdxPayload(<gdx_meta>)`` debug representation."""
+        """Return a GdxPayload(<gdx_meta>) debug representation."""
         return f"GdxPayload({object.__getattribute__(self, '_gdx_meta')!r})"
 
 

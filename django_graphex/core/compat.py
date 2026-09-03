@@ -31,20 +31,20 @@ from typing import Any
 
 
 def _gdx_meta(t: Any) -> Any:
-    """Return the ``_meta``-like object for ``t``.
+    """Return the _meta-like object for t.
 
-    Direct back-reference: ``t.graphene_type._meta`` when present.
-    Native:               ``t.extensions["gdx"]._meta`` (GdxPayload._meta → _MetaView).
+    Direct back-reference: t.graphene_type._meta when present.
+    Native:               t.extensions["gdx"]._meta (GdxPayload._meta → _MetaView).
 
     The direct back-reference is tried first as a fast path; native types fall
-    through to the ``extensions["gdx"]`` lookup.
+    through to the extensions["gdx"] lookup.
 
     Args:
-        t: A ``GraphQLObjectType`` (or similar) with either ``graphene_type``
-           or ``extensions["gdx"]`` populated.
+        t: A GraphQLObjectType (or similar) with either graphene_type
+           or extensions["gdx"] populated.
 
     Returns:
-        The ``_meta`` proxy object (``_MetaView`` over ``GdxMeta``).
+        The _meta proxy object (_MetaView over GdxMeta).
 
     Raises:
         AttributeError: if neither path is available.
@@ -78,23 +78,23 @@ def _gdx_meta(t: Any) -> Any:
 
 
 def _gdx_graphene_type(t: Any) -> Any:
-    """Return the source class for ``t``, or ``None``.
+    """Return the source class for t, or None.
 
-    Direct back-reference: ``t.graphene_type`` when present.
-    Native:               ``t.extensions["gdx"]._meta.graphene_type`` (the source
-        class — root ObjectType or DjangoObjectType — carried on ``GdxMeta`` at
+    Direct back-reference: t.graphene_type when present.
+    Native:               t.extensions["gdx"]._meta.graphene_type (the source
+        class — root ObjectType or DjangoObjectType — carried on GdxMeta at
         native compile time).
 
-    The direct back-reference is tried first as a fast path. Returns ``None``
+    The direct back-reference is tried first as a fast path. Returns None
     (never raises) when no source class is recoverable, so callers can treat
     "no custom resolver / hook declared" uniformly.
 
     Args:
-        t: A ``GraphQLObjectType`` — typically ``info.parent_type`` at a
+        t: A GraphQLObjectType — typically info.parent_type at a
            read-site.
 
     Returns:
-        The source class (root ObjectType or DjangoObjectType), or ``None`` when
+        The source class (root ObjectType or DjangoObjectType), or None when
         none is carried.
     """
     # Fast path: a direct graphene_type back-reference.

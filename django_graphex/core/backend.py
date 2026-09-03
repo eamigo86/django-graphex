@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 def _errors_to_type(errors: dict[str, list[str]]) -> list[ErrorType]:
-    """Convert a ``{field: [messages]}`` mapping to an ``ErrorType`` list."""
+    """Convert a {field: [messages]} mapping to an ErrorType list."""
     return [ErrorType(field=field, messages=msgs) for field, msgs in errors.items()]
 
 
@@ -427,7 +427,7 @@ class PydanticBackend(SerializerBackend):
         return True, obj
 
     def _output_fields(self) -> list[models.Field]:
-        """Return the fields ``to_representation`` emits (concrete + FK + M2M)."""
+        """Return the fields to_representation emits (concrete + FK + M2M)."""
         return [
             field
             for field in self.model._meta.get_fields()
