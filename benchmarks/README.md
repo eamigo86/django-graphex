@@ -176,7 +176,10 @@ The seed produces posts titled `Post 0` .. `Post 9999`, so `icontains "post 42"`
 matches `Post 42`, `Post 420..429`, `Post 4200..4299`, and `Post 1420..9942…`
 = **111** rows — comfortably inside the `>5, <200` window.
 
-`create_comment` always runs **last** (it mutates the DB).
+`create_comment` runs last, but like every request it is enclosed in a
+rollback-only transaction. Validation, SQL probes, warmups and samples leave
+both row counts and the SQLite sequence unchanged. BEGIN/ROLLBACK sit outside
+the timer and SQL capture, so isolation does not become part of the result.
 
 ## What the harness records
 
@@ -211,7 +214,7 @@ matches `Post 42`, `Post 420..429`, `Post 4200..4299`, and `Post 1420..9942…`
 Method per operation: **15 warmup** iterations (untimed) + **100 timed**
 iterations (`time.perf_counter`, ms). SQL count comes from one extra iteration
 wrapped in `CaptureQueriesContext`, excluded from timings. `validate()` runs on
-the first response.
+the first response. Every one of those requests is rolled back independently.
 
 ## Running it
 
