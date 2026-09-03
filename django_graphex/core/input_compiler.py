@@ -233,20 +233,20 @@ _STANDALONE_INPUT_ATTR = "_gdx_standalone_input_type"
 def _resolve_input_model_type(py_type: Any) -> Any:
     """Resolve a nested input-model annotation to its compiled input type.
 
-    A field annotated with ANOTHER input model — a hand-authored ``InputType``
-    subclass, or any bare ``pydantic.BaseModel`` subclass — must compile to that
-    child's ``GraphQLInputObjectType``, NEVER the ``GraphQLString`` fallback (the
+    A field annotated with ANOTHER input model — a hand-authored InputType
+    subclass, or any bare pydantic.BaseModel subclass — must compile to that
+    child's GraphQLInputObjectType, NEVER the GraphQLString fallback (the
     pre-fix silent-corruption bug). Resolution mirrors the descriptor input path
-    (``descriptors.py`` "_resolve_input_type"): prefer the compiled type already
-    stamped on ``_meta.graphql_input_type`` (populated by ``compile_all_inputs``
-    for registered ``InputType`` subclasses), so the schema reuses the ONE
+    (descriptors.py "_resolve_input_type"): prefer the compiled type already
+    stamped on _meta.graphql_input_type (populated by compile_all_inputs
+    for registered InputType subclasses), so the schema reuses the ONE
     canonical instance. When no registered type exists (an unregistered
-    ``BaseModel`` referenced directly, e.g. in isolation/tests), compile it once
+    BaseModel referenced directly, e.g. in isolation/tests), compile it once
     and memoize the result on the class so repeat resolutions return the SAME
     instance.
 
-    Called from inside the parent's ``fields`` thunk, so resolution is LAZY: a
-    child compiled AFTER the parent (later in ``compile_all_inputs`` registration
+    Called from inside the parent's fields thunk, so resolution is LAZY: a
+    child compiled AFTER the parent (later in compile_all_inputs registration
     order) is still resolved by the time graphql-core forces the parent's fields
     at schema-assembly time.
 
@@ -254,8 +254,8 @@ def _resolve_input_model_type(py_type: Any) -> Any:
         py_type: The (already optionality-unwrapped) annotation to resolve.
 
     Returns:
-        The child ``GraphQLInputObjectType`` when "py_type" is a ``BaseModel``
-        subclass; ``None`` when it is not (the caller keeps its scalar mapping).
+        The child GraphQLInputObjectType when "py_type" is a BaseModel
+        subclass; None when it is not (the caller keeps its scalar mapping).
     """
     if not (isinstance(py_type, type) and issubclass(py_type, BaseModel)):
         return None
@@ -280,11 +280,11 @@ def _resolve_input_model_type(py_type: Any) -> Any:
 def _python_type_to_gql(py_type: Any) -> Any:
     """Map a Python type to a graphql-core scalar/type.
 
-    Returns ``GraphQLString`` as a fallback for unknown types so the schema
+    Returns GraphQLString as a fallback for unknown types so the schema
     still builds. Unlike the pre-fix silent fallback, a truly-unknown CLASS
-    annotation (not a scalar, not an ``Enum``, not a ``BaseModel`` input model)
-    now emits a loud ``UserWarning`` so the degradation is visible rather than
-    silently corrupting a structured field into a ``String``.
+    annotation (not a scalar, not an Enum, not a BaseModel input model)
+    now emits a loud UserWarning so the degradation is visible rather than
+    silently corrupting a structured field into a String.
     """
     if py_type is None:
         return GraphQLString
@@ -345,15 +345,15 @@ def _is_required(field_info: Any) -> bool:
 
 
 def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
-    """Unwrap ``Optional[T]`` / ``T | None`` into ``(T, is_optional)``.
+    """Unwrap Optional[T] / T | None into (T, is_optional).
 
     Handles:
-    - Python 3.10+ ``X | None`` syntax (``types.UnionType``)
-    - ``typing.Optional[X]`` / ``typing.Union[X, None]``
+    - Python 3.10+ X | None syntax (types.UnionType)
+    - typing.Optional[X] / typing.Union[X, None]
 
     Returns:
-        ``(inner_type, True)`` if annotation is ``T | None`` / ``Optional[T]``.
-        ``(annotation, False)`` otherwise.
+        (inner_type, True) if annotation is T | None / Optional[T].
+        (annotation, False) otherwise.
     """
     import types as _types
     import typing
@@ -379,21 +379,21 @@ def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
 
 
 def _unwrap_list(annotation: Any) -> tuple[Any, bool]:
-    """Detect a ``list[T]`` origin and return ``(inner_type, is_list)``.
+    """Detect a list[T] origin and return (inner_type, is_list).
 
-    Handles ``list[T]`` (PEP 585 builtin generic) and ``typing.List[T]`` (both
-    carry a ``list`` origin under ``typing.get_origin``). The annotation passed
-    here is expected to already be optionality-unwrapped by ``_unwrap_optional``
-    so ``Optional[list[T]]`` / ``list[T] | None`` reach this as bare ``list[T]``.
+    Handles list[T] (PEP 585 builtin generic) and typing.List[T] (both
+    carry a list origin under typing.get_origin). The annotation passed
+    here is expected to already be optionality-unwrapped by _unwrap_optional
+    so Optional[list[T]] / list[T] | None reach this as bare list[T].
 
-    Unsupported origins (``dict[...]``, ``tuple[...]``, etc.) are NOT lists and
-    return ``(annotation, False)`` so the caller falls back to the existing
+    Unsupported origins (dict[...], tuple[...], etc.) are NOT lists and
+    return (annotation, False) so the caller falls back to the existing
     scalar mapping — the file does not invent new behavior for those origins.
 
     Returns:
-        ``(inner_type, True)`` for a list annotation (``inner_type`` is the
-        element type, e.g. ``str`` for ``list[str]``, or ``str | None`` for
-        ``list[str | None]``); ``(annotation, False)`` otherwise.
+        (inner_type, True) for a list annotation (inner_type is the
+        element type, e.g. str for list[str], or str | None for
+        list[str | None]); (annotation, False) otherwise.
     """
     import typing
 
@@ -408,29 +408,29 @@ def _unwrap_list(annotation: Any) -> tuple[Any, bool]:
 
 
 def _default_value_for(field_info: Any) -> Any:
-    """Resolve the graphql-core ``default_value`` for a Pydantic ``FieldInfo``.
+    """Resolve the graphql-core default_value for a Pydantic FieldInfo.
 
     Distinguishes the four Pydantic v2 default states so the SDL renders the
     correct default marker:
 
-    - ``PydanticUndefined`` (no default) -> graphql-core ``Undefined`` (the SDL
-      omits the ``= ...`` marker entirely).
-    - explicit ``None`` default -> ``None`` (SDL renders ``= null``).
-    - a concrete value (``1``, ``False``, ...) -> that value (SDL ``= <value>``).
-    - a ``default_factory`` -> the factory is invoked ONCE here at compile time
+    - PydanticUndefined (no default) -> graphql-core Undefined (the SDL
+      omits the = ... marker entirely).
+    - explicit None default -> None (SDL renders = null).
+    - a concrete value (1, False, ...) -> that value (SDL = <value>).
+    - a default_factory -> the factory is invoked ONCE here at compile time
       and the produced value is used. SINGLE-EVALUATION CONSTRAINT: the factory
       runs exactly once (when the fields thunk builds), so a mutable factory
-      default (e.g. ``list``) yields one shared default instance baked into the
+      default (e.g. list) yields one shared default instance baked into the
       SDL — this matches graphql-core's static-default model and never re-runs
       the factory per request.
-    - a Pydantic 2.10+ VALIDATED-DATA factory (``default_factory=lambda data:
-      ...``) -> graphql-core ``Undefined``. Such a factory needs the partially
+    - a Pydantic 2.10+ VALIDATED-DATA factory (default_factory=lambda data:
+      ...) -> graphql-core Undefined. Such a factory needs the partially
       validated instance data, so it has no compile-time value and cannot be a
       static SDL default; Pydantic still applies it per instance at validation
       time.
 
     Returns:
-        The graphql-core ``default_value`` (``Undefined`` when there is none).
+        The graphql-core default_value (Undefined when there is none).
     """
     from pydantic_core import PydanticUndefined
 
@@ -523,8 +523,8 @@ def coerce_input(cls: type[BaseModel], raw: dict[str, Any]) -> BaseModel:
 def _resolve_child_input_type(child: Any) -> Any:
     """Unwrap a nested child input spec into its graphql-core input type.
 
-    ``NestedInputField.child_input_type`` may be a compiled
-    ``GraphQLInputObjectType`` directly, or a zero-arg ``lambda`` thunk
+    NestedInputField.child_input_type may be a compiled
+    GraphQLInputObjectType directly, or a zero-arg lambda thunk
     returning one (lazy/forward-ref resolution inside the parent's own field
     thunk). This normalizes both to the concrete graphql-core type. A compiled
     type is an INSTANCE, never a callable, so the two cases cannot be confused.
