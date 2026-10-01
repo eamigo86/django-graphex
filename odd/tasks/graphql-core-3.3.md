@@ -582,3 +582,10 @@ Engram mirror pending until a registered runtime identity is available.
   authorized delivery. T4b new comparison profile, T4c example/migration
   guidance, and T4d SemVer/final gates remain pending. The Engram mirror
   remains pending without a registered runtime identity.
+- T4a work-unit commit: `cbcd1da815f8bea95607eb6ec5251275df42b3fc`.
+  Its first committed slice has 274 authored changed lines and 16 generated
+  lock lines (290 total) against integration `61b8784e`; this local-only
+  proof checkpoint adds no source or dependency changes. The initial RED log
+  is `/private/tmp/graphex-33-t4a-red.log`; final focused and full-suite logs
+  are `/private/tmp/graphex-33-t4a-focused-final.log` and
+  `/private/tmp/graphex-33-t4a-proof.Co6BJ6/full-suite.log`.
