@@ -50,7 +50,7 @@ def test_patch_metadata_and_locks_are_consistent() -> None:
 
 
 def test_dated_patch_notes_preserve_310_history() -> None:
-    """Date the patch notes without falsely describing them as published.
+    """Date the patch notes without claiming a live publication state.
 
     The historical 3.1.0 release heading and audit trail remain available.
     """
@@ -60,7 +60,8 @@ def test_dated_patch_notes_preserve_310_history() -> None:
     for notes in (root_notes, docs_notes):
         assert "## 3.1.1 — 2026-10-01" in notes
         assert "## 3.1.1 — Unreleased" not in notes
-        assert "Publication remains pending." in notes
+        assert "Production publication is tag-driven." in notes
+        assert "Publication remains pending." not in notes
     assert "docs/changelog.md#311--2026-10-01" in root_notes
     assert "## 3.1.0 — 2026-09-03" in docs_notes
     assert "### Audit traceability" in docs_notes

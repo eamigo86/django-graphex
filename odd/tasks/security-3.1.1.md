@@ -246,12 +246,20 @@ pending host session registration.
   format/lint, mypy, both docstring gates (strict TOTAL 0), and Zensical docs
   build passed. Docs retained five known baseline anchor warnings. Evidence:
   `/private/tmp/graphex-311-t5-clone.RfnZv2/`.
+- Follow-up TDD correction: production PyPI publication requires a version
+  tag, while the same prebuilt docs artifact is deployed after publishing.
+  Requiring live “Publication remains pending” text would make those dated
+  notes false after release. The new contract first failed on the old wording;
+  the evergreen “Production publication is tag-driven” wording then passed
+  all 74 focused tests. The first GREEN attempt caught a Markdown line-wrap
+  mismatch; placing the phrase intact fixed that contract without changing
+  release behavior. The dated notes still do not claim publication has occurred.
 - An initial archive-only harness lacked `.git` and caused two provenance
   failures; the real Git clone above resolved both without changing tests or
   excluding modules. The existing ignored extra benchmark files remain untouched.
 - Runtime HTTP and distribution-artifact checks are not applicable to this
   release-note-only unit. Hosted wheel, matrix, PostgreSQL and Codecov checks
   must be rerun after the notes PR. Rollback boundary: the dated 3.1.1 headings,
-  publication-pending wording, date contract, and this task checkpoint only.
+  evergreen publication wording, date contract, and this task checkpoint only.
   The 3.1.0 history, frozen benchmark artifacts and runtime dependency floor
   remain unchanged. No release tag or publication was performed.

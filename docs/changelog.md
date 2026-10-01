@@ -14,8 +14,9 @@ All notable changes to this library are documented here. The format is based on
 
 ## 3.1.1 — 2026-10-01
 
-**Security patch. Publication remains pending.** The supported runtime floor is
-now `graphql-core>=3.2.13,<3.3`, without moving to the separate 3.3 migration.
+**Security patch.** Production publication is tag-driven. The supported runtime
+floor is now `graphql-core>=3.2.13,<3.3`, without moving to the separate 3.3
+migration.
 The root and Playground locks resolve 3.2.13; the Playground also moves from
 Django 6.0.6 to 6.0.8 on the already-tested 6.0 line.
 
