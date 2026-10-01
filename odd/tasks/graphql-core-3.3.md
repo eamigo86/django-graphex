@@ -114,8 +114,14 @@ of scope.
   diagnostic failures; do not treat those failures as accepted skips.
   - [x] T3a — AST, retired mapper test guards, and directive coercion adapter.
     Work-unit commit: 5063aa0d4617f798fccb74633b1c6418d8a29f9a.
-  - [ ] T3b — Resolve 3.3 cost/list-node compatibility and stale upstream
-    constructor expectation with separate tests and guidance.
+  - [x] T3b — Resolve 3.3 cost/list-node compatibility and stale upstream
+    constructor expectation with separate tests and guidance. Route: delegated
+    direct on local child codex/graphql-core-3.3-cost from 5cdd2b13; own cost.py,
+    cost regressions, native-list fixture, query-limit guidance, and this document.
+    Observe RED under official 3.3.0, GREEN under 3.2.13 and 3.3.0, unchanged
+    full 3.2.13 coverage gate, changed-line coverage, quality, and docs. Preserve
+    the 16 HTTP dual-iterator failures for separately routed T3c. Roll back only
+    this T3b slice; do not raise the root dependency floor or deliver remotely.
   - [ ] T3c — Restore synchronous queryset execution under 3.3's dual-iterator
     list selection with a separate HTTP regression slice.
 - [ ] T4 — Raise the dependency floor to `graphql-core>=3.3.0,<3.4`, scope-update
@@ -136,9 +142,11 @@ integration branch after hosted checks. T2's exact child `fc1df815` merged as
 jobs plus Codecov green; its separate local-only recovery checkpoint is
 `278983b47fd6138c961bd8150881bfbb4cd50928`. The draft
 [tracker #212](https://github.com/eamigo86/django-graphex/pull/212) must not
-merge to main. T3a passed its local two-version and clean 3.2.13 gates,
-but T3b/T3c are pending, as are T4, its benchmark-profile choice, and the
-package release version. Published 3.1.1 main remains unchanged; no dependency
+merge to main. T3a passed local, independent, and hosted checks and merged
+into integration as `5cdd2b13`. T3b passed independent local verification but
+awaits remote delivery; T3c and T4 remain pending, as do the benchmark
+profile choice and package release version. Published 3.1.1 main remains
+unchanged; no dependency
 floor, lock, package metadata, benchmark result, or historical release note
 changed. Keep the Engram mirror pending until a
 registered session identity is available.
@@ -347,3 +355,61 @@ registered session identity is available.
   checks passed; five baseline docs anchor warnings remain. The parent
   independently spot-checked all 143 focused tests on 3.2.13. Proof:
   `/private/tmp/graphex-33-t3a-independent.3MRsAo/`.
+
+### T3a remote delivery (local-only recovery checkpoint)
+
+- Approved issue [#209](https://github.com/eamigo86/django-graphex/issues/209)
+  remains open. [Child PR #215](https://github.com/eamigo86/django-graphex/pull/215)
+  merged 372 authored changed lines, no exception, from head
+  `c05c362c74264412325dc5ec950a583e3081f132` into integration.
+- [Child CI](https://github.com/eamigo86/django-graphex/actions/runs/36920087103)
+  passed all 15 validation jobs and both Codecov checks; three publication
+  jobs skipped. Conventional merge `5cdd2b130af59ee65b35e71887625de3a615cf06`
+  has tree `39dcee3d367f770103742e2662cfd49dc3e345a9`, identical to the
+  reviewed child tree.
+- [Integration push CI](https://github.com/eamigo86/django-graphex/actions/runs/36920536950)
+  and [draft tracker CI](https://github.com/eamigo86/django-graphex/actions/runs/36920542837)
+  each passed all 15 validation jobs on exact merge `5cdd2b13`; both tracker
+  Codecov checks passed and three publication jobs skipped in each run.
+  [Tracker #212](https://github.com/eamigo86/django-graphex/pull/212) remains
+  draft, links T3a while reserving T3b/T3c/T4, and has not merged to main.
+  Main remains `bb415efc10e4a4b85079344b1c3c607de7a06daa`; tag v3.1.1
+  is unchanged. This checkpoint is local-only, not part of the green tracker
+  tree; its Engram mirror is still pending runtime identity.
+
+### T3b local verification
+
+- RED on official 3.3.0: a frozen `FieldNode(arguments=None)` raised
+  `TypeError` in cost estimation, while the historical NativeList test
+  expected a `GraphQLList(ErrorType)` constructor error that 3.3 no longer
+  raises. Four existing unpaginated-list cost tests share the same cause.
+- GREEN: absent arguments act as an empty sequence without mutating the AST.
+  The new regression checks `DEFAULT_PAGE_SIZE` fallback and node identity.
+  NativeList still retains the uncompiled `ErrorType`; the compiled-schema
+  test still checks the final `[ErrorType]` shape. Only the stale upstream
+  constructor assertion changed. All 41 focused tests passed under both
+  installed 3.2.13 and isolated official 3.3.0.
+- A clean real local clone imported candidate source and installed 3.2.13.
+  Its unchanged full runner passed 4,386 tests, 7 skips, 3 baseline warnings,
+  7 subtests, and 96.23% branch-enabled coverage against the unchanged
+  95.01% gate. Changed-line coverage was 100% (1/1). Ruff, mypy, both
+  docstring gates (strict TOTAL 0), docs, and diff checks passed; the five
+  established docs anchor warnings remain. Proof:
+  `/private/tmp/graphex-33-t3b.quJD66/`.
+- Full 3.3 diagnostic (no exclusions) reported 16 HTTP/field failures,
+  4,370 passes, 7 skips, and 67 warnings, mostly on the known pending
+  dual-iterator queryset path. These failures are not accepted final-state
+  skips; T3c owns the separate fix. Roll back only this T3b cost loop,
+  focused regression, stale fixture expectation, guide, and checkpoint.
+  Remote delivery remains pending; mirror pending.
+  Local work-unit commit: `8c9ab8fc2b156dbd6ad03e59b96ef9d142480764`.
+
+### T3b independent verification
+
+- Exact candidate `ef3c51263efc5fc90ae151d502a4770553819c8e` passed
+  41 focused tests under each core version. A clean 3.2.13 clone passed 4,386
+  tests, 7 skips, 3 baseline warnings, 7 subtests, 96.23% branch coverage,
+  and 100% changed-line coverage (1/1). Ruff, mypy, both docstring gates,
+  docs with five baseline anchor warnings, and diff checks passed. The parent
+  independently spot-checked all 41 root-focused tests. Proof:
+  `/private/tmp/graphex-33-t3b-independent.RWhjuV/`. T3c remains pending.
