@@ -35,13 +35,28 @@ import time
 from typing import Any, AsyncGenerator, AsyncIterator, Callable
 
 import pytest
-
-# REAL graphql-core delivery class — the one stock subscribe() returns and the
-# one our wrapper must NOT be. Re-exported at the top level as
-# graphql.MapAsyncIterator and defined at
-# graphql/execution/map_async_iterator.py.
-from graphql.execution.map_async_iterator import MapAsyncIterator
 from pytest_django.fixtures import DjangoAssertNumQueries
+
+
+def _stock_mapping(source: AsyncIterator[Any]) -> AsyncIterator[Any]:
+    """Construct the stock mapped delivery for the installed GraphQL-core.
+
+    Args:
+        source: Events to map with the stock GraphQL implementation.
+
+    Returns:
+        The version-native mapped async iterator.
+    """
+    from graphql import execution
+
+    mapper = getattr(execution, "map_async_iterable", None)
+    if mapper is not None:
+        return mapper(source, _identity)
+
+    from graphql.execution.map_async_iterator import MapAsyncIterator
+
+    return MapAsyncIterator(source, _identity)
+
 
 # ---------------------------------------------------------------------------
 # Helpers: in-memory async sources (no DB, no channels, no execute() variance)
@@ -334,20 +349,19 @@ async def test_close_event_handle_exposed() -> None:
 
 
 async def test_delivery_is_not_map_async_iterator() -> None:
-    """The delivery object must not be a graphql-core MapAsyncIterator.
+    """The delivery object must not use the stock mapped delivery type.
 
-    Contract: this is the structural guard from design paragraph 4 — the
-    COND-A win ships broken if a refactor accidentally routes delivery
-    through MapAsyncIterator, silently reintroducing the ~47 us/value cost.
+    Contract: the delivery path stays structurally distinct from the stock
+    mapper in both GraphQL-core generations; 3.2 uses MapAsyncIterator and
+    3.3 uses an async generator.
     """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
     delivery = make_delivery_iterator(_list_source([1, 2, 3]), _identity)
-    assert isinstance(delivery, MapAsyncIterator) is False
-
-    # And prove the guard discriminates: a real MapAsyncIterator IS one.
-    stock = MapAsyncIterator(_list_source([1, 2, 3]), lambda v: v)
-    assert isinstance(stock, MapAsyncIterator) is True
+    stock = _stock_mapping(_list_source([1, 2, 3]))
+    assert type(delivery) is not type(stock)
+    assert await stock.__anext__() == 1
+    await stock.aclose()
 
 
 def test_delivery_module_has_no_map_async_iterator_import() -> None:
@@ -530,20 +544,12 @@ def _median_per_value_us(
 
 
 def test_perf_lightweight_materially_below_stock() -> None:
-    """The lightweight per-value cost must stay materially below stock MapAsyncIterator.
+    """Keep delivery under its absolute latency ceiling on both core versions.
 
-    Contract: this test ships broken if the lightweight wrapper's median
-    per-value time exceeds either the absolute 25 us/value ceiling or one
-    tenth of stock MapAsyncIterator's per-value time.
-
-    Conservative, noise-robust bound: the lightweight wrapper's median per-value
-    time must be BOTH (a) below an absolute 25 us/value ceiling AND (b) below
-    one tenth of stock MapAsyncIterator's per-value time. The GO-gate spike
-    measured ~0.19 us (light) vs ~47 us (stock) — ~250x. The ratio bound is
-    the load-robust contract (both sides inflate together under CI load); the
-    absolute ceiling only guards against a pathological slowdown, and it is
-    calibrated from observed shared-runner load (5.16 us measured on a busy
-    3.13 CI box) with 5x margin, still ~130x above the true cost.
+    GraphQL-core 3.2's MapAsyncIterator also retains the historical tenfold
+    relative-speed guard. GraphQL-core 3.3 replaced that task-heavy iterator
+    with an async generator, so the old ratio no longer describes its stock
+    implementation. The 25 us/value ceiling remains on both versions.
     """
     from django_graphex.subscriptions.delivery import make_delivery_iterator
 
@@ -553,7 +559,7 @@ def test_perf_lightweight_materially_below_stock() -> None:
         return make_delivery_iterator(_list_source(list(range(n))), lambda v: v)
 
     def _make_stock() -> AsyncIterator[Any]:
-        return MapAsyncIterator(_list_source(list(range(n))), lambda v: v)
+        return _stock_mapping(_list_source(list(range(n))))
 
     light_us = _median_per_value_us(_make_light, n)
     stock_us = _median_per_value_us(_make_stock, n)
@@ -562,7 +568,12 @@ def test_perf_lightweight_materially_below_stock() -> None:
         f"lightweight per-value {light_us:.3f} us exceeds the 25 us ceiling "
         f"(COND-A budget)"
     )
-    assert light_us < stock_us / 10.0, (
-        f"lightweight ({light_us:.3f} us) is not materially below stock "
-        f"({stock_us:.3f} us): expected light < stock/10"
-    )
+    from graphql import execution
+
+    if not hasattr(execution, "map_async_iterable"):
+        # The historical 3.2 stock iterator pays task/wait overhead; the 3.3
+        # async generator removed that cost, so its old ratio is not portable.
+        assert light_us < stock_us / 10.0, (
+            f"lightweight ({light_us:.3f} us) is not materially below stock "
+            f"({stock_us:.3f} us): expected light < stock/10"
+        )
