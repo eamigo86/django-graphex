@@ -30,6 +30,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from django.core.cache import caches
+from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
 from django.http import HttpResponse, HttpResponseNotAllowed
 from django.http.response import HttpResponseBadRequest, HttpResponseForbidden
@@ -45,6 +46,7 @@ from graphql import (
     parse,
     validate_schema,
 )
+from graphql import execution as graphql_execution
 from graphql.execution.middleware import MiddlewareManager
 from graphql.validation import specified_rules, validate
 
@@ -56,6 +58,12 @@ from .security import format_graphql_error
 from .settings import graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule
+
+_EXECUTION_BACKEND_KEYWORD = (
+    "executor_class"
+    if hasattr(graphql_execution, "Executor")
+    else "execution_context_class"
+)
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -541,6 +549,7 @@ class BaseGraphQLView(View):
     schema = None
     subscription_path = None
     execution_context_class = None
+    executor_class = None
     validation_rules = None
 
     def __init__(
@@ -555,6 +564,7 @@ class BaseGraphQLView(View):
         subscription_path: str | None = None,
         execution_context_class: Any = None,
         validation_rules: Any = None,
+        executor_class: Any = None,
     ) -> None:
         """Configure the view, reading defaults from the "DJANGO_GRAPHEX" setting.
 
@@ -575,13 +585,16 @@ class BaseGraphQLView(View):
             batch: Whether to accept batched request lists.
             subscription_path: The advertised subscription endpoint path; falls
                 back to the "SUBSCRIPTION_PATH" setting.
-            execution_context_class: An optional custom execution context class.
+            execution_context_class: Compatibility alias for a custom execution
+                backend class.
             validation_rules: The validation-rules collection passed to
                 "validate".
+            executor_class: The preferred custom execution backend class.
 
         Raises:
             AssertionError: When the schema does not expose "graphql_schema", or
                 when both "graphiql" and "batch" are requested together.
+            ImproperlyConfigured: When both backend names select different classes.
         """
         if not schema:
             schema = graphql_api_settings.SCHEMA
@@ -600,9 +613,26 @@ class BaseGraphQLView(View):
         self.graphiql = graphiql or self.graphiql
         self.graphiql_template = graphiql_template or self.graphiql_template
         self.batch = batch or self.batch
-        self.execution_context_class = (
-            execution_context_class or self.execution_context_class
+        if executor_class is not None or execution_context_class is not None:
+            configured_executor = executor_class
+            configured_context = execution_context_class
+        else:
+            configured_executor = self.executor_class
+            configured_context = self.execution_context_class
+        if (
+            configured_executor is not None
+            and configured_context is not None
+            and configured_executor is not configured_context
+        ):
+            raise ImproperlyConfigured(
+                "executor_class and execution_context_class must reference the same class"
+            )
+        self.executor_class = (
+            configured_executor
+            if configured_executor is not None
+            else configured_context
         )
+        self.execution_context_class = self.executor_class
         if subscription_path is None:
             self.subscription_path = graphql_api_settings.SUBSCRIPTION_PATH
         else:
@@ -1261,10 +1291,8 @@ class BaseGraphQLView(View):
                 "operation_name": operation_name,
                 "middleware": self.get_middleware(request),
             }
-            if self.execution_context_class:
-                execute_options["execution_context_class"] = (
-                    self.execution_context_class
-                )
+            if self.executor_class is not None:
+                execute_options[_EXECUTION_BACKEND_KEYWORD] = self.executor_class
 
             is_mutation = (
                 operation_ast is not None
