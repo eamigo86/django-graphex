@@ -28,7 +28,10 @@ def _job(name: str) -> str:
 
 
 def test_security_patch_child_pr_runs_ci_without_widening_release_triggers() -> None:
-    """Run CI for the selected child base without changing release triggers."""
+    """Run CI for the selected child base without changing release triggers.
+
+    Only pull-request bases expand; push and publication restrictions remain.
+    """
     workflow = _workflow()
     triggers = workflow.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
     pull_request = triggers.split("  pull_request:\n", 1)[1].split(
