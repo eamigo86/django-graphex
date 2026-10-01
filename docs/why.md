@@ -68,6 +68,11 @@ Credibility is in the conditions, so let me state all of them up front.
   it is installed **editable from this repository**, not from PyPI. These
   artifacts measured django-graphex **3.1.0**, and record the exact source
   commit plus the SHA-256 of the shared dependency constraints.
+- **Historical version boundary.** These are 3.1.0 measurements, not 3.1.1
+  security-patch results. Their Django 6.0.6 and GraphQL-core 3.2.11 pins
+  remain frozen for provenance even though current library and Playground
+  dependencies use patched versions. A comparison for 3.1.1 would require new
+  measurements rather than relabeling these artifacts.
 - **Identical data.** The same Django models and the same seeded dataset for
   everyone: **2,000 authors, 20,000 posts, 100,000 comments, 60,000 tag
   relations**, generated from a deterministic seed. That is the `--authors 2000`

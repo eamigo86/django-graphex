@@ -16,6 +16,13 @@ count** per operation. It is deterministic and supports strict offline replay.
 
 ## What the published artifacts are
 
+These are **3.1.0 measurements**, not results for the 3.1.1 security patch.
+Their frozen environments use Django 6.0.6 and GraphQL-core 3.2.11 as recorded
+in `versions.env`, `constraints.txt`, and the eight tracked canonical JSON
+artifacts. The current library and Playground locks use patched versions, but
+changing historical pins or relabeling old timings would destroy provenance.
+New version claims require a new controlled measurement run and new artifacts.
+
 Every timing figure in the eight tracked canonical files under `results/` and on
 [Why django-graphex](https://eamigo86.github.io/django-graphex/why/) is the
 **median of three runs** per library per seed. Each file records that under an

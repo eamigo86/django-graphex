@@ -4,8 +4,11 @@
 
 Prepare a minimal security patch before the separately authorized future
 GraphQL-core 3.3 migration. The user approved local implementation on 2026-10-01.
-Local work-unit commits are authorized. Remote issues, pull requests, pushes,
-merges, release tags and publication require separate user authorization.
+Local work-unit commits are authorized. The user subsequently authorized GitHub
+issues and two chained pull requests toward 3.1.1 integration in
+eamigo86/django-graphex using the eamigo86 gh session. This task delegates all
+remote actions until after independent T3 verification. Merge, release tags and
+publication remain unauthorized; main stays unchanged.
 
 ## Problem and scope
 
@@ -34,9 +37,17 @@ merges, release tags and publication require separate user authorization.
 - Full runner: .venv/bin/python -m pytest; configured branch threshold: 95.01%.
 - RDD: off, observed via gentle-ai review mode status; deciding source: global.
   Use ordinary functional checks and independent verification, not native review.
-- Delivery strategy: ask-on-risk. Forecast: 150-300 authored changed lines;
-  generated lock changes excluded from this forecast but reported in total diff.
-  Existing PR policy remains applicable if delivery is subsequently authorized.
+- Delivery strategy: ask-on-risk, resolved to feature-branch-chain with two
+  authorized PR slices: T1 commit 0706264 first, T2 release-readiness work unit
+  second. T3 verification and the narrow chained-PR CI correction belong with
+  the second slice. The integration ref is v3.1.1; the first child head is
+  codex/v3.1.1-security at 0706264, and the existing codex/security-3.1.1 head
+  targets that first child. The user
+  approved a size exception solely for the 883-line generated Playground lock;
+  it does not waive review of authored code, tests or docs. Initial forecast was
+  150-300 authored changed lines; T1 and committed T2 total 505 authored lines
+  (189 + 316). The T2 commit has 320 total changed lines including four lock
+  metadata lines; the generated T1 Playground lock is reported separately.
 
 ## Tasks
 
@@ -45,8 +56,9 @@ merges, release tags and publication require separate user authorization.
   truncated-escape errors, HTTP error responses, and secure Playground lock.
   Acceptance: RED observed on 3.2.11; GREEN on 3.2.13; root/playground keep
   GraphQL-core below 3.3 and Django on the tested line.
-  Commit: pending (local work unit). Review tier/outcome: pending read-only
-  assessment; RDD disabled/unmanaged. RED: all six new cases failed on
+  Commit: 0706264 (local work unit). Review tier/outcome: high/unassessable
+  in read-only assessment due untracked .codegraph inventory;
+  RDD disabled/unmanaged. RED: all six new cases failed on
   GraphQL-core 3.2.11 for the intended parser, validator-budget and syntax
   causes. GREEN: six passed on 3.2.13; 85 related view/security tests passed.
   Root and Playground locks resolve 3.2.13; Playground resolves Django 6.0.8.
@@ -56,19 +68,32 @@ merges, release tags and publication require separate user authorization.
   benchmark module: 4,345 passed, 7 skipped, 96.21% branch coverage, exceeding
   the unchanged 95.01% threshold. Quality, docstrings and docs build passed;
   docs build emitted five existing broken-anchor warnings.
-- [ ] T2 — Prepare 3.1.1 metadata, release contracts and public patch notes.
+- [x] T2 — Prepare 3.1.1 metadata, release contracts and public patch notes.
   Route: delegated; retain historical 3.1.0 contracts and benchmark evidence.
   Acceptance: release/documentation RED observed, then GREEN; explain security
   hardening and benchmark provenance; no accidental migration scope.
-  Commit: pending. Review tier/outcome: pending; RDD disabled/unmanaged.
-- [ ] T3 — Verify the complete candidate and record release-readiness evidence.
+  Implementation and checks verified; the delivery-chain decision is resolved.
+  Commit: 1c76ea9 (local work unit; SHA entered in this post-commit evidence
+  update for T3 to include). Review tier/outcome: high/unassessable
+  in read-only assessment due untracked .codegraph inventory;
+  RDD disabled/unmanaged. RED: four new release/documentation contracts failed
+  on 3.1.0 metadata and missing patch notes/guidance; GREEN: 38 patch and
+  historical readiness tests passed, and 93 related release/docs/security
+  tests passed. Source version and installed distribution metadata are checked
+  separately because no local distribution build is authorized.
+- [x] T3 — Verify the local candidate and record release-readiness evidence.
   Route: delegated independent verification after writer checks.
-  Acceptance: full suite, branch coverage >95%, patch coverage >95%, quality,
+  Acceptance: full suite, branch-enabled total and applicable patch coverage
+  at least 95.01%, quality,
   frozen runtime audit, documentation, Playground and diff checks pass or any
   unavailable/failed checks are explicitly reported. No claim of hosted CI or
   publication without actually running them.
-  Commit: pending (verification evidence). Review tier/outcome: pending;
-  RDD disabled/unmanaged.
+  Clean tracked snapshot at b765246: all 4,371 tests passed, 7 skipped,
+  7 subtests passed; 96.21% branch-enabled total coverage exceeds 95.01%.
+  The final docstring-only correction at 63e527d passed independent checks.
+  Local checks passed; hosted matrix/artifact/PostgreSQL checks remain pending.
+  Commit: b765246 (verification and CI correction; SHA recorded in this
+  post-commit evidence update for final delivery). RDD disabled/unmanaged.
 
 ## Verification and rollback
 
@@ -88,5 +113,90 @@ document as coherent units. Preserve unrelated source and benchmark artifacts.
 T1 dependency hardening and bounded regressions are implemented. The local
 Playground lock was previously ignored by its own .gitignore; it is deliberately
 included in the T1 work unit so a fresh Playground resolves the tested patches.
-The pre-existing extra benchmark files remain untouched. Next: T2 patch metadata,
-release contracts and notes, then T3 independent release-readiness verification.
+The pre-existing extra benchmark files remain untouched. T2 prepared 3.1.1 as
+Unreleased while retaining the dated 3.1.0 history and benchmark freeze. The
+user resolved delivery to two feature-branch-chained PRs, with a size exception
+only for the generated Playground lock. The clean-snapshot local verification
+passed, including the corrected CI candidate. Next: parent-routed remote actions
+within the user's authorization; hosted checks remain pending.
+
+### T1 verification evidence
+
+- RED: `.venv/bin/python -m pytest tests/test_graphql_core_security_patch.py --no-cov -q`
+  on installed GraphQL-core 3.2.11: six failed for intended missing protections.
+- GREEN: the same command on 3.2.13: six passed. Related command with
+  `tests/test_view_base.py`, `tests/test_views_branches.py` and
+  `tests/test_views_security_hardening.py`: 85 passed.
+- Full `.venv/bin/python -m pytest -q`: 17 canonical-provenance failures,
+  4,349 passed and 7 skipped. Isolating that pre-existing benchmark module with
+  `--ignore=tests/benchmarks/test_canonical_provenance.py`: 4,345 passed,
+  7 skipped and 96.21% branch coverage against the unchanged 95.01% gate.
+- `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`,
+  `.venv/bin/mypy django_graphex`, the repository docstring checker,
+  `.venv/bin/zensical build --clean -f zensical.yml` and `git diff --check`
+  passed. The docs builder reported five unrelated existing anchor warnings.
+- Runtime harness: `test_truncated_escape_returns_json_http_400` confirmed
+  a JSON 400 syntax error rather than an internal error. Rollback boundary:
+  commit 0706264, covering the floor, both locks, regression tests and current
+  requirement docs without touching frozen benchmark files.
+
+### T2 verification evidence
+
+- RED: `.venv/bin/python -m pytest tests/test_release_readiness_311.py --no-cov -q`
+  failed four intended metadata, patch-note, security-guide and provenance
+  contracts before implementation. GREEN: four passed after implementation;
+  the paired 3.1.0 historical contract suite passed 34 tests.
+- Post-decision spot check: `.venv/bin/python -m pytest
+  tests/test_graphql_core_security_patch.py tests/test_release_readiness_311.py
+  --no-cov -q`: 10 passed. `git diff --cached --check` passed before commit.
+- Focused release/docs/security command over seven modules: 93 passed.
+  Version and packaging contracts after source/installed separation: 44 passed.
+- Full `.venv/bin/python -m pytest -q`: 4,353 passed, 7 skipped, 17 existing
+  canonical-provenance failures from extra ignored benchmark files. With only
+  that module excluded, 4,349 passed, 7 skipped and 96.21% branch coverage;
+  the configured 95.01% gate was unchanged. This is diagnostic, not a claim
+  that the full suite passed. T3 will run all tests in a clean tracked snapshot.
+- Ruff format/lint, mypy, docstring checker and Zensical build passed. Zensical
+  still reported five unrelated broken-anchor warnings. No local package build
+  or remote release action was run.
+- The newly tracked Playground lock makes `make install` reproduce the tested
+  local editable dependency closure: GraphQL-core 3.2.13 and Django 6.0.8.
+  Its prior ignore rule allowed a fresh clone to resolve later compatible
+  versions instead. It adds 883 generated lock lines, outside authored count.
+- Engram mirror pending: the host currently provides no authoritative
+  registered session identity, so no agent-attributed memory mutation is safe.
+
+### T3 local proof and delivery CI correction
+
+- Independent clean tracked snapshot at b765246: full suite 4,371 passed,
+  7 skipped, 7 subtests passed; 96.21% branch-enabled coverage with the unchanged
+  95.01% gate. No tests or benchmark modules were excluded. Evidence:
+  /private/tmp/graphex-311-verify.0MpK5X/correction-full-suite.log.
+  Skips: five PostgreSQL-only cases, optional multiselectfield and the retired
+  Graphene container; the three expected test warnings remain unchanged.
+- At 1c76ea9, runtime audit found no known vulnerabilities; Bandit, Ruff, mypy,
+  both docstring checks, docs build, root/Playground frozen locks and diff checks passed.
+  Playground: 59 tests passed. Docs retained the same five baseline anchor
+  warnings. The independent verifier also observed six vulnerable-version RED
+  cases and 27 patched-version GREEN cases.
+- Patch coverage is N/A because no covered runtime source lines changed;
+  the diff-cover threshold check passed. Wheel/sdist, external-wheel smoke,
+  six-version matrix and PostgreSQL checks require hosted CI; no local package
+  build, publication, tag, dispatch or merge was run.
+- Delivery blocker: PR #2 targets codex/v3.1.1-security, which the prior
+  pull-request branch filter did not admit. A narrow pull-request-only pattern
+  now covers codex/v3.1.1-* while push, dispatch and tag-only publication
+  remain unchanged. RED: the new workflow contract failed on the missing
+  pattern. GREEN: the workflow plus 3.1.1 contracts passed (14 tests), and
+  related historical-readiness contracts passed (48 total). Ruff format/lint
+  and diff check passed. Runtime harness: N/A, because this
+  change only selects the GitHub Actions PR event.
+- Rollback boundary: the pull-request branch pattern and its workflow contract;
+  neither runtime security fixes nor release publication gates depend on it.
+- Final 63e527d: `.venv/bin/python -m pytest tests/test_release_workflow.py
+  tests/test_release_readiness_311.py --no-cov -q` passed 14 tests; clean-clone
+  strict docstrings, Ruff format/lint and diff checks passed.
+  DOC002 was observed RED, then fixed by an atomic inline docstring-only edit;
+  no runtime or test logic changed after the full-suite proof. Parsed YAML
+  confirms both intended PR bases match, with every job, push and dispatch
+  unchanged.

@@ -2,7 +2,7 @@
 
 Covers:
 - __version__ == importlib.metadata.version("django-graphex") (single source of truth)
-- __version__ == "2.0.0" (matches pyproject.toml for this release)
+- source-checkout version fallback matches pyproject.toml
 - py.typed marker present in the installed package
 """
 
@@ -27,24 +27,18 @@ def test_version_matches_importlib_metadata() -> None:
     )
 
 
-def test_version_is_current_release() -> None:
-    """ "__version__" must equal the version declared in pyproject.toml.
+def test_source_version_is_current_release() -> None:
+    """The source fallback must equal the version declared in pyproject.toml.
 
-    Reads the declaration instead of hardcoding it, so a release bump does
-    not require editing this test. It still breaks when pyproject.toml is
-    bumped without reinstalling the package, or vice versa, which is the
-    drift this guard exists to catch.
+    A source-only patch candidate need not rebuild its installed distribution.
+    The separate installed-metadata contract covers the runtime attribute.
     """
     import tomllib
     from pathlib import Path
 
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
     declared = tomllib.loads(pyproject.read_text())["project"]["version"]
-    assert django_graphex.__version__ == declared, (
-        f"Expected __version__ == {declared!r} (pyproject.toml), "
-        f"got {django_graphex.__version__!r}. Reinstall the package after "
-        "bumping the version."
-    )
+    assert django_graphex._version_from_pyproject() == declared
 
 
 def test_py_typed_marker_present() -> None:

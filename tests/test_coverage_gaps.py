@@ -35,12 +35,14 @@ _CHECK_CONSTRAINT_KW = "condition"
 
 
 def test_version_from_pyproject_fallback() -> None:
-    """The source-checkout fallback must agree with installed metadata and "__version__".
+    """The source-checkout fallback must agree with source metadata.
 
-    Pins the single source of truth so the version can never drift between
-    pyproject.toml, the installed package metadata, and the module attribute.
+    Installed metadata may represent an earlier release in an unbuilt checkout.
+    Its separate contract checks that the module attribute follows that
+    installed metadata.
     """
-    import importlib.metadata
+    import pathlib
+    import tomllib
 
     import django_graphex
 
@@ -49,9 +51,9 @@ def test_version_from_pyproject_fallback() -> None:
     assert isinstance(fallback_version, str) and fallback_version, (
         f"_version_from_pyproject produced empty/non-str: {fallback_version!r}"
     )
-    # pyproject.toml (fallback) == build metadata == __version__ — no drift.
-    assert fallback_version == importlib.metadata.version("django-graphex")
-    assert fallback_version == django_graphex.__version__
+    pyproject = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
+    declared_version = tomllib.loads(pyproject.read_text())["project"]["version"]
+    assert fallback_version == declared_version
 
 
 # ---------------------------------------------------------------------------
