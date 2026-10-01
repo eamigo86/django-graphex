@@ -402,3 +402,4 @@ registered session identity is available.
   skips; T3c owns the separate fix. Roll back only this T3b cost loop,
   focused regression, stale fixture expectation, guide, and checkpoint.
   Remote delivery and independent verification remain pending; mirror pending.
+  Local work-unit commit: `8c9ab8fc2b156dbd6ad03e59b96ef9d142480764`.
