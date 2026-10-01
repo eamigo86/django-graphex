@@ -55,6 +55,11 @@ of scope.
   child passes its own checks. PRs require an approved linked issue and exactly
   one `type:*` label; issue creation and approval are explicitly authorized.
   No main merge, versioned release, tag, or publication follows automatically.
+- Approved issue map: [T0 #206](https://github.com/eamigo86/django-graphex/issues/206),
+  [T1 #207](https://github.com/eamigo86/django-graphex/issues/207),
+  [T2 #208](https://github.com/eamigo86/django-graphex/issues/208),
+  [T3 #209](https://github.com/eamigo86/django-graphex/issues/209), and
+  [T4 #210](https://github.com/eamigo86/django-graphex/issues/210).
 
 ## Tasks
 
@@ -94,7 +99,7 @@ T0 local implementation and independent verification are complete. The published
 3.1.1 main tree remains the immutable starting boundary; no migration runtime
 source, dependency, lock, package metadata, benchmark result, or historical
 release note changed. Next:
-create or reuse approved issues, deliver the T0 child PR to the integration
+deliver the T0 child PR to the integration
 branch, and leave an unmerged draft tracker to main. T1 is the next
 implementation task after that handoff. Keep the Engram mirror pending until a
 registered session identity is available.
