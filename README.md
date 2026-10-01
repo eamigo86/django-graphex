@@ -40,7 +40,7 @@ your Django models — no DRF, no graphene, no `django-filter`.
 
 - **Python:** 3.12+ (3.13, 3.14 supported)
 - **Django:** 5.2+ (5.2 LTS, 6.0 supported) — each Django version tested on the Python versions it officially supports
-- **graphql-core:** >=3.2.11,<3.3
+- **graphql-core:** >=3.2.13,<3.3
 - **pydantic:** >=2,<3
 
 ## Installation
