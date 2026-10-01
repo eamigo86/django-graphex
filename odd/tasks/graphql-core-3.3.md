@@ -105,8 +105,8 @@ of scope.
 
 T0 local implementation, independent verification, and integration are complete.
 The draft [tracker #212](https://github.com/eamigo86/django-graphex/pull/212)
-must not merge to main. T1's bounded correction is verified locally;
-independent reverification and remote child delivery remain pending. Published
+must not merge to main. T1's bounded correction passed independent
+reverification; remote child delivery remains pending. Published
 3.1.1 main remains unchanged; no dependency floor, lock, package metadata,
 benchmark result, or historical release note changed. T2 is the next source
 implementation task. Keep the Engram mirror pending until a registered session
@@ -225,3 +225,15 @@ identity is available.
   warnings remain. No test exclusion, coverage override, root dependency or
   lock change, local package build, remote delivery, or benchmark rewrite was
   used. Proof: `/private/tmp/graphex-33-t1-corrected.vWVmF7/`.
+
+### T1 independent reverification
+
+- Exact candidate `1086c012f97b5713ef04925b06be321786347c68` passed 90
+  focused real-HTTP/security tests under both GraphQL-core 3.2.13 and 3.3.0.
+  The clean-clone 3.2.13 suite passed 4,377 tests, 7 skipped, 7 subtests,
+  and 96.22% branch coverage against the unchanged 95.01% gate. Changed
+  runtime lines reached 100% diff coverage across 15 lines.
+- Ruff, mypy, both docstring gates (strict TOTAL 0), docs, and diff checks
+  passed; the five established docs anchor warnings remain. The parent
+  independently spot-checked the same 90 focused tests on 3.2.13. Proof:
+  `/private/tmp/graphex-33-t1-reverify.FP6LvF/`. Hosted checks remain pending.
