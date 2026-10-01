@@ -482,3 +482,4 @@ Engram mirror pending until a registered session identity is available.
 - The correction belongs to the same local T3c slice; T3b remote push remains
   blocked pending direct human authorization. Independent verification of this
   final candidate and T4 work remain pending. Engram mirror remains pending.
+  Correction commit: `d3d1125789e928528c4247ece4f13c0187fbee8f`.
