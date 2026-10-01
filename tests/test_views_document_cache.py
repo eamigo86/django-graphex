@@ -211,10 +211,16 @@ class TestValidationCacheSchemaIdentity(DocumentCacheTestBase):
 
 
 class TestValidationSuggestionVisibility(DocumentCacheTestBase):
-    """Keep public and hidden validation verdicts in separate cache entries."""
+    """Keep public and hidden validation verdicts in separate cache entries.
+
+    Exercise both the native capability and the transitional legacy backend.
+    """
 
     def test_visibility_modes_do_not_share_cached_error_objects(self) -> None:
-        """Native hidden validation must not reuse a public suggestion error."""
+        """Native hidden validation must not reuse a public suggestion error.
+
+        The same schema and query are validated in both visibility modes.
+        """
         schema = cache_test_schema.graphql_schema
         query = "{ hell }"
         document = views_module.cached_parse(query)
@@ -243,7 +249,10 @@ class TestValidationSuggestionVisibility(DocumentCacheTestBase):
 
     @override_settings(DJANGO_GRAPHEX={"DOCUMENT_CACHE_MAXSIZE": 0, "SCHEMA": None})
     def test_uncached_native_validation_hides_suggestions(self) -> None:
-        """The disabled-cache path must forward the native hiding option too."""
+        """The disabled-cache path must forward the native hiding option too.
+
+        Disabling memoization must not change validation visibility.
+        """
         schema = cache_test_schema.graphql_schema
         query = "{ hell }"
         document = views_module.cached_parse(query)
@@ -261,7 +270,10 @@ class TestValidationSuggestionVisibility(DocumentCacheTestBase):
             self.assertIn("Did you mean", errors[0].message)
 
     def test_capability_path_forwards_keyword_without_changing_default(self) -> None:
-        """A native-capable backend receives explicit visibility per call."""
+        """A native-capable backend receives explicit visibility per call.
+
+        A spy covers the native forwarding branch even under the legacy runtime.
+        """
         schema = cache_test_schema.graphql_schema
         query = "{ hell }"
         document = views_module.cached_parse(query)
