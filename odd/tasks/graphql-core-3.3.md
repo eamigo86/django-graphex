@@ -66,6 +66,7 @@ here. Issue-first permission must be resolved before remote delivery.
   harness: N/A, because this only selects hosted CI events. Rollback boundary:
   the new branch filters, their test contract, and this planning checkpoint.
   RED, GREEN, clean-clone full coverage and quality evidence are recorded below.
+  Work-unit commit: b8cf6d163a3b58f51487fa80f2d25fa3a66fa1d0.
 - [ ] T1 — Adapt HTTP views to Executor and renamed execution keyword handling.
   Keep the current 3.2.13 suite green while providing focused 3.3-API proof.
   Document that callers with old 3.2 custom ExecutionContext subclasses must
@@ -80,6 +81,10 @@ here. Issue-first permission must be resolved before remote delivery.
   without rewriting historical results. Resolve a package release version only
   after a separate product decision. Run independent clean-clone full/coverage,
   quality, docs, Playground, security, and hosted-release-readiness checks.
+  Benchmark profile decision remains pending: replay the historical four-way
+  results from a historical source ref/profile and run a separate current
+  diagnostic, or design a new comparison with per-library core versions. Do not
+  silently substitute peers or alter frozen historical artifacts.
 
 ## Progress and next step
 
@@ -109,3 +114,11 @@ mirror pending until a registered session identity is available.
 - Runtime harness: N/A, because this change only selects CI events. The
   rollback boundary is the three migration branch filters, their structural
   test, and this T0 planning checkpoint; publication guards are unchanged.
+- Read-only risk assessment returned high/unassessable because pre-existing
+  untracked .codegraph requires explicit inventory. RDD remains off; no native
+  review status, start or lifecycle was run. Independent verification is next.
+- T4 discovery: `benchmarks/setup_envs.sh` installs the current editable
+  GraphEx against frozen `graphql-core==3.2.11`, which will conflict with the
+  future 3.3 floor. [Graphene 3.4.3 metadata](https://pypi.org/pypi/graphene/3.4.3/json)
+  requires `graphql-core<3.3`; a shared 3.3 four-way profile is not viable with
+  that historical peer. This does not block the T0 CI-only change.
