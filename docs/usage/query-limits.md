@@ -136,6 +136,11 @@ DJANGO_GRAPHEX = {
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Last-resort multiplier when neither `MAX_PAGE_SIZE` nor `DEFAULT_PAGE_SIZE` is set; triggers a `RuntimeWarning`. |
 | `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a real list field's page size. |
 
+When a list field has no pagination argument, cost analysis uses
+`MAX_PAGE_SIZE`, then `DEFAULT_PAGE_SIZE`, then `DEFAULT_LIST_MULTIPLIER`.
+This applies even when the GraphQL parser represents an empty argument list as
+absent; the last fallback still emits its one-time unbounded-list warning.
+
 Declare per-type weights with `Meta.complexity`, so expensive types eat more of
 the budget:
 

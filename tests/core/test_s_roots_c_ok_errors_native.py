@@ -9,10 +9,10 @@ graphene and onto the native "field()" currency:
 
 "ErrorType" is a NATIVE plain "ObjectType" (S-ROOTS-b), so its compiled
 graphql-core type does not exist until "_compile_plain_object_type" runs. A
-graphql-core "GraphQLList(ErrorType)" CANNOT be built eagerly (graphql-core
-rejects a non-"GraphQLType" "of_type" at construction time), so the list is
-expressed via the native "NativeList" wrapper (descriptors.py) which the
-compiler resolves LAZILY through "_compile_wrapped_field_type".
+The plain "ErrorType" class is not a compiled "GraphQLType", regardless of
+whether a graphql-core version rejects or stores it at list construction.
+The native "NativeList" wrapper (descriptors.py) retains it for the compiler
+to resolve LAZILY through "_compile_wrapped_field_type".
 
 PARAMOUNT GUARD — the S6c silent-null mutation-payload regression class:
 the native container "__init__" (base.py) stashes payload kwargs whose key is
@@ -53,21 +53,17 @@ def test_native_list_exposes_of_type() -> None:
 def test_native_list_does_not_eagerly_build_graphql_list() -> None:
     """Assert that "NativeList(ErrorType)" must NOT eagerly construct a "GraphQLList".
 
-    graphql-core's "GraphQLList.__init__" raises "TypeError" for a
-    non-"GraphQLType" "of_type"; "ErrorType" is a Python class that compiles
-    later, so building the wrapper must be inert (lazy) — this is the whole reason
-    "NativeList" exists instead of "field(GraphQLList(ErrorType))".
+    The native wrapper must retain the Python class without constructing a
+    GraphQLList; the compiler later resolves it to a GraphQLObjectType.
+    GraphQL-core versions differ in whether GraphQLList validates eagerly.
     """
     from graphql import GraphQLList
 
     from django_graphex.core.descriptors import NativeList
     from django_graphex.errors import ErrorType
 
-    # Constructing the native wrapper is inert and never raises.
     wrapper = NativeList(ErrorType)
-    # graphql-core would have rejected the same eager construction.
-    with pytest.raises(TypeError):
-        GraphQLList(ErrorType)
+    assert not isinstance(wrapper, GraphQLList)
     assert wrapper.of_type is ErrorType
 
 

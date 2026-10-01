@@ -16,8 +16,9 @@ from graphql import (
     parse,
     validate,
 )
+from graphql.language import FieldNode, NameNode
 
-from django_graphex.cost import CostLimitValidationRule, analyze_cost
+from django_graphex.cost import CostLimitValidationRule, _CostAnalyzer, analyze_cost
 
 
 def _schema() -> GraphQLSchema:
@@ -141,6 +142,22 @@ def test_list_without_page_size_uses_default_page_size() -> None:
     doc = parse("{ items { child { x } } }")
     # own(items)=1 + DEFAULT_PAGE_SIZE(7) * own(child)=1 -> 1 + 7*1 = 8.
     assert analyze_cost(schema, doc).total == 8
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": None, "DEFAULT_PAGE_SIZE": 7})
+def test_missing_field_arguments_use_fallback_without_mutating_node() -> None:
+    """A frozen field with absent arguments uses the fallback page size.
+
+    The cost analyzer must not write a synthesized argument tuple onto the AST.
+    """
+    field = FieldNode(name=NameNode(value="items"), arguments=None)
+    schema = _schema()
+    assert schema.query_type is not None
+    analyzer = _CostAnalyzer(schema, lambda _name: None, {}, {})
+
+    assert analyzer._page_size_argument(field) is None
+    assert analyzer._list_multiplier(field, schema.query_type.fields["items"]) == 7
+    assert field.arguments is None
 
 
 # --------------------------------------------------------------------------- #
