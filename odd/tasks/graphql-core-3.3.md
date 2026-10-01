@@ -96,7 +96,7 @@ of scope.
   clean-clone coverage gate, changed-line coverage, quality, and docs before
   marking complete. Roll back only T2 transport integration, tests, and guide.
   Work-unit commit: a07fb18719c76e8b7e1524c8e8bce922061dea71.
-- [ ] T3 — Build immutable inline-fragment AST fixtures at construction time,
+- [x] T3 — Build immutable inline-fragment AST fixtures at construction time,
   replace test-only removed MapAsyncIterator imports without weakening the
   delivery guards, and verify coercion plus valid schema/query behavior under
   GraphQL-core 3.2.13 and isolated 3.3.0. Route: delegated direct; own focused
@@ -109,9 +109,9 @@ of scope.
   focused tests and unchanged full 3.2.13 clean-clone gate. A full 3.3
   diagnostic may identify later blockers but is not the T3 acceptance gate.
   Roll back only T3 AST/test compatibility, coercion adapter/regressions,
-  guidance, and tracking changes. Overall T3 remains pending until the
-  separate cost/list-fixture and HTTP dual-iterator slices resolve the 3.3
-  diagnostic failures; do not treat those failures as accepted skips.
+  guidance, and tracking changes. T3's local compatibility work is complete
+  after both full-suite gates; T3b/T3c remote delivery remains pending, so
+  this checkbox does not authorize the draft tracker or a dependency bump.
   - [x] T3a — AST, retired mapper test guards, and directive coercion adapter.
     Work-unit commit: 5063aa0d4617f798fccb74633b1c6418d8a29f9a.
   - [x] T3b — Resolve 3.3 cost/list-node compatibility and stale upstream
@@ -122,8 +122,20 @@ of scope.
     full 3.2.13 coverage gate, changed-line coverage, quality, and docs. Preserve
     the 16 HTTP dual-iterator failures for separately routed T3c. Roll back only
     this T3b slice; do not raise the root dependency floor or deliver remotely.
-  - [ ] T3c — Restore synchronous queryset execution under 3.3's dual-iterator
-    list selection with a separate HTTP regression slice.
+  - [x] T3c — Restore synchronous queryset execution under 3.3's dual-iterator
+    list selection with a separate HTTP regression slice. Route: delegated
+    direct on local child `codex/graphql-core-3.3-querysets` from T3b
+    `b8abfbf148d5a3d42f0eb6fb655f0d484b91f144`. Own HTTP view selection,
+    focused queryset/atomic/cache regressions, view guidance, and this document.
+    Strict TDD from current user AGENTS.md: RED on official 3.3.0 first,
+    then GREEN/REFACTOR with the `.venv/bin/python -m pytest <tests> --no-cov`
+    focal runner. Require complete clean-clone suites on both 3.2.13 and
+    3.3.0 with the unchanged 95.01% branch gate, plus changed-line coverage,
+    quality and docs. T3b remote push is blocked pending fresh specific human
+    authorization; do not retry it or perform any other remote operation here.
+    Rollback boundary is only T3c HTTP selection, tests, guidance, and tracking.
+    Local checks passed under both cores; independent and remote checks remain
+    pending.
 - [ ] T4 — Raise the dependency floor to `graphql-core>=3.3.0,<3.4`, scope-update
   root and Playground locks, examples, migration guidance, and benchmark harness
   without rewriting historical results. Resolve a package release version only
@@ -144,7 +156,9 @@ jobs plus Codecov green; its separate local-only recovery checkpoint is
 [tracker #212](https://github.com/eamigo86/django-graphex/pull/212) must not
 merge to main. T3a passed local, independent, and hosted checks and merged
 into integration as `5cdd2b13`. T3b passed independent local verification but
-awaits remote delivery; T3c and T4 remain pending, as do the benchmark
+its remote push was rejected by auto-review pending fresh specific human
+authorization. T3c passed local tests under both core versions and awaits
+independent verification; T4, the benchmark
 profile choice and package release version. Published 3.1.1 main remains
 unchanged; no dependency
 floor, lock, package metadata, benchmark result, or historical release note
@@ -413,3 +427,31 @@ registered session identity is available.
   docs with five baseline anchor warnings, and diff checks passed. The parent
   independently spot-checked all 41 root-focused tests. Proof:
   `/private/tmp/graphex-33-t3b-independent.RWhjuV/`. T3c remains pending.
+
+### T3c local verification
+
+- RED under official 3.3.0: two real HTTP queryset operations returned a
+  coroutine instead of a GraphQL result, and the predicate classified a
+  dual-protocol Django queryset as async. The diagnostic emitted unawaited
+  coroutine warnings. All three new regressions passed as 3.2.13 controls.
+- GREEN: only native 3.3 execution receives `is_async_iterable`. Its predicate
+  uses native async recognition but prefers synchronous completion for values
+  that are also native synchronous iterables. Real queryset HTTP reads and a
+  flagged atomic mutation evaluated on the request thread; the mutation's
+  row rolled back. Async-only values remain classified async. Existing custom
+  backend, cache-invalidation, HTTP security, and transport tests remained
+  green: 168 related tests passed under each core version.
+- Clean real clone candidate imports were verified for each core version.
+  Unchanged full runner passed 4,389 tests, 7 skips, 7 subtests, and 96.21%
+  branch-enabled coverage under both 3.2.13 and official 3.3.0, above the
+  unchanged 95.01% gate. Each had the same 3 established warnings and no
+  unawaited coroutine warning. Native 3.3 changed-line coverage passed at
+  100% (5/5). Root 3.2.13 diagnostic diff coverage is 60% because the 3.3-only
+  predicate branch cannot run there; it is not the applicable changed-line
+  gate. Ruff format/lint, mypy, both docstring gates (TOTAL 0), Zensical docs
+  with five baseline anchor warnings, and diff checks passed. Proof:
+  `/private/tmp/graphex-33-t3c.zDp9a3/`.
+- Rollback only the HTTP predicate, focused regressions, view guidance, and
+  this checkpoint. T3b remote push remains blocked by auto-review pending
+  direct human authorization. T3c is local-only; T4 floor/locks/version and
+  migration remote integration have not started. Engram mirror remains pending.

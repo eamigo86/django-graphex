@@ -48,6 +48,7 @@ from graphql import (
 )
 from graphql import execution as graphql_execution
 from graphql.execution.middleware import MiddlewareManager
+from graphql.pyutils import is_iterable
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
@@ -64,6 +65,19 @@ _EXECUTION_BACKEND_KEYWORD = (
     if hasattr(graphql_execution, "Executor")
     else "execution_context_class"
 )
+
+
+def _is_async_only_iterable(value: Any) -> bool:
+    """Keep dual-protocol Django querysets on the synchronous list path.
+
+    Args:
+        value: A resolver result considered for async list completion.
+
+    Returns:
+        Whether the result is async iterable without being sync iterable.
+    """
+    return hasattr(value, "__aiter__") and not is_iterable(value)
+
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -1293,6 +1307,8 @@ class BaseGraphQLView(View):
             }
             if self.executor_class is not None:
                 execute_options[_EXECUTION_BACKEND_KEYWORD] = self.executor_class
+            if _EXECUTION_BACKEND_KEYWORD == "executor_class":
+                execute_options["is_async_iterable"] = _is_async_only_iterable
 
             is_mutation = (
                 operation_ast is not None

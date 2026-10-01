@@ -41,6 +41,15 @@ need to be ported to the [3.3 Executor API](https://github.com/graphql-python/gr
 renaming the view keyword alone does not make them compatible. The runtime
 dependency floor remains on 3.2 until the rest of the 3.3 migration is verified.
 
+On GraphQL-core 3.3, the HTTP view supplies the executor's async-iterable
+predicate so a Django queryset, which implements both iterator protocols,
+continues through synchronous list completion. This keeps queryset evaluation
+inside the request's thread and any atomic mutation block. Results that are
+async iterable but not synchronously iterable retain GraphQL-core's async
+classification; this does not add general async-resolver support to the
+synchronous HTTP view. Custom executor classes must accept the native 3.3
+predicate argument when used with this view.
+
 ### Custom AST builders
 
 GraphQL-core 3.3 makes parsed AST nodes immutable and requires their fields at
