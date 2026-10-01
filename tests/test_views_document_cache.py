@@ -6,7 +6,8 @@ The cache lives in "django_graphex.views" and memoizes:
 * "parse(query) -> DocumentNode" in a global bounded LRU (AST is immutable), and
 * "validate(schema, document, rules, max_errors) -> tuple[errors]" in a
   per-schema bounded LRU keyed on the schema OBJECT (weakref) so a stale verdict
-  is never served across two different (permission-pruned) schemas.
+  is never served across two different (permission-pruned) schemas or suggestion
+  visibility modes.
 
 These tests spy on "graphql.parse" / "graphql.validation.validate" as seen
 by the view module to prove work is done exactly once on cache hits.
@@ -14,6 +15,7 @@ by the view module to prove work is done exactly once on cache hits.
 
 import json
 from typing import Any, Callable
+from unittest.mock import patch
 
 from django.http import HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
@@ -206,6 +208,90 @@ class TestValidationCacheSchemaIdentity(DocumentCacheTestBase):
         again_b = views_module.cached_validate(schema_b, "{ secret }", doc, None, None)
         self.assertEqual(again_a, ())
         self.assertTrue(again_b)
+
+
+class TestValidationSuggestionVisibility(DocumentCacheTestBase):
+    """Keep public and hidden validation verdicts in separate cache entries."""
+
+    def test_visibility_modes_do_not_share_cached_error_objects(self) -> None:
+        """Native hidden validation must not reuse a public suggestion error."""
+        schema = cache_test_schema.graphql_schema
+        query = "{ hell }"
+        document = views_module.cached_parse(query)
+        validate_spy = _CountingSpy(views_module.validate)
+
+        with patch.object(views_module, "validate", validate_spy):
+            public = views_module.cached_validate(schema, query, document, None, None)
+            hidden = views_module.cached_validate(
+                schema, query, document, None, None, hide_suggestions=True
+            )
+            again_public = views_module.cached_validate(
+                schema, query, document, None, None
+            )
+
+        self.assertIn("Did you mean", public[0].message)
+        self.assertEqual(validate_spy.calls, 2)
+        self.assertIs(again_public, public)
+        self.assertIsNot(hidden, public)
+        if (
+            "hide_suggestions"
+            in views_module.inspect.signature(views_module.validate).parameters
+        ):
+            self.assertNotIn("Did you mean", hidden[0].message)
+        else:
+            self.assertIn("Did you mean", hidden[0].message)
+
+    @override_settings(DJANGO_GRAPHEX={"DOCUMENT_CACHE_MAXSIZE": 0, "SCHEMA": None})
+    def test_uncached_native_validation_hides_suggestions(self) -> None:
+        """The disabled-cache path must forward the native hiding option too."""
+        schema = cache_test_schema.graphql_schema
+        query = "{ hell }"
+        document = views_module.cached_parse(query)
+
+        errors = views_module.cached_validate(
+            schema, query, document, None, None, hide_suggestions=True
+        )
+
+        if (
+            "hide_suggestions"
+            in views_module.inspect.signature(views_module.validate).parameters
+        ):
+            self.assertNotIn("Did you mean", errors[0].message)
+        else:
+            self.assertIn("Did you mean", errors[0].message)
+
+    def test_capability_path_forwards_keyword_without_changing_default(self) -> None:
+        """A native-capable backend receives explicit visibility per call."""
+        schema = cache_test_schema.graphql_schema
+        query = "{ hell }"
+        document = views_module.cached_parse(query)
+        forwarded: list[bool] = []
+
+        def validating_spy(*args: Any, **kwargs: Any) -> list[Any]:
+            """Record the native visibility argument without running validation.
+
+            Args:
+                args: Positional arguments passed to validation.
+                kwargs: Keyword arguments passed to validation.
+
+            Returns:
+                An empty validation result.
+            """
+            forwarded.append(kwargs["hide_suggestions"])
+            return []
+
+        with (
+            patch.object(
+                views_module, "_VALIDATE_SUPPORTS_HIDE_SUGGESTIONS", True, create=True
+            ),
+            patch.object(views_module, "validate", side_effect=validating_spy),
+        ):
+            views_module.cached_validate(schema, query, document, None, None)
+            views_module.cached_validate(
+                schema, query, document, None, None, hide_suggestions=True
+            )
+
+        self.assertEqual(forwarded, [False, True])
 
 
 class TestCacheDisabled(DocumentCacheTestBase):

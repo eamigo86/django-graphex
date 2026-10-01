@@ -66,6 +66,10 @@ _EXECUTION_BACKEND_KEYWORD = (
     else "execution_context_class"
 )
 
+_VALIDATE_SUPPORTS_HIDE_SUGGESTIONS = (
+    "hide_suggestions" in inspect.signature(validate).parameters
+)
+
 
 def _is_async_only_iterable(value: Any) -> bool:
     """Keep dual-protocol Django querysets on the synchronous list path.
@@ -338,7 +342,8 @@ _PARSE_CACHE: OrderedDict[str, Any] = OrderedDict()
 #: and the inner OrderedDicts).
 _VALIDATE_CACHE_LOCK = threading.Lock()
 
-#: schema OBJECT -> inner LRU keyed by (query, rules token, max_errors) ->
+#: schema OBJECT -> inner LRU keyed by query, rules, error cap, runtime limits,
+#: and suggestion visibility ->
 #: tuple[GraphQLError, ...]. WeakKeyDictionary so a GC'd schema drops its verdicts.
 _VALIDATE_CACHE: "weakref.WeakKeyDictionary[Any, OrderedDict[tuple, tuple]]" = (
     weakref.WeakKeyDictionary()
@@ -463,13 +468,15 @@ def cached_validate(
     document: Any,
     rules: Any,
     max_errors: Any,
+    hide_suggestions: bool = False,
 ) -> tuple:
     """Return the validation errors for the document against the schema, memoized.
 
     The verdict is keyed by the schema OBJECT (a per-schema sub-cache), the query
     string, a stable token of the rules, the max-errors cap, and the runtime
     depth/cost limits the bundled rules read dynamically (see
-    "_dynamic_limits_key") — every input that can change the verdict. An empty
+    "_dynamic_limits_key"), and suggestion visibility — every input that can
+    change the returned errors. An empty
     tuple means "valid". The SAME "GraphQLError" objects are reused across cache
     hits, so "error.formatted" serializes identically to a fresh run.
 
@@ -482,13 +489,23 @@ def cached_validate(
         document: The parsed "DocumentNode" to validate.
         rules: The validation-rules collection passed to "validate".
         max_errors: The "MAX_VALIDATION_ERRORS" cap passed to "validate".
+        hide_suggestions: Whether native validation should omit schema hints.
+            GraphQL-core 3.2 has no such native option and retains its existing
+            validation behavior during the migration.
 
     Returns:
         A tuple of "GraphQLError" (empty tuple when the document is valid).
     """
+    validation_options: dict[str, Any] = (
+        {"hide_suggestions": hide_suggestions}
+        if _VALIDATE_SUPPORTS_HIDE_SUGGESTIONS
+        else {}
+    )
     maxsize = _document_cache_maxsize()
     if maxsize <= 0:
-        return tuple(validate(schema, document, rules, max_errors))
+        return tuple(
+            validate(schema, document, rules, max_errors, **validation_options)
+        )
 
     # Rules identity: a CONTENT token (the dotted name of every rule, in order),
     # never id(rules). An address is only unique while the object is alive: a
@@ -504,7 +521,13 @@ def cached_validate(
     # limit would survive a limit tightening and silently bypass the guard until
     # eviction/restart. `_dynamic_limits_key` folds in every setting that can flip
     # a verdict (kept cheap: plain ints/None and a small tuple).
-    key = (query, _rules_key(rules), max_errors, _dynamic_limits_key())
+    key = (
+        query,
+        _rules_key(rules),
+        max_errors,
+        _dynamic_limits_key(),
+        hide_suggestions,
+    )
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)
@@ -515,7 +538,7 @@ def cached_validate(
                 return cached
 
     # Validate OUTSIDE the lock; store the result as a tuple.
-    errors = tuple(validate(schema, document, rules, max_errors))
+    errors = tuple(validate(schema, document, rules, max_errors, **validation_options))
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)
