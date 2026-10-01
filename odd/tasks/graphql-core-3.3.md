@@ -85,6 +85,7 @@ of scope.
   not override a subclass default stored under the other alias. Both cross-name
   real-HTTP regressions now pass after correcting explicit-over-default
   precedence; the bounded correction proof is recorded below.
+  Correction commit: 78f8040f72584d0a79b4f176db433aa117bd82d2.
 - [ ] T2 — Adapt SSE and WebSocket subscription sources to an Executor-built
   source. Cover both transport paths and sync/async error behavior with bounded
   regressions before changing the runtime floor.
