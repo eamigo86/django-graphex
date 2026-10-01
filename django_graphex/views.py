@@ -55,7 +55,7 @@ from . import settings as _settings
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
-from .security import format_graphql_error
+from .security import format_graphql_error, introspection_disabled
 from .settings import graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule
@@ -68,6 +68,9 @@ _EXECUTION_BACKEND_KEYWORD = (
 
 _VALIDATE_SUPPORTS_HIDE_SUGGESTIONS = (
     "hide_suggestions" in inspect.signature(validate).parameters
+)
+_EXECUTE_SUPPORTS_HIDE_SUGGESTIONS = (
+    "hide_suggestions" in inspect.signature(execute).parameters
 )
 
 
@@ -1310,12 +1313,15 @@ class BaseGraphQLView(View):
                 )
             )
 
+        middleware = self.get_middleware(request)
+        hide_suggestions = introspection_disabled(middleware)
         validation_errors = cached_validate(
             schema,
             query,
             document,
             self.validation_rules,
             graphql_api_settings.MAX_VALIDATION_ERRORS,
+            hide_suggestions=hide_suggestions,
         )
         if validation_errors:
             return ExecutionResult(data=None, errors=list(validation_errors))
@@ -1326,8 +1332,10 @@ class BaseGraphQLView(View):
                 "context_value": self.get_context(request),
                 "variable_values": variables,
                 "operation_name": operation_name,
-                "middleware": self.get_middleware(request),
+                "middleware": middleware,
             }
+            if _EXECUTE_SUPPORTS_HIDE_SUGGESTIONS:
+                execute_options["hide_suggestions"] = hide_suggestions
             if self.executor_class is not None:
                 execute_options[_EXECUTION_BACKEND_KEYWORD] = self.executor_class
             if _EXECUTION_BACKEND_KEYWORD == "executor_class":
