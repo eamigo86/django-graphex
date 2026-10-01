@@ -49,17 +49,19 @@ def test_patch_metadata_and_locks_are_consistent() -> None:
     assert _package(playground_lock, "django")["version"] == "6.0.8"
 
 
-def test_unreleased_patch_notes_preserve_310_history() -> None:
-    """Explain the patch without falsely describing it as published.
+def test_dated_patch_notes_preserve_310_history() -> None:
+    """Date the patch notes without falsely describing them as published.
 
     The historical 3.1.0 release heading and audit trail remain available.
     """
     root_notes = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     docs_notes = (ROOT / "docs/changelog.md").read_text(encoding="utf-8")
 
-    assert "## 3.1.1 — Unreleased" in root_notes
-    assert "## 3.1.1 — Unreleased" in docs_notes
-    assert "docs/changelog.md" in root_notes
+    for notes in (root_notes, docs_notes):
+        assert "## 3.1.1 — 2026-10-01" in notes
+        assert "## 3.1.1 — Unreleased" not in notes
+        assert "Publication remains pending." in notes
+    assert "docs/changelog.md#311--2026-10-01" in root_notes
     assert "## 3.1.0 — 2026-09-03" in docs_notes
     assert "### Audit traceability" in docs_notes
     for term in (

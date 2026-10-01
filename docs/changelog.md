@@ -12,9 +12,9 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
-## 3.1.1 — Unreleased
+## 3.1.1 — 2026-10-01
 
-**Security patch candidate; not yet published.** The supported runtime floor is
+**Security patch. Publication remains pending.** The supported runtime floor is
 now `graphql-core>=3.2.13,<3.3`, without moving to the separate 3.3 migration.
 The root and Playground locks resolve 3.2.13; the Playground also moves from
 Django 6.0.6 to 6.0.8 on the already-tested 6.0 line.
@@ -35,7 +35,7 @@ accounting fix is not itself an HTTP token cap. Configure request-size limits fo
 your deployment; see [runtime security guidance](usage/security.md#runtime-parser-and-validation-hardening).
 The canonical benchmark artifacts remain historical 3.1.0 measurements with
 their original Django 6.0.6 and GraphQL-core 3.2.11 freeze. They have not been
-rerun or relabeled for this candidate.
+rerun or relabeled for this patch.
 
 ## 3.1.0 — 2026-09-03
 
