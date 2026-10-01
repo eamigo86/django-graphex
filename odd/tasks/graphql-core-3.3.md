@@ -88,12 +88,13 @@ here. Issue-first permission must be resolved before remote delivery.
 
 ## Progress and next step
 
-T0 local implementation is verified. The published 3.1.1 main tree remains the
-immutable starting boundary; no migration runtime source, dependency, lock,
+T0 local implementation and independent verification are complete. The published
+3.1.1 main tree remains the immutable starting boundary; no migration runtime
+source, dependency, lock,
 package metadata, benchmark result or historical release note changed. Next:
-independently verify this T0 slice and resolve issue-first remote permission
-before any push or PR. T1 is the next implementation task. Keep the Engram
-mirror pending until a registered session identity is available.
+resolve issue-first remote permission before any push or PR. T1 is the next
+implementation task. Keep the Engram mirror pending until a registered session
+identity is available.
 
 ### T0 verification evidence
 
@@ -116,9 +117,21 @@ mirror pending until a registered session identity is available.
   test, and this T0 planning checkpoint; publication guards are unchanged.
 - Read-only risk assessment returned high/unassessable because pre-existing
   untracked .codegraph requires explicit inventory. RDD remains off; no native
-  review status, start or lifecycle was run. Independent verification is next.
+  review status, start or lifecycle was run. Independent verification passed.
 - T4 discovery: `benchmarks/setup_envs.sh` installs the current editable
   GraphEx against frozen `graphql-core==3.2.11`, which will conflict with the
   future 3.3 floor. [Graphene 3.4.3 metadata](https://pypi.org/pypi/graphene/3.4.3/json)
   requires `graphql-core<3.3`; a shared 3.3 four-way profile is not viable with
   that historical peer. This does not block the T0 CI-only change.
+
+### T0 independent verification
+
+- Candidate `cdfd2736522079a4f0d9d78e9634be8370df5b46` passed an independent
+  clean-clone check: 75 focused tests; 4,372 full-suite tests, 7 skipped,
+  7 subtests, and 96.21% branch-enabled coverage with the unchanged 95.01% gate.
+- Ruff, mypy, both docstring gates, docs build, and diff checks passed. The
+  five baseline documentation warnings remain. Diff coverage is N/A because
+  no covered runtime lines changed. No hosted checks or 3.3 runtime tests ran.
+- Parsed YAML and combined contract checks preserve publication guards,
+  permissions, the complete job graph, and the prior 3.1.1 branch coverage.
+  Evidence: `/private/tmp/graphex-33-t0-independent.CK7TLL/`.
