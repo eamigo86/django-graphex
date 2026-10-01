@@ -589,3 +589,25 @@ Engram mirror pending until a registered runtime identity is available.
   is `/private/tmp/graphex-33-t4a-red.log`; final focused and full-suite logs
   are `/private/tmp/graphex-33-t4a-focused-final.log` and
   `/private/tmp/graphex-33-t4a-proof.Co6BJ6/full-suite.log`.
+
+### T4a independent verification
+
+- Exact candidate `1729ece22b5b8978026e25a77bdb3a1fc447303b`, tree
+  `ed71ab15a2efabb64fc06f3ccbdf91ae8cc7e8f0`, passed independent clean-clone
+  checks: 51 focused tests and 4,392 full native-3.3 passes, 7 skips,
+  7 subtests, three established warnings, and 96.21% branch coverage against
+  the unchanged 95.01% gate. Diff-cover passed with no covered runtime lines
+  changed (N/A). The parent separately spot-checked both new contracts.
+- Ruff checked 461 files; mypy checked 79 source files while its verbose log
+  resolved GraphQL from the official 3.3 overlay. Standard and strict
+  docstring gates had TOTAL 0, and docs retained exactly five established
+  anchor warnings. Root and Playground offline/no-cache lock checks resolved
+  123 and 47 packages; seven in-memory negative controls rejected the old
+  floor, wrong core generations, and mismatched project versions. Proof:
+  `/private/tmp/graphex-33-t4a-independent.0r5pCl/`.
+- Source metadata is still 3.1.1; the reused root editable distribution
+  metadata reports 3.1.0. It is not an artifact-install or release-version
+  proof, and no root reinstall occurred. Hosted 3.3 matrix, PostgreSQL,
+  security, Playground, artifact, base-install, and Codecov checks remain
+  pending until an authorized child PR runs. T4b-T4d and package SemVer remain
+  pending; no main merge, tag, or publication is authorized.
