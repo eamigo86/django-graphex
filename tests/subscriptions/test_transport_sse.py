@@ -287,6 +287,35 @@ async def test_post_200_validation_error_is_in_stream_not_http_4xx(
     assert "event: complete\ndata: \n\n" in joined
 
 
+async def test_variable_coercion_error_is_framed_without_starting_sse_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Frame subscription variable errors without joining a broadcast group.
+
+    Args:
+        monkeypatch: Fixture used to install an isolated channel layer.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+    view = sse.subscription_sse_view(schema=build_native_schema())
+    request = _make_request(
+        "subscription Bad($action: PostSubscriptionAction!) "
+        "{ post(action: $action) { id } }",
+        variables={"action": "NOT_AN_ACTION"},
+    )
+
+    response = await view(request)
+    assert response.status_code == 200
+    assert sse.get_started_source(response) is None
+    frames = await _drain_frames(response, max_frames=3)
+    assert frames[-1] == "event: complete\ndata: \n\n"
+    error_frame = next(frame for frame in frames if frame.startswith("event: next"))
+    payload = json.loads(error_frame.split("data: ", 1)[1])
+    assert "NOT_AN_ACTION" in payload["errors"][0]["message"]
+
+
 # ---------------------------------------------------------------------------
 # 3) auth: an unauthenticated request to an auth-required subscription is rejected
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ implementation and the feature-branch-chain delivery strategy toward an
 integration branch in eamigo86/django-graphex using the authorized eamigo86
 session. The user subsequently authorized issue creation and approval for this
 migration, plus feature-branch-chain PR delivery toward the integration branch.
-T0 remote delivery may integrate only into that branch. Main merge, a release
+Child remote delivery may integrate only into that branch. Main merge, a release
 tag, publication, workflow dispatch, and unrelated remote changes remain out
 of scope.
 
@@ -86,9 +86,16 @@ of scope.
   real-HTTP regressions now pass after correcting explicit-over-default
   precedence; the bounded correction proof is recorded below.
   Correction commit: 78f8040f72584d0a79b4f176db433aa117bd82d2.
-- [ ] T2 — Adapt SSE and WebSocket subscription sources to an Executor-built
+- [x] T2 — Adapt SSE and WebSocket subscription sources to an Executor-built
   source. Cover both transport paths and sync/async error behavior with bounded
-  regressions before changing the runtime floor.
+  regressions before changing the runtime floor. Route: delegated direct; own
+  the SSE and WebSocket transports, focused transport regressions, subscription
+  guidance, and this document. First observe RED under the official 3.3.0
+  overlay for both transports, then GREEN/REFACTOR while preserving the root
+  3.2.13 suite. Verify both-version focused transports, unchanged full 3.2.13
+  clean-clone coverage gate, changed-line coverage, quality, and docs before
+  marking complete. Roll back only T2 transport integration, tests, and guide.
+  Work-unit commit: a07fb18719c76e8b7e1524c8e8bce922061dea71.
 - [ ] T3 — Replace mutable AST construction patterns and cover stricter value
   coercion, frozen node collections, and schema/query correctness regressions.
 - [ ] T4 — Raise the dependency floor to `graphql-core>=3.3.0,<3.4`, scope-update
@@ -105,12 +112,12 @@ of scope.
 
 T0 local implementation, independent verification, and integration are complete.
 The draft [tracker #212](https://github.com/eamigo86/django-graphex/pull/212)
-must not merge to main. T1's bounded correction passed independent
-reverification; remote child delivery remains pending. Published
+must not merge to main. T1 passed independent reverification and merged into
+the integration branch after hosted checks; T2 passed local checks and awaits
+independent verification and remote delivery. T3 is next. Published
 3.1.1 main remains unchanged; no dependency floor, lock, package metadata,
-benchmark result, or historical release note changed. T2 is the next source
-implementation task. Keep the Engram mirror pending until a registered session
-identity is available.
+benchmark result, or historical release note changed. Keep the Engram mirror
+pending until a registered session identity is available.
 
 ### T0 verification evidence
 
@@ -236,4 +243,38 @@ identity is available.
 - Ruff, mypy, both docstring gates (strict TOTAL 0), docs, and diff checks
   passed; the five established docs anchor warnings remain. The parent
   independently spot-checked the same 90 focused tests on 3.2.13. Proof:
-  `/private/tmp/graphex-33-t1-reverify.FP6LvF/`. Hosted checks remain pending.
+  `/private/tmp/graphex-33-t1-reverify.FP6LvF/`. Hosted checks are recorded below.
+
+### T1 remote delivery (checkpoint carried forward)
+
+- Approved issue #207's [child PR #213](https://github.com/eamigo86/django-graphex/pull/213)
+  merged 334 authored lines (no exception) into integration as
+  `849781c257f4b0a0ffed0711e5dbc74f4fd24115`, tree
+  `e476d12c4ebd044c2754cf34ba9f66bfc47ae13c`, identical to child
+  `ec2b42c7ac1da5f5fe4bc28ac435adb8d7d0108a`.
+- [Child](https://github.com/eamigo86/django-graphex/actions/runs/36911350914),
+  [integration](https://github.com/eamigo86/django-graphex/actions/runs/36911769469),
+  and [tracker](https://github.com/eamigo86/django-graphex/actions/runs/36911776002)
+  CI each passed 15 validation jobs, skipped three publication jobs, and the
+  child/tracker Codecov checks passed. Draft tracker #212 remains unmerged;
+  main `bb415efc` and tag v3.1.1 are unchanged. Full remote proof remains in
+  local-only checkpoint `eb538e609508960cf6b72b2dcc476fc4a453f0a7`.
+
+### T2 local verification
+
+- RED under official 3.3.0: SSE raised the old keyword TypeError; WS framed
+  that error instead of the expected variable error. Both 3.2.13 controls
+  passed. Expanded 3.3 testing also caught malformed WS variables reaching
+  the resolver; the adapter restores 3.2's early TypeError.
+- GREEN: 56 focused and 100 expanded transport tests passed under each of
+  3.2.13 and 3.3.0, including live delivery, sync/awaitable source results,
+  executor-build errors, authorization, and wire framing.
+- Clean real clone imported candidate source and root GraphQL-core 3.2.13:
+  full suite 4,382 passed, 7 skipped, 3 expected warnings, 7 subtests;
+  96.22% branch coverage exceeds the unchanged 95.01% gate. Diff coverage:
+  100% of 18 changed runtime lines. Ruff, mypy, both docstring gates (strict
+  TOTAL 0), docs, and diff checks passed; five baseline anchor warnings remain.
+- Exploratory full 3.3 subscriptions collection remains blocked by a retired
+  MapAsyncIterator test import; T4 owns full 3.3 migration validation. No
+  modules were excluded from the 3.2 full run. Proof:
+  `/private/tmp/graphex-33-t2-proof.iEKsNh/`.

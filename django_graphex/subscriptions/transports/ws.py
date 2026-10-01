@@ -83,7 +83,7 @@ from graphql.utilities import get_operation_ast
 from ...security import format_graphql_error
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
-from . import operation_selection_error
+from . import _start_source_event_stream, operation_selection_error
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable, Mapping
@@ -655,29 +655,19 @@ def subscription_ws_consumer(
             # source), returning the started ChannelLayerSource — or an
             # ExecutionResult when the subscribe resolver reported an error (deny).
             try:
-                source_or_result = await create_source_event_stream(
+                source_or_result = await _start_source_event_stream(
                     conn_schema,
                     document,
                     context_value=context,
                     variable_values=payload.get("variables"),
                     operation_name=payload.get("operationName"),
+                    source_factory=create_source_event_stream,
                 )
             except Exception as exc:
-                # NOT the authorize-deny path: graphql-core funnels everything
-                # the subscribe resolver RAISES into an ExecutionResult below
-                # (execute_subscription re-raises through located_error, which
-                # always yields a GraphQLError, and create_source_event_stream
-                # catches GraphQLError). Two things escape that funnel instead.
-                # The client-reachable one is assert_valid_execution_arguments,
-                # which runs before that try block — a client sending
-                # "variables" as an unparsed JSON string gets a plain TypeError
-                # (this is the branch the tests drive). The other is
-                # create_source_event_stream's own "Subscription field must
-                # return AsyncIterable" TypeError, raised INSIDE the try but not
-                # caught there: a subscribe entry that RETURNS the wrong kind of
-                # object lands here rather than in the ExecutionResult path.
-                # Frame both: an escaping exception kills the consumer task and
-                # every OTHER subscription multiplexed on this socket with it.
+                # Startup failures not represented as an ExecutionResult must
+                # still be framed for this operation. Otherwise an escaping
+                # exception could kill this task and strand other subscriptions
+                # multiplexed on the same socket.
                 await self._send_error(op_id, [format_graphql_error(exc)])
                 return
 
