@@ -143,8 +143,8 @@ jobs plus Codecov green; its separate local-only recovery checkpoint is
 `278983b47fd6138c961bd8150881bfbb4cd50928`. The draft
 [tracker #212](https://github.com/eamigo86/django-graphex/pull/212) must not
 merge to main. T3a passed local, independent, and hosted checks and merged
-into integration as `5cdd2b13`. T3b passed local gates but awaits independent
-verification and delivery; T3c and T4 remain pending, as do the benchmark
+into integration as `5cdd2b13`. T3b passed independent local verification but
+awaits remote delivery; T3c and T4 remain pending, as do the benchmark
 profile choice and package release version. Published 3.1.1 main remains
 unchanged; no dependency
 floor, lock, package metadata, benchmark result, or historical release note
@@ -401,5 +401,15 @@ registered session identity is available.
   dual-iterator queryset path. These failures are not accepted final-state
   skips; T3c owns the separate fix. Roll back only this T3b cost loop,
   focused regression, stale fixture expectation, guide, and checkpoint.
-  Remote delivery and independent verification remain pending; mirror pending.
+  Remote delivery remains pending; mirror pending.
   Local work-unit commit: `8c9ab8fc2b156dbd6ad03e59b96ef9d142480764`.
+
+### T3b independent verification
+
+- Exact candidate `ef3c51263efc5fc90ae151d502a4770553819c8e` passed
+  41 focused tests under each core version. A clean 3.2.13 clone passed 4,386
+  tests, 7 skips, 3 baseline warnings, 7 subtests, 96.23% branch coverage,
+  and 100% changed-line coverage (1/1). Ruff, mypy, both docstring gates,
+  docs with five baseline anchor warnings, and diff checks passed. The parent
+  independently spot-checked all 41 root-focused tests. Proof:
+  `/private/tmp/graphex-33-t3b-independent.RWhjuV/`. T3c remains pending.
