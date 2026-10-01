@@ -109,9 +109,9 @@ of scope.
   focused tests and unchanged full 3.2.13 clean-clone gate. A full 3.3
   diagnostic may identify later blockers but is not the T3 acceptance gate.
   Roll back only T3 AST/test compatibility, coercion adapter/regressions,
-  guidance, and tracking changes. T3's local compatibility work is complete
-  after both full-suite gates; T3b/T3c remote delivery remains pending, so
-  this checkbox does not authorize the draft tracker or a dependency bump.
+  guidance, and tracking changes. T3's local acceptance now includes both
+  root and 3.3 changed-line coverage gates. T3b/T3c remote delivery remains
+  pending; no checkbox authorizes the draft tracker or a dependency bump.
   - [x] T3a — AST, retired mapper test guards, and directive coercion adapter.
     Work-unit commit: 5063aa0d4617f798fccb74633b1c6418d8a29f9a.
   - [x] T3b — Resolve 3.3 cost/list-node compatibility and stale upstream
@@ -134,7 +134,9 @@ of scope.
     quality and docs. T3b remote push is blocked pending fresh specific human
     authorization; do not retry it or perform any other remote operation here.
     Rollback boundary is only T3c HTTP selection, tests, guidance, and tracking.
-    Local checks passed under both cores; independent and remote checks remain
+    Both full suites and changed-line gates now pass after a real
+    adapter-forwarding regression covers the native-3.3 capability path under
+    the root runner without exclusions. Independent and remote checks remain
     pending.
 - [ ] T4 — Raise the dependency floor to `graphql-core>=3.3.0,<3.4`, scope-update
   root and Playground locks, examples, migration guidance, and benchmark harness
@@ -157,13 +159,12 @@ jobs plus Codecov green; its separate local-only recovery checkpoint is
 merge to main. T3a passed local, independent, and hosted checks and merged
 into integration as `5cdd2b13`. T3b passed independent local verification but
 its remote push was rejected by auto-review pending fresh specific human
-authorization. T3c passed local tests under both core versions and awaits
-independent verification; T4, the benchmark
-profile choice and package release version. Published 3.1.1 main remains
-unchanged; no dependency
-floor, lock, package metadata, benchmark result, or historical release note
-changed. Keep the Engram mirror pending until a
-registered session identity is available.
+authorization. T3c passed both full suites and both changed-line gates after a
+bounded test-only correction; independent verification remains pending. T4,
+the benchmark profile choice, and package release version remain pending.
+Published 3.1.1 main remains unchanged; no dependency floor, lock, package
+metadata, benchmark result, or historical release note changed. Keep the
+Engram mirror pending until a registered session identity is available.
 
 ### T0 verification evidence
 
@@ -446,9 +447,9 @@ registered session identity is available.
   branch-enabled coverage under both 3.2.13 and official 3.3.0, above the
   unchanged 95.01% gate. Each had the same 3 established warnings and no
   unawaited coroutine warning. Native 3.3 changed-line coverage passed at
-  100% (5/5). Root 3.2.13 diagnostic diff coverage is 60% because the 3.3-only
-  predicate branch cannot run there; it is not the applicable changed-line
-  gate. Ruff format/lint, mypy, both docstring gates (TOTAL 0), Zensical docs
+  100% (5/5). Root 3.2.13 diff coverage was 60%, BELOW the required 95.01%
+  hosted patch gate; this is an acceptance gap, not an exception. Ruff
+  format/lint, mypy, both docstring gates (TOTAL 0), Zensical docs
   with five baseline anchor warnings, and diff checks passed. Proof:
   `/private/tmp/graphex-33-t3c.zDp9a3/`.
 - Rollback only the HTTP predicate, focused regressions, view guidance, and
@@ -456,3 +457,28 @@ registered session identity is available.
   direct human authorization. T3c is local-only; T4 floor/locks/version and
   migration remote integration have not started. Engram mirror remains pending.
   Local work-unit commit: `24e52238148514925d8cdac842331f87459f7e06`.
+
+### T3c root patch-gate correction
+
+- The first root 3.2.13 diff-cover run was 60%, below the required 95.01%,
+  because the native-3.3 forwarding branch had no root-runner regression.
+  This failure was not waived or hidden. A new test injects the stable
+  `executor_class` capability into the root runner, records a real view's
+  execute options, and checks the legacy backend alias plus sync-only,
+  dual-protocol, and async-only predicate decisions.
+- RED on a clean prebehavior clone at T3b `b8abfbf`: the new test failed with
+  missing `is_async_iterable` forwarding. GREEN on the T3c candidate: all
+  four focused queryset tests passed under each core version. No production
+  source change or dependency reinstall was needed for this correction.
+- Clean real candidate imports resolved to its source and core 3.2.13 or the
+  isolated official 3.3.0 overlay. The unchanged full runner passed 4,390
+  tests, 7 skips, 7 subtests under each core: 96.23% branch coverage on 3.2.13
+  and 96.21% on 3.3.0, both above 95.01%. Diff-cover now passes 100% (5/5)
+  independently under BOTH versions, with no exclusions or merged coverage.
+  Each run had only the 3 established warnings, no unawaited coroutine warning.
+  Ruff, mypy, both docstring gates (TOTAL 0), docs with five baseline anchor
+  warnings, and diff checks passed. Proof:
+  `/private/tmp/graphex-33-t3c-gate.SiiZ16/`.
+- The correction belongs to the same local T3c slice; T3b remote push remains
+  blocked pending direct human authorization. Independent verification of this
+  final candidate and T4 work remain pending. Engram mirror remains pending.

@@ -13,6 +13,7 @@ from django.contrib.auth.models import User
 from django.db import connection
 from django.test import RequestFactory, override_settings
 from graphql import (
+    ExecutionResult,
     GraphQLField,
     GraphQLID,
     GraphQLList,
@@ -168,6 +169,43 @@ class AsyncOnly:
             StopAsyncIteration: Always, as the stream is empty.
         """
         raise StopAsyncIteration
+
+
+@pytest.mark.django_db
+def test_capability_adapter_forwards_predicate_and_legacy_backend_alias() -> None:
+    """The native executor path forwards both the predicate and backend alias.
+
+    Forcing only the stable backend capability exercises this forwarding under
+    the installed 3.2 test runner without changing the installed dependency.
+    """
+
+    class Backend:
+        """A recording backend identity that the execution spy never invokes."""
+
+    query = GraphQLObjectType("Query", {"ping": GraphQLField(GraphQLString)})
+    schema = SimpleNamespace(graphql_schema=GraphQLSchema(query=query))
+    request = RequestFactory().post(
+        "/graphql/", json.dumps({"query": "{ ping }"}), content_type="application/json"
+    )
+    with (
+        patch("django_graphex.views._EXECUTION_BACKEND_KEYWORD", "executor_class"),
+        patch(
+            "django_graphex.views.execute",
+            return_value=ExecutionResult(data={"ping": None}),
+        ) as execute_spy,
+    ):
+        response = BaseGraphQLView.as_view(
+            schema=schema, execution_context_class=Backend
+        )(request)
+
+    assert response.status_code == 200
+    assert json.loads(response.content) == {"data": {"ping": None}}
+    options = execute_spy.call_args.kwargs
+    assert options["executor_class"] is Backend
+    predicate = options["is_async_iterable"]
+    assert not predicate(User.objects.all())
+    assert not predicate([1])
+    assert predicate(AsyncOnly())
 
 
 @pytest.mark.django_db
