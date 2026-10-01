@@ -6,9 +6,11 @@ Migrate django-graphex from GraphQL-core 3.2.13 to the stable 3.3 line while
 preserving the published 3.1.1 security release. The user approved local
 implementation and the feature-branch-chain delivery strategy toward an
 integration branch in eamigo86/django-graphex using the authorized eamigo86
-session. This T0 work unit remains local: no issue creation or approval change,
-push, PR, merge, release tag, publication, or workflow dispatch is authorized
-here. Issue-first permission must be resolved before remote delivery.
+session. The user subsequently authorized issue creation and approval for this
+migration, plus feature-branch-chain PR delivery toward the integration branch.
+T0 remote delivery may integrate only into that branch. Main merge, a release
+tag, publication, workflow dispatch, and unrelated remote changes remain out
+of scope.
 
 ## Problem and scope
 
@@ -51,7 +53,7 @@ here. Issue-first permission must be resolved before remote delivery.
   Keep each child PR at or below 400 authored changed lines, with no authored
   `size:exception` approved. The integration tracker remains draft until each
   child passes its own checks. PRs require an approved linked issue and exactly
-  one `type:*` label; issue-creation authority is unresolved in this T0 unit.
+  one `type:*` label; issue creation and approval are explicitly authorized.
   No main merge, versioned release, tag, or publication follows automatically.
 
 ## Tasks
@@ -90,11 +92,12 @@ here. Issue-first permission must be resolved before remote delivery.
 
 T0 local implementation and independent verification are complete. The published
 3.1.1 main tree remains the immutable starting boundary; no migration runtime
-source, dependency, lock,
-package metadata, benchmark result or historical release note changed. Next:
-resolve issue-first remote permission before any push or PR. T1 is the next
-implementation task. Keep the Engram mirror pending until a registered session
-identity is available.
+source, dependency, lock, package metadata, benchmark result, or historical
+release note changed. Next:
+create or reuse approved issues, deliver the T0 child PR to the integration
+branch, and leave an unmerged draft tracker to main. T1 is the next
+implementation task after that handoff. Keep the Engram mirror pending until a
+registered session identity is available.
 
 ### T0 verification evidence
 
