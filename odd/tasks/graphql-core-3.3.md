@@ -337,3 +337,13 @@ registered session identity is available.
   No dependency floor, lock, package metadata, benchmark artifact, or release
   note changed. Roll back only this T3 adapter, tests, view guidance, and
   recovery checkpoint; preserve integrated T0-T2.
+
+### T3a independent verification
+
+- Exact candidate `2a136cc84e3a3c23861e3808431cfa43aa791e0b` passed an
+  independent clean-clone check: 143 focused tests under each core version,
+  4,385 full 3.2.13 passes, 7 skips, and 96.23% branch coverage; changed-line
+  coverage was 100% (9/9). Ruff, mypy, both docstring gates, docs, and diff
+  checks passed; five baseline docs anchor warnings remain. The parent
+  independently spot-checked all 143 focused tests on 3.2.13. Proof:
+  `/private/tmp/graphex-33-t3a-independent.3MRsAo/`.
