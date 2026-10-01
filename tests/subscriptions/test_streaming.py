@@ -618,12 +618,12 @@ def test_drive_subscription_assert_num_queries_zero_per_event(
 
 
 async def test_delivery_path_is_not_map_async_iterator() -> None:
-    """drive_subscription must compose the WU2 DeliveryIterator, not MapAsyncIterator.
+    """Keep subscription delivery distinct from the stock mapped iterator.
 
-    Contract: the COND-A win ships broken if drive_subscription ever
-    returns a MapAsyncIterator instead of a DeliveryIterator.
+    Contract: drive_subscription returns DeliveryIterator instead of either
+    generation's stock mapped delivery type.
     """
-    from graphql.execution.map_async_iterator import MapAsyncIterator
+    from graphql import execution
 
     from django_graphex.subscriptions.delivery import DeliveryIterator
 
@@ -632,7 +632,18 @@ async def test_delivery_path_is_not_map_async_iterator() -> None:
     source = await _start_source(spec, layer)
     delivery = drive_subscription(source, spec)
     try:
-        assert isinstance(delivery, MapAsyncIterator) is False
+        mapper = getattr(execution, "map_async_iterable", None)
+        if mapper is None:
+            from graphql.execution.map_async_iterator import MapAsyncIterator
+
+            stock = MapAsyncIterator(source, lambda value: value)
+        else:
+
+            async def _identity(value: Any) -> Any:
+                return value
+
+            stock = mapper(source, _identity)
+        assert type(delivery) is not type(stock)
         assert isinstance(delivery, DeliveryIterator) is True
     finally:
         await delivery.aclose()

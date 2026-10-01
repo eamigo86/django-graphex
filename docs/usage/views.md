@@ -41,6 +41,19 @@ need to be ported to the [3.3 Executor API](https://github.com/graphql-python/gr
 renaming the view keyword alone does not make them compatible. The runtime
 dependency floor remains on 3.2 until the rest of the 3.3 migration is verified.
 
+### Custom AST builders
+
+GraphQL-core 3.3 makes parsed AST nodes immutable and requires their fields at
+construction. If an extension builds inline fragments for query analysis, pass
+`type_condition` and `selection_set` into `InlineFragmentNode(...)` rather
+than assigning them afterward. Use a tuple for `SelectionSetNode(selections=...)`;
+the built-in optimizer already reads both parsed and constructed fragments
+without mutating them. When evaluating directives directly against
+GraphQL-core 3.3, pass its native variable-values object rather than a plain
+dict. Test the resulting schema queries with valid variables, defaults, and
+invalid inputs when porting custom extensions. The published dependency floor
+remains on 3.2 until the full migration is verified.
+
 ### Cross-site POST protection
 
 `GraphQLView` and `AuthenticatedGraphQLView` are `csrf_exempt` (`BaseGraphQLView`

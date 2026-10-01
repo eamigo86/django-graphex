@@ -24,6 +24,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from django.db import models
 from django.test import TestCase, override_settings
 from graphql import (
@@ -1459,3 +1460,50 @@ class DeprecatedFieldIntrospectionTest(TestCase):
         )
         self.assertTrue(legacy["isDeprecated"])
         self.assertEqual(legacy["deprecationReason"], "use current")
+
+
+def test_native_variable_values_adapter_preserves_coerced_sources() -> None:
+    """Adapt legacy mappings without replacing native variable metadata.
+
+    GraphQL-core 3.3 stores both source and coerced values; 3.2 uses mappings.
+    """
+    from graphql.execution import values as graphql_values
+
+    from django_graphex._graphql_variables import native_variable_values
+
+    legacy = {"flag": True}
+    adapted = native_variable_values(legacy)
+    native_type = getattr(graphql_values, "VariableValues", None)
+    if native_type is None:
+        assert adapted is legacy
+    else:
+        assert isinstance(adapted, native_type)
+        assert adapted.coerced is legacy
+        assert adapted.sources == {}
+        source_marker = object()
+        native = native_type({"flag": source_marker}, {"flag": False})
+        assert native_variable_values(native) is native
+
+
+def test_native_variable_values_adapter_uses_exposed_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cover capability selection even when the installed core is 3.2.
+
+    Args:
+        monkeypatch: Pytest patcher for the optional upstream value class.
+    """
+    from collections import namedtuple
+
+    from django_graphex import _graphql_variables
+
+    native_type = namedtuple("NativeValues", "sources coerced")
+    monkeypatch.setattr(
+        _graphql_variables.graphql_values, "VariableValues", native_type, raising=False
+    )
+    legacy = {"flag": True}
+    adapted = _graphql_variables.native_variable_values(legacy)
+    assert adapted == native_type(sources={}, coerced=legacy)
+
+    original = native_type(sources={"flag": object()}, coerced={"flag": False})
+    assert _graphql_variables.native_variable_values(original) is original

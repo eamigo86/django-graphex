@@ -36,6 +36,8 @@ from graphql import GraphQLError
 from graphql.execution.values import get_directive_values
 from graphql.type.directives import GraphQLIncludeDirective, GraphQLSkipDirective
 
+from django_graphex._graphql_variables import native_variable_values
+
 if TYPE_CHECKING:  # pragma: no cover
     from graphql.language.ast import (
         FieldNode,
@@ -51,7 +53,7 @@ __all__ = ("is_selection_skipped",)
 def _safe_get_directive_values(
     directive_def: Any,
     node: Any,
-    variable_values: dict[str, Any],
+    variable_values: Any,
 ) -> dict[str, Any] | None:
     """Wrap "get_directive_values" with conservative error handling.
 
@@ -74,7 +76,7 @@ def _safe_get_directive_values(
         return get_directive_values(
             directive_def,
             node,
-            variable_values,  # type: ignore[arg-type]
+            native_variable_values(variable_values),
         )
     except GraphQLError:
         # Unresolvable variable reference → conservative: treat as absent.
@@ -83,7 +85,7 @@ def _safe_get_directive_values(
 
 def is_selection_skipped(
     node: _SelectionNode,
-    variable_values: dict[str, Any],
+    variable_values: Any,
 ) -> bool:
     """Return True when the selection should be excluded from processing.
 

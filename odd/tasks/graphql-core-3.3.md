@@ -96,8 +96,28 @@ of scope.
   clean-clone coverage gate, changed-line coverage, quality, and docs before
   marking complete. Roll back only T2 transport integration, tests, and guide.
   Work-unit commit: a07fb18719c76e8b7e1524c8e8bce922061dea71.
-- [ ] T3 — Replace mutable AST construction patterns and cover stricter value
-  coercion, frozen node collections, and schema/query correctness regressions.
+- [ ] T3 — Build immutable inline-fragment AST fixtures at construction time,
+  replace test-only removed MapAsyncIterator imports without weakening the
+  delivery guards, and verify coercion plus valid schema/query behavior under
+  GraphQL-core 3.2.13 and isolated 3.3.0. Route: delegated direct; own focused
+  optimizer, coverage, delivery, and streaming tests, concise migration
+  guidance, and this document. A real 3.3 Boolean-variable query exposed a
+  bounded directive-coercion incompatibility; the parent separately authorized
+  its T3 adapter in the shared directive/argument seams, preserving native
+  variable source metadata and conservative unbound behavior. Observe RED on
+  3.3 fixture/import/coercion behavior, then GREEN/REFACTOR; run both-version
+  focused tests and unchanged full 3.2.13 clean-clone gate. A full 3.3
+  diagnostic may identify later blockers but is not the T3 acceptance gate.
+  Roll back only T3 AST/test compatibility, coercion adapter/regressions,
+  guidance, and tracking changes. Overall T3 remains pending until the
+  separate cost/list-fixture and HTTP dual-iterator slices resolve the 3.3
+  diagnostic failures; do not treat those failures as accepted skips.
+  - [x] T3a — AST, retired mapper test guards, and directive coercion adapter.
+    Work-unit commit: 5063aa0d4617f798fccb74633b1c6418d8a29f9a.
+  - [ ] T3b — Resolve 3.3 cost/list-node compatibility and stale upstream
+    constructor expectation with separate tests and guidance.
+  - [ ] T3c — Restore synchronous queryset execution under 3.3's dual-iterator
+    list selection with a separate HTTP regression slice.
 - [ ] T4 — Raise the dependency floor to `graphql-core>=3.3.0,<3.4`, scope-update
   root and Playground locks, examples, migration guidance, and benchmark harness
   without rewriting historical results. Resolve a package release version only
@@ -110,14 +130,18 @@ of scope.
 
 ## Progress and next step
 
-T0 local implementation, independent verification, and integration are complete.
-The draft [tracker #212](https://github.com/eamigo86/django-graphex/pull/212)
-must not merge to main. T1 passed independent reverification and merged into
-the integration branch after hosted checks; T2 passed local checks and awaits
-independent verification and remote delivery. T3 is next. Published
-3.1.1 main remains unchanged; no dependency floor, lock, package metadata,
-benchmark result, or historical release note changed. Keep the Engram mirror
-pending until a registered session identity is available.
+T0, T1, and T2 passed independent verification and merged into the
+integration branch after hosted checks. T2's exact child `fc1df815` merged as
+`f079967e` with identical tree and all 15 child/integration/tracker validation
+jobs plus Codecov green; its separate local-only recovery checkpoint is
+`278983b47fd6138c961bd8150881bfbb4cd50928`. The draft
+[tracker #212](https://github.com/eamigo86/django-graphex/pull/212) must not
+merge to main. T3a passed its local two-version and clean 3.2.13 gates,
+but T3b/T3c are pending, as are T4, its benchmark-profile choice, and the
+package release version. Published 3.1.1 main remains unchanged; no dependency
+floor, lock, package metadata, benchmark result, or historical release note
+changed. Keep the Engram mirror pending until a
+registered session identity is available.
 
 ### T0 verification evidence
 
@@ -278,3 +302,48 @@ pending until a registered session identity is available.
   MapAsyncIterator test import; T4 owns full 3.3 migration validation. No
   modules were excluded from the 3.2 full run. Proof:
   `/private/tmp/graphex-33-t2-proof.iEKsNh/`.
+
+### T3a local verification and remaining migration blockers
+
+- RED under isolated official GraphQL-core 3.3.0: the old stock-mapper import
+  stopped collection, and 17 AST fixture tests failed because
+  `InlineFragmentNode` now requires its selection set at construction. A new
+  real union Boolean-variable query passed 3.2.13 but failed 3.3.0 with
+  `dict has no attribute coerced` from directive evaluation; its invalid
+  variable/default and valid-query assertions remain in the regression.
+- GREEN: 143 focused optimizer, directive, and delivery tests passed under
+  each of 3.2.13 and 3.3.0. AST fixtures use constructor-supplied immutable
+  fields and tuple selections. The structural delivery guard still rejects
+  each generation's stock mapping type. The 3.2 historical stock/optimized
+  speed ratio remains guarded; 3.3 retains the absolute latency ceiling.
+- The small capability adapter wraps only legacy dicts as native 3.3
+  `VariableValues(sources={}, coerced=values)` and preserves real native
+  objects, including default/source metadata. Core 3.2 mappings pass through.
+  Existing unbound skip/include cases remain conservative. No broad exception
+  handling or backend keyword changes were added.
+- A clean real candidate clone imported its source and the unchanged root
+  3.2.13 environment. Its full runner passed 4,385 tests, 7 skipped,
+  3 expected warnings, 7 subtests, and 96.23% branch coverage against the
+  unchanged 95.01% gate; changed runtime lines had 100% diff coverage (9/9).
+  Ruff format/lint, mypy, both docstring gates (strict TOTAL 0), docs, and
+  diff checks passed; five established docs anchor warnings remain. Proof:
+  `/private/tmp/graphex-33-t3-prelim.wjFbg6/`.
+- A diagnostic full 3.3.0 run collected all tests without the retired mapper
+  import, then reported 21 failures, 4,364 passes, and 7 skips. These later
+  migration blockers include four query-cost tests, one native-list constructor
+  expectation, and 16 HTTP/field tests affected by dual-iterator querysets;
+  they are not accepted skips and must be resolved
+  before T4 can claim a full 3.3 pass. No module was excluded or gate lowered.
+  No dependency floor, lock, package metadata, benchmark artifact, or release
+  note changed. Roll back only this T3 adapter, tests, view guidance, and
+  recovery checkpoint; preserve integrated T0-T2.
+
+### T3a independent verification
+
+- Exact candidate `2a136cc84e3a3c23861e3808431cfa43aa791e0b` passed an
+  independent clean-clone check: 143 focused tests under each core version,
+  4,385 full 3.2.13 passes, 7 skips, and 96.23% branch coverage; changed-line
+  coverage was 100% (9/9). Ruff, mypy, both docstring gates, docs, and diff
+  checks passed; five baseline docs anchor warnings remain. The parent
+  independently spot-checked all 143 focused tests on 3.2.13. Proof:
+  `/private/tmp/graphex-33-t3a-independent.3MRsAo/`.
