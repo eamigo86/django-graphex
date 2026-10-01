@@ -83,15 +83,17 @@ publication remain unauthorized; main stays unchanged.
   separately because no local distribution build is authorized.
 - [x] T3 — Verify the local candidate and record release-readiness evidence.
   Route: delegated independent verification after writer checks.
-  Acceptance: full suite, branch coverage >95%, patch coverage >95%, quality,
+  Acceptance: full suite, branch-enabled total and applicable patch coverage
+  at least 95.01%, quality,
   frozen runtime audit, documentation, Playground and diff checks pass or any
   unavailable/failed checks are explicitly reported. No claim of hosted CI or
   publication without actually running them.
-  Clean tracked snapshot at 1c76ea9: all 4,370 tests passed, 7 skipped,
-  7 subtests passed; 96.21% branch coverage exceeds 95.01%. Local quality,
-  security, docs, locks and Playground checks passed. CI on the corrected PR
-  candidate and hosted matrix/artifact/PostgreSQL checks remain pending.
-  Commit: pending (verification and CI correction evidence). RDD disabled/unmanaged.
+  Clean tracked snapshot at b765246: all 4,371 tests passed, 7 skipped,
+  7 subtests passed; 96.21% branch-enabled total coverage exceeds 95.01%.
+  The final docstring-only correction at 63e527d passed independent checks.
+  Local checks passed; hosted matrix/artifact/PostgreSQL checks remain pending.
+  Commit: b765246 (verification and CI correction; SHA recorded in this
+  post-commit evidence update for final delivery). RDD disabled/unmanaged.
 
 ## Verification and rollback
 
@@ -115,8 +117,8 @@ The pre-existing extra benchmark files remain untouched. T2 prepared 3.1.1 as
 Unreleased while retaining the dated 3.1.0 history and benchmark freeze. The
 user resolved delivery to two feature-branch-chained PRs, with a size exception
 only for the generated Playground lock. The clean-snapshot local verification
-passed. Next: independently verify the narrow CI correction, then parent-routed
-remote actions within the user's authorization; hosted checks remain pending.
+passed, including the corrected CI candidate. Next: parent-routed remote actions
+within the user's authorization; hosted checks remain pending.
 
 ### T1 verification evidence
 
@@ -166,12 +168,14 @@ remote actions within the user's authorization; hosted checks remain pending.
 
 ### T3 local proof and delivery CI correction
 
-- Independent clean tracked snapshot at 1c76ea9: full suite 4,370 passed,
-  7 skipped, 7 subtests passed; 96.21% branch coverage with the unchanged
+- Independent clean tracked snapshot at b765246: full suite 4,371 passed,
+  7 skipped, 7 subtests passed; 96.21% branch-enabled coverage with the unchanged
   95.01% gate. No tests or benchmark modules were excluded. Evidence:
-  /private/tmp/graphex-311-verify.0MpK5X/full-suite.log.
-- Runtime audit found zero vulnerabilities; Bandit, Ruff, mypy, both docstring
-  checks, docs build, root/Playground frozen locks and diff checks passed.
+  /private/tmp/graphex-311-verify.0MpK5X/correction-full-suite.log.
+  Skips: five PostgreSQL-only cases, optional multiselectfield and the retired
+  Graphene container; the three expected test warnings remain unchanged.
+- At 1c76ea9, runtime audit found no known vulnerabilities; Bandit, Ruff, mypy,
+  both docstring checks, docs build, root/Playground frozen locks and diff checks passed.
   Playground: 59 tests passed. Docs retained the same five baseline anchor
   warnings. The independent verifier also observed six vulnerable-version RED
   cases and 27 patched-version GREEN cases.
@@ -189,3 +193,10 @@ remote actions within the user's authorization; hosted checks remain pending.
   change only selects the GitHub Actions PR event.
 - Rollback boundary: the pull-request branch pattern and its workflow contract;
   neither runtime security fixes nor release publication gates depend on it.
+- Final 63e527d: `.venv/bin/python -m pytest tests/test_release_workflow.py
+  tests/test_release_readiness_311.py --no-cov -q` passed 14 tests; clean-clone
+  strict docstrings, Ruff format/lint and diff checks passed.
+  DOC002 was observed RED, then fixed by an atomic inline docstring-only edit;
+  no runtime or test logic changed after the full-suite proof. Parsed YAML
+  confirms both intended PR bases match, with every job, push and dispatch
+  unchanged.
