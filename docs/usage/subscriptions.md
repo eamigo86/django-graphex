@@ -472,6 +472,12 @@ trigger, Enter/Tab to accept).
     bypasses the block (`INTROSPECTION_ALLOW_SUPERUSER`), so the same page can
     behave differently for two logged-in users.
 
+When introspection is disabled, GraphQL-core 3.3 also omits schema-derived
+suggestions from SSE and WebSocket subscription startup errors. This applies
+to invalid documents and variables before a source joins any group; client
+values and error paths remain visible. Public mode retains native suggestions.
+The current 3.2 runtime retains its recognized legacy error-filtering behavior.
+
 The endpoints default to the page's own origin with the
 routes `/ws/graphql/` (WS), `/graphql/stream` (SSE) and `/graphql/` (HTTP);
 override them if yours differ:

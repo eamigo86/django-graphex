@@ -79,6 +79,7 @@ async def test_executor_build_forwards_inputs_or_returns_coercion_errors(
         monkeypatch: Fixture used to expose the new API on the 3.2 test runtime.
         with_errors: Whether construction returns variable-coercion errors.
     """
+    from django_graphex.subscriptions import transports
     from django_graphex.subscriptions.transports import graphql_execution
 
     schema: Any = object()
@@ -106,11 +107,14 @@ async def test_executor_build_forwards_inputs_or_returns_coercion_errors(
             """
             assert actual_schema is schema
             assert actual_document is document
-            assert kwargs == {
+            expected_options = {
                 "context_value": context,
                 "raw_variable_values": variables,
                 "operation_name": "Chosen",
             }
+            if transports._EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS:
+                expected_options["hide_suggestions"] = False
+            assert kwargs == expected_options
             return errors if with_errors else built
 
     async def events() -> AsyncIterator[str]:
@@ -150,3 +154,106 @@ async def test_executor_build_forwards_inputs_or_returns_coercion_errors(
         assert not isinstance(result, ExecutionResult)
         assert source_calls == [built]
         assert await anext(result.__aiter__()) == "ready"
+
+
+async def test_native_executor_builder_receives_private_suggestion_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forward private mode to native variable coercion before source startup.
+
+    Args:
+        monkeypatch: Fixture used to exercise the native capability on 3.2.
+    """
+    from django_graphex.subscriptions import transports
+
+    built = object()
+
+    class FakeExecutor:
+        """Record the options passed to the native executor constructor."""
+
+        @staticmethod
+        def build(_schema: Any, _document: Any, **kwargs: Any) -> Any:
+            """Check the private flag without changing executor behavior.
+
+            Args:
+                _schema: Schema supplied by the transport.
+                _document: Document supplied by the transport.
+                **kwargs: Request-scoped executor options.
+
+            Returns:
+                A marker for the built executor.
+            """
+            assert kwargs["hide_suggestions"] is True
+            return built
+
+    def source_factory(executor: Any) -> Any:
+        """Return the constructed executor as the source marker.
+
+        Args:
+            executor: Built executor passed to the source factory.
+
+        Returns:
+            The same marker for assertion.
+        """
+        return executor
+
+    monkeypatch.setattr(
+        transports.graphql_execution, "Executor", FakeExecutor, raising=False
+    )
+    monkeypatch.setattr(
+        transports, "_EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS", True, raising=False
+    )
+    result = await _start_source_event_stream(
+        object(),
+        object(),
+        context_value=None,
+        variable_values=None,
+        operation_name=None,
+        source_factory=source_factory,
+        hide_suggestions=True,
+    )
+    assert result is built
+
+
+def test_native_document_validation_receives_private_suggestion_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forward private mode to native document validation when supported.
+
+    Args:
+        monkeypatch: Fixture used to expose the native capability on 3.2.
+    """
+    from django_graphex.subscriptions import transports
+
+    schema = object()
+    document = object()
+    rules = object()
+
+    def fake_validate(
+        actual_schema: Any, actual_document: Any, *args: Any, **kwargs: Any
+    ) -> list[Any]:
+        """Assert the native validation options.
+
+        Args:
+            actual_schema: Schema supplied by the transport.
+            actual_document: Document supplied by the transport.
+            *args: Validation rules supplied by the transport.
+            **kwargs: Native validation options.
+
+        Returns:
+            An empty error collection.
+        """
+        assert actual_schema is schema
+        assert actual_document is document
+        assert args == (rules,)
+        assert kwargs == {"max_errors": 12, "hide_suggestions": True}
+        return []
+
+    monkeypatch.setattr(
+        transports, "_VALIDATE_SUPPORTS_HIDE_SUGGESTIONS", True, raising=False
+    )
+    monkeypatch.setattr(transports, "validate", fake_validate, raising=False)
+    result = transports._validate_subscription_document(
+        schema, document, rules, max_errors=12, hide_suggestions=True
+    )
+    assert result == []

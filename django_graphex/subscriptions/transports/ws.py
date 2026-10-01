@@ -76,14 +76,17 @@ from graphql import (
     OperationType,
     create_source_event_stream,
     parse,
-    validate,
 )
 from graphql.utilities import get_operation_ast
 
-from ...security import format_graphql_error
+from ...security import format_graphql_error, introspection_disabled
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
-from . import _start_source_event_stream, operation_selection_error
+from . import (
+    _start_source_event_stream,
+    _validate_subscription_document,
+    operation_selection_error,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable, Mapping
@@ -638,11 +641,13 @@ def subscription_ws_consumer(
             # at a settings module.
             from ...views import DEFAULT_VALIDATION_RULES
 
-            validation_errors = validate(
+            hide_suggestions = introspection_disabled(None)
+            validation_errors = _validate_subscription_document(
                 conn_schema,
                 document,
                 DEFAULT_VALIDATION_RULES,
                 max_errors=graphql_api_settings.MAX_VALIDATION_ERRORS,
+                hide_suggestions=hide_suggestions,
             )
             if validation_errors:
                 await self._send_error(
@@ -662,6 +667,7 @@ def subscription_ws_consumer(
                     variable_values=payload.get("variables"),
                     operation_name=payload.get("operationName"),
                     source_factory=create_source_event_stream,
+                    hide_suggestions=hide_suggestions,
                 )
             except Exception as exc:
                 # Startup failures not represented as an ExecutionResult must

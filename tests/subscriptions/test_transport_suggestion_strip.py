@@ -29,9 +29,15 @@ pytest.importorskip("channels")
 
 from graphql import (  # noqa: E402
     ExecutionResult,
+    GraphQLArgument,
     GraphQLBoolean,
+    GraphQLEnumType,
+    GraphQLEnumValue,
     GraphQLError,
     GraphQLField,
+    GraphQLInputField,
+    GraphQLInputObjectType,
+    GraphQLList,
     GraphQLObjectType,
     GraphQLSchema,
     GraphQLString,
@@ -68,6 +74,23 @@ def _schema() -> GraphQLSchema:
             single "id" field for a misspelling to suggest.
     """
     tick = GraphQLObjectType("Tick", {"id": GraphQLField(GraphQLString)})
+    role = GraphQLEnumType(
+        "Role",
+        {"ADMIN": GraphQLEnumValue("admin"), "READER": GraphQLEnumValue("reader")},
+    )
+    child = GraphQLInputObjectType(
+        "ChildInput",
+        {"email": GraphQLInputField(GraphQLString), "role": GraphQLInputField(role)},
+    )
+    filter_input = GraphQLInputObjectType(
+        "FilterInput",
+        {
+            "email": GraphQLInputField(GraphQLString),
+            "role": GraphQLInputField(role),
+            "child": GraphQLInputField(child),
+            "items": GraphQLInputField(GraphQLList(child)),
+        },
+    )
 
     async def subscribe(root: Any, info: Any) -> Any:
         raise GraphQLError(_LEAKY_MESSAGE)
@@ -75,7 +98,14 @@ def _schema() -> GraphQLSchema:
     return GraphQLSchema(
         query=GraphQLObjectType("Query", {"ok": GraphQLField(GraphQLBoolean)}),
         subscription=GraphQLObjectType(
-            "Subscription", {"onTick": GraphQLField(tick, subscribe=subscribe)}
+            "Subscription",
+            {
+                "onTick": GraphQLField(
+                    tick,
+                    args={"filter": GraphQLArgument(filter_input)},
+                    subscribe=subscribe,
+                )
+            },
         ),
     )
 
@@ -92,11 +122,12 @@ class _User:
 # ---------------------------------------------------------------------------
 
 
-async def _sse_body(query: str) -> str:
+async def _sse_body(query: str, variables: dict[str, Any] | None = None) -> str:
     """Run the SSE view for a document and return its concatenated frames.
 
     Args:
         query: The GraphQL subscription document to post.
+        variables: Optional variables for the selected operation.
 
     Returns:
         body: The decoded text of every frame up to (and including) "complete".
@@ -107,7 +138,7 @@ async def _sse_body(query: str) -> str:
 
     request = RequestFactory().post(
         "/subscriptions/sse",
-        data=json.dumps({"query": query}),
+        data=json.dumps({"query": query, "variables": variables}),
         content_type="application/json",
     )
     request.user = _User()
@@ -196,18 +227,162 @@ def _consumer() -> Any:
     return consumer
 
 
-async def _ws_frames(query: str) -> str:
+async def _ws_frames(query: str, variables: dict[str, Any] | None = None) -> str:
     """Run one WS subscribe operation and return its frames as JSON text.
 
     Args:
         query: The GraphQL subscription document to subscribe with.
+        variables: Optional variables for the selected operation.
 
     Returns:
         frames: The JSON dump of every frame the consumer sent.
     """
     consumer = _consumer()
-    await consumer._run_operation("op1", {"query": query})
+    await consumer._run_operation("op1", {"query": query, "variables": variables})
     return json.dumps(consumer._sent)
+
+
+async def _transport_output(
+    transport: str, query: str, variables: dict[str, Any] | None = None
+) -> str:
+    """Collect one subscription startup response from either transport.
+
+    Args:
+        transport: The transport under test, either SSE or WebSocket.
+        query: Subscription document to execute.
+        variables: Optional variables supplied with the document.
+
+    Returns:
+        The transport's response text, including framed errors.
+    """
+    if transport == "sse":
+        return await _sse_body(query, variables)
+    return await _ws_frames(query, variables)
+
+
+@pytest.mark.parametrize("transport", ["sse", "ws"])
+@pytest.mark.parametrize(
+    ("query", "variables"),
+    [
+        (
+            'subscription { onTick(filter: { emial: "x" }) { id } }',
+            None,
+        ),
+        (
+            "subscription { onTick(filter: { role: ADMNI }) { id } }",
+            None,
+        ),
+        (
+            "subscription { onTick { idd } }",
+            None,
+        ),
+        (
+            "subscription($filter: FilterInput) { onTick(filter: $filter) { id } }",
+            {"filter": {"child": {"emial": "x"}}},
+        ),
+        (
+            "subscription($filter: FilterInput) { onTick(filter: $filter) { id } }",
+            {"filter": {"items": [{"emial": "x"}]}},
+        ),
+        (
+            "subscription($filter: FilterInput) { onTick(filter: $filter) { id } }",
+            {"filter": {"role": "ADMNI"}},
+        ),
+        (
+            "subscription($filter: FilterInput) { onTick(filter: $filter) { id } }",
+            {"filter": {"child": {"role": "ADMNI"}}},
+        ),
+    ],
+)
+@override_settings(DJANGO_GRAPHEX=_INTROSPECTION_OFF)
+async def test_native_subscription_startup_hides_schema_suggestions(
+    transport: str, query: str, variables: dict[str, Any] | None
+) -> None:
+    """Private transport startup must not reveal suggested schema members.
+
+    Args:
+        transport: The transport under test.
+        query: Invalid document supplied by the client.
+        variables: Optional invalid variables for the document.
+    """
+    from inspect import signature
+
+    from graphql import validate
+
+    output = await _transport_output(transport, query, variables)
+    assert "error" in output
+    if "hide_suggestions" in signature(validate).parameters:
+        assert "Did you mean" not in output
+
+
+@pytest.mark.parametrize("transport", ["sse", "ws"])
+@override_settings(DJANGO_GRAPHEX=_INTROSPECTION_OFF)
+async def test_native_subscription_variables_preserve_client_found_text(
+    transport: str,
+) -> None:
+    """Do not parse or erase client text that resembles a suggestion.
+
+    Args:
+        transport: The transport under test.
+    """
+    from inspect import signature
+
+    from graphql import validate
+
+    query = "subscription($filter: FilterInput) { onTick(filter: $filter) { id } }"
+    variables = {
+        "filter": {
+            "emial": "sentinel'. Did you mean 'client'? Found: retained",
+        }
+    }
+    output = await _transport_output(transport, query, variables)
+    assert "retained" in output
+    if "hide_suggestions" in signature(validate).parameters:
+        assert "Did you mean 'email'" not in output
+
+
+@pytest.mark.parametrize("transport", ["sse", "ws"])
+@pytest.mark.parametrize(
+    "key", ["emial'. Did you mean 'client'? Found:", 'emial"quoted', "emial\\path"]
+)
+@override_settings(DJANGO_GRAPHEX=_INTROSPECTION_OFF)
+async def test_native_subscription_preserves_quoted_client_keys(
+    transport: str, key: str
+) -> None:
+    """Keep delimiter-bearing client keys without leaking a schema suggestion.
+
+    Args:
+        transport: The transport under test.
+        key: Client-supplied unknown input field name.
+    """
+    from inspect import signature
+
+    from graphql import validate
+
+    query = "subscription($filter: FilterInput) { onTick(filter: $filter) { id } }"
+    output = await _transport_output(transport, query, {"filter": {key: "retained"}})
+    assert "retained" in output
+    if "client" in key:
+        assert "Did you mean 'client'" in output
+    if "hide_suggestions" in signature(validate).parameters:
+        assert "Did you mean 'email'" not in output
+
+
+@pytest.mark.parametrize("transport", ["sse", "ws"])
+@override_settings(DJANGO_GRAPHEX=_INTROSPECTION_ON)
+async def test_native_subscription_public_mode_retains_schema_suggestions(
+    transport: str,
+) -> None:
+    """Public transport errors keep the GraphQL-native hint.
+
+    Args:
+        transport: The transport under test.
+    """
+    query = "subscription($filter: FilterInput) { onTick(filter: $filter) { id } }"
+    output = await _transport_output(
+        transport, query, {"filter": {"child": {"emial": "x"}}}
+    )
+    assert "Did you mean 'email'" in output
 
 
 @override_settings(DJANGO_GRAPHEX=_INTROSPECTION_OFF)
