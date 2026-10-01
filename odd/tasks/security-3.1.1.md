@@ -39,11 +39,15 @@ publication remain unauthorized; main stays unchanged.
   Use ordinary functional checks and independent verification, not native review.
 - Delivery strategy: ask-on-risk, resolved to feature-branch-chain with two
   authorized PR slices: T1 commit 0706264 first, T2 release-readiness work unit
-  second. T3 verification evidence belongs with the second slice. The user
+  second. T3 verification and the narrow chained-PR CI correction belong with
+  the second slice. The integration ref is v3.1.1; the first child head is
+  codex/v3.1.1-security at 0706264, and the existing codex/security-3.1.1 head
+  targets that first child. The user
   approved a size exception solely for the 883-line generated Playground lock;
   it does not waive review of authored code, tests or docs. Initial forecast was
-  150-300 authored changed lines; actual T1 and T2 authored changes total 483
-  (189 + 294), with generated lock content reported separately.
+  150-300 authored changed lines; T1 and committed T2 total 505 authored lines
+  (189 + 316). The T2 commit has 320 total changed lines including four lock
+  metadata lines; the generated T1 Playground lock is reported separately.
 
 ## Tasks
 
@@ -68,23 +72,26 @@ publication remain unauthorized; main stays unchanged.
   Route: delegated; retain historical 3.1.0 contracts and benchmark evidence.
   Acceptance: release/documentation RED observed, then GREEN; explain security
   hardening and benchmark provenance; no accidental migration scope.
-  Implementation and checks verified; the delivery-chain decision is resolved
-  and the local work-unit commit closes this task. Its SHA is recorded in the
-  post-commit evidence update. Review tier/outcome: high/unassessable
+  Implementation and checks verified; the delivery-chain decision is resolved.
+  Commit: 1c76ea9 (local work unit; SHA entered in this post-commit evidence
+  update for T3 to include). Review tier/outcome: high/unassessable
   in read-only assessment due untracked .codegraph inventory;
   RDD disabled/unmanaged. RED: four new release/documentation contracts failed
   on 3.1.0 metadata and missing patch notes/guidance; GREEN: 38 patch and
   historical readiness tests passed, and 93 related release/docs/security
   tests passed. Source version and installed distribution metadata are checked
   separately because no local distribution build is authorized.
-- [ ] T3 — Verify the complete candidate and record release-readiness evidence.
+- [x] T3 — Verify the local candidate and record release-readiness evidence.
   Route: delegated independent verification after writer checks.
   Acceptance: full suite, branch coverage >95%, patch coverage >95%, quality,
   frozen runtime audit, documentation, Playground and diff checks pass or any
   unavailable/failed checks are explicitly reported. No claim of hosted CI or
   publication without actually running them.
-  Commit: pending (verification evidence). Review tier/outcome: pending;
-  RDD disabled/unmanaged.
+  Clean tracked snapshot at 1c76ea9: all 4,370 tests passed, 7 skipped,
+  7 subtests passed; 96.21% branch coverage exceeds 95.01%. Local quality,
+  security, docs, locks and Playground checks passed. CI on the corrected PR
+  candidate and hosted matrix/artifact/PostgreSQL checks remain pending.
+  Commit: pending (verification and CI correction evidence). RDD disabled/unmanaged.
 
 ## Verification and rollback
 
@@ -107,8 +114,9 @@ included in the T1 work unit so a fresh Playground resolves the tested patches.
 The pre-existing extra benchmark files remain untouched. T2 prepared 3.1.1 as
 Unreleased while retaining the dated 3.1.0 history and benchmark freeze. The
 user resolved delivery to two feature-branch-chained PRs, with a size exception
-only for the generated Playground lock. Next: T3 independent release-readiness
-verification in a clean tracked snapshot before any parent-routed remote action.
+only for the generated Playground lock. The clean-snapshot local verification
+passed. Next: independently verify the narrow CI correction, then parent-routed
+remote actions within the user's authorization; hosted checks remain pending.
 
 ### T1 verification evidence
 
@@ -136,6 +144,9 @@ verification in a clean tracked snapshot before any parent-routed remote action.
   failed four intended metadata, patch-note, security-guide and provenance
   contracts before implementation. GREEN: four passed after implementation;
   the paired 3.1.0 historical contract suite passed 34 tests.
+- Post-decision spot check: `.venv/bin/python -m pytest
+  tests/test_graphql_core_security_patch.py tests/test_release_readiness_311.py
+  --no-cov -q`: 10 passed. `git diff --cached --check` passed before commit.
 - Focused release/docs/security command over seven modules: 93 passed.
   Version and packaging contracts after source/installed separation: 44 passed.
 - Full `.venv/bin/python -m pytest -q`: 4,353 passed, 7 skipped, 17 existing
@@ -152,3 +163,29 @@ verification in a clean tracked snapshot before any parent-routed remote action.
   versions instead. It adds 883 generated lock lines, outside authored count.
 - Engram mirror pending: the host currently provides no authoritative
   registered session identity, so no agent-attributed memory mutation is safe.
+
+### T3 local proof and delivery CI correction
+
+- Independent clean tracked snapshot at 1c76ea9: full suite 4,370 passed,
+  7 skipped, 7 subtests passed; 96.21% branch coverage with the unchanged
+  95.01% gate. No tests or benchmark modules were excluded. Evidence:
+  /private/tmp/graphex-311-verify.0MpK5X/full-suite.log.
+- Runtime audit found zero vulnerabilities; Bandit, Ruff, mypy, both docstring
+  checks, docs build, root/Playground frozen locks and diff checks passed.
+  Playground: 59 tests passed. Docs retained the same five baseline anchor
+  warnings. The independent verifier also observed six vulnerable-version RED
+  cases and 27 patched-version GREEN cases.
+- Patch coverage is N/A because no covered runtime source lines changed;
+  the diff-cover threshold check passed. Wheel/sdist, external-wheel smoke,
+  six-version matrix and PostgreSQL checks require hosted CI; no local package
+  build, publication, tag, dispatch or merge was run.
+- Delivery blocker: PR #2 targets codex/v3.1.1-security, which the prior
+  pull-request branch filter did not admit. A narrow pull-request-only pattern
+  now covers codex/v3.1.1-* while push, dispatch and tag-only publication
+  remain unchanged. RED: the new workflow contract failed on the missing
+  pattern. GREEN: the workflow plus 3.1.1 contracts passed (14 tests), and
+  related historical-readiness contracts passed (48 total). Ruff format/lint
+  and diff check passed. Runtime harness: N/A, because this
+  change only selects the GitHub Actions PR event.
+- Rollback boundary: the pull-request branch pattern and its workflow contract;
+  neither runtime security fixes nor release publication gates depend on it.
