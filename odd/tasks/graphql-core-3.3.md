@@ -96,7 +96,7 @@ of scope.
   clean-clone coverage gate, changed-line coverage, quality, and docs before
   marking complete. Roll back only T2 transport integration, tests, and guide.
   Work-unit commit: a07fb18719c76e8b7e1524c8e8bce922061dea71.
-- [x] T3 — Build immutable inline-fragment AST fixtures at construction time,
+- [ ] T3 — Build immutable inline-fragment AST fixtures at construction time,
   replace test-only removed MapAsyncIterator imports without weakening the
   delivery guards, and verify coercion plus valid schema/query behavior under
   GraphQL-core 3.2.13 and isolated 3.3.0. Route: delegated direct; own focused
@@ -109,7 +109,15 @@ of scope.
   focused tests and unchanged full 3.2.13 clean-clone gate. A full 3.3
   diagnostic may identify later blockers but is not the T3 acceptance gate.
   Roll back only T3 AST/test compatibility, coercion adapter/regressions,
-  guidance, and tracking changes.
+  guidance, and tracking changes. Overall T3 remains pending until the
+  separate cost/list-fixture and HTTP dual-iterator slices resolve the 3.3
+  diagnostic failures; do not treat those failures as accepted skips.
+  - [x] T3a — AST, retired mapper test guards, and directive coercion adapter.
+    Work-unit commit: 5063aa0d4617f798fccb74633b1c6418d8a29f9a.
+  - [ ] T3b — Resolve 3.3 cost/list-node compatibility and stale upstream
+    constructor expectation with separate tests and guidance.
+  - [ ] T3c — Restore synchronous queryset execution under 3.3's dual-iterator
+    list selection with a separate HTTP regression slice.
 - [ ] T4 — Raise the dependency floor to `graphql-core>=3.3.0,<3.4`, scope-update
   root and Playground locks, examples, migration guidance, and benchmark harness
   without rewriting historical results. Resolve a package release version only
@@ -128,10 +136,11 @@ integration branch after hosted checks. T2's exact child `fc1df815` merged as
 jobs plus Codecov green; its separate local-only recovery checkpoint is
 `278983b47fd6138c961bd8150881bfbb4cd50928`. The draft
 [tracker #212](https://github.com/eamigo86/django-graphex/pull/212) must not
-merge to main. T3 passed its local two-version and clean 3.2.13 gates; T4,
-its benchmark-profile choice, and the package release version remain pending. Published 3.1.1 main remains
-unchanged; no dependency floor, lock, package metadata, benchmark result, or
-historical release note changed. Keep the Engram mirror pending until a
+merge to main. T3a passed its local two-version and clean 3.2.13 gates,
+but T3b/T3c are pending, as are T4, its benchmark-profile choice, and the
+package release version. Published 3.1.1 main remains unchanged; no dependency
+floor, lock, package metadata, benchmark result, or historical release note
+changed. Keep the Engram mirror pending until a
 registered session identity is available.
 
 ### T0 verification evidence
@@ -294,7 +303,7 @@ registered session identity is available.
   modules were excluded from the 3.2 full run. Proof:
   `/private/tmp/graphex-33-t2-proof.iEKsNh/`.
 
-### T3 local verification and remaining migration blockers
+### T3a local verification and remaining migration blockers
 
 - RED under isolated official GraphQL-core 3.3.0: the old stock-mapper import
   stopped collection, and 17 AST fixture tests failed because
@@ -321,8 +330,9 @@ registered session identity is available.
   `/private/tmp/graphex-33-t3-prelim.wjFbg6/`.
 - A diagnostic full 3.3.0 run collected all tests without the retired mapper
   import, then reported 21 failures, 4,364 passes, and 7 skips. These later
-  migration blockers include query-cost/list behavior and legacy field-test
-  async assumptions; they are not the T3 acceptance gate and must be resolved
+  migration blockers include four query-cost tests, one native-list constructor
+  expectation, and 16 HTTP/field tests affected by dual-iterator querysets;
+  they are not accepted skips and must be resolved
   before T4 can claim a full 3.3 pass. No module was excluded or gate lowered.
   No dependency floor, lock, package metadata, benchmark artifact, or release
   note changed. Roll back only this T3 adapter, tests, view guidance, and
