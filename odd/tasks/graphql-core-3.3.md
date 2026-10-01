@@ -136,8 +136,8 @@ of scope.
     Rollback boundary is only T3c HTTP selection, tests, guidance, and tracking.
     Both full suites and changed-line gates now pass after a real
     adapter-forwarding regression covers the native-3.3 capability path under
-    the root runner without exclusions. Independent and remote checks remain
-    pending.
+    the root runner without exclusions. Independent verification passed;
+    remote checks remain blocked pending fresh specific human authorization.
 - [ ] T4 — Raise the dependency floor to `graphql-core>=3.3.0,<3.4`, scope-update
   root and Playground locks, examples, migration guidance, and benchmark harness
   without rewriting historical results. Resolve a package release version only
@@ -159,8 +159,8 @@ jobs plus Codecov green; its separate local-only recovery checkpoint is
 merge to main. T3a passed local, independent, and hosted checks and merged
 into integration as `5cdd2b13`. T3b passed independent local verification but
 its remote push was rejected by auto-review pending fresh specific human
-authorization. T3c passed both full suites and both changed-line gates after a
-bounded test-only correction; independent verification remains pending. T4,
+authorization. T3c passed independent two-version verification after a
+bounded test-only correction; remote delivery remains blocked. T4,
 the benchmark profile choice, and package release version remain pending.
 Published 3.1.1 main remains unchanged; no dependency floor, lock, package
 metadata, benchmark result, or historical release note changed. Keep the
@@ -481,5 +481,20 @@ Engram mirror pending until a registered session identity is available.
   `/private/tmp/graphex-33-t3c-gate.SiiZ16/`.
 - The correction belongs to the same local T3c slice; T3b remote push remains
   blocked pending direct human authorization. Independent verification of this
-  final candidate and T4 work remain pending. Engram mirror remains pending.
+  final candidate is recorded below; T4 remains pending. Engram mirror pending.
   Correction commit: `d3d1125789e928528c4247ece4f13c0187fbee8f`.
+
+### T3c independent verification
+
+- Exact candidate `bab1be79618b51c6c21a25f18ca079eef9df5d34` passed
+  four new and 169 related tests under each core. Clean full suites each
+  passed 4,390 tests, 7 skips, 7 subtests, and the same three baseline
+  warnings; branch coverage was 96.23% on 3.2.13 and 96.21% on 3.3.0.
+  Separate coverage XML files yielded 100% diff coverage (5/5) on each.
+- Ruff, mypy, both docstring gates (TOTAL 0), docs with five baseline anchor
+  warnings, and diff checks passed. No new coroutine warnings or defects were
+  found. The parent spot-checked all four native 3.3 regressions. Proof:
+  `/private/tmp/graphex-33-t3c-independent.33W2kc/`.
+- T3 local acceptance is verified. T3b/T3c remote delivery remains blocked
+  pending fresh specific human authorization; T4 remains untouched. Engram
+  mirror remains pending without registered runtime identity.
