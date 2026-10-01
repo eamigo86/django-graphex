@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parents[1]
-VERSION = "3.1.0"
 RELEASE_HEADING = "## 3.1.0 — 2026-09-03"
 
 
@@ -24,20 +23,22 @@ def _release_notes() -> str:
     return match.group("body")
 
 
-def test_project_metadata_is_ready_for_310() -> None:
-    """The build backend must derive the release version from pyproject.toml.
+def test_310_release_history_is_retained() -> None:
+    """Keep the dated 3.1.0 release record after later patch versions.
 
-    This test protects the corresponding regression contract.
+    The historical audit notes must remain distinct from current metadata.
+    """
+    changelog = (ROOT / "docs/changelog.md").read_text(encoding="utf-8")
+    assert RELEASE_HEADING in changelog
+    assert "### Audit traceability" in _release_notes()
+
+
+def test_lock_metadata_matches_current_project_version() -> None:
+    """Keep the editable root lock aligned with current release metadata.
+
+    The 3.1.0 heading above is historical, not a current-version pin.
     """
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert metadata["project"]["version"] == VERSION
-
-
-def test_lock_metadata_matches_project_version() -> None:
-    """The editable root package entry cannot drift from release metadata.
-
-    This test protects the corresponding regression contract.
-    """
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     root_package = next(
         package
@@ -45,7 +46,7 @@ def test_lock_metadata_matches_project_version() -> None:
         if package["name"] == "django-graphex"
         and package.get("source") == {"editable": "."}
     )
-    assert root_package["version"] == VERSION
+    assert root_package["version"] == metadata["project"]["version"]
 
 
 def test_changelog_publishes_upgrade_guide() -> None:

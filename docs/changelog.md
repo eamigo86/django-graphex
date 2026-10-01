@@ -12,6 +12,32 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## 3.1.1 — 2026-10-01
+
+**Security patch.** Production publication is tag-driven. The supported runtime
+floor is now `graphql-core>=3.2.13,<3.3`, without moving to the separate 3.3
+migration.
+The root and Playground locks resolve 3.2.13; the Playground also moves from
+Django 6.0.6 to 6.0.8 on the already-tested 6.0 line.
+
+- [GraphQL-core 3.2.12](https://github.com/graphql-python/graphql-core/releases/tag/v3.2.12)
+  makes `max_tokens` count skipped comment tokens and gives the
+  `OverlappingFieldsCanBeMerged` validator a per-document comparison budget.
+  The default is 250,000 field comparisons. A query that exhausts it now returns
+  a validation error; callers using an explicit parser token limit may also see
+  comment-heavy documents rejected where they were previously accepted.
+- [GraphQL-core 3.2.13](https://github.com/graphql-python/graphql-core/releases/tag/v3.2.13)
+  reports a truncated string escape as `GraphQLSyntaxError` instead of an
+  unhandled `IndexError`. The HTTP view returns a JSON 400 syntax error for this
+  malformed input.
+
+The HTTP view does **not** pass `max_tokens` to the parser, so the upstream token
+accounting fix is not itself an HTTP token cap. Configure request-size limits for
+your deployment; see [runtime security guidance](usage/security.md#runtime-parser-and-validation-hardening).
+The canonical benchmark artifacts remain historical 3.1.0 measurements with
+their original Django 6.0.6 and GraphQL-core 3.2.11 freeze. They have not been
+rerun or relabeled for this patch.
+
 ## 3.1.0 — 2026-09-03
 
 **Audit-hardening release.** This release closes all 24 findings from the 3.0

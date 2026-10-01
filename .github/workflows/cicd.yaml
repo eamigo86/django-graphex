@@ -13,6 +13,8 @@ on:
     - main
     # PRs targeting a release tracker branch get the same checks as PRs to main.
     - 'v*.*.*'
+    # Chained security-patch PRs target their preceding child branch.
+    - 'codex/v3.1.1-*'
   workflow_dispatch:
 
 permissions:

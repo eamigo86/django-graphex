@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -24,6 +25,23 @@ def _job(name: str) -> str:
     )
     assert match, f"workflow job {name!r} not found"
     return match.group(1)
+
+
+def test_security_patch_child_pr_runs_ci_without_widening_release_triggers() -> None:
+    """Run CI for the selected child base without changing release triggers.
+
+    Only pull-request bases expand; push and publication restrictions remain.
+    """
+    workflow = _workflow()
+    triggers = workflow.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
+    pull_request = triggers.split("  pull_request:\n", 1)[1].split(
+        "  workflow_dispatch:", 1
+    )[0]
+    branches = set(re.findall(r"(?m)^    - '?([^'\n]+)'?$", pull_request))
+
+    assert branches == {"main", "v*.*.*", "codex/v3.1.1-*"}
+    assert any(fnmatchcase("codex/v3.1.1-security", branch) for branch in branches)
+    assert "    - 'codex/v3.1.1-*'" not in triggers.split("  pull_request:\n", 1)[0]
 
 
 def test_release_artifact_builds_and_validates_one_distribution_pair() -> None:

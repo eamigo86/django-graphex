@@ -18,6 +18,26 @@ your resolvers.
     `Meta.max_depth`, `Meta.complexity`) now live on their own page —
     [Query depth & cost limits](query-limits.md).
 
+## Runtime parser and validation hardening
+
+The 3.1.1 candidate requires graphql-core 3.2.13. Its 3.2.12 fixes count
+skipped comments when an application passes a `max_tokens` parser limit, and
+bound the `OverlappingFieldsCanBeMerged` validation rule to 250,000 field
+comparisons per document by default. Exhausting that budget returns a GraphQL
+validation error before resolver execution. Version 3.2.13 additionally turns
+truncated string escapes into GraphQL syntax errors; the HTTP view returns JSON
+400 for these malformed documents. See the upstream
+[3.2.12 security notes](https://github.com/graphql-python/graphql-core/releases/tag/v3.2.12)
+and [3.2.13 fix notes](https://github.com/graphql-python/graphql-core/releases/tag/v3.2.13).
+
+The built-in HTTP view calls `parse(query)` and **does not pass max_tokens**.
+Thus the upstream comment accounting fix does not give the HTTP endpoint a
+token-count limit. `DJANGO_GRAPHEX['MAX_REQUEST_BODY_SIZE']` defaults to `None`;
+set it to a finite byte limit appropriate for your deployment, and enforce
+request-size limits at the ingress as well. Body size, parser tokens, validation
+comparisons, and application query depth/cost are different controls; none
+replaces all the others.
+
 Wire the middlewares through `DJANGO_GRAPHEX['MIDDLEWARE']`:
 
 ```python
