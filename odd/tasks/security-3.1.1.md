@@ -7,8 +7,11 @@ GraphQL-core 3.3 migration. The user approved local implementation on 2026-10-01
 Local work-unit commits are authorized. The user subsequently authorized GitHub
 issues and two chained pull requests toward 3.1.1 integration in
 eamigo86/django-graphex using the eamigo86 gh session. This task delegates all
-remote actions until after independent T3 verification. Merge, release tags and
-publication remain unauthorized; main stays unchanged.
+remote actions until after independent T3 verification. The user then authorized
+merging both child PRs into v3.1.1 and opening its draft tracker toward main.
+The user has now authorized closing the 3.1.1 changelog and, after fresh CI,
+merging the tracker into main. Release tags, publication, workflow dispatch and
+branch cleanup remain unauthorized.
 
 ## Problem and scope
 
@@ -91,9 +94,31 @@ publication remain unauthorized; main stays unchanged.
   Clean tracked snapshot at b765246: all 4,371 tests passed, 7 skipped,
   7 subtests passed; 96.21% branch-enabled total coverage exceeds 95.01%.
   The final docstring-only correction at 63e527d passed independent checks.
-  Local checks passed; hosted matrix/artifact/PostgreSQL checks remain pending.
+  Local checks passed; hosted matrix, artifact and PostgreSQL checks also passed.
   Commit: b765246 (verification and CI correction; SHA recorded in this
   post-commit evidence update for final delivery). RDD disabled/unmanaged.
+- [x] T4 — Integrate reviewed children and open the draft main tracker.
+  Route: delegated remote delivery; local checkpoint is an atomic inline update.
+  PR #202 merged as d42e20e; PR #203 was retargeted, synchronized without source
+  changes, revalidated and merged as 4e2aa5d. Their merge subjects are conventional.
+  Draft PR #204 targets main from v3.1.1. Its 15 validation jobs and both Codecov
+  checks passed; publication jobs were skipped. The integration tree equals the
+  reviewed 78bdddae tree. Main remains at a160d12; no v3.1.1 tag was created.
+- [ ] T5 — Close the 3.1.1 changelog and integrate only after fresh CI.
+  Route: delegated direct; this new work unit spans release-date contracts and
+  two public changelogs. Start from v3.1.1 at 4e2aa5d on
+  codex/v3.1.1-release-notes. Strict TDD remains enabled from current user
+  instructions: date contract RED, minimal notes GREEN, then REFACTOR. Focused
+  runner is `.venv/bin/python -m pytest <release tests> --no-cov`; the full
+  branch-enabled gate stays at 95.01%. Forecast: one small, cohesive release
+  notes slice under 400 authored changed lines. Acceptance: date both 3.1.1
+  changelogs 2026-10-01 without claiming PyPI publication or changing 3.1.0;
+  focused and clean full checks pass. After independent verification, use one
+  approved-issue-linked notes PR into v3.1.1, fresh CI, then merge it and the
+  updated tracker only after fresh green CI. No tag or publication is in scope.
+  Local date/contract implementation is verified; the issue-linked notes PR,
+  fresh hosted checks and main merge remain pending. Engram mirror remains
+  pending without an authoritative session identity.
 
 ## Verification and rollback
 
@@ -117,8 +142,14 @@ The pre-existing extra benchmark files remain untouched. T2 prepared 3.1.1 as
 Unreleased while retaining the dated 3.1.0 history and benchmark freeze. The
 user resolved delivery to two feature-branch-chained PRs, with a size exception
 only for the generated Playground lock. The clean-snapshot local verification
-passed, including the corrected CI candidate. Next: parent-routed remote actions
-within the user's authorization; hosted checks remain pending.
+passed, including the corrected CI candidate and hosted release gates. Both
+children are merged into v3.1.1 and draft tracker #204 is green. The user has
+authorized the dated 3.1.1 notes and a conditional main merge after fresh CI.
+Next: independently verify the dated T5 candidate, then use the authorized
+review path. Tag creation and publication still require separate explicit
+approval. The prior T4 checkpoint was carried into this local T5 work unit;
+no unreviewed bytes were added to the green tracker. Its Engram mirror remains
+pending host session registration.
 
 ### T1 verification evidence
 
@@ -200,3 +231,35 @@ within the user's authorization; hosted checks remain pending.
   no runtime or test logic changed after the full-suite proof. Parsed YAML
   confirms both intended PR bases match, with every job, push and dispatch
   unchanged.
+
+### T5 local release-note proof
+
+- RED: `.venv/bin/python -m pytest
+  tests/test_release_readiness_311.py::test_dated_patch_notes_preserve_310_history
+  --no-cov -q` failed once for the intended pre-change 3.1.1 Unreleased heading.
+  GREEN: `.venv/bin/python -m pytest tests/test_release_readiness_311.py
+  tests/test_release_readiness_310.py tests/test_docs_310_parity.py
+  tests/test_release_workflow.py --no-cov -q` passed all 74 tests.
+- A clean local Git clone with the four-file candidate overlay passed all
+  4,371 tests with 7 skips and 96.21% branch-enabled coverage against the
+  unchanged 95.01% gate; no test or benchmark module was excluded. Ruff
+  format/lint, mypy, both docstring gates (strict TOTAL 0), and Zensical docs
+  build passed. Docs retained five known baseline anchor warnings. Evidence:
+  `/private/tmp/graphex-311-t5-clone.RfnZv2/`.
+- Follow-up TDD correction: production PyPI publication requires a version
+  tag, while the same prebuilt docs artifact is deployed after publishing.
+  Requiring live “Publication remains pending” text would make those dated
+  notes false after release. The new contract first failed on the old wording;
+  the evergreen “Production publication is tag-driven” wording then passed
+  all 74 focused tests. The first GREEN attempt caught a Markdown line-wrap
+  mismatch; placing the phrase intact fixed that contract without changing
+  release behavior. The dated notes still do not claim publication has occurred.
+- An initial archive-only harness lacked `.git` and caused two provenance
+  failures; the real Git clone above resolved both without changing tests or
+  excluding modules. The existing ignored extra benchmark files remain untouched.
+- Runtime HTTP and distribution-artifact checks are not applicable to this
+  release-note-only unit. Hosted wheel, matrix, PostgreSQL and Codecov checks
+  must be rerun after the notes PR. Rollback boundary: the dated 3.1.1 headings,
+  evergreen publication wording, date contract, and this task checkpoint only.
+  The 3.1.0 history, frozen benchmark artifacts and runtime dependency floor
+  remain unchanged. No release tag or publication was performed.
