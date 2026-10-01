@@ -39,9 +39,46 @@ def test_security_patch_child_pr_runs_ci_without_widening_release_triggers() -> 
     )[0]
     branches = set(re.findall(r"(?m)^    - '?([^'\n]+)'?$", pull_request))
 
-    assert branches == {"main", "v*.*.*", "codex/v3.1.1-*"}
+    assert {"main", "v*.*.*", "codex/v3.1.1-*"} <= branches
     assert any(fnmatchcase("codex/v3.1.1-security", branch) for branch in branches)
     assert "    - 'codex/v3.1.1-*'" not in triggers.split("  pull_request:\n", 1)[0]
+
+
+def test_graphql_core_migration_branches_run_ci_without_widening_publish() -> None:
+    """Admit only the migration integration and child bases to CI.
+
+    The existing release tag and manual publication triggers stay separate.
+    """
+    triggers = _workflow().split("on:\n", 1)[1].split("\npermissions:", 1)[0]
+    push = triggers.split("  push:\n", 1)[1].split("  pull_request:\n", 1)[0]
+    pull_request = triggers.split("  pull_request:\n", 1)[1].split(
+        "  workflow_dispatch:", 1
+    )[0]
+    push_branches, push_tags = push.split("    tags:\n", 1)
+    branch_pattern = r"(?m)^    - '?([^'\n]+)'?$"
+    assert set(re.findall(branch_pattern, push_branches)) == {
+        "main",
+        "v*.*.*",
+        "codex/graphql-core-3.3",
+    }
+    assert set(re.findall(branch_pattern, pull_request)) == {
+        "main",
+        "v*.*.*",
+        "codex/v3.1.1-*",
+        "codex/graphql-core-3.3",
+        "codex/graphql-core-3.3-*",
+    }
+    assert push_tags.strip() == "- 'v*.*.*'"
+    assert "  workflow_dispatch:" in triggers
+    for base in ("codex/graphql-core-3.3", "codex/graphql-core-3.3-t1"):
+        assert any(
+            fnmatchcase(base, branch)
+            for branch in re.findall(branch_pattern, pull_request)
+        )
+    assert not any(
+        fnmatchcase("codex/unrelated-feature", branch)
+        for branch in re.findall(branch_pattern, pull_request)
+    )
 
 
 def test_release_artifact_builds_and_validates_one_distribution_pair() -> None:
