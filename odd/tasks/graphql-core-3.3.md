@@ -455,3 +455,4 @@ registered session identity is available.
   this checkpoint. T3b remote push remains blocked by auto-review pending
   direct human authorization. T3c is local-only; T4 floor/locks/version and
   migration remote integration have not started. Engram mirror remains pending.
+  Local work-unit commit: `24e52238148514925d8cdac842331f87459f7e06`.
