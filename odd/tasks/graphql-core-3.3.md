@@ -74,10 +74,12 @@ of scope.
   the new branch filters, their test contract, and this planning checkpoint.
   RED, GREEN, clean-clone full coverage and quality evidence are recorded below.
   Work-unit commit: b8cf6d163a3b58f51487fa80f2d25fa3a66fa1d0.
-- [ ] T1 — Adapt HTTP views to Executor and renamed execution keyword handling.
+- [x] T1 — Adapt HTTP views to Executor and renamed execution keyword handling.
   Keep the current 3.2.13 suite green while providing focused 3.3-API proof.
   Document that callers with old 3.2 custom ExecutionContext subclasses must
   upgrade them; do not promise transparent compatibility for those subclasses.
+  Route: delegated direct. Own only the HTTP view, focused tests, public view
+  guidance, and this recovery document. Evidence and rollback are below.
 - [ ] T2 — Adapt SSE and WebSocket subscription sources to an Executor-built
   source. Cover both transport paths and sync/async error behavior with bounded
   regressions before changing the runtime floor.
@@ -95,14 +97,14 @@ of scope.
 
 ## Progress and next step
 
-T0 local implementation and independent verification are complete. The published
-3.1.1 main tree remains the immutable starting boundary; no migration runtime
-source, dependency, lock, package metadata, benchmark result, or historical
-release note changed. Next:
-deliver the T0 child PR to the integration
-branch, and leave an unmerged draft tracker to main. T1 is the next
-implementation task after that handoff. Keep the Engram mirror pending until a
-registered session identity is available.
+T0 local implementation, independent verification, and integration are complete.
+The draft [tracker #212](https://github.com/eamigo86/django-graphex/pull/212)
+must not merge to main. T1 HTTP compatibility is complete locally, but its
+independent verification and remote child delivery remain pending. Published
+3.1.1 main remains unchanged; no dependency floor, lock, package metadata,
+benchmark result, or historical release note changed. T2 is the next source
+implementation task. Keep the Engram mirror pending until a registered session
+identity is available.
 
 ### T0 verification evidence
 
@@ -143,3 +145,55 @@ registered session identity is available.
 - Parsed YAML and combined contract checks preserve publication guards,
   permissions, the complete job graph, and the prior 3.1.1 branch coverage.
   Evidence: `/private/tmp/graphex-33-t0-independent.CK7TLL/`.
+
+### T0 remote delivery
+
+- Approved [issue #206](https://github.com/eamigo86/django-graphex/issues/206)
+  backs [child PR #211](https://github.com/eamigo86/django-graphex/pull/211):
+  `codex/graphql-core-3.3-ci` at
+  `74b32a7e998346b9e66d01efea210645e93ebec6` into the integration branch.
+  The slice has 188 additions and 1 deletion, all authored, with no exception.
+- [Child CI](https://github.com/eamigo86/django-graphex/actions/runs/36905293149)
+  passed all 15 validation jobs and both Codecov checks. The three publication
+  jobs skipped as intended. Conventional merge
+  `977560446f74abe7fdfdb695311ba19da721b806` has the reviewed child tree
+  `f3cafb98e9a48bca6329283771625f42f2a75e89`.
+- The integration [push CI](https://github.com/eamigo86/django-graphex/actions/runs/36905712173)
+  and draft [tracker CI](https://github.com/eamigo86/django-graphex/actions/runs/36905838138)
+  each passed all 15 validation jobs, with the three publication jobs skipped;
+  both tracker Codecov checks passed. Tracker #212 is draft, links approved
+  issues #206-#210, and remains unmerged. Main remains at
+  `bb415efc10e4a4b85079344b1c3c607de7a06daa`; the 3.1.1 tag is unchanged.
+- This evidence checkpoint is local-only. It is not part of the reviewed
+  integration tree or tracker PR; no task-document commit was pushed after T0.
+
+### T1 local implementation and verification
+
+- RED on both installed 3.2.13 and isolated official 3.3.0: the preferred
+  `executor_class` view keyword was rejected, and the legacy keyword failed
+  3.3 execution. Conflicting backend names were not rejected as configured.
+  After the minimal adapter, all four new or updated focused contracts passed
+  under both versions; the related HTTP and security selection passed 88 tests
+  under each. The tests execute a real HTTP query with a recording backend.
+- `BaseGraphQLView` accepts `executor_class` and the compatibility alias
+  `execution_context_class`. Supplying the same class twice is allowed; distinct
+  non-None classes raise `ImproperlyConfigured` at construction. The adapter
+  selects GraphQL's native keyword by the installed execution module's
+  `Executor` export, not by an optionally patched `execute` call signature.
+  GraphQL-core 3.2 custom ExecutionContext subclasses must be ported to the
+  3.3 Executor base and methods; the alias does not port their implementation.
+  No `from_schema` view factory exists here, so constructor and `as_view` are
+  the applicable configuration paths.
+- An isolated official 3.3.0 wheel overlay in `/private/tmp/graphex-33-t1-overlay`
+  supplied only GraphQL-core; the root environment and dependency floor stayed
+  at 3.2.13. A clean local Git clone proved imports came from its candidate
+  source and the overlay package. Its unchanged full runner passed 4,375 tests,
+  7 skipped, 7 subtests, and 96.22% branch-enabled coverage against the
+  unchanged 95.01% gate. Changed runtime lines reached 100% diff coverage.
+  Proof: `/private/tmp/graphex-33-t1.9xmCtW/`.
+- Ruff format and lint, mypy, standard and strict docstrings (TOTAL 0),
+  Zensical docs build, and diff checks passed. The docs build kept five
+  verified pre-existing anchor warnings. No local package build, root
+  dependency refresh, benchmark rewrite, remote push, PR, main merge, tag, or
+  dispatch occurred. Rollback only T1's HTTP backend adapter, tests, and view
+  guidance; preserve the independently integrated T0 CI gate.

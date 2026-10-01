@@ -26,6 +26,20 @@ automatically (no-ops until `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` are set — see
 [Query depth & cost limits](query-limits.md)) and response caching when
 `CACHE_ACTIVE` is on (see [Settings](settings.md)).
 
+### Custom execution backend
+
+Pass `executor_class=YourBackend` to a view constructor or `as_view()` to
+customize GraphQL execution. The older `execution_context_class=` spelling
+remains an alias; if both are supplied, they must name the same class or view
+construction raises `ImproperlyConfigured`. A class attribute may set the same
+default for a view subclass.
+
+The backend class itself must match the installed GraphQL-core generation:
+subclass `ExecutionContext` on 3.2, or `Executor` on 3.3. Custom 3.2 subclasses
+need to be ported to the [3.3 Executor API](https://github.com/graphql-python/graphql-core/releases/tag/v3.3.0);
+renaming the view keyword alone does not make them compatible. The runtime
+dependency floor remains on 3.2 until the rest of the 3.3 migration is verified.
+
 ### Cross-site POST protection
 
 `GraphQLView` and `AuthenticatedGraphQLView` are `csrf_exempt` (`BaseGraphQLView`
