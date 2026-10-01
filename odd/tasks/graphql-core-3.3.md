@@ -80,6 +80,7 @@ of scope.
   upgrade them; do not promise transparent compatibility for those subclasses.
   Route: delegated direct. Own only the HTTP view, focused tests, public view
   guidance, and this recovery document. Evidence and rollback are below.
+  Work-unit commit: 62edc33f5c47a12f8ae51bb04c08557473f08ad7.
 - [ ] T2 — Adapt SSE and WebSocket subscription sources to an Executor-built
   source. Cover both transport paths and sync/async error behavior with bounded
   regressions before changing the runtime floor.
