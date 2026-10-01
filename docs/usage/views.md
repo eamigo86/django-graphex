@@ -32,7 +32,8 @@ Pass `executor_class=YourBackend` to a view constructor or `as_view()` to
 customize GraphQL execution. The older `execution_context_class=` spelling
 remains an alias; if both are supplied, they must name the same class or view
 construction raises `ImproperlyConfigured`. A class attribute may set the same
-default for a view subclass.
+default for a view subclass. An explicit constructor or `as_view()` argument
+overrides that default regardless of which alias the subclass used.
 
 The backend class itself must match the installed GraphQL-core generation:
 subclass `ExecutionContext` on 3.2, or `Executor` on 3.3. Custom 3.2 subclasses

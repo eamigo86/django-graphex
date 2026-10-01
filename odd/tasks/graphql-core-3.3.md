@@ -81,6 +81,10 @@ of scope.
   Route: delegated direct. Own only the HTTP view, focused tests, public view
   guidance, and this recovery document. Evidence and rollback are below.
   Work-unit commit: 62edc33f5c47a12f8ae51bb04c08557473f08ad7.
+  Reopened after independent verification found that an explicit keyword could
+  not override a subclass default stored under the other alias. Both cross-name
+  real-HTTP regressions now pass after correcting explicit-over-default
+  precedence; the bounded correction proof is recorded below.
 - [ ] T2 — Adapt SSE and WebSocket subscription sources to an Executor-built
   source. Cover both transport paths and sync/async error behavior with bounded
   regressions before changing the runtime floor.
@@ -100,8 +104,8 @@ of scope.
 
 T0 local implementation, independent verification, and integration are complete.
 The draft [tracker #212](https://github.com/eamigo86/django-graphex/pull/212)
-must not merge to main. T1 HTTP compatibility is complete locally, but its
-independent verification and remote child delivery remain pending. Published
+must not merge to main. T1's bounded correction is verified locally;
+independent reverification and remote child delivery remain pending. Published
 3.1.1 main remains unchanged; no dependency floor, lock, package metadata,
 benchmark result, or historical release note changed. T2 is the next source
 implementation task. Keep the Engram mirror pending until a registered session
@@ -198,3 +202,25 @@ identity is available.
   dependency refresh, benchmark rewrite, remote push, PR, main merge, tag, or
   dispatch occurred. Rollback only T1's HTTP backend adapter, tests, and view
   guidance; preserve the independently integrated T0 CI gate.
+
+### T1 bounded correction after independent verification
+
+- Root cause: each alias fell back to its subclass default before explicit
+  constructor choices were compared, so a default under the other name looked
+  like a second explicit class. Two new real-HTTP cross-name override tests
+  each failed RED with `ImproperlyConfigured` under both GraphQL-core 3.2.13
+  and 3.3.0, then passed GREEN after explicit arguments took precedence over
+  defaults. Distinct explicitly supplied classes still fail; identical ones
+  remain allowed. Public view guidance now states this precedence.
+- The corrected HTTP/security selection passed 90 tests under each version.
+  Clean tracked-candidate source imported from
+  `/private/tmp/graphex-33-t1-corrected.vWVmF7/candidate`, while the isolated
+  official 3.3.0 overlay supplied GraphQL-core only. The unchanged 3.2.13 full
+  runner passed 4,377 tests, 7 skipped, 7 subtests, and 96.22% branch-enabled
+  coverage against the unchanged 95.01% gate. Changed runtime lines had 100%
+  diff coverage (15 lines, zero missing).
+- Ruff format/lint, mypy, standard and strict docstrings (TOTAL 0), docs build,
+  and diff checks passed in the clean candidate. The five established anchor
+  warnings remain. No test exclusion, coverage override, root dependency or
+  lock change, local package build, remote delivery, or benchmark rewrite was
+  used. Proof: `/private/tmp/graphex-33-t1-corrected.vWVmF7/`.

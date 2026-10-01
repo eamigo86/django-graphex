@@ -613,14 +613,12 @@ class BaseGraphQLView(View):
         self.graphiql = graphiql or self.graphiql
         self.graphiql_template = graphiql_template or self.graphiql_template
         self.batch = batch or self.batch
-        configured_executor = (
-            executor_class if executor_class is not None else self.executor_class
-        )
-        configured_context = (
-            execution_context_class
-            if execution_context_class is not None
-            else self.execution_context_class
-        )
+        if executor_class is not None or execution_context_class is not None:
+            configured_executor = executor_class
+            configured_context = execution_context_class
+        else:
+            configured_executor = self.executor_class
+            configured_context = self.execution_context_class
         if (
             configured_executor is not None
             and configured_context is not None

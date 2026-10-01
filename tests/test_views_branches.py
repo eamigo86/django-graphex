@@ -259,6 +259,62 @@ class BaseViewBranchesTest(TestCase):
                 execution_context_class=second,
             )
 
+    def test_preferred_argument_overrides_legacy_class_default(self) -> None:
+        """Let an explicit preferred backend replace the legacy default.
+
+        A differently named class attribute is a default, not a second choice.
+        """
+        default_calls: list[str] = []
+        explicit_calls: list[str] = []
+        default_backend = _recording_executor(default_calls)
+        explicit_backend = _recording_executor(explicit_calls)
+
+        class LegacyDefaultView(BaseGraphQLView):
+            """Use a legacy backend as this view's class-level default."""
+
+            execution_context_class = default_backend
+
+        view = LegacyDefaultView.as_view(
+            schema=_schema, executor_class=explicit_backend
+        )
+        request = self.factory.post(
+            "/graphql/", {"query": "{ hello }"}, content_type="application/json"
+        )
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["data"]["hello"], "world")
+        self.assertEqual(explicit_calls, ["built"])
+        self.assertEqual(default_calls, [])
+
+    def test_legacy_argument_overrides_preferred_class_default(self) -> None:
+        """Let an explicit legacy backend replace the preferred default.
+
+        The caller's supplied class wins regardless of alias spelling.
+        """
+        default_calls: list[str] = []
+        explicit_calls: list[str] = []
+        default_backend = _recording_executor(default_calls)
+        explicit_backend = _recording_executor(explicit_calls)
+
+        class PreferredDefaultView(BaseGraphQLView):
+            """Use a preferred backend as this view's class-level default."""
+
+            executor_class = default_backend
+
+        view = PreferredDefaultView.as_view(
+            schema=_schema, execution_context_class=explicit_backend
+        )
+        request = self.factory.post(
+            "/graphql/", {"query": "{ hello }"}, content_type="application/json"
+        )
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["data"]["hello"], "world")
+        self.assertEqual(explicit_calls, ["built"])
+        self.assertEqual(default_calls, [])
+
     def test_invalid_variables_json_is_bad_request(self) -> None:
         """Ship-broken contract: a malformed "variables" JSON string must be
         rejected with a 400 response.
