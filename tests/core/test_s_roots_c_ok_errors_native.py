@@ -8,9 +8,9 @@ graphene and onto the native "field()" currency:
     errors = List(ErrorType)     ->  field(NativeList(ErrorType), ...)
 
 "ErrorType" is a NATIVE plain "ObjectType" (S-ROOTS-b), so its compiled
-graphql-core type does not exist until "_compile_plain_object_type" runs. A
-The plain "ErrorType" class is not a compiled "GraphQLType", regardless of
-whether a graphql-core version rejects or stores it at list construction.
+graphql-core type does not exist until "_compile_plain_object_type" runs.
+GraphQL-core versions differ in whether "GraphQLList" rejects or stores an
+uncompiled element at construction.
 The native "NativeList" wrapper (descriptors.py) retains it for the compiler
 to resolve LAZILY through "_compile_wrapped_field_type".
 
