@@ -47,9 +47,13 @@ of scope.
   independent verification follows ordinary checks. Engram mirror
   `odd/graphql-core-3.3/tasks` is pending because the host has no authoritative
   registered session identity. Do not write memory without that identity.
-- Forecast: 450-650 authored changed lines for migration behavior/tests, plus
-  CI and task-document overhead; generated lock lines are reported separately.
-  Delivery strategy: auto-chain using the human-approved feature-branch-chain.
+- Initial migration forecast was 450-650 authored lines; that historical
+  estimate is superseded for remaining work. T4b benchmark bootstrap is
+  forecast at 200-320 authored lines and its separate new runner at 250-380;
+  final examples/guidance and measured artifacts remain TBD. Generated locks
+  are reported separately. The 400-line task heuristic does not justify
+  dropping tests or docs; each delivered child PR still respects its hard
+  authored-line budget. Delivery strategy: auto-chain using the human-approved feature-branch-chain.
   Keep each child PR at or below 400 authored changed lines, with no authored
   `size:exception` approved. The integration tracker remains draft until each
   child passes its own checks. PRs require an approved linked issue and exactly
@@ -110,8 +114,10 @@ of scope.
   diagnostic may identify later blockers but is not the T3 acceptance gate.
   Roll back only T3 AST/test compatibility, coercion adapter/regressions,
   guidance, and tracking changes. T3's local acceptance now includes both
-  root and 3.3 changed-line coverage gates. T3b/T3c remote delivery remains
-  pending; no checkbox authorizes the draft tracker or a dependency bump.
+  root and 3.3 changed-line coverage gates. T3b/T3c merged into only the
+  integration branch as `637dcb71` and `61b8784e`; both fresh integration
+  and tracker runs passed 15 validation jobs and tracker Codecov. No checkbox
+  authorizes a main merge or dependency bump.
   - [x] T3a — AST, retired mapper test guards, and directive coercion adapter.
     Work-unit commit: 5063aa0d4617f798fccb74633b1c6418d8a29f9a.
   - [x] T3b — Resolve 3.3 cost/list-node compatibility and stale upstream
@@ -131,40 +137,54 @@ of scope.
     then GREEN/REFACTOR with the `.venv/bin/python -m pytest <tests> --no-cov`
     focal runner. Require complete clean-clone suites on both 3.2.13 and
     3.3.0 with the unchanged 95.01% branch gate, plus changed-line coverage,
-    quality and docs. T3b remote push is blocked pending fresh specific human
-    authorization; do not retry it or perform any other remote operation here.
-    Rollback boundary is only T3c HTTP selection, tests, guidance, and tracking.
-    Both full suites and changed-line gates now pass after a real
-    adapter-forwarding regression covers the native-3.3 capability path under
-    the root runner without exclusions. Independent verification passed;
-    remote checks remain blocked pending fresh specific human authorization.
-- [ ] T4 — Raise the dependency floor to `graphql-core>=3.3.0,<3.4`, scope-update
-  root and Playground locks, examples, migration guidance, and benchmark harness
-  without rewriting historical results. Resolve a package release version only
-  after a separate product decision. Run independent clean-clone full/coverage,
-  quality, docs, Playground, security, and hosted-release-readiness checks.
-  Benchmark profile decision remains pending: replay the historical four-way
-  results from a historical source ref/profile and run a separate current
-  diagnostic, or design a new comparison with per-library core versions. Do not
-  silently substitute peers or alter frozen historical artifacts.
+    quality and docs. The initially rejected T3b push was a historical
+    authorization block; fresh explicit human authorization later enabled
+    issue-linked PRs and integration-only merges. Rollback boundary is only
+    T3c HTTP selection, tests, guidance, and tracking. Both full suites and
+    changed-line gates passed after a real adapter-forwarding regression
+    covered the native-3.3 capability path under the root runner without
+    exclusions. Independent and current-head hosted verification passed.
+- [ ] T4 — Adopt GraphQL-core 3.3 as the supported runtime, complete the
+  example, benchmark, documentation, and release-readiness migration without
+  rewriting historical results. Route: delegated direct in coherent child PRs.
+  The user selected a new four-library comparison with compatible core
+  versions chosen separately for each library. Compare disclosed whole stacks,
+  not libraries alone. Preserve the eight historical JSON results, versions.env,
+  constraints, and dated release notes. Package SemVer is still undecided.
+  - [x] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
+    scope-update root and Playground graphql-core lock entries; preserve
+    package version 3.1.1. Own current-readiness contracts and bounded public
+    floor/Executor guidance. Strict TDD: RED current floor/lock/document
+    contracts, then GREEN/REFACTOR; focused runner uses
+    `.venv/bin/python -m pytest <tests> --no-cov`. Prove a full clean-clone
+    3.3 suite with unchanged 95.01% branch gate, check-only quality/docs,
+    lock consistency, and diff checks. Hosted 3.3 gates await delivery.
+    Rollback only this floor/locks/readiness/guidance child.
+  - [ ] T4b — Add a new comparison profile and benchmark harness/tests using
+    per-library compatible core versions; keep historical replay isolated
+    and historical artifacts byte-identical. No new performance result is
+    claimed until measured.
+  - [ ] T4c — Complete Playground/example and migration guidance, verify
+    quiet measurements and docs without relabeling old results.
+  - [ ] T4d — Resolve package SemVer by separate product decision, then run
+    final independent and hosted release-readiness gates. No main merge or
+    publication follows automatically.
 
 ## Progress and next step
 
-T0, T1, and T2 passed independent verification and merged into the
-integration branch after hosted checks. T2's exact child `fc1df815` merged as
-`f079967e` with identical tree and all 15 child/integration/tracker validation
-jobs plus Codecov green; its separate local-only recovery checkpoint is
-`278983b47fd6138c961bd8150881bfbb4cd50928`. The draft
-[tracker #212](https://github.com/eamigo86/django-graphex/pull/212) must not
-merge to main. T3a passed local, independent, and hosted checks and merged
-into integration as `5cdd2b13`. T3b passed independent local verification but
-its remote push was rejected by auto-review pending fresh specific human
-authorization. T3c passed independent two-version verification after a
-bounded test-only correction; remote delivery remains blocked. T4,
-the benchmark profile choice, and package release version remain pending.
-Published 3.1.1 main remains unchanged; no dependency floor, lock, package
-metadata, benchmark result, or historical release note changed. Keep the
-Engram mirror pending until a registered session identity is available.
+T0-T3 are integrated at `61b8784e4d9779a48f62b0209f9abfa62e5323cd`.
+Fresh integration-push and draft tracker #212 CI passed all 15 validation jobs,
+skipped the three publication jobs, and both tracker Codecov checks succeeded.
+The independently verified T3c head has the exact merged source tree. Root
+3.2.13 and isolated official 3.3.0 full suites each passed 4,390 tests,
+7 skips, and the same three warnings; coverage was 96.23% and 96.21%, with
+separate 100% patch coverage (5/5). Hosted CI still uses the 3.2.13 floor.
+T4a local checks passed on this child; hosted 3.3 checks await delivery. The
+new per-library benchmark comparison choice is resolved, while package SemVer
+and T4b-T4d remain pending. The historical
+3.1.1 main/tag and canonical benchmark files remain unchanged. The draft
+tracker is not authorized for main merge, tag, publication, or dispatch.
+Engram mirror pending until a registered runtime identity is available.
 
 ### T0 verification evidence
 
@@ -495,6 +515,70 @@ Engram mirror pending until a registered session identity is available.
   warnings, and diff checks passed. No new coroutine warnings or defects were
   found. The parent spot-checked all four native 3.3 regressions. Proof:
   `/private/tmp/graphex-33-t3c-independent.33W2kc/`.
-- T3 local acceptance is verified. T3b/T3c remote delivery remains blocked
-  pending fresh specific human authorization; T4 remains untouched. Engram
-  mirror remains pending without registered runtime identity.
+- T3 local acceptance was verified. At this historical checkpoint, T3b/T3c
+  remote delivery was blocked pending fresh human authorization; the later
+  integration is recorded below. Engram mirror remains pending without a
+  registered runtime identity.
+
+### T4a start and T3 checkpoint reconciliation
+
+- The local-only tracking commit `c33c4e4a054c9777fdc9ed541822b0babe3fa6c1`
+  reconciled the final T3 evidence. T3b behavior commit
+  `8c9ab8fc2b156dbd6ad03e59b96ef9d142480764` merged via PR #216 at
+  `637dcb714d3ec01e3df1a6d5a0115d39583eea35`; T3c behavior commit
+  `24e52238148514925d8cdac842331f87459f7e06` and correction
+  `d3d1125789e928528c4247ece4f13c0187fbee8f` merged via PR #217 at
+  `61b8784e4d9779a48f62b0209f9abfa62e5323cd`. The latter tree is
+  `19064b4ecd6dbc75083e3dff998567ea239e46ce`, identical to reviewed
+  history-sync head `0e8b1d7e63049e6b329cb152ded1c8511d73a3a7`.
+- Integration-push run 36927916167 and draft-tracker run 36927925471
+  each passed 15 validation jobs and skipped three publishing jobs; both
+  fresh tracker Codecov checks succeeded. Historical rejected-push notes
+  above are past evidence, not an active block. The final independent T3c
+  clean-clone proof is `/private/tmp/graphex-33-t3c-independent.33W2kc/`:
+  4,390 full passes under each core, 7 skips, three established test warnings,
+  coverage 96.23%/96.21%, separate diff coverage 100% (5/5), and five
+  established docs-anchor warnings. No new coroutine warning.
+- T4a route: delegated direct, multiple non-trivial metadata, lock, test,
+  and public-doc files. Current user AGENTS.md enables strict TDD; use the
+  existing root pytest runner and clean real local clone. Authored child
+  budget ≤400 lines, generated lock lines reported separately. No source
+  behavior, benchmarks, package version, root environment, main, or remote
+  state changes are authorized in this local unit. Mirror remains pending.
+
+### T4a local verification
+
+- RED: `.venv/bin/python -m pytest tests/test_graphql_core_33_readiness.py
+  --no-cov -q` failed both new contracts for the old 3.2.13 floor and current
+  README. GREEN: the new current contract plus 3.1.1/3.1.0 release and CI
+  contracts passed 51 tests with `--no-cov -q`. Historical 3.1.1 notes still
+  describe the 3.2.13 security patch; the new Unreleased entries describe
+  current source without inventing a package version or publication date.
+- Both lockfiles resolve graphql-core 3.3.0 and retain django-graphex 3.1.1;
+  a TOML package comparison found changes only in the graphql-core package
+  and the local project's GraphQL requirement. Every other package pin,
+  including Playground Django 6.0.8, is unchanged. Root and Playground
+  `uv lock --check --no-build` passed. The initial resolver refreshed unrelated
+  Autobahn/cbor2 packages, so only its verified official GraphQL metadata was
+  retained before the checks; no broad dependency refresh was accepted.
+- A clean real local Git clone imported candidate source and official 3.3.0
+  from the existing isolated overlay; the root `.venv` still imports 3.2.13.
+  Its unchanged `.venv/bin/python -m pytest` runner passed 4,392 tests,
+  7 skips, 7 subtests, 3 established warnings, and 96.21% branch coverage
+  against the unchanged 95.01% gate. Diff-cover reported no covered runtime
+  lines changed (N/A); no waiver or exclusion was used. Proof:
+  `/private/tmp/graphex-33-t4a-proof.Co6BJ6/`.
+- Ruff format/check, mypy, standard and strict docstring gates (TOTAL 0),
+  Zensical docs build, and diff checks passed. A second mypy run with
+  `MYPYPATH` set to the official 3.3 overlay also passed; its verbose log
+  confirms GraphQL imports from that overlay rather than root 3.2 stubs.
+  Zensical retained five established anchor warnings. No local project build, root environment
+  reinstall, benchmark rewrite, main merge, tag, or remote operation occurred.
+  Runtime harness is the real full 3.3 suite above; it covers HTTP and
+  subscriptions through candidate-source imports, not an editable install.
+  Rollback only T4a's runtime bound, two GraphQL-only lock changes, current
+  readiness tests, Unreleased notes, and current requirements/view guidance.
+- Hosted 3.3 matrix, security/PG, and publication-readiness checks await
+  authorized delivery. T4b new comparison profile, T4c example/migration
+  guidance, and T4d SemVer/final gates remain pending. The Engram mirror
+  remains pending without a registered runtime identity.

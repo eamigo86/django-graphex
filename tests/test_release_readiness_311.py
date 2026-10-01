@@ -32,20 +32,19 @@ def _package(lock: dict, name: str) -> dict:
 
 
 def test_patch_metadata_and_locks_are_consistent() -> None:
-    """Keep the candidate version and patched runtime in both environments.
+    """Preserve the published patch version and dated dependency history.
 
-    The GraphQL 3.3 migration is deliberately not part of this patch.
+    The current development floor may move independently of that history.
     """
     project = _metadata(ROOT / "pyproject.toml")["project"]
-    root_lock = _metadata(ROOT / "uv.lock")
+    root_notes = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    docs_notes = (ROOT / "docs/changelog.md").read_text(encoding="utf-8")
     playground_lock = _metadata(ROOT / "examples/playground/uv.lock")
 
     assert project["version"] == "3.1.1"
-    assert "graphql-core>=3.2.13,<3.3" in project["dependencies"]
-    assert _package(root_lock, "django-graphex")["version"] == "3.1.1"
-    assert _package(playground_lock, "django-graphex")["version"] == "3.1.1"
-    for lock in (root_lock, playground_lock):
-        assert _package(lock, "graphql-core")["version"] == "3.2.13"
+    for notes in (root_notes, docs_notes):
+        patch = notes.split("## 3.1.1 — 2026-10-01", maxsplit=1)[1]
+        assert "3.2.13" in patch.split("## 3.1.0 — 2026-09-03", maxsplit=1)[0]
     assert _package(playground_lock, "django")["version"] == "6.0.8"
 
 

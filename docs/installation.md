@@ -76,7 +76,7 @@ of lazily on first request), so type-compilation errors surface immediately.
 
 - **Python**: 3.12, 3.13, 3.14
 - **Django**: 5.2 (LTS), 6.0
-- **graphql-core**: >=3.2.13,<3.3
+- **graphql-core**: >=3.3.0,<3.4
 - **pydantic**: >=2,<3
 
 !!! warning "Django 4.x / 5.0 / 5.1 users"

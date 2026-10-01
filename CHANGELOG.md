@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Current source raises the runtime GraphQL-core floor to
+`graphql-core>=3.3.0,<3.4`. The root and Playground locks target the 3.3
+line. This is an in-progress migration, not a published package release;
+the package version and release date remain undecided. Custom execution
+backends must move from 3.2 `ExecutionContext` subclasses to the 3.3
+`Executor` API; renaming the view keyword alone is not sufficient. The
+3.1.1 security patch and its 3.2.13 requirement remain historical facts.
+
 ## 3.1.1 — 2026-10-01
 
 This patch raises the required GraphQL-core version to 3.2.13 while staying
