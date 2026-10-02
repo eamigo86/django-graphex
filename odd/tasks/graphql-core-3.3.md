@@ -151,7 +151,7 @@ of scope.
   versions chosen separately for each library. Compare disclosed whole stacks,
   not libraries alone. Preserve the eight historical JSON results, versions.env,
   constraints, and dated release notes. Package SemVer is still undecided.
-  - [x] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
+  - [ ] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
     scope-update root and Playground graphql-core lock entries; preserve
     package version 3.1.1. Own current-readiness contracts and bounded public
     floor/Executor guidance. Strict TDD: RED current floor/lock/document
@@ -161,7 +161,9 @@ of scope.
     lock consistency, and diff checks. The original T4a RED/GREEN proof is
     retained below; the later privacy integration is a history merge, not a
     fabricated second RED. Fresh combined native-3.3 and hosted checks are
-    required before integration.
+    required before integration. Reopened after exact-head project Codecov
+    failed at 94.96% despite green validation jobs; T4q tests address the
+    identified capability-path coverage gap without altering runtime code.
     Rollback only this floor/locks/readiness/guidance child.
   - [ ] T4b — Add a new comparison profile and benchmark harness/tests using
     per-library compatible core versions; keep historical replay isolated
@@ -175,8 +177,9 @@ of scope.
 
 ## Progress and next step
 
-T0-T3 and the JSON, validation-cache, HTTP privacy, and subscription privacy
-children are integrated through `b5a5207ebb80b70e95b49880b1b51b327500a5b7`.
+T0-T3 and the JSON, validation-cache, HTTP privacy, subscription privacy,
+and T4q capability-test children are integrated through
+`fc0d730a87b90c5bc57387fad61a09ca761aac2a`.
 PR #222 passed exact-head hosted checks before that integration-only merge;
 its integration-push run `36945214190` and tracker run `36945219668` each
 passed 15 validations, with three publication jobs skipped; both tracker
@@ -184,8 +187,11 @@ Codecov checks succeeded. This floor child
 history-merges that reviewed integration without importing the rejected regex
 branches. Its source diff remains limited to the GraphQL-core floor/locks,
 readiness contracts, and current guidance; the package version stays 3.1.1.
-Combined native-3.3 local checks passed on merge `8093da0`; hosted checks on
-this new floor head remain pending. The
+The earlier `8093da0` floor head passed local native-3.3 checks but failed
+project Codecov at 94.96%; no gate was waived. T4q PR #223 passed all 15
+validation jobs and both Codecov checks before its integration-only merge.
+The floor branch now history-merges T4q through `a886e60`; this new combined
+head requires fresh local, independent, and hosted checks. The
 new per-library benchmark comparison choice is resolved, while package SemVer
 and T4b-T4d remain pending. Published 3.1.1 main/tag and canonical benchmark
 files remain unchanged. Draft tracker #212 has no main merge, tag,
@@ -660,3 +666,17 @@ an authoritative runtime identity.
   root environment install, remote operation, main merge, tag, or publication
   occurred in this local work unit. New floor-head independent and hosted
   checks remain pending; T4b-T4d and package SemVer remain undecided.
+
+### T4a capability-test history sync
+
+- T4q PR #223 passed all 15 validation jobs and both Codecov checks before
+  integration-only merge `fc0d730a87b90c5bc57387fad61a09ca761aac2a`.
+  Conventional merge `a886e60d8d58f6d1400b96003d0eedd45e275a8e`
+  preserves the old floor history and adds only those reviewed tests/docs.
+- The combined clean-clone native-3.3 suite passed 4,432 tests, 7 skips,
+  23 subtests, and the 3 established warnings at 96.23% branch coverage.
+  Its XML has 258 missed lines and 266 partial branches, exactly matching
+  T4q's 3.2 baseline; all six previously uncovered capability sites passed.
+  Conservative projected line coverage is 95.018064%, an inference rather
+  than a hosted Codecov verdict. Fresh independent and hosted checks on this
+  combined floor head are still required before integration-only delivery.
