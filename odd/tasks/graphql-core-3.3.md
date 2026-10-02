@@ -667,6 +667,41 @@ an authoritative runtime identity.
   occurred in this local work unit. New floor-head independent and hosted
   checks remain pending; T4b-T4d and package SemVer remain undecided.
 
+### T4b1 named-profile bootstrap (focused local child)
+
+- Independent verification reopened T4b1a/b: the source-backed Graphex venv
+  cannot start without its declared Pydantic/dateutil/unidecode dependencies,
+  and the unchanged Graphene adapter cannot import its django-filter field.
+  Metadata/freeze equality alone is not a runnable-stack contract. Add failing
+  source/adapter dependency tests first, then observed exact freezes and all
+  five real HTTP workload contracts per library. Correct this profile child
+  before history-merging it into the setup child; both remain local pending
+  independent and hosted revalidation. Historical artifacts stay frozen.
+- Correction commits `144b8ad177b55c5f1d55bcf28ff305f888d7445c` and
+  `27a4474c5826f1de8d99e28785d7124c99e6de41` add two cause-correct RED
+  tests, fail-closed required-package checks, and installer-observed 13-package
+  Graphex/Graphene freezes. Six profile tests and 50 benchmark tests passed;
+  all four unchanged seeded five-operation HTTP contracts passed with rollback
+  and expected SQL counts, without timing publication. The clean native-3.3
+  full suite passed 4,438 tests at 96.23% branch coverage; independent and
+  hosted checks remain pending. Proof: `/private/tmp/graphex-t4b1-correction.efG5xu/`.
+- Human-selected future package version is 4.0.0, not yet applied or released.
+  The approved new comparison uses Strawberry 0.328.0 plus
+  strawberry-django 0.90.0 on core 3.3.0; the earlier 0.320.1/0.86.4
+  optimizer failure remains historical diagnostic evidence.
+- Before this source unit, an isolated Python 3.12.11/Django 6.0.8 venv
+  passed the unchanged seeded 20×10×5 Strawberry response contract in three
+  SQL queries and verified mutation rollback. The four observed dependency
+  freezes live under `/private/tmp/graphex-t4b1.8H68G9/`.
+- Route: delegated direct; ownership is a new named-profile manifest and
+  per-library observed constraints, preflight/bootstrap, benchmark tests,
+  concise guide, and this narrow checkpoint. Strict TDD is enabled by current
+  AGENTS.md: RED profile contract before implementation, then GREEN/refactor.
+  Focused runner is `.venv/bin/python -m pytest tests/benchmarks --no-cov`;
+  full native-3.3 runner retains the 95.01% branch gate in a clean clone.
+  No canonical result/freeze, package version, benchmark timing, main, tag,
+  or publication change belongs to this unit. Engram mirror remains pending.
+
 ### T4a capability-test history sync
 
 - T4q PR #223 passed all 15 validation jobs and both Codecov checks before
