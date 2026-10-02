@@ -71,6 +71,10 @@ for one diagnostic run through the selected interpreter and existing harness.
 It validates the measured result and refuses source, profile, runtime, seed,
 or output drift. If a replaced output path cannot be cleaned safely, owned
 residue is left for recovery rather than removing a foreign directory. A
+replacement between directory creation and descriptor acquisition is rejected
+before the child runs; a foreign regular result or empty directory is retained.
+This is a bounded ownership check, not protection against a process with
+authority to change the parent directory at every filesystem operation. A
 single run is not a published comparison or a three-run median.
 
 The no-argument historical `setup_envs.sh` instead installs published

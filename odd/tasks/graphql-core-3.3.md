@@ -273,6 +273,17 @@ of scope.
         sets. Ruff, mypy, both docstring gates, docs, and diff check passed.
         Full raw proof: /private/tmp/graphex-t4b2b2b2.csQs2s/. Independent
         verification and hosted gates remain pending, so this task stays open.
+        A later independent control at `ce47fc4` exposed a mkdir-to-open
+        ownership race: on synthetic child failure the dispatcher removed a
+        replacement directory and its pre-existing result. The focused
+        correction records the created directory identity before descriptor
+        acquisition and refuses mismatches; regular-file, empty-directory,
+        and symlink replacements are regression-covered. The chronological
+        new RED failed two preservation controls (regular and empty); root
+        Python 3.12.11/core 3.2.13 GREEN passed three controls. Native-3.3
+        local proof is pending because the exact locked wheel could not be
+        fetched in the restricted environment. Do not treat earlier 4,527
+        tests or four diagnostic runs as proof for this corrected head.
         Leave three-run publication and quiet measurements for later slices;
         Engram mirror remains pending. Roll back only this dispatch slice.
   - [ ] T4c — Complete Playground/example and migration guidance, verify

@@ -462,34 +462,37 @@ def run_single(plan: RunPlan) -> Path:
         destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     )
     output_fd: int | None = None
+    created: os.stat_result | None = None
     checked_file: os.stat_result | None = None
     filename = f"{plan.library}.json"
+
+    def owned() -> bool:
+        """Check that the visible name still identifies the created directory.
+
+        Returns:
+            Whether acquisition and the visible name match the created inode.
+        """
+        if output_fd is None or created is None:
+            return False
+        held = os.fstat(output_fd)
+        try:
+            named = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            return False
+        identity = (created.st_dev, created.st_ino)
+        return stat.S_ISDIR(named.st_mode) and (
+            (held.st_dev, held.st_ino) == identity
+            and (named.st_dev, named.st_ino) == identity
+        )
+
     try:
         os.mkdir(destination.name, mode=0o700, dir_fd=parent_fd)
+        created = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
         output_fd = os.open(
             destination.name,
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=parent_fd,
         )
-        held = os.fstat(output_fd)
-
-        def owned() -> bool:
-            """Check that the visible name still identifies the held directory.
-
-            Returns:
-                Whether the output name still identifies this attempt's inode.
-            """
-            try:
-                named = os.stat(
-                    destination.name, dir_fd=parent_fd, follow_symlinks=False
-                )
-            except OSError:
-                return False
-            return stat.S_ISDIR(named.st_mode) and (named.st_dev, named.st_ino) == (
-                held.st_dev,
-                held.st_ino,
-            )
-
         if not owned():
             raise ValueError("output directory changed before measurement")
         environment = _environment(plan.library, plan.database, plan.authors)

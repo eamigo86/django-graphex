@@ -742,6 +742,70 @@ def test_single_run_preserves_replacement_directory_on_failure(
     assert (moved / "graphex.json").is_file()
 
 
+@pytest.mark.parametrize("replacement", ["regular", "empty", "symlink"])
+def test_single_run_rejects_replacement_before_directory_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    """Never adopt or clean a foreign output swapped between mkdir and open.
+
+    Args:
+        tmp_path: Disposable attempt and foreign directory paths.
+        monkeypatch: Fixture swapping the output immediately before descriptor open.
+        replacement: Foreign directory shape to preserve.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    displaced = tmp_path / "displaced-attempt"
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    sentinel = foreign / "graphex.json"
+    if replacement == "regular":
+        sentinel.write_bytes(b"pre-existing foreign result\n")
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+    real_open = run_comparison.os.open
+    swapped = False
+
+    def swap_before_open(
+        path: str | bytes | os.PathLike[str],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if path == output.name and dir_fd is not None and not swapped:
+            output.rename(displaced)
+            if replacement == "symlink":
+                output.symlink_to(foreign, target_is_directory=True)
+            else:
+                foreign.rename(output)
+            swapped = True
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    def fail_child(_command: list[str], **_kwargs: object) -> None:
+        pytest.fail("measurement started after directory acquisition drift")
+
+    monkeypatch.setattr(run_comparison.os, "open", swap_before_open)
+    monkeypatch.setattr(run_comparison.subprocess, "run", fail_child)
+    with pytest.raises((ValueError, OSError)):
+        run_comparison.run_single(plan)
+
+    assert swapped
+    assert displaced.is_dir()
+    if replacement == "symlink":
+        assert output.is_symlink()
+        assert foreign.is_dir()
+    else:
+        assert output.is_dir()
+    if replacement == "regular":
+        assert (
+            output / "graphex.json"
+        ).read_bytes() == b"pre-existing foreign result\n"
+
+
 def test_single_run_rejects_symlink_result_without_touching_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
