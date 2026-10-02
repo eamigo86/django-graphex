@@ -223,6 +223,7 @@ of scope.
         benchmark tests, 96.23%; quality and docs pass. Proof:
         /private/tmp/graphex-t4b2b2.Qr4xxr/numeric-fix/.
         Original work unit: dff6703475bbec39fce5bca7edbb72852f952de7.
+        Numeric correction: d934c045c42cc0c6f8a3e9c6a404719c4a7297a5.
         Roll back only this validator slice.
       - [ ] T4b2b2b — Dispatch the existing five-operation harness after
         preflight via the selected interpreter. Reuse the checked validator,
