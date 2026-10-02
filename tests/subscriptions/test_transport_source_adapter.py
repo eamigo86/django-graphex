@@ -20,6 +20,211 @@ from graphql import (
 from django_graphex.subscriptions.transports import _start_source_event_stream
 
 
+def test_legacy_validation_omits_native_suggestion_keyword(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pass only legacy validation options when the native flag is unavailable.
+
+    Args:
+        monkeypatch: Fixture replacing the capability and validation callable.
+    """
+    from django_graphex.subscriptions import transports
+
+    schema = object()
+    document = object()
+    rules = object()
+
+    def legacy_validate(
+        actual_schema: Any,
+        actual_document: Any,
+        actual_rules: Any,
+        *,
+        max_errors: int,
+    ) -> list[GraphQLError]:
+        """Reject unsupported keywords through the legacy signature.
+
+        Args:
+            actual_schema: Schema supplied by the transport.
+            actual_document: Document supplied by the transport.
+            actual_rules: Validation rules supplied by the transport.
+            max_errors: Error limit supplied by the transport.
+
+        Returns:
+            No validation errors for the contract probe.
+        """
+        assert (actual_schema, actual_document, actual_rules, max_errors) == (
+            schema,
+            document,
+            rules,
+            9,
+        )
+        return []
+
+    monkeypatch.setattr(transports, "_VALIDATE_SUPPORTS_HIDE_SUGGESTIONS", False)
+    monkeypatch.setattr(transports, "validate", legacy_validate)
+    assert (
+        transports._validate_subscription_document(
+            schema, document, rules, max_errors=9, hide_suggestions=True
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("with_errors", [False, True])
+async def test_legacy_source_factory_receives_original_request_contract(
+    monkeypatch: pytest.MonkeyPatch, *, with_errors: bool
+) -> None:
+    """Keep schema/document source construction and startup errors on 3.2.
+
+    Args:
+        monkeypatch: Fixture selecting the legacy GraphQL execution API.
+        with_errors: Whether the source factory returns startup errors.
+    """
+    from django_graphex.subscriptions import transports
+
+    schema = object()
+    document = object()
+    context = object()
+    variables = {"value": "ready"}
+    errors = [GraphQLError("source unavailable")]
+    calls: list[tuple[Any, Any, Any, Any, Any]] = []
+
+    async def events() -> AsyncIterator[str]:
+        """Yield one raw event from a synchronously returned source.
+
+        Yields:
+            The event payload.
+        """
+        yield "ready"
+
+    def legacy_source_factory(
+        actual_schema: Any,
+        actual_document: Any,
+        *,
+        context_value: Any,
+        variable_values: Any,
+        operation_name: Any,
+    ) -> Any:
+        """Require the original source-factory argument shape.
+
+        Args:
+            actual_schema: Request schema.
+            actual_document: Parsed subscription document.
+            context_value: Request-specific transport context.
+            variable_values: Client variables.
+            operation_name: Selected subscription operation.
+
+        Returns:
+            A stream or a startup error result.
+        """
+        calls.append(
+            (
+                actual_schema,
+                actual_document,
+                context_value,
+                variable_values,
+                operation_name,
+            )
+        )
+        return ExecutionResult(errors=errors) if with_errors else events()
+
+    monkeypatch.setattr(transports.graphql_execution, "Executor", None, raising=False)
+    result = await _start_source_event_stream(
+        schema,
+        document,
+        context_value=context,
+        variable_values=variables,
+        operation_name="Chosen",
+        source_factory=legacy_source_factory,
+        hide_suggestions=True,
+    )
+    assert calls == [(schema, document, context, variables, "Chosen")]
+    if with_errors:
+        assert isinstance(result, ExecutionResult)
+        assert result.errors == errors
+    else:
+        assert not isinstance(result, ExecutionResult)
+        assert await anext(result.__aiter__()) == "ready"
+
+
+async def test_executor_without_suggestion_option_starts_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not send an unsupported hint flag to an Executor builder.
+
+    Args:
+        monkeypatch: Fixture selecting the unsupported-capability branch.
+    """
+    from django_graphex.subscriptions import transports
+
+    schema = object()
+    document = object()
+    context = object()
+    variables = {"value": "ready"}
+    built = object()
+    received: list[Any] = []
+
+    class LegacyExecutor:
+        """Expose a builder without a native suggestion option."""
+
+        @staticmethod
+        def build(
+            actual_schema: Any,
+            actual_document: Any,
+            *,
+            context_value: Any,
+            raw_variable_values: Any,
+            operation_name: Any,
+        ) -> Any:
+            """Require only supported options and return an executor marker.
+
+            Args:
+                actual_schema: Request schema.
+                actual_document: Parsed subscription document.
+                context_value: Request-specific transport context.
+                raw_variable_values: Client variables.
+                operation_name: Selected subscription operation.
+
+            Returns:
+                The built executor marker.
+            """
+            assert (actual_schema, actual_document) == (schema, document)
+            assert (context_value, raw_variable_values, operation_name) == (
+                context,
+                variables,
+                "Chosen",
+            )
+            return built
+
+    def source_factory(executor: Any) -> Any:
+        """Receive the built executor without rebuilding the source.
+
+        Args:
+            executor: Built executor marker.
+
+        Returns:
+            The same marker for assertion.
+        """
+        received.append(executor)
+        return executor
+
+    monkeypatch.setattr(
+        transports.graphql_execution, "Executor", LegacyExecutor, raising=False
+    )
+    monkeypatch.setattr(transports, "_EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS", False)
+    result = await _start_source_event_stream(
+        schema,
+        document,
+        context_value=context,
+        variable_values=variables,
+        operation_name="Chosen",
+        source_factory=source_factory,
+        hide_suggestions=True,
+    )
+    assert result is built
+    assert received == [built]
+
+
 async def test_sync_subscribe_resolver_starts_source_on_both_core_versions() -> None:
     """Use an immediately returned source without assuming it is awaitable.
 
