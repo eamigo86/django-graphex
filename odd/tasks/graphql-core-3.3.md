@@ -169,6 +169,12 @@ of scope.
     per-library compatible core versions; keep historical replay isolated
     and historical artifacts byte-identical. No new performance result is
     claimed until measured.
+    - [x] T4b1a/b — Locally verify named dependency freezes, preflight, and
+      isolated setup; independent and hosted delivery checks remain pending.
+    - [ ] T4b1b-CI — Align disposable fake-uv fixtures with the test interpreter;
+      retain the real 3.12.11 pin and wrong-interpreter rejection. Recheck the
+      focused contracts, 3.14 portability, and clean native-3.3 full suite.
+    - [ ] T4b2 — Add the separately named runner, provenance, and measurements.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run
@@ -666,6 +672,47 @@ an authoritative runtime identity.
   root environment install, remote operation, main merge, tag, or publication
   occurred in this local work unit. New floor-head independent and hosted
   checks remain pending; T4b-T4d and package SemVer remain undecided.
+
+### T4b1 local proof and remaining gate
+
+- The corrected profile child `b0f2fdba2888296ef117aa304602558ff11203a9`
+  fixes the independent Graphex and Graphene startup blockers (345 authored
+  plus 47 installer-observed freeze lines). Its clean native-3.3 suite passed
+  4,438 tests at 96.23% branch coverage. Conventional merge
+  `f7d39a4ffba8903371b4a412e783cade4fbee57c` carries it into this setup
+  child without rewriting either history; focused setup diff remains 358 lines.
+- Two fresh offline setup recreations produced four byte-identical freezes per
+  round with valid activation and entrypoints. All four real seeded five-step
+  HTTP workloads passed with mutation rollback; all 20 SQL counts matched the
+  frozen contracts. Clean setup clone passed 56 benchmark and 4,444 full
+  native-3.3 tests at 96.23%; Ruff, mypy, docstrings, docs, Bash, and pinned
+  ShellCheck passed. Proof: `/private/tmp/graphex-t4b1-correction.efG5xu/`.
+  Independent and hosted checks remain pending; T4b2 measurements are not run.
+- Profile child `783385d35d25fdcfd7f91e595949e9076199016b` records observed
+  per-library constraints and validates the selected direct pins. Its clean
+  clone passed 46 benchmark tests and 4,434 full native-3.3 tests at 96.23%
+  branch coverage. Setup commits through `624503147705866e59f781091ea593ce6cb3c369`
+  add fail-closed final-path installation and the historical published-wheel
+  pin; the exact clean clone passed 52 benchmark tests and 4,440 full native-3.3 tests at
+  96.23%, above the unchanged 95.01% gate. Both runs had seven established
+  skips, three warnings, and 23 passed subtests.
+- Chronological RED before source: five new tests failed for absent profile,
+  setup, and historical-wheel behavior. Separate new RED tests exposed ambient
+  UV credential variables and venv relocation; both passed after focused fixes.
+  Focused GREEN: 14 passed. Four stacks
+  were recreated twice offline from the isolated cache with exact freezes;
+  an empty-cache control failed without promoting or leaving a target venv.
+  A fresh four-stack replay used isolated HOME, retained final-path activation
+  scripts and console commands, and passed exact freeze comparisons.
+  The published historical 3.1.0 wheel imported from site-packages when run
+  from the benchmarks directory without a source-shadowing PYTHONPATH.
+- Ruff, native-3.3 mypy (80 files), standard and strict Google docstrings
+  (TOTAL 0), docs (five established anchor warnings), Bash syntax, and diff
+  checks passed. Shellcheck was unavailable and was not waived or installed.
+  No covered package-runtime line changed, so package patch coverage is N/A.
+  Proof is under `/private/tmp/graphex-t4b1.8H68G9/`. Independent review,
+  hosted CI, T4b2 runner, new measurements, T4c, and T4d remain pending;
+  no GitHub delivery, main merge, tag, or publication occurred here.
 
 ### T4b1 named-profile bootstrap (focused local child)
 
