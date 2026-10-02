@@ -49,7 +49,11 @@ process also records a `profile_witness`: the loaded backend and schema paths,
 actual Python/Django/GraphQL-core versions, source commit and tree, source
 version read from the measured checkout, and selected manifest/freeze hashes.
 The historical harness without that variable keeps its original output
-contract. The named runner's read-only `validate_result(plan, result)` checks
+contract. For a named profile, an optional BENCH_OUTPUT_FD must name the same
+directory as BENCH_OUTPUT_DIR; the harness then writes through that held
+directory descriptor with an empty filename prefix and exclusive creation.
+This is a write boundary, not a new runner or a sandbox for arbitrary callers.
+The named runner's read-only `validate_result(plan, result)` checks
 this witness against preflight, plus the selected stack, shared schema surface,
 five-operation SQL counts, iteration counts, and five schema rebuild samples.
 Timings must be finite, nonnegative numbers rather than JSON booleans; SQL

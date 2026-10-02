@@ -111,6 +111,248 @@ def test_harness_provenance_changes_only_for_named_profile(
         assert result["versions"]["django-graphex"] == "3.1.0"
 
 
+def test_named_profile_rejects_output_descriptor_for_another_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refuse a descriptor that does not name the declared output directory.
+
+    Args:
+        tmp_path: Disposable owned and decoy output directories.
+        monkeypatch: Fixture replacing workload operations and environment.
+    """
+    from benchmarks import harness
+
+    declared = tmp_path / "declared"
+    held = tmp_path / "held"
+    declared.mkdir()
+    held.mkdir()
+    descriptor = os.open(held, os.O_RDONLY | os.O_DIRECTORY)
+    schema = SimpleNamespace(OPERATIONS={}, LIB_VERSIONS={})
+    monkeypatch.setattr(harness, "_import_schema", lambda: (schema, 1.0, [1.0] * 5))
+    monkeypatch.setattr(harness, "_surface", lambda *_: {})
+    monkeypatch.setattr(
+        harness,
+        "_profile_witness",
+        lambda *_: {
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+            "source_version": "3.1.1",
+            "constraints_sha256": "c" * 64,
+        },
+    )
+    monkeypatch.setenv("BENCH_OUTPUT_DIR", str(declared))
+    monkeypatch.setenv("BENCH_OUTPUT_FD", str(descriptor))
+    monkeypatch.setenv("BENCH_PREFIX", "")
+    try:
+        with pytest.raises(ValueError, match="descriptor"):
+            harness.main()
+    finally:
+        os.close(descriptor)
+    assert list(declared.iterdir()) == []
+    assert list(held.iterdir()) == []
+
+
+def test_named_profile_writes_through_held_output_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Write named output through the held directory, not its pathname.
+
+    Args:
+        tmp_path: Disposable diagnostic directory.
+        monkeypatch: Fixture replacing workload operations and path writes.
+
+    Raises:
+        AssertionError: If the harness writes through the output pathname.
+    """
+    from benchmarks import harness
+
+    output = tmp_path / "owned"
+    output.mkdir()
+    descriptor = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    schema = SimpleNamespace(OPERATIONS={}, LIB_VERSIONS={})
+    monkeypatch.setattr(harness, "_import_schema", lambda: (schema, 1.0, [1.0] * 5))
+    monkeypatch.setattr(harness, "_surface", lambda *_: {})
+    monkeypatch.setattr(
+        harness,
+        "_profile_witness",
+        lambda *_: {
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+            "source_version": "3.1.1",
+            "constraints_sha256": "c" * 64,
+        },
+    )
+    monkeypatch.setenv("BENCH_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("BENCH_OUTPUT_FD", str(descriptor))
+    monkeypatch.setenv("BENCH_PREFIX", "")
+    original_open = Path.open
+
+    def forbid_path_write(path: Path, *args: object, **kwargs: object) -> object:
+        """Reject pathname output while permitting unrelated file reads.
+
+        Args:
+            path: File path requested by the harness.
+            *args: Positional arguments for the original opener.
+            **kwargs: Keyword arguments for the original opener.
+
+        Returns:
+            The original opener's stream for another path.
+
+        Raises:
+            AssertionError: If the harness writes through the output pathname.
+        """
+        if path == output / "graphex.json":
+            raise AssertionError("named output used its pathname")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", forbid_path_write)
+    try:
+        harness.main()
+    finally:
+        os.close(descriptor)
+    assert (output / "graphex.json").is_file()
+
+
+def test_named_profile_descriptor_rejects_ambient_filename_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep an ambient prefix from changing the held-directory filename.
+
+    Args:
+        tmp_path: Disposable diagnostic directory.
+        monkeypatch: Fixture replacing workload operations and environment.
+    """
+    from benchmarks import harness
+
+    output = tmp_path / "owned"
+    output.mkdir()
+    descriptor = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    schema = SimpleNamespace(OPERATIONS={}, LIB_VERSIONS={})
+    monkeypatch.setattr(harness, "_import_schema", lambda: (schema, 1.0, [1.0] * 5))
+    monkeypatch.setattr(harness, "_surface", lambda *_: {})
+    monkeypatch.setattr(
+        harness,
+        "_profile_witness",
+        lambda *_: {
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+            "source_version": "3.1.1",
+            "constraints_sha256": "c" * 64,
+        },
+    )
+    monkeypatch.setenv("BENCH_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("BENCH_OUTPUT_FD", str(descriptor))
+    monkeypatch.setattr(harness, "BENCH_PREFIX", "../escape")
+    try:
+        with pytest.raises(ValueError, match="prefix"):
+            harness.main()
+    finally:
+        os.close(descriptor)
+    assert list(output.iterdir()) == []
+
+
+@pytest.mark.parametrize("library", ["../escape", "/tmp/escape"])
+def test_named_profile_descriptor_rejects_unsafe_library_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, library: str
+) -> None:
+    """Reject traversal-bearing library names before held-directory writes.
+
+    Args:
+        tmp_path: Disposable diagnostic directory.
+        monkeypatch: Fixture replacing workload operations and library name.
+        library: Traversal-bearing or absolute library value.
+    """
+    from benchmarks import harness
+
+    output = tmp_path / "owned"
+    output.mkdir()
+    descriptor = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    schema = SimpleNamespace(OPERATIONS={}, LIB_VERSIONS={})
+    monkeypatch.setattr(harness, "_import_schema", lambda: (schema, 1.0, [1.0] * 5))
+    monkeypatch.setattr(harness, "_surface", lambda *_: {})
+    monkeypatch.setattr(
+        harness,
+        "_profile_witness",
+        lambda *_: {
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+            "source_version": "3.1.1",
+            "constraints_sha256": "c" * 64,
+        },
+    )
+    monkeypatch.setattr(harness, "BENCH_LIB", library)
+    monkeypatch.setenv("BENCH_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("BENCH_OUTPUT_FD", str(descriptor))
+    try:
+        with pytest.raises(ValueError, match="library"):
+            harness.main()
+    finally:
+        os.close(descriptor)
+    assert list(output.iterdir()) == []
+
+
+def test_named_profile_descriptor_stays_on_renamed_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the write on the held inode if its visible path is replaced.
+
+    Args:
+        tmp_path: Disposable original and replacement directories.
+        monkeypatch: Fixture replacing workload operations and path lookup.
+    """
+    from benchmarks import harness
+
+    output = tmp_path / "owned"
+    moved = tmp_path / "moved"
+    output.mkdir()
+    descriptor = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+    schema = SimpleNamespace(OPERATIONS={}, LIB_VERSIONS={})
+    monkeypatch.setattr(harness, "_import_schema", lambda: (schema, 1.0, [1.0] * 5))
+    monkeypatch.setattr(harness, "_surface", lambda *_: {})
+    monkeypatch.setattr(
+        harness,
+        "_profile_witness",
+        lambda *_: {
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+            "source_version": "3.1.1",
+            "constraints_sha256": "c" * 64,
+        },
+    )
+    monkeypatch.setenv("BENCH_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("BENCH_OUTPUT_FD", str(descriptor))
+    monkeypatch.setattr(harness, "BENCH_PREFIX", "")
+    real_stat = os.stat
+    real_fstat = os.fstat
+    descriptor_checked = False
+
+    def notice_descriptor(fd: int) -> os.stat_result:
+        nonlocal descriptor_checked
+        if fd == descriptor:
+            descriptor_checked = True
+        return real_fstat(fd)
+
+    def replace_after_lookup(path: object, **kwargs: object) -> os.stat_result:
+        result = real_stat(path, **kwargs)
+        if (
+            descriptor_checked
+            and path == output
+            and kwargs.get("follow_symlinks") is False
+        ):
+            output.rename(moved)
+            output.mkdir()
+        return result
+
+    monkeypatch.setattr(harness.os, "fstat", notice_descriptor)
+    monkeypatch.setattr(harness.os, "stat", replace_after_lookup)
+    try:
+        harness.main()
+    finally:
+        os.close(descriptor)
+    assert (moved / "graphex.json").is_file()
+    assert list(output.iterdir()) == []
+
+
 def test_all_117_operation_requests_roll_back_rows_and_sqlite_sequence(
     tmp_path: Path,
 ) -> None:
