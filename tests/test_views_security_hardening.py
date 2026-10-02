@@ -26,6 +26,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
 from graphql import (
+    ExecutionResult,
     GraphQLArgument,
     GraphQLBoolean,
     GraphQLEnumType,
@@ -911,6 +912,82 @@ class NativeHttpSuggestionPrivacyTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(forwarded, [True])
+
+    def test_legacy_http_capabilities_omit_new_execution_options(self) -> None:
+        """Use the legacy backend keyword without native-only execution options.
+
+        A strict spy rejects unsupported options before returning a real HTTP
+        result, regardless of the GraphQL-core generation installed for tests.
+        """
+        backend = object
+        view = BaseGraphQLView.as_view(schema=_schema, executor_class=backend)
+        captured: list[dict[str, Any]] = []
+        validated: list[Any] = []
+        original_validate = views_module.validate
+
+        def legacy_validate(
+            schema: Any, document: Any, rules: Any, max_errors: Any
+        ) -> Any:
+            """Delegate validation without accepting native-only keywords.
+
+            Args:
+                schema: Request schema passed by the view.
+                document: Parsed request document.
+                rules: Validation rules configured for the view.
+                max_errors: Maximum validation errors for this request.
+
+            Returns:
+                Native validation errors for the document.
+            """
+            validated.append(document)
+            return original_validate(schema, document, rules, max_errors)
+
+        def legacy_execute(schema: Any, document: Any, **options: Any) -> Any:
+            """Assert the legacy call contract and return a query result.
+
+            Args:
+                schema: Request schema passed by the view.
+                document: Parsed request document.
+                **options: Execution options supported by the legacy API.
+
+            Returns:
+                A successful GraphQL result for the HTTP response.
+            """
+            self.assertIs(schema, _schema.graphql_schema)
+            self.assertIsNotNone(document)
+            self.assertIs(options["execution_context_class"], backend)
+            self.assertNotIn("executor_class", options)
+            self.assertNotIn("hide_suggestions", options)
+            self.assertNotIn("is_async_iterable", options)
+            captured.append(options)
+            return ExecutionResult(data={"hello": "world"})
+
+        with (
+            patch.object(
+                views_module, "_EXECUTION_BACKEND_KEYWORD", "execution_context_class"
+            ),
+            patch.object(views_module, "_VALIDATE_SUPPORTS_HIDE_SUGGESTIONS", False),
+            patch.object(views_module, "_EXECUTE_SUPPORTS_HIDE_SUGGESTIONS", False),
+            patch.object(views_module, "validate", side_effect=legacy_validate),
+            patch.object(views_module, "execute", side_effect=legacy_execute),
+            override_settings(
+                DJANGO_GRAPHEX={
+                    "ALLOW_INTROSPECTION": False,
+                    "MIDDLEWARE": _INTROSPECTION_MIDDLEWARE,
+                }
+            ),
+        ):
+            request = self.factory.post(
+                "/graphql/",
+                json.dumps({"query": "{ hello }"}),
+                content_type="application/json",
+            )
+            response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["data"], {"hello": "world"})
+        self.assertEqual(len(validated), 1)
+        self.assertEqual(len(captured), 1)
 
 
 @override_settings(

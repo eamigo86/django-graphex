@@ -151,6 +151,9 @@ def iter_ids(limit: int) -> Iterator[int]:
   **95.01%**.
 - Use descriptive test names
 - Follow the existing test structure
+- Capability-path tests may use strict legacy signatures to verify that a
+  newer GraphQL-core engine does not receive keywords unsupported by an older
+  API. They do not extend the declared runtime support range.
 
 The tool dependencies in `tox.ini` deliberately use bounded compatibility
 ranges. Keep those ranges identical to their entries in
