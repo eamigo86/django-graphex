@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from benchmarks import harness
 from benchmarks.verify_freeze import render_verified_freeze
 
@@ -123,6 +125,8 @@ def test_offline_replay_fails_clearly_without_a_cached_package(tmp_path: Path) -
     """
     benchmark_dir = tmp_path / "benchmarks"
     benchmark_dir.mkdir()
+    previous_freeze = benchmark_dir / ".freeze-graphex.txt"
+    previous_freeze.write_text("previous freeze")
     for name in ("setup_envs.sh", "versions.env", "constraints.txt"):
         shutil.copy2(BENCHMARKS / name, benchmark_dir / name)
 
@@ -160,8 +164,201 @@ exit 1
     assert result.returncode != 0
     assert "offline benchmark cache is incomplete" in result.stderr
     assert "venv -p 3.12.11" in uv_log.read_text()
-    assert "pip install --offline" in uv_log.read_text()
+    assert "pip install --no-config --offline" in uv_log.read_text()
     assert all(line.endswith("|never") for line in uv_log.read_text().splitlines())
+    assert not (benchmark_dir / ".venv-graphex").exists()
+    assert previous_freeze.read_text() == "previous freeze"
+
+
+@pytest.mark.parametrize("target_kind", ("directory", "file", "symlink", "dangling"))
+def test_legacy_setup_preserves_existing_target_on_offline_failure(
+    tmp_path: Path,
+    target_kind: str,
+) -> None:
+    """Keep an existing historical environment when the cache is incomplete.
+
+    Args:
+        tmp_path: Disposable benchmark checkout and command directory.
+        target_kind: Existing final-path entry to preserve.
+    """
+    benchmark_dir = tmp_path / "benchmarks"
+    benchmark_dir.mkdir()
+    for name in ("setup_envs.sh", "versions.env", "constraints.txt"):
+        shutil.copy2(BENCHMARKS / name, benchmark_dir / name)
+    existing = benchmark_dir / ".venv-graphex"
+    marker = tmp_path / "keep.txt"
+    marker.write_text("original environment")
+    if target_kind == "directory":
+        existing.mkdir()
+        (existing / "keep.txt").write_text("original environment")
+    elif target_kind == "file":
+        existing.write_text("original environment")
+    else:
+        existing.symlink_to(marker if target_kind == "symlink" else tmp_path / "absent")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv_log = tmp_path / "uv.log"
+    fake_uv = bin_dir / "uv"
+    fake_uv.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$UV_LOG"\n'
+        'if [[ "$1" == "venv" ]]; then mkdir -p "${@: -1}/bin"; exit 0; fi\n'
+        "exit 1\n"
+    )
+    fake_uv.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(benchmark_dir / "setup_envs.sh"), "graphex"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "BENCH_OFFLINE": "1",
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "UV_LOG": str(uv_log),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert existing.exists() or existing.is_symlink()
+    if target_kind == "directory":
+        assert (existing / "keep.txt").read_text() == "original environment"
+    elif target_kind == "file":
+        assert existing.read_text() == "original environment"
+    else:
+        assert existing.is_symlink()
+    assert marker.read_text() == "original environment"
+    assert not uv_log.exists()
+
+
+def test_legacy_setup_preflights_every_requested_target(tmp_path: Path) -> None:
+    """Reject a later existing target before creating the first environment.
+
+    Args:
+        tmp_path: Disposable benchmark checkout and fake command directory.
+    """
+    benchmark_dir = tmp_path / "benchmarks"
+    benchmark_dir.mkdir()
+    for name in ("setup_envs.sh", "versions.env", "constraints.txt"):
+        shutil.copy2(BENCHMARKS / name, benchmark_dir / name)
+    existing = benchmark_dir / ".venv-graphene"
+    existing.mkdir()
+    marker = existing / "keep.txt"
+    marker.write_text("original environment")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_uv = bin_dir / "uv"
+    fake_uv.write_text('#!/usr/bin/env bash\necho called > "$UV_LOG"\nexit 1\n')
+    fake_uv.chmod(0o755)
+    uv_log = tmp_path / "uv.log"
+    result = subprocess.run(
+        ["bash", str(benchmark_dir / "setup_envs.sh"), "graphex", "graphene"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "UV_LOG": str(uv_log),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "will not be replaced" in result.stderr
+    assert marker.read_text() == "original environment"
+    assert not (benchmark_dir / ".venv-graphex").exists()
+    assert not uv_log.exists()
+
+
+@pytest.mark.parametrize(
+    ("requested", "existing_name"),
+    (((), "ariadne"), (("graphex", "unknown"), None), (("graphex", "graphex"), None)),
+)
+def test_legacy_setup_rejects_invalid_whole_requests_before_install(
+    tmp_path: Path,
+    requested: tuple[str, ...],
+    existing_name: str | None,
+) -> None:
+    """Reject invalid or duplicate libraries and the last default target first.
+
+    Args:
+        tmp_path: Disposable benchmark checkout and fake command directory.
+        requested: Explicit library names, or empty for the default four.
+        existing_name: Existing target used by the no-argument case.
+    """
+    benchmark_dir = tmp_path / "benchmarks"
+    benchmark_dir.mkdir()
+    for name in ("setup_envs.sh", "versions.env", "constraints.txt"):
+        shutil.copy2(BENCHMARKS / name, benchmark_dir / name)
+    if existing_name:
+        (benchmark_dir / f".venv-{existing_name}").write_text("keep")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_uv = bin_dir / "uv"
+    fake_uv.write_text('#!/usr/bin/env bash\necho called > "$UV_LOG"\nexit 1\n')
+    fake_uv.chmod(0o755)
+    uv_log = tmp_path / "uv.log"
+    result = subprocess.run(
+        ["bash", str(benchmark_dir / "setup_envs.sh"), *requested],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "UV_LOG": str(uv_log),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert not uv_log.exists()
+    assert not (benchmark_dir / ".venv-graphex").exists()
+    if existing_name:
+        assert (benchmark_dir / f".venv-{existing_name}").read_text() == "keep"
+
+
+def test_legacy_setup_rolls_back_all_fresh_targets_on_later_install_failure(
+    tmp_path: Path,
+) -> None:
+    """Remove only this attempt's venvs if a later package install fails.
+
+    Args:
+        tmp_path: Disposable benchmark checkout and fake command directory.
+    """
+    benchmark_dir = tmp_path / "benchmarks"
+    benchmark_dir.mkdir()
+    for name in ("setup_envs.sh", "versions.env", "constraints.txt"):
+        shutil.copy2(BENCHMARKS / name, benchmark_dir / name)
+    old_freeze = benchmark_dir / ".freeze-graphex.txt"
+    old_freeze.write_text("previous freeze")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_uv = bin_dir / "uv"
+    fake_uv.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$1" == "venv" ]]; then\n'
+        '  target="${@: -1}"\n'
+        '  mkdir -p "$target/bin"\n'
+        '  printf "#!/usr/bin/env bash\\nprintf \'django==6.0.6\\\\n\'\\n" > "$target/bin/python"\n'
+        '  chmod +x "$target/bin/python"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "$*" == *"graphene-django"* ]]; then exit 1; fi\n'
+        "exit 0\n"
+    )
+    fake_uv.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(benchmark_dir / "setup_envs.sh"), "graphex", "graphene"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert not (benchmark_dir / ".venv-graphex").exists()
+    assert not (benchmark_dir / ".venv-graphene").exists()
+    assert old_freeze.read_text() == "previous freeze"
 
 
 def test_result_provenance_records_commit_and_constraints_hash() -> None:
