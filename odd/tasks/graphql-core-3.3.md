@@ -669,6 +669,14 @@ an authoritative runtime identity.
 
 ### T4b1 named-profile bootstrap (focused local child)
 
+- Independent verification reopened T4b1a/b: the source-backed Graphex venv
+  cannot start without its declared Pydantic/dateutil/unidecode dependencies,
+  and the unchanged Graphene adapter cannot import its django-filter field.
+  Metadata/freeze equality alone is not a runnable-stack contract. Add failing
+  source/adapter dependency tests first, then observed exact freezes and all
+  five real HTTP workload contracts per library. Correct this profile child
+  before history-merging it into the setup child; both remain local pending
+  independent and hosted revalidation. Historical artifacts stay frozen.
 - Human-selected future package version is 4.0.0, not yet applied or released.
   The approved new comparison uses Strawberry 0.328.0 plus
   strawberry-django 0.90.0 on core 3.3.0; the earlier 0.320.1/0.86.4
