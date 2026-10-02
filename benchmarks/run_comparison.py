@@ -1,4 +1,4 @@
-"""Preflight one named-profile benchmark without running measurements."""
+"""Preflight a named profile and optionally dispatch one diagnostic run."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import math
 import os
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import tomllib
@@ -373,8 +374,184 @@ def validate_result(plan: RunPlan, result: dict[str, Any]) -> None:
         raise ValueError("measured schema rebuild count differs from contract")
 
 
+def _database_identity(database: Path) -> tuple[str, tuple[tuple[str, int], ...]]:
+    """Read seed bytes and persistent SQLite allocation sequence.
+
+    Args:
+        database: Prepared SQLite seed file.
+
+    Returns:
+        Database digest and ordered sequence values.
+    """
+    with sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True) as connection:
+        sequence = tuple(
+            connection.execute("SELECT name, seq FROM sqlite_sequence ORDER BY name")
+        )
+    return hashlib.sha256(database.read_bytes()).hexdigest(), sequence
+
+
+def _check_measured_context(plan: RunPlan) -> None:
+    """Recheck source, selected stack, and seed after the child exits.
+
+    Args:
+        plan: Identity attested before the measured subprocess.
+
+    Raises:
+        ValueError: If source, profile, runtime, or seed has drifted.
+    """
+    if (
+        _git_identity() != (plan.commit, plan.tree)
+        or str(
+            tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+        )
+        != plan.source_version
+    ):
+        raise ValueError("source changed during measurement")
+    spec = load_profile(plan.profile, plan.library, BASE)
+    manifest = BASE / "comparison_profiles" / plan.profile / "manifest.json"
+    freeze = spec["constraints"].read_text()
+    if hashlib.sha256(manifest.read_bytes()).hexdigest() != plan.manifest_sha256:
+        raise ValueError("profile manifest changed during measurement")
+    if (
+        hashlib.sha256(spec["constraints"].read_bytes()).hexdigest()
+        != plan.constraints_sha256
+        or (plan.python.parent.parent / ".freeze.txt").read_text() != freeze
+        or _installed_freeze(plan.python, spec["constraints"], plan.library) != freeze
+    ):
+        raise ValueError("profile freeze changed during measurement")
+    runtime = _runtime_probe(plan.python, plan.library, plan.database, plan.authors)
+    if runtime != {
+        "python": plan.python_version,
+        "django": plan.packages["django"],
+        "graphql-core": plan.packages["graphql-core"],
+        "backend_path": str(plan.backend_path),
+    }:
+        raise ValueError("profile runtime changed during measurement")
+    _check_database(plan.database, plan.authors)
+
+
+def run_single(plan: RunPlan) -> Path:
+    """Measure once into a disposable output using the selected interpreter.
+
+    Failed attempts retain their output because pathname observations cannot
+    establish creation ownership for safe automatic deletion.
+
+    Args:
+        plan: Read-only preflight selection.
+
+    Returns:
+        Verified diagnostic JSON path.
+
+    Raises:
+        ValueError: If source, seed, or measured result differs from preflight.
+        FileExistsError: If the destination was claimed after preflight.
+        subprocess.CalledProcessError: If the measuring child fails.
+    """
+    if (
+        prepare_run(
+            plan.profile,
+            plan.library,
+            plan.python.parents[2],
+            plan.database,
+            plan.output_root,
+            plan.authors,
+        )
+        != plan
+    ):
+        raise ValueError("profile changed after preflight")
+    before = _database_identity(plan.database)
+    destination = plan.output_root
+    parent_fd = os.open(
+        destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    )
+    output_fd: int | None = None
+    observed: os.stat_result | None = None
+    filename = f"{plan.library}.json"
+
+    def unchanged() -> bool:
+        """Check that the visible name still identifies the observed directory.
+
+        Returns:
+            Whether acquisition and the visible name match the observed inode.
+        """
+        if output_fd is None or observed is None:
+            return False
+        held = os.fstat(output_fd)
+        try:
+            named = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            return False
+        identity = (observed.st_dev, observed.st_ino)
+        return stat.S_ISDIR(named.st_mode) and (
+            (held.st_dev, held.st_ino) == identity
+            and (named.st_dev, named.st_ino) == identity
+        )
+
+    try:
+        os.mkdir(destination.name, mode=0o700, dir_fd=parent_fd)
+        observed = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        output_fd = os.open(
+            destination.name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=parent_fd,
+        )
+        if not unchanged():
+            raise ValueError("output directory changed before measurement")
+        environment = _environment(plan.library, plan.database, plan.authors)
+        environment.update(
+            BENCH_OUTPUT_DIR=str(destination),
+            BENCH_OUTPUT_FD=str(output_fd),
+            BENCH_PREFIX="",
+        )
+        subprocess.run(
+            [str(plan.python), str(BASE / "harness.py")],
+            cwd=BASE,
+            env=environment,
+            pass_fds=(output_fd,),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        _check_measured_context(plan)
+        if _database_identity(plan.database) != before:
+            raise ValueError("measurement changed seed or SQLite sequence")
+        if not unchanged():
+            raise ValueError("output directory changed during measurement")
+        if os.listdir(output_fd) != [filename]:
+            raise ValueError("measuring child created unexpected output files")
+        file_info = os.stat(filename, dir_fd=output_fd, follow_symlinks=False)
+        if not stat.S_ISREG(file_info.st_mode) or file_info.st_nlink != 1:
+            raise ValueError("measuring child created a non-regular output")
+        file_fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=output_fd)
+        with os.fdopen(file_fd) as stream:
+            opened = os.fstat(stream.fileno())
+            if (opened.st_dev, opened.st_ino) != (file_info.st_dev, file_info.st_ino):
+                raise ValueError("output file changed before validation")
+            validate_result(plan, json.load(stream))
+        current_file = os.stat(filename, dir_fd=output_fd, follow_symlinks=False)
+        if (
+            current_file.st_dev,
+            current_file.st_ino,
+            current_file.st_size,
+            current_file.st_mtime_ns,
+        ) != (
+            file_info.st_dev,
+            file_info.st_ino,
+            file_info.st_size,
+            file_info.st_mtime_ns,
+        ):
+            raise ValueError("output file changed during validation")
+        if not unchanged():
+            raise ValueError("output directory changed during result validation")
+        return destination / filename
+    finally:
+        if output_fd is not None:
+            os.close(output_fd)
+        os.close(parent_fd)
+
+
 def main(argv: list[str] | None = None) -> None:
-    """Report preflight identity without creating or publishing a result.
+    """Report preflight identity or explicitly run one unpublished diagnostic.
 
     Args:
         argv: Optional CLI arguments; defaults to the process arguments.
@@ -389,6 +566,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--authors", type=int, required=True)
+    parser.add_argument("--execute", action="store_true")
     args = parser.parse_args(argv)
     plan = prepare_run(
         args.profile,
@@ -398,26 +576,24 @@ def main(argv: list[str] | None = None) -> None:
         args.output_root,
         args.authors,
     )
-    print(
-        json.dumps(
-            {
-                "profile": plan.profile,
-                "library": plan.library,
-                "python": str(plan.python),
-                "python_version": plan.python_version,
-                "database": str(plan.database),
-                "output_root": str(plan.output_root),
-                "commit": plan.commit,
-                "tree": plan.tree,
-                "source_version": plan.source_version,
-                "backend_path": str(plan.backend_path),
-                "manifest_sha256": plan.manifest_sha256,
-                "constraints_sha256": plan.constraints_sha256,
-                "packages": plan.packages,
-            },
-            indent=2,
-        )
-    )
+    report = {
+        "profile": plan.profile,
+        "library": plan.library,
+        "python": str(plan.python),
+        "python_version": plan.python_version,
+        "database": str(plan.database),
+        "output_root": str(plan.output_root),
+        "commit": plan.commit,
+        "tree": plan.tree,
+        "source_version": plan.source_version,
+        "backend_path": str(plan.backend_path),
+        "manifest_sha256": plan.manifest_sha256,
+        "constraints_sha256": plan.constraints_sha256,
+        "packages": plan.packages,
+    }
+    if args.execute:
+        report["result"] = str(run_single(plan))
+    print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":

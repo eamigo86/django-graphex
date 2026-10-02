@@ -245,14 +245,75 @@ of scope.
         descriptor write and its controls.
       - [ ] T4b2b2b2 — Dispatch the existing five-operation harness using
         read-only preflight, the checked validator, and the held directory.
+        Route: delegated direct on codex/graphql-core-3.3-benchmark-dispatch-single
+        from integration cbc9ebe; own only the named runner, focused tests,
+        concise benchmark guidance, and this task checkpoint. Keep default
+        CLI preflight read-only and make execution explicit.
         Reserve fresh external output with safe empty prefix, sanitize the
         child, recheck source/runtime/freeze/seed around execution, reject
-        witness/output drift, and clean only attempt-owned output on failure.
+        witness/output drift, and retain failed-attempt output when creation
+        ownership cannot be proved for safe cleanup. In particular, retain
+        unvalidated result files and even empty directories instead of risking
+        deletion of a foreign path. Do not claim loaded-byte
+        attestation or a universal filesystem sandbox.
         The earlier public missing-entrypoint RED and basic mocked GREEN are
         retained; new safeguards need their own cause-correct RED before fix.
         Prove four real runs and rollback controls only AFTER a separate
         user-visible 2,340-request/20-build cost notice and explicit resume.
-        Hard child PR budget is 400; no earlier exception carries forward.
+        The human approved a size:exception only for this coherent dispatcher
+        PR after its observed 640 authored-line candidate was disclosed. This
+        is not a separate exact ceiling or an exception for another unit.
+        Work unit: 3778eda4e3fd16cfcd178bab8f6e27d8f6ca35dd.
+        After the informational cost notice, four single-run diagnostics at
+        source commit c99de0ff27cfd3daf50fc4461cdfba8784914164 validated
+        all five operations, 100 samples per operation, and five schema builds
+        per library. Each seed retained 1,000 authors, 10,000 posts, 50,000
+        comments, identical SQLite sequences, and identical file hashes.
+        The exact measured clone passed 75 focal, 139 benchmark, and 4,527
+        full tests at 96.23% branch coverage with unchanged 258/266/282 gap
+        sets. Ruff, mypy, both docstring gates, docs, and diff check passed.
+        Full raw proof: /private/tmp/graphex-t4b2b2b2.csQs2s/. Independent
+        verification and hosted gates remain pending, so this task stays open.
+        A later independent control at `ce47fc4` exposed a mkdir-to-open
+        ownership race: on synthetic child failure the dispatcher removed a
+        replacement directory and its pre-existing result. The focused
+        correction recorded a pathname identity before descriptor acquisition,
+        but later independent verification proved a replacement before that
+        first stat still reached the child and deleted a foreign regular result
+        and directory. A second chronological RED failed regular-result and
+        empty-directory preservation controls at that adjacent boundary. The
+        final policy does not delete failed-attempt directories or unvalidated
+        files automatically; these remain for manual inspection. Before-open
+        regular-file, empty-directory, and symlink replacements are also
+        regression-covered. The first chronological RED failed two
+        before-open preservation controls; root Python 3.12.11/core 3.2.13
+        GREEN passed three before-open and two before-first-stat controls.
+        Independent native-3.3 proof at `3fa9390` passed 80 focal, 144
+        benchmark, and 4,532 full tests at 96.23% branch coverage; complete
+        258/266/282 gap sets match a fresh integration base. Eleven real
+        filesystem controls passed. The actual configured standard docstring
+        gate then found candidate-only DOC005 in this preservation test; a
+        separate chronological RED preceded its truthful Raises correction.
+        Both docstring gates and native focal tests pass after that correction.
+        Full-suite and independent checks on the new exact head, four fresh
+        real-profile diagnostics, and hosted gates remain pending. Earlier
+        4,527 tests and four diagnostic runs are historical, not fresh proof
+        for this corrected head.
+        Current checkpoint supersedes those pending *local* statements:
+        `a37e178` / tree `1a674aed` independently passed 4,532 native-3.3
+        tests at 96.23%, 80 focal, 144 benchmark, both docstrings at TOTAL 0,
+        and 11 real-filesystem controls. Four fresh exact profiles and a private
+        1,000-author seed supported four actual diagnostics at that same source
+        identity in fixed Graphex, Graphene, Strawberry, Ariadne order: five
+        operations, 100 timed samples each, five rebuilds per library. Seed
+        hash, row contents, and SQLite sequences stayed identical. Raw outer
+        streams and child JSON survive; successful child streams do not. These
+        are neither equal-core claims nor published medians. Lost original raw
+        RED, both failed ownership controls, and the disclosed omit-ID memory
+        summary deviation remain in stable recovery; no zero-write claim is
+        made. Documentary TDD RED is N/A; hosted gates remain pending, so this
+        task stays unchecked. Current proof and recovery root:
+        `/Users/eamigo/.codex/visualizations/2026/09/02/01a062ff-dccb-7123-a1e9-e7de825aafc2/graphex-resume-2026-10-02/`.
         Leave three-run publication and quiet measurements for later slices;
         Engram mirror remains pending. Roll back only this dispatch slice.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
