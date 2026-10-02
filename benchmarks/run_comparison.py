@@ -280,6 +280,23 @@ def prepare_run(
     )
 
 
+def _valid_timing(value: object) -> bool:
+    """Identify finite, nonnegative timing values without accepting booleans.
+
+    Args:
+        value: Measured millisecond value from the child result.
+
+    Returns:
+        Whether the value is a finite integer or float at least zero.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
+
+
 def validate_result(plan: RunPlan, result: dict[str, Any]) -> None:
     """Require the child output to match the checked whole-stack contract.
 
@@ -337,30 +354,21 @@ def validate_result(plan: RunPlan, result: dict[str, Any]) -> None:
         stats = operations[name]
         if (
             not isinstance(stats, dict)
+            or isinstance(stats.get("sql_queries"), bool)
             or stats.get("sql_queries") != sql_queries
             or stats.get("iterations") != 100
         ):
             raise ValueError(f"measured SQL or iterations differ for {name}")
-        if not all(
-            isinstance(stats.get(metric), (int, float)) and stats[metric] >= 0
-            for metric in METRICS
-        ):
+        if not all(_valid_timing(stats.get(metric)) for metric in METRICS):
             raise ValueError(f"measured timing fields differ for {name}")
     builds = result.get("schema_rebuild_samples_ms")
     imported = result.get("schema_import_ms")
-    if (
-        not isinstance(imported, (int, float))
-        or not math.isfinite(imported)
-        or imported < 0
-    ):
+    if not _valid_timing(imported):
         raise ValueError("measured schema import differs from contract")
     if (
         not isinstance(builds, list)
         or len(builds) != 5
-        or not all(
-            isinstance(sample, (int, float)) and math.isfinite(sample) and sample >= 0
-            for sample in builds
-        )
+        or not all(_valid_timing(sample) for sample in builds)
     ):
         raise ValueError("measured schema rebuild count differs from contract")
 

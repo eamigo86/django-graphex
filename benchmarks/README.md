@@ -52,6 +52,8 @@ The historical harness without that variable keeps its original output
 contract. The named runner's read-only `validate_result(plan, result)` checks
 this witness against preflight, plus the selected stack, shared schema surface,
 five-operation SQL counts, iteration counts, and five schema rebuild samples.
+Timings must be finite, nonnegative numbers rather than JSON booleans; SQL
+counts must not be booleans either.
 It does not create an output or dispatch a measurement; validation does not
 turn an unmeasured profile into a published comparison.
 

@@ -216,10 +216,14 @@ of scope.
         are post-GREEN strengthening, not a claimed validator-specific RED.
         The retained initial RED failed on absent run_single and specified
         five forged-witness fields; no full real run is claimed here.
-        Native-3.3 clean-clone: 4,481 full / 93 benchmark tests, 96.23%;
-        quality and docs pass. Proof: /private/tmp/graphex-t4b2b2.Qr4xxr/.
-        Work unit: dff6703475bbec39fce5bca7edbb72852f952de7. Roll back
-        only this validator slice.
+        Fresh numeric RED: 25 malformed-value controls failed because the
+        validator accepted infinity and booleans; valid integer/float timing
+        control passed. After the focused fix, all five independent repros
+        reject malformed data. Native-3.3 clean-clone: 4,507 full / 119
+        benchmark tests, 96.23%; quality and docs pass. Proof:
+        /private/tmp/graphex-t4b2b2.Qr4xxr/numeric-fix/.
+        Original work unit: dff6703475bbec39fce5bca7edbb72852f952de7.
+        Roll back only this validator slice.
       - [ ] T4b2b2b — Dispatch the existing five-operation harness after
         preflight via the selected interpreter. Reuse the checked validator,
         reserve an external owned output safely, sanitize the child environment

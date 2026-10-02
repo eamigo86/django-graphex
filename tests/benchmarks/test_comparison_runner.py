@@ -460,3 +460,104 @@ def test_result_validator_rejects_incomplete_schema_timings(
         result["schema_rebuild_samples_ms"] = ["bad"] * 5
     with pytest.raises(ValueError, match="schema"):
         run_comparison.validate_result(plan, result)
+
+
+@pytest.mark.parametrize(
+    "metric", ["mean_ms", "p50_ms", "p95_ms", "min_ms", "stddev_ms"]
+)
+@pytest.mark.parametrize(
+    "value",
+    [float("inf"), json.loads("1e999"), True, False],
+    ids=["infinity", "json-overflow", "true", "false"],
+)
+def test_result_validator_rejects_invalid_operation_timings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metric: str, value: object
+) -> None:
+    """Reject non-finite and boolean operation timings from a child result.
+
+    Args:
+        tmp_path: Disposable synthetic preflight workspace.
+        monkeypatch: Fixture replacing external preflight observations.
+        metric: Operation timing field to corrupt.
+        value: Invalid measured value.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    plan = run_comparison.prepare_run(
+        "core33",
+        "graphex",
+        venv_root,
+        tmp_path / "seed.sqlite3",
+        tmp_path / "run",
+        1000,
+    )
+    result = _measured_result(plan)
+    result["ops"]["flat_list"][metric] = value
+    with pytest.raises(ValueError, match="timing"):
+        run_comparison.validate_result(plan, result)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema_import_ms", True),
+        ("schema_import_ms", False),
+        ("schema_rebuild_samples_ms", True),
+        ("schema_rebuild_samples_ms", False),
+        ("sql_queries", True),
+    ],
+)
+def test_result_validator_rejects_boolean_schema_timings_and_sql_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: bool
+) -> None:
+    """Reject JSON booleans where measured numbers or SQL counts are required.
+
+    Args:
+        tmp_path: Disposable synthetic preflight workspace.
+        monkeypatch: Fixture replacing external preflight observations.
+        field: Schema timing or SQL count field to corrupt.
+        value: JSON-compatible boolean supplied by the child.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    plan = run_comparison.prepare_run(
+        "core33",
+        "graphex",
+        venv_root,
+        tmp_path / "seed.sqlite3",
+        tmp_path / "run",
+        1000,
+    )
+    result = _measured_result(plan)
+    if field == "schema_rebuild_samples_ms":
+        result[field] = [value] * 5
+    elif field == "sql_queries":
+        result["ops"]["flat_list"][field] = value
+    else:
+        result[field] = value
+    with pytest.raises(ValueError):
+        run_comparison.validate_result(plan, result)
+
+
+def test_result_validator_accepts_finite_integer_and_float_timings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preserve valid integer and floating-point timing values.
+
+    Args:
+        tmp_path: Disposable synthetic preflight workspace.
+        monkeypatch: Fixture replacing external preflight observations.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    plan = run_comparison.prepare_run(
+        "core33",
+        "graphex",
+        venv_root,
+        tmp_path / "seed.sqlite3",
+        tmp_path / "run",
+        1000,
+    )
+    result = _measured_result(plan)
+    result["ops"]["flat_list"]["mean_ms"] = 1
+    result["ops"]["flat_list"]["p50_ms"] = 0.5
+    result["schema_import_ms"] = 2
+    result["schema_rebuild_samples_ms"] = [0, 1, 0.5, 1.0, 2]
+    run_comparison.validate_result(plan, result)
