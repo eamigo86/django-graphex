@@ -626,10 +626,10 @@ def test_single_run_preserves_raced_existing_destination(
     assert marker.read_text() == "existing"
 
 
-def test_single_run_rejects_forged_child_without_deleting_sibling(
+def test_single_run_retains_forged_child_and_sibling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reject a forged measured tree and remove only the owned attempt.
+    """Reject a forged tree without deleting unvalidated output or a sibling.
 
     Args:
         tmp_path: Disposable profile and diagnostic paths.
@@ -654,7 +654,10 @@ def test_single_run_rejects_forged_child_without_deleting_sibling(
     monkeypatch.setattr(run_comparison.subprocess, "run", child)
     with pytest.raises(ValueError, match="witness"):
         run_comparison.run_single(plan)
-    assert not output.exists()
+    assert (
+        json.loads((output / "graphex.json").read_text())["profile_witness"]["tree"]
+        == "forged"
+    )
     assert sibling.read_text() == "existing"
 
 
@@ -709,7 +712,7 @@ def test_single_run_rejects_source_version_changed_during_child(
     monkeypatch.setattr(run_comparison.subprocess, "run", child)
     with pytest.raises(ValueError, match="source"):
         run_comparison.run_single(plan)
-    assert not output.exists()
+    assert (output / "graphex.json").is_file()
 
 
 def test_single_run_preserves_replacement_directory_on_failure(
@@ -806,6 +809,62 @@ def test_single_run_rejects_replacement_before_directory_acquisition(
         ).read_bytes() == b"pre-existing foreign result\n"
 
 
+@pytest.mark.parametrize("replacement", ["regular", "empty"])
+def test_single_run_preserves_replacement_before_first_ownership_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    """Leave a foreign directory untouched when mkdir is followed by a swap.
+
+    Args:
+        tmp_path: Disposable attempt and replacement directories.
+        monkeypatch: Fixture swapping the path before its first ownership stat.
+        replacement: Whether the foreign directory contains a regular result.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    displaced = tmp_path / "displaced-attempt"
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    sentinel = b"pre-existing foreign result\n"
+    if replacement == "regular":
+        (foreign / "graphex.json").write_bytes(sentinel)
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+    real_stat = run_comparison.os.stat
+    swapped = False
+
+    def swap_before_stat(
+        path: str | bytes | os.PathLike[str],
+        *,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result:
+        nonlocal swapped
+        if path == output.name and dir_fd is not None and not swapped:
+            output.rename(displaced)
+            foreign.rename(output)
+            swapped = True
+        return real_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    def fail_child(command: list[str], **_kwargs: object) -> None:
+        raise subprocess.CalledProcessError(2, command)
+
+    monkeypatch.setattr(run_comparison.os, "stat", swap_before_stat)
+    monkeypatch.setattr(run_comparison.subprocess, "run", fail_child)
+    with pytest.raises(subprocess.CalledProcessError):
+        run_comparison.run_single(plan)
+
+    assert swapped
+    assert displaced.is_dir()
+    assert output.is_dir()
+    if replacement == "regular":
+        assert (output / "graphex.json").read_bytes() == sentinel
+    else:
+        assert list(output.iterdir()) == []
+
+
 def test_single_run_rejects_symlink_result_without_touching_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -899,13 +958,13 @@ def test_single_run_rejects_seed_and_sequence_changes(
     with pytest.raises(ValueError, match="seed or SQLite sequence"):
         run_comparison.run_single(plan)
     assert run_comparison._database_identity(database) != before
-    assert not output.exists()
+    assert (output / "graphex.json").is_file()
 
 
-def test_single_run_cleans_owned_output_after_child_failure(
+def test_single_run_retains_partial_output_after_child_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Propagate a failed child without removing an existing sibling.
+    """Propagate a failed child while retaining unvalidated output and sibling.
 
     Args:
         tmp_path: Disposable diagnostic and sibling paths.
@@ -930,7 +989,7 @@ def test_single_run_cleans_owned_output_after_child_failure(
     monkeypatch.setattr(run_comparison.subprocess, "run", child)
     with pytest.raises(subprocess.CalledProcessError):
         run_comparison.run_single(plan)
-    assert not output.exists()
+    assert (output / "graphex.json").read_text() == "partial"
     assert sibling.read_text() == "existing"
 
 
@@ -974,7 +1033,7 @@ def test_single_run_rechecks_selected_stack_after_child(
     monkeypatch.setattr(run_comparison.subprocess, "run", child)
     with pytest.raises(ValueError, match="profile"):
         run_comparison.run_single(plan)
-    assert not output.exists()
+    assert (output / "graphex.json").is_file()
 
 
 def test_single_run_rejects_result_replaced_during_validation(

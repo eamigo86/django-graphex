@@ -251,9 +251,10 @@ of scope.
         CLI preflight read-only and make execution explicit.
         Reserve fresh external output with safe empty prefix, sanitize the
         child, recheck source/runtime/freeze/seed around execution, reject
-        witness/output drift, and clean only attempt-owned output on failure.
-        If directory replacement makes cleanup uncertain, retain recoverable
-        residue rather than touching a foreign path. Do not claim loaded-byte
+        witness/output drift, and retain failed-attempt output when creation
+        ownership cannot be proved for safe cleanup. In particular, retain
+        unvalidated result files and even empty directories instead of risking
+        deletion of a foreign path. Do not claim loaded-byte
         attestation or a universal filesystem sandbox.
         The earlier public missing-entrypoint RED and basic mocked GREEN are
         retained; new safeguards need their own cause-correct RED before fix.
@@ -276,12 +277,18 @@ of scope.
         A later independent control at `ce47fc4` exposed a mkdir-to-open
         ownership race: on synthetic child failure the dispatcher removed a
         replacement directory and its pre-existing result. The focused
-        correction records the created directory identity before descriptor
-        acquisition and refuses mismatches; regular-file, empty-directory,
-        and symlink replacements are regression-covered. The chronological
-        new RED failed two preservation controls (regular and empty); root
-        Python 3.12.11/core 3.2.13 GREEN passed three controls. Native-3.3
-        local proof is pending because the exact locked wheel could not be
+        correction recorded a pathname identity before descriptor acquisition,
+        but later independent verification proved a replacement before that
+        first stat still reached the child and deleted a foreign regular result
+        and directory. A second chronological RED failed regular-result and
+        empty-directory preservation controls at that adjacent boundary. The
+        final policy does not delete failed-attempt directories or unvalidated
+        files automatically; these remain for manual inspection. Before-open
+        regular-file, empty-directory, and symlink replacements are also
+        regression-covered. The first chronological RED failed two
+        before-open preservation controls; root Python 3.12.11/core 3.2.13
+        GREEN passed three before-open and two before-first-stat controls.
+        Native-3.3 local proof is pending because the exact locked wheel could not be
         fetched in the restricted environment. Do not treat earlier 4,527
         tests or four diagnostic runs as proof for this corrected head.
         Leave three-run publication and quiet measurements for later slices;

@@ -433,6 +433,9 @@ def _check_measured_context(plan: RunPlan) -> None:
 def run_single(plan: RunPlan) -> Path:
     """Measure once into a disposable output using the selected interpreter.
 
+    Failed attempts retain their output because pathname observations cannot
+    establish creation ownership for safe automatic deletion.
+
     Args:
         plan: Read-only preflight selection.
 
@@ -462,24 +465,23 @@ def run_single(plan: RunPlan) -> Path:
         destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     )
     output_fd: int | None = None
-    created: os.stat_result | None = None
-    checked_file: os.stat_result | None = None
+    observed: os.stat_result | None = None
     filename = f"{plan.library}.json"
 
-    def owned() -> bool:
-        """Check that the visible name still identifies the created directory.
+    def unchanged() -> bool:
+        """Check that the visible name still identifies the observed directory.
 
         Returns:
-            Whether acquisition and the visible name match the created inode.
+            Whether acquisition and the visible name match the observed inode.
         """
-        if output_fd is None or created is None:
+        if output_fd is None or observed is None:
             return False
         held = os.fstat(output_fd)
         try:
             named = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
         except OSError:
             return False
-        identity = (created.st_dev, created.st_ino)
+        identity = (observed.st_dev, observed.st_ino)
         return stat.S_ISDIR(named.st_mode) and (
             (held.st_dev, held.st_ino) == identity
             and (named.st_dev, named.st_ino) == identity
@@ -487,13 +489,13 @@ def run_single(plan: RunPlan) -> Path:
 
     try:
         os.mkdir(destination.name, mode=0o700, dir_fd=parent_fd)
-        created = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        observed = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
         output_fd = os.open(
             destination.name,
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=parent_fd,
         )
-        if not owned():
+        if not unchanged():
             raise ValueError("output directory changed before measurement")
         environment = _environment(plan.library, plan.database, plan.authors)
         environment.update(
@@ -513,7 +515,7 @@ def run_single(plan: RunPlan) -> Path:
         _check_measured_context(plan)
         if _database_identity(plan.database) != before:
             raise ValueError("measurement changed seed or SQLite sequence")
-        if not owned():
+        if not unchanged():
             raise ValueError("output directory changed during measurement")
         if os.listdir(output_fd) != [filename]:
             raise ValueError("measuring child created unexpected output files")
@@ -525,7 +527,6 @@ def run_single(plan: RunPlan) -> Path:
             opened = os.fstat(stream.fileno())
             if (opened.st_dev, opened.st_ino) != (file_info.st_dev, file_info.st_ino):
                 raise ValueError("output file changed before validation")
-            checked_file = file_info
             validate_result(plan, json.load(stream))
         current_file = os.stat(filename, dir_fd=output_fd, follow_symlinks=False)
         if (
@@ -540,27 +541,9 @@ def run_single(plan: RunPlan) -> Path:
             file_info.st_mtime_ns,
         ):
             raise ValueError("output file changed during validation")
-        if not owned():
+        if not unchanged():
             raise ValueError("output directory changed during result validation")
         return destination / filename
-    except Exception:
-        if output_fd is not None and owned():
-            names = os.listdir(output_fd)
-            if names == [filename]:
-                file_info = os.stat(filename, dir_fd=output_fd, follow_symlinks=False)
-                if (
-                    stat.S_ISREG(file_info.st_mode)
-                    and file_info.st_nlink == 1
-                    and (
-                        checked_file is None
-                        or (file_info.st_dev, file_info.st_ino)
-                        == (checked_file.st_dev, checked_file.st_ino)
-                    )
-                ):
-                    os.unlink(filename, dir_fd=output_fd)
-            if not os.listdir(output_fd) and owned():
-                os.rmdir(destination.name, dir_fd=parent_fd)
-        raise
     finally:
         if output_fd is not None:
             os.close(output_fd)
