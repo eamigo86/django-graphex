@@ -225,18 +225,24 @@ of scope.
         Original work unit: dff6703475bbec39fce5bca7edbb72852f952de7.
         Numeric correction: d934c045c42cc0c6f8a3e9c6a404719c4a7297a5.
         Roll back only this validator slice.
-      - [ ] T4b2b2b1 — Add an optional held-directory write boundary for
+      - [x] T4b2b2b1 — Add an optional held-directory write boundary for
         named-profile harness output without changing historical output.
         Route: delegated direct on codex/graphql-core-3.3-benchmark-dispatch-run
         from integration 1413265; own only harness, focused isolation tests,
         brief guidance, and this checkpoint. Fresh RED proved a mismatched
         output descriptor was ignored and the path writer was still used;
-        GREEN proved both held-directory controls. Check unsafe output names
-        and a renamed visible directory against actual filesystem behavior.
+        GREEN proved both held-directory controls. A further fresh RED proved
+        traversal-bearing library names were accepted; the guard now rejects
+        them. A renamed visible directory leaves the write on the held inode.
         This boundary is useful independently but does not dispatch or measure
-        a full profile. Require
-        clean native-3.3 and quality gates before checking it complete.
-        Roll back only the optional descriptor write and its controls.
+        a full profile. Work unit: 50f38c657f864bfb1ce7a5cbe618bb9f4e48c141.
+        Clean native-3.3 clone: 61 focal, 125 benchmark, 4,513 full tests;
+        96.23% branch coverage above 95.01%, unchanged 258/266/282 gap sets,
+        seven skips, three warnings, 23 subtests. Ruff, mypy 82 files, both
+        public docstring gates, docs with five baseline anchors, and diff check
+        passed. Full raw proof: /private/tmp/graphex-t4b2b2b.nXAbfN/.
+        No heavy four-profile measurement was run. Roll back only the optional
+        descriptor write and its controls.
       - [ ] T4b2b2b2 — Dispatch the existing five-operation harness using
         read-only preflight, the checked validator, and the held directory.
         Reserve fresh external output with safe empty prefix, sanitize the
