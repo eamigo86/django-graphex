@@ -57,7 +57,11 @@ def test_mismatched_or_missing_freeze_fails_before_install(tmp_path: Path) -> No
     freezes.mkdir()
     (freezes / "strawberry.txt").write_bytes(
         (
-            BENCHMARKS / "comparison_profiles" / "core33" / "constraints" / "strawberry.txt"
+            BENCHMARKS
+            / "comparison_profiles"
+            / "core33"
+            / "constraints"
+            / "strawberry.txt"
         ).read_bytes()
     )
     with pytest.raises(ValueError, match="mismatch"):
