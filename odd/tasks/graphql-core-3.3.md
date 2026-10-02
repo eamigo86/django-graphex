@@ -23,8 +23,8 @@ of scope.
   wheel-overlay environment for focused new-API proof without changing the root
   environment prematurely; no dual-version public support promise is implied.
 - Raise the final runtime minimum to GraphQL-core 3.3.0 with an upper bound below
-  3.4 only after compatibility work. The package release version remains
-  undecided; do not change 3.1.1 metadata in preparatory tasks.
+  3.4 only after compatibility work. The user selected 4.0.0 for the later
+  release; do not change 3.1.1 metadata in preparatory tasks.
 - Retain the dated 3.1.1 and 3.1.0 changelogs, audit traceability, eight
   canonical benchmark JSON artifacts, and frozen historical constraints.
   Append migration guidance later rather than relabeling old results.
@@ -151,7 +151,7 @@ of scope.
   versions chosen separately for each library. Compare disclosed whole stacks,
   not libraries alone. Preserve the eight historical JSON results, versions.env,
   constraints, and dated release notes. Package SemVer is still undecided.
-  - [ ] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
+  - [x] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
     scope-update root and Playground graphql-core lock entries; preserve
     package version 3.1.1. Own current-readiness contracts and bounded public
     floor/Executor guidance. Strict TDD: RED current floor/lock/document
@@ -171,7 +171,7 @@ of scope.
     claimed until measured.
     - [x] T4b1a/b — Locally verify named dependency freezes, preflight, and
       isolated setup; independent and hosted delivery checks remain pending.
-    - [ ] T4b1b-CI — Align disposable fake-uv fixtures with the test interpreter;
+    - [x] T4b1b-CI — Align disposable fake-uv fixtures with the test interpreter;
       retain the real 3.12.11 pin and wrong-interpreter rejection. Recheck the
       focused contracts, 3.14 portability, and clean native-3.3 full suite.
     - [x] T4b1c — Make the historical no-argument bootstrap fail closed before
@@ -207,12 +207,27 @@ of scope.
         The previous missing-database probe path was corrected before the
         asset-preservation proof. Work-unit commit 5d16273aa106342e51eaab3ab05580bbc2aee326
         has tree 1c6ddee80dcd3f94da8e823e84bbff61cbee5b8a.
-      - [ ] T4b2b2 — Dispatch the existing five-operation harness after
-        preflight and validate the child's witness against the checked source
-        and tree in a disposable single-run diagnostic. Observe dispatch RED
-        before implementation; prove four real profile runs, SQL/response and
-        rollback controls. Leave three-run publication and quiet measurements
-        for later slices; Engram mirror remains pending.
+      - [x] T4b2b2a — Validate a named-profile child's whole-stack witness,
+        five-operation output, and selected freeze against read-only preflight.
+        Route: delegated direct on codex/graphql-core-3.3-benchmark-execution
+        from b5650d8; own runner validator, focused tests, brief guide, and
+        this checkpoint. This extracts already GREEN-tested dispatch intent
+        into a standalone read-only contract; new direct validator controls
+        are post-GREEN strengthening, not a claimed validator-specific RED.
+        The retained initial RED failed on absent run_single and specified
+        five forged-witness fields; no full real run is claimed here.
+        Native-3.3 clean-clone: 4,481 full / 93 benchmark tests, 96.23%;
+        quality and docs pass. Proof: /private/tmp/graphex-t4b2b2.Qr4xxr/.
+        Roll back only this validator slice.
+      - [ ] T4b2b2b — Dispatch the existing five-operation harness after
+        preflight via the selected interpreter. Reuse the checked validator,
+        reserve an external owned output safely, sanitize the child environment
+        and prefix, reject source/seed drift, and preserve existing assets on
+        child failure. Prove four real runs, SQL/response and rollback controls
+        after a separate cost notice. Hard child PR budget is 400 authored
+        lines; no earlier size exception carries forward. Leave three-run
+        publication and quiet measurements for later slices; Engram mirror
+        remains pending. Roll back only this dispatch slice.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run

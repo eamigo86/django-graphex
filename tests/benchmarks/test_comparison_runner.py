@@ -8,11 +8,18 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from benchmarks import run_comparison
+from benchmarks.run_publish import (
+    EXPECTED_SQL,
+    EXPECTED_SURFACE,
+    EXPECTED_VERSIONS,
+    OPERATIONS,
+)
 
 
 def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -249,3 +256,207 @@ def test_direct_cli_uses_its_sibling_profile_validator(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "--profile" in result.stdout
+
+
+def _measured_result(plan: run_comparison.RunPlan) -> dict[str, object]:
+    """Build a complete synthetic child result for validator controls.
+
+    Args:
+        plan: Prepared synthetic profile selection.
+
+    Returns:
+        Five-operation result bearing the expected child witness.
+    """
+    return {
+        "lib": plan.library,
+        "versions": {
+            name: plan.source_version
+            if name == "django-graphex"
+            else plan.packages[name]
+            for name in EXPECTED_VERSIONS[plan.library]
+        },
+        "python": plan.python_version,
+        "django": plan.packages["django"],
+        "machine": {"platform": "test", "cpu_count": 1},
+        "dataset": {
+            "authors": plan.authors,
+            "posts_per_author": 10,
+            "comments_per_post": 5,
+        },
+        "provenance": {
+            "commit": plan.commit,
+            "tree": plan.tree,
+            "constraints_sha256": plan.constraints_sha256,
+        },
+        "schema_import_ms": 1.0,
+        "schema_rebuild_samples_ms": [1.0] * 5,
+        "surface": EXPECTED_SURFACE,
+        "ops": {
+            name: {
+                "sql_queries": EXPECTED_SQL[plan.library][name],
+                "iterations": 100,
+                "mean_ms": 1.0,
+                "p50_ms": 1.0,
+                "p95_ms": 1.0,
+                "min_ms": 1.0,
+                "stddev_ms": 0.0,
+            }
+            for name in OPERATIONS
+        },
+        "profile_witness": {
+            "profile": plan.profile,
+            "library": plan.library,
+            "commit": plan.commit,
+            "tree": plan.tree,
+            "source_version": plan.source_version,
+            "manifest_sha256": plan.manifest_sha256,
+            "constraints_sha256": plan.constraints_sha256,
+            "backend_path": str(plan.backend_path),
+            "schema_path": str(
+                run_comparison.BASE / "libs" / plan.library / "bench_schema.py"
+            ),
+            "python": plan.python_version,
+            "django": plan.packages["django"],
+            "graphql-core": plan.packages["graphql-core"],
+        },
+    }
+
+
+def test_result_validator_accepts_dynamic_source_version_without_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validate a future source version without creating a diagnostic file.
+
+    Args:
+        tmp_path: Disposable profile and future checkout paths.
+        monkeypatch: Fixture replacing external preflight observations.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    (run_comparison.ROOT / "pyproject.toml").write_text(
+        '[project]\nversion = "4.0.0"\n'
+    )
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    run_comparison.validate_result(plan, _measured_result(plan))
+    assert plan.source_version == "4.0.0"
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("library", ["graphex", "graphene", "strawberry", "ariadne"])
+def test_result_validator_accepts_each_disclosed_whole_stack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, library: str
+) -> None:
+    """Keep each peer's compatible GraphQL-core and package pins distinct.
+
+    Args:
+        tmp_path: Disposable synthetic preflight workspace.
+        monkeypatch: Fixture replacing external preflight observations.
+        library: Selected whole-stack profile entry.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    prepared = run_comparison.prepare_run(
+        "core33",
+        "graphex",
+        venv_root,
+        tmp_path / "seed.sqlite3",
+        tmp_path / "run",
+        1000,
+    )
+    manifest = json.loads(
+        (run_comparison.BASE / "comparison_profiles/core33/manifest.json").read_text()
+    )
+    plan = replace(
+        prepared, library=library, packages=manifest["libraries"][library]["packages"]
+    )
+    run_comparison.validate_result(plan, _measured_result(plan))
+    assert not plan.output_root.exists()
+
+
+@pytest.mark.parametrize(
+    "field", ["commit", "tree", "source_version", "backend_path", "constraints_sha256"]
+)
+def test_result_validator_rejects_forged_child_witness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    """Reject five independently forged measured identity fields.
+
+    Args:
+        tmp_path: Disposable profile and output paths.
+        monkeypatch: Fixture replacing external preflight observations.
+        field: Witness value changed after preflight.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    result = _measured_result(plan)
+    result["profile_witness"][field] = "forged"
+    with pytest.raises(ValueError, match="witness"):
+        run_comparison.validate_result(plan, result)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "field", ["versions", "provenance", "surface", "sql", "rebuilds"]
+)
+def test_result_validator_rejects_workload_or_stack_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    """Reject mismatched stack, schema, SQL, or rebuild output read-only.
+
+    Args:
+        tmp_path: Disposable profile and output paths.
+        monkeypatch: Fixture replacing external preflight observations.
+        field: Result contract element changed after measurement.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    result = _measured_result(plan)
+    if field == "versions":
+        result["versions"]["django"] = "0"
+    elif field == "provenance":
+        result["provenance"]["constraints_sha256"] = "0" * 64
+    elif field == "surface":
+        result["surface"] = {}
+    elif field == "sql":
+        result["ops"]["nested"]["sql_queries"] = 0
+    else:
+        result["schema_rebuild_samples_ms"] = []
+    with pytest.raises(ValueError):
+        run_comparison.validate_result(plan, result)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("field", ["missing_import", "nonnumeric_rebuild"])
+def test_result_validator_rejects_incomplete_schema_timings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    """Reject an incomplete schema diagnostic before later publication.
+
+    Args:
+        tmp_path: Disposable synthetic preflight workspace.
+        monkeypatch: Fixture replacing external preflight observations.
+        field: Invalid schema timing to test.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    plan = run_comparison.prepare_run(
+        "core33",
+        "graphex",
+        venv_root,
+        tmp_path / "seed.sqlite3",
+        tmp_path / "run",
+        1000,
+    )
+    result = _measured_result(plan)
+    if field == "missing_import":
+        del result["schema_import_ms"]
+    else:
+        result["schema_rebuild_samples_ms"] = ["bad"] * 5
+    with pytest.raises(ValueError, match="schema"):
+        run_comparison.validate_result(plan, result)

@@ -49,8 +49,11 @@ process also records a `profile_witness`: the loaded backend and schema paths,
 actual Python/Django/GraphQL-core versions, source commit and tree, source
 version read from the measured checkout, and selected manifest/freeze hashes.
 The historical harness without that variable keeps its original output
-contract. This witness is diagnostic evidence, not a published comparison;
-the named runner does not dispatch or validate measurements yet.
+contract. The named runner's read-only `validate_result(plan, result)` checks
+this witness against preflight, plus the selected stack, shared schema surface,
+five-operation SQL counts, iteration counts, and five schema rebuild samples.
+It does not create an output or dispatch a measurement; validation does not
+turn an unmeasured profile into a published comparison.
 
 Before running a comparison, use run_comparison.py to preflight one named
 profile stack. Pass --profile core33, one --library, the absolute
