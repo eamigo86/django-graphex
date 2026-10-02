@@ -158,7 +158,10 @@ of scope.
     contracts, then GREEN/REFACTOR; focused runner uses
     `.venv/bin/python -m pytest <tests> --no-cov`. Prove a full clean-clone
     3.3 suite with unchanged 95.01% branch gate, check-only quality/docs,
-    lock consistency, and diff checks. Hosted 3.3 gates await delivery.
+    lock consistency, and diff checks. The original T4a RED/GREEN proof is
+    retained below; the later privacy integration is a history merge, not a
+    fabricated second RED. Fresh combined native-3.3 and hosted checks are
+    required before integration.
     Rollback only this floor/locks/readiness/guidance child.
   - [ ] T4b — Add a new comparison profile and benchmark harness/tests using
     per-library compatible core versions; keep historical replay isolated
@@ -172,19 +175,20 @@ of scope.
 
 ## Progress and next step
 
-T0-T3 are integrated at `61b8784e4d9779a48f62b0209f9abfa62e5323cd`.
-Fresh integration-push and draft tracker #212 CI passed all 15 validation jobs,
-skipped the three publication jobs, and both tracker Codecov checks succeeded.
-The independently verified T3c head has the exact merged source tree. Root
-3.2.13 and isolated official 3.3.0 full suites each passed 4,390 tests,
-7 skips, and the same three warnings; coverage was 96.23% and 96.21%, with
-separate 100% patch coverage (5/5). Hosted CI still uses the 3.2.13 floor.
-T4a local checks passed on this child; hosted 3.3 checks await delivery. The
+T0-T3 and the JSON, validation-cache, HTTP privacy, and subscription privacy
+children are integrated through `b5a5207ebb80b70e95b49880b1b51b327500a5b7`.
+PR #222 passed exact-head hosted checks before that integration-only merge;
+its integration-push run `36945214190` concluded success without rechecked
+job counts, while tracker run `36945219668` remained in progress. This floor child
+history-merges that reviewed integration without importing the rejected regex
+branches. Its source diff remains limited to the GraphQL-core floor/locks,
+readiness contracts, and current guidance; the package version stays 3.1.1.
+Combined native-3.3 and hosted checks must pass on the new merge head. The
 new per-library benchmark comparison choice is resolved, while package SemVer
-and T4b-T4d remain pending. The historical
-3.1.1 main/tag and canonical benchmark files remain unchanged. The draft
-tracker is not authorized for main merge, tag, publication, or dispatch.
-Engram mirror pending until a registered runtime identity is available.
+and T4b-T4d remain pending. Published 3.1.1 main/tag and canonical benchmark
+files remain unchanged. Draft tracker #212 has no main merge, tag,
+publication, or dispatch authorization. Engram mirror remains pending without
+an authoritative runtime identity.
 
 ### T0 verification evidence
 
@@ -611,3 +615,26 @@ Engram mirror pending until a registered runtime identity is available.
   security, Playground, artifact, base-install, and Codecov checks remain
   pending until an authorized child PR runs. T4b-T4d and package SemVer remain
   pending; no main merge, tag, or publication is authorized.
+
+### T4a privacy-prerequisite history sync
+
+- The independently verified native-3.3 HTTP child `0c4917e` merged through
+  PR #221 as `a99bbd67` with identical source tree. Its integration and
+  tracker runs `36944307169` and `36944311598` each passed 15 validation
+  jobs; both tracker Codecov checks passed and publication jobs skipped.
+- The independently verified SSE/WS child `1eedc4e` passed 84 startup/core
+  cases, 37 focused and 90 related tests, full suites of 4,425 under each
+  core, coverage 96.23%/96.19%, and 100% patch coverage (22/22). Its hosted
+  run `36944908273` passed all 15 validations and both Codecov checks; three
+  publication jobs skipped. PR #222 merged only into integration as
+  `b5a5207ebb80b70e95b49880b1b51b327500a5b7`, tree
+  `5c56559b647ead22eedfce49b78ba8b765561d25`. Post-merge integration
+  run `36945214190` concluded success without rechecked job counts; tracker
+  run `36945219668` remained in progress at this checkpoint.
+- This T4a correction merges `b5a5207` into existing floor branch `4cd2f7d`
+  without rebasing or rewriting either history. Original T4a RED/GREEN and
+  independent proof remain valid for their exact earlier candidate; the new
+  combined tree requires its own full native-3.3 and hosted checks. Floor
+  PR #218's earlier Playground/Python 3.14 failures are historical, not waived.
+  Roll back only this floor child if its fresh gates fail. The rejected T4s
+  regex branches, frozen benchmarks, and dated 3.1.1/3.1.0 notes remain out.

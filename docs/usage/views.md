@@ -297,6 +297,11 @@ an oversized POST with **HTTP 413** before the body is parsed. It checks the
 declared `Content-Length` first, then measures the body itself — so a client
 cannot under-declare its length to slip past.
 
+JSON that the decoder cannot parse returns **HTTP 400**, including when the
+decoder raises a recursion error. This is parser-error handling, not a promise
+that every JSON document above a fixed nesting depth will be rejected; Python
+versions may accept different depths.
+
 `multipart/form-data` is measured too, but by **seeking** the request stream to
 its end and back rather than by reading it. Reading it would pull a streaming
 upload into memory and break every request from a client holding the endpoint's
