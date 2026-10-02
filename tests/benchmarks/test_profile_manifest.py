@@ -45,7 +45,10 @@ def test_new_profile_pins_compatible_complete_stacks() -> None:
 
 
 def test_profile_includes_source_runtime_requirements() -> None:
-    """Keep the Graphex freeze sufficient for its current source."""
+    """Keep the Graphex freeze sufficient for its current source.
+
+    Every declared runtime requirement must have a compatible exact pin.
+    """
     project = tomllib.loads((BENCHMARKS.parent / "pyproject.toml").read_text())
     graphex = _profile().load_profile("core33", "graphex", BENCHMARKS)
     for raw in project["project"]["dependencies"]:
@@ -57,7 +60,10 @@ def test_profile_includes_source_runtime_requirements() -> None:
 
 
 def test_profile_includes_graphene_adapter_filter() -> None:
-    """Pin the filter package imported by the existing Graphene adapter."""
+    """Pin the filter package imported by the existing Graphene adapter.
+
+    The adapter's filter import is part of the unchanged shared workload.
+    """
     adapter = (BENCHMARKS / "libs" / "graphene" / "bench_schema.py").read_text()
     assert "from graphene_django.filter import DjangoFilterConnectionField" in adapter
     graphene = _profile().load_profile("core33", "graphene", BENCHMARKS)
