@@ -299,6 +299,21 @@ of scope.
         real-profile diagnostics, and hosted gates remain pending. Earlier
         4,527 tests and four diagnostic runs are historical, not fresh proof
         for this corrected head.
+        Current checkpoint supersedes those pending *local* statements:
+        `a37e178` / tree `1a674aed` independently passed 4,532 native-3.3
+        tests at 96.23%, 80 focal, 144 benchmark, both docstrings at TOTAL 0,
+        and 11 real-filesystem controls. Four fresh exact profiles and a private
+        1,000-author seed supported four actual diagnostics at that same source
+        identity in fixed Graphex, Graphene, Strawberry, Ariadne order: five
+        operations, 100 timed samples each, five rebuilds per library. Seed
+        hash, row contents, and SQLite sequences stayed identical. Raw outer
+        streams and child JSON survive; successful child streams do not. These
+        are neither equal-core claims nor published medians. Lost original raw
+        RED, both failed ownership controls, and the disclosed omit-ID memory
+        summary deviation remain in stable recovery; no zero-write claim is
+        made. Documentary TDD RED is N/A; hosted gates remain pending, so this
+        task stays unchecked. Current proof and recovery root:
+        `/Users/eamigo/.codex/visualizations/2026/09/02/01a062ff-dccb-7123-a1e9-e7de825aafc2/graphex-resume-2026-10-02/`.
         Leave three-run publication and quiet measurements for later slices;
         Engram mirror remains pending. Roll back only this dispatch slice.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
