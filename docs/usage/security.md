@@ -104,10 +104,12 @@ continues to filter its recognized legacy trailing suggestion forms. The
 `locations` and `path` fields are unchanged in either case.
 
 Suppression is active **only when introspection is actually disabled**: it
-needs `DisableIntrospectionMiddleware` in the view's effective per-request
-middleware chain *and* `ALLOW_INTROSPECTION=False`. With introspection open,
-native hints remain useful. Subscription transports need their own native 3.3
-wiring; this HTTP behavior alone does not cover SSE or WebSocket errors.
+needs `DisableIntrospectionMiddleware` in the effective middleware chain *and*
+`ALLOW_INTROSPECTION=False`. With introspection open, native hints remain useful.
+Under 3.3, SSE and WebSocket startup use the same private verdict for document
+validation and variable coercion before framing errors. Their existing 3.2
+formatter still covers recognized legacy trailing hints; it does not promise
+suppression of every quoted unknown-input spelling in that older generation.
 
 !!! note "Superusers do not get the suggestions back"
 

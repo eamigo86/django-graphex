@@ -20,10 +20,10 @@ never pulls channels until WS is actually routed.
 
 from __future__ import annotations
 
-from inspect import isawaitable
+from inspect import isawaitable, signature
 from typing import TYPE_CHECKING
 
-from graphql import ExecutionResult
+from graphql import ExecutionResult, GraphQLError, validate
 from graphql import execution as graphql_execution
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -34,6 +34,41 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 __all__ = ["sse", "ws"]
 
+_VALIDATE_SUPPORTS_HIDE_SUGGESTIONS = (
+    "hide_suggestions" in signature(validate).parameters
+)
+_NATIVE_EXECUTOR = getattr(graphql_execution, "Executor", None)
+_EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS = bool(
+    _NATIVE_EXECUTOR
+    and "hide_suggestions" in signature(_NATIVE_EXECUTOR.build).parameters
+)
+
+
+def _validate_subscription_document(
+    schema: "GraphQLSchema",
+    document: "DocumentNode",
+    rules: Any,
+    *,
+    max_errors: int,
+    hide_suggestions: bool,
+) -> list[GraphQLError]:
+    """Validate a subscription without sending unsupported options to 3.2.
+
+    Args:
+        schema: Request-specific subscription schema.
+        document: Parsed subscription document.
+        rules: Validation rules applied before source startup.
+        max_errors: Maximum number of validation errors.
+        hide_suggestions: Whether schema-derived suggestions are private.
+
+    Returns:
+        Validation errors for the request document.
+    """
+    options: dict[str, Any] = {"max_errors": max_errors}
+    if _VALIDATE_SUPPORTS_HIDE_SUGGESTIONS:
+        options["hide_suggestions"] = hide_suggestions
+    return validate(schema, document, rules, **options)
+
 
 async def _start_source_event_stream(
     schema: "GraphQLSchema",
@@ -43,6 +78,7 @@ async def _start_source_event_stream(
     variable_values: dict[str, Any] | None,
     operation_name: str | None,
     source_factory: "Callable[..., Any]",
+    hide_suggestions: bool = False,
 ) -> "AsyncIterable[Any] | ExecutionResult":
     """Start a transport source with the installed GraphQL execution API.
 
@@ -53,6 +89,7 @@ async def _start_source_event_stream(
         variable_values: Client variables for the selected operation.
         operation_name: Name of the selected subscription operation, if any.
         source_factory: Transport-local source factory, retained for injection.
+        hide_suggestions: Whether native variable errors omit schema hints.
 
     Returns:
         The source stream or an execution result containing startup errors.
@@ -77,13 +114,14 @@ async def _start_source_event_stream(
             operation_name=operation_name,
         )
     else:
-        executor = executor_class.build(
-            schema,
-            document,
-            context_value=context_value,
-            raw_variable_values=variable_values,
-            operation_name=operation_name,
-        )
+        options: dict[str, Any] = {
+            "context_value": context_value,
+            "raw_variable_values": variable_values,
+            "operation_name": operation_name,
+        }
+        if _EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS:
+            options["hide_suggestions"] = hide_suggestions
+        executor = executor_class.build(schema, document, **options)
         if isinstance(executor, list):
             return ExecutionResult(data=None, errors=executor)
         result = source_factory(executor)
