@@ -184,6 +184,19 @@ of scope.
       Local proof and work-unit commits are recorded below. Independent and
       hosted verification remain pending.
     - [ ] T4b2 — Add the separately named runner, provenance, and measurements.
+      - [x] T4b2a — Add an independently executable, read-only named-profile
+        preflight for one selected stack: clean source identity, installed
+        freeze, runtime import, prepared seed, and fresh external destination.
+        Retain strict RED/GREEN and native-3.3 gates; size:exception applies
+        only here. Route: delegated direct; preflight, tests, guidance.
+        Initial 544 lines grew for fail-closed output, backend provenance,
+        direct CLI import safety, and public docstrings; final count is 592.
+        Four real stacks and clean native-3.3 gates passed without producing
+        measurements. Proof: /private/tmp/graphex-t4b2a.eaFO6y.
+      - [ ] T4b2b — Dispatch the existing five-operation harness after preflight,
+        bind the measured backend to the checked source and tree, and retain
+        a disposable single-run diagnostic. Leave three-run publication and
+        quiet measurements for later slices. Engram mirror remains pending.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run
