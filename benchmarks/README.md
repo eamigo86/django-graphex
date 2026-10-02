@@ -41,8 +41,17 @@ and optionally `BENCH_PROFILE_VENV_ROOT` to an isolated absolute directory.
 Set `BENCH_OFFLINE=1` for cache-only replay. Graphene additionally requires
 `BENCH_WHEEL_DIR` containing a verified upstream `promise-2.3-py3-none-any.whl`;
 the bootstrap never builds django-graphex or another upstream dependency.
-The current source is not installed into the new Graphex venv; the separate
-comparison runner must supply it explicitly and record its commit/version.
+The current source is not installed into the new Graphex venv. The separate
+comparison preflight supplies it explicitly and records its commit/version.
+
+Before running a comparison, use run_comparison.py to preflight one named
+profile stack. Pass --profile core33, one --library, the absolute
+--venv-root containing its profile environment, an existing seeded SQLite
+--database, a fresh external --output-root, and --authors 1000 (or the
+matching seed size). The command prints source commit/tree, source version,
+manifest and freeze digests after checking the installed interpreter and seed.
+It does not create output or run a measurement yet; the next runner slice will
+dispatch the existing workload and bind that output to this identity.
 
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
