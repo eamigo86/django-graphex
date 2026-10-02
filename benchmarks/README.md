@@ -47,6 +47,11 @@ comparison runner must supply it explicitly and record its commit/version.
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
 `PYTHONPATH` that points at newer source so the published wheel is imported.
+It checks every requested historical destination before installation and
+refuses existing directories, files, and symlinks. If an install fails, it
+removes only environments created by that attempt; earlier freeze files and
+existing environments remain untouched. Choose an empty, disposable benchmark
+checkout for replay rather than deleting a historical environment in place.
 
 Every timing figure in the eight tracked canonical files under `results/` and on
 [Why django-graphex](https://eamigo86.github.io/django-graphex/why/) is the

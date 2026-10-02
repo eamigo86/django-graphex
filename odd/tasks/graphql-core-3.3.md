@@ -171,6 +171,13 @@ of scope.
     claimed until measured.
     - [x] T4b1a/b — Locally verify named dependency freezes, preflight, and
       isolated setup; independent and hosted delivery checks remain pending.
+    - [ ] T4b1c — Make the historical no-argument bootstrap fail closed before
+      replacing any existing venv. Preserve all requested targets on invalid
+      input, offline cache miss, or install failure; reserve fresh final paths
+      without relocating venvs. Test RED on the old destructive path, then
+      GREEN, fresh published-3.1.0-wheel setup, and clean-clone gates. Own only
+      the legacy script, focused tests, benchmark guidance, and this checkpoint.
+      Rollback only this safety child; no canonical results or pins change.
     - [ ] T4b2 — Add the separately named runner, provenance, and measurements.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
