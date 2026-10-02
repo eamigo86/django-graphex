@@ -171,6 +171,9 @@ of scope.
     claimed until measured.
     - [x] T4b1a/b — Locally verify named dependency freezes, preflight, and
       isolated setup; independent and hosted delivery checks remain pending.
+    - [ ] T4b1b-CI — Align disposable fake-uv fixtures with the test interpreter;
+      retain the real 3.12.11 pin and wrong-interpreter rejection. Recheck the
+      focused contracts, 3.14 portability, and clean native-3.3 full suite.
     - [x] T4b1c — Make the historical no-argument bootstrap fail closed before
       replacing any existing venv. Preserve all requested targets on invalid
       input, offline cache miss, or install failure; reserve fresh final paths
