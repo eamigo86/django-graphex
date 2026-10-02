@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -116,7 +117,7 @@ def test_missing_second_freeze_rejects_all_requested_libraries(tmp_path: Path) -
         cwd=bench,
         env={
             **os.environ,
-            "BENCH_PYTHON": str(ROOT / ".venv" / "bin" / "python"),
+            "BENCH_PYTHON": sys.executable,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "UV_LOG": str(log),
         },
@@ -154,7 +155,7 @@ def test_offline_cache_miss_leaves_no_profile_environment(tmp_path: Path) -> Non
         cwd=bench,
         env={
             **os.environ,
-            "BENCH_PYTHON": str(ROOT / ".venv" / "bin" / "python"),
+            "BENCH_PYTHON": sys.executable,
             "BENCH_UV_CACHE_DIR": str(tmp_path / "cache"),
             "BENCH_PROFILE_VENV_ROOT": str(root),
             "BENCH_OFFLINE": "1",
