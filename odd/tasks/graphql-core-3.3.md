@@ -225,15 +225,30 @@ of scope.
         Original work unit: dff6703475bbec39fce5bca7edbb72852f952de7.
         Numeric correction: d934c045c42cc0c6f8a3e9c6a404719c4a7297a5.
         Roll back only this validator slice.
-      - [ ] T4b2b2b — Dispatch the existing five-operation harness after
-        preflight via the selected interpreter. Reuse the checked validator,
-        reserve an external owned output safely, sanitize the child environment
-        and prefix, reject source/seed drift, and preserve existing assets on
-        child failure. Prove four real runs, SQL/response and rollback controls
-        after a separate cost notice. Hard child PR budget is 400 authored
-        lines; no earlier size exception carries forward. Leave three-run
-        publication and quiet measurements for later slices; Engram mirror
-        remains pending. Roll back only this dispatch slice.
+      - [ ] T4b2b2b1 — Add an optional held-directory write boundary for
+        named-profile harness output without changing historical output.
+        Route: delegated direct on codex/graphql-core-3.3-benchmark-dispatch-run
+        from integration 1413265; own only harness, focused isolation tests,
+        brief guidance, and this checkpoint. Fresh RED proved a mismatched
+        output descriptor was ignored and the path writer was still used;
+        GREEN proved both held-directory controls. Check unsafe output names
+        and a renamed visible directory against actual filesystem behavior.
+        This boundary is useful independently but does not dispatch or measure
+        a full profile. Require
+        clean native-3.3 and quality gates before checking it complete.
+        Roll back only the optional descriptor write and its controls.
+      - [ ] T4b2b2b2 — Dispatch the existing five-operation harness using
+        read-only preflight, the checked validator, and the held directory.
+        Reserve fresh external output with safe empty prefix, sanitize the
+        child, recheck source/runtime/freeze/seed around execution, reject
+        witness/output drift, and clean only attempt-owned output on failure.
+        The earlier public missing-entrypoint RED and basic mocked GREEN are
+        retained; new safeguards need their own cause-correct RED before fix.
+        Prove four real runs and rollback controls only AFTER a separate
+        user-visible 2,340-request/20-build cost notice and explicit resume.
+        Hard child PR budget is 400; no earlier exception carries forward.
+        Leave three-run publication and quiet measurements for later slices;
+        Engram mirror remains pending. Roll back only this dispatch slice.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run

@@ -34,6 +34,7 @@ import importlib
 import json
 import os
 import platform
+import stat
 import statistics
 import subprocess
 import sys
@@ -352,7 +353,30 @@ def main() -> None:
     else:
         out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{BENCH_PREFIX}{BENCH_LIB}.json"
-    with out_path.open("x" if witness is not None else "w") as stream:
+    held_directory = os.environ.get("BENCH_OUTPUT_FD") if witness is not None else None
+    if held_directory is not None:
+        if BENCH_PREFIX:
+            raise ValueError("named output descriptor requires an empty prefix")
+        if BENCH_LIB not in {"graphex", "strawberry", "graphene", "ariadne"}:
+            raise ValueError("named output descriptor requires a known library")
+        directory_fd = int(held_directory)
+        held = os.fstat(directory_fd)
+        named = os.stat(out_dir, follow_symlinks=False)
+        if not stat.S_ISDIR(held.st_mode) or (held.st_dev, held.st_ino) != (
+            named.st_dev,
+            named.st_ino,
+        ):
+            raise ValueError("named output descriptor differs from directory")
+        file_fd = os.open(
+            out_path.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        stream = os.fdopen(file_fd, "w")
+    else:
+        stream = out_path.open("x" if witness is not None else "w")
+    with stream:
         stream.write(json.dumps(output, indent=2))
     sys.stdout.write(json.dumps(output, indent=2) + "\n")
     sys.stdout.write(f"\nWrote {out_path}\n")
