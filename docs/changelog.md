@@ -12,6 +12,16 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## Unreleased
+
+Current source raises the runtime GraphQL-core floor to
+`graphql-core>=3.3.0,<3.4`. The root and Playground locks target the 3.3
+line. This is an in-progress migration, not a published package release;
+the package version and release date remain undecided. Custom execution
+backends must move from 3.2 `ExecutionContext` subclasses to the 3.3
+`Executor` API; renaming the view keyword alone is not sufficient. The
+3.1.1 security patch and its 3.2.13 requirement remain historical facts.
+
 ## 3.1.1 — 2026-10-01
 
 **Security patch.** Production publication is tag-driven. The supported runtime

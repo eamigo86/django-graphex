@@ -39,7 +39,7 @@ The backend class itself must match the installed GraphQL-core generation:
 subclass `ExecutionContext` on 3.2, or `Executor` on 3.3. Custom 3.2 subclasses
 need to be ported to the [3.3 Executor API](https://github.com/graphql-python/graphql-core/releases/tag/v3.3.0);
 renaming the view keyword alone does not make them compatible. The runtime
-dependency floor remains on 3.2 until the rest of the 3.3 migration is verified.
+dependency floor is now 3.3 for current source; custom backends must be ported.
 
 On GraphQL-core 3.3, the HTTP view supplies the executor's async-iterable
 predicate so a Django queryset, which implements both iterator protocols,
@@ -60,8 +60,9 @@ the built-in optimizer already reads both parsed and constructed fragments
 without mutating them. When evaluating directives directly against
 GraphQL-core 3.3, pass its native variable-values object rather than a plain
 dict. Test the resulting schema queries with valid variables, defaults, and
-invalid inputs when porting custom extensions. The published dependency floor
-remains on 3.2 until the full migration is verified.
+invalid inputs when porting custom extensions. Published 3.1.1 still retains
+the historical 3.2 requirement; this current-source migration is not a new
+package release.
 
 ### Cross-site POST protection
 
