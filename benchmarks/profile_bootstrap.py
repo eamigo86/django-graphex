@@ -10,6 +10,16 @@ from typing import Any
 
 LIBRARIES = ("graphex", "graphene", "strawberry", "ariadne")
 PROFILES = ("core33",)
+_REQUIRED_PACKAGES = {
+    "graphex": (
+        "django",
+        "graphql-core",
+        "pydantic",
+        "python-dateutil",
+        "text-unidecode",
+    ),
+    "graphene": ("django-filter",),
+}
 _PIN = re.compile(r"([a-z0-9][a-z0-9-]*)==([A-Za-z0-9][A-Za-z0-9.!+_-]*)")
 
 
@@ -62,6 +72,9 @@ def load_profile(profile: str, library: str, benchmarks: Path) -> dict[str, Any]
     spec = manifest["libraries"][library]
     path = directory / "constraints" / f"{library}.txt"
     freeze = load_constraints(path)
+    for name in _REQUIRED_PACKAGES.get(library, ()):
+        if name not in spec["packages"]:
+            raise ValueError(f"required package missing from {library}: {name}")
     for name, version in spec["packages"].items():
         if freeze.get(name) != version:
             raise ValueError(f"manifest/freeze mismatch for {library}: {name}")
