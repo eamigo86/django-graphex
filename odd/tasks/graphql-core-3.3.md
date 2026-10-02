@@ -672,6 +672,19 @@ an authoritative runtime identity.
 
 ### T4b1 local proof and remaining gate
 
+- The corrected profile child `b0f2fdba2888296ef117aa304602558ff11203a9`
+  fixes the independent Graphex and Graphene startup blockers (345 authored
+  plus 47 installer-observed freeze lines). Its clean native-3.3 suite passed
+  4,438 tests at 96.23% branch coverage. Conventional merge
+  `f7d39a4ffba8903371b4a412e783cade4fbee57c` carries it into this setup
+  child without rewriting either history; focused setup diff remains 358 lines.
+- Two fresh offline setup recreations produced four byte-identical freezes per
+  round with valid activation and entrypoints. All four real seeded five-step
+  HTTP workloads passed with mutation rollback; all 20 SQL counts matched the
+  frozen contracts. Clean setup clone passed 56 benchmark and 4,444 full
+  native-3.3 tests at 96.23%; Ruff, mypy, docstrings, docs, Bash, and pinned
+  ShellCheck passed. Proof: `/private/tmp/graphex-t4b1-correction.efG5xu/`.
+  Independent and hosted checks remain pending; T4b2 measurements are not run.
 - Profile child `783385d35d25fdcfd7f91e595949e9076199016b` records observed
   per-library constraints and validates the selected direct pins. Its clean
   clone passed 46 benchmark tests and 4,434 full native-3.3 tests at 96.23%
