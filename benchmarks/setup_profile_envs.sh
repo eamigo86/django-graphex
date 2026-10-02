@@ -36,15 +36,18 @@ for lib in "$@"; do
   fi
 done
 
-export UV_PYTHON_DOWNLOADS=never
 uv_flags=(--no-config --cache-dir "$cache")
 if [[ "${BENCH_OFFLINE:-0}" == 1 ]]; then
   uv_flags+=(--offline)
 fi
-stage=""
+run_uv() {
+  env -i PATH="$PATH" HOME="$cache" UV_PYTHON_DOWNLOADS=never \
+    uv "${uv_flags[@]}" "$@"
+}
+owned_target=""
 cleanup() {
-  if [[ -n "$stage" && -d "$stage" ]]; then
-    rm -rf "$stage"
+  if [[ -n "$owned_target" && -d "$owned_target" ]]; then
+    rm -rf "$owned_target"
   fi
 }
 trap cleanup EXIT
@@ -53,27 +56,25 @@ index=0
 for lib in "$@"; do
   freeze="${constraints[$index]}"
   index=$((index + 1))
-  stage="$(mktemp -d "$root/.venv-$profile-$lib.staging.XXXXXX")"
-  uv "${uv_flags[@]}" venv --no-managed-python -p "$python" "$stage"
+  target="$root/.venv-$profile-$lib"
+  mkdir "$target" || { echo "profile destination appeared during install: $lib" >&2; exit 1; }
+  owned_target="$target"
+  run_uv venv --allow-existing --no-managed-python -p "$python" "$target"
   install_args=(--index-url https://pypi.org/simple -r "$freeze")
   if [[ "$lib" == graphene ]]; then
     install_args+=(--find-links "$BENCH_WHEEL_DIR")
   fi
-  uv "${uv_flags[@]}" pip install --no-build --python "$stage/bin/python" \
+  run_uv pip install --no-build --python "$target/bin/python" \
     "${install_args[@]}" || {
       echo "profile install failed; destination remains untouched: $lib" >&2
       exit 1
     }
-  "$stage/bin/python" "$HERE/verify_freeze.py" "$freeze" "$lib" > "$stage/.freeze.txt"
-  cmp -s "$freeze" "$stage/.freeze.txt" || {
+  "$target/bin/python" "$HERE/verify_freeze.py" "$freeze" "$lib" > "$target/.freeze.txt"
+  cmp -s "$freeze" "$target/.freeze.txt" || {
     echo "installed freeze differs from observed constraints: $lib" >&2
     exit 1
   }
-  uv "${uv_flags[@]}" pip check --python "$stage/bin/python"
-  target="$root/.venv-$profile-$lib"
-  [[ ! -e "$target" ]] || { echo "profile destination appeared during install" >&2; exit 1; }
-  mv -n "$stage" "$target"
-  [[ ! -e "$stage" ]] || { echo "profile promotion did not complete: $lib" >&2; exit 1; }
-  stage=""
+  run_uv pip check --python "$target/bin/python"
+  owned_target=""
   echo "Ready: $target"
 done

@@ -141,15 +141,16 @@ def test_offline_cache_miss_leaves_no_profile_environment(tmp_path: Path) -> Non
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     uv = fake_bin / "uv"
+    log = tmp_path / "uv.log"
     uv.write_text(
-        '#!/bin/bash\necho "$*" >>"$UV_LOG"\n'
+        '#!/bin/bash\necho "$*|${UV_EXTRA_INDEX_URL-unset}|${UV_INDEX_USERNAME-unset}" '
+        f'>>"{log}"\n'
         'for arg in "$@"; do\n'
         '  if [[ "$arg" == venv ]]; then mkdir -p "${@: -1}/bin"; exit 0; fi\n'
         "done\nexit 1\n"
     )
     uv.chmod(0o755)
     root = tmp_path / "venvs"
-    log = tmp_path / "uv.log"
     result = subprocess.run(
         ["bash", str(bench / "setup_envs.sh"), "--profile", "core33", "graphex"],
         cwd=bench,
@@ -159,8 +160,9 @@ def test_offline_cache_miss_leaves_no_profile_environment(tmp_path: Path) -> Non
             "BENCH_UV_CACHE_DIR": str(tmp_path / "cache"),
             "BENCH_PROFILE_VENV_ROOT": str(root),
             "BENCH_OFFLINE": "1",
+            "UV_EXTRA_INDEX_URL": "https://private.invalid/simple",
+            "UV_INDEX_USERNAME": "private-user",
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "UV_LOG": str(log),
         },
         capture_output=True,
         text=True,
@@ -169,5 +171,41 @@ def test_offline_cache_miss_leaves_no_profile_environment(tmp_path: Path) -> Non
     assert result.returncode != 0
     assert "destination remains untouched" in result.stderr
     assert "--offline" in log.read_text()
+    assert all(line.endswith("|unset|unset") for line in log.read_text().splitlines())
     assert not (root / ".venv-core33-graphex").exists()
+    assert not list(root.glob("*.staging.*"))
+
+
+def test_profile_venv_is_created_at_its_final_path(tmp_path: Path) -> None:
+    """Avoid moving a venv after its activation scripts are generated.
+
+    Args:
+        tmp_path: Disposable bootstrap inputs and fake package manager.
+    """
+    bench = _isolated_benchmarks(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    log = tmp_path / "uv.log"
+    uv = fake_bin / "uv"
+    uv.write_text(f'#!/bin/sh\necho "$*" >>"{log}"\nexit 1\n')
+    uv.chmod(0o755)
+    root = tmp_path / "venvs"
+    result = subprocess.run(
+        ["bash", str(bench / "setup_envs.sh"), "--profile", "core33", "graphex"],
+        cwd=bench,
+        env={
+            **os.environ,
+            "BENCH_PYTHON": sys.executable,
+            "BENCH_UV_CACHE_DIR": str(tmp_path / "cache"),
+            "BENCH_PROFILE_VENV_ROOT": str(root),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    target = root / ".venv-core33-graphex"
+    assert result.returncode != 0
+    assert log.read_text().splitlines()[0].endswith(str(target))
+    assert not target.exists()
     assert not list(root.glob("*.staging.*"))
