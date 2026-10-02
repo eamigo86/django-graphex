@@ -205,7 +205,8 @@ of scope.
         four real profile imports bound version, paths, hashes, commit, and
         tree. Ruff, mypy, both docstring gates, docs, and diff checks passed.
         The previous missing-database probe path was corrected before the
-        asset-preservation proof. Work-unit commit recorded in follow-up note.
+        asset-preservation proof. Work-unit commit 5d16273aa106342e51eaab3ab05580bbc2aee326
+        has tree 1c6ddee80dcd3f94da8e823e84bbff61cbee5b8a.
       - [ ] T4b2b2 — Dispatch the existing five-operation harness after
         preflight and validate the child's witness against the checked source
         and tree in a disposable single-run diagnostic. Observe dispatch RED
