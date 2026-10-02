@@ -30,6 +30,7 @@ raw-run directory and is the only command that replaces canonical results.
 """
 
 import hashlib
+import importlib
 import json
 import os
 import platform
@@ -37,8 +38,10 @@ import statistics
 import subprocess
 import sys
 import time
+import tomllib
 from contextlib import nullcontext
 from pathlib import Path
+from types import ModuleType
 
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
@@ -197,6 +200,53 @@ def _provenance() -> dict[str, str]:
     }
 
 
+def _profile_witness(schema_module: ModuleType) -> dict[str, str] | None:
+    """Attest the actual loaded backend only for a named comparison profile.
+
+    Args:
+        schema_module: Schema module used by this measuring process.
+
+    Returns:
+        Measured checkout, runtime, backend, and selected freeze identity.
+    """
+    profile = os.environ.get("BENCH_PROFILE")
+    if not profile:
+        return None
+    root = BASE_DIR.parent
+    backend = {
+        "graphex": "django_graphex",
+        "graphene": "graphene_django",
+        "strawberry": "strawberry_django",
+        "ariadne": "ariadne",
+    }[BENCH_LIB]
+    package = importlib.import_module(backend)
+    manifest = BASE_DIR / "comparison_profiles" / profile / "manifest.json"
+    constraints = manifest.parent / "constraints" / f"{BENCH_LIB}.txt"
+    project = tomllib.loads((root / "pyproject.toml").read_text())
+
+    import django
+    import graphql
+
+    return {
+        "profile": profile,
+        "library": BENCH_LIB,
+        "commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip(),
+        "tree": subprocess.check_output(
+            ["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True
+        ).strip(),
+        "source_version": str(project["project"]["version"]),
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "constraints_sha256": hashlib.sha256(constraints.read_bytes()).hexdigest(),
+        "backend_path": str(Path(package.__file__).resolve()),
+        "schema_path": str(Path(schema_module.__file__).resolve()),
+        "python": platform.python_version(),
+        "django": django.__version__,
+        "graphql-core": graphql.version,
+    }
+
+
 def main() -> None:
     """Run the selected library's isolated benchmark and write its result.
 
@@ -284,11 +334,21 @@ def main() -> None:
         "surface": _surface(client),
         "ops": results,
     }
+    witness = _profile_witness(schema_module)
+    if witness is not None:
+        output["profile_witness"] = witness
+        if BENCH_LIB == "graphex":
+            output["versions"]["django-graphex"] = witness["source_version"]
 
     out_dir = Path(os.environ.get("BENCH_OUTPUT_DIR", BASE_DIR / "scratch"))
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if witness is not None:
+        if not out_dir.is_dir() or out_dir.is_symlink():
+            raise ValueError("named-profile output directory is not owned")
+    else:
+        out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{BENCH_PREFIX}{BENCH_LIB}.json"
-    out_path.write_text(json.dumps(output, indent=2))
+    with out_path.open("x" if witness is not None else "w") as stream:
+        stream.write(json.dumps(output, indent=2))
     sys.stdout.write(json.dumps(output, indent=2) + "\n")
     sys.stdout.write(f"\nWrote {out_path}\n")
 

@@ -193,10 +193,26 @@ of scope.
         direct CLI import safety, and public docstrings; final count is 592.
         Four real stacks and clean native-3.3 gates passed without producing
         measurements. Proof: /private/tmp/graphex-t4b2a.eaFO6y.
-      - [ ] T4b2b — Dispatch the existing five-operation harness after preflight,
-        bind the measured backend to the checked source and tree, and retain
-        a disposable single-run diagnostic. Leave three-run publication and
-        quiet measurements for later slices. Engram mirror remains pending.
+        Commit 121714f942aa4201867881a0703faf25e8dae48d merged into
+        integration as 5f1d4167379fd0d1f1facba904249b0b6c1cfe15.
+      - [x] T4b2b1 — Add an opt-in measuring-child source/backend/profile
+        witness, with focused tests and guidance. Route: delegated direct.
+        Observe witness-specific RED, then GREEN; prove actual profile imports,
+        dynamic source version, native-3.3 gates, and unchanged historical
+        no-profile output. No measurement dispatch or publication in this unit.
+        Candidate proof: /private/tmp/graphex-t4b2b.G0XXJU. Clean native-3.3
+        clone passed 74 benchmark and 4,462 full tests at 96.23% branch;
+        four real profile imports bound version, paths, hashes, commit, and
+        tree. Ruff, mypy, both docstring gates, docs, and diff checks passed.
+        The previous missing-database probe path was corrected before the
+        asset-preservation proof. Work-unit commit 5d16273aa106342e51eaab3ab05580bbc2aee326
+        has tree 1c6ddee80dcd3f94da8e823e84bbff61cbee5b8a.
+      - [ ] T4b2b2 — Dispatch the existing five-operation harness after
+        preflight and validate the child's witness against the checked source
+        and tree in a disposable single-run diagnostic. Observe dispatch RED
+        before implementation; prove four real profile runs, SQL/response and
+        rollback controls. Leave three-run publication and quiet measurements
+        for later slices; Engram mirror remains pending.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run

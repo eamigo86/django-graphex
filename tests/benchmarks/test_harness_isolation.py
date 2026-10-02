@@ -5,10 +5,67 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = REPO_ROOT / "benchmarks"
+
+
+def test_profile_witness_is_child_observed_and_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attest the loaded backend only for named-profile child processes.
+
+    Args:
+        monkeypatch: Fixture selecting or removing the profile mode.
+    """
+    from benchmarks import harness
+
+    schema = SimpleNamespace(__file__=BENCHMARKS / "libs/graphex/bench_schema.py")
+    monkeypatch.delenv("BENCH_PROFILE", raising=False)
+    assert harness._profile_witness(schema) is None
+    monkeypatch.setenv("BENCH_PROFILE", "core33")
+    witness = harness._profile_witness(schema)
+    assert witness["schema_path"] == str(schema.__file__)
+    assert witness["backend_path"] == str(REPO_ROOT / "django_graphex/__init__.py")
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    assert witness["source_version"] == project["project"]["version"]
+    assert (
+        witness["tree"]
+        == subprocess.check_output(
+            ["git", "rev-parse", "HEAD^{tree}"], cwd=REPO_ROOT, text=True
+        ).strip()
+    )
+    assert len(witness["constraints_sha256"]) == 64
+
+
+def test_profile_witness_reads_future_source_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Read the measured checkout version rather than a historical constant.
+
+    Args:
+        tmp_path: Synthetic future checkout with its own profile files.
+        monkeypatch: Fixture redirecting the child witness to that checkout.
+    """
+    from benchmarks import harness
+
+    bench = tmp_path / "benchmarks"
+    profile = bench / "comparison_profiles/core33"
+    (profile / "constraints").mkdir(parents=True)
+    (profile / "manifest.json").write_text("{}")
+    (profile / "constraints/graphex.txt").write_text("graphql-core==3.3.0\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "4.0.0"\n')
+    monkeypatch.setattr(harness, "BASE_DIR", bench)
+    monkeypatch.setattr(harness.subprocess, "check_output", lambda *_a, **_k: "a" * 40)
+    monkeypatch.setenv("BENCH_PROFILE", "core33")
+    schema = SimpleNamespace(__file__=bench / "libs/graphex/bench_schema.py")
+
+    assert harness._profile_witness(schema)["source_version"] == "4.0.0"
 
 
 def test_all_117_operation_requests_roll_back_rows_and_sqlite_sequence(
