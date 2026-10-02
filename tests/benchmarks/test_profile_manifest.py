@@ -17,7 +17,10 @@ def _profile() -> object:
 
 
 def test_new_profile_pins_compatible_complete_stacks() -> None:
-    """Require observed per-library freezes and distinct core generations."""
+    """Require observed per-library freezes and distinct core generations.
+
+    The selected direct pins must agree with every recorded dependency freeze.
+    """
     profile = _profile()
     expected = {
         "graphex": ("3.3.0", "source"),
