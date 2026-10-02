@@ -44,6 +44,14 @@ the bootstrap never builds django-graphex or another upstream dependency.
 The current source is not installed into the new Graphex venv. The separate
 comparison preflight supplies it explicitly and records its commit/version.
 
+When the existing harness receives `BENCH_PROFILE=core33`, its measuring
+process also records a `profile_witness`: the loaded backend and schema paths,
+actual Python/Django/GraphQL-core versions, source commit and tree, source
+version read from the measured checkout, and selected manifest/freeze hashes.
+The historical harness without that variable keeps its original output
+contract. This witness is diagnostic evidence, not a published comparison;
+the named runner does not dispatch or validate measurements yet.
+
 Before running a comparison, use run_comparison.py to preflight one named
 profile stack. Pass --profile core33, one --library, the absolute
 --venv-root containing its profile environment, an existing seeded SQLite
