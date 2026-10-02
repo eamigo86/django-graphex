@@ -178,12 +178,14 @@ of scope.
 T0-T3 and the JSON, validation-cache, HTTP privacy, and subscription privacy
 children are integrated through `b5a5207ebb80b70e95b49880b1b51b327500a5b7`.
 PR #222 passed exact-head hosted checks before that integration-only merge;
-its integration-push run `36945214190` concluded success without rechecked
-job counts, while tracker run `36945219668` remained in progress. This floor child
+its integration-push run `36945214190` and tracker run `36945219668` each
+passed 15 validations, with three publication jobs skipped; both tracker
+Codecov checks succeeded. This floor child
 history-merges that reviewed integration without importing the rejected regex
 branches. Its source diff remains limited to the GraphQL-core floor/locks,
 readiness contracts, and current guidance; the package version stays 3.1.1.
-Combined native-3.3 and hosted checks must pass on the new merge head. The
+Combined native-3.3 local checks passed on merge `8093da0`; hosted checks on
+this new floor head remain pending. The
 new per-library benchmark comparison choice is resolved, while package SemVer
 and T4b-T4d remain pending. Published 3.1.1 main/tag and canonical benchmark
 files remain unchanged. Draft tracker #212 has no main merge, tag,
@@ -629,8 +631,8 @@ an authoritative runtime identity.
   publication jobs skipped. PR #222 merged only into integration as
   `b5a5207ebb80b70e95b49880b1b51b327500a5b7`, tree
   `5c56559b647ead22eedfce49b78ba8b765561d25`. Post-merge integration
-  run `36945214190` concluded success without rechecked job counts; tracker
-  run `36945219668` remained in progress at this checkpoint.
+  run `36945214190` and tracker run `36945219668` each passed 15 validation
+  jobs, skipped three publication jobs, and both tracker Codecov checks passed.
 - This T4a correction merges `b5a5207` into existing floor branch `4cd2f7d`
   without rebasing or rewriting either history. Original T4a RED/GREEN and
   independent proof remain valid for their exact earlier candidate; the new
@@ -638,3 +640,23 @@ an authoritative runtime identity.
   PR #218's earlier Playground/Python 3.14 failures are historical, not waived.
   Roll back only this floor child if its fresh gates fail. The rejected T4s
   regex branches, frozen benchmarks, and dated 3.1.1/3.1.0 notes remain out.
+- History-preserving merge `8093da0ecac2038a588adc020e8d7f0418b7145f`
+  has tree `4f0981b58fbd136feb11bd0941cb51b2c6b46aec`. The focused
+  floor diff against `b5a5207` is 352 authored plus 16 generated lock lines,
+  368 changed lines total. A clean real clone imported source plus official
+  GraphQL-core 3.3.0: 51 readiness, 66 HTTP/security, and 90 SSE/WS focal
+  tests passed. The unchanged full runner passed 4,427 tests, 7 skips,
+  3 established warnings, and 23 subtests at 96.19% branch coverage versus
+  the unchanged 95.01% gate. Changed-line coverage is N/A because this floor
+  slice changes no covered runtime line. Playground passed 59 tests on both
+  Python 3.12 and 3.14 with native 3.3. Proof:
+  `/private/tmp/graphex-33-t4a-resync.xqRKvD/`.
+- Root and Playground offline no-build lock checks passed for 123 and 47
+  packages. TOML comparison found only graphql-core and the project's GraphQL
+  requirement changed; all other pins, eight historical benchmark results,
+  constraints, versions.env, and dated changelog sections are unchanged.
+  Ruff, native-3.3 mypy (79 files), both docstring gates (TOTAL 0), docs with
+  five established anchor warnings, and diff checks passed. No own build,
+  root environment install, remote operation, main merge, tag, or publication
+  occurred in this local work unit. New floor-head independent and hosted
+  checks remain pending; T4b-T4d and package SemVer remain undecided.
