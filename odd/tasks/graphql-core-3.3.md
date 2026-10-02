@@ -263,9 +263,16 @@ of scope.
         PR after its observed 640 authored-line candidate was disclosed. This
         is not a separate exact ceiling or an exception for another unit.
         Work unit: 3778eda4e3fd16cfcd178bab8f6e27d8f6ca35dd.
-        Focused synthetic controls pass, but the dispatcher remains staged
-        before heavy measurements. Real profile runs, independent verification,
-        and hosted gates remain pending, not checked off.
+        After the informational cost notice, four single-run diagnostics at
+        source commit c99de0ff27cfd3daf50fc4461cdfba8784914164 validated
+        all five operations, 100 samples per operation, and five schema builds
+        per library. Each seed retained 1,000 authors, 10,000 posts, 50,000
+        comments, identical SQLite sequences, and identical file hashes.
+        The exact measured clone passed 75 focal, 139 benchmark, and 4,527
+        full tests at 96.23% branch coverage with unchanged 258/266/282 gap
+        sets. Ruff, mypy, both docstring gates, docs, and diff check passed.
+        Full raw proof: /private/tmp/graphex-t4b2b2b2.csQs2s/. Independent
+        verification and hosted gates remain pending, so this task stays open.
         Leave three-run publication and quiet measurements for later slices;
         Engram mirror remains pending. Roll back only this dispatch slice.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
