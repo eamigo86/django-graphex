@@ -245,14 +245,26 @@ of scope.
         descriptor write and its controls.
       - [ ] T4b2b2b2 — Dispatch the existing five-operation harness using
         read-only preflight, the checked validator, and the held directory.
+        Route: delegated direct on codex/graphql-core-3.3-benchmark-dispatch-single
+        from integration cbc9ebe; own only the named runner, focused tests,
+        concise benchmark guidance, and this task checkpoint. Keep default
+        CLI preflight read-only and make execution explicit.
         Reserve fresh external output with safe empty prefix, sanitize the
         child, recheck source/runtime/freeze/seed around execution, reject
         witness/output drift, and clean only attempt-owned output on failure.
+        If directory replacement makes cleanup uncertain, retain recoverable
+        residue rather than touching a foreign path. Do not claim loaded-byte
+        attestation or a universal filesystem sandbox.
         The earlier public missing-entrypoint RED and basic mocked GREEN are
         retained; new safeguards need their own cause-correct RED before fix.
         Prove four real runs and rollback controls only AFTER a separate
         user-visible 2,340-request/20-build cost notice and explicit resume.
-        Hard child PR budget is 400; no earlier exception carries forward.
+        The human approved a size:exception only for this coherent dispatcher
+        PR after its observed 640 authored-line candidate was disclosed. This
+        is not a separate exact ceiling or an exception for another unit.
+        Focused synthetic controls pass, but the dispatcher remains staged
+        before heavy measurements. Real profile runs, independent verification,
+        and hosted gates remain pending, not checked off.
         Leave three-run publication and quiet measurements for later slices;
         Engram mirror remains pending. Roll back only this dispatch slice.
   - [ ] T4c — Complete Playground/example and migration guidance, verify

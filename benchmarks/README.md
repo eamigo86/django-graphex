@@ -65,10 +65,13 @@ Before running a comparison, use run_comparison.py to preflight one named
 profile stack. Pass --profile core33, one --library, the absolute
 --venv-root containing its profile environment, an existing seeded SQLite
 --database, a fresh external --output-root, and --authors 1000 (or the
-matching seed size). The command prints source commit/tree, source version,
-manifest and freeze digests after checking the installed interpreter and seed.
-It does not create output or run a measurement yet; the next runner slice will
-dispatch the existing workload and bind that output to this identity.
+matching seed size). By default the command prints source commit/tree, source
+version, and manifest and freeze digests without creating output. Add --execute
+for one diagnostic run through the selected interpreter and existing harness.
+It validates the measured result and refuses source, profile, runtime, seed,
+or output drift. If a replaced output path cannot be cleaned safely, owned
+residue is left for recovery rather than removing a foreign directory. A
+single run is not a published comparison or a three-run median.
 
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a

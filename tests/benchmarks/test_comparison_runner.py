@@ -561,3 +561,386 @@ def test_result_validator_accepts_finite_integer_and_float_timings(
     result["schema_import_ms"] = 2
     result["schema_rebuild_samples_ms"] = [0, 1, 0.5, 1.0, 2]
     run_comparison.validate_result(plan, result)
+
+
+def test_single_run_uses_selected_child_and_owned_external_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dispatch only the selected interpreter with a held output directory.
+
+    Args:
+        tmp_path: Disposable profile and diagnostic paths.
+        monkeypatch: Fixture replacing the measuring child.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    monkeypatch.setattr(
+        run_comparison, "_database_identity", lambda *_: ("seed", ()), raising=False
+    )
+    monkeypatch.setenv("BENCH_PREFIX", "../unsafe")
+
+    def child(command: list[str], **kwargs: object) -> None:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        assert command[0] == str(plan.python)
+        assert environment["BENCH_PREFIX"] == ""
+        assert environment["BENCH_OUTPUT_DIR"] == str(output)
+        assert "PIP_INDEX_URL" not in environment
+        assert kwargs["pass_fds"]
+        (output / "graphex.json").write_text(json.dumps(_measured_result(plan)))
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    path = run_comparison.run_single(plan)
+    assert path == output / "graphex.json"
+    assert json.loads(path.read_text())["profile_witness"]["tree"] == plan.tree
+
+
+def test_single_run_preserves_raced_existing_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refuse an output occupied after preflight without launching a child.
+
+    Args:
+        tmp_path: Disposable profile and diagnostic paths.
+        monkeypatch: Fixture forbidding child execution.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    output.mkdir()
+    marker = output / "keep.txt"
+    marker.write_text("existing")
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+    monkeypatch.setattr(
+        run_comparison.subprocess,
+        "run",
+        lambda *_a, **_k: pytest.fail("child launched"),
+    )
+    with pytest.raises((ValueError, FileExistsError)):
+        run_comparison.run_single(plan)
+    assert marker.read_text() == "existing"
+
+
+def test_single_run_rejects_forged_child_without_deleting_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a forged measured tree and remove only the owned attempt.
+
+    Args:
+        tmp_path: Disposable profile and diagnostic paths.
+        monkeypatch: Fixture replacing the measuring child.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    sibling = tmp_path / "keep.txt"
+    sibling.write_text("existing")
+    monkeypatch.setattr(
+        run_comparison, "_database_identity", lambda *_: ("seed", ()), raising=False
+    )
+
+    def child(_command: list[str], **_kwargs: object) -> None:
+        result = _measured_result(plan)
+        result["profile_witness"]["tree"] = "forged"
+        (output / "graphex.json").write_text(json.dumps(result))
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    with pytest.raises(ValueError, match="witness"):
+        run_comparison.run_single(plan)
+    assert not output.exists()
+    assert sibling.read_text() == "existing"
+
+
+def test_single_run_rejects_changed_freeze_before_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recheck the selected freeze before claiming a diagnostic output.
+
+    Args:
+        tmp_path: Disposable profile workspace.
+        monkeypatch: Fixture forbidding measurement after drift.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    (venv_root / ".venv-core33-graphex/.freeze.txt").write_text("changed\n")
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+    monkeypatch.setattr(
+        run_comparison.subprocess,
+        "run",
+        lambda *_a, **_k: pytest.fail("child launched after freeze drift"),
+    )
+    with pytest.raises(ValueError, match="freeze"):
+        run_comparison.run_single(plan)
+    assert not output.exists()
+
+
+def test_single_run_rejects_source_version_changed_during_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject source-version drift even if mocked Git identity is stable.
+
+    Args:
+        tmp_path: Disposable source and output paths.
+        monkeypatch: Fixture simulating the measuring child.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+
+    def child(_command: list[str], **_kwargs: object) -> None:
+        (output / "graphex.json").write_text(json.dumps(_measured_result(plan)))
+        (run_comparison.ROOT / "pyproject.toml").write_text(
+            '[project]\nversion = "4.0.0"\n'
+        )
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    with pytest.raises(ValueError, match="source"):
+        run_comparison.run_single(plan)
+    assert not output.exists()
+
+
+def test_single_run_preserves_replacement_directory_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never remove a foreign directory that replaced the owned output path.
+
+    Args:
+        tmp_path: Disposable owned and replacement directories.
+        monkeypatch: Fixture simulating a child-time path replacement.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    moved = tmp_path / "moved"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+
+    def child(_command: list[str], **_kwargs: object) -> None:
+        (output / "graphex.json").write_text(json.dumps(_measured_result(plan)))
+        output.rename(moved)
+        output.mkdir()
+        (output / "foreign.txt").write_text("keep")
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    with pytest.raises(ValueError, match="output"):
+        run_comparison.run_single(plan)
+    assert (output / "foreign.txt").read_text() == "keep"
+    assert (moved / "graphex.json").is_file()
+
+
+def test_single_run_rejects_symlink_result_without_touching_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Leave an unowned symlink and its target intact on result rejection.
+
+    Args:
+        tmp_path: Disposable diagnostic and external target paths.
+        monkeypatch: Fixture simulating a malformed child output.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    marker = tmp_path / "foreign.json"
+    marker.write_text("keep")
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+
+    def child(_command: list[str], **_kwargs: object) -> None:
+        (output / "graphex.json").symlink_to(marker)
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    with pytest.raises((ValueError, OSError)):
+        run_comparison.run_single(plan)
+    assert marker.read_text() == "keep"
+    assert (output / "graphex.json").is_symlink()
+
+
+def test_cli_execution_is_explicit_and_reports_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Keep default preflight read-only and dispatch only with the opt-in flag.
+
+    Args:
+        tmp_path: Disposable profile and result paths.
+        monkeypatch: Fixture replacing the measuring child.
+        capsys: Fixture capturing the CLI report.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    result = output / "graphex.json"
+    monkeypatch.setattr(run_comparison, "run_single", lambda *_: result)
+    run_comparison.main(
+        [
+            "--profile",
+            "core33",
+            "--library",
+            "graphex",
+            "--venv-root",
+            str(venv_root),
+            "--database",
+            str(tmp_path / "seed.sqlite3"),
+            "--output-root",
+            str(output),
+            "--authors",
+            "1000",
+            "--execute",
+        ]
+    )
+    assert json.loads(capsys.readouterr().out)["result"] == str(result)
+
+
+def test_single_run_rejects_seed_and_sequence_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a child that changes prepared SQLite bytes or allocation state.
+
+    Args:
+        tmp_path: Disposable profile, seed, and output paths.
+        monkeypatch: Fixture simulating a mutating child.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    database = tmp_path / "seed.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE allocation (id INTEGER PRIMARY KEY AUTOINCREMENT)"
+        )
+        connection.execute("INSERT INTO allocation DEFAULT VALUES")
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, database, output, 1000
+    )
+    before = run_comparison._database_identity(database)
+
+    def child(_command: list[str], **_kwargs: object) -> None:
+        (output / "graphex.json").write_text(json.dumps(_measured_result(plan)))
+        with sqlite3.connect(database) as connection:
+            connection.execute("INSERT INTO allocation DEFAULT VALUES")
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    with pytest.raises(ValueError, match="seed or SQLite sequence"):
+        run_comparison.run_single(plan)
+    assert run_comparison._database_identity(database) != before
+    assert not output.exists()
+
+
+def test_single_run_cleans_owned_output_after_child_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Propagate a failed child without removing an existing sibling.
+
+    Args:
+        tmp_path: Disposable diagnostic and sibling paths.
+        monkeypatch: Fixture simulating a failed measuring child.
+
+    Raises:
+        subprocess.CalledProcessError: From the simulated measuring child.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    sibling = tmp_path / "keep.txt"
+    sibling.write_text("existing")
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+
+    def child(_command: list[str], **_kwargs: object) -> None:
+        (output / "graphex.json").write_text("partial")
+        raise subprocess.CalledProcessError(2, ["mock-child"])
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    with pytest.raises(subprocess.CalledProcessError):
+        run_comparison.run_single(plan)
+    assert not output.exists()
+    assert sibling.read_text() == "existing"
+
+
+@pytest.mark.parametrize("drift", ["manifest", "freeze", "runtime"])
+def test_single_run_rechecks_selected_stack_after_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    """Reject a changed profile, sidecar, or interpreter after measurement.
+
+    Args:
+        tmp_path: Disposable selected profile and output paths.
+        monkeypatch: Fixture simulating a changing child-time stack.
+        drift: Selected post-measurement observation to alter.
+    """
+    bench, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+
+    def child(_command: list[str], **_kwargs: object) -> None:
+        (output / "graphex.json").write_text(json.dumps(_measured_result(plan)))
+        if drift == "manifest":
+            manifest = bench / "comparison_profiles/core33/manifest.json"
+            manifest.write_text(manifest.read_text() + "\n")
+        elif drift == "freeze":
+            (venv_root / ".venv-core33-graphex/.freeze.txt").write_text("changed\n")
+        else:
+            monkeypatch.setattr(
+                run_comparison,
+                "_runtime_probe",
+                lambda *_: {
+                    "python": "3.14.0",
+                    "django": "6.0.8",
+                    "graphql-core": "3.3.0",
+                    "backend_path": str(plan.backend_path),
+                },
+            )
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    with pytest.raises(ValueError, match="profile"):
+        run_comparison.run_single(plan)
+    assert not output.exists()
+
+
+def test_single_run_rejects_result_replaced_during_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refuse a swapped result without deleting the replacement file.
+
+    Args:
+        tmp_path: Disposable result and retained-file paths.
+        monkeypatch: Fixture replacing result validation at the swap point.
+    """
+    _, venv_root = _workspace(tmp_path, monkeypatch)
+    output = tmp_path / "run"
+    plan = run_comparison.prepare_run(
+        "core33", "graphex", venv_root, tmp_path / "seed.sqlite3", output, 1000
+    )
+    monkeypatch.setattr(run_comparison, "_database_identity", lambda *_: ("seed", ()))
+
+    def child(_command: list[str], **_kwargs: object) -> None:
+        (output / "graphex.json").write_text(json.dumps(_measured_result(plan)))
+
+    original_validate = run_comparison.validate_result
+
+    def swap_result(checked: run_comparison.RunPlan, result: dict[str, object]) -> None:
+        original_validate(checked, result)
+        (output / "graphex.json").unlink()
+        (output / "graphex.json").write_text("foreign")
+
+    monkeypatch.setattr(run_comparison.subprocess, "run", child)
+    monkeypatch.setattr(run_comparison, "validate_result", swap_result)
+    with pytest.raises(ValueError, match="output file changed"):
+        run_comparison.run_single(plan)
+    assert (output / "graphex.json").read_text() == "foreign"
