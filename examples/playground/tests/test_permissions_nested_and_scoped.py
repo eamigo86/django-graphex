@@ -224,7 +224,8 @@ def test_scoped_schema_prunes_the_nested_comments_input(
     )
 
     messages = " ".join(error.get("message", "") for error in body.get("errors") or [])
-    assert "Field 'comments' is not defined" in messages, body
+    assert "comments" in messages and "PostCreateNestedCommentsType" in messages, body
+    assert "Did you mean" not in messages, body
     assert "postWithCommentsCreate" not in messages, body
 
     # The child's own root field is pruned for them as well — front door and

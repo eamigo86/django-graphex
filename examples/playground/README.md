@@ -48,16 +48,15 @@ control that proves only the one column moved:
 |-------|--------|
 | `{ authors { results(page: 1) { bio } } }` | `Cannot query field 'bio' on type 'AuthorType'. Did you mean 'id'?` |
 | `{ authors { results(page: 1, ordering: "bio") { id } } }` | `Invalid ordering field: 'bio'.` |
-| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Field 'bio' is not defined by type 'AuthorFilterInput'. Did you mean 'id'?` |
+| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | Rejected: `bio` is not an input field of `AuthorFilterInput`. |
 | `{ authors { results(page: 1, ordering: "name") { id name } } }` | The rows, ordered by name. |
 
-Those answers are what the playground serves **as shipped**, with
-`ALLOW_INTROSPECTION = True`. Flip it to `False` (as the
-[Views section](#views) suggests) and the trailing `Did you mean 'id'?` is
-stripped from rows 1 and 3 — guessing at invented names is how a hidden schema
-gets rebuilt, so the suggestion goes with the introspection. Everything before
-it survives, and row 2 is untouched: `Invalid ordering field: 'bio'.` names the
-term *you* sent, not a schema member.
+The input-field wording can vary with graphql-core. With
+`ALLOW_INTROSPECTION = True`, it may suggest `id`; flip the setting to `False`
+(as the [Views section](#views) suggests) and that schema-derived suggestion
+is stripped from rows 1 and 3. The rejection survives, including graphql-core
+3.3's trailing `Found` clause, and row 2 is untouched:
+`Invalid ordering field: 'bio'.` names the term *you* sent, not a schema member.
 
 Ordering is refused at **query time**; filtering is refused earlier still.
 Adding `"bio"` to that `filter_fields` dict does not drop the entry quietly —
@@ -747,7 +746,7 @@ grants no model permission. Log in as `editor` / `editor12345`, open
 |---|---|
 | `mutation { noteCreate(newNote: { title: "x" }) { ok } }` | `Cannot query field 'noteCreate' on type 'RootMutation'. Did you mean 'postCreate'?` |
 | `mutation { commentCreate(newComment: { … }) { ok } }` | `Cannot query field 'commentCreate' on type 'RootMutation'. Did you mean 'documentCreate', 'postCreate', or 'documentUpdate'?` |
-| `postWithCommentsCreate(newPost: { …, comments: [...] })` | `Field 'comments' is not defined by type 'PostCreateNestedCommentsType'` — the mutation survives, the **nested input field** does not |
+| `postWithCommentsCreate(newPost: { …, comments: [...] })` | Rejected: `comments` is not an input field of `PostCreateNestedCommentsType`; the mutation survives, the **nested input field** does not. |
 | `postWithCommentsCreate(newPost: { … })`, no `comments` | `ok: true` — the parent write is theirs to make |
 | `{ serverTime posts { totalCount } }` | resolves normally — untagged and readable fields are untouched |
 
@@ -1068,10 +1067,10 @@ AuthenticatedGraphQLView.as_view(graphiql=True, permission_classes=(IsAdmin,))
 >
 > Flipping it also changes **error messages** this README quotes. With
 > introspection actually disabled — the middleware installed *and* the setting
-> off, which is what `config/settings.py` gives you — the library strips the
-> trailing `Did you mean …?` from every message that builds one out of schema
-> members: `Cannot query field …`, `Field … is not defined by type …`,
-> `Unknown type …`, `Unknown argument …`, and enum-value coercion. Probing with
+> off, which is what `config/settings.py` gives you — the HTTP view omits
+> schema-derived `Did you mean …?` hints from field, input, type, argument,
+> and enum errors. GraphQL-core 3.3 may place an input hint before `Found`;
+> that detail remains while the hint is omitted. Probing with
 > invented names is how a hidden schema is rebuilt one guess at a time, so the
 > suggestion is part of what the toggle hides. Nothing else moves: the rest of
 > the message, the `locations` and the `path` all survive, and a refusal this
