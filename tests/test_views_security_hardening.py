@@ -970,6 +970,12 @@ class NativeHttpSuggestionPrivacyTest(TestCase):
             patch.object(views_module, "_EXECUTE_SUPPORTS_HIDE_SUGGESTIONS", False),
             patch.object(views_module, "validate", side_effect=legacy_validate),
             patch.object(views_module, "execute", side_effect=legacy_execute),
+            override_settings(
+                DJANGO_GRAPHEX={
+                    "ALLOW_INTROSPECTION": False,
+                    "MIDDLEWARE": _INTROSPECTION_MIDDLEWARE,
+                }
+            ),
         ):
             request = self.factory.post(
                 "/graphql/",
