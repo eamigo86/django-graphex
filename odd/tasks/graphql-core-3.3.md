@@ -262,6 +262,7 @@ of scope.
         The human approved a size:exception only for this coherent dispatcher
         PR after its observed 640 authored-line candidate was disclosed. This
         is not a separate exact ceiling or an exception for another unit.
+        Work unit: 3778eda4e3fd16cfcd178bab8f6e27d8f6ca35dd.
         Focused synthetic controls pass, but the dispatcher remains staged
         before heavy measurements. Real profile runs, independent verification,
         and hosted gates remain pending, not checked off.
