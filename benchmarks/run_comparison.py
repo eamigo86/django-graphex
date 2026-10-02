@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -12,11 +13,26 @@ import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 if __package__:
     from .profile_bootstrap import load_profile
+    from .run_publish import (
+        EXPECTED_SQL,
+        EXPECTED_SURFACE,
+        EXPECTED_VERSIONS,
+        METRICS,
+        OPERATIONS,
+    )
 else:
     from profile_bootstrap import load_profile
+    from run_publish import (
+        EXPECTED_SQL,
+        EXPECTED_SURFACE,
+        EXPECTED_VERSIONS,
+        METRICS,
+        OPERATIONS,
+    )
 
 BASE = Path(__file__).resolve().parent
 ROOT = BASE.parent
@@ -262,6 +278,99 @@ def prepare_run(
         hashlib.sha256(spec["constraints"].read_bytes()).hexdigest(),
         spec["packages"],
     )
+
+
+def _valid_timing(value: object) -> bool:
+    """Identify finite, nonnegative timing values without accepting booleans.
+
+    Args:
+        value: Measured millisecond value from the child result.
+
+    Returns:
+        Whether the value is a finite integer or float at least zero.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
+
+
+def validate_result(plan: RunPlan, result: dict[str, Any]) -> None:
+    """Require the child output to match the checked whole-stack contract.
+
+    Args:
+        plan: Preflight-validated source and runtime selection.
+        result: Raw output from the measuring child.
+
+    Raises:
+        ValueError: If identity, schema, workload, or SQL differs.
+    """
+    expected_witness = {
+        "profile": plan.profile,
+        "library": plan.library,
+        "commit": plan.commit,
+        "tree": plan.tree,
+        "source_version": plan.source_version,
+        "manifest_sha256": plan.manifest_sha256,
+        "constraints_sha256": plan.constraints_sha256,
+        "backend_path": str(plan.backend_path),
+        "schema_path": str(BASE / "libs" / plan.library / "bench_schema.py"),
+        "python": plan.python_version,
+        "django": plan.packages["django"],
+        "graphql-core": plan.packages["graphql-core"],
+    }
+    if result.get("profile_witness") != expected_witness:
+        raise ValueError("measured profile witness differs from preflight")
+    expected_versions = {
+        name: plan.source_version if name == "django-graphex" else plan.packages[name]
+        for name in EXPECTED_VERSIONS[plan.library]
+    }
+    expected_provenance = {
+        "commit": plan.commit,
+        "tree": plan.tree,
+        "constraints_sha256": plan.constraints_sha256,
+    }
+    if (
+        result.get("versions") != expected_versions
+        or result.get("provenance") != expected_provenance
+    ):
+        raise ValueError("measured dependency provenance differs from profile")
+    if result.get("lib") != plan.library or result.get("python") != plan.python_version:
+        raise ValueError("measured library or Python differs from profile")
+    if result.get("django") != plan.packages["django"] or result.get("dataset") != {
+        "authors": plan.authors,
+        "posts_per_author": 10,
+        "comments_per_post": 5,
+    }:
+        raise ValueError("measured Django or seed differs from profile")
+    if result.get("surface") != EXPECTED_SURFACE:
+        raise ValueError("measured schema surface differs from contract")
+    operations = result.get("ops")
+    if not isinstance(operations, dict) or set(operations) != set(OPERATIONS):
+        raise ValueError("measured operation set differs from contract")
+    for name, sql_queries in EXPECTED_SQL[plan.library].items():
+        stats = operations[name]
+        if (
+            not isinstance(stats, dict)
+            or isinstance(stats.get("sql_queries"), bool)
+            or stats.get("sql_queries") != sql_queries
+            or stats.get("iterations") != 100
+        ):
+            raise ValueError(f"measured SQL or iterations differ for {name}")
+        if not all(_valid_timing(stats.get(metric)) for metric in METRICS):
+            raise ValueError(f"measured timing fields differ for {name}")
+    builds = result.get("schema_rebuild_samples_ms")
+    imported = result.get("schema_import_ms")
+    if not _valid_timing(imported):
+        raise ValueError("measured schema import differs from contract")
+    if (
+        not isinstance(builds, list)
+        or len(builds) != 5
+        or not all(_valid_timing(sample) for sample in builds)
+    ):
+        raise ValueError("measured schema rebuild count differs from contract")
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -337,6 +337,11 @@ def main() -> None:
     witness = _profile_witness(schema_module)
     if witness is not None:
         output["profile_witness"] = witness
+        output["provenance"] = {
+            "commit": witness["commit"],
+            "tree": witness["tree"],
+            "constraints_sha256": witness["constraints_sha256"],
+        }
         if BENCH_LIB == "graphex":
             output["versions"]["django-graphex"] = witness["source_version"]
 

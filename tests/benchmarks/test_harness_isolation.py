@@ -68,6 +68,49 @@ def test_profile_witness_reads_future_source_version(
     assert harness._profile_witness(schema)["source_version"] == "4.0.0"
 
 
+@pytest.mark.parametrize("named_profile", [False, True])
+def test_harness_provenance_changes_only_for_named_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, named_profile: bool
+) -> None:
+    """Keep historical provenance while labeling selected profile output.
+
+    Args:
+        tmp_path: Disposable diagnostic output directory.
+        monkeypatch: Fixture replacing workload operations with no-op controls.
+        named_profile: Whether the named comparison witness is active.
+    """
+    import json
+
+    from benchmarks import harness
+
+    schema = SimpleNamespace(OPERATIONS={}, LIB_VERSIONS={"django-graphex": "3.1.0"})
+    witness = {
+        "commit": "a" * 40,
+        "tree": "b" * 40,
+        "source_version": "4.0.0",
+        "constraints_sha256": "c" * 64,
+    }
+    monkeypatch.setattr(harness, "_import_schema", lambda: (schema, 1.0, [1.0] * 5))
+    monkeypatch.setattr(harness, "_surface", lambda *_: {})
+    monkeypatch.setattr(
+        harness, "_profile_witness", lambda *_: witness if named_profile else None
+    )
+    monkeypatch.setenv("BENCH_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.delenv("BENCH_OUTPUT_FD", raising=False)
+    harness.main()
+    result = json.loads((tmp_path / "graphex.json").read_text())
+    if named_profile:
+        assert result["provenance"] == {
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+            "constraints_sha256": "c" * 64,
+        }
+        assert result["versions"]["django-graphex"] == "4.0.0"
+    else:
+        assert "tree" not in result["provenance"]
+        assert result["versions"]["django-graphex"] == "3.1.0"
+
+
 def test_all_117_operation_requests_roll_back_rows_and_sqlite_sequence(
     tmp_path: Path,
 ) -> None:
