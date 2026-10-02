@@ -1,0 +1,40 @@
+{
+  "python": "3.12.11",
+  "libraries": {
+    "graphex": {
+      "mode": "source",
+      "packages": {
+        "django": "6.0.8",
+        "channels": "4.3.2",
+        "graphql-core": "3.3.0"
+      }
+    },
+    "graphene": {
+      "mode": "source-independent",
+      "packages": {
+        "django": "6.0.8",
+        "graphql-core": "3.2.13",
+        "graphene": "3.4.3",
+        "graphene-django": "3.2.3"
+      }
+    },
+    "strawberry": {
+      "mode": "source-independent",
+      "packages": {
+        "django": "6.0.8",
+        "graphql-core": "3.3.0",
+        "strawberry-graphql": "0.328.0",
+        "strawberry-graphql-django": "0.90.0"
+      }
+    },
+    "ariadne": {
+      "mode": "source-independent",
+      "packages": {
+        "django": "6.0.8",
+        "graphql-core": "3.2.13",
+        "ariadne": "1.1.0",
+        "ariadne-django": "0.3.0"
+      }
+    }
+  }
+}

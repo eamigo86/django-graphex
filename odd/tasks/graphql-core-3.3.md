@@ -667,6 +667,25 @@ an authoritative runtime identity.
   occurred in this local work unit. New floor-head independent and hosted
   checks remain pending; T4b-T4d and package SemVer remain undecided.
 
+### T4b1 named-profile bootstrap (focused local child)
+
+- Human-selected future package version is 4.0.0, not yet applied or released.
+  The approved new comparison uses Strawberry 0.328.0 plus
+  strawberry-django 0.90.0 on core 3.3.0; the earlier 0.320.1/0.86.4
+  optimizer failure remains historical diagnostic evidence.
+- Before this source unit, an isolated Python 3.12.11/Django 6.0.8 venv
+  passed the unchanged seeded 20×10×5 Strawberry response contract in three
+  SQL queries and verified mutation rollback. The four observed dependency
+  freezes live under `/private/tmp/graphex-t4b1.8H68G9/`.
+- Route: delegated direct; ownership is a new named-profile manifest and
+  per-library observed constraints, preflight/bootstrap, benchmark tests,
+  concise guide, and this narrow checkpoint. Strict TDD is enabled by current
+  AGENTS.md: RED profile contract before implementation, then GREEN/refactor.
+  Focused runner is `.venv/bin/python -m pytest tests/benchmarks --no-cov`;
+  full native-3.3 runner retains the 95.01% branch gate in a clean clone.
+  No canonical result/freeze, package version, benchmark timing, main, tag,
+  or publication change belongs to this unit. Engram mirror remains pending.
+
 ### T4a capability-test history sync
 
 - T4q PR #223 passed all 15 validation jobs and both Codecov checks before

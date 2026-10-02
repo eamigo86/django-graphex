@@ -1,0 +1,5 @@
+asgiref==3.11.1
+channels==4.3.2
+django==6.0.8
+graphql-core==3.3.0
+sqlparse==0.5.5
