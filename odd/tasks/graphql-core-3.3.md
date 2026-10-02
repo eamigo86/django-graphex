@@ -343,8 +343,10 @@ of scope.
         Clean source-snapshot clone: 172 benchmark tests and 4,560 full tests
         at 96.23% passed, with the same complete coverage gaps, seven skips,
         three warnings, and 23 subtests as the retained baseline. Root-only
-        benchmark provenance failures came from 29 ignored historical JSON
-        files; no file was removed. Exact commit proof and local logs live in
+        benchmark provenance failures came from pre-existing ignored historical
+        JSON; no file was removed. Behavior commit:
+        `01c9ea16f68edae1174a71a1fe0dd8faa86664ba`. Exact commit proof and
+        local logs live in
         `graphex-resume-2026-10-02/profile-median-t4b2c1/`.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
