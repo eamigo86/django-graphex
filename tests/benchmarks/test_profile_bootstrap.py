@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -14,11 +15,12 @@ ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = ROOT / "benchmarks"
 
 
-def _isolated_benchmarks(tmp_path: Path) -> Path:
+def _isolated_benchmarks(tmp_path: Path, profile_python: str | None = None) -> Path:
     """Copy only bootstrap inputs into a disposable benchmark directory.
 
     Args:
         tmp_path: Temporary directory supplied by pytest.
+        profile_python: Interpreter version for a disposable synthetic profile.
 
     Returns:
         Directory containing the isolated bootstrap inputs.
@@ -32,6 +34,15 @@ def _isolated_benchmarks(tmp_path: Path) -> Path:
         "verify_freeze.py",
     ):
         shutil.copy2(BENCHMARKS / name, target / name)
+    if profile_python is not None:
+        manifest_path = target / "comparison_profiles/core33/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["python"] = profile_python
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        setup_path = target / "setup_profile_envs.sh"
+        setup = setup_path.read_text()
+        assert setup.count("3.12.11") == 3
+        setup_path.write_text(setup.replace("3.12.11", profile_python))
     return target
 
 
@@ -137,7 +148,7 @@ def test_offline_cache_miss_leaves_no_profile_environment(tmp_path: Path) -> Non
     Args:
         tmp_path: Disposable bootstrap inputs and fake package-manager log.
     """
-    bench = _isolated_benchmarks(tmp_path)
+    bench = _isolated_benchmarks(tmp_path, profile_python=sys.version.split()[0])
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     uv = fake_bin / "uv"
@@ -176,13 +187,24 @@ def test_offline_cache_miss_leaves_no_profile_environment(tmp_path: Path) -> Non
     assert not list(root.glob("*.staging.*"))
 
 
-def test_profile_venv_is_created_at_its_final_path(tmp_path: Path) -> None:
+@pytest.mark.parametrize("wrong_python", [False, True])
+def test_profile_venv_is_created_at_its_final_path(
+    tmp_path: Path, wrong_python: bool
+) -> None:
     """Avoid moving a venv after its activation scripts are generated.
 
     Args:
         tmp_path: Disposable bootstrap inputs and fake package manager.
+        wrong_python: Whether the synthetic profile rejects this interpreter.
     """
-    bench = _isolated_benchmarks(tmp_path)
+    version = sys.version.split()[0]
+    if wrong_python:
+        version = "3.14.0" if version != "3.14.0" else "3.12.11"
+    bench = _isolated_benchmarks(tmp_path, profile_python=version)
+    manifest = json.loads(
+        (bench / "comparison_profiles/core33/manifest.json").read_text()
+    )
+    assert manifest["python"] == version
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     log = tmp_path / "uv.log"
@@ -206,6 +228,10 @@ def test_profile_venv_is_created_at_its_final_path(tmp_path: Path) -> None:
     )
     target = root / ".venv-core33-graphex"
     assert result.returncode != 0
-    assert log.read_text().splitlines()[0].endswith(str(target))
+    if wrong_python:
+        assert f"requires Python {version}" in result.stderr
+        assert not log.exists()
+    else:
+        assert log.read_text().splitlines()[0].endswith(str(target))
     assert not target.exists()
     assert not list(root.glob("*.staging.*"))

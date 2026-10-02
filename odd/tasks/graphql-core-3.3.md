@@ -171,6 +171,9 @@ of scope.
     claimed until measured.
     - [x] T4b1a/b — Locally verify named dependency freezes, preflight, and
       isolated setup; independent and hosted delivery checks remain pending.
+    - [ ] T4b1b-CI — Align disposable fake-uv fixtures with the test interpreter;
+      retain the real 3.12.11 pin and wrong-interpreter rejection. Recheck the
+      focused contracts, 3.14 portability, and clean native-3.3 full suite.
     - [ ] T4b2 — Add the separately named runner, provenance, and measurements.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
