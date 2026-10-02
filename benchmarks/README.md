@@ -77,6 +77,16 @@ result or empty replacement directory. An observed directory change is rejected
 before a successful result is returned, but this is not a filesystem sandbox. A
 single run is not a published comparison or a three-run median.
 
+`comparison_statistics.aggregate_three` is a pure helper for exactly three
+raw results from one already-prepared named-profile plan. It applies the same
+single-run validation to each result and returns detached per-statistic
+medians; callers retain the raw results separately. The five rebuild values
+are per-position diagnostic medians, not one raw rebuild series, and the p95
+value is the median of three per-run p95 values, not a pooled percentile over
+300 samples. This helper neither runs the harness nor writes or publishes a
+comparison. The core 3.3.0 and 3.2.13 stacks remain whole-stack diagnostics,
+not an equal-core competition.
+
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
 `PYTHONPATH` that points at newer source so the published wheel is imported.

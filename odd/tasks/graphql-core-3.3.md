@@ -243,7 +243,7 @@ of scope.
         passed. Full raw proof: /private/tmp/graphex-t4b2b2b.nXAbfN/.
         No heavy four-profile measurement was run. Roll back only the optional
         descriptor write and its controls.
-      - [ ] T4b2b2b2 — Dispatch the existing five-operation harness using
+      - [x] T4b2b2b2 — Dispatch the existing five-operation harness using
         read-only preflight, the checked validator, and the held directory.
         Route: delegated direct on codex/graphql-core-3.3-benchmark-dispatch-single
         from integration cbc9ebe; own only the named runner, focused tests,
@@ -316,6 +316,36 @@ of scope.
         `/Users/eamigo/.codex/visualizations/2026/09/02/01a062ff-dccb-7123-a1e9-e7de825aafc2/graphex-resume-2026-10-02/`.
         Leave three-run publication and quiet measurements for later slices;
         Engram mirror remains pending. Roll back only this dispatch slice.
+        PR #231 merged only into integration as `cfa6258bbe1b449a76be08490d9d9fd8a64ba576`.
+        Child `37072641158`, integration push `37073467579`, and tracker
+        `37073472802` each passed 15 validations with three publication jobs
+        skipped; both Codecov checks passed. This closes the dispatcher slice,
+        not T4b2, median publication, or release readiness.
+      - [x] T4b2c1 — Add a pure profile-aware three-run median helper for one
+        already-prepared RunPlan; no CLI, file output, seeding, rotation, or
+        publication. Route: delegated direct because helper, focused tests,
+        guide, and this task document span multiple non-trivial files. Own only
+        `benchmarks/comparison_statistics.py`, its focused benchmark tests,
+        concise `benchmarks/README.md` guidance, and this checkpoint. Forecast:
+        250-350 authored lines, with a hard 400-line PR budget; the prior
+        dispatcher exception does not carry forward. Strict TDD from current
+        AGENTS.md: observe cause-correct RED before code, then GREEN/refactor;
+        focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_statistics.py --no-cov` under native
+        3.3. Require exact three-run shared validation, detached per-statistic
+        medians, stable identity/SQL/surface, both seed sizes and all four
+        libraries; check all benchmarks, unchanged full 95.01% branch gate,
+        Ruff, mypy, both docstring gates, docs, and protected assets. Runtime
+        harness: N/A, because this unit only transforms supplied validated
+        dictionaries. Roll back only this helper, tests, guide, and checkpoint;
+        a later T4b2c2 unit may orchestrate rotated runs and publication.
+        RED: eight missing-helper cases; GREEN: 28 native-3.3 focal cases.
+        Clean source-snapshot clone: 172 benchmark tests and 4,560 full tests
+        at 96.23% passed, with the same complete coverage gaps, seven skips,
+        three warnings, and 23 subtests as the retained baseline. Root-only
+        benchmark provenance failures came from 29 ignored historical JSON
+        files; no file was removed. Exact commit proof and local logs live in
+        `graphex-resume-2026-10-02/profile-median-t4b2c1/`.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run
