@@ -76,7 +76,10 @@ def test_invalid_profile_or_library_is_rejected_before_env_changes(
 
 
 def test_legacy_bootstrap_uses_published_historical_distribution() -> None:
-    """Keep the old no-argument profile tied to published version 3.1.0."""
+    """Keep the old no-argument profile tied to published version 3.1.0.
+
+    The current source must not masquerade as the canonical 3.1.0 artifact.
+    """
     setup = (BENCHMARKS / "setup_envs.sh").read_text()
     assert '"django-graphex==3.1.0"' in setup
     assert '-e "$REPO_ROOT"' not in setup
