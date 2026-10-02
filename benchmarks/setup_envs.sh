@@ -11,7 +11,10 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
+if [[ "${1:-}" == "--profile" ]]; then
+  shift
+  exec bash "$HERE/setup_profile_envs.sh" "$@"
+fi
 CONSTRAINTS="$HERE/constraints.txt"
 # shellcheck source=versions.env
 source "$HERE/versions.env"
@@ -45,6 +48,10 @@ write_verified_freeze() {
 make_venv() {
   local lib="$1"
   local venv="$HERE/.venv-$lib"
+  case "$lib" in
+    graphex|graphene|strawberry|ariadne) ;;
+    *) echo "Unknown lib: $lib" >&2; exit 1 ;;
+  esac
   echo
   echo "=== Setting up $lib -> $venv ==="
   rm -rf "$venv"
@@ -53,7 +60,7 @@ make_venv() {
   case "$lib" in
     graphex)
       install_pinned "$venv/bin/python" "Django==$DJANGO_VERSION" \
-        "channels==$CHANNELS_VERSION" -e "$REPO_ROOT"
+        "channels==$CHANNELS_VERSION" "django-graphex==3.1.0"
       ;;
     graphene)
       install_pinned "$venv/bin/python" "Django==$DJANGO_VERSION" \

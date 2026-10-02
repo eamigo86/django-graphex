@@ -23,6 +23,31 @@ artifacts. The current library and Playground locks use patched versions, but
 changing historical pins or relabeling old timings would destroy provenance.
 New version claims require a new controlled measurement run and new artifacts.
 
+### Named GraphQL-core 3.3 comparison environment
+
+The separate `core33` profile records **whole-stack** inputs, not a new timing
+result. Its four exact freezes live under `comparison_profiles/core33/`:
+django-graphex source and Strawberry use core 3.3.0; Graphene and Ariadne use
+their compatible core 3.2.13. All use Python 3.12.11 and Django 6.0.8.
+Strawberry's pinned 0.328.0/0.90.0 pair passed the shared seeded nested
+response contract with its optimizer enabled. The profile does not modify the
+historical constraints, result files, or publisher.
+
+`setup_envs.sh --profile core33` validates every requested manifest/freeze
+before installation, builds only fresh `.venv-core33-<library>` environments,
+and refuses to overwrite an existing one. Set `BENCH_PYTHON` to an absolute
+Python 3.12.11 executable, `BENCH_UV_CACHE_DIR` to an isolated absolute cache,
+and optionally `BENCH_PROFILE_VENV_ROOT` to an isolated absolute directory.
+Set `BENCH_OFFLINE=1` for cache-only replay. Graphene additionally requires
+`BENCH_WHEEL_DIR` containing a verified upstream `promise-2.3-py3-none-any.whl`;
+the bootstrap never builds django-graphex or another upstream dependency.
+The current source is not installed into the new Graphex venv; the separate
+comparison runner must supply it explicitly and record its commit/version.
+
+The no-argument historical `setup_envs.sh` instead installs published
+django-graphex 3.1.0, not this checkout. Run historical tools without a
+`PYTHONPATH` that points at newer source so the published wheel is imported.
+
 Every timing figure in the eight tracked canonical files under `results/` and on
 [Why django-graphex](https://eamigo86.github.io/django-graphex/why/) is the
 **median of three runs** per library per seed. Each file records that under an
