@@ -675,15 +675,19 @@ an authoritative runtime identity.
 - Profile child `783385d35d25fdcfd7f91e595949e9076199016b` records observed
   per-library constraints and validates the selected direct pins. Its clean
   clone passed 46 benchmark tests and 4,434 full native-3.3 tests at 96.23%
-  branch coverage. Setup child `b3f4ce70e9bd9439ce859d582ba89ffe997eb208`
-  adds safe staged installation and the historical published-wheel pin; its
-  clean clone passed 51 benchmark tests and 4,439 full native-3.3 tests at
+  branch coverage. Setup commits through `624503147705866e59f781091ea593ce6cb3c369`
+  add fail-closed final-path installation and the historical published-wheel
+  pin; the exact clean clone passed 52 benchmark tests and 4,440 full native-3.3 tests at
   96.23%, above the unchanged 95.01% gate. Both runs had seven established
   skips, three warnings, and 23 passed subtests.
 - Chronological RED before source: five new tests failed for absent profile,
-  setup, and historical-wheel behavior. Focused GREEN: 13 passed. Four stacks
+  setup, and historical-wheel behavior. Separate new RED tests exposed ambient
+  UV credential variables and venv relocation; both passed after focused fixes.
+  Focused GREEN: 14 passed. Four stacks
   were recreated twice offline from the isolated cache with exact freezes;
   an empty-cache control failed without promoting or leaving a target venv.
+  A fresh four-stack replay used isolated HOME, retained final-path activation
+  scripts and console commands, and passed exact freeze comparisons.
   The published historical 3.1.0 wheel imported from site-packages when run
   from the benchmarks directory without a source-shadowing PYTHONPATH.
 - Ruff, native-3.3 mypy (80 files), standard and strict Google docstrings
