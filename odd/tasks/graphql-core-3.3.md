@@ -288,9 +288,17 @@ of scope.
         regression-covered. The first chronological RED failed two
         before-open preservation controls; root Python 3.12.11/core 3.2.13
         GREEN passed three before-open and two before-first-stat controls.
-        Native-3.3 local proof is pending because the exact locked wheel could not be
-        fetched in the restricted environment. Do not treat earlier 4,527
-        tests or four diagnostic runs as proof for this corrected head.
+        Independent native-3.3 proof at `3fa9390` passed 80 focal, 144
+        benchmark, and 4,532 full tests at 96.23% branch coverage; complete
+        258/266/282 gap sets match a fresh integration base. Eleven real
+        filesystem controls passed. The actual configured standard docstring
+        gate then found candidate-only DOC005 in this preservation test; a
+        separate chronological RED preceded its truthful Raises correction.
+        Both docstring gates and native focal tests pass after that correction.
+        Full-suite and independent checks on the new exact head, four fresh
+        real-profile diagnostics, and hosted gates remain pending. Earlier
+        4,527 tests and four diagnostic runs are historical, not fresh proof
+        for this corrected head.
         Leave three-run publication and quiet measurements for later slices;
         Engram mirror remains pending. Roll back only this dispatch slice.
   - [ ] T4c — Complete Playground/example and migration guidance, verify

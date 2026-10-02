@@ -819,6 +819,9 @@ def test_single_run_preserves_replacement_before_first_ownership_stat(
         tmp_path: Disposable attempt and replacement directories.
         monkeypatch: Fixture swapping the path before its first ownership stat.
         replacement: Whether the foreign directory contains a regular result.
+
+    Raises:
+        AssertionError: If a foreign directory or its result is not preserved.
     """
     _, venv_root = _workspace(tmp_path, monkeypatch)
     output = tmp_path / "run"
