@@ -677,6 +677,14 @@ an authoritative runtime identity.
   five real HTTP workload contracts per library. Correct this profile child
   before history-merging it into the setup child; both remain local pending
   independent and hosted revalidation. Historical artifacts stay frozen.
+- Correction commits `144b8ad177b55c5f1d55bcf28ff305f888d7445c` and
+  `27a4474c5826f1de8d99e28785d7124c99e6de41` add two cause-correct RED
+  tests, fail-closed required-package checks, and installer-observed 13-package
+  Graphex/Graphene freezes. Six profile tests and 50 benchmark tests passed;
+  all four unchanged seeded five-operation HTTP contracts passed with rollback
+  and expected SQL counts, without timing publication. The clean native-3.3
+  full suite passed 4,438 tests at 96.23% branch coverage; independent and
+  hosted checks remain pending. Proof: `/private/tmp/graphex-t4b1-correction.efG5xu/`.
 - Human-selected future package version is 4.0.0, not yet applied or released.
   The approved new comparison uses Strawberry 0.328.0 plus
   strawberry-django 0.90.0 on core 3.3.0; the earlier 0.320.1/0.86.4
