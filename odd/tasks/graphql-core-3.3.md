@@ -171,13 +171,15 @@ of scope.
     claimed until measured.
     - [x] T4b1a/b — Locally verify named dependency freezes, preflight, and
       isolated setup; independent and hosted delivery checks remain pending.
-    - [ ] T4b1c — Make the historical no-argument bootstrap fail closed before
+    - [x] T4b1c — Make the historical no-argument bootstrap fail closed before
       replacing any existing venv. Preserve all requested targets on invalid
       input, offline cache miss, or install failure; reserve fresh final paths
       without relocating venvs. Test RED on the old destructive path, then
       GREEN, fresh published-3.1.0-wheel setup, and clean-clone gates. Own only
       the legacy script, focused tests, benchmark guidance, and this checkpoint.
       Rollback only this safety child; no canonical results or pins change.
+      Local proof and work-unit commits are recorded below. Independent and
+      hosted verification remain pending.
     - [ ] T4b2 — Add the separately named runner, provenance, and measurements.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
@@ -766,3 +768,29 @@ an authoritative runtime identity.
   Conservative projected line coverage is 95.018064%, an inference rather
   than a hosted Codecov verdict. Fresh independent and hosted checks on this
   combined floor head are still required before integration-only delivery.
+
+### T4b1c legacy bootstrap safety (local)
+
+- Chronological RED: the new disposable offline-cache regression lost an
+  existing `.venv-graphex/keep.txt` because the old script deleted its target
+  before installation. GREEN: 15 legacy bootstrap contracts passed, including
+  directories, files, live/dangling symlinks, whole-request preflight, cache
+  failure, and rollback after a later install failure.
+- A separate real offline run without the local promise wheel failed while
+  resolving Graphene and left all four venv paths and freeze files absent.
+- A clean clone installed all four historical stacks offline into fresh final
+  paths using the isolated cache and the verified upstream promise wheel.
+  Each freeze matched its installed environment; all used Python 3.12.11,
+  Django 6.0.6, and core 3.2.11. GraphEx 3.1.0 imported from the published
+  wheel in site-packages, not this checkout. No timing or canonical result was
+  written. Proof: `/private/tmp/graphex-t4b1c.sX1F3i/`.
+- The exact clean-clone native-3.3 suite passed 4,453 tests, 7 skips,
+  3 established warnings, and 23 subtests at 96.23% branch coverage against
+  the unchanged 95.01% gate. All 65 benchmark tests, Ruff, native-3.3 mypy80,
+  both docstring gates (TOTAL 0), docs with five established anchors, Bash,
+  pinned ShellCheck, and diff checks passed. No covered package-runtime line
+  changed, so package diff coverage is N/A.
+- Rollback only the historical setup script, its safety regressions, current
+  benchmark guidance, and this checkpoint. Independent/hosted checks remain
+  pending. Separate PR #225 Python-version fixture failures are not addressed
+  in this child; no source package version, main, tag, or publication changed.
