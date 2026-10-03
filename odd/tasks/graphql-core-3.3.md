@@ -1031,14 +1031,28 @@ of scope.
     focused test. The local Zensical clean build then reported zero issues.
     This is local evidence only; final clean-clone gates and independent
     readback remain pending at this checkpoint.
+    Local behavior work-unit commit `a92c601305b3ab42c0c6606fedae82a539446eef`
+    has tree `be87ee0b62d81905f9b0cd15ada1697a586f9474` and changes 114
+    added plus 12 deleted authored lines across six owned paths. Its clean
+    native-3.3 clone passed 53 focal, 331 benchmark, 59 Playground and 4,729
+    full tests at 96.23% branch coverage with the unchanged 95.01% gate.
+    Complete 258/266/274/282 coverage gaps, seven skips and three warnings
+    match the accepted baseline. Ruff, 79/82/102-module mypy and both
+    docstring gates passed; the generated docs reported **No issues found**
+    and all five repaired hrefs resolved to existing HTML IDs. All 82
+    protected objects and every outside-scope tracked blob were unchanged.
+    Local correction does not relabel the earlier independent documentation
+    PARTIAL as PASS; fresh independent and hosted acceptance remain pending.
 
 ## Progress and next step
 
 Current checkpoint: the prepared 4.0.0 integration is
 `4087f04417f58964589d8a1e0e16a14b12f90dad`; T4e is the bounded
 documentation-anchor correction required by the user's final clean-doc
-request. Functional and hosted gates passed, but the latest independent
-documentation check is PARTIAL for five known broken hrefs. Tracker-to-main
+request. Functional and earlier hosted gates passed, but the latest
+independent documentation check remains a historical PARTIAL; the T4e local
+candidate now builds with zero issues and still needs independent and hosted
+acceptance. Tracker-to-main
 approval, tag, artifact build and publication have not occurred. The earlier
 progress snapshots below remain historical
 evidence of their respective candidate states.
