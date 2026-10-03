@@ -69,14 +69,15 @@ share of elapsed time; the separate diagnostic evidence below now does.
   witnesses; independently verify the measurements and semantic boundary.
   Owner/route: delegated profiler and independent verifier. Both completed;
   parent read both full reports and repeated the 14-test native-3.3 baseline.
-- [x] MP2 — Correct the scaling path after the contract decision below. Add a
+- [ ] MP2 — Correct the scaling path after the contract decision below. Add a
   cause-correct failing regression; implement the smallest safe bounded check;
   preserve invalid FK/M2M errors, nested rollback and connection reuse. Update
   current docs and both changelogs alongside behavior and tests. Run focal and
   related checks, then close one Conventional work-unit commit with evidence.
   Owner/route: one delegated writer. Local native-3.3 runtime and diagnostic
-  evidence passed at 3721404; actual PostgreSQL remains pending, not inferred
-  from the non-SQLite routing test.
+  evidence passed at 3721404, but independent verification reopened this task:
+  valid multi-table inheritance with a parent-owned FK fails on the new checker.
+  Actual PostgreSQL remains pending, not inferred from the routing stand-in.
 - [ ] MP3 — Independently validate the exact candidate. Run the unchanged full
   native-3.3 suite and applicable coverage/quality/docs/example/Playground and
   benchmark gates. Reconcile profiling results and limitations; record actual,
@@ -250,3 +251,39 @@ database was opened for SQLite work. Actual PostgreSQL integration and MP3
 independent verification are still pending; no main merge/tag/release is
 authorized. Full raw tests, SQL, driver commands, protections and limits are
 under graphex-resume-2026-10-02/mutation-constraint-performance-mp2/.
+
+## MP3 blocker and bounded MP2 correction
+
+Independent verification of 2cebebc624420a8d831c1f710c68f6d6cd0faaf1
+confirmed a candidate-caused regression: a valid multi-table-inherited model
+whose concrete parent owns a foreign key raises OperationalError because the
+new CASE reads child.target_id from the child table, while that column is stored
+in the parent table. The identical fixture succeeds on exact base 7eb3935.
+Rollback and connection usability remained correct; no corruption was observed.
+All 82 protected objects remained unchanged. Broader MP3 gates were deferred,
+not passed; actual PostgreSQL remains pending.
+
+MP2 is reopened for a cause-correct regression test and bounded correction that
+validates direct saved rows in their actual owning tables, with parent-row FK
+failure and rollback controls. Preserve the accepted mutation-owned scope and
+ordinary four-statement comment contract. Do not hide the issue with weakened
+tests or a global scan of unrelated rows. After correction, rerun final exact
+gates and diagnostic timings, then repeat independent MP3 acceptance.
+
+The failed-candidate report and exact base/candidate reproduction are retained
+under graphex-resume-2026-10-02/independent-mutation-2cebebc/report.md.
+
+The inheritance correction has a fresh permanent cause-correct RED before the
+production edit. Its first fixture used a non-primary target input rejected
+by the existing schema before reaching SQL; that failed attempt is retained,
+not claimed as the target RED. The corrected normal-FK fixture produced two
+`no such column: child.target_id` failures on 2cebebc. The fix groups
+constrained concrete FKs by `field.model`, queries each physical owner table
+through that owner's prepared primary key, and still checks the child's
+parent link. Valid inherited create, invalid parent-FK create/update,
+nullable inheritance, rollback and connection reuse passed the 25-test
+focused run. Ordinary comment SQL remains four statements. Both changelogs,
+mutation guidance and the comparison page now explain the physical parent
+scope and that retained numbers predate this change. Final exact-head gates,
+independent recheck and fresh disposable post-correction profiling remain
+pending at this checkpoint.

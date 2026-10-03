@@ -89,6 +89,10 @@ and separate per-library constraints hashes.
 | 2,000 | ariadne | 1.1210 ms / 1 SQL | 40.3793 ms / 221 SQL | 0.8419 ms / 2 SQL | 1.5311 ms / 1 SQL | 0.7766 ms / 1 SQL |
 <!-- core33-results:end -->
 
+The Graphex create-comment figures above were measured before the prepared
+4.0.0 SQLite mutation checker was narrowed to directly written rows. They
+remain the original 3.1.1-source measurements, not post-optimization timings.
+
 Every reported timing statistic is the median of that statistic across three
 raw runs; the median of per-run p95 values is **not a pooled 300-sample
 percentile**. The five schema rebuild values are per-position median

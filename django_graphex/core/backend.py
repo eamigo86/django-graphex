@@ -78,9 +78,13 @@ def _check_sqlite_written_relations(
     """
     db = connections[using]
     quote = db.ops.quote_name
-    pk = obj._meta.pk
-    if pk.column is None:
-        tables = [obj._meta.db_table]
+    fields_by_owner: dict[type[models.Model], list[models.ForeignKey]] = {}
+    for field in obj._meta.concrete_fields:
+        if isinstance(field, models.ForeignKey) and field.db_constraint:
+            fields_by_owner.setdefault(field.model, []).append(field)
+
+    if any(owner._meta.pk.column is None for owner in fields_by_owner):
+        tables = [owner._meta.db_table for owner in fields_by_owner]
         tables.extend(
             obj._meta.get_field(name).remote_field.through._meta.db_table
             for name in m2m_names
@@ -88,12 +92,7 @@ def _check_sqlite_written_relations(
         db.check_constraints(table_names=tables)
         return
 
-    fields = [
-        field
-        for field in obj._meta.concrete_fields
-        if isinstance(field, models.ForeignKey) and field.db_constraint
-    ]
-    if fields:
+    for owner, fields in fields_by_owner.items():
         checks = []
         parameters: list[Any] = []
         for field in fields:
@@ -106,12 +105,16 @@ def _check_sqlite_written_relations(
                 "THEN %s"
             )
             parameters.append(field.name)
+        owner_pk = owner._meta.pk
         with db.cursor() as cursor:
             cursor.execute(
                 f"SELECT CASE {' '.join(checks)} ELSE NULL END "
-                f"FROM {quote(obj._meta.db_table)} AS child "
-                f"WHERE child.{quote(pk.column)} = %s",
-                [*parameters, pk.get_db_prep_value(obj.pk, db)],
+                f"FROM {quote(owner._meta.db_table)} AS child "
+                f"WHERE child.{quote(owner_pk.column)} = %s",
+                [
+                    *parameters,
+                    owner_pk.get_db_prep_value(getattr(obj, owner_pk.attname), db),
+                ],
             )
             row = cursor.fetchone()
             if row is None:

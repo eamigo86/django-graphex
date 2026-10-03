@@ -187,6 +187,57 @@ class CompositeChild(models.Model):
         app_label = "scoped_constraint_fixture"
 
 
+class InheritedTarget(models.Model):
+    """Provide a referenced key for inherited parent rows.
+
+    The FK belongs physically to the concrete parent table.
+    """
+
+    label = models.CharField(max_length=32)
+
+    class Meta:
+        """Keep the target table in the disposable fixture app.
+
+        The test owns its schema lifecycle.
+        """
+
+        app_label = "scoped_constraint_fixture"
+
+
+class InheritedParent(models.Model):
+    """Own a nullable constrained FK inherited by a concrete child.
+
+    Django stores this field only in the parent table.
+    """
+
+    target = models.ForeignKey(InheritedTarget, null=True, on_delete=models.CASCADE)
+
+    class Meta:
+        """Keep the parent table in the disposable fixture app.
+
+        The test owns its schema lifecycle.
+        """
+
+        app_label = "scoped_constraint_fixture"
+
+
+class InheritedChild(InheritedParent):
+    """Write a child row and its parent-owned FK in one mutation.
+
+    The automatic parent link is stored in the child table.
+    """
+
+    extra = models.CharField(max_length=32)
+
+    class Meta:
+        """Keep the child table in the disposable fixture app.
+
+        The test owns its schema lifecycle.
+        """
+
+        app_label = "scoped_constraint_fixture"
+
+
 def _info() -> SimpleNamespace:
     """Return the minimal resolver context required by the backend.
 
@@ -427,3 +478,102 @@ def test_non_sqlite_path_retains_existing_table_check(
             )
             assert ok, result
     assert checked_tables == [[Post._meta.db_table, Post.tags.through._meta.db_table]]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_inherited_parent_fk_uses_its_physical_table() -> None:
+    """A valid inherited FK checks parent and child rows by their own keys.
+
+    The checker must not read a parent-owned column from the child table.
+    """
+    with connection.schema_editor() as editor:
+        for model in (InheritedTarget, InheritedParent, InheritedChild):
+            editor.create_model(model)
+    try:
+        target = InheritedTarget.objects.create(label="valid")
+        backend = PydanticBackend(InheritedChild)
+        with transaction.atomic():
+            with CaptureQueriesContext(connection) as captured:
+                ok, child = backend.save_object(
+                    None,
+                    None,
+                    _info(),
+                    {"target": target.pk, "extra": "valid"},
+                )
+            assert ok, child
+            assert InheritedParent.objects.filter(pk=child.pk).exists()
+            assert InheritedChild.objects.filter(pk=child.pk).exists()
+            checks = [
+                item["sql"]
+                for item in captured.captured_queries
+                if "SELECT CASE" in item["sql"]
+            ]
+            assert len(checks) == 2, checks
+            assert any(
+                f'FROM "{InheritedParent._meta.db_table}"' in sql for sql in checks
+            )
+            assert any(
+                f'FROM "{InheritedChild._meta.db_table}"' in sql for sql in checks
+            )
+            assert not any(
+                "FOREIGN_KEY_CHECK" in item["sql"].upper() for item in captured
+            )
+            transaction.set_rollback(True)
+        assert InheritedParent.objects.count() == 0
+        assert InheritedChild.objects.count() == 0
+        assert InheritedTarget.objects.filter(pk=target.pk).exists()
+    finally:
+        with connection.schema_editor() as editor:
+            for model in (InheritedChild, InheritedParent, InheritedTarget):
+                editor.delete_model(model)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_inherited_parent_fk_failure_rolls_back_and_keeps_connection() -> None:
+    """An invalid parent-owned FK fails without leaving a partial child row.
+
+    The enclosing transaction remains usable after the inner savepoint rolls back.
+    """
+    with connection.schema_editor() as editor:
+        for model in (InheritedTarget, InheritedParent, InheritedChild):
+            editor.create_model(model)
+    try:
+        InheritedTarget.objects.create(label="valid")
+        backend = PydanticBackend(InheritedChild)
+        with transaction.atomic():
+            ok, errors = backend.save_object(
+                None,
+                None,
+                _info(),
+                {"target": 999999, "extra": "invalid"},
+            )
+            assert ok is False
+            assert {item.field for item in errors} == {"target"}
+            assert InheritedParent.objects.count() == 0
+            assert InheritedChild.objects.count() == 0
+            ok, child = backend.save_object(
+                None,
+                None,
+                _info(),
+                {"target": None, "extra": "nullable"},
+            )
+            assert ok, child
+            assert InheritedParent.objects.filter(pk=child.pk, target_id=None).exists()
+            ok, errors = backend.save_object(
+                None,
+                None,
+                _info(),
+                {"target": 999999},
+                instance=child,
+                partial=True,
+            )
+            assert ok is False
+            assert {item.field for item in errors} == {"target"}
+            assert InheritedParent.objects.get(pk=child.pk).target_id is None
+            transaction.set_rollback(True)
+        assert InheritedParent.objects.count() == 0
+        assert InheritedChild.objects.count() == 0
+    finally:
+        with connection.schema_editor() as editor:
+            for model in (InheritedChild, InheritedParent, InheritedTarget):
+                editor.delete_model(model)

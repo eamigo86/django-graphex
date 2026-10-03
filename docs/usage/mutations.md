@@ -387,14 +387,16 @@ Example error response:
 !!! tip "FK checks stay inside the mutation's rollback boundary"
     In true autocommit, a valid plain mutation issues a single `INSERT` or
     `UPDATE`; it does not pre-check each FK. Within an outer transaction,
-    SQLite validates the saved row's constrained FKs and directly updated M2M
-    links **after** writing, inside the recovery savepoint. It does not scan
-    unrelated rows in those tables for ordinary single-column primary keys;
+    SQLite validates constrained FKs on directly saved model rows, including
+    concrete inheritance parent rows, and directly updated M2M links **after**
+    writing, inside the recovery savepoint. It does not scan unrelated rows
+    in those tables for ordinary single-column primary keys;
     composite primary keys retain the previous table-scoped fallback rather
     than silently omitting a constraint check. Invalid FK or M2M input still
-    rolls back and returns the structured `errors[]` envelope. An earlier, unrelated
-    deferred violation can remain until the outer transaction commits; that
-    commit still fails if the violation is not repaired. PostgreSQL and other
+    rolls back and returns the structured `errors[]` envelope. An earlier,
+    unrelated deferred violation can remain until the outer transaction
+    commits; that commit still fails if the violation is not repaired.
+    PostgreSQL and other
     backends retain their existing deferred-constraint checks. The scoped
     SQLite check covers direct model and relation writes, not arbitrary writes
     from custom save methods or signals. Nested child work still has its own
