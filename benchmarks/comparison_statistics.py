@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from statistics import median
 from typing import Any, Sequence
 
@@ -11,7 +12,9 @@ from benchmarks.run_publish import METRICS, OPERATIONS
 
 
 def aggregate_three(
-    plan: run_comparison.RunPlan, runs: Sequence[dict[str, Any]]
+    plan: run_comparison.RunPlan,
+    runs: Sequence[dict[str, Any]],
+    schema_base: Path | None = None,
 ) -> dict[str, Any]:
     """Return detached per-statistic medians for one exact named profile.
 
@@ -22,6 +25,7 @@ def aggregate_three(
     Args:
         plan: Prepared source, seed, and whole-stack profile identity.
         runs: Exactly three raw results from independent dispatches.
+        schema_base: Explicit recorded benchmark directory for replay.
 
     Returns:
         A detached result containing explicit aggregation metadata.
@@ -34,7 +38,10 @@ def aggregate_three(
     for run in runs:
         if "aggregation" in run:
             raise ValueError("only raw results may be aggregated")
-        run_comparison.validate_result(plan, run)
+        if schema_base is None:
+            run_comparison.validate_result(plan, run)
+        else:
+            run_comparison.validate_result(plan, run, schema_base)
     if any(run["machine"] != runs[0]["machine"] for run in runs[1:]):
         raise ValueError("measured machine differs between runs")
     expected_stats = {*METRICS, "iterations", "sql_queries"}

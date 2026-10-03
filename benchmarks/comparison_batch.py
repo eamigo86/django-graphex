@@ -51,14 +51,32 @@ class BatchGroup:
 
 
 @dataclass(frozen=True)
+class DispatchReceipt:
+    """Bind one completed dispatch to its checked plan and retained raw bytes.
+
+    A receipt corroborates local evidence; it is not a signed attestation or
+    authority to rerun a workload or trust an arbitrary path.
+    """
+
+    number: int
+    plan: run_comparison.RunPlan
+    raw_path: Path
+    sha256: str
+    schema_base: Path | None = None
+
+
+@dataclass(frozen=True)
 class BatchResult:
     """Return eight detached groups without publishing any artifact.
 
-    The dispatch order lists retained raw paths in execution order.
+    The dispatch order lists retained raw paths in execution order. New live
+    batches include 24 checked receipts; the empty default keeps older
+    two-field records and constructor calls compatible for explicit replay.
     """
 
     groups: tuple[BatchGroup, ...]
     dispatch_order: tuple[Path, ...]
+    receipts: tuple[DispatchReceipt, ...] = ()
 
 
 def _git(root: Path, *args: str) -> str:
@@ -307,12 +325,15 @@ def _same_parent(parent: Path, descriptor: int) -> None:
         raise ValueError("batch output parent changed")
 
 
-def _read_raw(path: Path, plan: run_comparison.RunPlan) -> tuple[dict[str, Any], str]:
+def _read_raw(
+    path: Path, plan: run_comparison.RunPlan, schema_base: Path | None = None
+) -> tuple[dict[str, Any], str]:
     """Read and revalidate one retained regular JSON result without following links.
 
     Args:
         path: Exact path returned by the verified single-run dispatcher.
         plan: Current-source run plan for this output.
+        schema_base: Explicit recorded benchmark directory for replay.
 
     Returns:
         Parsed raw result and held-byte digest for later drift checks.
@@ -345,7 +366,7 @@ def _read_raw(path: Path, plan: run_comparison.RunPlan) -> tuple[dict[str, Any],
             raise ValueError("raw result changed during validation")
     if not isinstance(raw, dict):
         raise ValueError("raw result is not a JSON object")
-    run_comparison.validate_result(plan, raw)
+    run_comparison.validate_result(plan, raw, schema_base)
     return raw, hashlib.sha256(data).hexdigest()
 
 
@@ -365,7 +386,7 @@ def run_batch(
         output_parent: Existing owner-only external directory for raw runs.
 
     Returns:
-        Detached medians and retained raw paths only after all 24 runs pass.
+        Detached medians, raw paths and exact receipts after all 24 runs pass.
 
     Raises:
         ValueError: If source, seeds, outputs, runtime, or results drift.
@@ -403,6 +424,7 @@ def run_batch(
             (seed.plan.authors, library): [] for seed in seeds for library in LIBRARIES
         }
         order: list[Path] = []
+        receipts: list[DispatchReceipt] = []
         raw_digests: dict[Path, str] = {}
         machine_reference: dict[str, Any] | None = None
         for (seed, _repetition, library), destination in zip(schedule, destinations):
@@ -441,6 +463,11 @@ def run_batch(
             ):
                 raise ValueError("batch source or seed changed after dispatch")
             raw, raw_digest = _read_raw(path, plan)
+            receipts.append(
+                DispatchReceipt(
+                    len(receipts) + 1, plan, path, raw_digest, run_comparison.BASE
+                )
+            )
             machine = raw.get("machine")
             if not isinstance(machine, dict) or not machine:
                 raise ValueError("raw result has no machine witness")
@@ -495,6 +522,6 @@ def run_batch(
             raise ValueError("raw result changed after aggregation")
         for rows in groups.values():
             run_comparison._check_measured_context(rows[0][0])
-        return BatchResult(tuple(medians), tuple(order))
+        return BatchResult(tuple(medians), tuple(order), tuple(receipts))
     finally:
         os.close(parent_fd)

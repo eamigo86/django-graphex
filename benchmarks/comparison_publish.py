@@ -8,7 +8,7 @@ import re
 import stat
 import tempfile
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -17,6 +17,7 @@ from .comparison_batch import (
     LIBRARIES,
     BatchGroup,
     BatchResult,
+    DispatchReceipt,
     _digest_regular,
     _read_raw,
 )
@@ -40,20 +41,6 @@ FILENAMES = {
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 PORTABLE_TEXT = re.compile(r"[A-Za-z0-9_.+-]{1,120}\Z")
-
-
-@dataclass(frozen=True)
-class DispatchReceipt:
-    """Bind one completed dispatch to its raw bytes and checked plan.
-
-    A receipt corroborates local evidence; it is not a signed attestation or
-    permission to recreate a seed, rerun a workload, or trust an arbitrary path.
-    """
-
-    number: int
-    plan: run_comparison.RunPlan
-    raw_path: Path
-    sha256: str
 
 
 def _hex(value: object, pattern: re.Pattern[str]) -> bool:
@@ -169,6 +156,8 @@ def _read_receipts(
         or len(receipts) != 24
     ):
         raise ValueError("publisher requires exactly 24 completed raw dispatches")
+    if batch.receipts and tuple(receipts) != batch.receipts:
+        raise ValueError("explicit receipts differ from the live batch")
     groups: dict[tuple[int, str], list[tuple[DispatchReceipt, dict[str, Any]]]] = {
         key: [] for key in GROUP_KEYS
     }
@@ -177,6 +166,7 @@ def _read_receipts(
     databases: dict[int, Path] = {}
     machine: dict[str, Any] | None = None
     used_paths: set[Path] = set()
+    schema_base: Path | None = None
     for number, receipt in enumerate(receipts, 1):
         if (
             type(receipt) is not DispatchReceipt
@@ -184,6 +174,16 @@ def _read_receipts(
         ):
             raise ValueError("dispatch receipt or plan has an unexpected type")
         plan = receipt.plan
+        if receipt.schema_base is not None and (
+            not isinstance(receipt.schema_base, Path)
+            or not receipt.schema_base.is_absolute()
+            or receipt.schema_base.name != "benchmarks"
+        ):
+            raise ValueError("receipt schema context is malformed")
+        if number == 1:
+            schema_base = receipt.schema_base
+        elif receipt.schema_base != schema_base:
+            raise ValueError("receipts use mixed schema checkouts")
         authors = AUTHOR_COUNTS[(number - 1) // 12]
         repetition = ((number - 1) % 12) // 4
         library = ROTATIONS[repetition][(number - 1) % 4]
@@ -235,7 +235,7 @@ def _read_receipts(
         previous_database = databases.setdefault(authors, plan.database)
         if previous_database != plan.database:
             raise ValueError("one seed size has mixed databases")
-        raw, digest = _read_raw(receipt.raw_path, plan)
+        raw, digest = _read_raw(receipt.raw_path, plan, receipt.schema_base)
         if digest != receipt.sha256:
             raise ValueError("raw bytes differ from dispatch receipt")
         if machine is None:
@@ -291,7 +291,11 @@ def _artifacts(
         previous_seed = seed_sources.setdefault(group.authors, seed)
         if seed != previous_seed:
             raise ValueError("one seed size has mixed source or bytes")
-        computed = aggregate_three(first_plan, [raw for _, raw in triple])
+        if any(receipt.schema_base != receipts[0].schema_base for receipt in receipts):
+            raise ValueError("median group has mixed schema checkout context")
+        computed = aggregate_three(
+            first_plan, [raw for _, raw in triple], receipts[0].schema_base
+        )
         if group.median != computed:
             raise ValueError("recorded median differs from raw result math")
         machine = _public_machine(computed["machine"])

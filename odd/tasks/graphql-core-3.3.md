@@ -643,7 +643,7 @@ of scope.
         child and tracker Codecov checks succeeded. This closes only the
         unpublished rotated-batch unit. The earlier pending statements above
         are chronological, not current blockers for T4b2c3.
-      - [ ] T4b2c4 — Stage the portable core33 eight-artifact publisher.
+      - [x] T4b2c4 — Stage the portable core33 eight-artifact publisher.
         Route: delegated direct, because a new publisher, focused tests,
         benchmark ignore rules, guide, and this task document are non-trivial.
         The coherent pending-version size exception has no numeric ceiling;
@@ -701,6 +701,133 @@ of scope.
         requirement. Hosted approval and actual canonical generation remain
         pending. Evidence: `independent-publisher-f8c418f/report.md` under
         the stable local recovery root.
+        The final documentary boundary at `54ca72fc6ea4e5e1a868396d18236c713d15f1b4`
+        passed independent readback and native focused checks. PR #236 merged
+        only into integration as `af9678c482df59ed4c731326c98450ba4eea7254`;
+        child run `37105519521`, integration run `37105723125`, and tracker
+        run `37105726297` each passed 15 validations with three publication
+        skips, while child and tracker Codecov checks succeeded. This closes
+        only the staged publisher, not actual artifact generation.
+      - [ ] T4b2c5 — Add the explicit core33 run/replay publication command.
+        Route: delegated direct because the command, live batch receipt seam,
+        focused tests, and guide are non-trivial; forecast roughly 700–1100
+        authored lines, with the existing coherent pending-version size
+        exception and an honest final count. Strict TDD is enabled by current
+        AGENTS.md: observe a new command/receipt RED, then GREEN and refactor.
+        Focal runner: `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_batch.py
+        tests/benchmarks/test_comparison_publish.py
+        tests/benchmarks/test_run_publish_core33.py --no-cov` under the named
+        core-3.3 overlay. Own only the new command and its tests, minimal
+        batch/publisher receipt compatibility, focused existing tests,
+        concise benchmark guide, and this checkpoint. The run mode composes
+        checked fresh seeds, one rotated batch, and all-or-nothing publisher
+        only after preflighting options and destinations. The replay mode
+        reads explicit retained event/manifest/batch evidence, reconstructs
+        typed receipts without current runtime probes or workloads, then uses
+        the same validator and publisher. Reject malformed or contradictory
+        witnesses before publication, preserve failed private outputs, and
+        leave the legacy publisher and old eight JSON untouched. Verify
+        native focal, all benchmarks, unchanged full 95.01% branch gate and
+        complete coverage gap sets, Ruff, typing, both docstring gates, docs
+        anchors, diff, and all protected tracked/ignored/database identities
+        in a clean exact-commit clone. Rollback only this command, receipt seam,
+        focused tests, guide, and task checkpoint. This unit uses synthetic
+        evidence only; no actual measurement, reseed, or canonical install.
+        Chronological TDD: new-command import failed with exit 2 before the
+        CLI existed, and the live-batch receipt assertion failed with exit 1
+        before the seam was added. The initial targeted implementation passed
+        81 focused controls, then expanded synthetic receipt, replay, run and
+        preservation checks passed 89 focused controls. The root 3.2.13
+        interpreter gives iteration evidence only; exact native-3.3 final
+        acceptance, independent verification and hosted gates remain pending.
+        Local behavior commit `db720cb588d84f5edc5b16a8477910b8ad5a5028`
+        passed 89 focused, 311 benchmark, and 4,699 unchanged full native-3.3
+        tests at 96.23% branch coverage. The complete 258/266/274/282 gap
+        sets, seven skips, three warnings, 23 subtests, both docstring gates,
+        typing, Ruff, and five known docs anchors matched the accepted
+        baseline. The parser read the retained actual 8-group/24-receipt
+        evidence metadata without opening databases, raw result files, or
+        publishing; the measurement witness remains `350ae84`/3.1.1, distinct
+        from this command checkout. All eight historical JSON, 35 ignored
+        historical JSON, and four databases retained their verified identities.
+        This is staged local command proof only; independent and hosted checks
+        and T4b2c6 actual artifact generation remain pending.
+        Independent verification of final local head `7ec498a` is terminal
+        PARTIAL: a synthetic cross-checkout CLI replay failed before staging
+        because shared validation used the current command checkout for the
+        recorded schema path. The accepted old journal already records each
+        measuring child's checkout, harness argv, selected environment, and
+        source identity; the loader discarded that context. Reopen this unit
+        for a bounded strict-TDD correction, not a new feature or measurement.
+        Add an explicit checked benchmark-schema context to the retained
+        receipt, propagate it through shared raw validation and median
+        recomputation, and recover the old context only from corroborating
+        child-invocation records. Future live evidence must state its checked
+        context explicitly; missing or contradictory context fails closed.
+        Keep current-checkout live defaults, old typed constructors and old
+        recorded plans compatible; never mutate global source paths or raw
+        witnesses. First observe a fresh cause-correct cross-checkout RED,
+        then GREEN and refactor. The fresh real-CLI synthetic cross-checkout
+        RED exited 1 at the exact schema witness mismatch, without touching
+        actual raws or databases. The bounded correction's first root-venv
+        GREEN passed 124 focused controls, including the distinct-root CLI,
+        future-context round-trip, old child invocation and forged/missing/
+        mixed context rejection. Read-only loading of the accepted old journal
+        recovered all 24 schema contexts at the measured `350ae84` checkout;
+        no actual raw or database was opened. Final native-3.3 gates and
+        independent recheck remain pending. The existing local and independent
+        failures
+        remain in their original proof roots; corrected exact-head full gates,
+        independent recheck, hosted delivery, and actual publication remain
+        pending. Rollback this correction's narrow context seam, tests, guide,
+        and checkpoint together without touching old measurement assets.
+        Correction commit `fa0f6a43a9dee2a63fdb6a78b9a549241e88f968`
+        passed the exact clean-clone native-3.3 focal 96, benchmark 318, and
+        unchanged full 4,706 tests at 96.23% against the 95.01% branch gate.
+        Complete 258/266/274/282 coverage gaps, seven skips, three warnings,
+        23 subtests, Ruff, configured and natural typing, both docstring gates
+        at TOTAL 0, and five docs anchors matched baseline. The accepted old
+        journal's 24 contexts parsed read-only at its measured checkout with
+        the original SHA unchanged; no actual raw, database, or public target
+        was opened. This is local corrected-context proof only; independent
+        repeat, hosted gates, and T4b2c6 generation remain pending.
+        Independent recheck of `ad25e69` is terminal PARTIAL: the original
+        cross-checkout positive now succeeds, but deleting only the old
+        journal's preflight event still installs eight synthetic files. This
+        violates the stated old child-context source-witness requirement.
+        Reopen only the old fallback acceptance guard: require its one
+        matching preflight commit/tree; future explicit schema-context records
+        remain independently valid. Observe the missing-preflight real CLI RED
+        before this guard, then GREEN/refactor and exact-final native gates.
+        Preserve both independent reports, all raw proof, and actual assets.
+        Fresh cause-correct old-format real-CLI RED exited 1 because deleting
+        only preflight let it install eight synthetic files. The minimal guard
+        then passed 44 CLI controls, including valid old/new positives and
+        contradictory source rejection. Mixed explicit/legacy context without
+        preflight is separately rejected. Local full native and independent
+        acceptance remain pending; no actual raw or database was opened.
+        Independent exact-head verification of `b035567` passed 99 focal,
+        321 benchmark, and 4,709 full native-3.3 tests at 96.23% branch
+        coverage, with the baseline gaps, skips, warnings, and quality gates
+        unchanged. PR #237's first hosted run `37111329600` failed in all six
+        test-matrix jobs and base-install: each job reported only the direct
+        script/module help test failing because it tried a developer-specific
+        Python path absent on the runner. Reopen hosted acceptance for a
+        test-only portability correction using the executing interpreter;
+        preserve real help subprocess and no-workload checks. Observe a fresh
+        local cause-correct RED and GREEN, then repeat exact-head local gates.
+        The hosted failure remains a failure; no publication is authorized.
+        The fresh interpreter-alias control failed before the selection fix:
+        the help test chose the checkout Python rather than the active test
+        interpreter, although both paths existed locally. The test observes
+        the requested executable and still launches both real help commands.
+        Selecting the active interpreter passed both targeted controls after
+        the fix; exact-head full and hosted revalidation remain pending.
+      - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
+        bundle from the retained 24 measured raw results. Reuse the verified
+        read-only replay path after independent and hosted acceptance of
+        T4b2c5; do not rerun measurements or relabel the measured source.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its

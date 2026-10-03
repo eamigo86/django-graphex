@@ -153,7 +153,8 @@ GraphQL-core version. No new performance figures are published by this helper.
 `comparison_publish.publish_core33` is the separate receipt-aware writer for
 an already completed batch. Its caller supplies the detached `BatchResult`,
 24 numbered `DispatchReceipt` records containing each exact RunPlan, raw path,
-and SHA-256, and an existing absolute results directory. It rereads every raw
+SHA-256, and checked measuring-checkout schema context, and an existing
+absolute results directory. It rereads every raw
 file, applies the shared profile validator, recomputes all eight three-run
 medians, then projects only portable versions, dataset, machine platform/CPU,
 surface, SQL/timing statistics, aggregation meaning, source and seed digests,
@@ -181,6 +182,55 @@ extra, noncolliding inherited file causes validation to reject the bundle,
 but the eight added files remain as recoverable foreign-directory residue.
 Descriptor checks establish continuity from first acquisition, not creator
 ownership or immutable foreign state.
+
+Use `run_publish_core33.py` only with an explicit mode. The expensive `run`
+mode requires `--profile core33 --authors 1000 2000 --runs 3`, an existing
+named `--venv-root`, existing owner-only external `--seed-parent` with absent
+`seed-1000` and `seed-2000` children, empty owner-only external
+`--output-parent`, and trusted existing `--results-root` with no `core33`
+child. All paths must be absolute. For example:
+
+```sh
+.venv/bin/python -m benchmarks.run_publish_core33 run \
+  --profile core33 --authors 1000 2000 --runs 3 \
+  --venv-root /absolute/named-envs --seed-parent /absolute/private-seeds \
+  --output-parent /absolute/private-raws \
+  --results-root /absolute/checkout/benchmarks/results
+```
+
+It creates two private seeds, performs 24 rotated single-run
+measurements, retains their complete receipts as private `events.jsonl`,
+`raw-manifest.json`, and `batch-result.json`, then calls the eight-file
+publisher. These private records are written after a complete batch and are
+not timestamped live child events. Failures preserve private seeds, raw files,
+records, and staging residue for inspection; no reset or automatic deletion
+occurs. The publisher still refuses an occupied public target.
+
+The `replay` mode instead requires `--profile core33 --events`,
+`--raw-manifest`, `--batch-result`, and `--results-root`. It reconstructs the
+24 typed dispatch receipts from explicit retained files, compares their
+cross-file identities, and delegates raw-byte, result, and median validation
+to the same publisher. New complete-batch records carry one explicit schema
+context per dispatch. Older accepted journals recover that context only from
+each corroborating measuring-child cwd, harness argv, selected environment,
+and one matching preflight source witness. The explicit new format binds each
+dispatch directly and does not require that older preflight record. Missing,
+mixed, or contradictory contexts fail before installation; replay does not
+replace the measured checkout with the current command checkout. These are
+local corroborating records, not signed attestations of loaded source bytes.
+It never probes the current named environments, creates seeds, or reruns
+measurements. Both modes require a trusted results parent without concurrent
+pathname substitution; neither is a same-user
+filesystem sandbox. The legacy `run_publish.py` command and its historical
+eight artifacts remain separate and unchanged.
+
+```sh
+.venv/bin/python -m benchmarks.run_publish_core33 replay \
+  --profile core33 --events /absolute/private-raws/events.jsonl \
+  --raw-manifest /absolute/private-raws/raw-manifest.json \
+  --batch-result /absolute/private-raws/batch-result.json \
+  --results-root /absolute/checkout/benchmarks/results
+```
 
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a

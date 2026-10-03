@@ -439,3 +439,23 @@ def test_publisher_documents_preacquisition_directory_limit() -> None:
     assert "foreign directory can receive all eight exclusive files" in guide
     assert "first acquired descriptor" in api_doc
     assert "does not prove creator ownership" in api_doc
+
+
+def test_publisher_rejects_explicit_receipts_that_contradict_live_batch(
+    tmp_path: Path,
+) -> None:
+    """Do not publish when a newer batch embeds different live receipts.
+
+    Args:
+        tmp_path: Private synthetic raw and public fixture roots.
+
+    Raises:
+        AssertionError: If contradictory receipt witnesses stage an artifact.
+    """
+    batch, receipts, parent = _fixture(tmp_path)
+    live = replace(batch, receipts=receipts)
+    wrong = (replace(receipts[0], sha256="0" * 64), *receipts[1:])
+    with pytest.raises(ValueError, match="explicit receipts differ"):
+        publish_core33(live, wrong, parent)
+    assert not (parent / "core33").exists()
+    assert not list(parent.glob(".core33-stage-*"))

@@ -298,12 +298,16 @@ def _valid_timing(value: object) -> bool:
     )
 
 
-def validate_result(plan: RunPlan, result: dict[str, Any]) -> None:
+def validate_result(
+    plan: RunPlan, result: dict[str, Any], schema_base: Path | None = None
+) -> None:
     """Require the child output to match the checked whole-stack contract.
 
     Args:
         plan: Preflight-validated source and runtime selection.
         result: Raw output from the measuring child.
+        schema_base: Explicit recorded benchmark directory for replay. Live
+            validation uses this module's current benchmark directory.
 
     Raises:
         ValueError: If identity, schema, workload, or SQL differs.
@@ -317,7 +321,12 @@ def validate_result(plan: RunPlan, result: dict[str, Any]) -> None:
         "manifest_sha256": plan.manifest_sha256,
         "constraints_sha256": plan.constraints_sha256,
         "backend_path": str(plan.backend_path),
-        "schema_path": str(BASE / "libs" / plan.library / "bench_schema.py"),
+        "schema_path": str(
+            (BASE if schema_base is None else schema_base)
+            / "libs"
+            / plan.library
+            / "bench_schema.py"
+        ),
         "python": plan.python_version,
         "django": plan.packages["django"],
         "graphql-core": plan.packages["graphql-core"],
