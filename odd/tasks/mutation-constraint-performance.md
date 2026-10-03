@@ -195,3 +195,11 @@ fields. Composite primary keys retain the previous table-scoped fallback,
 rather than silently dropping checks for an unsupported row-key shape.
 The final exact-head full suite, changed-line coverage and disposable 50k/100k
 performance profile are still pending at this checkpoint.
+
+The first clean correction clone at dd90b97 still failed one new test under
+the full suite's richer fixture order: unrelated relation serialization added
+extra SELECTs outside the checker. The corrected assertion bounds the checker
+itself to exactly one saved-row-key-filtered CASE query and forbids the
+table-wide PRAGMA, without claiming all serialization SQL is fixed. That
+failed full run (4,734 pass/one fail) is also retained; the 17-test focal
+passed after the assertion correction. Its exact-head full run remains pending.

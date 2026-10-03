@@ -180,7 +180,7 @@ def _info() -> SimpleNamespace:
 def test_valid_atomic_write_has_bounded_sql_without_table_check() -> None:
     """A valid write checks its own FK, not all rows in the Post table.
 
-    The request stays within a constant SQL budget independent of table size.
+    The checker uses one key-filtered statement independent of table size.
     """
     author = Author.objects.create(name="Owner")
     backend = PydanticBackend(Post)
@@ -197,7 +197,9 @@ def test_valid_atomic_write_has_bounded_sql_without_table_check() -> None:
 
     statements = [item["sql"].upper() for item in captured.captured_queries]
     assert not any("FOREIGN_KEY_CHECK" in sql for sql in statements)
-    assert len(statements) <= 5, statements
+    scoped_checks = [sql for sql in statements if "SELECT CASE" in sql]
+    assert len(scoped_checks) == 1, statements
+    assert 'WHERE CHILD."ID" =' in scoped_checks[0]
     assert Post.objects.filter(pk=post.pk).exists()
 
 
