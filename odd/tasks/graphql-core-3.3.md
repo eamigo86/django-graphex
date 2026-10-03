@@ -400,12 +400,40 @@ of scope.
         was invalid, not a configured failure; configured library mypy passed
         79 files. No database was created. Independent and hosted acceptance
         remain pending; T4b2c2b owns actual private seed creation.
+        PR #233 merged only into integration as
+        `f2013619704c36643a5df03762eae6e95c2d1a46`. Child
+        `37087831179` passed 15 validations and both Codecov checks;
+        integration push `37088175387` and tracker `37088179078` each passed
+        15 validations with three publication skips, and tracker Codecov passed.
+        Independent read-only preflight proof is retained under
+        `graphex-resume-2026-10-02/independent-seed-preflight-2867c8a/`.
       - [ ] T4b2c2b — Reserve and build fresh private seeds from the checked
-        plan, then validate and retain failed attempts. This separate unit owns
-        exclusive directory/database creation, migrate then seed_bench,
-        protected-asset and cardinality checks, and the later cost notice for
-        actual 1,000/2,000-author writes. Rotated runs and all-or-nothing new
-        profile publication remain a further independent boundary.
+        plan, then validate and retain failed attempts. Route: delegated direct
+        because execution helper, focused tests, README, and checkpoint are
+        non-trivial. Forecast 300-500 authored lines; the approved coherent
+        migration size exception applies, without a numeric ceiling. Strict
+        TDD from current AGENTS.md requires creator-specific RED, GREEN, then
+        refactor; focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_seed_execution.py --no-cov` under
+        native GraphQL-core 3.3. Recheck every SeedPlan field before writes;
+        create only a fresh external private database using the selected named
+        interpreter, current committed migrations, and explicit sanitized
+        BENCH_DATABASE. Reject path, source, freeze, runtime, or DB drift;
+        validate shared cardinalities and fixed post 5000. Retain failed
+        attempt output without automatic deletion. Rollback only the creator,
+        its tests, guide, and checkpoint; keep preflight independently useful.
+        Mocked/local gates precede a separately forecast actual 1,000/2,000
+        author seed creation. Rotated runs and all-or-nothing new profile
+        publication remain a further independent boundary.
+        Creator-specific missing-entrypoint RED failed 12 cases before source;
+        normalized mocked GREEN passed 18 cases under the native 3.3 overlay.
+        The helper stages through an exclusive regular file beneath an
+        owner-only external parent, retains streams/residue, and uses atomic
+        no-clobber directory installation. Random staging-directory opening
+        is not creator-ownership proof or a same-user filesystem sandbox.
+        Actual seed creation, independent acceptance, and hosted gates remain
+        pending; no measured request or canonical publication is part of this
+        unit.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run

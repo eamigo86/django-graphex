@@ -106,6 +106,21 @@ plan = prepare_seed_plan(
 assert not plan.output_root.exists()
 ```
 
+`comparison_seed_execution.create_private_seed(plan, envs_root)` is the
+separate write step. It rechecks every plan field, requires the destination's
+existing parent to be owner-only, and uses the selected Graphex interpreter
+with an explicit private database path. It runs committed migrations, then
+`seed_bench`, and checks the shared cardinalities and fixed post 5000 before
+installing the database without replacing an occupied destination. Migration
+and seed stdout/stderr files and failed attempt files remain for inspection;
+there is no automatic deletion. The returned `PreparedSeed` identifies the
+validated database, source plan, digest, and stream paths, not a benchmark
+measurement. Path and descriptor checks bound ordinary substitutions, but
+opening the random staging directory after creation does not attest creator
+ownership. They do not protect against a same-user actor changing every
+filesystem operation; the later runner must still preflight the returned
+database.
+
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
 `PYTHONPATH` that points at newer source so the published wheel is imported.
