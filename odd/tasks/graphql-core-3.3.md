@@ -782,6 +782,16 @@ of scope.
         independent recheck, hosted delivery, and actual publication remain
         pending. Rollback this correction's narrow context seam, tests, guide,
         and checkpoint together without touching old measurement assets.
+        Correction commit `fa0f6a43a9dee2a63fdb6a78b9a549241e88f968`
+        passed the exact clean-clone native-3.3 focal 96, benchmark 318, and
+        unchanged full 4,706 tests at 96.23% against the 95.01% branch gate.
+        Complete 258/266/274/282 coverage gaps, seven skips, three warnings,
+        23 subtests, Ruff, configured and natural typing, both docstring gates
+        at TOTAL 0, and five docs anchors matched baseline. The accepted old
+        journal's 24 contexts parsed read-only at its measured checkout with
+        the original SHA unchanged; no actual raw, database, or public target
+        was opened. This is local corrected-context proof only; independent
+        repeat, hosted gates, and T4b2c6 generation remain pending.
       - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
         bundle from the retained 24 measured raw results. Reuse the verified
         read-only replay path after independent and hosted acceptance of
