@@ -944,14 +944,59 @@ of scope.
     result does not claim independent or hosted acceptance, a new measurement,
     guaranteed CPU quietness, a published 4.0.0 package, or main/tag/release.
     Final documentary-head proof is recorded separately; independent and
-    hosted gates remain pending for parent delivery.
+    hosted gates remained pending at that local checkpoint. Subsequent
+    independent verification passed, and PR #239 merged only into the
+    integration branch as `d740a0b90a811a8ce1bd74bd2467561044a2d983`
+    with tree `4a943df1f8696c9d62a51dadd99078e68a912103`. Child run
+    `37118812807`, post-push run `37119020840`, and tracker run
+    `37119023499` each passed all 15 validations with three publication
+    skips; both Codecov checks succeeded. Tracker #212 remains open/draft
+    against main and issue #210 remains open/approved. No main merge, tag,
+    package publication, or new benchmark measurement occurred.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
     release-readiness unit, then run final independent and hosted gates. No
     main merge or publication follows automatically.
+    Route: delegated direct because project/lock metadata, two changelogs,
+    current release guidance, executable readiness contracts, and this
+    checkpoint form one coherent version-preparation work unit. Strict TDD
+    is enabled by current AGENTS.md: observe a cause-correct 4.0.0 contract
+    RED before changing metadata, then minimum GREEN/refactor. Ownership is
+    limited to the project version, each lock's editable local-project
+    version entry, current 4.0.0 notes/status guidance, narrowly affected
+    tests, and this task. Preserve every other lock pin, historical dated
+    notes and eight-plus-eight benchmark JSON. Close the migration notes as
+    `4.0.0 — 2026-10-03` while keeping an empty Unreleased heading, and
+    distinguish local release preparation from publication. Adapt the old
+    3.1.1 current-version assertion only while retaining its dated history
+    checks. Focal runner: `.venv/bin/python -m pytest <release/readiness/docs
+    selection> --no-cov`; full native-3.3 runner: `.venv/bin/python -m pytest`
+    in a clean real commit clone with the unchanged 95.01% branch gate.
+    Verify the full Playground suite, benchmark contracts, configured quality
+    and typing, both docstring gates, docs, complete coverage-gap and
+    protected-asset equivalence. Rollback only this local version-preparation
+    unit; actual wheel validation, independent/hosted gates, tracker-to-main,
+    tag and publication remain separate and require their own authority.
+    Local TDD checkpoint: the new release contract first failed on the old
+    version, undated migration notes and stale prepared-status guidance
+    (three RED assertions, one preservation control passed). A separate
+    benchmark-guide assertion first failed on the stale website-status text.
+    The corrected six-module focal selection then passed 52 tests with the
+    official core-3.3 overlay. Offline, no-build, no-cache checks confirmed
+    both lockfiles agree with the editable 4.0.0 metadata without changing
+    third-party pins. Full exact-head, Playground and quality gates remain
+    pending at this checkpoint; neither RED is a measurement failure.
 
 ## Progress and next step
 
-T0-T3 and the JSON, validation-cache, HTTP privacy, subscription privacy,
+Current checkpoint: T4c is independently and hosted-verified at integration
+`d740a0b90a811a8ce1bd74bd2467561044a2d983`; T4d is the remaining
+local release-readiness child. Package 4.0.0 is selected, but final child
+verification, tracker-to-main approval, tag, artifact build and publication
+have not occurred. The earlier progress snapshots below remain historical
+evidence of their respective candidate states.
+
+At the earlier T4q checkpoint, T0-T3 and the JSON, validation-cache, HTTP
+privacy, subscription privacy,
 and T4q capability-test children are integrated through
 `fc0d730a87b90c5bc57387fad61a09ca761aac2a`.
 PR #222 passed exact-head hosted checks before that integration-only merge;

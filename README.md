@@ -43,8 +43,9 @@ your Django models — no DRF, no graphene, no `django-filter`.
 - **graphql-core:** >=3.3.0,<3.4
 - **pydantic:** >=2,<3
 
-These are requirements of the current unreleased migration checkout, not a
-claim that the published 3.1.1 wheel already targets GraphQL-core 3.3. See
+These are requirements of the **4.0.0 prepared checkout**, not a claim that
+the published 3.1.1 wheel already targets GraphQL-core 3.3 or that a 4.0.0
+wheel has been built and published. See
 the [upgrade guidance](docs/UPGRADE-4.0.md) before testing custom executors,
 AST builders or subscription transports against this source.
 

@@ -176,8 +176,9 @@ timed requests in each of three runs for both 1,000- and 2,000-author seeds.
 Every timing statistic is the median of that statistic across the three
 validated runs; a median of per-run p95 values is not a pooled 300-request
 p95. The measured django-graphex source remains 3.1.1 in provenance. These
-files are not yet used by the website or the historical `results/` comparison
-and are not a 4.0.0 measurement.
+files now supply the website's separate current core33 comparison; they do
+not replace the historical `results/` comparison and are not a 4.0.0
+measurement.
 
 Use a trusted results parent without concurrent pathname substitution. A
 foreign directory moved into the stage name after creation but before the first

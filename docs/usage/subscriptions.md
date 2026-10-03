@@ -67,8 +67,8 @@ layer is fine for development.
     by `Executor.build()` and accept either an immediate or awaitable result from
     `create_source_event_stream()`. Keep per-event delivery and teardown in the
     serialize-once driver rather than replacing it with the stock `subscribe()`
-    pipeline. The published dependency floor remains on 3.2 until the final
-    migration task raises it.
+    pipeline. The published 3.1.1 package retains its 3.2 dependency floor.
+    The prepared 4.0.0 checkout requires 3.3, but has not been published.
 
 !!! tip "Try it interactively"
     Add the [browser client view](#browser-client-view) to your URLConf to

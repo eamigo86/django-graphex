@@ -79,6 +79,13 @@ of lazily on first request), so type-compilation errors surface immediately.
 - **graphql-core**: >=3.3.0,<3.4
 - **pydantic**: >=2,<3
 
+These requirements describe the prepared 4.0.0 source checkout. The 4.0.0
+distribution is not published by this repository change, so the ordinary
+`uv add` and `pip install` commands above may still resolve the published
+3.1.1 package with its older GraphQL-core requirement. For a pre-release
+evaluation, test the checkout explicitly and follow the
+[4.0 upgrade guide](UPGRADE-4.0.md).
+
 !!! warning "Django 4.x / 5.0 / 5.1 users"
     **django-graphex 2.0+ requires Django >= 5.2.**
     If your project is still on **Django 4.2, 5.0, or 5.1**, use

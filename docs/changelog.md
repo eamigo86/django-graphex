@@ -14,19 +14,23 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
-The current checkout requires `graphql-core>=3.3.0,<3.4`; the root and
-Playground locks target 3.3. This is an unreleased migration: 4.0.0 is
-selected but the package metadata remains 3.1.1. Custom 3.2
+## 4.0.0 — 2026-10-03
+
+**Release prepared, not published.** The package and both editable project
+locks now name 4.0.0, with `graphql-core>=3.3.0,<3.4`. A tag, built wheel,
+hosted release-artifact verification, and publication remain separate gates.
+Custom 3.2
 `ExecutionContext` subclasses must move to the 3.3 `Executor` API; the
 legacy view keyword remains an alias with explicit-argument precedence.
 Custom AST builders must construct immutable AST nodes, and subscription
-transports must handle 3.3 source-stream results. Synchronous queryset
+transports must handle the 3.3 source stream results. Synchronous queryset
 execution, directive coercion and query cost behavior retain compatibility
 tests. New core33 whole-stack results and explicit run/replay guidance are
-separate from the frozen 3.1.0 measurements. See the
-[unreleased upgrade guide](UPGRADE-4.0.md) and
-[current comparison](why.md#current-core33-comparison). The 3.1.1
-security patch and its 3.2.13 requirement remain historical facts.
+separate from the frozen 3.1.0 measurements. Their measured django-graphex
+source was still 3.1.1; no 4.0.0 benchmark was run. See the
+[4.0 upgrade guide](UPGRADE-4.0.md) and
+[current comparison](why.md#current-core33-comparison). The dated 3.1.1
+security patch and its GraphQL-core 3.2.13 requirement remain historical facts.
 
 ## 3.1.1 — 2026-10-01
 
