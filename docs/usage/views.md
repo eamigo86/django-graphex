@@ -26,6 +26,44 @@ automatically (no-ops until `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` are set — see
 [Query depth & cost limits](query-limits.md)) and response caching when
 `CACHE_ACTIVE` is on (see [Settings](settings.md)).
 
+### Custom execution backend
+
+Pass `executor_class=YourBackend` to a view constructor or `as_view()` to
+customize GraphQL execution. The older `execution_context_class=` spelling
+remains an alias; if both are supplied, they must name the same class or view
+construction raises `ImproperlyConfigured`. A class attribute may set the same
+default for a view subclass. An explicit constructor or `as_view()` argument
+overrides that default regardless of which alias the subclass used.
+
+The backend class itself must match the installed GraphQL-core generation:
+subclass `ExecutionContext` on 3.2, or `Executor` on 3.3. Custom 3.2 subclasses
+need to be ported to the [3.3 Executor API](https://github.com/graphql-python/graphql-core/releases/tag/v3.3.0);
+renaming the view keyword alone does not make them compatible. The runtime
+dependency floor is now 3.3 for current source; custom backends must be ported.
+
+On GraphQL-core 3.3, the HTTP view supplies the executor's async-iterable
+predicate so a Django queryset, which implements both iterator protocols,
+continues through synchronous list completion. This keeps queryset evaluation
+inside the request's thread and any atomic mutation block. Results that are
+async iterable but not synchronously iterable retain GraphQL-core's async
+classification; this does not add general async-resolver support to the
+synchronous HTTP view. Custom executor classes must accept the native 3.3
+predicate argument when used with this view.
+
+### Custom AST builders
+
+GraphQL-core 3.3 makes parsed AST nodes immutable and requires their fields at
+construction. If an extension builds inline fragments for query analysis, pass
+`type_condition` and `selection_set` into `InlineFragmentNode(...)` rather
+than assigning them afterward. Use a tuple for `SelectionSetNode(selections=...)`;
+the built-in optimizer already reads both parsed and constructed fragments
+without mutating them. When evaluating directives directly against
+GraphQL-core 3.3, pass its native variable-values object rather than a plain
+dict. Test the resulting schema queries with valid variables, defaults, and
+invalid inputs when porting custom extensions. Published 3.1.1 still retains
+the historical 3.2 requirement; this current-source migration is not a new
+package release.
+
 ### Cross-site POST protection
 
 `GraphQLView` and `AuthenticatedGraphQLView` are `csrf_exempt` (`BaseGraphQLView`
@@ -258,6 +296,11 @@ With [`MAX_REQUEST_BODY_SIZE`](settings.md#file-uploads) set, `dispatch` refuses
 an oversized POST with **HTTP 413** before the body is parsed. It checks the
 declared `Content-Length` first, then measures the body itself — so a client
 cannot under-declare its length to slip past.
+
+JSON that the decoder cannot parse returns **HTTP 400**, including when the
+decoder raises a recursion error. This is parser-error handling, not a promise
+that every JSON document above a fixed nesting depth will be rejected; Python
+versions may accept different depths.
 
 `multipart/form-data` is measured too, but by **seeking** the request stream to
 its end and back rather than by reading it. Reading it would pull a streaming

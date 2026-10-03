@@ -62,13 +62,13 @@ def _inline_fragment_node(type_name: str | None):
         SelectionSetNode,
     )
 
-    node = InlineFragmentNode()
-    node.selection_set = SelectionSetNode(selections=[])
-    if type_name is None:
-        node.type_condition = None
-    else:
-        node.type_condition = NamedTypeNode(name=NameNode(value=type_name))
-    return node
+    type_condition = (
+        NamedTypeNode(name=NameNode(value=type_name)) if type_name is not None else None
+    )
+    return InlineFragmentNode(
+        type_condition=type_condition,
+        selection_set=SelectionSetNode(selections=()),
+    )
 
 
 # =========================================================================== #
@@ -211,13 +211,20 @@ def test_inline_fragment_malformed_condition_descends() -> None:
     "type_condition" but no usable name would crash the walker or silently drop
     the selection instead of preserving transparent descent.
     """
-    from graphql.language.ast import InlineFragmentNode, NamedTypeNode, NameNode
+    from graphql.language.ast import (
+        InlineFragmentNode,
+        NamedTypeNode,
+        NameNode,
+        SelectionSetNode,
+    )
 
     from django_graphex.utils import _inline_fragment_applies
 
-    node = InlineFragmentNode()
     # A NamedTypeNode whose NameNode has an empty value -> condition_name falsy.
-    node.type_condition = NamedTypeNode(name=NameNode(value=""))
+    node = InlineFragmentNode(
+        type_condition=NamedTypeNode(name=NameNode(value="")),
+        selection_set=SelectionSetNode(selections=()),
+    )
 
     assert _inline_fragment_applies(node, current_type_name="AccountType") is True
 

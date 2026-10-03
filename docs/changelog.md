@@ -12,6 +12,26 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## Unreleased
+
+## 4.0.0 — 2026-10-03
+
+**Release prepared, not published.** The package and both editable project
+locks now name 4.0.0, with `graphql-core>=3.3.0,<3.4`. A tag, built wheel,
+hosted release-artifact verification, and publication remain separate gates.
+Custom 3.2
+`ExecutionContext` subclasses must move to the 3.3 `Executor` API; the
+legacy view keyword remains an alias with explicit-argument precedence.
+Custom AST builders must construct immutable AST nodes, and subscription
+transports must handle the 3.3 source stream results. Synchronous queryset
+execution, directive coercion and query cost behavior retain compatibility
+tests. New core33 whole-stack results and explicit run/replay guidance are
+separate from the frozen 3.1.0 measurements. Their measured django-graphex
+source was still 3.1.1; no 4.0.0 benchmark was run. See the
+[4.0 upgrade guide](UPGRADE-4.0.md) and
+[current comparison](why.md#current-core33-comparison). The dated 3.1.1
+security patch and its GraphQL-core 3.2.13 requirement remain historical facts.
+
 ## 3.1.1 — 2026-10-01
 
 **Security patch.** Production publication is tag-driven. The supported runtime
@@ -611,7 +631,7 @@ changed nothing), plus six internal names — four of which were importable, so
   bucket it likes and evict that bucket's members. Salting would not help — the
   namespace is small by construction, so a caller that cannot aim can still cover
   it by volume. The ceiling is misses, never bodies. See
-  [Caching › Bucketing for unauthenticated identities](usage/caching.md#bucketing-for-unauthenticated-identities)
+  [Caching › Bucketing for unauthenticated identities](usage/caching.md#bucketing-for-unauthenticated-identities-in-identity-scope)
   and
   [Views › Response caching and cache identity](usage/views.md#response-caching-and-cache-identity).
 - **A hand-mounted interface field leaked its implementors' rows.** The

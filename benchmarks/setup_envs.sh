@@ -11,15 +11,18 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
+if [[ "${1:-}" == "--profile" ]]; then
+  shift
+  exec bash "$HERE/setup_profile_envs.sh" "$@"
+fi
 CONSTRAINTS="$HERE/constraints.txt"
 # shellcheck source=versions.env
 source "$HERE/versions.env"
 
-UV_FLAGS=()
+UV_FLAGS=(--no-config)
+export UV_PYTHON_DOWNLOADS=never
 if [[ "${BENCH_OFFLINE:-0}" == "1" ]]; then
   UV_FLAGS+=(--offline)
-  export UV_PYTHON_DOWNLOADS=never
   echo ">> Offline replay: uv may use its local cache only"
 fi
 
@@ -38,8 +41,9 @@ install_pinned() {
 write_verified_freeze() {
   local lib="$1"
   local python="$2"
+  local target="$3"
   "$python" "$HERE/verify_freeze.py" "$CONSTRAINTS" "$lib" \
-    >"$HERE/.freeze-$lib.txt"
+    >"$target/.freeze.txt"
 }
 
 make_venv() {
@@ -47,13 +51,14 @@ make_venv() {
   local venv="$HERE/.venv-$lib"
   echo
   echo "=== Setting up $lib -> $venv ==="
-  rm -rf "$venv"
-  uv venv -p "$PYTHON_VERSION" "$venv"
+  mkdir -- "$venv"
+  owned_targets+=("$venv")
+  uv venv -p "$PYTHON_VERSION" --allow-existing "$venv"
 
   case "$lib" in
     graphex)
       install_pinned "$venv/bin/python" "Django==$DJANGO_VERSION" \
-        "channels==$CHANNELS_VERSION" -e "$REPO_ROOT"
+        "channels==$CHANNELS_VERSION" "django-graphex==3.1.0"
       ;;
     graphene)
       install_pinned "$venv/bin/python" "Django==$DJANGO_VERSION" \
@@ -70,22 +75,59 @@ make_venv() {
         "ariadne==$ARIADNE_VERSION" \
         "ariadne-django==$ARIADNE_DJANGO_VERSION"
       ;;
-    *)
-      echo "Unknown lib: $lib" >&2
-      exit 1
-      ;;
   esac
 
-  write_verified_freeze "$lib" "$venv/bin/python"
-  echo "--- Installed versions in $lib venv ---"
-  cat "$HERE/.freeze-$lib.txt"
+  write_verified_freeze "$lib" "$venv/bin/python" "$venv"
 }
 
-LIBS=("${@:-graphex graphene strawberry ariadne}")
-# shellcheck disable=SC2068
-for lib in ${LIBS[@]}; do
+if [[ "$#" -eq 0 ]]; then
+  LIBS=(graphex graphene strawberry ariadne)
+else
+  LIBS=("$@")
+fi
+
+# Validate the whole request before reserving or installing any environment.
+requested=("")
+for lib in "${LIBS[@]}"; do
+  case "$lib" in
+    graphex|graphene|strawberry|ariadne) ;;
+    *) echo "Unknown lib: $lib" >&2; exit 1 ;;
+  esac
+  for previous in "${requested[@]}"; do
+    [[ "$previous" != "$lib" ]] || {
+      echo "Duplicate library requested: $lib" >&2; exit 1;
+    }
+  done
+  requested+=("$lib")
+  target="$HERE/.venv-$lib"
+  [[ ! -e "$target" && ! -L "$target" ]] || {
+    echo "Existing legacy environment will not be replaced: $target" >&2; exit 1;
+  }
+done
+
+owned_targets=("")
+completed=0
+cleanup() {
+  if [[ "$completed" -eq 0 ]]; then
+    for target in "${owned_targets[@]}"; do
+      [[ -n "$target" ]] || continue
+      [[ ! -L "$target" ]] && rm -rf -- "$target"
+    done
+  fi
+}
+trap cleanup EXIT
+
+for lib in "${LIBS[@]}"; do
   make_venv "$lib"
 done
+
+# Do not alter previous freeze artifacts unless the whole request succeeded.
+for lib in "${LIBS[@]}"; do
+  cp -- "$HERE/.venv-$lib/.freeze.txt" "$HERE/.freeze-$lib.txt"
+  echo "--- Installed versions in $lib venv ---"
+  cat "$HERE/.freeze-$lib.txt"
+done
+completed=1
 
 echo
 echo ">> All requested environments ready."

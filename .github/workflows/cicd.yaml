@@ -6,6 +6,8 @@ on:
     - main
     # Release tracker branches (e.g. v1.2.1) run the full test pipeline on every merge.
     - 'v*.*.*'
+    # GraphQL-core migration integration runs checks before release planning.
+    - 'codex/graphql-core-3.3'
     tags:
     - 'v*.*.*'
   pull_request:
@@ -15,6 +17,9 @@ on:
     - 'v*.*.*'
     # Chained security-patch PRs target their preceding child branch.
     - 'codex/v3.1.1-*'
+    # Migration PRs target integration or their preceding child branch.
+    - 'codex/graphql-core-3.3'
+    - 'codex/graphql-core-3.3-*'
   workflow_dispatch:
 
 permissions:

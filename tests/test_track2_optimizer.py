@@ -151,13 +151,13 @@ def _inline_fragment_node(type_name: str | None) -> object:
         SelectionSetNode,
     )
 
-    node = InlineFragmentNode()
-    node.selection_set = SelectionSetNode(selections=[])
-    if type_name is None:
-        node.type_condition = None
-    else:
-        node.type_condition = NamedTypeNode(name=NameNode(value=type_name))
-    return node
+    type_condition = (
+        NamedTypeNode(name=NameNode(value=type_name)) if type_name is not None else None
+    )
+    return InlineFragmentNode(
+        type_condition=type_condition,
+        selection_set=SelectionSetNode(selections=()),
+    )
 
 
 def test_resolve_fragment_target_returns_member_triple_for_known_type() -> None:
@@ -755,3 +755,53 @@ def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror() -> None:
         f"proxy + base must collapse to one batched SELECT for the shared "
         f"content type; got {account_selects}"
     )
+
+
+@pytest.mark.django_db
+def test_gfk_union_query_preserves_variable_and_default_coercion() -> None:
+    """Keep valid union fragments while rejecting invalid Boolean inputs.
+
+    Cover a real schema query, variable coercion, and an invalid default.
+    """
+    schema, _registry = _build_gfk_union_schema()
+    _seed_gfk_rows()
+    query = """
+    query Comments($show: Boolean = true) {
+      allComments {
+        results {
+          target {
+            __typename
+            ... on AccountType { balance @include(if: $show) }
+          }
+        }
+      }
+    }
+    """
+
+    valid = graphql_sync(schema.graphql_schema, query, variable_values={"show": True})
+    assert valid.errors is None, valid.errors
+    assert any(
+        "balance" in row["target"]
+        for row in valid.data["allComments"]["results"]
+        if row["target"]["__typename"] == "AccountType"
+    )
+
+    defaulted = graphql_sync(schema.graphql_schema, query)
+    assert defaulted.errors is None, defaulted.errors
+    assert any(
+        "balance" in row["target"]
+        for row in defaulted.data["allComments"]["results"]
+        if row["target"]["__typename"] == "AccountType"
+    )
+
+    invalid_variable = graphql_sync(
+        schema.graphql_schema, query, variable_values={"show": "true"}
+    )
+    assert invalid_variable.errors
+    assert "Boolean" in str(invalid_variable.errors[0])
+
+    invalid_default = graphql_sync(
+        schema.graphql_schema, query.replace("= true", '= "true"')
+    )
+    assert invalid_default.errors
+    assert "Boolean" in str(invalid_default.errors[0])

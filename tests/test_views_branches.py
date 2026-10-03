@@ -13,8 +13,11 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from django.test import RequestFactory, TestCase, override_settings
 from graphql import GraphQLBoolean, GraphQLString
+from graphql import execute as graphql_execute
+from graphql import execution as graphql_execution
 from graphql.execution.middleware import MiddlewareManager
 
 from django_graphex.core import Mutation, ObjectType, field
@@ -104,6 +107,39 @@ class _Mutation(ObjectType):
 _schema = DjangoGraphQLSchema(query=_Query, mutation=_Mutation)
 
 
+def _recording_executor(calls: list[str]) -> type[Any]:
+    """Build a version-native execution backend that records real use.
+
+    Args:
+        calls: Mutable record populated when GraphQL builds the backend.
+
+    Returns:
+        A subclass of the installed GraphQL execution backend.
+    """
+    backend = getattr(graphql_execution, "Executor", None)
+    if backend is None:
+        backend = graphql_execution.ExecutionContext
+
+    class RecordingExecutor(backend):
+        """Record that the installed GraphQL backend constructed this class."""
+
+        @classmethod
+        def build(cls, *args: Any, **kwargs: Any) -> Any:
+            """Record backend construction and delegate to GraphQL.
+
+            Args:
+                *args: Positional arguments passed by GraphQL.
+                **kwargs: Keyword arguments passed by GraphQL.
+
+            Returns:
+                The constructed execution backend or validation errors.
+            """
+            calls.append("built")
+            return super().build(*args, **kwargs)
+
+    return RecordingExecutor
+
+
 class BaseViewBranchesTest(TestCase):
     """Branch coverage for "BaseGraphQLView" construction and request handling.
 
@@ -143,13 +179,13 @@ class BaseViewBranchesTest(TestCase):
         self.assertIsNone(view.middleware)
 
     def test_execution_context_class_is_forwarded(self) -> None:
-        """Ship-broken contract: an explicit "execution_context_class" kwarg
-        must be forwarded and used without breaking normal execution.
-        """
-        from graphql.execution import ExecutionContext
+        """Forward the legacy spelling to the installed GraphQL backend.
 
+        The backend marker proves that execution used the supplied class.
+        """
+        calls: list[str] = []
         view = BaseGraphQLView.as_view(
-            schema=_schema, execution_context_class=ExecutionContext
+            schema=_schema, execution_context_class=_recording_executor(calls)
         )
         request = self.factory.post(
             "/graphql/", {"query": "{ hello }"}, content_type="application/json"
@@ -157,6 +193,127 @@ class BaseViewBranchesTest(TestCase):
         response = view(request)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)["data"]["hello"], "world")
+        self.assertEqual(calls, ["built"])
+
+    def test_executor_class_is_forwarded_to_real_http_execution(self) -> None:
+        """Use the preferred backend spelling on a real enhanced HTTP view.
+
+        The delegated GraphQL call must receive the native version keyword.
+        """
+        calls: list[str] = []
+        backend = _recording_executor(calls)
+        view = GraphQLView.as_view(schema=_schema, executor_class=backend)
+        request = self.factory.post(
+            "/graphql/", {"query": "{ hello }"}, content_type="application/json"
+        )
+        with patch(
+            "django_graphex.views.execute", wraps=graphql_execute
+        ) as execute_spy:
+            response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["data"]["hello"], "world")
+        self.assertEqual(calls, ["built"])
+        keyword = (
+            "executor_class"
+            if hasattr(graphql_execution, "Executor")
+            else "execution_context_class"
+        )
+        self.assertIs(execute_spy.call_args.kwargs[keyword], backend)
+
+    def test_both_backend_names_accept_the_same_class(self) -> None:
+        """Accept both spellings when they explicitly name one backend.
+
+        The shared class must still construct the actual request executor.
+        """
+        calls: list[str] = []
+        backend = _recording_executor(calls)
+        view = BaseGraphQLView.as_view(
+            schema=_schema,
+            executor_class=backend,
+            execution_context_class=backend,
+        )
+        request = self.factory.post(
+            "/graphql/", {"query": "{ hello }"}, content_type="application/json"
+        )
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["data"]["hello"], "world")
+        self.assertEqual(calls, ["built"])
+
+    def test_conflicting_backend_names_fail_at_construction(self) -> None:
+        """Reject two distinct non-None backends rather than choose one.
+
+        This keeps configuration errors visible before a request executes.
+        """
+        first = _recording_executor([])
+        second = _recording_executor([])
+        with self.assertRaisesRegex(
+            ImproperlyConfigured,
+            "executor_class and execution_context_class must reference the same class",
+        ):
+            BaseGraphQLView(
+                schema=_schema,
+                executor_class=first,
+                execution_context_class=second,
+            )
+
+    def test_preferred_argument_overrides_legacy_class_default(self) -> None:
+        """Let an explicit preferred backend replace the legacy default.
+
+        A differently named class attribute is a default, not a second choice.
+        """
+        default_calls: list[str] = []
+        explicit_calls: list[str] = []
+        default_backend = _recording_executor(default_calls)
+        explicit_backend = _recording_executor(explicit_calls)
+
+        class LegacyDefaultView(BaseGraphQLView):
+            """Use a legacy backend as this view's class-level default."""
+
+            execution_context_class = default_backend
+
+        view = LegacyDefaultView.as_view(
+            schema=_schema, executor_class=explicit_backend
+        )
+        request = self.factory.post(
+            "/graphql/", {"query": "{ hello }"}, content_type="application/json"
+        )
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["data"]["hello"], "world")
+        self.assertEqual(explicit_calls, ["built"])
+        self.assertEqual(default_calls, [])
+
+    def test_legacy_argument_overrides_preferred_class_default(self) -> None:
+        """Let an explicit legacy backend replace the preferred default.
+
+        The caller's supplied class wins regardless of alias spelling.
+        """
+        default_calls: list[str] = []
+        explicit_calls: list[str] = []
+        default_backend = _recording_executor(default_calls)
+        explicit_backend = _recording_executor(explicit_calls)
+
+        class PreferredDefaultView(BaseGraphQLView):
+            """Use a preferred backend as this view's class-level default."""
+
+            executor_class = default_backend
+
+        view = PreferredDefaultView.as_view(
+            schema=_schema, execution_context_class=explicit_backend
+        )
+        request = self.factory.post(
+            "/graphql/", {"query": "{ hello }"}, content_type="application/json"
+        )
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["data"]["hello"], "world")
+        self.assertEqual(explicit_calls, ["built"])
+        self.assertEqual(default_calls, [])
 
     def test_invalid_variables_json_is_bad_request(self) -> None:
         """Ship-broken contract: a malformed "variables" JSON string must be

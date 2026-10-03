@@ -1,0 +1,1701 @@
+# GraphQL-core 3.3 migration
+
+## Objective and authorization
+
+Migrate django-graphex from GraphQL-core 3.2.13 to the stable 3.3 line while
+preserving the published 3.1.1 security release. The user approved local
+implementation and the feature-branch-chain delivery strategy toward an
+integration branch in eamigo86/django-graphex using the authorized eamigo86
+session. The user subsequently authorized issue creation and approval for this
+migration, plus feature-branch-chain PR delivery toward the integration branch.
+Child remote delivery may integrate only into that branch. Main merge, a release
+tag, publication, workflow dispatch, and unrelated remote changes remain out
+of scope.
+
+## Problem and scope
+
+- [GraphQL-core 3.3.0](https://github.com/graphql-python/graphql-core/releases/tag/v3.3.0)
+  is a stable but breaking migration from 3.2.13: immutable AST nodes, renamed
+  execution context APIs, and changed subscription source construction require
+  code and regression work before raising the runtime dependency floor.
+- Implement the compatibility work while 3.2.13 remains the root runtime, so
+  ordinary full-suite checks stay green. Future tasks can use a separate 3.3
+  wheel-overlay environment for focused new-API proof without changing the root
+  environment prematurely; no dual-version public support promise is implied.
+- Raise the final runtime minimum to GraphQL-core 3.3.0 with an upper bound below
+  3.4 only after compatibility work. The user selected 4.0.0 for the later
+  release; do not change 3.1.1 metadata in preparatory tasks.
+- Retain the dated 3.1.1 and 3.1.0 changelogs, audit traceability, eight
+  canonical benchmark JSON artifacts, and frozen historical constraints.
+  Append migration guidance later rather than relabeling old results.
+- Preserve the pre-existing untracked .codegraph index and local Python
+  environment. No local distribution build or uncontrolled dependency refresh.
+
+## Execution and delivery
+
+- Branch: `codex/graphql-core-3.3`; branch point:
+  `bb415efc10e4a4b85079344b1c3c607de7a06daa` (published 3.1.1 main).
+- Route: delegated direct by bounded task. T0 touches CI and its contract;
+  T1-T4 require multiple non-trivial runtime, test, lock, or documentation files.
+- Strict TDD: enabled by current user AGENTS.md instructions. Each behavioral
+  unit observes RED for the intended cause, minimum GREEN, then REFACTOR.
+  Focused runner: `.venv/bin/python -m pytest <tests> --no-cov`.
+  Full runner: `.venv/bin/python -m pytest` with unchanged 95.01% branch gate.
+  Use a clean real local Git clone for full verification because this checkout
+  has ignored extra benchmark JSON that causes unrelated provenance failures.
+- RDD is globally off. Do not enable or invoke a native review lifecycle;
+  independent verification follows ordinary checks. Engram mirror
+  `odd/graphql-core-3.3/tasks` is pending because the host has no authoritative
+  registered session identity. Do not write memory without that identity.
+- Initial migration forecast was 450-650 authored lines; that historical
+  estimate is superseded for remaining work. T4b benchmark bootstrap is
+  forecast at 200-320 authored lines and its separate new runner at 250-380;
+  final examples/guidance and measured artifacts remain TBD. Generated locks
+  are reported separately. The 400-line task heuristic does not justify
+  dropping tests or docs. Delivery strategy: auto-chain using the
+  human-approved feature-branch-chain. The maintainer later approved
+  `size:exception` for coherent pending-version PRs without a numeric ceiling;
+  disclose each actual additions-plus-deletions count and retain the chain's
+  reviewable behavior boundaries. Earlier under-400 stops and unit-scoped
+  exceptions below remain historical decisions. The integration tracker
+  remains draft until each
+  child passes its own checks. PRs require an approved linked issue and exactly
+  one `type:*` label; issue creation and approval are explicitly authorized.
+  No main merge, versioned release, tag, or publication follows automatically.
+- Approved issue map: [T0 #206](https://github.com/eamigo86/django-graphex/issues/206),
+  [T1 #207](https://github.com/eamigo86/django-graphex/issues/207),
+  [T2 #208](https://github.com/eamigo86/django-graphex/issues/208),
+  [T3 #209](https://github.com/eamigo86/django-graphex/issues/209), and
+  [T4 #210](https://github.com/eamigo86/django-graphex/issues/210).
+
+## Tasks
+
+- [x] T0 — Admit the migration integration branch and its child PR bases to CI.
+  Route: delegated direct; ownership is `.github/workflows/cicd.yaml`,
+  `tests/test_release_workflow.py`, and this task document. Add narrow push and
+  pull-request branch filters for `codex/graphql-core-3.3` and
+  `codex/graphql-core-3.3-*` only. Preserve existing main, release-branch,
+  3.1.1 child and tag triggers, permissions, job graph, and publication guards.
+  Observe a RED workflow contract first, then GREEN and full checks. Runtime
+  harness: N/A, because this only selects hosted CI events. Rollback boundary:
+  the new branch filters, their test contract, and this planning checkpoint.
+  RED, GREEN, clean-clone full coverage and quality evidence are recorded below.
+  Work-unit commit: b8cf6d163a3b58f51487fa80f2d25fa3a66fa1d0.
+- [x] T1 — Adapt HTTP views to Executor and renamed execution keyword handling.
+  Keep the current 3.2.13 suite green while providing focused 3.3-API proof.
+  Document that callers with old 3.2 custom ExecutionContext subclasses must
+  upgrade them; do not promise transparent compatibility for those subclasses.
+  Route: delegated direct. Own only the HTTP view, focused tests, public view
+  guidance, and this recovery document. Evidence and rollback are below.
+  Work-unit commit: 62edc33f5c47a12f8ae51bb04c08557473f08ad7.
+  Reopened after independent verification found that an explicit keyword could
+  not override a subclass default stored under the other alias. Both cross-name
+  real-HTTP regressions now pass after correcting explicit-over-default
+  precedence; the bounded correction proof is recorded below.
+  Correction commit: 78f8040f72584d0a79b4f176db433aa117bd82d2.
+- [x] T2 — Adapt SSE and WebSocket subscription sources to an Executor-built
+  source. Cover both transport paths and sync/async error behavior with bounded
+  regressions before changing the runtime floor. Route: delegated direct; own
+  the SSE and WebSocket transports, focused transport regressions, subscription
+  guidance, and this document. First observe RED under the official 3.3.0
+  overlay for both transports, then GREEN/REFACTOR while preserving the root
+  3.2.13 suite. Verify both-version focused transports, unchanged full 3.2.13
+  clean-clone coverage gate, changed-line coverage, quality, and docs before
+  marking complete. Roll back only T2 transport integration, tests, and guide.
+  Work-unit commit: a07fb18719c76e8b7e1524c8e8bce922061dea71.
+- [x] T3 — Build immutable inline-fragment AST fixtures at construction time,
+  replace test-only removed MapAsyncIterator imports without weakening the
+  delivery guards, and verify coercion plus valid schema/query behavior under
+  GraphQL-core 3.2.13 and isolated 3.3.0. Route: delegated direct; own focused
+  optimizer, coverage, delivery, and streaming tests, concise migration
+  guidance, and this document. A real 3.3 Boolean-variable query exposed a
+  bounded directive-coercion incompatibility; the parent separately authorized
+  its T3 adapter in the shared directive/argument seams, preserving native
+  variable source metadata and conservative unbound behavior. Observe RED on
+  3.3 fixture/import/coercion behavior, then GREEN/REFACTOR; run both-version
+  focused tests and unchanged full 3.2.13 clean-clone gate. A full 3.3
+  diagnostic may identify later blockers but is not the T3 acceptance gate.
+  Roll back only T3 AST/test compatibility, coercion adapter/regressions,
+  guidance, and tracking changes. T3's local acceptance now includes both
+  root and 3.3 changed-line coverage gates. T3b/T3c merged into only the
+  integration branch as `637dcb71` and `61b8784e`; both fresh integration
+  and tracker runs passed 15 validation jobs and tracker Codecov. No checkbox
+  authorizes a main merge or dependency bump.
+  - [x] T3a — AST, retired mapper test guards, and directive coercion adapter.
+    Work-unit commit: 5063aa0d4617f798fccb74633b1c6418d8a29f9a.
+  - [x] T3b — Resolve 3.3 cost/list-node compatibility and stale upstream
+    constructor expectation with separate tests and guidance. Route: delegated
+    direct on local child codex/graphql-core-3.3-cost from 5cdd2b13; own cost.py,
+    cost regressions, native-list fixture, query-limit guidance, and this document.
+    Observe RED under official 3.3.0, GREEN under 3.2.13 and 3.3.0, unchanged
+    full 3.2.13 coverage gate, changed-line coverage, quality, and docs. Preserve
+    the 16 HTTP dual-iterator failures for separately routed T3c. Roll back only
+    this T3b slice; do not raise the root dependency floor or deliver remotely.
+  - [x] T3c — Restore synchronous queryset execution under 3.3's dual-iterator
+    list selection with a separate HTTP regression slice. Route: delegated
+    direct on local child `codex/graphql-core-3.3-querysets` from T3b
+    `b8abfbf148d5a3d42f0eb6fb655f0d484b91f144`. Own HTTP view selection,
+    focused queryset/atomic/cache regressions, view guidance, and this document.
+    Strict TDD from current user AGENTS.md: RED on official 3.3.0 first,
+    then GREEN/REFACTOR with the `.venv/bin/python -m pytest <tests> --no-cov`
+    focal runner. Require complete clean-clone suites on both 3.2.13 and
+    3.3.0 with the unchanged 95.01% branch gate, plus changed-line coverage,
+    quality and docs. The initially rejected T3b push was a historical
+    authorization block; fresh explicit human authorization later enabled
+    issue-linked PRs and integration-only merges. Rollback boundary is only
+    T3c HTTP selection, tests, guidance, and tracking. Both full suites and
+    changed-line gates passed after a real adapter-forwarding regression
+    covered the native-3.3 capability path under the root runner without
+    exclusions. Independent and current-head hosted verification passed.
+- [x] T4 — Adopt GraphQL-core 3.3 as the supported runtime, complete the
+  example, benchmark, documentation, and release-readiness migration without
+  rewriting historical results. Route: delegated direct in coherent child PRs.
+  The user selected a new four-library comparison with compatible core
+  versions chosen separately for each library. Compare disclosed whole stacks,
+  not libraries alone. Preserve the eight historical JSON results, versions.env,
+  constraints, and dated release notes. Package 4.0.0 is prepared in the
+  integration branch. Hosted CI built and smoke-tested validation artifacts;
+  no package has been published.
+  - [x] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
+    scope-update root and Playground graphql-core lock entries; preserve
+    package version 3.1.1. Own current-readiness contracts and bounded public
+    floor/Executor guidance. Strict TDD: RED current floor/lock/document
+    contracts, then GREEN/REFACTOR; focused runner uses
+    `.venv/bin/python -m pytest <tests> --no-cov`. Prove a full clean-clone
+    3.3 suite with unchanged 95.01% branch gate, check-only quality/docs,
+    lock consistency, and diff checks. The original T4a RED/GREEN proof is
+    retained below; the later privacy integration is a history merge, not a
+    fabricated second RED. Fresh combined native-3.3 and hosted checks are
+    required before integration. Reopened after exact-head project Codecov
+    failed at 94.96% despite green validation jobs; T4q tests address the
+    identified capability-path coverage gap without altering runtime code.
+    Rollback only this floor/locks/readiness/guidance child.
+  - [x] T4b — Add a new comparison profile and benchmark harness/tests using
+    per-library compatible core versions; keep historical replay isolated
+    and historical artifacts byte-identical. No new performance result is
+    claimed until measured.
+    - [x] T4b1a/b — Locally verify named dependency freezes, preflight, and
+      isolated setup; independent and hosted delivery checks remain pending.
+    - [x] T4b1b-CI — Align disposable fake-uv fixtures with the test interpreter;
+      retain the real 3.12.11 pin and wrong-interpreter rejection. Recheck the
+      focused contracts, 3.14 portability, and clean native-3.3 full suite.
+    - [x] T4b1c — Make the historical no-argument bootstrap fail closed before
+      replacing any existing venv. Preserve all requested targets on invalid
+      input, offline cache miss, or install failure; reserve fresh final paths
+      without relocating venvs. Test RED on the old destructive path, then
+      GREEN, fresh published-3.1.0-wheel setup, and clean-clone gates. Own only
+      the legacy script, focused tests, benchmark guidance, and this checkpoint.
+      Rollback only this safety child; no canonical results or pins change.
+      Local proof and work-unit commits are recorded below. Independent and
+      hosted verification remain pending.
+    - [x] T4b2 — Add the separately named runner, provenance, and measurements.
+      - [x] T4b2a — Add an independently executable, read-only named-profile
+        preflight for one selected stack: clean source identity, installed
+        freeze, runtime import, prepared seed, and fresh external destination.
+        Retain strict RED/GREEN and native-3.3 gates; size:exception applies
+        only here. Route: delegated direct; preflight, tests, guidance.
+        Initial 544 lines grew for fail-closed output, backend provenance,
+        direct CLI import safety, and public docstrings; final count is 592.
+        Four real stacks and clean native-3.3 gates passed without producing
+        measurements. Proof: /private/tmp/graphex-t4b2a.eaFO6y.
+        Commit 121714f942aa4201867881a0703faf25e8dae48d merged into
+        integration as 5f1d4167379fd0d1f1facba904249b0b6c1cfe15.
+      - [x] T4b2b1 — Add an opt-in measuring-child source/backend/profile
+        witness, with focused tests and guidance. Route: delegated direct.
+        Observe witness-specific RED, then GREEN; prove actual profile imports,
+        dynamic source version, native-3.3 gates, and unchanged historical
+        no-profile output. No measurement dispatch or publication in this unit.
+        Candidate proof: /private/tmp/graphex-t4b2b.G0XXJU. Clean native-3.3
+        clone passed 74 benchmark and 4,462 full tests at 96.23% branch;
+        four real profile imports bound version, paths, hashes, commit, and
+        tree. Ruff, mypy, both docstring gates, docs, and diff checks passed.
+        The previous missing-database probe path was corrected before the
+        asset-preservation proof. Work-unit commit 5d16273aa106342e51eaab3ab05580bbc2aee326
+        has tree 1c6ddee80dcd3f94da8e823e84bbff61cbee5b8a.
+      - [x] T4b2b2a — Validate a named-profile child's whole-stack witness,
+        five-operation output, and selected freeze against read-only preflight.
+        Route: delegated direct on codex/graphql-core-3.3-benchmark-execution
+        from b5650d8; own runner validator, focused tests, brief guide, and
+        this checkpoint. This extracts already GREEN-tested dispatch intent
+        into a standalone read-only contract; new direct validator controls
+        are post-GREEN strengthening, not a claimed validator-specific RED.
+        The retained initial RED failed on absent run_single and specified
+        five forged-witness fields; no full real run is claimed here.
+        Fresh numeric RED: 25 malformed-value controls failed because the
+        validator accepted infinity and booleans; valid integer/float timing
+        control passed. After the focused fix, all five independent repros
+        reject malformed data. Native-3.3 clean-clone: 4,507 full / 119
+        benchmark tests, 96.23%; quality and docs pass. Proof:
+        /private/tmp/graphex-t4b2b2.Qr4xxr/numeric-fix/.
+        Original work unit: dff6703475bbec39fce5bca7edbb72852f952de7.
+        Numeric correction: d934c045c42cc0c6f8a3e9c6a404719c4a7297a5.
+        Roll back only this validator slice.
+      - [x] T4b2b2b1 — Add an optional held-directory write boundary for
+        named-profile harness output without changing historical output.
+        Route: delegated direct on codex/graphql-core-3.3-benchmark-dispatch-run
+        from integration 1413265; own only harness, focused isolation tests,
+        brief guidance, and this checkpoint. Fresh RED proved a mismatched
+        output descriptor was ignored and the path writer was still used;
+        GREEN proved both held-directory controls. A further fresh RED proved
+        traversal-bearing library names were accepted; the guard now rejects
+        them. A renamed visible directory leaves the write on the held inode.
+        This boundary is useful independently but does not dispatch or measure
+        a full profile. Work unit: 50f38c657f864bfb1ce7a5cbe618bb9f4e48c141.
+        Clean native-3.3 clone: 61 focal, 125 benchmark, 4,513 full tests;
+        96.23% branch coverage above 95.01%, unchanged 258/266/282 gap sets,
+        seven skips, three warnings, 23 subtests. Ruff, mypy 82 files, both
+        public docstring gates, docs with five baseline anchors, and diff check
+        passed. Full raw proof: /private/tmp/graphex-t4b2b2b.nXAbfN/.
+        No heavy four-profile measurement was run. Roll back only the optional
+        descriptor write and its controls.
+      - [x] T4b2b2b2 — Dispatch the existing five-operation harness using
+        read-only preflight, the checked validator, and the held directory.
+        Route: delegated direct on codex/graphql-core-3.3-benchmark-dispatch-single
+        from integration cbc9ebe; own only the named runner, focused tests,
+        concise benchmark guidance, and this task checkpoint. Keep default
+        CLI preflight read-only and make execution explicit.
+        Reserve fresh external output with safe empty prefix, sanitize the
+        child, recheck source/runtime/freeze/seed around execution, reject
+        witness/output drift, and retain failed-attempt output when creation
+        ownership cannot be proved for safe cleanup. In particular, retain
+        unvalidated result files and even empty directories instead of risking
+        deletion of a foreign path. Do not claim loaded-byte
+        attestation or a universal filesystem sandbox.
+        The earlier public missing-entrypoint RED and basic mocked GREEN are
+        retained; new safeguards need their own cause-correct RED before fix.
+        Prove four real runs and rollback controls only AFTER a separate
+        user-visible 2,340-request/20-build cost notice and explicit resume.
+        The human approved a size:exception only for this coherent dispatcher
+        PR after its observed 640 authored-line candidate was disclosed. This
+        is not a separate exact ceiling or an exception for another unit.
+        Work unit: 3778eda4e3fd16cfcd178bab8f6e27d8f6ca35dd.
+        After the informational cost notice, four single-run diagnostics at
+        source commit c99de0ff27cfd3daf50fc4461cdfba8784914164 validated
+        all five operations, 100 samples per operation, and five schema builds
+        per library. Each seed retained 1,000 authors, 10,000 posts, 50,000
+        comments, identical SQLite sequences, and identical file hashes.
+        The exact measured clone passed 75 focal, 139 benchmark, and 4,527
+        full tests at 96.23% branch coverage with unchanged 258/266/282 gap
+        sets. Ruff, mypy, both docstring gates, docs, and diff check passed.
+        Full raw proof: /private/tmp/graphex-t4b2b2b2.csQs2s/. Independent
+        verification and hosted gates remain pending, so this task stays open.
+        A later independent control at `ce47fc4` exposed a mkdir-to-open
+        ownership race: on synthetic child failure the dispatcher removed a
+        replacement directory and its pre-existing result. The focused
+        correction recorded a pathname identity before descriptor acquisition,
+        but later independent verification proved a replacement before that
+        first stat still reached the child and deleted a foreign regular result
+        and directory. A second chronological RED failed regular-result and
+        empty-directory preservation controls at that adjacent boundary. The
+        final policy does not delete failed-attempt directories or unvalidated
+        files automatically; these remain for manual inspection. Before-open
+        regular-file, empty-directory, and symlink replacements are also
+        regression-covered. The first chronological RED failed two
+        before-open preservation controls; root Python 3.12.11/core 3.2.13
+        GREEN passed three before-open and two before-first-stat controls.
+        Independent native-3.3 proof at `3fa9390` passed 80 focal, 144
+        benchmark, and 4,532 full tests at 96.23% branch coverage; complete
+        258/266/282 gap sets match a fresh integration base. Eleven real
+        filesystem controls passed. The actual configured standard docstring
+        gate then found candidate-only DOC005 in this preservation test; a
+        separate chronological RED preceded its truthful Raises correction.
+        Both docstring gates and native focal tests pass after that correction.
+        Full-suite and independent checks on the new exact head, four fresh
+        real-profile diagnostics, and hosted gates remain pending. Earlier
+        4,527 tests and four diagnostic runs are historical, not fresh proof
+        for this corrected head.
+        Current checkpoint supersedes those pending *local* statements:
+        `a37e178` / tree `1a674aed` independently passed 4,532 native-3.3
+        tests at 96.23%, 80 focal, 144 benchmark, both docstrings at TOTAL 0,
+        and 11 real-filesystem controls. Four fresh exact profiles and a private
+        1,000-author seed supported four actual diagnostics at that same source
+        identity in fixed Graphex, Graphene, Strawberry, Ariadne order: five
+        operations, 100 timed samples each, five rebuilds per library. Seed
+        hash, row contents, and SQLite sequences stayed identical. Raw outer
+        streams and child JSON survive; successful child streams do not. These
+        are neither equal-core claims nor published medians. Lost original raw
+        RED, both failed ownership controls, and the disclosed omit-ID memory
+        summary deviation remain in stable recovery; no zero-write claim is
+        made. Documentary TDD RED is N/A; hosted gates remain pending, so this
+        task stays unchecked. Current proof and recovery root:
+        `/Users/eamigo/.codex/visualizations/2026/09/02/01a062ff-dccb-7123-a1e9-e7de825aafc2/graphex-resume-2026-10-02/`.
+        Leave three-run publication and quiet measurements for later slices;
+        Engram mirror remains pending. Roll back only this dispatch slice.
+        PR #231 merged only into integration as `cfa6258bbe1b449a76be08490d9d9fd8a64ba576`.
+        Child `37072641158`, integration push `37073467579`, and tracker
+        `37073472802` each passed 15 validations with three publication jobs
+        skipped; both Codecov checks passed. This closes the dispatcher slice,
+        not T4b2, median publication, or release readiness.
+      - [x] T4b2c1 — Add a pure profile-aware three-run median helper for one
+        already-prepared RunPlan; no CLI, file output, seeding, rotation, or
+        publication. Route: delegated direct because helper, focused tests,
+        guide, and this task document span multiple non-trivial files. Own only
+        `benchmarks/comparison_statistics.py`, its focused benchmark tests,
+        concise `benchmarks/README.md` guidance, and this checkpoint. Forecast:
+        250-350 authored lines, with a hard 400-line PR budget; the prior
+        dispatcher exception does not carry forward. Strict TDD from current
+        AGENTS.md: observe cause-correct RED before code, then GREEN/refactor;
+        focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_statistics.py --no-cov` under native
+        3.3. Require exact three-run shared validation, detached per-statistic
+        medians, stable identity/SQL/surface, both seed sizes and all four
+        libraries; check all benchmarks, unchanged full 95.01% branch gate,
+        Ruff, mypy, both docstring gates, docs, and protected assets. Runtime
+        harness: N/A, because this unit only transforms supplied validated
+        dictionaries. Roll back only this helper, tests, guide, and checkpoint;
+        a later T4b2c2 unit may orchestrate rotated runs and publication.
+        RED: eight missing-helper cases; GREEN: 28 native-3.3 focal cases.
+        Clean source-snapshot clone: 172 benchmark tests and 4,560 full tests
+        at 96.23% passed, with the same complete coverage gaps, seven skips,
+        three warnings, and 23 subtests as the retained baseline. Root-only
+        benchmark provenance failures came from pre-existing ignored historical
+        JSON; no file was removed. Behavior commit:
+        `01c9ea16f68edae1174a71a1fe0dd8faa86664ba`. Exact commit proof and
+        local logs live in
+        `graphex-resume-2026-10-02/profile-median-t4b2c1/`.
+        PR #232 merged only into integration as
+        `53b54ef715c735f8cdd86382878e6f78aba7155e`. Child
+        `37077748110`, integration push `37078103350`, and tracker
+        `37078107070` each passed 15 validations with three publication jobs
+        skipped; both Codecov checks passed. This closes only the pure median
+        helper, not rotated measurements or publication.
+      - [x] T4b2c2a — Return a checked, read-only SeedPlan for a future fresh
+        private named-profile database. Route: delegated direct because helper,
+        focused tests, guide, and checkpoint span non-trivial files; auto-chain
+        uses the existing feature-branch strategy. Own only
+        `benchmarks/comparison_seed.py`, its focused tests, concise
+        `benchmarks/README.md` guidance, and this task. Forecast 200-350
+        authored lines; this forecast was exceeded. The maintainer subsequently
+        approved a size exception for coherent migration PRs until the new
+        version is complete, without a numeric ceiling. Report each PR's actual
+        additions and deletions; do not compress tests or guide text to fit
+        the earlier 400-line budget. Strict TDD
+        from current AGENTS.md requires fresh preflight-specific RED before
+        code, GREEN/refactor; focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_seed.py --no-cov` under native 3.3.
+        Require 1,000/2,000 authors, a fresh absolute external destination,
+        clean source commit/tree/version, exact core33 Graphex interpreter,
+        freeze and runtime imports. Return trusted metadata only: no mkdir,
+        database, migration, seed, unlink, or publication. Run unchanged local
+        gates and read-only real preflights. Roll back only this helper, tests,
+        guide, and checkpoint. The 425-line full-lifecycle prototype was
+        suspended without commit, README, full gates, or real seed; its raw
+        RED/GREEN and exact bytes survive outside the checkout.
+        Fresh read-only preflight RED failed 19 missing-API cases before
+        extraction; 21 focused mocked cases passed after implementation.
+        These are not real seed builds. This unit rolls back through only the
+        helper, focused tests, guide, and this checkpoint; actual database
+        creation and independent/hosted acceptance remain pending.
+        The first local behavior commit is
+        `9b1461ab780a85c0561a7e9917925424685988ab`: 478 additions in four
+        owned files. Its exact clean clone passed 21 focused and 193 benchmark
+        tests, the unchanged full 4,581-test suite at 96.23% coverage, and two
+        real read-only plans; both destinations stayed absent. Coverage gap
+        sets equal the retained baseline (258 missed lines, 266 partial sites,
+        282 missing arcs); seven skips, three warnings, and 23 subtests remain.
+        Ruff, prior 82-file mypy, natural-module mypy, standard docstrings,
+        and docs passed. The strict-public DOC002 on SeedPlan's single-line
+        docstring was corrected in
+        `5562d03ac204b7862f30aeb8d041e423fef315d4`; its exact clean clone
+        passed the same 21 focused, 193 benchmark, and 4,581 full tests,
+        96.23% coverage, both docstring gates at TOTAL 0, all typing routes,
+        Ruff, and docs with the same five baseline anchors. Its complete
+        coverage gaps, skips, and warnings equal the retained baseline. Two
+        real checked plans remained read-only. The no-target mypy experiment
+        was invalid, not a configured failure; configured library mypy passed
+        79 files. No database was created. Independent and hosted acceptance
+        remain pending; T4b2c2b owns actual private seed creation.
+        PR #233 merged only into integration as
+        `f2013619704c36643a5df03762eae6e95c2d1a46`. Child
+        `37087831179` passed 15 validations and both Codecov checks;
+        integration push `37088175387` and tracker `37088179078` each passed
+        15 validations with three publication skips, and tracker Codecov passed.
+        Independent read-only preflight proof is retained under
+        `graphex-resume-2026-10-02/independent-seed-preflight-2867c8a/`.
+      - [x] T4b2c2b — Reserve and build fresh private seeds from the checked
+        plan, then validate and retain failed attempts. Route: delegated direct
+        because execution helper, focused tests, README, and checkpoint are
+        non-trivial. Forecast 300-500 authored lines; the approved coherent
+        migration size exception applies, without a numeric ceiling. Strict
+        TDD from current AGENTS.md requires creator-specific RED, GREEN, then
+        refactor; focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_seed_execution.py --no-cov` under
+        native GraphQL-core 3.3. Recheck every SeedPlan field before writes;
+        create only a fresh external private database using the selected named
+        interpreter, current committed migrations, and explicit sanitized
+        BENCH_DATABASE. Reject path, source, freeze, runtime, or DB drift;
+        validate shared cardinalities and fixed post 5000. Retain failed
+        attempt output without automatic deletion. Rollback only the creator,
+        its tests, guide, and checkpoint; keep preflight independently useful.
+        Mocked/local gates precede a separately forecast actual 1,000/2,000
+        author seed creation. Rotated runs and all-or-nothing new profile
+        publication remain a further independent boundary.
+        Creator-specific missing-entrypoint RED failed 12 cases before source;
+        normalized mocked GREEN passed 18 cases under the native 3.3 overlay.
+        The helper stages through an exclusive regular file beneath an
+        owner-only external parent, retains streams/residue, and uses atomic
+        no-clobber directory installation. Random staging-directory opening
+        is not creator-ownership proof or a same-user filesystem sandbox.
+        Actual seed creation, independent acceptance, and hosted gates remain
+        pending; no measured request or canonical publication is part of this
+        unit.
+        First local behavior commit:
+        `16621b6d4fc95eea7f066d07384e39b53b45c860`. Its exact clean clone
+        passed 18 focused and 211 benchmark tests, the unchanged full suite
+        at 4,599 passed/7 skipped/3 warnings/23 subtests and 96.23% branch
+        coverage, Ruff, configured 79-file and prior 82-file mypy plus the
+        natural 98-module creator import, both docstring gates at TOTAL 0,
+        and docs with five baseline anchors. Complete coverage gaps and skip/
+        warning records equal the retained CBC baseline; protected blobs,
+        eight canonical JSON, retained DB, and existing private seed match
+        their previous identities. The final focused test additionally pins
+        exact migration and seed flags; it does not authorize actual data
+        creation. Proof is retained under
+        `graphex-resume-2026-10-02/private-seed-creation-t4b2c2b/`.
+        Independent staged verification at `f484a1b` is PARTIAL: a clean
+        checkout without the ignored historical benchmarks/db.sqlite3 passes
+        the real read-only seed preflight, but the creator raises
+        FileNotFoundError before any guarded write or child command because
+        its retained-asset digest assumes that legacy file exists. Reopen
+        staged acceptance within T4b2c2b. Correction scope: observe either
+        absence or a present regular file and reject changes to that state;
+        fail closed for symlinks, nonregular objects, and read errors. Add a
+        fresh cause-correct RED before fixing the helper, then repeat native
+        focused/full and protected-asset checks. The prior missing-entrypoint
+        RED12 and mocked GREEN18 remain historical, not correction proof.
+        No real private seed or benchmark execution is authorized yet.
+        Correction RED failed seven of 28 focused cases on the pre-fix helper:
+        absent checkout, nonregular historical paths, and unexpected read
+        error handling exposed the retained-state assumption. After the
+        narrow absence-or-regular-file observation change, all 28 focused
+        mocked cases passed. Absent-to-present, present-to-absent, changed
+        bytes, symlink, dangling link, directory, and read-error controls
+        fail closed. The independent PARTIAL remains historical evidence;
+        full exact-candidate and independent rechecks still precede real
+        private seed creation.
+        Correction work-unit commit
+        `151d613e982992ef61901b79410d4010d4dcc1d8` passed 28 focused,
+        221 benchmark, and 4,609 full native-3.3 tests at 96.23% branch
+        coverage; complete gaps, skips, warnings, five docs anchors, and
+        protected assets matched the retained baseline. Ruff, all three
+        typing routes, and strict docstrings passed. The configured standard
+        docstring gate exposed DOC005 in the new read-error test, so its
+        truthful assertion Raises section was added before final freeze;
+        both gates now report TOTAL 0. The failed standard-gate log is
+        retained, not waived. Final exact-head proof and independent review
+        remain required before real seed creation.
+        Independent verification of `7e9cdf6` found a second bounded
+        acquisition defect after all ordinary checks passed: replacing a
+        regular retained file with a FIFO after lstat but before os.open
+        blocked the reader instead of reaching its type/inode rejection.
+        The independent two-second child was killed and reaped; original
+        sentinel and foreign FIFO remain intact under
+        `graphex-resume-2026-10-02/independent-seed-creation-7e9cdf6/`.
+        Keep T4b2c2b staged. Add a fresh bounded FIFO-specific RED, acquire
+        the retained path nonblocking without following links, and preserve
+        regular-file, inode, absence and read-error checks. Repeat native
+        full/protected gates; independent acceptance and actual seeds remain
+        pending. This is not a general same-user filesystem sandbox claim.
+        New acquisition-specific RED: the one-shot FIFO replacement timed
+        out in its bounded child, which was killed and reaped; focused runner
+        reported one failure and 28 passes before the source change. Adding
+        nonblocking no-follow acquisition while keeping regular/inode checks
+        yielded 29 focused passes. No FIFO reader waits for a writer, and
+        original/foreign residue remains intact. Final exact-head gates and
+        independent recheck still precede actual seed creation.
+        Staged independent verification at exact
+        `1b5b941e2555a5bffee8a109ee0a32fdef1258fd` / tree
+        `ebc8872c6660c355c460238be37c2047a922f28d` passed: the
+        one-shot FIFO substitution rejected promptly, 41 bounded filesystem
+        controls passed, clean-checkout preflight reached guarded reservation,
+        and focal 29, benchmark 222, full 4,610/96.23%, typing, docstrings,
+        docs, and protected-asset proofs were authenticated. The parent
+        repeated focal 29 with native 3.3. After one informational forecast
+        (3,000 authors, 30,000 posts, 150,000 comments; two migrations and
+        two seeds), the parent explicitly authorized exactly two fresh
+        private databases. At clean source witness `1b5b941` / tree `ebc8872`,
+        actual creation produced the 1,000-author seed (10,000 posts, 50,000
+        comments; SHA-256 `a09f1404…`) and 2,000-author seed (20,000 posts,
+        100,000 comments; SHA-256 `3d68cdc6…`). Both passed the shared shape
+        check and independent read-only row-content, order, integrity, and
+        sequence checks. The original external proof driver failed after the
+        first seed on a Path-versus-string cwd assertion; its raw failure is
+        retained, the first seed was not rerun, and its actual audit events
+        were not persisted. A read-only recovery authenticated that seed and
+        all four retained child streams; only the second seed has retained
+        actual child argv/cwd/env audit events. Root and prior private DBs and
+        eight canonical JSON files remained byte-identical. Local final-head
+        and independent factual checks, hosted delivery, rotation, and
+        publication remain separate gates; no HTTP or timing ran here.
+        Independent actual-data verification at documentary head `32690b7`
+        passed the complete read-only deterministic row contract for both
+        preserved seeds. Executable bytes remain bound to seed source
+        `1b5b941`; only this task document changed at `32690b7`. The first
+        child's lost audit events and failed external proof driver remain
+        disclosed. PR #234 merged only into integration as `97f2031671c8`.
+        Child run `37095541300`, integration run `37095991172`, and tracker
+        run `37095993760` each passed 15 validations with three publication
+        skips; child and tracker Codecov checks passed. This closes seed
+        creation only, not rotated measurements or canonical publication.
+      - [x] T4b2c3 — Orchestrate one complete rotated batch from the two
+        already prepared private seeds. Route: delegated direct because a new
+        batch helper, focused tests, guide, and this checkpoint are non-trivial.
+        The coherent pending-version size exception applies without a numeric
+        ceiling; disclose actual additions plus deletions. Strict TDD from
+        current AGENTS.md requires a batch-specific RED, GREEN, then refactor;
+        focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_batch.py --no-cov` under native 3.3.
+        Accept only validated 1,000/2,000-author PreparedSeed records, prove
+        the older seed source's exact compatible data contract against current
+        clean source, and keep its original witness. Dispatch exactly three
+        cyclic library rotations per seed through existing prepare_run,
+        run_single, and validate_result seams: 24 distinct external outputs.
+        Aggregate only eight complete three-run groups with the existing
+        median helper, return detached provenance and raw paths, and retain
+        all partial outputs on failure. Reject changed seeds, source, freeze,
+        profile, DB, results, or unsafe output parent before claiming a batch.
+        This first stage uses stubs only: no actual HTTP/schema/timing, seed
+        creation, cleanup, legacy publisher, or canonical write. After local
+        native focal/full, typing, lint, docstrings, docs, baseline and asset
+        checks, independent inspection and a separate heavy-work cost forecast
+        precede any real 24-run batch. Roll back only the new helper, focused
+        tests, guide, and this checkpoint. New-profile atomic publication is
+        a separate following unit; T4b2 remains pending.
+        Stub-stage TDD: the new focal first failed import for the missing
+        helper. Additional cause-correct RED controls exposed acceptance of
+        an earlier raw file changed before batch completion, missing early
+        rejection of a publicly readable 0644 seed, cross-library machine
+        drift, and a forged current RunPlan; each passed after its narrow
+        correction. The private-mode RED reached a dirty-source error, not a
+        completed batch that accepted the seed. The current 29 focused cases
+        pass without HTTP, schema rebuilds, or actual dispatch. Both preserved
+        private seeds passed a separate read-only compatibility probe against
+        clean integration `97f2031`: their `1b5b941` source/tree witnesses
+        remain distinct, hashes and full selected freeze are intact. Final
+        exact-head gates and independent staged inspection remain pending.
+        The first committed candidate passed 29 focused, 251 benchmark, and
+        4,639 full tests at 96.23% coverage, but its configured standard
+        docstring gate found one missing Raises section in a failure test.
+        Its raw failure is retained. A truthful assertion Raises section was
+        added without changing test behavior; both docstring gates now pass
+        locally at TOTAL 0. Behavior work unit `797fd4ad3b3d001d007d0859b4565eb0119deb6c`
+        and documentary correction `1bc15432263ded2832ede58927c973c9080764f7`
+        together passed exact-head clean-clone focal 29, benchmarks 251, and
+        full 4,639 tests at 96.23% branch coverage. Complete CBC gap, skip,
+        warning, and five docs-anchor sets match; Ruff, all typing routes,
+        both docstring gates, and protected assets passed. Two actual private
+        seeds and eight whole-stack RunPlans passed read-only final-head
+        preflight; no output directory, measuring child, schema build, request,
+        or timing was created. Read-only runtime and freeze probe children did
+        run. Independent `45c018b` inspection found no behavior defect: 29
+        focused, 251 benchmark, and 4,639 full tests at 96.23% passed, along
+        with 28 bounded controls, both real read-only seed checks, and eight
+        RunPlans. Documentary acceptance was reopened for these two wording
+        errors and an external proof locator; the heavy-work cost forecast,
+        actual rotation, and hosted gates remain pending. T4b2c3 remains
+        unchecked.
+        Documentary correction `350ae84256fdad1b1a98a6e0bef8d0f63609257f`
+        passed independent staged readback: the prior full 4,639/96.23% proof
+        remains bound to `45c018b`, while final-head focal 29, both docstring
+        gates, and read-only two-seed/eight-plan checks passed. Parent repeated
+        focal 29 and gave the one informational forecast of about 14,040
+        rollback-only workload requests plus 120 schema-rebuild samples.
+        Exactly one actual 24-dispatch batch is now authorized against clean
+        source `350ae84` and the two preserved seeds; its results, database
+        invariants, and hosted checks are pending. No publication is authorized.
+        The first external proof driver exited 1 before the batch call: it
+        counted all 36 visible top-level result JSON files, including 28
+        pre-existing ignored historical files, rather than the eight tracked
+        canonical files. The original driver and raw failure are retained;
+        no output parent, measuring child, or workload was created. This is
+        a proof-driver assertion error, not a runtime batch verdict. Actual
+        execution remains pending a bounded parent-authorized correction;
+        no automatic retry or cleanup is allowed.
+        Parent inspected that failure, confirmed 36 visible files comprise
+        eight tracked canonical JSON and 28 ignored historical JSON, and
+        authorized a separate corrected external proof driver for the same
+        still-unstarted single batch call. The original driver, logs, and
+        report remain immutable evidence. The corrected driver must protect
+        both tracked and ignored inventories, observe a bounded quiet CPU
+        window, and stop without any measurement if preflight is uncertain.
+        The corrected external driver completed the first and only actual
+        `run_batch` call against clean source `350ae84`/tree `0afc1369`.
+        It recorded 24 distinct successful measuring children and raw JSON
+        files in the specified cyclic order, then eight detached, unpublished
+        three-run median groups. The original seed witness remains `1b5b941`;
+        both private DB hashes, SQLite sequences and row counts, the retained
+        root/older private DBs, eight tracked canonical JSON, and all 35
+        ignored historical JSON remained unchanged. A read-only proof replay
+        revalidated all 24 raw contracts and recomputed all eight medians.
+        The one-minute host load and several aggregate CPU-idle samples were
+        observed before execution, not a guarantee of quietness throughout.
+        Individual HTTP requests were not separately counted; the unchanged
+        harness contract implies 14,040 workload requests and 120 rebuild
+        samples. The corrected driver's actual child streams were retained
+        externally; the unmodified dispatcher itself discards them. No
+        canonical result was published. Independent actual-data acceptance,
+        hosted gates, and the separate publisher remain pending; T4b2c3 is
+        still unchecked.
+        Independent actual-data acceptance passed at `95ebf2b` with the
+        measured `350ae84` source witness unchanged. PR #235 merged only into
+        integration as `224b3063f55eda413a71a2f8e69116e8f1166c99`;
+        child run `37102260315`, integration run `37102534707`, and tracker
+        run `37102538323` each passed 15 checks with three publication skips;
+        child and tracker Codecov checks succeeded. This closes only the
+        unpublished rotated-batch unit. The earlier pending statements above
+        are chronological, not current blockers for T4b2c3.
+      - [x] T4b2c4 — Stage the portable core33 eight-artifact publisher.
+        Route: delegated direct, because a new publisher, focused tests,
+        benchmark ignore rules, guide, and this task document are non-trivial.
+        The coherent pending-version size exception has no numeric ceiling;
+        forecast roughly 600–900 authored lines including safety tests and
+        docs, then disclose the actual count. Strict TDD is enabled by the
+        current AGENTS.md: observe a publisher-specific RED, then GREEN and
+        refactor with `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_publish.py --no-cov` under the named
+        core-3.3 overlay. Accept a BatchResult plus 24 explicit dispatch
+        receipts, re-read exact raw bytes, reuse shared validation and median
+        math, and reject every missing, duplicate, drifted, or mixed witness
+        before installing anything. Project only portable allowlisted fields
+        into eight new `benchmarks/results/core33` JSON files; exclude private
+        paths and environment facts. Stage and validate all eight under a
+        unique same-filesystem private sibling, then install the whole directory
+        once with atomic no-clobber rename; occupied targets and failed stages
+        remain untouched or recoverable without automatic deletion. Keep the
+        old eight artifacts and legacy publisher unchanged. Verify native
+        focal, benchmarks, unchanged full coverage gate, baseline gap sets,
+        Ruff, typing, both docstring gates, docs anchors, diff, and protected
+        DB/JSON/blob identities in an exact clean commit clone. Rollback removes
+        only this publisher, its tests and guidance/ignore/task additions.
+        This unit uses synthetic receipts only: actual canonical generation,
+        hosted acceptance, and release/version work remain later stages.
+        Publisher-specific RED first observed the missing module (exit 2),
+        followed by 23 passing focused controls. A fresh one-shot foreign
+        staging-directory substitution then reproduced an unsafe install
+        (exit 1) before the held-directory identity check made 24 focused
+        controls pass. The test data are synthetic; neither run generated
+        canonical artifacts. Raw chronology is retained under the stable
+        `core33-publisher-t4b2c4` proof root. Final native and independent
+        gates remain pending at this checkpoint.
+        Local exact behavior commit `f9f76ea803fe34de94d6d394331565b8494fb505`
+        passed 24 focused, 275 benchmark, and 4,663 unchanged full-suite
+        native-3.3 tests at 96.23% branch coverage. The complete coverage
+        gap sets, seven skips, three warnings, 23 subtests, and five known
+        documentation anchors matched the accepted baseline; Ruff, the
+        configured and natural-module type checks, and both docstring gates
+        passed. The eight historical JSON files, retained database, and three
+        private databases kept their verified hashes. This is local synthetic-stage
+        proof, not an actual new canonical bundle, independent acceptance, or
+        hosted approval; those remain pending.
+        Independent staged verification at `f8c418f` passed 29 synthetic
+        controls, 248 separately checked numeric medians, and the unchanged
+        4,663-test native suite with the same quality and protected-state
+        baselines. Its ordinary pre-acquisition substitution control showed
+        that a foreign directory moved into the stage name after creation but
+        before the first descriptor can receive eight exclusive additions;
+        when empty it can be installed as the complete foreign-inode bundle.
+        An inherited colliding file was not overwritten, and an inherited
+        extra file caused rejection but left the additions as residue. The
+        first descriptor proves continuity from acquisition, not creator
+        ownership or unchanged foreign state. This reopens only documentary
+        boundary guidance, not publisher behavior or a universal sandbox
+        requirement. Hosted approval and actual canonical generation remain
+        pending. Evidence: `independent-publisher-f8c418f/report.md` under
+        the stable local recovery root.
+        The final documentary boundary at `54ca72fc6ea4e5e1a868396d18236c713d15f1b4`
+        passed independent readback and native focused checks. PR #236 merged
+        only into integration as `af9678c482df59ed4c731326c98450ba4eea7254`;
+        child run `37105519521`, integration run `37105723125`, and tracker
+        run `37105726297` each passed 15 validations with three publication
+        skips, while child and tracker Codecov checks succeeded. This closes
+        only the staged publisher, not actual artifact generation.
+      - [x] T4b2c5 — Add the explicit core33 run/replay publication command.
+        Route: delegated direct because the command, live batch receipt seam,
+        focused tests, and guide are non-trivial; forecast roughly 700–1100
+        authored lines, with the existing coherent pending-version size
+        exception and an honest final count. Strict TDD is enabled by current
+        AGENTS.md: observe a new command/receipt RED, then GREEN and refactor.
+        Focal runner: `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_batch.py
+        tests/benchmarks/test_comparison_publish.py
+        tests/benchmarks/test_run_publish_core33.py --no-cov` under the named
+        core-3.3 overlay. Own only the new command and its tests, minimal
+        batch/publisher receipt compatibility, focused existing tests,
+        concise benchmark guide, and this checkpoint. The run mode composes
+        checked fresh seeds, one rotated batch, and all-or-nothing publisher
+        only after preflighting options and destinations. The replay mode
+        reads explicit retained event/manifest/batch evidence, reconstructs
+        typed receipts without current runtime probes or workloads, then uses
+        the same validator and publisher. Reject malformed or contradictory
+        witnesses before publication, preserve failed private outputs, and
+        leave the legacy publisher and old eight JSON untouched. Verify
+        native focal, all benchmarks, unchanged full 95.01% branch gate and
+        complete coverage gap sets, Ruff, typing, both docstring gates, docs
+        anchors, diff, and all protected tracked/ignored/database identities
+        in a clean exact-commit clone. Rollback only this command, receipt seam,
+        focused tests, guide, and task checkpoint. This unit uses synthetic
+        evidence only; no actual measurement, reseed, or canonical install.
+        Chronological TDD: new-command import failed with exit 2 before the
+        CLI existed, and the live-batch receipt assertion failed with exit 1
+        before the seam was added. The initial targeted implementation passed
+        81 focused controls, then expanded synthetic receipt, replay, run and
+        preservation checks passed 89 focused controls. The root 3.2.13
+        interpreter gives iteration evidence only; exact native-3.3 final
+        acceptance, independent verification and hosted gates remain pending.
+        Local behavior commit `db720cb588d84f5edc5b16a8477910b8ad5a5028`
+        passed 89 focused, 311 benchmark, and 4,699 unchanged full native-3.3
+        tests at 96.23% branch coverage. The complete 258/266/274/282 gap
+        sets, seven skips, three warnings, 23 subtests, both docstring gates,
+        typing, Ruff, and five known docs anchors matched the accepted
+        baseline. The parser read the retained actual 8-group/24-receipt
+        evidence metadata without opening databases, raw result files, or
+        publishing; the measurement witness remains `350ae84`/3.1.1, distinct
+        from this command checkout. All eight historical JSON, 35 ignored
+        historical JSON, and four databases retained their verified identities.
+        This is staged local command proof only; independent and hosted checks
+        and T4b2c6 actual artifact generation remain pending.
+        Independent verification of final local head `7ec498a` is terminal
+        PARTIAL: a synthetic cross-checkout CLI replay failed before staging
+        because shared validation used the current command checkout for the
+        recorded schema path. The accepted old journal already records each
+        measuring child's checkout, harness argv, selected environment, and
+        source identity; the loader discarded that context. Reopen this unit
+        for a bounded strict-TDD correction, not a new feature or measurement.
+        Add an explicit checked benchmark-schema context to the retained
+        receipt, propagate it through shared raw validation and median
+        recomputation, and recover the old context only from corroborating
+        child-invocation records. Future live evidence must state its checked
+        context explicitly; missing or contradictory context fails closed.
+        Keep current-checkout live defaults, old typed constructors and old
+        recorded plans compatible; never mutate global source paths or raw
+        witnesses. First observe a fresh cause-correct cross-checkout RED,
+        then GREEN and refactor. The fresh real-CLI synthetic cross-checkout
+        RED exited 1 at the exact schema witness mismatch, without touching
+        actual raws or databases. The bounded correction's first root-venv
+        GREEN passed 124 focused controls, including the distinct-root CLI,
+        future-context round-trip, old child invocation and forged/missing/
+        mixed context rejection. Read-only loading of the accepted old journal
+        recovered all 24 schema contexts at the measured `350ae84` checkout;
+        no actual raw or database was opened. Final native-3.3 gates and
+        independent recheck remain pending. The existing local and independent
+        failures
+        remain in their original proof roots; corrected exact-head full gates,
+        independent recheck, hosted delivery, and actual publication remain
+        pending. Rollback this correction's narrow context seam, tests, guide,
+        and checkpoint together without touching old measurement assets.
+        Correction commit `fa0f6a43a9dee2a63fdb6a78b9a549241e88f968`
+        passed the exact clean-clone native-3.3 focal 96, benchmark 318, and
+        unchanged full 4,706 tests at 96.23% against the 95.01% branch gate.
+        Complete 258/266/274/282 coverage gaps, seven skips, three warnings,
+        23 subtests, Ruff, configured and natural typing, both docstring gates
+        at TOTAL 0, and five docs anchors matched baseline. The accepted old
+        journal's 24 contexts parsed read-only at its measured checkout with
+        the original SHA unchanged; no actual raw, database, or public target
+        was opened. This is local corrected-context proof only; independent
+        repeat, hosted gates, and T4b2c6 generation remain pending.
+        Independent recheck of `ad25e69` is terminal PARTIAL: the original
+        cross-checkout positive now succeeds, but deleting only the old
+        journal's preflight event still installs eight synthetic files. This
+        violates the stated old child-context source-witness requirement.
+        Reopen only the old fallback acceptance guard: require its one
+        matching preflight commit/tree; future explicit schema-context records
+        remain independently valid. Observe the missing-preflight real CLI RED
+        before this guard, then GREEN/refactor and exact-final native gates.
+        Preserve both independent reports, all raw proof, and actual assets.
+        Fresh cause-correct old-format real-CLI RED exited 1 because deleting
+        only preflight let it install eight synthetic files. The minimal guard
+        then passed 44 CLI controls, including valid old/new positives and
+        contradictory source rejection. Mixed explicit/legacy context without
+        preflight is separately rejected. Local full native and independent
+        acceptance remain pending; no actual raw or database was opened.
+        Independent exact-head verification of `b035567` passed 99 focal,
+        321 benchmark, and 4,709 full native-3.3 tests at 96.23% branch
+        coverage, with the baseline gaps, skips, warnings, and quality gates
+        unchanged. PR #237's first hosted run `37111329600` failed in all six
+        test-matrix jobs and base-install: each job reported only the direct
+        script/module help test failing because it tried a developer-specific
+        Python path absent on the runner. Reopen hosted acceptance for a
+        test-only portability correction using the executing interpreter;
+        preserve real help subprocess and no-workload checks. Observe a fresh
+        local cause-correct RED and GREEN, then repeat exact-head local gates.
+        The hosted failure remains a failure; no publication is authorized.
+        The fresh interpreter-alias control failed before the selection fix:
+        the help test chose the checkout Python rather than the active test
+        interpreter, although both paths existed locally. The test observes
+        the requested executable and still launches both real help commands.
+        Selecting the active interpreter passed both targeted controls after
+        the fix; exact-head full and hosted revalidation were pending at that
+        checkpoint. The corrected child commit `165fe7655a88d09b0049a4a2d40f8877b4285e6c`
+        passed local native-3.3 100 focal, 322 benchmark, and 4,710 full
+        tests at 96.23%, with both docstring gates at zero. Its independent
+        final test-only readback passed 100 focal and authenticated the writer's
+        4,710 full-test proof; earlier independent production verification
+        at `b035567` passed 4,709 full tests at 96.23%. The corrected child
+        hosted run `37112708200` passed all 15 validations and both Codecov
+        checks. PR #237 merged only into integration as
+        `b4d1530fe3b50d5485cf85fb4c6f457b6357d806` with the same tree;
+        post-push integration run `37112964180` and tracker run `37112966167`
+        each passed all 15 validations with three publication skips, and
+        both integration Codecov checks succeeded. Tracker #212 remains a
+        draft against main, issue #210 remains open/approved, and no main
+        merge, tag, release, or actual core33 artifact install occurred.
+        The original failed run `37111329600` remains failed history.
+      - [x] T4b2c6 — Generate and review the actual core33 eight-artifact
+        bundle from the retained 24 measured raw results. Reuse the verified
+        read-only replay path after independent and hosted acceptance of
+        T4b2c5; do not rerun measurements or relabel the measured source.
+        Route: delegated direct because an executable artifact contract,
+        eight generated files, guide, and task checkpoint form a recoverable
+        work unit. Strict TDD is enabled by current AGENTS.md: observe a
+        missing-target contract RED, then replay GREEN and refactor. Focal
+        runner: `.venv/bin/python -m pytest
+        tests/benchmarks/test_core33_results.py
+        tests/benchmarks/test_run_publish_core33.py
+        tests/benchmarks/test_comparison_batch.py
+        tests/benchmarks/test_comparison_publish.py --no-cov` under the
+        native-3.3 overlay. Only the new eight whitelisted JSON, a focused
+        actual-artifact contract module, concise benchmark guidance, and this
+        checkpoint are owned. Before one real replay, verify accepted journal
+        and all 24 raw locators/digests, measured source and seed identities,
+        an absent public target, a clean exact integration source clone, and
+        protected asset state. Replay must independently validate and
+        recompute existing results; no seed, HTTP, schema or timing workload
+        may run. Verify portable names, dataset/SQL/surface/math/runtime and
+        provenance without leaking private paths or relabeling 3.1.1 as the
+        command checkout. Then run focal, benchmark, unchanged full coverage,
+        Ruff, typing, docstrings, docs, diff and protected-state checks at the
+        final commit. Generated-file size is counted separately from authored
+        source lines under the approved coherent size exception. Rollback this
+        one new directory, focused contract, guide, and checkpoint together;
+        never alter historical result files or retained raw evidence.
+        Fresh artifact-contract TDD failed nine cases while the public target
+        was absent. Read-only preflight verified the original journal SHA,
+        all 24 raw digests and typed receipts, the measured `350ae84` source,
+        the older `1b5b941` seed witness, native core 3.3.0, and unchanged
+        protected assets. Exactly one sanitized `replay` CLI invocation from
+        a clean `b4d1530` clone succeeded and atomically installed eight JSON
+        without seeding or measuring; all nine actual-artifact contracts then
+        passed. The numeric contracts were frozen from the accepted unpublished
+        batch before replay and cover all 248 per-statistic and schema medians.
+        The 24 raw files, three evidence records, historical eight JSON,
+        35 ignored JSON, and four databases matched their byte and filesystem
+        identities after replay. Final exact-head checks, independent review,
+        hosted acceptance, website guidance, and version 4.0.0 were pending
+        at that checkpoint. PR #238 carried child
+        `1cc54b5d3b4152e0faf07ba342c99549dd52850a`; independent review
+        verified all 24 raw digests, 248 numeric medians, and portable public
+        projection. Fresh 109 focal and 331 benchmark checks passed, and the
+        independent readback authenticated the writer's 4,719 full native
+        tests at 96.23%; the parent repeated 109 focal tests. Child hosted
+        run `37115354396`, integration post-push run `37115973364`, and
+        tracker run `37115975715` each passed 15 validations with three
+        publication skips, while child and integration Codecov succeeded.
+        An initial Codecov-not-yet-posted guard stopped before mutation and
+        was satisfied on refresh, not waived. The PR merged only into
+        integration as `10189fbcb86775690ea68d5b35532d64c5a213ff`
+        with the exact child tree. Tracker #212 remains open/draft against
+        main and issue #210 remains open/approved; no main merge, tag, or
+        release occurred. The measured `350ae84` source and `1b5b941` seed
+        witnesses remain distinct from this artifact checkout.
+  - [x] T4c — Complete Playground/example and migration guidance, verify
+    quiet measurements and docs without relabeling old results.
+    Route: delegated direct because derived website tables, two changelogs,
+    current example guidance, and executable parity/readiness tests are
+    non-trivial across multiple files. Strict TDD is enabled by current
+    AGENTS.md: observe documentation-contract RED before edits, then GREEN
+    and refactor. Derive new numbers only from the eight committed core33 JSON,
+    preserve the old eight and dated release notes, distinguish measured
+    unreleased source 3.1.1 from future 4.0.0, and explain split whole-stack
+    versions and per-run-statistic medians. Update concise README, benchmark
+    page, both Unreleased changelogs, and verified Playground migration
+    guidance; add navigation only if needed. Run focused documentation and
+    readiness contracts, the complete Playground suite, benchmarks, full
+    native-3.3 tests with unchanged 95.01% branch gate, Ruff, mypy, both
+    docstring audits, docs build, link readback, and complete baseline and
+    protected-asset comparisons. Rollback only documentation, navigation,
+    contracts, and this checkpoint. No package/runtime/pin/result/version
+    changes, new measurement, or hosted/independent claim belongs to this unit.
+    The executable documentation contract first failed four missing-table,
+    guide, provenance, and stale-banner cases; a separate stack-version
+    parity control failed before its table was added. Both are retained as
+    chronological RED proof. Current focused readiness/parity checks pass
+    37 tests and the complete Playground suite passes 59 with the installed
+    native-3.3 overlay and no migrations. The current website build succeeds
+    with the same five historical broken-anchor targets. Root benchmark
+    execution still fails 17 canonical-provenance cases because pre-existing
+    ignored historical JSON pollutes that checkout; no files were removed or
+    tests waived. The coherent work-unit commit
+    `abdf746c2fceb3df81e610132dd8dd027db4edde` added the JSON-backed
+    eight-artifact parity contract, current-profile website table and exact
+    stack versions, unreleased 3.3 upgrade guide and navigation, two
+    Unreleased changelogs, root and benchmark entries, and current Playground
+    banner/test invocation. A clean real clone of that commit passed 331
+    benchmark and 4,724 full native-3.3 tests at 96.23% coverage against
+    the unchanged 95.01% gate. Its complete gap sets exactly equal the
+    retained baseline (258 missing lines, 266 partial sites, 274 all-missing
+    branch sites, 282 missing arcs); seven skips, three warnings and 23
+    subtests also match. The complete Playground suite passed 59 tests with
+    Python 3.12.11, Django 6.0.8 and the official core-3.3.0 overlay.
+    Configured 79/82-file typing and normal-import 102-module typing passed;
+    Ruff lint/check-only format and both docstring gates were TOTAL 0.
+    Zensical built with the same five historical broken-anchor targets; the
+    changelog diagnostic moved from line 624 to 630 as Unreleased grew.
+    Protected old/new JSON, ignored histories, retained and private database
+    bytes, and outside-scope tracked paths remained unchanged. This local
+    result does not claim independent or hosted acceptance, a new measurement,
+    guaranteed CPU quietness, a published 4.0.0 package, or main/tag/release.
+    Final documentary-head proof is recorded separately; independent and
+    hosted gates remained pending at that local checkpoint. Subsequent
+    independent verification passed, and PR #239 merged only into the
+    integration branch as `d740a0b90a811a8ce1bd74bd2467561044a2d983`
+    with tree `4a943df1f8696c9d62a51dadd99078e68a912103`. Child run
+    `37118812807`, post-push run `37119020840`, and tracker run
+    `37119023499` each passed all 15 validations with three publication
+    skips; both Codecov checks succeeded. Tracker #212 remains open/draft
+    against main and issue #210 remains open/approved. No main merge, tag,
+    package publication, or new benchmark measurement occurred.
+  - [x] T4d — Apply the selected future 4.0.0 package version only in its
+    release-readiness unit, then run final independent and hosted gates. No
+    main merge or publication follows automatically.
+    Route: delegated direct because project/lock metadata, two changelogs,
+    current release guidance, executable readiness contracts, and this
+    checkpoint form one coherent version-preparation work unit. Strict TDD
+    is enabled by current AGENTS.md: observe a cause-correct 4.0.0 contract
+    RED before changing metadata, then minimum GREEN/refactor. Ownership is
+    limited to the project version, each lock's editable local-project
+    version entry, current 4.0.0 notes/status guidance, narrowly affected
+    tests, and this task. Preserve every other lock pin, historical dated
+    notes and eight-plus-eight benchmark JSON. Close the migration notes as
+    `4.0.0 — 2026-10-03` while keeping an empty Unreleased heading, and
+    distinguish local release preparation from publication. Adapt the old
+    3.1.1 current-version assertion only while retaining its dated history
+    checks. Focal runner: `.venv/bin/python -m pytest <release/readiness/docs
+    selection> --no-cov`; full native-3.3 runner: `.venv/bin/python -m pytest`
+    in a clean real commit clone with the unchanged 95.01% branch gate.
+    Verify the full Playground suite, benchmark contracts, configured quality
+    and typing, both docstring gates, docs, complete coverage-gap and
+    protected-asset equivalence. Rollback only this local version-preparation
+    unit; actual wheel validation, independent/hosted gates, tracker-to-main,
+    tag and publication remain separate and require their own authority.
+    Local TDD checkpoint: the new release contract first failed on the old
+    version, undated migration notes and stale prepared-status guidance
+    (three RED assertions, one preservation control passed). A separate
+    benchmark-guide assertion first failed on the stale website-status text.
+    The corrected six-module focal selection then passed 52 tests with the
+    official core-3.3 overlay. Offline, no-build, no-cache checks confirmed
+    both lockfiles agree with the editable 4.0.0 metadata without changing
+    third-party pins. Full exact-head, Playground and quality gates remain
+    pending at this checkpoint; neither RED is a measurement failure.
+    Local behavior commit `969326a134bfaa5ee23996ef8898644fcb76019c`
+    has tree `947801f3cf52f5404278063005c7931139796ede` and changes 219
+    added plus 44 deleted authored lines across 16 owned paths. Its clean
+    real clone passed 52 focal, 331 benchmark, 59 Playground and 4,728 full
+    native-3.3 tests with seven skips, three established warnings, 23 subtests
+    and 96.23% branch coverage; complete 258/266/274/282 gap sets equal the
+    accepted T4c baseline. Ruff, 79/82/102-module mypy routes, both docstring
+    gates at TOTAL 0, offline checks of both unchanged-pin locks and docs
+    build passed. The same five historical anchor targets remain; changelog
+    moved from line 630 to 634. All 82 protected raw/result/database objects
+    retained exact bytes and inode/mode/link identities. The first strict
+    audit in the polluted source checkout reported 58 ignored-asset issues;
+    the clean exact-head clone passed the required gate without deleting
+    them. Local preparation is not wheel validation or release acceptance;
+    independent and hosted gates, main, tag and publication remain pending.
+    The 4.0.0 child later passed independent functional, Playground, benchmark,
+    lock and quality checks, and its hosted child, integration and tracker
+    validations were accepted. The requested final independent check at
+    integration `4087f04417f58964589d8a1e0e16a14b12f90dad` passed 4,728
+    root tests at 96.23%, 331 benchmark tests and 59 Playground tests, but
+    remained PARTIAL for five real historical broken documentation anchors.
+    Tracker run `37121554286` attempt 2 passed all 15 validations and both
+    Codecov checks, with three publication jobs skipped; attempt 1's timeout
+    remains historical. T4d remains open until the requested clean-doc check.
+  - [x] T4e — Correct only the five verified historical broken hrefs and add
+    an executable heading-backed anchor contract, then prove a warning-free
+    generated site and the unchanged native-3.3 test gate. Route: delegated
+    direct because four documentation sources, one focused contract and this
+    task checkpoint form a coherent correction. Strict TDD from current
+    AGENTS.md requires a cause-correct RED before href edits, followed by
+    GREEN/refactor; focal runner is `.venv/bin/python -m pytest
+    tests/test_docs_anchor_links.py --no-cov`. Preserve all target headings,
+    historical dates, other links and old/new benchmark artifacts. Verify
+    the six release/readiness/docs/workflow modules, full clean-clone pytest
+    with unchanged 95.01% branch gate, both docstring gates, Ruff, typing,
+    exact generated-HTML anchor resolution, and protected-state equality.
+    Rollback only this five-href/test/task unit. Main, tag, artifact build,
+    publication and the draft tracker remain outside this local unit.
+    Cause-correct RED: the new heading-backed regression failed on the first
+    historical changelog href (`310--2026-09-02` versus the actual
+    `310-2026-09-03` heading). A first GREEN attempt exposed an inaccurate
+    test label for the index link, not a sixth broken href; the corrected
+    source-label fixture and exactly five href edits yielded one passing
+    focused test. The local Zensical clean build then reported zero issues.
+    This is local evidence only; final clean-clone gates and independent
+    readback remain pending at this checkpoint.
+    Local behavior work-unit commit `a92c601305b3ab42c0c6606fedae82a539446eef`
+    has tree `be87ee0b62d81905f9b0cd15ada1697a586f9474` and changes 114
+    added plus 12 deleted authored lines across six owned paths. Its clean
+    native-3.3 clone passed 53 focal, 331 benchmark, 59 Playground and 4,729
+    full tests at 96.23% branch coverage with the unchanged 95.01% gate.
+    Complete 258/266/274/282 coverage gaps, seven skips and three warnings
+    match the accepted baseline. Ruff, 79/82/102-module mypy and both
+    docstring gates passed; the generated docs reported **No issues found**
+    and all five repaired hrefs resolved to existing HTML IDs. All 82
+    protected objects and every outside-scope tracked blob were unchanged.
+    Local correction does not relabel the earlier independent documentation
+    PARTIAL as PASS; fresh independent and hosted acceptance remain pending.
+
+## Progress and next step
+
+Current checkpoint: implementation and release preparation are complete at
+integration `706d20ccac907bf247073f96103391d44aa97b3a`, tree
+`d636fa9266ab00c845255bac51c6a145f8770177`. T4d and the additional T4e
+clean-documentation requirement are verified. The package is prepared as
+4.0.0, not published; tracker #212 remains open/draft against main.
+
+The user-authorized rerun of tracker `37121554286` targeted the failed
+coverage job. GitHub also reran dependencies; attempt 2 passed all 15
+validations and both Codecov checks, with three publication jobs skipped.
+Attempt 1's setup-uv manifest download timeout remains failed history.
+
+Final independent checks at `4087f04` freshly executed 4,728 root tests at
+96.23%, 331 benchmark tests, 59 Playground tests, quickstart/type/mutation
+examples, Ruff, 79/82/102-module typing, both docstring gates and offline
+locks. Its five-link documentation PARTIAL remains an immutable prior report.
+T4e then corrected exactly those five hrefs with heading-backed RED/GREEN.
+The writer's clean `c899918` clone passed 4,729 full tests at 96.23%,
+331 benchmarks and 59 Playground tests with complete unchanged coverage
+and skip/warning sets. At task-only final `c84a781`, independent fresh
+53 focal tests, both docstring gates and generated-site readback passed;
+all five links resolve and Zensical reports **No issues found**. That verifier
+also authenticated, rather than repeated, the `c899918` full-suite proof.
+The parent separately repeated all 53 focal tests.
+
+PR #241 merged only into integration at `706d20c` with the accepted tree.
+Child `37135402863`, post-push `37135642881` and tracker `37135645807`
+each passed all 15 validations and both child/integration Codecov checks;
+three publication jobs skipped. All 82 protected result/raw/metadata/DB
+identities remain unchanged. Current package runtime code has the same tree
+as measured source `350ae84`; measured metadata 3.1.1, seed provenance and
+whole-stack versions were not relabeled as fresh 4.0.0 measurements.
+
+This final checkpoint is an inline, mechanical one-file status update using
+already observed proof; it introduces no behavior or additional tests. Its
+checks are structural readback, exact outside-task tree equality and diff
+validation, followed by its own hosted child gate. No new RED is claimed
+for bookkeeping. Earlier task snapshots remain historical evidence at their
+original identities. The Engram mirror remains pending because the runtime
+has no registered session identity.
+
+Next: explicit maintainer authorization for tracker-to-main, then all fresh
+main checks and a separate explicit authorization before the irreversible
+annotated release tag. No main merge, tag, publication, workflow dispatch or
+branch deletion is authorized by this checkpoint. Hosted CI already built
+and smoke-tested 4.0.0 validation artifacts; that is not publication.
+
+At the earlier T4q checkpoint, T0-T3 and the JSON, validation-cache, HTTP
+privacy, subscription privacy,
+and T4q capability-test children are integrated through
+`fc0d730a87b90c5bc57387fad61a09ca761aac2a`.
+PR #222 passed exact-head hosted checks before that integration-only merge;
+its integration-push run `36945214190` and tracker run `36945219668` each
+passed 15 validations, with three publication jobs skipped; both tracker
+Codecov checks succeeded. This floor child
+history-merges that reviewed integration without importing the rejected regex
+branches. Its source diff remains limited to the GraphQL-core floor/locks,
+readiness contracts, and current guidance; the package version stays 3.1.1.
+The earlier `8093da0` floor head passed local native-3.3 checks but failed
+project Codecov at 94.96%; no gate was waived. T4q PR #223 passed all 15
+validation jobs and both Codecov checks before its integration-only merge.
+The floor branch now history-merges T4q through `a886e60`; this new combined
+head requires fresh local, independent, and hosted checks. The
+new per-library benchmark comparison choice is resolved, while package SemVer
+and T4b-T4d remain pending. Published 3.1.1 main/tag and canonical benchmark
+files remain unchanged. Draft tracker #212 has no main merge, tag,
+publication, or dispatch authorization. Engram mirror remains pending without
+an authoritative runtime identity.
+
+### T0 verification evidence
+
+- RED: `.venv/bin/python -m pytest
+  tests/test_release_workflow.py::test_graphql_core_migration_branches_run_ci_without_widening_publish
+  --no-cov -q` failed for the intended missing integration push branch.
+  GREEN: `.venv/bin/python -m pytest tests/test_release_workflow.py
+  tests/test_release_readiness_311.py --no-cov -q` passed 15 tests. The related
+  3.1.0 docs/readiness command passed 75 tests.
+- A clean real local clone with the three-file candidate overlay passed the
+  complete suite: 4,372 passed, 7 skipped, 96.21% branch-enabled coverage
+  against the unchanged 95.01% gate. No module was excluded. Evidence:
+  `/private/tmp/graphex-33-t0.J99X1K/full-suite.log`.
+- Ruff format/lint, mypy, standard and strict docstring gates (strict TOTAL 0),
+  Zensical build and diff checks passed in the clean clone. The docs build
+  retained five previously verified broken-anchor warnings. No local build,
+  dependency reinstall, issue, push, PR, merge or workflow dispatch occurred.
+- Runtime harness: N/A, because this change only selects CI events. The
+  rollback boundary is the three migration branch filters, their structural
+  test, and this T0 planning checkpoint; publication guards are unchanged.
+- Read-only risk assessment returned high/unassessable because pre-existing
+  untracked .codegraph requires explicit inventory. RDD remains off; no native
+  review status, start or lifecycle was run. Independent verification passed.
+- T4 discovery: `benchmarks/setup_envs.sh` installs the current editable
+  GraphEx against frozen `graphql-core==3.2.11`, which will conflict with the
+  future 3.3 floor. [Graphene 3.4.3 metadata](https://pypi.org/pypi/graphene/3.4.3/json)
+  requires `graphql-core<3.3`; a shared 3.3 four-way profile is not viable with
+  that historical peer. This does not block the T0 CI-only change.
+
+### T0 independent verification
+
+- Candidate `cdfd2736522079a4f0d9d78e9634be8370df5b46` passed an independent
+  clean-clone check: 75 focused tests; 4,372 full-suite tests, 7 skipped,
+  7 subtests, and 96.21% branch-enabled coverage with the unchanged 95.01% gate.
+- Ruff, mypy, both docstring gates, docs build, and diff checks passed. The
+  five baseline documentation warnings remain. Diff coverage is N/A because
+  no covered runtime lines changed. No hosted checks or 3.3 runtime tests ran.
+- Parsed YAML and combined contract checks preserve publication guards,
+  permissions, the complete job graph, and the prior 3.1.1 branch coverage.
+  Evidence: `/private/tmp/graphex-33-t0-independent.CK7TLL/`.
+
+### T0 remote delivery
+
+- Approved [issue #206](https://github.com/eamigo86/django-graphex/issues/206)
+  backs [child PR #211](https://github.com/eamigo86/django-graphex/pull/211):
+  `codex/graphql-core-3.3-ci` at
+  `74b32a7e998346b9e66d01efea210645e93ebec6` into the integration branch.
+  The slice has 188 additions and 1 deletion, all authored, with no exception.
+- [Child CI](https://github.com/eamigo86/django-graphex/actions/runs/36905293149)
+  passed all 15 validation jobs and both Codecov checks. The three publication
+  jobs skipped as intended. Conventional merge
+  `977560446f74abe7fdfdb695311ba19da721b806` has the reviewed child tree
+  `f3cafb98e9a48bca6329283771625f42f2a75e89`.
+- The integration [push CI](https://github.com/eamigo86/django-graphex/actions/runs/36905712173)
+  and draft [tracker CI](https://github.com/eamigo86/django-graphex/actions/runs/36905838138)
+  each passed all 15 validation jobs, with the three publication jobs skipped;
+  both tracker Codecov checks passed. Tracker #212 is draft, links approved
+  issues #206-#210, and remains unmerged. Main remains at
+  `bb415efc10e4a4b85079344b1c3c607de7a06daa`; the 3.1.1 tag is unchanged.
+- This evidence checkpoint is local-only. It is not part of the reviewed
+  integration tree or tracker PR; no task-document commit was pushed after T0.
+
+### T1 local implementation and verification
+
+- RED on both installed 3.2.13 and isolated official 3.3.0: the preferred
+  `executor_class` view keyword was rejected, and the legacy keyword failed
+  3.3 execution. Conflicting backend names were not rejected as configured.
+  After the minimal adapter, all four new or updated focused contracts passed
+  under both versions; the related HTTP and security selection passed 88 tests
+  under each. The tests execute a real HTTP query with a recording backend.
+- `BaseGraphQLView` accepts `executor_class` and the compatibility alias
+  `execution_context_class`. Supplying the same class twice is allowed; distinct
+  non-None classes raise `ImproperlyConfigured` at construction. The adapter
+  selects GraphQL's native keyword by the installed execution module's
+  `Executor` export, not by an optionally patched `execute` call signature.
+  GraphQL-core 3.2 custom ExecutionContext subclasses must be ported to the
+  3.3 Executor base and methods; the alias does not port their implementation.
+  No `from_schema` view factory exists here, so constructor and `as_view` are
+  the applicable configuration paths.
+- An isolated official 3.3.0 wheel overlay in `/private/tmp/graphex-33-t1-overlay`
+  supplied only GraphQL-core; the root environment and dependency floor stayed
+  at 3.2.13. A clean local Git clone proved imports came from its candidate
+  source and the overlay package. Its unchanged full runner passed 4,375 tests,
+  7 skipped, 7 subtests, and 96.22% branch-enabled coverage against the
+  unchanged 95.01% gate. Changed runtime lines reached 100% diff coverage.
+  Proof: `/private/tmp/graphex-33-t1.9xmCtW/`.
+- Ruff format and lint, mypy, standard and strict docstrings (TOTAL 0),
+  Zensical docs build, and diff checks passed. The docs build kept five
+  verified pre-existing anchor warnings. No local package build, root
+  dependency refresh, benchmark rewrite, remote push, PR, main merge, tag, or
+  dispatch occurred. Rollback only T1's HTTP backend adapter, tests, and view
+  guidance; preserve the independently integrated T0 CI gate.
+
+### T1 bounded correction after independent verification
+
+- Root cause: each alias fell back to its subclass default before explicit
+  constructor choices were compared, so a default under the other name looked
+  like a second explicit class. Two new real-HTTP cross-name override tests
+  each failed RED with `ImproperlyConfigured` under both GraphQL-core 3.2.13
+  and 3.3.0, then passed GREEN after explicit arguments took precedence over
+  defaults. Distinct explicitly supplied classes still fail; identical ones
+  remain allowed. Public view guidance now states this precedence.
+- The corrected HTTP/security selection passed 90 tests under each version.
+  Clean tracked-candidate source imported from
+  `/private/tmp/graphex-33-t1-corrected.vWVmF7/candidate`, while the isolated
+  official 3.3.0 overlay supplied GraphQL-core only. The unchanged 3.2.13 full
+  runner passed 4,377 tests, 7 skipped, 7 subtests, and 96.22% branch-enabled
+  coverage against the unchanged 95.01% gate. Changed runtime lines had 100%
+  diff coverage (15 lines, zero missing).
+- Ruff format/lint, mypy, standard and strict docstrings (TOTAL 0), docs build,
+  and diff checks passed in the clean candidate. The five established anchor
+  warnings remain. No test exclusion, coverage override, root dependency or
+  lock change, local package build, remote delivery, or benchmark rewrite was
+  used. Proof: `/private/tmp/graphex-33-t1-corrected.vWVmF7/`.
+
+### T1 independent reverification
+
+- Exact candidate `1086c012f97b5713ef04925b06be321786347c68` passed 90
+  focused real-HTTP/security tests under both GraphQL-core 3.2.13 and 3.3.0.
+  The clean-clone 3.2.13 suite passed 4,377 tests, 7 skipped, 7 subtests,
+  and 96.22% branch coverage against the unchanged 95.01% gate. Changed
+  runtime lines reached 100% diff coverage across 15 lines.
+- Ruff, mypy, both docstring gates (strict TOTAL 0), docs, and diff checks
+  passed; the five established docs anchor warnings remain. The parent
+  independently spot-checked the same 90 focused tests on 3.2.13. Proof:
+  `/private/tmp/graphex-33-t1-reverify.FP6LvF/`. Hosted checks are recorded below.
+
+### T1 remote delivery (checkpoint carried forward)
+
+- Approved issue #207's [child PR #213](https://github.com/eamigo86/django-graphex/pull/213)
+  merged 334 authored lines (no exception) into integration as
+  `849781c257f4b0a0ffed0711e5dbc74f4fd24115`, tree
+  `e476d12c4ebd044c2754cf34ba9f66bfc47ae13c`, identical to child
+  `ec2b42c7ac1da5f5fe4bc28ac435adb8d7d0108a`.
+- [Child](https://github.com/eamigo86/django-graphex/actions/runs/36911350914),
+  [integration](https://github.com/eamigo86/django-graphex/actions/runs/36911769469),
+  and [tracker](https://github.com/eamigo86/django-graphex/actions/runs/36911776002)
+  CI each passed 15 validation jobs, skipped three publication jobs, and the
+  child/tracker Codecov checks passed. Draft tracker #212 remains unmerged;
+  main `bb415efc` and tag v3.1.1 are unchanged. Full remote proof remains in
+  local-only checkpoint `eb538e609508960cf6b72b2dcc476fc4a453f0a7`.
+
+### T2 local verification
+
+- RED under official 3.3.0: SSE raised the old keyword TypeError; WS framed
+  that error instead of the expected variable error. Both 3.2.13 controls
+  passed. Expanded 3.3 testing also caught malformed WS variables reaching
+  the resolver; the adapter restores 3.2's early TypeError.
+- GREEN: 56 focused and 100 expanded transport tests passed under each of
+  3.2.13 and 3.3.0, including live delivery, sync/awaitable source results,
+  executor-build errors, authorization, and wire framing.
+- Clean real clone imported candidate source and root GraphQL-core 3.2.13:
+  full suite 4,382 passed, 7 skipped, 3 expected warnings, 7 subtests;
+  96.22% branch coverage exceeds the unchanged 95.01% gate. Diff coverage:
+  100% of 18 changed runtime lines. Ruff, mypy, both docstring gates (strict
+  TOTAL 0), docs, and diff checks passed; five baseline anchor warnings remain.
+- Exploratory full 3.3 subscriptions collection remains blocked by a retired
+  MapAsyncIterator test import; T4 owns full 3.3 migration validation. No
+  modules were excluded from the 3.2 full run. Proof:
+  `/private/tmp/graphex-33-t2-proof.iEKsNh/`.
+
+### T3a local verification and remaining migration blockers
+
+- RED under isolated official GraphQL-core 3.3.0: the old stock-mapper import
+  stopped collection, and 17 AST fixture tests failed because
+  `InlineFragmentNode` now requires its selection set at construction. A new
+  real union Boolean-variable query passed 3.2.13 but failed 3.3.0 with
+  `dict has no attribute coerced` from directive evaluation; its invalid
+  variable/default and valid-query assertions remain in the regression.
+- GREEN: 143 focused optimizer, directive, and delivery tests passed under
+  each of 3.2.13 and 3.3.0. AST fixtures use constructor-supplied immutable
+  fields and tuple selections. The structural delivery guard still rejects
+  each generation's stock mapping type. The 3.2 historical stock/optimized
+  speed ratio remains guarded; 3.3 retains the absolute latency ceiling.
+- The small capability adapter wraps only legacy dicts as native 3.3
+  `VariableValues(sources={}, coerced=values)` and preserves real native
+  objects, including default/source metadata. Core 3.2 mappings pass through.
+  Existing unbound skip/include cases remain conservative. No broad exception
+  handling or backend keyword changes were added.
+- A clean real candidate clone imported its source and the unchanged root
+  3.2.13 environment. Its full runner passed 4,385 tests, 7 skipped,
+  3 expected warnings, 7 subtests, and 96.23% branch coverage against the
+  unchanged 95.01% gate; changed runtime lines had 100% diff coverage (9/9).
+  Ruff format/lint, mypy, both docstring gates (strict TOTAL 0), docs, and
+  diff checks passed; five established docs anchor warnings remain. Proof:
+  `/private/tmp/graphex-33-t3-prelim.wjFbg6/`.
+- A diagnostic full 3.3.0 run collected all tests without the retired mapper
+  import, then reported 21 failures, 4,364 passes, and 7 skips. These later
+  migration blockers include four query-cost tests, one native-list constructor
+  expectation, and 16 HTTP/field tests affected by dual-iterator querysets;
+  they are not accepted skips and must be resolved
+  before T4 can claim a full 3.3 pass. No module was excluded or gate lowered.
+  No dependency floor, lock, package metadata, benchmark artifact, or release
+  note changed. Roll back only this T3 adapter, tests, view guidance, and
+  recovery checkpoint; preserve integrated T0-T2.
+
+### T3a independent verification
+
+- Exact candidate `2a136cc84e3a3c23861e3808431cfa43aa791e0b` passed an
+  independent clean-clone check: 143 focused tests under each core version,
+  4,385 full 3.2.13 passes, 7 skips, and 96.23% branch coverage; changed-line
+  coverage was 100% (9/9). Ruff, mypy, both docstring gates, docs, and diff
+  checks passed; five baseline docs anchor warnings remain. The parent
+  independently spot-checked all 143 focused tests on 3.2.13. Proof:
+  `/private/tmp/graphex-33-t3a-independent.3MRsAo/`.
+
+### T3a remote delivery (local-only recovery checkpoint)
+
+- Approved issue [#209](https://github.com/eamigo86/django-graphex/issues/209)
+  remains open. [Child PR #215](https://github.com/eamigo86/django-graphex/pull/215)
+  merged 372 authored changed lines, no exception, from head
+  `c05c362c74264412325dc5ec950a583e3081f132` into integration.
+- [Child CI](https://github.com/eamigo86/django-graphex/actions/runs/36920087103)
+  passed all 15 validation jobs and both Codecov checks; three publication
+  jobs skipped. Conventional merge `5cdd2b130af59ee65b35e71887625de3a615cf06`
+  has tree `39dcee3d367f770103742e2662cfd49dc3e345a9`, identical to the
+  reviewed child tree.
+- [Integration push CI](https://github.com/eamigo86/django-graphex/actions/runs/36920536950)
+  and [draft tracker CI](https://github.com/eamigo86/django-graphex/actions/runs/36920542837)
+  each passed all 15 validation jobs on exact merge `5cdd2b13`; both tracker
+  Codecov checks passed and three publication jobs skipped in each run.
+  [Tracker #212](https://github.com/eamigo86/django-graphex/pull/212) remains
+  draft, links T3a while reserving T3b/T3c/T4, and has not merged to main.
+  Main remains `bb415efc10e4a4b85079344b1c3c607de7a06daa`; tag v3.1.1
+  is unchanged. This checkpoint is local-only, not part of the green tracker
+  tree; its Engram mirror is still pending runtime identity.
+
+### T3b local verification
+
+- RED on official 3.3.0: a frozen `FieldNode(arguments=None)` raised
+  `TypeError` in cost estimation, while the historical NativeList test
+  expected a `GraphQLList(ErrorType)` constructor error that 3.3 no longer
+  raises. Four existing unpaginated-list cost tests share the same cause.
+- GREEN: absent arguments act as an empty sequence without mutating the AST.
+  The new regression checks `DEFAULT_PAGE_SIZE` fallback and node identity.
+  NativeList still retains the uncompiled `ErrorType`; the compiled-schema
+  test still checks the final `[ErrorType]` shape. Only the stale upstream
+  constructor assertion changed. All 41 focused tests passed under both
+  installed 3.2.13 and isolated official 3.3.0.
+- A clean real local clone imported candidate source and installed 3.2.13.
+  Its unchanged full runner passed 4,386 tests, 7 skips, 3 baseline warnings,
+  7 subtests, and 96.23% branch-enabled coverage against the unchanged
+  95.01% gate. Changed-line coverage was 100% (1/1). Ruff, mypy, both
+  docstring gates (strict TOTAL 0), docs, and diff checks passed; the five
+  established docs anchor warnings remain. Proof:
+  `/private/tmp/graphex-33-t3b.quJD66/`.
+- Full 3.3 diagnostic (no exclusions) reported 16 HTTP/field failures,
+  4,370 passes, 7 skips, and 67 warnings, mostly on the known pending
+  dual-iterator queryset path. These failures are not accepted final-state
+  skips; T3c owns the separate fix. Roll back only this T3b cost loop,
+  focused regression, stale fixture expectation, guide, and checkpoint.
+  Remote delivery remains pending; mirror pending.
+  Local work-unit commit: `8c9ab8fc2b156dbd6ad03e59b96ef9d142480764`.
+
+### T3b independent verification
+
+- Exact candidate `ef3c51263efc5fc90ae151d502a4770553819c8e` passed
+  41 focused tests under each core version. A clean 3.2.13 clone passed 4,386
+  tests, 7 skips, 3 baseline warnings, 7 subtests, 96.23% branch coverage,
+  and 100% changed-line coverage (1/1). Ruff, mypy, both docstring gates,
+  docs with five baseline anchor warnings, and diff checks passed. The parent
+  independently spot-checked all 41 root-focused tests. Proof:
+  `/private/tmp/graphex-33-t3b-independent.RWhjuV/`. T3c remains pending.
+
+### T3c local verification
+
+- RED under official 3.3.0: two real HTTP queryset operations returned a
+  coroutine instead of a GraphQL result, and the predicate classified a
+  dual-protocol Django queryset as async. The diagnostic emitted unawaited
+  coroutine warnings. All three new regressions passed as 3.2.13 controls.
+- GREEN: only native 3.3 execution receives `is_async_iterable`. Its predicate
+  uses native async recognition but prefers synchronous completion for values
+  that are also native synchronous iterables. Real queryset HTTP reads and a
+  flagged atomic mutation evaluated on the request thread; the mutation's
+  row rolled back. Async-only values remain classified async. Existing custom
+  backend, cache-invalidation, HTTP security, and transport tests remained
+  green: 168 related tests passed under each core version.
+- Clean real clone candidate imports were verified for each core version.
+  Unchanged full runner passed 4,389 tests, 7 skips, 7 subtests, and 96.21%
+  branch-enabled coverage under both 3.2.13 and official 3.3.0, above the
+  unchanged 95.01% gate. Each had the same 3 established warnings and no
+  unawaited coroutine warning. Native 3.3 changed-line coverage passed at
+  100% (5/5). Root 3.2.13 diff coverage was 60%, BELOW the required 95.01%
+  hosted patch gate; this is an acceptance gap, not an exception. Ruff
+  format/lint, mypy, both docstring gates (TOTAL 0), Zensical docs
+  with five baseline anchor warnings, and diff checks passed. Proof:
+  `/private/tmp/graphex-33-t3c.zDp9a3/`.
+- Rollback only the HTTP predicate, focused regressions, view guidance, and
+  this checkpoint. T3b remote push remains blocked by auto-review pending
+  direct human authorization. T3c is local-only; T4 floor/locks/version and
+  migration remote integration have not started. Engram mirror remains pending.
+  Local work-unit commit: `24e52238148514925d8cdac842331f87459f7e06`.
+
+### T3c root patch-gate correction
+
+- The first root 3.2.13 diff-cover run was 60%, below the required 95.01%,
+  because the native-3.3 forwarding branch had no root-runner regression.
+  This failure was not waived or hidden. A new test injects the stable
+  `executor_class` capability into the root runner, records a real view's
+  execute options, and checks the legacy backend alias plus sync-only,
+  dual-protocol, and async-only predicate decisions.
+- RED on a clean prebehavior clone at T3b `b8abfbf`: the new test failed with
+  missing `is_async_iterable` forwarding. GREEN on the T3c candidate: all
+  four focused queryset tests passed under each core version. No production
+  source change or dependency reinstall was needed for this correction.
+- Clean real candidate imports resolved to its source and core 3.2.13 or the
+  isolated official 3.3.0 overlay. The unchanged full runner passed 4,390
+  tests, 7 skips, 7 subtests under each core: 96.23% branch coverage on 3.2.13
+  and 96.21% on 3.3.0, both above 95.01%. Diff-cover now passes 100% (5/5)
+  independently under BOTH versions, with no exclusions or merged coverage.
+  Each run had only the 3 established warnings, no unawaited coroutine warning.
+  Ruff, mypy, both docstring gates (TOTAL 0), docs with five baseline anchor
+  warnings, and diff checks passed. Proof:
+  `/private/tmp/graphex-33-t3c-gate.SiiZ16/`.
+- The correction belongs to the same local T3c slice; T3b remote push remains
+  blocked pending direct human authorization. Independent verification of this
+  final candidate is recorded below; T4 remains pending. Engram mirror pending.
+  Correction commit: `d3d1125789e928528c4247ece4f13c0187fbee8f`.
+
+### T3c independent verification
+
+- Exact candidate `bab1be79618b51c6c21a25f18ca079eef9df5d34` passed
+  four new and 169 related tests under each core. Clean full suites each
+  passed 4,390 tests, 7 skips, 7 subtests, and the same three baseline
+  warnings; branch coverage was 96.23% on 3.2.13 and 96.21% on 3.3.0.
+  Separate coverage XML files yielded 100% diff coverage (5/5) on each.
+- Ruff, mypy, both docstring gates (TOTAL 0), docs with five baseline anchor
+  warnings, and diff checks passed. No new coroutine warnings or defects were
+  found. The parent spot-checked all four native 3.3 regressions. Proof:
+  `/private/tmp/graphex-33-t3c-independent.33W2kc/`.
+- T3 local acceptance was verified. At this historical checkpoint, T3b/T3c
+  remote delivery was blocked pending fresh human authorization; the later
+  integration is recorded below. Engram mirror remains pending without a
+  registered runtime identity.
+
+### T4a start and T3 checkpoint reconciliation
+
+- The local-only tracking commit `c33c4e4a054c9777fdc9ed541822b0babe3fa6c1`
+  reconciled the final T3 evidence. T3b behavior commit
+  `8c9ab8fc2b156dbd6ad03e59b96ef9d142480764` merged via PR #216 at
+  `637dcb714d3ec01e3df1a6d5a0115d39583eea35`; T3c behavior commit
+  `24e52238148514925d8cdac842331f87459f7e06` and correction
+  `d3d1125789e928528c4247ece4f13c0187fbee8f` merged via PR #217 at
+  `61b8784e4d9779a48f62b0209f9abfa62e5323cd`. The latter tree is
+  `19064b4ecd6dbc75083e3dff998567ea239e46ce`, identical to reviewed
+  history-sync head `0e8b1d7e63049e6b329cb152ded1c8511d73a3a7`.
+- Integration-push run 36927916167 and draft-tracker run 36927925471
+  each passed 15 validation jobs and skipped three publishing jobs; both
+  fresh tracker Codecov checks succeeded. Historical rejected-push notes
+  above are past evidence, not an active block. The final independent T3c
+  clean-clone proof is `/private/tmp/graphex-33-t3c-independent.33W2kc/`:
+  4,390 full passes under each core, 7 skips, three established test warnings,
+  coverage 96.23%/96.21%, separate diff coverage 100% (5/5), and five
+  established docs-anchor warnings. No new coroutine warning.
+- T4a route: delegated direct, multiple non-trivial metadata, lock, test,
+  and public-doc files. Current user AGENTS.md enables strict TDD; use the
+  existing root pytest runner and clean real local clone. Authored child
+  budget ≤400 lines, generated lock lines reported separately. No source
+  behavior, benchmarks, package version, root environment, main, or remote
+  state changes are authorized in this local unit. Mirror remains pending.
+
+### T4a local verification
+
+- RED: `.venv/bin/python -m pytest tests/test_graphql_core_33_readiness.py
+  --no-cov -q` failed both new contracts for the old 3.2.13 floor and current
+  README. GREEN: the new current contract plus 3.1.1/3.1.0 release and CI
+  contracts passed 51 tests with `--no-cov -q`. Historical 3.1.1 notes still
+  describe the 3.2.13 security patch; the new Unreleased entries describe
+  current source without inventing a package version or publication date.
+- Both lockfiles resolve graphql-core 3.3.0 and retain django-graphex 3.1.1;
+  a TOML package comparison found changes only in the graphql-core package
+  and the local project's GraphQL requirement. Every other package pin,
+  including Playground Django 6.0.8, is unchanged. Root and Playground
+  `uv lock --check --no-build` passed. The initial resolver refreshed unrelated
+  Autobahn/cbor2 packages, so only its verified official GraphQL metadata was
+  retained before the checks; no broad dependency refresh was accepted.
+- A clean real local Git clone imported candidate source and official 3.3.0
+  from the existing isolated overlay; the root `.venv` still imports 3.2.13.
+  Its unchanged `.venv/bin/python -m pytest` runner passed 4,392 tests,
+  7 skips, 7 subtests, 3 established warnings, and 96.21% branch coverage
+  against the unchanged 95.01% gate. Diff-cover reported no covered runtime
+  lines changed (N/A); no waiver or exclusion was used. Proof:
+  `/private/tmp/graphex-33-t4a-proof.Co6BJ6/`.
+- Ruff format/check, mypy, standard and strict docstring gates (TOTAL 0),
+  Zensical docs build, and diff checks passed. A second mypy run with
+  `MYPYPATH` set to the official 3.3 overlay also passed; its verbose log
+  confirms GraphQL imports from that overlay rather than root 3.2 stubs.
+  Zensical retained five established anchor warnings. No local project build, root environment
+  reinstall, benchmark rewrite, main merge, tag, or remote operation occurred.
+  Runtime harness is the real full 3.3 suite above; it covers HTTP and
+  subscriptions through candidate-source imports, not an editable install.
+  Rollback only T4a's runtime bound, two GraphQL-only lock changes, current
+  readiness tests, Unreleased notes, and current requirements/view guidance.
+- Hosted 3.3 matrix, security/PG, and publication-readiness checks await
+  authorized delivery. T4b new comparison profile, T4c example/migration
+  guidance, and T4d SemVer/final gates remain pending. The Engram mirror
+  remains pending without a registered runtime identity.
+- T4a work-unit commit: `cbcd1da815f8bea95607eb6ec5251275df42b3fc`.
+  Its first committed slice has 274 authored changed lines and 16 generated
+  lock lines (290 total) against integration `61b8784e`; this local-only
+  proof checkpoint adds no source or dependency changes. The initial RED log
+  is `/private/tmp/graphex-33-t4a-red.log`; final focused and full-suite logs
+  are `/private/tmp/graphex-33-t4a-focused-final.log` and
+  `/private/tmp/graphex-33-t4a-proof.Co6BJ6/full-suite.log`.
+
+### T4a independent verification
+
+- Exact candidate `1729ece22b5b8978026e25a77bdb3a1fc447303b`, tree
+  `ed71ab15a2efabb64fc06f3ccbdf91ae8cc7e8f0`, passed independent clean-clone
+  checks: 51 focused tests and 4,392 full native-3.3 passes, 7 skips,
+  7 subtests, three established warnings, and 96.21% branch coverage against
+  the unchanged 95.01% gate. Diff-cover passed with no covered runtime lines
+  changed (N/A). The parent separately spot-checked both new contracts.
+- Ruff checked 461 files; mypy checked 79 source files while its verbose log
+  resolved GraphQL from the official 3.3 overlay. Standard and strict
+  docstring gates had TOTAL 0, and docs retained exactly five established
+  anchor warnings. Root and Playground offline/no-cache lock checks resolved
+  123 and 47 packages; seven in-memory negative controls rejected the old
+  floor, wrong core generations, and mismatched project versions. Proof:
+  `/private/tmp/graphex-33-t4a-independent.0r5pCl/`.
+- Source metadata is still 3.1.1; the reused root editable distribution
+  metadata reports 3.1.0. It is not an artifact-install or release-version
+  proof, and no root reinstall occurred. Hosted 3.3 matrix, PostgreSQL,
+  security, Playground, artifact, base-install, and Codecov checks remain
+  pending until an authorized child PR runs. T4b-T4d and package SemVer remain
+  pending; no main merge, tag, or publication is authorized.
+
+### T4a privacy-prerequisite history sync
+
+- The independently verified native-3.3 HTTP child `0c4917e` merged through
+  PR #221 as `a99bbd67` with identical source tree. Its integration and
+  tracker runs `36944307169` and `36944311598` each passed 15 validation
+  jobs; both tracker Codecov checks passed and publication jobs skipped.
+- The independently verified SSE/WS child `1eedc4e` passed 84 startup/core
+  cases, 37 focused and 90 related tests, full suites of 4,425 under each
+  core, coverage 96.23%/96.19%, and 100% patch coverage (22/22). Its hosted
+  run `36944908273` passed all 15 validations and both Codecov checks; three
+  publication jobs skipped. PR #222 merged only into integration as
+  `b5a5207ebb80b70e95b49880b1b51b327500a5b7`, tree
+  `5c56559b647ead22eedfce49b78ba8b765561d25`. Post-merge integration
+  run `36945214190` and tracker run `36945219668` each passed 15 validation
+  jobs, skipped three publication jobs, and both tracker Codecov checks passed.
+- This T4a correction merges `b5a5207` into existing floor branch `4cd2f7d`
+  without rebasing or rewriting either history. Original T4a RED/GREEN and
+  independent proof remain valid for their exact earlier candidate; the new
+  combined tree requires its own full native-3.3 and hosted checks. Floor
+  PR #218's earlier Playground/Python 3.14 failures are historical, not waived.
+  Roll back only this floor child if its fresh gates fail. The rejected T4s
+  regex branches, frozen benchmarks, and dated 3.1.1/3.1.0 notes remain out.
+- History-preserving merge `8093da0ecac2038a588adc020e8d7f0418b7145f`
+  has tree `4f0981b58fbd136feb11bd0941cb51b2c6b46aec`. The focused
+  floor diff against `b5a5207` is 352 authored plus 16 generated lock lines,
+  368 changed lines total. A clean real clone imported source plus official
+  GraphQL-core 3.3.0: 51 readiness, 66 HTTP/security, and 90 SSE/WS focal
+  tests passed. The unchanged full runner passed 4,427 tests, 7 skips,
+  3 established warnings, and 23 subtests at 96.19% branch coverage versus
+  the unchanged 95.01% gate. Changed-line coverage is N/A because this floor
+  slice changes no covered runtime line. Playground passed 59 tests on both
+  Python 3.12 and 3.14 with native 3.3. Proof:
+  `/private/tmp/graphex-33-t4a-resync.xqRKvD/`.
+- Root and Playground offline no-build lock checks passed for 123 and 47
+  packages. TOML comparison found only graphql-core and the project's GraphQL
+  requirement changed; all other pins, eight historical benchmark results,
+  constraints, versions.env, and dated changelog sections are unchanged.
+  Ruff, native-3.3 mypy (79 files), both docstring gates (TOTAL 0), docs with
+  five established anchor warnings, and diff checks passed. No own build,
+  root environment install, remote operation, main merge, tag, or publication
+  occurred in this local work unit. New floor-head independent and hosted
+  checks remain pending; T4b-T4d and package SemVer remain undecided.
+
+### T4b1 local proof and remaining gate
+
+- The corrected profile child `b0f2fdba2888296ef117aa304602558ff11203a9`
+  fixes the independent Graphex and Graphene startup blockers (345 authored
+  plus 47 installer-observed freeze lines). Its clean native-3.3 suite passed
+  4,438 tests at 96.23% branch coverage. Conventional merge
+  `f7d39a4ffba8903371b4a412e783cade4fbee57c` carries it into this setup
+  child without rewriting either history; focused setup diff remains 358 lines.
+- Two fresh offline setup recreations produced four byte-identical freezes per
+  round with valid activation and entrypoints. All four real seeded five-step
+  HTTP workloads passed with mutation rollback; all 20 SQL counts matched the
+  frozen contracts. Clean setup clone passed 56 benchmark and 4,444 full
+  native-3.3 tests at 96.23%; Ruff, mypy, docstrings, docs, Bash, and pinned
+  ShellCheck passed. Proof: `/private/tmp/graphex-t4b1-correction.efG5xu/`.
+  Independent and hosted checks remain pending; T4b2 measurements are not run.
+- Profile child `783385d35d25fdcfd7f91e595949e9076199016b` records observed
+  per-library constraints and validates the selected direct pins. Its clean
+  clone passed 46 benchmark tests and 4,434 full native-3.3 tests at 96.23%
+  branch coverage. Setup commits through `624503147705866e59f781091ea593ce6cb3c369`
+  add fail-closed final-path installation and the historical published-wheel
+  pin; the exact clean clone passed 52 benchmark tests and 4,440 full native-3.3 tests at
+  96.23%, above the unchanged 95.01% gate. Both runs had seven established
+  skips, three warnings, and 23 passed subtests.
+- Chronological RED before source: five new tests failed for absent profile,
+  setup, and historical-wheel behavior. Separate new RED tests exposed ambient
+  UV credential variables and venv relocation; both passed after focused fixes.
+  Focused GREEN: 14 passed. Four stacks
+  were recreated twice offline from the isolated cache with exact freezes;
+  an empty-cache control failed without promoting or leaving a target venv.
+  A fresh four-stack replay used isolated HOME, retained final-path activation
+  scripts and console commands, and passed exact freeze comparisons.
+  The published historical 3.1.0 wheel imported from site-packages when run
+  from the benchmarks directory without a source-shadowing PYTHONPATH.
+- Ruff, native-3.3 mypy (80 files), standard and strict Google docstrings
+  (TOTAL 0), docs (five established anchor warnings), Bash syntax, and diff
+  checks passed. Shellcheck was unavailable and was not waived or installed.
+  No covered package-runtime line changed, so package patch coverage is N/A.
+  Proof is under `/private/tmp/graphex-t4b1.8H68G9/`. Independent review,
+  hosted CI, T4b2 runner, new measurements, T4c, and T4d remain pending;
+  no GitHub delivery, main merge, tag, or publication occurred here.
+
+### T4b1 named-profile bootstrap (focused local child)
+
+- Independent verification reopened T4b1a/b: the source-backed Graphex venv
+  cannot start without its declared Pydantic/dateutil/unidecode dependencies,
+  and the unchanged Graphene adapter cannot import its django-filter field.
+  Metadata/freeze equality alone is not a runnable-stack contract. Add failing
+  source/adapter dependency tests first, then observed exact freezes and all
+  five real HTTP workload contracts per library. Correct this profile child
+  before history-merging it into the setup child; both remain local pending
+  independent and hosted revalidation. Historical artifacts stay frozen.
+- Correction commits `144b8ad177b55c5f1d55bcf28ff305f888d7445c` and
+  `27a4474c5826f1de8d99e28785d7124c99e6de41` add two cause-correct RED
+  tests, fail-closed required-package checks, and installer-observed 13-package
+  Graphex/Graphene freezes. Six profile tests and 50 benchmark tests passed;
+  all four unchanged seeded five-operation HTTP contracts passed with rollback
+  and expected SQL counts, without timing publication. The clean native-3.3
+  full suite passed 4,438 tests at 96.23% branch coverage; independent and
+  hosted checks remain pending. Proof: `/private/tmp/graphex-t4b1-correction.efG5xu/`.
+- Human-selected future package version is 4.0.0, not yet applied or released.
+  The approved new comparison uses Strawberry 0.328.0 plus
+  strawberry-django 0.90.0 on core 3.3.0; the earlier 0.320.1/0.86.4
+  optimizer failure remains historical diagnostic evidence.
+- Before this source unit, an isolated Python 3.12.11/Django 6.0.8 venv
+  passed the unchanged seeded 20×10×5 Strawberry response contract in three
+  SQL queries and verified mutation rollback. The four observed dependency
+  freezes live under `/private/tmp/graphex-t4b1.8H68G9/`.
+- Route: delegated direct; ownership is a new named-profile manifest and
+  per-library observed constraints, preflight/bootstrap, benchmark tests,
+  concise guide, and this narrow checkpoint. Strict TDD is enabled by current
+  AGENTS.md: RED profile contract before implementation, then GREEN/refactor.
+  Focused runner is `.venv/bin/python -m pytest tests/benchmarks --no-cov`;
+  full native-3.3 runner retains the 95.01% branch gate in a clean clone.
+  No canonical result/freeze, package version, benchmark timing, main, tag,
+  or publication change belongs to this unit. Engram mirror remains pending.
+
+### T4a capability-test history sync
+
+- T4q PR #223 passed all 15 validation jobs and both Codecov checks before
+  integration-only merge `fc0d730a87b90c5bc57387fad61a09ca761aac2a`.
+  Conventional merge `a886e60d8d58f6d1400b96003d0eedd45e275a8e`
+  preserves the old floor history and adds only those reviewed tests/docs.
+- The combined clean-clone native-3.3 suite passed 4,432 tests, 7 skips,
+  23 subtests, and the 3 established warnings at 96.23% branch coverage.
+  Its XML has 258 missed lines and 266 partial branches, exactly matching
+  T4q's 3.2 baseline; all six previously uncovered capability sites passed.
+  Conservative projected line coverage is 95.018064%, an inference rather
+  than a hosted Codecov verdict. Fresh independent and hosted checks on this
+  combined floor head are still required before integration-only delivery.
+
+### T4b1c legacy bootstrap safety (local)
+
+- Chronological RED: the new disposable offline-cache regression lost an
+  existing `.venv-graphex/keep.txt` because the old script deleted its target
+  before installation. GREEN: 15 legacy bootstrap contracts passed, including
+  directories, files, live/dangling symlinks, whole-request preflight, cache
+  failure, and rollback after a later install failure.
+- A separate real offline run without the local promise wheel failed while
+  resolving Graphene and left all four venv paths and freeze files absent.
+- A clean clone installed all four historical stacks offline into fresh final
+  paths using the isolated cache and the verified upstream promise wheel.
+  Each freeze matched its installed environment; all used Python 3.12.11,
+  Django 6.0.6, and core 3.2.11. GraphEx 3.1.0 imported from the published
+  wheel in site-packages, not this checkout. No timing or canonical result was
+  written. Proof: `/private/tmp/graphex-t4b1c.sX1F3i/`.
+- The exact clean-clone native-3.3 suite passed 4,453 tests, 7 skips,
+  3 established warnings, and 23 subtests at 96.23% branch coverage against
+  the unchanged 95.01% gate. All 65 benchmark tests, Ruff, native-3.3 mypy80,
+  both docstring gates (TOTAL 0), docs with five established anchors, Bash,
+  pinned ShellCheck, and diff checks passed. No covered package-runtime line
+  changed, so package diff coverage is N/A.
+- Rollback only the historical setup script, its safety regressions, current
+  benchmark guidance, and this checkpoint. Independent/hosted checks remain
+  pending. Separate PR #225 Python-version fixture failures are not addressed
+  in this child; no source package version, main, tag, or publication changed.

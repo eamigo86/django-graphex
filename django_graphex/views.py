@@ -30,6 +30,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from django.core.cache import caches
+from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
 from django.http import HttpResponse, HttpResponseNotAllowed
 from django.http.response import HttpResponseBadRequest, HttpResponseForbidden
@@ -45,17 +46,45 @@ from graphql import (
     parse,
     validate_schema,
 )
+from graphql import execution as graphql_execution
 from graphql.execution.middleware import MiddlewareManager
+from graphql.pyutils import is_iterable
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
-from .security import format_graphql_error
+from .security import format_graphql_error, introspection_disabled
 from .settings import graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule
+
+_EXECUTION_BACKEND_KEYWORD = (
+    "executor_class"
+    if hasattr(graphql_execution, "Executor")
+    else "execution_context_class"
+)
+
+_VALIDATE_SUPPORTS_HIDE_SUGGESTIONS = (
+    "hide_suggestions" in inspect.signature(validate).parameters
+)
+_EXECUTE_SUPPORTS_HIDE_SUGGESTIONS = (
+    "hide_suggestions" in inspect.signature(execute).parameters
+)
+
+
+def _is_async_only_iterable(value: Any) -> bool:
+    """Keep dual-protocol Django querysets on the synchronous list path.
+
+    Args:
+        value: A resolver result considered for async list completion.
+
+    Returns:
+        Whether the result is async iterable without being sync iterable.
+    """
+    return hasattr(value, "__aiter__") and not is_iterable(value)
+
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -316,7 +345,8 @@ _PARSE_CACHE: OrderedDict[str, Any] = OrderedDict()
 #: and the inner OrderedDicts).
 _VALIDATE_CACHE_LOCK = threading.Lock()
 
-#: schema OBJECT -> inner LRU keyed by (query, rules token, max_errors) ->
+#: schema OBJECT -> inner LRU keyed by query, rules, error cap, runtime limits,
+#: and suggestion visibility ->
 #: tuple[GraphQLError, ...]. WeakKeyDictionary so a GC'd schema drops its verdicts.
 _VALIDATE_CACHE: "weakref.WeakKeyDictionary[Any, OrderedDict[tuple, tuple]]" = (
     weakref.WeakKeyDictionary()
@@ -441,13 +471,15 @@ def cached_validate(
     document: Any,
     rules: Any,
     max_errors: Any,
+    hide_suggestions: bool = False,
 ) -> tuple:
     """Return the validation errors for the document against the schema, memoized.
 
     The verdict is keyed by the schema OBJECT (a per-schema sub-cache), the query
     string, a stable token of the rules, the max-errors cap, and the runtime
     depth/cost limits the bundled rules read dynamically (see
-    "_dynamic_limits_key") — every input that can change the verdict. An empty
+    "_dynamic_limits_key"), and suggestion visibility — every input that can
+    change the returned errors. An empty
     tuple means "valid". The SAME "GraphQLError" objects are reused across cache
     hits, so "error.formatted" serializes identically to a fresh run.
 
@@ -460,13 +492,23 @@ def cached_validate(
         document: The parsed "DocumentNode" to validate.
         rules: The validation-rules collection passed to "validate".
         max_errors: The "MAX_VALIDATION_ERRORS" cap passed to "validate".
+        hide_suggestions: Whether native validation should omit schema hints.
+            GraphQL-core 3.2 has no such native option and retains its existing
+            validation behavior during the migration.
 
     Returns:
         A tuple of "GraphQLError" (empty tuple when the document is valid).
     """
+    validation_options: dict[str, Any] = (
+        {"hide_suggestions": hide_suggestions}
+        if _VALIDATE_SUPPORTS_HIDE_SUGGESTIONS
+        else {}
+    )
     maxsize = _document_cache_maxsize()
     if maxsize <= 0:
-        return tuple(validate(schema, document, rules, max_errors))
+        return tuple(
+            validate(schema, document, rules, max_errors, **validation_options)
+        )
 
     # Rules identity: a CONTENT token (the dotted name of every rule, in order),
     # never id(rules). An address is only unique while the object is alive: a
@@ -482,7 +524,13 @@ def cached_validate(
     # limit would survive a limit tightening and silently bypass the guard until
     # eviction/restart. `_dynamic_limits_key` folds in every setting that can flip
     # a verdict (kept cheap: plain ints/None and a small tuple).
-    key = (query, _rules_key(rules), max_errors, _dynamic_limits_key())
+    key = (
+        query,
+        _rules_key(rules),
+        max_errors,
+        _dynamic_limits_key(),
+        hide_suggestions,
+    )
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)
@@ -493,7 +541,7 @@ def cached_validate(
                 return cached
 
     # Validate OUTSIDE the lock; store the result as a tuple.
-    errors = tuple(validate(schema, document, rules, max_errors))
+    errors = tuple(validate(schema, document, rules, max_errors, **validation_options))
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)
@@ -541,6 +589,7 @@ class BaseGraphQLView(View):
     schema = None
     subscription_path = None
     execution_context_class = None
+    executor_class = None
     validation_rules = None
 
     def __init__(
@@ -555,6 +604,7 @@ class BaseGraphQLView(View):
         subscription_path: str | None = None,
         execution_context_class: Any = None,
         validation_rules: Any = None,
+        executor_class: Any = None,
     ) -> None:
         """Configure the view, reading defaults from the "DJANGO_GRAPHEX" setting.
 
@@ -575,13 +625,16 @@ class BaseGraphQLView(View):
             batch: Whether to accept batched request lists.
             subscription_path: The advertised subscription endpoint path; falls
                 back to the "SUBSCRIPTION_PATH" setting.
-            execution_context_class: An optional custom execution context class.
+            execution_context_class: Compatibility alias for a custom execution
+                backend class.
             validation_rules: The validation-rules collection passed to
                 "validate".
+            executor_class: The preferred custom execution backend class.
 
         Raises:
             AssertionError: When the schema does not expose "graphql_schema", or
                 when both "graphiql" and "batch" are requested together.
+            ImproperlyConfigured: When both backend names select different classes.
         """
         if not schema:
             schema = graphql_api_settings.SCHEMA
@@ -600,9 +653,26 @@ class BaseGraphQLView(View):
         self.graphiql = graphiql or self.graphiql
         self.graphiql_template = graphiql_template or self.graphiql_template
         self.batch = batch or self.batch
-        self.execution_context_class = (
-            execution_context_class or self.execution_context_class
+        if executor_class is not None or execution_context_class is not None:
+            configured_executor = executor_class
+            configured_context = execution_context_class
+        else:
+            configured_executor = self.executor_class
+            configured_context = self.execution_context_class
+        if (
+            configured_executor is not None
+            and configured_context is not None
+            and configured_executor is not configured_context
+        ):
+            raise ImproperlyConfigured(
+                "executor_class and execution_context_class must reference the same class"
+            )
+        self.executor_class = (
+            configured_executor
+            if configured_executor is not None
+            else configured_context
         )
+        self.execution_context_class = self.executor_class
         if subscription_path is None:
             self.subscription_path = graphql_api_settings.SUBSCRIPTION_PATH
         else:
@@ -1243,12 +1313,15 @@ class BaseGraphQLView(View):
                 )
             )
 
+        middleware = self.get_middleware(request)
+        hide_suggestions = introspection_disabled(middleware)
         validation_errors = cached_validate(
             schema,
             query,
             document,
             self.validation_rules,
             graphql_api_settings.MAX_VALIDATION_ERRORS,
+            hide_suggestions=hide_suggestions,
         )
         if validation_errors:
             return ExecutionResult(data=None, errors=list(validation_errors))
@@ -1259,12 +1332,14 @@ class BaseGraphQLView(View):
                 "context_value": self.get_context(request),
                 "variable_values": variables,
                 "operation_name": operation_name,
-                "middleware": self.get_middleware(request),
+                "middleware": middleware,
             }
-            if self.execution_context_class:
-                execute_options["execution_context_class"] = (
-                    self.execution_context_class
-                )
+            if _EXECUTE_SUPPORTS_HIDE_SUGGESTIONS:
+                execute_options["hide_suggestions"] = hide_suggestions
+            if self.executor_class is not None:
+                execute_options[_EXECUTION_BACKEND_KEYWORD] = self.executor_class
+            if _EXECUTION_BACKEND_KEYWORD == "executor_class":
+                execute_options["is_async_iterable"] = _is_async_only_iterable
 
             is_mutation = (
                 operation_ast is not None

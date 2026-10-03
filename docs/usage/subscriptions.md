@@ -61,6 +61,15 @@ A cross-process channel layer (Redis) is required when the producer (the process
 running model writes) and the subscriber processes are separate; the in-memory
 layer is fine for development.
 
+!!! note "Custom transport migrations to GraphQL-core 3.3"
+    The built-in SSE and WebSocket transports prepare an `Executor` before
+    creating a 3.3 source stream. A custom transport must handle errors returned
+    by `Executor.build()` and accept either an immediate or awaitable result from
+    `create_source_event_stream()`. Keep per-event delivery and teardown in the
+    serialize-once driver rather than replacing it with the stock `subscribe()`
+    pipeline. The published 3.1.1 package retains its 3.2 dependency floor.
+    The prepared 4.0.0 checkout requires 3.3, but has not been published.
+
 !!! tip "Try it interactively"
     Add the [browser client view](#browser-client-view) to your URLConf to
     subscribe and watch notifications stream in — straight from the browser,
@@ -462,6 +471,12 @@ trigger, Enter/Tab to accept).
     'Subscription'` until you type your own field name. An active superuser
     bypasses the block (`INTROSPECTION_ALLOW_SUPERUSER`), so the same page can
     behave differently for two logged-in users.
+
+When introspection is disabled, GraphQL-core 3.3 also omits schema-derived
+suggestions from SSE and WebSocket subscription startup errors. This applies
+to invalid documents and variables before a source joins any group; client
+values and error paths remain visible. Public mode retains native suggestions.
+The current 3.2 runtime retains its recognized legacy error-filtering behavior.
 
 The endpoints default to the page's own origin with the
 routes `/ws/graphql/` (WS), `/graphql/stream` (SSE) and `/graphql/` (HTTP);
