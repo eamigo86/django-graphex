@@ -154,7 +154,8 @@ of scope.
   versions chosen separately for each library. Compare disclosed whole stacks,
   not libraries alone. Preserve the eight historical JSON results, versions.env,
   constraints, and dated release notes. Package 4.0.0 is prepared in the
-  integration branch but has not been built or published.
+  integration branch. Hosted CI built and smoke-tested validation artifacts;
+  no package has been published.
   - [x] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
     scope-update root and Playground graphql-core lock entries; preserve
     package version 3.1.1. Own current-readiness contracts and bounded public
@@ -1053,7 +1054,8 @@ request. Functional and earlier hosted gates passed, but the latest
 independent documentation check remains a historical PARTIAL; the T4e local
 candidate now builds with zero issues and still needs independent and hosted
 acceptance. Tracker-to-main
-approval, tag, artifact build and publication have not occurred. The earlier
+approval, tag and publication have not occurred. Hosted CI has already built
+and validated 4.0.0 artifacts; that is not release publication. The earlier
 progress snapshots below remain historical
 evidence of their respective candidate states.
 
