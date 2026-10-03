@@ -153,8 +153,9 @@ of scope.
   The user selected a new four-library comparison with compatible core
   versions chosen separately for each library. Compare disclosed whole stacks,
   not libraries alone. Preserve the eight historical JSON results, versions.env,
-  constraints, and dated release notes. The selected future package version is
-  4.0.0, not yet applied or released.
+  constraints, and dated release notes. Package 4.0.0 is prepared in the
+  integration branch. Hosted CI built and smoke-tested validation artifacts;
+  no package has been published.
   - [x] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
     scope-update root and Playground graphql-core lock entries; preserve
     package version 3.1.1. Own current-readiness contracts and bounded public
@@ -1000,14 +1001,62 @@ of scope.
     the clean exact-head clone passed the required gate without deleting
     them. Local preparation is not wheel validation or release acceptance;
     independent and hosted gates, main, tag and publication remain pending.
+    The 4.0.0 child later passed independent functional, Playground, benchmark,
+    lock and quality checks, and its hosted child, integration and tracker
+    validations were accepted. The requested final independent check at
+    integration `4087f04417f58964589d8a1e0e16a14b12f90dad` passed 4,728
+    root tests at 96.23%, 331 benchmark tests and 59 Playground tests, but
+    remained PARTIAL for five real historical broken documentation anchors.
+    Tracker run `37121554286` attempt 2 passed all 15 validations and both
+    Codecov checks, with three publication jobs skipped; attempt 1's timeout
+    remains historical. T4d remains open until the requested clean-doc check.
+  - [ ] T4e — Correct only the five verified historical broken hrefs and add
+    an executable heading-backed anchor contract, then prove a warning-free
+    generated site and the unchanged native-3.3 test gate. Route: delegated
+    direct because four documentation sources, one focused contract and this
+    task checkpoint form a coherent correction. Strict TDD from current
+    AGENTS.md requires a cause-correct RED before href edits, followed by
+    GREEN/refactor; focal runner is `.venv/bin/python -m pytest
+    tests/test_docs_anchor_links.py --no-cov`. Preserve all target headings,
+    historical dates, other links and old/new benchmark artifacts. Verify
+    the six release/readiness/docs/workflow modules, full clean-clone pytest
+    with unchanged 95.01% branch gate, both docstring gates, Ruff, typing,
+    exact generated-HTML anchor resolution, and protected-state equality.
+    Rollback only this five-href/test/task unit. Main, tag, artifact build,
+    publication and the draft tracker remain outside this local unit.
+    Cause-correct RED: the new heading-backed regression failed on the first
+    historical changelog href (`310--2026-09-02` versus the actual
+    `310-2026-09-03` heading). A first GREEN attempt exposed an inaccurate
+    test label for the index link, not a sixth broken href; the corrected
+    source-label fixture and exactly five href edits yielded one passing
+    focused test. The local Zensical clean build then reported zero issues.
+    This is local evidence only; final clean-clone gates and independent
+    readback remain pending at this checkpoint.
+    Local behavior work-unit commit `a92c601305b3ab42c0c6606fedae82a539446eef`
+    has tree `be87ee0b62d81905f9b0cd15ada1697a586f9474` and changes 114
+    added plus 12 deleted authored lines across six owned paths. Its clean
+    native-3.3 clone passed 53 focal, 331 benchmark, 59 Playground and 4,729
+    full tests at 96.23% branch coverage with the unchanged 95.01% gate.
+    Complete 258/266/274/282 coverage gaps, seven skips and three warnings
+    match the accepted baseline. Ruff, 79/82/102-module mypy and both
+    docstring gates passed; the generated docs reported **No issues found**
+    and all five repaired hrefs resolved to existing HTML IDs. All 82
+    protected objects and every outside-scope tracked blob were unchanged.
+    Local correction does not relabel the earlier independent documentation
+    PARTIAL as PASS; fresh independent and hosted acceptance remain pending.
 
 ## Progress and next step
 
-Current checkpoint: T4c is independently and hosted-verified at integration
-`d740a0b90a811a8ce1bd74bd2467561044a2d983`; T4d is the remaining
-local release-readiness child. Package 4.0.0 is selected, but final child
-verification, tracker-to-main approval, tag, artifact build and publication
-have not occurred. The earlier progress snapshots below remain historical
+Current checkpoint: the prepared 4.0.0 integration is
+`4087f04417f58964589d8a1e0e16a14b12f90dad`; T4e is the bounded
+documentation-anchor correction required by the user's final clean-doc
+request. Functional and earlier hosted gates passed, but the latest
+independent documentation check remains a historical PARTIAL; the T4e local
+candidate now builds with zero issues and still needs independent and hosted
+acceptance. Tracker-to-main
+approval, tag and publication have not occurred. Hosted CI has already built
+and validated 4.0.0 artifacts; that is not release publication. The earlier
+progress snapshots below remain historical
 evidence of their respective candidate states.
 
 At the earlier T4q checkpoint, T0-T3 and the JSON, validation-cache, HTTP
