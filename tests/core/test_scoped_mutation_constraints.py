@@ -4,14 +4,14 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from django.db import IntegrityError, connection, models, transaction
+from django.db import IntegrityError, connection, connections, models, transaction
 from django.test.utils import CaptureQueriesContext
 
 from django_graphex.core.backend import (
     PydanticBackend,
     _check_sqlite_written_relations,
 )
-from tests.models import Author, Post
+from tests.models import Author, Post, Tag
 
 
 class ScopedTarget(models.Model):
@@ -160,6 +160,26 @@ class UuidLink(models.Model):
 
     class Meta:
         """Keep the UUID link table in the disposable fixture app.
+
+        The test owns its schema lifecycle.
+        """
+
+        app_label = "scoped_constraint_fixture"
+
+
+class CompositeChild(models.Model):
+    """Exercise the explicit fallback for a composite primary key.
+
+    Its row cannot be addressed through a single database column.
+    """
+
+    first = models.IntegerField()
+    second = models.IntegerField()
+    pk = models.CompositePrimaryKey("first", "second")
+    target = models.ForeignKey(ScopedTarget, to_field="code", on_delete=models.CASCADE)
+
+    class Meta:
+        """Keep the composite-key table in the disposable fixture app.
 
         The test owns its schema lifecycle.
         """
@@ -341,3 +361,69 @@ def test_uuid_row_and_relation_keys_are_database_prepared() -> None:
         with connection.schema_editor() as editor:
             for model in (UuidLink, UuidOwner, UuidChild, UuidTarget):
                 editor.delete_model(model)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_composite_key_retains_table_constraint_fallback() -> None:
+    """Composite keys retain database checks rather than skipping them.
+
+    The fallback is explicitly table-scoped, not claimed to be constant work.
+    """
+    with connection.schema_editor() as editor:
+        editor.create_model(ScopedTarget)
+        editor.create_model(CompositeChild)
+    try:
+        target = ScopedTarget.objects.create(code="valid")
+        with transaction.atomic():
+            child = CompositeChild.objects.create(
+                first=1, second=2, target_id=target.code
+            )
+            _check_sqlite_written_relations(child, set(), "default")
+            CompositeChild.objects.filter(first=1, second=2).update(target_id="bad")
+            with pytest.raises(IntegrityError):
+                _check_sqlite_written_relations(child, set(), "default")
+            transaction.set_rollback(True)
+    finally:
+        with connection.schema_editor() as editor:
+            editor.delete_model(CompositeChild)
+            editor.delete_model(ScopedTarget)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_non_sqlite_path_retains_existing_table_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-SQLite branch still invokes the existing table check.
+
+    A SQLite connection stands in only to check branch routing; this is not
+    a substitute for actual PostgreSQL integration testing.
+
+    Args:
+        monkeypatch: Fixture temporarily selecting the non-SQLite branch.
+    """
+    author = Author.objects.create(name="Owner")
+    tag = Tag.objects.create(label="tag")
+    backend = PydanticBackend(Post)
+    database = connections["default"]
+    checked_tables: list[list[str]] = []
+
+    def record_tables(*, table_names: list[str]) -> None:
+        """Record the tables passed to the existing check.
+
+        Args:
+            table_names: Tables the backend asks the database to check.
+        """
+        checked_tables.append(table_names)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(database, "vendor", "other")
+        patch.setattr(database, "check_constraints", record_tables)
+        with transaction.atomic():
+            ok, result = backend.save_object(
+                None,
+                None,
+                _info(),
+                {"title": "Valid", "author": author.pk, "body": "", "tags": [tag.pk]},
+            )
+            assert ok, result
+    assert checked_tables == [[Post._meta.db_table, Post.tags.through._meta.db_table]]

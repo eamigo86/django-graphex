@@ -203,3 +203,15 @@ itself to exactly one saved-row-key-filtered CASE query and forbids the
 table-wide PRAGMA, without claiming all serialization SQL is fixed. That
 failed full run (4,734 pass/one fail) is also retained; the 17-test focal
 passed after the assertion correction. Its exact-head full run remains pending.
+
+At fea81d7e372282f26bc24c1acd6a24aa7c926805, the clean native-3.3 full
+suite passed 4,735 tests with seven skips, three warnings, 23 subtests and
+96.16% total branch coverage (unchanged 95.01% floor). All 331 benchmark
+tests, 59 Playground tests, configured 79/82-file typing, both docstring gates,
+Ruff and docs build passed. The first changed-runtime diff-cover measured only
+83% (51/61 lines), so MP2 remains open: focused composite-key fallback and
+non-SQLite branch-routing tests were added without claiming that a SQLite
+stand-in is actual PostgreSQL integration. Their initial fixture typo failed
+before correction, and the two-test focused rerun passed. A new exact-head
+full/diff-coverage proof and post-change disposable performance profile remain
+pending.
