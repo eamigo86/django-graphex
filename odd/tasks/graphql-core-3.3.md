@@ -896,7 +896,7 @@ of scope.
         main and issue #210 remains open/approved; no main merge, tag, or
         release occurred. The measured `350ae84` source and `1b5b941` seed
         witnesses remain distinct from this artifact checkout.
-  - [ ] T4c — Complete Playground/example and migration guidance, verify
+  - [x] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
     Route: delegated direct because derived website tables, two changelogs,
     current example guidance, and executable parity/readiness tests are
@@ -923,8 +923,28 @@ of scope.
     with the same five historical broken-anchor targets. Root benchmark
     execution still fails 17 canonical-provenance cases because pre-existing
     ignored historical JSON pollutes that checkout; no files were removed or
-    tests waived. Clean exact-head benchmark/full/quality and independent or
-    hosted verification remain pending at this checkpoint.
+    tests waived. The coherent work-unit commit
+    `abdf746c2fceb3df81e610132dd8dd027db4edde` added the JSON-backed
+    eight-artifact parity contract, current-profile website table and exact
+    stack versions, unreleased 3.3 upgrade guide and navigation, two
+    Unreleased changelogs, root and benchmark entries, and current Playground
+    banner/test invocation. A clean real clone of that commit passed 331
+    benchmark and 4,724 full native-3.3 tests at 96.23% coverage against
+    the unchanged 95.01% gate. Its complete gap sets exactly equal the
+    retained baseline (258 missing lines, 266 partial sites, 274 all-missing
+    branch sites, 282 missing arcs); seven skips, three warnings and 23
+    subtests also match. The complete Playground suite passed 59 tests with
+    Python 3.12.11, Django 6.0.8 and the official core-3.3.0 overlay.
+    Configured 79/82-file typing and normal-import 102-module typing passed;
+    Ruff lint/check-only format and both docstring gates were TOTAL 0.
+    Zensical built with the same five historical broken-anchor targets; the
+    changelog diagnostic moved from line 624 to 630 as Unreleased grew.
+    Protected old/new JSON, ignored histories, retained and private database
+    bytes, and outside-scope tracked paths remained unchanged. This local
+    result does not claim independent or hosted acceptance, a new measurement,
+    guaranteed CPU quietness, a published 4.0.0 package, or main/tag/release.
+    Final documentary-head proof is recorded separately; independent and
+    hosted gates remain pending for parent delivery.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
     release-readiness unit, then run final independent and hosted gates. No
     main merge or publication follows automatically.
