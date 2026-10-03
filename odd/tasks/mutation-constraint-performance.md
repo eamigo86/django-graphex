@@ -140,8 +140,12 @@ partial/complete statuses precisely: profiling PASS, optimization pending.
 
 ## Work-unit evidence
 
-MP1 profiling recovery is a documentation-only work unit; its commit identity is
-recorded after creation. No runtime implementation commit exists. Running
-authored runtime changed-line count: 0. Rollback boundary: only this new
+MP1 work-unit commit: 42102f6ed829a88628c96f3094f60b3ab2f0b3e6
+(docs(perf): record constraint profiling and contract decision). Its 147 authored
+lines are profiling recovery only; no runtime implementation commit exists.
+Running authored runtime changed-line count: 0. Rollback boundary: only this new
 constraint-cost unit and its tests/docs, never the previously validated migration
 integration. The Engram mirror remains explicitly pending.
+
+The following small tracking checkpoint records MP1's immutable commit identity;
+it does not close MP2/MP3 or claim optimized performance, coverage or delivery.
