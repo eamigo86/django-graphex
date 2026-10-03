@@ -423,6 +423,11 @@ both row counts and the SQLite sequence unchanged. BEGIN/ROLLBACK sit outside
 the timer and SQL capture, so isolation does not become part of the result. The
 graphex mutation itself records **4 request-internal SQL statements** on SQLite:
 `SAVEPOINT`, `INSERT`, deferred-FK `PRAGMA foreign_key_check`, and `RELEASE`.
+Those recorded core33 results measured the earlier 3.1.1 checkout. The prepared
+4.0.0 source now uses a scoped post-write SQLite FK lookup instead of the
+table-wide PRAGMA inside an outer transaction. Its new request timing is only
+diagnostic until a separate controlled comparison is measured and published;
+the eight existing core33 JSON files remain unchanged.
 
 ## What the harness records
 

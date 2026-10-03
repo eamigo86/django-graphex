@@ -14,7 +14,7 @@ import enum
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
-from django.db import IntegrityError, connection, models, transaction
+from django.db import IntegrityError, connections, models, router, transaction
 from pydantic import ValidationError
 
 from ..backends import SerializerBackend
@@ -61,6 +61,85 @@ def _json_safe(field: models.Field, value: Any) -> Any:
             return None
         return base64.b64encode(bytes(value)).decode("ascii")
     return value
+
+
+def _check_sqlite_written_relations(
+    obj: models.Model, m2m_names: set[str], using: str
+) -> None:
+    """Check only the saved row and its directly updated relation rows.
+
+    Args:
+        obj: The model instance just saved inside a rollback boundary.
+        m2m_names: Relations whose link rows were directly updated.
+        using: Database alias owning the write and rollback boundary.
+
+    Raises:
+        IntegrityError: A directly written row has an invalid constrained FK.
+    """
+    db = connections[using]
+    quote = db.ops.quote_name
+    pk = obj._meta.pk
+    if pk.column is None:
+        tables = [obj._meta.db_table]
+        tables.extend(
+            obj._meta.get_field(name).remote_field.through._meta.db_table
+            for name in m2m_names
+        )
+        db.check_constraints(table_names=tables)
+        return
+
+    fields = [
+        field
+        for field in obj._meta.concrete_fields
+        if isinstance(field, models.ForeignKey) and field.db_constraint
+    ]
+    if fields:
+        columns = ", ".join(quote(field.column) for field in fields)
+        with db.cursor() as cursor:
+            cursor.execute(
+                f"SELECT {columns} FROM {quote(obj._meta.db_table)} "
+                f"WHERE {quote(pk.column)} = %s",
+                [obj.pk],
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise IntegrityError("The saved mutation row is missing.")
+            for field, value in zip(fields, row, strict=True):
+                if value is None:
+                    continue
+                target = field.target_field
+                cursor.execute(
+                    f"SELECT 1 FROM {quote(target.model._meta.db_table)} "
+                    f"WHERE {quote(target.column)} = %s LIMIT 1",
+                    [value],
+                )
+                if cursor.fetchone() is None:
+                    raise IntegrityError(f"Invalid foreign key in {field.name}.")
+
+    for name in m2m_names:
+        relation = obj._meta.get_field(name)
+        through = relation.remote_field.through
+        source_field = through._meta.get_field(relation.m2m_field_name())
+        source_value = getattr(obj, source_field.target_field.attname)
+        child_table = quote(through._meta.db_table)
+        source_column = quote(source_field.column)
+        with db.cursor() as cursor:
+            for field in through._meta.concrete_fields:
+                if not isinstance(field, models.ForeignKey) or not field.db_constraint:
+                    continue
+                target = field.target_field
+                child_column = quote(field.column)
+                cursor.execute(
+                    f"SELECT 1 FROM {child_table} AS child "
+                    f"WHERE child.{source_column} = %s "
+                    f"AND child.{child_column} IS NOT NULL "
+                    f"AND NOT EXISTS (SELECT 1 FROM {quote(target.model._meta.db_table)} "
+                    f"AS parent WHERE parent.{quote(target.column)} = "
+                    f"child.{child_column}) LIMIT 1",
+                    [source_value],
+                )
+                if cursor.fetchone() is not None:
+                    raise IntegrityError(f"Invalid foreign key in {field.name}.")
 
 
 class PydanticBackend(SerializerBackend):
@@ -123,16 +202,23 @@ class PydanticBackend(SerializerBackend):
         }
 
     def _db_check_errors(
-        self, payload: dict[str, Any], instance: models.Model | None
+        self,
+        payload: dict[str, Any],
+        instance: models.Model | None,
+        using: str | None = None,
     ) -> dict[str, list[str]]:
         """Run the DB-level checks Pydantic can't (FK existence, uniqueness)."""
         errors: dict[str, list[str]] = {}
+        alias = using or (instance._state.db if instance is not None else None)
+        alias = alias or router.db_for_write(self.model, instance=instance)
         fks = self._fk_fields()
         for name, fk in fks.items():
             pk = payload.get(name)
             if (
                 pk is not None
-                and not fk.related_model._default_manager.filter(pk=pk).exists()
+                and not fk.related_model._default_manager.db_manager(alias)
+                .filter(**{fk.target_field.name: pk})
+                .exists()
             ):
                 errors.setdefault(name, []).append(
                     f'Invalid pk "{pk}" - object does not exist.'
@@ -148,14 +234,18 @@ class PydanticBackend(SerializerBackend):
             if not isinstance(pks, (list, tuple)) or not pks:
                 continue
             unique_pks = list(dict.fromkeys(pks))  # deduplicate, preserve order
-            existing_count = field.related_model._default_manager.filter(
-                pk__in=unique_pks
-            ).count()
+            existing_count = (
+                field.related_model._default_manager.db_manager(alias)
+                .filter(pk__in=unique_pks)
+                .count()
+            )
             if existing_count != len(unique_pks):
                 missing = [
                     pk
                     for pk in unique_pks
-                    if not field.related_model._default_manager.filter(pk=pk).exists()
+                    if not field.related_model._default_manager.db_manager(alias)
+                    .filter(pk=pk)
+                    .exists()
                 ]
                 for pk in missing:
                     errors.setdefault(field.name, []).append(
@@ -168,7 +258,7 @@ class PydanticBackend(SerializerBackend):
                 and not field.primary_key
                 and field.name in payload
             ):
-                qs = self.model._default_manager.filter(
+                qs = self.model._default_manager.db_manager(alias).filter(
                     **{field.name: payload[field.name]}
                 )
                 if instance is not None:
@@ -186,7 +276,7 @@ class PydanticBackend(SerializerBackend):
                 )
                 lookup[name] = value
             if all(v is not None for v in lookup.values()):
-                qs = self.model._default_manager.filter(**lookup)
+                qs = self.model._default_manager.db_manager(alias).filter(**lookup)
                 if instance is not None:
                     qs = qs.exclude(pk=instance.pk)
                 if qs.exists():
@@ -255,7 +345,7 @@ class PydanticBackend(SerializerBackend):
                 )
                 lookup[name] = value
             if all(v is not None for v in lookup.values()):
-                qs = self.model._default_manager.filter(**lookup)
+                qs = self.model._default_manager.db_manager(alias).filter(**lookup)
                 if instance is not None:
                     qs = qs.exclude(pk=instance.pk)
                 if qs.exists():
@@ -380,11 +470,13 @@ class PydanticBackend(SerializerBackend):
         # autocommit needs NO wrapper: a failed INSERT autocommits/rolls back
         # itself and leaves the connection usable, so the hot path stays a
         # single INSERT with zero savepoint SQL.
-        need_boundary = connection.in_atomic_block or bool(m2m_values)
-        boundary = transaction.atomic() if need_boundary else nullcontext()
+        using = obj._state.db or router.db_for_write(self.model, instance=obj)
+        db_connection = connections[using]
+        need_boundary = db_connection.in_atomic_block or bool(m2m_values)
+        boundary = transaction.atomic(using=using) if need_boundary else nullcontext()
         try:
             with boundary:
-                obj.save()
+                obj.save(using=using)
                 for name, pks in m2m_values.items():
                     # Only present keys reach here (``model_fields_set`` gates
                     # the payload), so an OMITTED M2M never appears in
@@ -394,30 +486,25 @@ class PydanticBackend(SerializerBackend):
                     # surface, non-nested ID list).
                     getattr(obj, name).set([] if pks is None else pks)
                 if need_boundary:
-                    # Force deferred FK validation while still INSIDE the
-                    # savepoint. Backends that defer referential integrity to
-                    # the end of a transaction (SQLite disables FK enforcement
-                    # inside an atomic block; MySQL/Postgres may use DEFERRED
-                    # constraints) would otherwise let a bad FK slip past this
-                    # ``save()`` and only surface at the OUTERMOST commit — long
-                    # after this recovery boundary, where the connection is no
-                    # longer positioned to run the diagnostic SELECTs. Checking
-                    # here makes the ``IntegrityError`` land in the ``except``
-                    # below so the savepoint rolls back and diagnostics run on a
-                    # usable connection. One ``check_constraints`` call covers
-                    # ALL FKs of the touched tables (vs the old per-FK
-                    # ``SELECT 1``), and it only runs on the boundary path —
-                    # never on the autocommit hot path. The M2M through tables
-                    # are included so a bad M2M pk (its violation lives in the
-                    # link row, not the parent) is caught too.
-                    check_tables = [self.model._meta.db_table]
-                    for name in m2m_values:
-                        through = self.model._meta.get_field(name).remote_field.through
-                        check_tables.append(through._meta.db_table)
-                    connection.check_constraints(table_names=check_tables)
+                    # Resolve deferred violations of this mutation's own row
+                    # and updated M2M links before leaving the savepoint, so
+                    # diagnostics can run after rollback on a usable connection.
+                    # SQLite's table-wide check scales with unrelated rows;
+                    # only SQLite uses the bounded post-write relation checks.
+                    # Other backends retain their existing constraint checks.
+                    if db_connection.vendor == "sqlite":
+                        _check_sqlite_written_relations(obj, set(m2m_values), using)
+                    else:
+                        check_tables = [self.model._meta.db_table]
+                        for name in m2m_values:
+                            through = self.model._meta.get_field(
+                                name
+                            ).remote_field.through
+                            check_tables.append(through._meta.db_table)
+                        db_connection.check_constraints(table_names=check_tables)
         except IntegrityError:
             # Reproduce the exact structured envelope the eager check produced.
-            errors = self._db_check_errors(diagnostic_payload, instance)
+            errors = self._db_check_errors(diagnostic_payload, instance, using)
             if errors:
                 return False, _errors_to_type(errors)
             # Integrity error of another kind (not a missing FK/M2M we can

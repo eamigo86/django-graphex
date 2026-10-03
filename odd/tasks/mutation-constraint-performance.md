@@ -14,12 +14,16 @@ at 1,000 authors and 9.2149 ms at 2,000, versus Ariadne's 0.7818 and 0.7766 ms.
 GraphEx emits four request-only statements at both sizes. Static inspection found
 that the harness's rollback-only outer transaction activates the backend's
 savepoint and table-wide SQLite foreign-key check. The comment table grows from
-50,000 to 100,000 rows. Static inspection does not yet quantify the check's share
-of elapsed time; timings must separate diagnostics from canonical comparisons.
+50,000 to 100,000 rows. Initial static inspection did not quantify the check's
+share of elapsed time; the separate diagnostic evidence below now does.
 
 ## Authority and boundaries
 
 - User explicitly authorized profiling and optimization on 2026-10-03.
+- The user subsequently explicitly accepted immediate SQLite checks limited to
+  the mutation's direct writes, leaving earlier unrelated deferred violations
+  for enforcement at outer commit if they remain unresolved. Implement this
+  selected contract with strict TDD; do not ask the same choice again.
 - Base: integration commit 7eb3935b60310a1358cf204aeb0917c31c3546df.
 - Branch: codex/graphql-core-3.3-mutation-performance.
 - Authorized source scope: the generic mutation save/constraint path, focused
@@ -86,10 +90,10 @@ structural bounded-work regression or correctness tests. A new whole-stack
 canonical comparison and hosted delivery are separate follow-ups; old numbers
 must remain explicitly attributed to their original measuring checkout.
 
-Progress: MP1 profiling verified; MP2 is waiting for the human semantic-boundary
-decision. No production code/test/docs or canonical benchmark artifact changed.
-Next: ask one question about earlier unrelated deferred violations. Do not start
-production edits until answered; optimization is not complete.
+Progress: MP1 profiling verified; the human semantic-boundary decision for MP2
+is accepted. No production code/test/docs or canonical benchmark artifact has
+changed yet. Next: delegate one bounded strict-TDD writer for MP2, then rerun
+diagnostic timings with fresh data and independently verify the exact candidate.
 
 ## Verified baseline and contract decision
 
@@ -128,10 +132,13 @@ fields, M2M/custom through rows, aliases and side effects require actual tests;
 this proposed checker is not implemented or verified. PostgreSQL remains on its
 existing path unless separately justified and tested.
 
-Human decision required: retain immediate detection of all earlier violations
-in each checked table, or accept immediate checks scoped to the mutation's own
-writes plus database enforcement at outer commit. Never infer that choice from
-profiling PASS or silently remove the table check.
+Human decision: the user explicitly accepted immediate validation of SQLite
+changes directly saved by the mutation, with database enforcement of remaining
+violations at outer commit. This permits replacing the table-wide SQLite scan,
+not skipping the mutation's own FK/M2M validation or its rollback boundary.
+PostgreSQL and other backends retain their current deferred-constraint path.
+Tests and current documentation must explicitly demonstrate the accepted
+earlier-unrelated-row behavior and the still-failing unresolved outer commit.
 
 Reports are retained under the authorized visualization root:
 graphex-resume-2026-10-02/mutation-constraint-profile/report.md and
@@ -149,3 +156,24 @@ integration. The Engram mirror remains explicitly pending.
 
 The following small tracking checkpoint records MP1's immutable commit identity;
 it does not close MP2/MP3 or claim optimized performance, coverage or delivery.
+
+## MP2 implementation checkpoint
+
+Strict TDD produced two cause-correct REDs before the SQLite source edit:
+`tests/core/test_scoped_mutation_constraints.py` rejected the table-wide
+`PRAGMA foreign_key_check` and proved the old check rejected a valid mutation
+because of an earlier unrelated invalid row. A later non-primary target-field
+regression failed on the diagnostic path's primary-key-only lookup before that
+lookup was corrected. Raw chronological logs are under
+`mutation-constraint-performance-mp2/`; neither RED is reconstructed.
+
+The candidate now checks persisted constrained FK values on the saved row and
+the current object's directly updated M2M through rows after writing, within
+the existing rollback boundary. It uses the write's database alias and actual
+referenced target columns; `db_constraint=False` is not invented as a database
+constraint. PostgreSQL and other backends retain their previous check path.
+The existing golden error, rollback, nested-write and autocommit contracts plus
+five new focused tests passed (19 total); related core/mutation tests passed
+1,295. The earlier invalid row remains for outer-commit enforcement, as chosen.
+This is not yet full native-3.3/quality/performance or independent acceptance;
+MP2 and MP3 remain open until those checks and separate review are observed.

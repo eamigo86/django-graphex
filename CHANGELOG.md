@@ -20,6 +20,14 @@ source was still 3.1.1; no 4.0.0 benchmark was run. See the
 [current comparison](docs/why.md#current-core33-comparison). The dated 3.1.1
 security patch and its GraphQL-core 3.2.13 requirement remain historical facts.
 
+SQLite generic mutations now validate only their directly saved FK row and
+updated M2M links after the write, inside the rollback savepoint. This avoids
+the table-wide deferred-FK scan that grew with unrelated rows, while retaining
+immediate structured errors for the mutation's own invalid relations. Earlier
+unrelated deferred violations remain the outer transaction's responsibility
+and still prevent commit if unresolved. PostgreSQL's existing check is unchanged.
+The frozen core33 results predate this change and are not new 4.0.0 timings.
+
 ## 3.1.1 — 2026-10-01
 
 This patch raises the required GraphQL-core version to 3.2.13 while staying
