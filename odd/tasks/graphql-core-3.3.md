@@ -447,6 +447,27 @@ of scope.
         exact migration and seed flags; it does not authorize actual data
         creation. Proof is retained under
         `graphex-resume-2026-10-02/private-seed-creation-t4b2c2b/`.
+        Independent staged verification at `f484a1b` is PARTIAL: a clean
+        checkout without the ignored historical benchmarks/db.sqlite3 passes
+        the real read-only seed preflight, but the creator raises
+        FileNotFoundError before any guarded write or child command because
+        its retained-asset digest assumes that legacy file exists. Reopen
+        staged acceptance within T4b2c2b. Correction scope: observe either
+        absence or a present regular file and reject changes to that state;
+        fail closed for symlinks, nonregular objects, and read errors. Add a
+        fresh cause-correct RED before fixing the helper, then repeat native
+        focused/full and protected-asset checks. The prior missing-entrypoint
+        RED12 and mocked GREEN18 remain historical, not correction proof.
+        No real private seed or benchmark execution is authorized yet.
+        Correction RED failed seven of 28 focused cases on the pre-fix helper:
+        absent checkout, nonregular historical paths, and unexpected read
+        error handling exposed the retained-state assumption. After the
+        narrow absence-or-regular-file observation change, all 28 focused
+        mocked cases passed. Absent-to-present, present-to-absent, changed
+        bytes, symlink, dangling link, directory, and read-error controls
+        fail closed. The independent PARTIAL remains historical evidence;
+        full exact-candidate and independent rechecks still precede real
+        private seed creation.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run

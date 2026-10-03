@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -15,7 +16,11 @@ from benchmarks.comparison_seed import SeedPlan
 
 
 def _workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authors: int = 1000
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    authors: int = 1000,
+    *,
+    retained_exists: bool = True,
 ) -> tuple[SeedPlan, Path, Path]:
     """Provide a private parent and checked-plan stand-in without Django writes.
 
@@ -23,6 +28,7 @@ def _workspace(
         tmp_path: Pytest-owned private filesystem root.
         monkeypatch: Fixture isolating the benchmark source root.
         authors: Published workload cardinality.
+        retained_exists: Whether a historical shared database is present.
 
     Returns:
         Checked plan, named environment root, and retained marker.
@@ -31,7 +37,8 @@ def _workspace(
     base = source / "benchmarks"
     base.mkdir(parents=True)
     retained = base / "db.sqlite3"
-    retained.write_bytes(b"retained")
+    if retained_exists:
+        retained.write_bytes(b"retained")
     venv_root = tmp_path / "venvs"
     python = venv_root / ".venv-core33-graphex/bin/python"
     python.parent.mkdir(parents=True)
@@ -397,3 +404,142 @@ def test_creator_rejects_invalid_shared_database_shape(
     with pytest.raises(ValueError, match="shape"):
         execution.create_private_seed(plan, venv_root)
     assert not plan.output_root.exists() and retained.read_bytes() == b"retained"
+
+
+def test_creator_accepts_absent_legacy_database_without_creating_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Build a private seed from a clean checkout with no shared database.
+
+    Args:
+        tmp_path: Pytest-owned private filesystem root.
+        monkeypatch: Fixture replacing expensive child work.
+    """
+    from benchmarks import comparison_seed_execution as execution
+
+    plan, venv_root, retained = _workspace(tmp_path, monkeypatch, retained_exists=False)
+    observed = _checks(monkeypatch, plan)
+    result = execution.create_private_seed(plan, venv_root)
+    assert result.database.read_bytes() == b"seeded"
+    assert [name for name, _ in observed] == ["migrate", "seed_bench"]
+    assert not retained.exists()
+
+
+@pytest.mark.parametrize(
+    ("initially_present", "change"),
+    (
+        (False, "create"),
+        (True, "remove"),
+        (True, "content"),
+        (False, "symlink"),
+        (True, "symlink"),
+    ),
+)
+def test_creator_rejects_legacy_database_drift_before_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    initially_present: bool,
+    change: str,
+) -> None:
+    """Stop before seeding when the observed shared asset changes.
+
+    Args:
+        tmp_path: Pytest-owned private filesystem root.
+        monkeypatch: Fixture changing the shared asset after migration.
+        initially_present: Whether the shared asset exists at entry.
+        change: Asset change to attempt between child operations.
+    """
+    from benchmarks import comparison_seed_execution as execution
+
+    plan, venv_root, retained = _workspace(
+        tmp_path, monkeypatch, retained_exists=initially_present
+    )
+    seen = _checks(monkeypatch, plan)
+    original = execution.subprocess.run
+
+    def mutate(argv: list[str], **kwargs: Any) -> None:
+        """Change only the historical asset after the migration child."""
+        original(argv, **kwargs)
+        if argv[3] == "migrate":
+            if change == "create":
+                retained.write_bytes(b"unexpected")
+            elif change == "remove":
+                retained.unlink()
+            elif change == "content":
+                retained.write_bytes(b"changed")
+            else:
+                if initially_present:
+                    retained.unlink()
+                retained.symlink_to(tmp_path / "missing-foreign.sqlite3")
+
+    monkeypatch.setattr(execution.subprocess, "run", mutate)
+    with pytest.raises(ValueError, match="retained"):
+        execution.create_private_seed(plan, venv_root)
+    assert [name for name, _ in seen] == ["migrate"]
+    assert not plan.output_root.exists()
+    if change == "symlink":
+        assert retained.is_symlink()
+    elif change in ("create", "content"):
+        assert retained.read_bytes() == (
+            b"unexpected" if change == "create" else b"changed"
+        )
+    else:
+        assert not retained.exists()
+
+
+@pytest.mark.parametrize("kind", ("symlink", "dangling", "directory"))
+def test_creator_rejects_nonregular_legacy_asset_before_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Do not follow or replace a historical path that is not regular.
+
+    Args:
+        tmp_path: Pytest-owned private filesystem root.
+        monkeypatch: Fixture replacing the read-only preflight.
+        kind: Nonregular historical path type.
+    """
+    from benchmarks import comparison_seed_execution as execution
+
+    plan, venv_root, retained = _workspace(tmp_path, monkeypatch, retained_exists=False)
+    monkeypatch.setattr(execution, "prepare_seed_plan", lambda *_: plan)
+    target = tmp_path / "foreign.sqlite3"
+    target.write_bytes(b"foreign")
+    if kind == "directory":
+        retained.mkdir()
+    else:
+        retained.symlink_to(target if kind == "symlink" else tmp_path / "missing")
+    with pytest.raises(ValueError, match="retained"):
+        execution.create_private_seed(plan, venv_root)
+    assert not plan.output_root.exists()
+    assert target.read_bytes() == b"foreign"
+    if kind == "directory":
+        assert retained.is_dir()
+    else:
+        assert retained.is_symlink()
+
+
+def test_creator_propagates_unexpected_legacy_read_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Do not mistake a read permission failure for absent legacy data.
+
+    Args:
+        tmp_path: Pytest-owned private filesystem root.
+        monkeypatch: Fixture injecting one path-specific read error.
+    """
+    from benchmarks import comparison_seed_execution as execution
+
+    plan, venv_root, retained = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(execution, "prepare_seed_plan", lambda *_: plan)
+    original = execution.os.open
+
+    def fail_open(path: str | os.PathLike[str], flags: int, *args: Any) -> int:
+        """Refuse only the historical asset read."""
+        if Path(path) == retained:
+            raise PermissionError("retained read denied")
+        return original(path, flags, *args)
+
+    monkeypatch.setattr(execution.os, "open", fail_open)
+    with pytest.raises(PermissionError, match="retained read denied"):
+        execution.create_private_seed(plan, venv_root)
+    assert not plan.output_root.exists()

@@ -115,7 +115,11 @@ installing the database without replacing an occupied destination. Migration
 and seed stdout/stderr files and failed attempt files remain for inspection;
 there is no automatic deletion. The returned `PreparedSeed` identifies the
 validated database, source plan, digest, and stream paths, not a benchmark
-measurement. Path and descriptor checks bound ordinary substitutions, but
+measurement. A fresh checkout needs no historical `benchmarks/db.sqlite3`:
+its absence is observed and must remain absent; when that file exists, its
+regular-file type and bytes must remain unchanged. Symlinks and other
+nonregular historical paths fail closed. Path and descriptor checks bound
+ordinary substitutions, but
 opening the random staging directory after creation does not attest creator
 ownership. They do not protect against a same-user actor changing every
 filesystem operation; the later runner must still preflight the returned

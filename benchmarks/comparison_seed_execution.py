@@ -89,22 +89,47 @@ def _check_visible(path: Path, descriptor: int, *, directory: bool) -> None:
         raise ValueError("private seed path changed")
 
 
-def _retained_digest() -> bytes:
-    """Identify the existing shared seed without opening it as a database.
+def _retained_digest() -> bytes | None:
+    """Observe an absent or regular shared seed without opening it as SQLite.
 
     Returns:
-        Digest of the retained benchmark database's current bytes.
+        Digest of a regular retained database, or None when it is absent.
+
+    Raises:
+        ValueError: If the retained path is not a stable regular file.
+        OSError: If an observed regular file cannot be opened or read.
     """
-    return hashlib.sha256((run_comparison.BASE / "db.sqlite3").read_bytes()).digest()
+    path = run_comparison.BASE / "db.sqlite3"
+    try:
+        visible = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(visible.st_mode):
+        raise ValueError("retained benchmark database is not a regular file")
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+        held = os.fstat(stream.fileno())
+        if not stat.S_ISREG(held.st_mode) or (visible.st_dev, visible.st_ino) != (
+            held.st_dev,
+            held.st_ino,
+        ):
+            raise ValueError("retained benchmark database changed")
+        digest = hashlib.file_digest(stream, "sha256").digest()
+        current = path.lstat()
+        if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
+            held.st_dev,
+            held.st_ino,
+        ):
+            raise ValueError("retained benchmark database changed")
+        return digest
 
 
-def _checked_plan(plan: SeedPlan, venv_root: Path, retained: bytes) -> None:
+def _checked_plan(plan: SeedPlan, venv_root: Path, retained: bytes | None) -> None:
     """Revalidate all source and destination bindings before another step.
 
     Args:
         plan: Original read-only preflight result.
         venv_root: Selected named-profile environment root.
-        retained: Initial digest of the shared retained database.
+        retained: Initial absence or digest of the shared retained database.
 
     Raises:
         ValueError: If the plan, destination, or retained database drifted.
