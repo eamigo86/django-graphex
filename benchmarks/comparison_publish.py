@@ -8,7 +8,7 @@ import re
 import stat
 import tempfile
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -17,6 +17,7 @@ from .comparison_batch import (
     LIBRARIES,
     BatchGroup,
     BatchResult,
+    DispatchReceipt,
     _digest_regular,
     _read_raw,
 )
@@ -40,20 +41,6 @@ FILENAMES = {
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 PORTABLE_TEXT = re.compile(r"[A-Za-z0-9_.+-]{1,120}\Z")
-
-
-@dataclass(frozen=True)
-class DispatchReceipt:
-    """Bind one completed dispatch to its raw bytes and checked plan.
-
-    A receipt corroborates local evidence; it is not a signed attestation or
-    permission to recreate a seed, rerun a workload, or trust an arbitrary path.
-    """
-
-    number: int
-    plan: run_comparison.RunPlan
-    raw_path: Path
-    sha256: str
 
 
 def _hex(value: object, pattern: re.Pattern[str]) -> bool:
@@ -169,6 +156,8 @@ def _read_receipts(
         or len(receipts) != 24
     ):
         raise ValueError("publisher requires exactly 24 completed raw dispatches")
+    if batch.receipts and tuple(receipts) != batch.receipts:
+        raise ValueError("explicit receipts differ from the live batch")
     groups: dict[tuple[int, str], list[tuple[DispatchReceipt, dict[str, Any]]]] = {
         key: [] for key in GROUP_KEYS
     }

@@ -643,7 +643,7 @@ of scope.
         child and tracker Codecov checks succeeded. This closes only the
         unpublished rotated-batch unit. The earlier pending statements above
         are chronological, not current blockers for T4b2c3.
-      - [ ] T4b2c4 — Stage the portable core33 eight-artifact publisher.
+      - [x] T4b2c4 — Stage the portable core33 eight-artifact publisher.
         Route: delegated direct, because a new publisher, focused tests,
         benchmark ignore rules, guide, and this task document are non-trivial.
         The coherent pending-version size exception has no numeric ceiling;
@@ -701,6 +701,50 @@ of scope.
         requirement. Hosted approval and actual canonical generation remain
         pending. Evidence: `independent-publisher-f8c418f/report.md` under
         the stable local recovery root.
+        The final documentary boundary at `54ca72fc6ea4e5e1a868396d18236c713d15f1b4`
+        passed independent readback and native focused checks. PR #236 merged
+        only into integration as `af9678c482df59ed4c731326c98450ba4eea7254`;
+        child run `37105519521`, integration run `37105723125`, and tracker
+        run `37105726297` each passed 15 validations with three publication
+        skips, while child and tracker Codecov checks succeeded. This closes
+        only the staged publisher, not actual artifact generation.
+      - [ ] T4b2c5 — Add the explicit core33 run/replay publication command.
+        Route: delegated direct because the command, live batch receipt seam,
+        focused tests, and guide are non-trivial; forecast roughly 700–1100
+        authored lines, with the existing coherent pending-version size
+        exception and an honest final count. Strict TDD is enabled by current
+        AGENTS.md: observe a new command/receipt RED, then GREEN and refactor.
+        Focal runner: `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_batch.py
+        tests/benchmarks/test_comparison_publish.py
+        tests/benchmarks/test_run_publish_core33.py --no-cov` under the named
+        core-3.3 overlay. Own only the new command and its tests, minimal
+        batch/publisher receipt compatibility, focused existing tests,
+        concise benchmark guide, and this checkpoint. The run mode composes
+        checked fresh seeds, one rotated batch, and all-or-nothing publisher
+        only after preflighting options and destinations. The replay mode
+        reads explicit retained event/manifest/batch evidence, reconstructs
+        typed receipts without current runtime probes or workloads, then uses
+        the same validator and publisher. Reject malformed or contradictory
+        witnesses before publication, preserve failed private outputs, and
+        leave the legacy publisher and old eight JSON untouched. Verify
+        native focal, all benchmarks, unchanged full 95.01% branch gate and
+        complete coverage gap sets, Ruff, typing, both docstring gates, docs
+        anchors, diff, and all protected tracked/ignored/database identities
+        in a clean exact-commit clone. Rollback only this command, receipt seam,
+        focused tests, guide, and task checkpoint. This unit uses synthetic
+        evidence only; no actual measurement, reseed, or canonical install.
+        Chronological TDD: new-command import failed with exit 2 before the
+        CLI existed, and the live-batch receipt assertion failed with exit 1
+        before the seam was added. The initial targeted implementation passed
+        81 focused controls, then expanded synthetic receipt, replay, run and
+        preservation checks passed 89 focused controls. The root 3.2.13
+        interpreter gives iteration evidence only; exact native-3.3 final
+        acceptance, independent verification and hosted gates remain pending.
+      - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
+        bundle from the retained 24 measured raw results. Reuse the verified
+        read-only replay path after independent and hosted acceptance of
+        T4b2c5; do not rerun measurements or relabel the measured source.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its

@@ -182,6 +182,47 @@ but the eight added files remain as recoverable foreign-directory residue.
 Descriptor checks establish continuity from first acquisition, not creator
 ownership or immutable foreign state.
 
+Use `run_publish_core33.py` only with an explicit mode. The expensive `run`
+mode requires `--profile core33 --authors 1000 2000 --runs 3`, an existing
+named `--venv-root`, existing owner-only external `--seed-parent` with absent
+`seed-1000` and `seed-2000` children, empty owner-only external
+`--output-parent`, and trusted existing `--results-root` with no `core33`
+child. All paths must be absolute. For example:
+
+```sh
+.venv/bin/python -m benchmarks.run_publish_core33 run \
+  --profile core33 --authors 1000 2000 --runs 3 \
+  --venv-root /absolute/named-envs --seed-parent /absolute/private-seeds \
+  --output-parent /absolute/private-raws \
+  --results-root /absolute/checkout/benchmarks/results
+```
+
+It creates two private seeds, performs 24 rotated single-run
+measurements, retains their complete receipts as private `events.jsonl`,
+`raw-manifest.json`, and `batch-result.json`, then calls the eight-file
+publisher. These private records are written after a complete batch and are
+not timestamped live child events. Failures preserve private seeds, raw files,
+records, and staging residue for inspection; no reset or automatic deletion
+occurs. The publisher still refuses an occupied public target.
+
+The `replay` mode instead requires `--profile core33 --events`,
+`--raw-manifest`, `--batch-result`, and `--results-root`. It reconstructs the
+24 typed dispatch receipts from explicit retained files, compares their
+cross-file identities, and delegates raw-byte, result, and median validation
+to the same publisher. It never probes the current named environments,
+creates seeds, or reruns measurements. Both modes require a trusted results
+parent without concurrent pathname substitution; neither is a same-user
+filesystem sandbox. The legacy `run_publish.py` command and its historical
+eight artifacts remain separate and unchanged.
+
+```sh
+.venv/bin/python -m benchmarks.run_publish_core33 replay \
+  --profile core33 --events /absolute/private-raws/events.jsonl \
+  --raw-manifest /absolute/private-raws/raw-manifest.json \
+  --batch-result /absolute/private-raws/batch-result.json \
+  --results-root /absolute/checkout/benchmarks/results
+```
+
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
 `PYTHONPATH` that points at newer source so the published wheel is imported.

@@ -245,6 +245,23 @@ def test_batch_rotates_two_seeds_and_returns_only_eight_detached_medians(
     ]
     assert [plan.library for plan in seen[12:]] == [plan.library for plan in seen[:12]]
     assert len(result.groups) == 8
+    assert len(result.receipts) == 24
+    assert [receipt.number for receipt in result.receipts] == list(range(1, 25))
+    assert [receipt.plan for receipt in result.receipts] == seen
+    assert [receipt.raw_path for receipt in result.receipts] == list(
+        result.dispatch_order
+    )
+    assert all(
+        receipt.sha256 == hashlib.sha256(receipt.raw_path.read_bytes()).hexdigest()
+        for receipt in result.receipts
+    )
+    from benchmarks.comparison_publish import DispatchReceipt as PublishedReceipt
+
+    assert PublishedReceipt is comparison_batch.DispatchReceipt
+    assert (
+        comparison_batch.BatchResult(result.groups, result.dispatch_order).receipts
+        == ()
+    )
     assert all(len(group.raw_paths) == 3 for group in result.groups)
     assert all(group.median["aggregation"]["runs"] == 3 for group in result.groups)
     assert all(group.median["schema_import_ms"] == 13.0 for group in result.groups)
