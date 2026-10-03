@@ -354,7 +354,7 @@ of scope.
         `37078107070` each passed 15 validations with three publication jobs
         skipped; both Codecov checks passed. This closes only the pure median
         helper, not rotated measurements or publication.
-      - [ ] T4b2c2a — Return a checked, read-only SeedPlan for a future fresh
+      - [x] T4b2c2a — Return a checked, read-only SeedPlan for a future fresh
         private named-profile database. Route: delegated direct because helper,
         focused tests, guide, and checkpoint span non-trivial files; auto-chain
         uses the existing feature-branch strategy. Own only
@@ -389,10 +389,17 @@ of scope.
         sets equal the retained baseline (258 missed lines, 266 partial sites,
         282 missing arcs); seven skips, three warnings, and 23 subtests remain.
         Ruff, prior 82-file mypy, natural-module mypy, standard docstrings,
-        and docs passed. A strict-public DOC002 on SeedPlan's single-line
-        docstring requires a follow-up documentary correction and fresh final
-        check; the no-target mypy experiment was invalid, while configured
-        library mypy separately passed 79 files. No database was created.
+        and docs passed. The strict-public DOC002 on SeedPlan's single-line
+        docstring was corrected in
+        `5562d03ac204b7862f30aeb8d041e423fef315d4`; its exact clean clone
+        passed the same 21 focused, 193 benchmark, and 4,581 full tests,
+        96.23% coverage, both docstring gates at TOTAL 0, all typing routes,
+        Ruff, and docs with the same five baseline anchors. Its complete
+        coverage gaps, skips, and warnings equal the retained baseline. Two
+        real checked plans remained read-only. The no-target mypy experiment
+        was invalid, not a configured failure; configured library mypy passed
+        79 files. No database was created. Independent and hosted acceptance
+        remain pending; T4b2c2b owns actual private seed creation.
       - [ ] T4b2c2b — Reserve and build fresh private seeds from the checked
         plan, then validate and retain failed attempts. This separate unit owns
         exclusive directory/database creation, migrate then seed_bench,
