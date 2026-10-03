@@ -7,7 +7,7 @@ import json
 import os
 import stat
 import sys
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,10 +28,8 @@ PLAN_PATHS = frozenset({"python", "database", "output_root", "backend_path"})
 PRIVATE_EVIDENCE = ("events.jsonl", "raw-manifest.json", "batch-result.json")
 OTHER_EVENTS = frozenset(
     {
-        "preflight",
         "output_parent_created",
         "batch_call_start",
-        "measuring_child_start",
         "measuring_child_success",
         "batch_call_success",
         "final_verified",
@@ -147,6 +145,24 @@ def _path(value: object) -> Path:
     return path
 
 
+def _schema_base(value: object) -> Path:
+    """Require an explicit absolute benchmark directory witness.
+
+    Args:
+        value: Recorded schema checkout directory.
+
+    Returns:
+        Validated lexical benchmark directory path.
+
+    Raises:
+        ValueError: If the context is missing or malformed.
+    """
+    base = _path(value)
+    if base.name != "benchmarks":
+        raise ValueError("schema context is not a benchmark directory")
+    return base
+
+
 def _plan(value: object) -> run_comparison.RunPlan:
     """Restore one exact RunPlan shape without a current runtime probe.
 
@@ -227,18 +243,54 @@ def _receipt(value: object) -> DispatchReceipt:
     Raises:
         ValueError: If receipt shape or primitive types differ.
     """
-    if type(value) is not dict or set(value) != {
-        "number",
-        "plan",
-        "raw_path",
-        "sha256",
-    }:
+    names = {"number", "plan", "raw_path", "sha256"}
+    if type(value) is not dict or set(value) not in (names, names | {"schema_base"}):
         raise ValueError("embedded receipt fields differ")
     if type(value["number"]) is not int or type(value["sha256"]) is not str:
         raise ValueError("embedded receipt values are malformed")
     return DispatchReceipt(
-        value["number"], _plan(value["plan"]), _path(value["raw_path"]), value["sha256"]
+        value["number"],
+        _plan(value["plan"]),
+        _path(value["raw_path"]),
+        value["sha256"],
+        _schema_base(value["schema_base"])
+        if value.get("schema_base") is not None
+        else None,
     )
+
+
+def _child_schema_base(event: dict[str, Any], plan: run_comparison.RunPlan) -> Path:
+    """Corroborate an old measuring-child invocation against its dispatch plan.
+
+    Args:
+        event: Retained actual child-start journal record.
+        plan: Immediately preceding exact dispatch plan.
+
+    Returns:
+        Original benchmark directory from the recorded child cwd.
+
+    Raises:
+        ValueError: If argv, environment or cwd contradicts the plan.
+    """
+    base = _schema_base(event.get("cwd"))
+    argv = event.get("argv")
+    environment = event.get("env")
+    expected = {
+        "PYTHONPATH": f"{base.parent}:{base}",
+        "BENCH_LIB": plan.library,
+        "BENCH_DATABASE": str(plan.database),
+        "BENCH_AUTHORS": str(plan.authors),
+        "BENCH_PROFILE": plan.profile,
+        "BENCH_OUTPUT_DIR": str(plan.output_root),
+    }
+    if (
+        type(argv) is not list
+        or argv != [str(plan.python), str(base / "harness.py")]
+        or type(environment) is not dict
+        or any(environment.get(key) != value for key, value in expected.items())
+    ):
+        raise ValueError("recorded measuring child context differs from plan")
+    return base
 
 
 def load_replay(
@@ -265,12 +317,49 @@ def load_replay(
         raise ValueError("dispatch journal has an invalid record count")
     starts: dict[int, run_comparison.RunPlan] = {}
     successes: dict[int, tuple[Path, str]] = {}
+    contexts: dict[int, Path] = {}
+    preflight_source: tuple[str, str] | None = None
     for line in lines:
         event = _decode_json(line)
         if type(event) is not dict or type(event.get("kind")) is not str:
             raise ValueError("dispatch journal event is malformed")
         kind = event["kind"]
         if kind in OTHER_EVENTS:
+            continue
+        if kind == "preflight":
+            source = (event.get("source_commit"), event.get("source_tree"))
+            if preflight_source is not None or any(
+                type(item) is not str for item in source
+            ):
+                raise ValueError("recorded preflight source is missing or duplicated")
+            preflight_source = source
+            continue
+        if kind in {"schema_context", "measuring_child_start"}:
+            number = event.get("number")
+            if (
+                type(number) is not int
+                or number not in starts
+                or number in successes
+                or number in contexts
+            ):
+                raise ValueError("recorded schema context is missing or duplicated")
+            plan = starts[number]
+            if kind == "measuring_child_start":
+                base = _child_schema_base(event, plan)
+            else:
+                if set(event) != {
+                    "kind",
+                    "number",
+                    "schema_base",
+                    "commit",
+                    "tree",
+                } or (event["commit"], event["tree"]) != (
+                    plan.commit,
+                    plan.tree,
+                ):
+                    raise ValueError("explicit schema context differs from plan")
+                base = _schema_base(event["schema_base"])
+            contexts[number] = base
             continue
         if kind not in {"dispatch_start", "dispatch_success"}:
             raise ValueError("dispatch journal contains an unknown event")
@@ -294,17 +383,27 @@ def load_replay(
                 )
             starts[number] = _plan(event["plan"])
         else:
-            if number not in starts or number != len(successes) + 1:
+            if (
+                number not in starts
+                or number not in contexts
+                or number != len(successes) + 1
+            ):
                 raise ValueError(
                     "dispatch success is missing, duplicated, or reordered"
                 )
             if type(event["raw_sha256"]) is not str:
                 raise ValueError("dispatch digest is malformed")
             successes[number] = (_path(event["raw_path"]), event["raw_sha256"])
-    if len(starts) != 24 or len(successes) != 24:
+    if len(starts) != 24 or len(successes) != 24 or len(contexts) != 24:
         raise ValueError("dispatch journal is incomplete")
+    if preflight_source is not None and any(
+        (plan.commit, plan.tree) != preflight_source for plan in starts.values()
+    ):
+        raise ValueError("recorded preflight source differs from dispatch plans")
+    if len(set(contexts.values())) != 1:
+        raise ValueError("recorded dispatches use mixed schema checkouts")
     receipts = tuple(
-        DispatchReceipt(number, starts[number], *successes[number])
+        DispatchReceipt(number, starts[number], *successes[number], contexts[number])
         for number in range(1, 25)
     )
     raw_manifest = _decode_json(_read_evidence(manifest))
@@ -342,7 +441,12 @@ def load_replay(
         value = recorded["receipts"]
         if type(value) is not list or len(value) != 24:
             raise ValueError("embedded receipts are incomplete")
-        embedded = tuple(_receipt(item) for item in value)
+        embedded = tuple(
+            replace(_receipt(item), schema_base=contexts[number])
+            if type(item) is dict and "schema_base" not in item
+            else _receipt(item)
+            for number, item in enumerate(value, 1)
+        )
         if embedded != receipts:
             raise ValueError("embedded receipts differ from the journal")
     return BatchResult(groups, order, embedded), receipts
@@ -387,12 +491,21 @@ def _write_evidence(parent: Path, batch: BatchResult) -> None:
     events = []
     manifest = []
     for receipt in batch.receipts:
+        if receipt.schema_base is None:
+            raise ValueError("complete live receipts need checked schema context")
         events.extend(
             (
                 {
                     "kind": "dispatch_start",
                     "number": receipt.number,
                     "plan": asdict(receipt.plan),
+                },
+                {
+                    "kind": "schema_context",
+                    "number": receipt.number,
+                    "schema_base": receipt.schema_base,
+                    "commit": receipt.plan.commit,
+                    "tree": receipt.plan.tree,
                 },
                 {
                     "kind": "dispatch_success",

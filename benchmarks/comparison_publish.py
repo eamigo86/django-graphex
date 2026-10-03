@@ -166,6 +166,7 @@ def _read_receipts(
     databases: dict[int, Path] = {}
     machine: dict[str, Any] | None = None
     used_paths: set[Path] = set()
+    schema_base: Path | None = None
     for number, receipt in enumerate(receipts, 1):
         if (
             type(receipt) is not DispatchReceipt
@@ -173,6 +174,16 @@ def _read_receipts(
         ):
             raise ValueError("dispatch receipt or plan has an unexpected type")
         plan = receipt.plan
+        if receipt.schema_base is not None and (
+            not isinstance(receipt.schema_base, Path)
+            or not receipt.schema_base.is_absolute()
+            or receipt.schema_base.name != "benchmarks"
+        ):
+            raise ValueError("receipt schema context is malformed")
+        if number == 1:
+            schema_base = receipt.schema_base
+        elif receipt.schema_base != schema_base:
+            raise ValueError("receipts use mixed schema checkouts")
         authors = AUTHOR_COUNTS[(number - 1) // 12]
         repetition = ((number - 1) % 12) // 4
         library = ROTATIONS[repetition][(number - 1) % 4]
@@ -224,7 +235,7 @@ def _read_receipts(
         previous_database = databases.setdefault(authors, plan.database)
         if previous_database != plan.database:
             raise ValueError("one seed size has mixed databases")
-        raw, digest = _read_raw(receipt.raw_path, plan)
+        raw, digest = _read_raw(receipt.raw_path, plan, receipt.schema_base)
         if digest != receipt.sha256:
             raise ValueError("raw bytes differ from dispatch receipt")
         if machine is None:
@@ -280,7 +291,11 @@ def _artifacts(
         previous_seed = seed_sources.setdefault(group.authors, seed)
         if seed != previous_seed:
             raise ValueError("one seed size has mixed source or bytes")
-        computed = aggregate_three(first_plan, [raw for _, raw in triple])
+        if any(receipt.schema_base != receipts[0].schema_base for receipt in receipts):
+            raise ValueError("median group has mixed schema checkout context")
+        computed = aggregate_three(
+            first_plan, [raw for _, raw in triple], receipts[0].schema_base
+        )
         if group.median != computed:
             raise ValueError("recorded median differs from raw result math")
         machine = _public_machine(computed["machine"])

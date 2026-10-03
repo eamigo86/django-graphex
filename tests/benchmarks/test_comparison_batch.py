@@ -248,6 +248,7 @@ def test_batch_rotates_two_seeds_and_returns_only_eight_detached_medians(
     assert len(result.receipts) == 24
     assert [receipt.number for receipt in result.receipts] == list(range(1, 25))
     assert [receipt.plan for receipt in result.receipts] == seen
+    assert {receipt.schema_base for receipt in result.receipts} == {run_comparison.BASE}
     assert [receipt.raw_path for receipt in result.receipts] == list(
         result.dispatch_order
     )

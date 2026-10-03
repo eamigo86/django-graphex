@@ -153,7 +153,8 @@ GraphQL-core version. No new performance figures are published by this helper.
 `comparison_publish.publish_core33` is the separate receipt-aware writer for
 an already completed batch. Its caller supplies the detached `BatchResult`,
 24 numbered `DispatchReceipt` records containing each exact RunPlan, raw path,
-and SHA-256, and an existing absolute results directory. It rereads every raw
+SHA-256, and checked measuring-checkout schema context, and an existing
+absolute results directory. It rereads every raw
 file, applies the shared profile validator, recomputes all eight three-run
 medians, then projects only portable versions, dataset, machine platform/CPU,
 surface, SQL/timing statistics, aggregation meaning, source and seed digests,
@@ -209,7 +210,14 @@ The `replay` mode instead requires `--profile core33 --events`,
 `--raw-manifest`, `--batch-result`, and `--results-root`. It reconstructs the
 24 typed dispatch receipts from explicit retained files, compares their
 cross-file identities, and delegates raw-byte, result, and median validation
-to the same publisher. It never probes the current named environments,
+to the same publisher. New complete-batch records carry one explicit schema
+context per dispatch. Older accepted journals recover that context only from
+each corroborating measuring-child cwd, harness argv, selected environment,
+and matching preflight source witness. Missing, mixed, or contradictory
+contexts fail before installation; replay does not replace the measured
+checkout with the current command checkout. These are local corroborating
+records, not signed attestations of loaded source bytes. It never probes the
+current named environments,
 creates seeds, or reruns measurements. Both modes require a trusted results
 parent without concurrent pathname substitution; neither is a same-user
 filesystem sandbox. The legacy `run_publish.py` command and its historical

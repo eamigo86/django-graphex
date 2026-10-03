@@ -753,6 +753,35 @@ of scope.
         historical JSON, and four databases retained their verified identities.
         This is staged local command proof only; independent and hosted checks
         and T4b2c6 actual artifact generation remain pending.
+        Independent verification of final local head `7ec498a` is terminal
+        PARTIAL: a synthetic cross-checkout CLI replay failed before staging
+        because shared validation used the current command checkout for the
+        recorded schema path. The accepted old journal already records each
+        measuring child's checkout, harness argv, selected environment, and
+        source identity; the loader discarded that context. Reopen this unit
+        for a bounded strict-TDD correction, not a new feature or measurement.
+        Add an explicit checked benchmark-schema context to the retained
+        receipt, propagate it through shared raw validation and median
+        recomputation, and recover the old context only from corroborating
+        child-invocation records. Future live evidence must state its checked
+        context explicitly; missing or contradictory context fails closed.
+        Keep current-checkout live defaults, old typed constructors and old
+        recorded plans compatible; never mutate global source paths or raw
+        witnesses. First observe a fresh cause-correct cross-checkout RED,
+        then GREEN and refactor. The fresh real-CLI synthetic cross-checkout
+        RED exited 1 at the exact schema witness mismatch, without touching
+        actual raws or databases. The bounded correction's first root-venv
+        GREEN passed 124 focused controls, including the distinct-root CLI,
+        future-context round-trip, old child invocation and forged/missing/
+        mixed context rejection. Read-only loading of the accepted old journal
+        recovered all 24 schema contexts at the measured `350ae84` checkout;
+        no actual raw or database was opened. Final native-3.3 gates and
+        independent recheck remain pending. The existing local and independent
+        failures
+        remain in their original proof roots; corrected exact-head full gates,
+        independent recheck, hosted delivery, and actual publication remain
+        pending. Rollback this correction's narrow context seam, tests, guide,
+        and checkpoint together without touching old measurement assets.
       - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
         bundle from the retained 24 measured raw results. Reuse the verified
         read-only replay path after independent and hosted acceptance of

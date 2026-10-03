@@ -62,6 +62,7 @@ class DispatchReceipt:
     plan: run_comparison.RunPlan
     raw_path: Path
     sha256: str
+    schema_base: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -324,12 +325,15 @@ def _same_parent(parent: Path, descriptor: int) -> None:
         raise ValueError("batch output parent changed")
 
 
-def _read_raw(path: Path, plan: run_comparison.RunPlan) -> tuple[dict[str, Any], str]:
+def _read_raw(
+    path: Path, plan: run_comparison.RunPlan, schema_base: Path | None = None
+) -> tuple[dict[str, Any], str]:
     """Read and revalidate one retained regular JSON result without following links.
 
     Args:
         path: Exact path returned by the verified single-run dispatcher.
         plan: Current-source run plan for this output.
+        schema_base: Explicit recorded benchmark directory for replay.
 
     Returns:
         Parsed raw result and held-byte digest for later drift checks.
@@ -362,7 +366,7 @@ def _read_raw(path: Path, plan: run_comparison.RunPlan) -> tuple[dict[str, Any],
             raise ValueError("raw result changed during validation")
     if not isinstance(raw, dict):
         raise ValueError("raw result is not a JSON object")
-    run_comparison.validate_result(plan, raw)
+    run_comparison.validate_result(plan, raw, schema_base)
     return raw, hashlib.sha256(data).hexdigest()
 
 
@@ -459,7 +463,11 @@ def run_batch(
             ):
                 raise ValueError("batch source or seed changed after dispatch")
             raw, raw_digest = _read_raw(path, plan)
-            receipts.append(DispatchReceipt(len(receipts) + 1, plan, path, raw_digest))
+            receipts.append(
+                DispatchReceipt(
+                    len(receipts) + 1, plan, path, raw_digest, run_comparison.BASE
+                )
+            )
             machine = raw.get("machine")
             if not isinstance(machine, dict) or not machine:
                 raise ValueError("raw result has no machine witness")

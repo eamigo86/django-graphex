@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -44,7 +46,10 @@ def _evidence(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     batch, receipts, results = _fixture(tmp_path)
     private = tmp_path / "evidence"
     private.mkdir(mode=0o700)
-    _write_evidence(private, replace(batch, receipts=receipts))
+    checked = tuple(
+        replace(receipt, schema_base=run_comparison.BASE) for receipt in receipts
+    )
+    _write_evidence(private, replace(batch, receipts=checked))
     return (
         private / "events.jsonl",
         private / "raw-manifest.json",
@@ -111,6 +116,212 @@ def test_private_records_roundtrip_embedded_live_receipts(tmp_path: Path) -> Non
     assert batch.receipts == receipts
     assert [receipt.number for receipt in receipts] == list(range(1, 25))
     assert receipts[0].plan.source_version == "3.1.1"
+    assert {receipt.schema_base for receipt in receipts} == {run_comparison.BASE}
+    assert (
+        sum(
+            json.loads(line)["kind"] == "schema_context"
+            for line in events.read_text().splitlines()
+        )
+        == 24
+    )
+
+
+def test_replay_cli_accepts_recorded_measurement_checkout(
+    tmp_path: Path,
+) -> None:
+    """Replay a different measured checkout using its recorded child context.
+
+    Args:
+        tmp_path: Separate synthetic measuring and replaying source roots.
+
+    Raises:
+        AssertionError: If replay substitutes its own schema checkout.
+    """
+    batch, original_receipts, results = _fixture(tmp_path)
+    measured_base = tmp_path / "measured-source" / "benchmarks"
+    measured_base.mkdir(parents=True)
+    assert measured_base != run_comparison.BASE
+    receipts = []
+    for receipt in original_receipts:
+        raw = json.loads(receipt.raw_path.read_text())
+        raw["profile_witness"]["schema_path"] = str(
+            measured_base / "libs" / receipt.plan.library / "bench_schema.py"
+        )
+        data = (json.dumps(raw, sort_keys=True) + "\n").encode()
+        receipt.raw_path.write_bytes(data)
+        receipts.append(
+            replace(
+                receipt,
+                sha256=hashlib.sha256(data).hexdigest(),
+                schema_base=measured_base,
+            )
+        )
+    groups = tuple(
+        replace(
+            group,
+            median={
+                **group.median,
+                "profile_witness": {
+                    **group.median["profile_witness"],
+                    "schema_path": str(
+                        measured_base / "libs" / group.library / "bench_schema.py"
+                    ),
+                },
+            },
+        )
+        for group in batch.groups
+    )
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    _write_evidence(evidence, replace(batch, groups=groups, receipts=tuple(receipts)))
+    events = evidence / "events.jsonl"
+    rows = [json.loads(line) for line in events.read_text().splitlines()]
+    with_child_context = [
+        {
+            "kind": "preflight",
+            "source_commit": receipts[0].plan.commit,
+            "source_tree": receipts[0].plan.tree,
+        }
+    ]
+    for row in rows:
+        if row["kind"] == "schema_context":
+            continue
+        with_child_context.append(row)
+        if row["kind"] == "dispatch_start":
+            plan = row["plan"]
+            with_child_context.append(
+                {
+                    "kind": "measuring_child_start",
+                    "number": row["number"],
+                    "cwd": str(measured_base),
+                    "argv": [plan["python"], str(measured_base / "harness.py")],
+                    "env": {
+                        "PYTHONPATH": f"{measured_base.parent}:{measured_base}",
+                        "BENCH_LIB": plan["library"],
+                        "BENCH_DATABASE": plan["database"],
+                        "BENCH_AUTHORS": str(plan["authors"]),
+                        "BENCH_PROFILE": plan["profile"],
+                        "BENCH_OUTPUT_DIR": plan["output_root"],
+                    },
+                }
+            )
+    events.write_text("\n".join(json.dumps(row) for row in with_child_context) + "\n")
+    batch_record = evidence / "batch-result.json"
+    legacy_record = json.loads(batch_record.read_text())
+    legacy_record.pop("receipts")
+    batch_record.write_text(json.dumps(legacy_record))
+    command = [
+        sys.executable,
+        "-m",
+        "benchmarks.run_publish_core33",
+        "replay",
+        "--profile",
+        "core33",
+        "--events",
+        str(events),
+        "--raw-manifest",
+        str(evidence / "raw-manifest.json"),
+        "--batch-result",
+        str(evidence / "batch-result.json"),
+        "--results-root",
+        str(results),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=run_comparison.ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert len(list((results / "core33").iterdir())) == 8
+
+
+@pytest.mark.parametrize(
+    "case",
+    ("missing", "duplicate", "wrong_commit", "wrong_base", "mixed_base"),
+)
+def test_replay_rejects_missing_or_forged_future_schema_context(
+    tmp_path: Path, case: str
+) -> None:
+    """Require one coherent checked source directory for all 24 dispatches.
+
+    Args:
+        tmp_path: Synthetic complete private evidence root.
+        case: Missing or contradictory future context record.
+
+    Raises:
+        AssertionError: If a forged context reaches public installation.
+    """
+    events, manifest, batch_path, results = _evidence(tmp_path)
+    rows = [json.loads(line) for line in events.read_text().splitlines()]
+    first = next(
+        index for index, row in enumerate(rows) if row["kind"] == "schema_context"
+    )
+    if case == "missing":
+        rows.pop(first)
+    elif case == "duplicate":
+        rows.insert(first + 1, dict(rows[first]))
+    elif case == "wrong_commit":
+        rows[first]["commit"] = "0" * 40
+    elif case == "wrong_base":
+        rows[first]["schema_base"] = str(tmp_path / "not-benchmarks")
+    else:
+        rows[first]["schema_base"] = str(tmp_path / "foreign" / "benchmarks")
+    events.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    with pytest.raises(ValueError):
+        replay_publication("core33", events, manifest, batch_path, results)
+    assert not (results / "core33").exists()
+    assert not list(results.glob(".core33-stage-*"))
+
+
+def test_replay_rejects_contradictory_old_child_invocation(
+    tmp_path: Path,
+) -> None:
+    """Reject an old journal whose recorded child interpreter differs.
+
+    Args:
+        tmp_path: Synthetic retained journal and public parent.
+
+    Raises:
+        AssertionError: If an uncorroborated child context is accepted.
+    """
+    events, manifest, batch_path, results = _evidence(tmp_path)
+    rows = [json.loads(line) for line in events.read_text().splitlines()]
+    old_rows = []
+    for row in rows:
+        if row["kind"] != "schema_context":
+            old_rows.append(row)
+            continue
+        previous_plan = old_rows[-1]["plan"]
+        base = Path(row["schema_base"])
+        old_rows.append(
+            {
+                "kind": "measuring_child_start",
+                "number": row["number"],
+                "cwd": str(base),
+                "argv": [previous_plan["python"], str(base / "harness.py")],
+                "env": {
+                    "PYTHONPATH": f"{base.parent}:{base}",
+                    "BENCH_LIB": previous_plan["library"],
+                    "BENCH_DATABASE": previous_plan["database"],
+                    "BENCH_AUTHORS": str(previous_plan["authors"]),
+                    "BENCH_PROFILE": previous_plan["profile"],
+                    "BENCH_OUTPUT_DIR": previous_plan["output_root"],
+                },
+            }
+        )
+    first_child = next(
+        row for row in old_rows if row["kind"] == "measuring_child_start"
+    )
+    first_child["argv"][0] = "/foreign/python"
+    batch_record = json.loads(batch_path.read_text())
+    batch_record.pop("receipts")
+    batch_path.write_text(json.dumps(batch_record))
+    events.write_text("\n".join(json.dumps(row) for row in old_rows) + "\n")
+    with pytest.raises(ValueError, match="recorded measuring child context"):
+        replay_publication("core33", events, manifest, batch_path, results)
+    assert not (results / "core33").exists()
 
 
 @pytest.mark.parametrize(
@@ -151,24 +362,32 @@ def test_replay_rejects_broken_cross_file_evidence_before_public_write(
     """
     events, manifest, batch_path, results = _evidence(tmp_path)
     event_rows = [json.loads(line) for line in events.read_text().splitlines()]
+    start = next(
+        index for index, row in enumerate(event_rows) if row["kind"] == "dispatch_start"
+    )
+    success = next(
+        index
+        for index, row in enumerate(event_rows)
+        if row["kind"] == "dispatch_success"
+    )
     manifest_rows = json.loads(manifest.read_text())
     batch = json.loads(batch_path.read_text())
     if case == "missing_start":
-        event_rows.pop(0)
+        event_rows.pop(start)
     elif case == "duplicate_success":
-        event_rows.append(event_rows[1])
+        event_rows.append(event_rows[success])
     elif case == "extra_success":
-        event_rows.append({**event_rows[1], "number": 25})
+        event_rows.append({**event_rows[success], "number": 25})
     elif case == "boolean_number":
-        event_rows[0]["number"] = True
+        event_rows[start]["number"] = True
     elif case == "unknown_event_field":
-        event_rows[0]["private"] = "unsupported"
+        event_rows[start]["private"] = "unsupported"
     elif case == "wrong_plan_profile":
-        event_rows[0]["plan"]["profile"] = "legacy"
+        event_rows[start]["plan"]["profile"] = "legacy"
     elif case == "wrong_authors":
-        event_rows[0]["plan"]["authors"] = 3000
+        event_rows[start]["plan"]["authors"] = 3000
     elif case == "relative_raw_path":
-        event_rows[1]["raw_path"] = "relative/graphex.json"
+        event_rows[success]["raw_path"] = "relative/graphex.json"
     elif case == "wrong_manifest_sha":
         manifest_rows[0]["sha256"] = "0" * 64
     elif case == "duplicate_manifest":
@@ -182,11 +401,11 @@ def test_replay_rejects_broken_cross_file_evidence_before_public_write(
     elif case == "wrong_seed":
         batch["groups"][0]["seed_sha256"] = "0" * 64
     elif case == "wrong_source":
-        event_rows[0]["plan"]["commit"] = "0" * 40
+        event_rows[start]["plan"]["commit"] = "0" * 40
     elif case == "wrong_freeze":
-        event_rows[0]["plan"]["constraints_sha256"] = "0" * 64
+        event_rows[start]["plan"]["constraints_sha256"] = "0" * 64
     elif case == "raw_mutated":
-        Path(event_rows[1]["raw_path"]).write_bytes(b"changed raw result")
+        Path(event_rows[success]["raw_path"]).write_bytes(b"changed raw result")
     elif case == "nonfinite":
         batch["groups"][0]["median"]["ops"]["nested"]["p95_ms"] = float("nan")
     elif case == "embedded_drift":
