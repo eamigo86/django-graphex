@@ -741,6 +741,18 @@ of scope.
         preservation checks passed 89 focused controls. The root 3.2.13
         interpreter gives iteration evidence only; exact native-3.3 final
         acceptance, independent verification and hosted gates remain pending.
+        Local behavior commit `db720cb588d84f5edc5b16a8477910b8ad5a5028`
+        passed 89 focused, 311 benchmark, and 4,699 unchanged full native-3.3
+        tests at 96.23% branch coverage. The complete 258/266/274/282 gap
+        sets, seven skips, three warnings, 23 subtests, both docstring gates,
+        typing, Ruff, and five known docs anchors matched the accepted
+        baseline. The parser read the retained actual 8-group/24-receipt
+        evidence metadata without opening databases, raw result files, or
+        publishing; the measurement witness remains `350ae84`/3.1.1, distinct
+        from this command checkout. All eight historical JSON, 35 ignored
+        historical JSON, and four databases retained their verified identities.
+        This is staged local command proof only; independent and hosted checks
+        and T4b2c6 actual artifact generation remain pending.
       - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
         bundle from the retained 24 measured raw results. Reuse the verified
         read-only replay path after independent and hosted acceptance of
