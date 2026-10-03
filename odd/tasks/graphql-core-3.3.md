@@ -985,6 +985,21 @@ of scope.
     both lockfiles agree with the editable 4.0.0 metadata without changing
     third-party pins. Full exact-head, Playground and quality gates remain
     pending at this checkpoint; neither RED is a measurement failure.
+    Local behavior commit `969326a134bfaa5ee23996ef8898644fcb76019c`
+    has tree `947801f3cf52f5404278063005c7931139796ede` and changes 219
+    added plus 44 deleted authored lines across 16 owned paths. Its clean
+    real clone passed 52 focal, 331 benchmark, 59 Playground and 4,728 full
+    native-3.3 tests with seven skips, three established warnings, 23 subtests
+    and 96.23% branch coverage; complete 258/266/274/282 gap sets equal the
+    accepted T4c baseline. Ruff, 79/82/102-module mypy routes, both docstring
+    gates at TOTAL 0, offline checks of both unchanged-pin locks and docs
+    build passed. The same five historical anchor targets remain; changelog
+    moved from line 630 to 634. All 82 protected raw/result/database objects
+    retained exact bytes and inode/mode/link identities. The first strict
+    audit in the polluted source checkout reported 58 ignored-asset issues;
+    the clean exact-head clone passed the required gate without deleting
+    them. Local preparation is not wheel validation or release acceptance;
+    independent and hosted gates, main, tag and publication remain pending.
 
 ## Progress and next step
 
