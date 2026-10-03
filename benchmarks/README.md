@@ -118,7 +118,9 @@ validated database, source plan, digest, and stream paths, not a benchmark
 measurement. A fresh checkout needs no historical `benchmarks/db.sqlite3`:
 its absence is observed and must remain absent; when that file exists, its
 regular-file type and bytes must remain unchanged. Symlinks and other
-nonregular historical paths fail closed. Path and descriptor checks bound
+nonregular historical paths fail closed. A FIFO substituted during acquisition
+is opened nonblocking and rejected by the regular-file/inode checks rather
+than waiting for a writer. Path and descriptor checks bound
 ordinary substitutions, but
 opening the random staging directory after creation does not attest creator
 ownership. They do not protect against a same-user actor changing every

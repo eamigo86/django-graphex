@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -546,3 +547,80 @@ def test_creator_propagates_unexpected_legacy_read_failure(
     with pytest.raises(PermissionError, match="retained read denied"):
         execution.create_private_seed(plan, venv_root)
     assert not plan.output_root.exists()
+
+
+def test_retained_regular_to_fifo_acquisition_rejects_without_blocking(
+    tmp_path: Path,
+) -> None:
+    """Reject a FIFO substituted between retained-file lstat and open.
+
+    Args:
+        tmp_path: Pytest-owned filesystem root for the bounded child.
+
+    Raises:
+        AssertionError: If the original or replacement is damaged.
+    """
+    base = tmp_path / "benchmarks"
+    base.mkdir()
+    retained = base / "db.sqlite3"
+    retained.write_bytes(b"original retained sentinel")
+    child = """
+import os
+import sys
+from pathlib import Path
+from unittest.mock import patch
+from benchmarks import comparison_seed_execution as execution, run_comparison
+
+base = Path(sys.argv[1])
+retained = base / "db.sqlite3"
+original_open = os.open
+replaced = False
+
+def substitute(path, flags, *args, **kwargs):
+    global replaced
+    assert Path(path) == retained and not replaced
+    replaced = True
+    retained.rename(base / "recoverable-original")
+    os.mkfifo(retained, 0o600)
+    print("FIFO substituted before open", flush=True)
+    return original_open(path, flags, *args, **kwargs)
+
+with patch.object(run_comparison, "BASE", base), patch.object(os, "open", substitute):
+    try:
+        execution._retained_digest()
+    except ValueError as error:
+        assert "retained" in str(error)
+    else:
+        raise AssertionError("substituted FIFO was accepted")
+assert replaced and retained.is_fifo()
+assert (base / "recoverable-original").read_bytes() == b"original retained sentinel"
+print("substituted FIFO rejected", flush=True)
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-B", "-c", child, str(base)],
+        cwd=Path(__file__).resolve().parents[2],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        try:
+            stdout, stderr = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate(timeout=2)
+            assert (base / "recoverable-original").read_bytes() == (
+                b"original retained sentinel"
+            )
+            assert retained.is_fifo()
+            pytest.fail(f"retained FIFO acquisition blocked: {stdout} {stderr}")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate()
+    assert process.returncode == 0, stderr
+    assert "substituted FIFO rejected" in stdout
+    assert (base / "recoverable-original").read_bytes() == (
+        b"original retained sentinel"
+    )
+    assert retained.is_fifo()

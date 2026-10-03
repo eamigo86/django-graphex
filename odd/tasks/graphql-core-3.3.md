@@ -479,6 +479,25 @@ of scope.
         both gates now report TOTAL 0. The failed standard-gate log is
         retained, not waived. Final exact-head proof and independent review
         remain required before real seed creation.
+        Independent verification of `7e9cdf6` found a second bounded
+        acquisition defect after all ordinary checks passed: replacing a
+        regular retained file with a FIFO after lstat but before os.open
+        blocked the reader instead of reaching its type/inode rejection.
+        The independent two-second child was killed and reaped; original
+        sentinel and foreign FIFO remain intact under
+        `graphex-resume-2026-10-02/independent-seed-creation-7e9cdf6/`.
+        Keep T4b2c2b staged. Add a fresh bounded FIFO-specific RED, acquire
+        the retained path nonblocking without following links, and preserve
+        regular-file, inode, absence and read-error checks. Repeat native
+        full/protected gates; independent acceptance and actual seeds remain
+        pending. This is not a general same-user filesystem sandbox claim.
+        New acquisition-specific RED: the one-shot FIFO replacement timed
+        out in its bounded child, which was killed and reaped; focused runner
+        reported one failure and 28 passes before the source change. Adding
+        nonblocking no-follow acquisition while keeping regular/inode checks
+        yielded 29 focused passes. No FIFO reader waits for a writer, and
+        original/foreign residue remains intact. Final exact-head gates and
+        independent recheck still precede actual seed creation.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run

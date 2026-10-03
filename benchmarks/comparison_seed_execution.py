@@ -106,7 +106,9 @@ def _retained_digest() -> bytes | None:
         return None
     if not stat.S_ISREG(visible.st_mode):
         raise ValueError("retained benchmark database is not a regular file")
-    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+    # A FIFO substituted after lstat must not block before fstat rejects it.
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    with os.fdopen(os.open(path, flags), "rb") as stream:
         held = os.fstat(stream.fileno())
         if not stat.S_ISREG(held.st_mode) or (visible.st_dev, visible.st_ino) != (
             held.st_dev,
