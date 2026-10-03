@@ -25,8 +25,9 @@ New version claims require a new controlled measurement run and new artifacts.
 
 ### Named GraphQL-core 3.3 comparison environment
 
-The separate `core33` profile records **whole-stack** inputs, not a new timing
-result. Its four exact freezes live under `comparison_profiles/core33/`:
+The separate `core33` profile records **whole-stack** inputs and has its own
+eight portable results under `results/core33/`. Its four exact freezes live
+under `comparison_profiles/core33/`:
 django-graphex source and Strawberry use core 3.3.0; Graphene and Ariadne use
 their compatible core 3.2.13. All use Python 3.12.11 and Django 6.0.8.
 Strawberry's pinned 0.328.0/0.90.0 pair passed the shared seeded nested
@@ -168,9 +169,15 @@ occupied target is never replaced; failed or uncertain staging residue is
 retained for inspection, not deleted automatically. These checks are bounded
 integrity and no-clobber controls, not a same-user filesystem sandbox or a
 signed provenance receipt. This helper does not seed, measure, invoke the
-historical publisher, or update the eight old tracked result files. The new
-profile's actual canonical artifacts and any documentation using their numbers
-must be generated and reviewed in a later, explicit publication unit.
+historical publisher, or update the eight old tracked result files. The
+`results/core33/` bundle was generated once by replaying the retained 24
+measured raw results. Its eight artifacts record five operations over 100
+timed requests in each of three runs for both 1,000- and 2,000-author seeds.
+Every timing statistic is the median of that statistic across the three
+validated runs; a median of per-run p95 values is not a pooled 300-request
+p95. The measured django-graphex source remains 3.1.1 in provenance. These
+files are not yet used by the website or the historical `results/` comparison
+and are not a 4.0.0 measurement.
 
 Use a trusted results parent without concurrent pathname substitution. A
 foreign directory moved into the stage name after creation but before the first
@@ -223,6 +230,9 @@ measurements. Both modes require a trusted results parent without concurrent
 pathname substitution; neither is a same-user
 filesystem sandbox. The legacy `run_publish.py` command and its historical
 eight artifacts remain separate and unchanged.
+The installed `results/core33/` target is intentionally no-clobber; to repeat
+the replay, select a separate trusted results parent rather than deleting or
+overwriting these artifacts.
 
 ```sh
 .venv/bin/python -m benchmarks.run_publish_core33 replay \

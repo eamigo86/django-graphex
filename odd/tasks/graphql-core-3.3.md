@@ -708,7 +708,7 @@ of scope.
         run `37105726297` each passed 15 validations with three publication
         skips, while child and tracker Codecov checks succeeded. This closes
         only the staged publisher, not actual artifact generation.
-      - [ ] T4b2c5 — Add the explicit core33 run/replay publication command.
+      - [x] T4b2c5 — Add the explicit core33 run/replay publication command.
         Route: delegated direct because the command, live batch receipt seam,
         focused tests, and guide are non-trivial; forecast roughly 700–1100
         authored lines, with the existing coherent pending-version size
@@ -823,11 +823,63 @@ of scope.
         interpreter, although both paths existed locally. The test observes
         the requested executable and still launches both real help commands.
         Selecting the active interpreter passed both targeted controls after
-        the fix; exact-head full and hosted revalidation remain pending.
+        the fix; exact-head full and hosted revalidation were pending at that
+        checkpoint. The corrected child commit `165fe7655a88d09b0049a4a2d40f8877b4285e6c`
+        passed local native-3.3 100 focal, 322 benchmark, and 4,710 full
+        tests at 96.23%, with both docstring gates at zero. Its independent
+        final test-only readback passed 100 focal and authenticated the writer's
+        4,710 full-test proof; earlier independent production verification
+        at `b035567` passed 4,709 full tests at 96.23%. The corrected child
+        hosted run `37112708200` passed all 15 validations and both Codecov
+        checks. PR #237 merged only into integration as
+        `b4d1530fe3b50d5485cf85fb4c6f457b6357d806` with the same tree;
+        post-push integration run `37112964180` and tracker run `37112966167`
+        each passed all 15 validations with three publication skips, and
+        both integration Codecov checks succeeded. Tracker #212 remains a
+        draft against main, issue #210 remains open/approved, and no main
+        merge, tag, release, or actual core33 artifact install occurred.
+        The original failed run `37111329600` remains failed history.
       - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
         bundle from the retained 24 measured raw results. Reuse the verified
         read-only replay path after independent and hosted acceptance of
         T4b2c5; do not rerun measurements or relabel the measured source.
+        Route: delegated direct because an executable artifact contract,
+        eight generated files, guide, and task checkpoint form a recoverable
+        work unit. Strict TDD is enabled by current AGENTS.md: observe a
+        missing-target contract RED, then replay GREEN and refactor. Focal
+        runner: `.venv/bin/python -m pytest
+        tests/benchmarks/test_core33_results.py
+        tests/benchmarks/test_run_publish_core33.py
+        tests/benchmarks/test_comparison_batch.py
+        tests/benchmarks/test_comparison_publish.py --no-cov` under the
+        native-3.3 overlay. Only the new eight whitelisted JSON, a focused
+        actual-artifact contract module, concise benchmark guidance, and this
+        checkpoint are owned. Before one real replay, verify accepted journal
+        and all 24 raw locators/digests, measured source and seed identities,
+        an absent public target, a clean exact integration source clone, and
+        protected asset state. Replay must independently validate and
+        recompute existing results; no seed, HTTP, schema or timing workload
+        may run. Verify portable names, dataset/SQL/surface/math/runtime and
+        provenance without leaking private paths or relabeling 3.1.1 as the
+        command checkout. Then run focal, benchmark, unchanged full coverage,
+        Ruff, typing, docstrings, docs, diff and protected-state checks at the
+        final commit. Generated-file size is counted separately from authored
+        source lines under the approved coherent size exception. Rollback this
+        one new directory, focused contract, guide, and checkpoint together;
+        never alter historical result files or retained raw evidence.
+        Fresh artifact-contract TDD failed nine cases while the public target
+        was absent. Read-only preflight verified the original journal SHA,
+        all 24 raw digests and typed receipts, the measured `350ae84` source,
+        the older `1b5b941` seed witness, native core 3.3.0, and unchanged
+        protected assets. Exactly one sanitized `replay` CLI invocation from
+        a clean `b4d1530` clone succeeded and atomically installed eight JSON
+        without seeding or measuring; all nine actual-artifact contracts then
+        passed. The numeric contracts were frozen from the accepted unpublished
+        batch before replay and cover all 248 per-statistic and schema medians.
+        The 24 raw files, three evidence records, historical eight JSON,
+        35 ignored JSON, and four databases matched their byte and filesystem
+        identities after replay. Final exact-head checks, independent review,
+        hosted acceptance, website guidance, and version 4.0.0 remain pending.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
