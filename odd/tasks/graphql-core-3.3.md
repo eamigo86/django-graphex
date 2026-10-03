@@ -839,7 +839,7 @@ of scope.
         draft against main, issue #210 remains open/approved, and no main
         merge, tag, release, or actual core33 artifact install occurred.
         The original failed run `37111329600` remains failed history.
-      - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
+      - [x] T4b2c6 — Generate and review the actual core33 eight-artifact
         bundle from the retained 24 measured raw results. Reuse the verified
         read-only replay path after independent and hosted acceptance of
         T4b2c5; do not rerun measurements or relabel the measured source.
@@ -879,9 +879,52 @@ of scope.
         The 24 raw files, three evidence records, historical eight JSON,
         35 ignored JSON, and four databases matched their byte and filesystem
         identities after replay. Final exact-head checks, independent review,
-        hosted acceptance, website guidance, and version 4.0.0 remain pending.
+        hosted acceptance, website guidance, and version 4.0.0 were pending
+        at that checkpoint. PR #238 carried child
+        `1cc54b5d3b4152e0faf07ba342c99549dd52850a`; independent review
+        verified all 24 raw digests, 248 numeric medians, and portable public
+        projection. Fresh 109 focal and 331 benchmark checks passed, and the
+        independent readback authenticated the writer's 4,719 full native
+        tests at 96.23%; the parent repeated 109 focal tests. Child hosted
+        run `37115354396`, integration post-push run `37115973364`, and
+        tracker run `37115975715` each passed 15 validations with three
+        publication skips, while child and integration Codecov succeeded.
+        An initial Codecov-not-yet-posted guard stopped before mutation and
+        was satisfied on refresh, not waived. The PR merged only into
+        integration as `10189fbcb86775690ea68d5b35532d64c5a213ff`
+        with the exact child tree. Tracker #212 remains open/draft against
+        main and issue #210 remains open/approved; no main merge, tag, or
+        release occurred. The measured `350ae84` source and `1b5b941` seed
+        witnesses remain distinct from this artifact checkout.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
+    Route: delegated direct because derived website tables, two changelogs,
+    current example guidance, and executable parity/readiness tests are
+    non-trivial across multiple files. Strict TDD is enabled by current
+    AGENTS.md: observe documentation-contract RED before edits, then GREEN
+    and refactor. Derive new numbers only from the eight committed core33 JSON,
+    preserve the old eight and dated release notes, distinguish measured
+    unreleased source 3.1.1 from future 4.0.0, and explain split whole-stack
+    versions and per-run-statistic medians. Update concise README, benchmark
+    page, both Unreleased changelogs, and verified Playground migration
+    guidance; add navigation only if needed. Run focused documentation and
+    readiness contracts, the complete Playground suite, benchmarks, full
+    native-3.3 tests with unchanged 95.01% branch gate, Ruff, mypy, both
+    docstring audits, docs build, link readback, and complete baseline and
+    protected-asset comparisons. Rollback only documentation, navigation,
+    contracts, and this checkpoint. No package/runtime/pin/result/version
+    changes, new measurement, or hosted/independent claim belongs to this unit.
+    The executable documentation contract first failed four missing-table,
+    guide, provenance, and stale-banner cases; a separate stack-version
+    parity control failed before its table was added. Both are retained as
+    chronological RED proof. Current focused readiness/parity checks pass
+    37 tests and the complete Playground suite passes 59 with the installed
+    native-3.3 overlay and no migrations. The current website build succeeds
+    with the same five historical broken-anchor targets. Root benchmark
+    execution still fails 17 canonical-provenance cases because pre-existing
+    ignored historical JSON pollutes that checkout; no files were removed or
+    tests waived. Clean exact-head benchmark/full/quality and independent or
+    hosted verification remain pending at this checkpoint.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
     release-readiness unit, then run final independent and hosted gates. No
     main merge or publication follows automatically.

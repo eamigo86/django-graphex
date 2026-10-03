@@ -43,6 +43,11 @@ your Django models — no DRF, no graphene, no `django-filter`.
 - **graphql-core:** >=3.3.0,<3.4
 - **pydantic:** >=2,<3
 
+These are requirements of the current unreleased migration checkout, not a
+claim that the published 3.1.1 wheel already targets GraphQL-core 3.3. See
+the [upgrade guidance](docs/UPGRADE-4.0.md) before testing custom executors,
+AST builders or subscription transports against this source.
+
 ## Installation
 
 ```bash
@@ -190,6 +195,10 @@ A fully wired example project lives in [`examples/playground/`](examples/playgro
 [Subscriptions](https://eamigo86.github.io/django-graphex/usage/subscriptions/),
 [Settings](https://eamigo86.github.io/django-graphex/usage/settings/) and the
 [Migration Guide](https://eamigo86.github.io/django-graphex/migration/).
+
+The [current core33 comparison](docs/why.md#current-core33-comparison) is
+derived from eight committed portable results, with three-run medians across
+different whole stacks; the original 3.1.0 figures remain historical.
 
 ## License
 

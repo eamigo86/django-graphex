@@ -1,6 +1,6 @@
 # django-graphex — Playground
 
-> **Targets django-graphex v3.1 — native `graphql-core` backend (no graphene).**
+> **Targets the unreleased django-graphex migration checkout with graphql-core 3.3 (no graphene).**
 > Query-optimization, typed-GFK unions, `get_queryset` scoping + safe ordering,
 > native subscriptions (SSE + WS), and the 2.2 permission story: nested writes
 > authorized by the child, a schema pruned to the caller, safe account
@@ -384,7 +384,7 @@ the playground ships no migration files:
 
 ```bash
 cd examples/playground
-DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations
+DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations --no-cov
 ```
 
 The shipped `ALLOWED_HOSTS` contains only `127.0.0.1`, `localhost`, and
