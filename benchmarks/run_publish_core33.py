@@ -319,6 +319,7 @@ def load_replay(
     successes: dict[int, tuple[Path, str]] = {}
     contexts: dict[int, Path] = {}
     preflight_source: tuple[str, str] | None = None
+    legacy_context_seen = False
     for line in lines:
         event = _decode_json(line)
         if type(event) is not dict or type(event.get("kind")) is not str:
@@ -345,6 +346,7 @@ def load_replay(
                 raise ValueError("recorded schema context is missing or duplicated")
             plan = starts[number]
             if kind == "measuring_child_start":
+                legacy_context_seen = True
                 base = _child_schema_base(event, plan)
             else:
                 if set(event) != {
@@ -396,6 +398,8 @@ def load_replay(
             successes[number] = (_path(event["raw_path"]), event["raw_sha256"])
     if len(starts) != 24 or len(successes) != 24 or len(contexts) != 24:
         raise ValueError("dispatch journal is incomplete")
+    if legacy_context_seen and preflight_source is None:
+        raise ValueError("recorded child context needs its source preflight")
     if preflight_source is not None and any(
         (plan.commit, plan.tree) != preflight_source for plan in starts.values()
     ):

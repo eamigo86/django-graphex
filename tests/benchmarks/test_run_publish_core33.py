@@ -126,16 +126,18 @@ def test_private_records_roundtrip_embedded_live_receipts(tmp_path: Path) -> Non
     )
 
 
-def test_replay_cli_accepts_recorded_measurement_checkout(
-    tmp_path: Path,
+@pytest.mark.parametrize("preflight", ("valid", "missing", "wrong_source"))
+def test_replay_cli_checks_recorded_measurement_checkout_preflight(
+    tmp_path: Path, preflight: str
 ) -> None:
-    """Replay a different measured checkout using its recorded child context.
+    """Bind an old child context to one matching source preflight witness.
 
     Args:
         tmp_path: Separate synthetic measuring and replaying source roots.
+        preflight: Matching, missing, or contradictory old source record.
 
     Raises:
-        AssertionError: If replay substitutes its own schema checkout.
+        AssertionError: If replay accepts a missing or mismatched witness.
     """
     batch, original_receipts, results = _fixture(tmp_path)
     measured_base = tmp_path / "measured-source" / "benchmarks"
@@ -176,13 +178,17 @@ def test_replay_cli_accepts_recorded_measurement_checkout(
     _write_evidence(evidence, replace(batch, groups=groups, receipts=tuple(receipts)))
     events = evidence / "events.jsonl"
     rows = [json.loads(line) for line in events.read_text().splitlines()]
-    with_child_context = [
-        {
-            "kind": "preflight",
-            "source_commit": receipts[0].plan.commit,
-            "source_tree": receipts[0].plan.tree,
-        }
-    ]
+    with_child_context = []
+    if preflight != "missing":
+        with_child_context.append(
+            {
+                "kind": "preflight",
+                "source_commit": (
+                    receipts[0].plan.commit if preflight == "valid" else "0" * 40
+                ),
+                "source_tree": receipts[0].plan.tree,
+            }
+        )
     for row in rows:
         if row["kind"] == "schema_context":
             continue
@@ -233,13 +239,25 @@ def test_replay_cli_accepts_recorded_measurement_checkout(
         capture_output=True,
         check=False,
     )
-    assert completed.returncode == 0, completed.stderr
-    assert len(list((results / "core33").iterdir())) == 8
+    if preflight == "valid":
+        assert completed.returncode == 0, completed.stderr
+        assert len(list((results / "core33").iterdir())) == 8
+    else:
+        assert completed.returncode != 0, completed.stdout
+        assert not (results / "core33").exists()
+        assert not list(results.glob(".core33-stage-*"))
 
 
 @pytest.mark.parametrize(
     "case",
-    ("missing", "duplicate", "wrong_commit", "wrong_base", "mixed_base"),
+    (
+        "missing",
+        "duplicate",
+        "wrong_commit",
+        "wrong_base",
+        "mixed_base",
+        "legacy_fallback_without_preflight",
+    ),
 )
 def test_replay_rejects_missing_or_forged_future_schema_context(
     tmp_path: Path, case: str
@@ -266,6 +284,23 @@ def test_replay_rejects_missing_or_forged_future_schema_context(
         rows[first]["commit"] = "0" * 40
     elif case == "wrong_base":
         rows[first]["schema_base"] = str(tmp_path / "not-benchmarks")
+    elif case == "legacy_fallback_without_preflight":
+        plan = rows[first - 1]["plan"]
+        base = Path(rows[first]["schema_base"])
+        rows[first] = {
+            "kind": "measuring_child_start",
+            "number": rows[first]["number"],
+            "cwd": str(base),
+            "argv": [plan["python"], str(base / "harness.py")],
+            "env": {
+                "PYTHONPATH": f"{base.parent}:{base}",
+                "BENCH_LIB": plan["library"],
+                "BENCH_DATABASE": plan["database"],
+                "BENCH_AUTHORS": str(plan["authors"]),
+                "BENCH_PROFILE": plan["profile"],
+                "BENCH_OUTPUT_DIR": plan["output_root"],
+            },
+        }
     else:
         rows[first]["schema_base"] = str(tmp_path / "foreign" / "benchmarks")
     events.write_text("\n".join(json.dumps(row) for row in rows) + "\n")

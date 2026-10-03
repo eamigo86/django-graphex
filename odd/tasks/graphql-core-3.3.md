@@ -792,6 +792,21 @@ of scope.
         the original SHA unchanged; no actual raw, database, or public target
         was opened. This is local corrected-context proof only; independent
         repeat, hosted gates, and T4b2c6 generation remain pending.
+        Independent recheck of `ad25e69` is terminal PARTIAL: the original
+        cross-checkout positive now succeeds, but deleting only the old
+        journal's preflight event still installs eight synthetic files. This
+        violates the stated old child-context source-witness requirement.
+        Reopen only the old fallback acceptance guard: require its one
+        matching preflight commit/tree; future explicit schema-context records
+        remain independently valid. Observe the missing-preflight real CLI RED
+        before this guard, then GREEN/refactor and exact-final native gates.
+        Preserve both independent reports, all raw proof, and actual assets.
+        Fresh cause-correct old-format real-CLI RED exited 1 because deleting
+        only preflight let it install eight synthetic files. The minimal guard
+        then passed 44 CLI controls, including valid old/new positives and
+        contradictory source rejection. Mixed explicit/legacy context without
+        preflight is separately rejected. Local full native and independent
+        acceptance remain pending; no actual raw or database was opened.
       - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
         bundle from the retained 24 measured raw results. Reuse the verified
         read-only replay path after independent and hosted acceptance of

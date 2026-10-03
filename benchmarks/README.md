@@ -213,13 +213,14 @@ cross-file identities, and delegates raw-byte, result, and median validation
 to the same publisher. New complete-batch records carry one explicit schema
 context per dispatch. Older accepted journals recover that context only from
 each corroborating measuring-child cwd, harness argv, selected environment,
-and matching preflight source witness. Missing, mixed, or contradictory
-contexts fail before installation; replay does not replace the measured
-checkout with the current command checkout. These are local corroborating
-records, not signed attestations of loaded source bytes. It never probes the
-current named environments,
-creates seeds, or reruns measurements. Both modes require a trusted results
-parent without concurrent pathname substitution; neither is a same-user
+and one matching preflight source witness. The explicit new format binds each
+dispatch directly and does not require that older preflight record. Missing,
+mixed, or contradictory contexts fail before installation; replay does not
+replace the measured checkout with the current command checkout. These are
+local corroborating records, not signed attestations of loaded source bytes.
+It never probes the current named environments, creates seeds, or reruns
+measurements. Both modes require a trusted results parent without concurrent
+pathname substitution; neither is a same-user
 filesystem sandbox. The legacy `run_publish.py` command and its historical
 eight artifacts remain separate and unchanged.
 
