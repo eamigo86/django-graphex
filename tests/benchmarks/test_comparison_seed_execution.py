@@ -99,6 +99,11 @@ def _checks(monkeypatch: pytest.MonkeyPatch, plan: SeedPlan) -> list[tuple[str, 
         assert "UV_INDEX_URL" not in env and "BENCH_OUTPUT_DIR" not in env
         assert argv[:3] == [str(plan.python), "-m", "django"]
         operation = argv[3]
+        assert argv[4:] == (
+            ["--run-syncdb", "--noinput"]
+            if operation == "migrate"
+            else ["--authors", str(plan.authors)]
+        )
         observed.append((operation, database))
         database.write_bytes(b"migrated" if operation == "migrate" else b"seeded")
         stdout.write(f"{operation} stdout\n".encode())

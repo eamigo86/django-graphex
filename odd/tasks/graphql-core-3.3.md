@@ -434,6 +434,19 @@ of scope.
         Actual seed creation, independent acceptance, and hosted gates remain
         pending; no measured request or canonical publication is part of this
         unit.
+        First local behavior commit:
+        `16621b6d4fc95eea7f066d07384e39b53b45c860`. Its exact clean clone
+        passed 18 focused and 211 benchmark tests, the unchanged full suite
+        at 4,599 passed/7 skipped/3 warnings/23 subtests and 96.23% branch
+        coverage, Ruff, configured 79-file and prior 82-file mypy plus the
+        natural 98-module creator import, both docstring gates at TOTAL 0,
+        and docs with five baseline anchors. Complete coverage gaps and skip/
+        warning records equal the retained CBC baseline; protected blobs,
+        eight canonical JSON, retained DB, and existing private seed match
+        their previous identities. The final focused test additionally pins
+        exact migration and seed flags; it does not authorize actual data
+        creation. Proof is retained under
+        `graphex-resume-2026-10-02/private-seed-creation-t4b2c2b/`.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run
