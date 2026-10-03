@@ -391,7 +391,8 @@ Example error response:
     concrete inheritance parent rows, and directly updated M2M links **after**
     writing, inside the recovery savepoint. A symmetric self-relation checks
     both its forward and mirror links, including constrained custom-through
-    fields. It does not scan unrelated rows
+    fields, even when accessed through a proxy or concrete child inheriting
+    the relation. It does not scan unrelated rows
     in those tables for ordinary single-column primary keys;
     composite primary keys retain the previous table-scoped fallback rather
     than silently omitting a constraint check. Invalid FK or M2M input still

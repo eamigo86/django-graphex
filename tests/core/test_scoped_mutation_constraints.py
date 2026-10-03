@@ -590,10 +590,17 @@ def test_inherited_parent_fk_failure_rolls_back_and_keeps_connection() -> None:
 
 @pytest.mark.django_db(transaction=True)
 @isolate_apps("tests")
-def test_symmetric_mirror_default_fk_rolls_back_with_direct_write() -> None:
+@pytest.mark.parametrize("model_kind", ["concrete", "proxy", "inherited"])
+def test_symmetric_mirror_default_fk_rolls_back_with_direct_write(
+    model_kind: str,
+) -> None:
     """Reject an invalid mirror created by a normal symmetric relation set.
 
-    A subsequent valid mutation must work in the same outer transaction.
+    A subsequent valid mutation must work in the same outer transaction,
+    including when the relation is inherited or exposed through a proxy.
+
+    Args:
+        model_kind: Concrete, proxy, or inherited model used for the write.
     """
     defaults: list[int] = []
 
@@ -665,13 +672,54 @@ def test_symmetric_mirror_default_fk_rolls_back_with_direct_write() -> None:
 
             app_label = "tests"
 
+    class ProxyNode(SymmetricNode):
+        """Expose the concrete symmetric relation without another table.
+
+        Django's manager must still write a mirror for this model.
+        """
+
+        class Meta:
+            """Register an isolated proxy of the symmetric node.
+
+            The proxy has no physical table of its own.
+            """
+
+            app_label = "tests"
+            proxy = True
+
+    class InheritedNode(SymmetricNode):
+        """Access a parent-declared self-relation from a concrete child.
+
+        The child has a separate table linked to its parent row.
+        """
+
+        extra = models.CharField(max_length=32)
+
+        class Meta:
+            """Register an isolated concrete child of the symmetric node.
+
+            Its parent link is created with the temporary schema.
+            """
+
+            app_label = "tests"
+
     with connection.schema_editor() as editor:
         for model in (SymmetricGuard, SymmetricNode, SymmetricLink):
             editor.create_model(model)
+        if model_kind == "inherited":
+            editor.create_model(InheritedNode)
     try:
         guard = SymmetricGuard.objects.create()
         peer = SymmetricNode.objects.create(name="peer")
-        backend = PydanticBackend(SymmetricNode)
+        selected = {
+            "concrete": SymmetricNode,
+            "proxy": ProxyNode,
+            "inherited": InheritedNode,
+        }[model_kind]
+        backend = PydanticBackend(selected)
+        data = {"name": "invalid", "friends": [peer.pk]}
+        if model_kind == "inherited":
+            data["extra"] = "child"
         assert peer.friends.symmetrical is True
         with transaction.atomic():
             defaults[:] = [guard.pk, 999999]
@@ -680,18 +728,19 @@ def test_symmetric_mirror_default_fk_rolls_back_with_direct_write() -> None:
                     None,
                     None,
                     _info(),
-                    {"name": "invalid", "friends": [peer.pk]},
+                    data,
                 )
             assert SymmetricNode.objects.count() == 1
             assert SymmetricLink.objects.count() == 0
             assert SymmetricGuard.objects.filter(pk=guard.pk).exists()
 
             defaults[:] = [guard.pk, guard.pk]
+            data["name"] = "valid"
             ok, node = backend.save_object(
                 None,
                 None,
                 _info(),
-                {"name": "valid", "friends": [peer.pk]},
+                data,
             )
             assert ok, node
             assert set(
@@ -700,5 +749,7 @@ def test_symmetric_mirror_default_fk_rolls_back_with_direct_write() -> None:
     finally:
         defaults.clear()
         with connection.schema_editor() as editor:
+            if model_kind == "inherited":
+                editor.delete_model(InheritedNode)
             for model in (SymmetricLink, SymmetricNode, SymmetricGuard):
                 editor.delete_model(model)

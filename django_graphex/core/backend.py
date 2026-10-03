@@ -135,7 +135,7 @@ def _check_sqlite_written_relations(
         owner_values = [source_value]
         if (
             relation.remote_field.symmetrical
-            and relation.remote_field.model is obj.__class__
+            and relation.remote_field.model is relation.model
         ):
             reverse_field = through._meta.get_field(relation.m2m_reverse_field_name())
             reverse_value = reverse_field.target_field.get_db_prep_value(

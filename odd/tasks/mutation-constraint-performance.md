@@ -69,7 +69,7 @@ share of elapsed time; the separate diagnostic evidence below now does.
   witnesses; independently verify the measurements and semantic boundary.
   Owner/route: delegated profiler and independent verifier. Both completed;
   parent read both full reports and repeated the 14-test native-3.3 baseline.
-- [x] MP2 — Correct the scaling path after the contract decision below. Add a
+- [ ] MP2 — Correct the scaling path after the contract decision below. Add a
   cause-correct failing regression; implement the smallest safe bounded check;
   preserve invalid FK/M2M errors, nested rollback and connection reuse. Update
   current docs and both changelogs alongside behavior and tests. Run focal and
@@ -78,7 +78,8 @@ share of elapsed time; the separate diagnostic evidence below now does.
   evidence passed at 3721404, but independent verification reopened this task
   for inherited-parent and symmetric-mirror regressions. Both have permanent
   correction tests and final local proof at 60ab332. Independent MP3 and
-  actual PostgreSQL remain pending, not inferred from routing stand-ins.
+  actual PostgreSQL remain pending, not inferred from routing stand-ins. MP2 is
+  reopened for the independently reproduced proxy-mirror regression below.
 - [ ] MP3 — Independently validate the exact candidate. Run the unchanged full
   native-3.3 suite and applicable coverage/quality/docs/example/Playground and
   benchmark gates. Reconcile profiling results and limitations; record actual,
@@ -352,3 +353,42 @@ continuous quiet-host proof or an Ariadne comparison. All 82 original retained
 objects remained byte-and-stat identical; no retained database was opened for
 SQLite work. Actual PostgreSQL integration and independent MP3 acceptance
 remain pending. No main merge, tag or release is authorized.
+
+## MP3 proxy-mirror blocker at bc3f826
+
+Fresh independent verification reproduced another direct-write regression with
+a standard Django proxy of the symmetric self-M2M model. The exact-class check
+against the saved instance excludes the proxy although its actual related
+manager still creates both forward and mirror rows. Candidate bc3f826 returns
+success with an invalid newly created mirror; exact base 7eb3935 rejects it
+inside the recovery savepoint. Outer commit still enforces integrity. The
+permanent suite passing 4,740 tests is therefore not acceptance of this candidate.
+
+MP2 is reopened for an observed proxy-specific RED and a bounded correction
+using Django's declared relation/manager semantics, while retaining source-owner
+only scope for ordinary non-self relations. Then repeat exact-source local gates
+and independent acceptance. The failed-candidate evidence remains immutable in
+graphex-resume-2026-10-02/independent-mutation-final/report.md. No broader audit,
+canonical remeasurement, main merge, tag or publication is authorized.
+
+Metric clarification: the configured branch-enabled coverage report's 96.26%
+combines executable lines and branch arcs. The independently counted branch-arcs
+only ratio is 92.7013%; these are distinct metrics. Do not label the combined
+percentage as branch-arcs-only coverage. Preserve the configured 95.01% gate and
+independently verify the changed-runtime line and changed-arc floors.
+
+The proxy correction has a permanent three-way direct-write fixture: concrete,
+proxy, and concrete child inheriting the parent-declared symmetric relation.
+Before the source edit, the concrete case passed while proxy and inherited
+cases failed with the same missing immediate `IntegrityError`; the raw RED is
+under mutation-constraint-performance-proxy/red-proxy-inherited.log. Replacing
+instance exact-class identity with declaration self-identity made all 27 focal
+FK/savepoint/scoped tests pass. Ordinary non-self source-owner SQL remains an
+explicit control. Final exact-source full/quality/diagnostic and independent
+MP3 acceptance remain pending at this checkpoint.
+
+One related-only test selection omitted `tests/test_converter.py`, whose
+collection registers `tests_testmodel`; an unrelated user-delete cascade then
+failed because that model's table was absent. The failed 1,262-pass run is
+retained. Including that fixture-owning module in the related selection passed
+1,292 tests. This does not replace the required unchanged full suite.

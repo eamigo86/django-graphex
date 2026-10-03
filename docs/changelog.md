@@ -34,7 +34,8 @@ security patch and its GraphQL-core 3.2.13 requirement remain historical facts.
 
 SQLite generic mutations now validate only their directly saved FK rows
 (including concrete inheritance parents) and updated M2M links, including
-both rows of a symmetric self-relation, after the
+both rows of a symmetric self-relation accessed through a proxy or concrete
+child, after the
 write, inside the rollback savepoint. This avoids
 the table-wide deferred-FK scan that grew with unrelated rows, while retaining
 immediate structured errors for the mutation's own invalid relations. Earlier
