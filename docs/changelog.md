@@ -631,7 +631,7 @@ changed nothing), plus six internal names — four of which were importable, so
   bucket it likes and evict that bucket's members. Salting would not help — the
   namespace is small by construction, so a caller that cannot aim can still cover
   it by volume. The ceiling is misses, never bodies. See
-  [Caching › Bucketing for unauthenticated identities](usage/caching.md#bucketing-for-unauthenticated-identities)
+  [Caching › Bucketing for unauthenticated identities](usage/caching.md#bucketing-for-unauthenticated-identities-in-identity-scope)
   and
   [Views › Response caching and cache identity](usage/views.md#response-caching-and-cache-identity).
 - **A hand-mounted interface field leaked its implementors' rows.** The

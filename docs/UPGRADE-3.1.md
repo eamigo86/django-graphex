@@ -104,7 +104,7 @@ class CanEdit(BasePermission):
 ## Audit-to-documentation map
 
 This table is the review path for the 24 audit findings. The linked page is the
-canonical operational documentation; the [changelog](changelog.md#310--2026-09-02)
+canonical operational documentation; the [changelog](changelog.md#310-2026-09-03)
 records the release-level summary.
 
 | # | Change | Canonical documentation |
@@ -136,6 +136,6 @@ records the release-level summary.
 
 ## Next steps
 
-- Read the full [3.1.0 changelog](changelog.md#310--2026-09-02).
+- Read the full [3.1.0 changelog](changelog.md#310-2026-09-03).
 - If coming from 2.x, complete the [3.0 upgrade guide](UPGRADE-3.0.md) first.
 - Validate the runnable changes in the [playground](usage/examples/playground.md).

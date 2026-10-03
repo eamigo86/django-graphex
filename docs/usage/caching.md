@@ -64,7 +64,7 @@ and are neither read from nor written to the response cache.
 This partitioning applies to the **response entry**, which always carries the
 full identity.  Invalidation is grouped more coarsely for unauthenticated
 identities — see
-[Bucketing for unauthenticated identities](#bucketing-for-unauthenticated-identities).
+[Bucketing for unauthenticated identities](#bucketing-for-unauthenticated-identities-in-identity-scope).
 
 ---
 
