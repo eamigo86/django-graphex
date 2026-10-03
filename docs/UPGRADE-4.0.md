@@ -1,13 +1,14 @@
 # Preparing for GraphQL-core 3.3
 
-## Unreleased
+## 4.0.0 release prepared
 
-The current source checkout requires `graphql-core>=3.3.0,<3.4`. Version
-4.0.0 is selected for the future release, but package metadata is still
-3.1.1 and this migration has not been published. Install and test the
-checkout explicitly when evaluating it; ordinary package-manager commands
-may still fetch the published 3.1.1 line. Do not infer runtime compatibility
-from the unchanged package version.
+The current source checkout and its editable project locks name 4.0.0 and
+require `graphql-core>=3.3.0,<3.4`. This is a local release-preparation
+state: 4.0.0 is not published, and no wheel, tag, or package release is
+attested here. Install and test the checkout explicitly when evaluating
+it; ordinary package-manager commands may still fetch the published 3.1.1
+line and its older GraphQL-core requirement. Do not infer compatibility from
+an installed 3.1.1 distribution's metadata.
 
 ### Check custom integration code
 

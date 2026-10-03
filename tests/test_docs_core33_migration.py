@@ -120,7 +120,7 @@ def test_upgrade_guide_and_changelogs_cover_the_actual_migration() -> None:
     guide = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
     nav = (ROOT / "zensical.yml").read_text(encoding="utf-8")
     assert "UPGRADE-4.0.md" in nav
-    assert "## Unreleased" in guide
+    assert "## 4.0.0 release prepared" in guide
     for token in (
         "graphql-core>=3.3.0,<3.4",
         "Executor",
@@ -142,7 +142,7 @@ def test_upgrade_guide_and_changelogs_cover_the_actual_migration() -> None:
             assert token in notes
 
 
-def test_playground_banner_targets_unreleased_checkout() -> None:
+def test_playground_banner_targets_prepared_checkout() -> None:
     """Avoid presenting the example as a v3.1-only application.
 
     Existing security and example guidance remains valid for this checkout.
@@ -150,6 +150,6 @@ def test_playground_banner_targets_unreleased_checkout() -> None:
     page = (ROOT / "examples/playground/README.md").read_text(encoding="utf-8")
     banner = page.split("A small, runnable", maxsplit=1)[0]
     assert "Targets django-graphex v3.1" not in banner
-    assert "unreleased" in banner.lower()
+    assert "prepared 4.0.0 checkout" in banner.lower()
     assert "graphql-core 3.3" in banner
     assert "--no-migrations --no-cov" in page

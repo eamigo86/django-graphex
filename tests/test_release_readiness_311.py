@@ -1,4 +1,4 @@
-"""Release preparation contracts for the unpublished 3.1.1 security patch."""
+"""Historical preservation contracts for the published 3.1.1 security patch."""
 
 import tomllib
 from pathlib import Path
@@ -31,17 +31,15 @@ def _package(lock: dict, name: str) -> dict:
     return next(package for package in lock["package"] if package["name"] == name)
 
 
-def test_patch_metadata_and_locks_are_consistent() -> None:
-    """Preserve the published patch version and dated dependency history.
+def test_patch_history_and_playground_lock_are_consistent() -> None:
+    """Preserve the dated patch dependency history and Playground runtime.
 
     The current development floor may move independently of that history.
     """
-    project = _metadata(ROOT / "pyproject.toml")["project"]
     root_notes = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     docs_notes = (ROOT / "docs/changelog.md").read_text(encoding="utf-8")
     playground_lock = _metadata(ROOT / "examples/playground/uv.lock")
 
-    assert project["version"] == "3.1.1"
     for notes in (root_notes, docs_notes):
         patch = notes.split("## 3.1.1 — 2026-10-01", maxsplit=1)[1]
         assert "3.2.13" in patch.split("## 3.1.0 — 2026-09-03", maxsplit=1)[0]

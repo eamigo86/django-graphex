@@ -1,6 +1,6 @@
 # django-graphex — Playground
 
-> **Targets the unreleased django-graphex migration checkout with graphql-core 3.3 (no graphene).**
+> **Targets the prepared 4.0.0 checkout with graphql-core 3.3 (no graphene); no 4.0.0 package release is claimed.**
 > Query-optimization, typed-GFK unions, `get_queryset` scoping + safe ordering,
 > native subscriptions (SSE + WS), and the 2.2 permission story: nested writes
 > authorized by the child, a schema pruned to the caller, safe account

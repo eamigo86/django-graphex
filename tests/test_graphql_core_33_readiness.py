@@ -35,7 +35,7 @@ def _locked_package(lock: dict, name: str) -> dict:
 def test_current_graphql_floor_and_both_locks_are_consistent() -> None:
     """Require the 3.3 floor and matching locks.
 
-    The package release version remains a separate product decision.
+    The prepared local version is distinct from the published 3.1.1 patch.
     """
     project = _read_toml(ROOT / "pyproject.toml")["project"]
     assert FLOOR in project["dependencies"]
