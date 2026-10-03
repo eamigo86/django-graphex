@@ -98,47 +98,71 @@ class ScopedLink(models.Model):
 
 
 class UuidTarget(models.Model):
-    """Provide a UUID primary key for SQLite value adaptation."""
+    """Provide a UUID primary key for SQLite value adaptation.
+
+    The key is stored as a backend-specific database representation.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
 
     class Meta:
-        """Keep the UUID table in the disposable fixture app."""
+        """Keep the UUID table in the disposable fixture app.
+
+        The test owns its schema lifecycle.
+        """
 
         app_label = "scoped_constraint_fixture"
 
 
 class UuidChild(models.Model):
-    """Reference a UUID target from a directly written row."""
+    """Reference a UUID target from a directly written row.
+
+    The saved row exercises bound primary and foreign keys.
+    """
 
     target = models.ForeignKey(UuidTarget, on_delete=models.CASCADE)
 
     class Meta:
-        """Keep the UUID child table in the disposable fixture app."""
+        """Keep the UUID child table in the disposable fixture app.
+
+        The test owns its schema lifecycle.
+        """
 
         app_label = "scoped_constraint_fixture"
 
 
 class UuidOwner(models.Model):
-    """Own relation rows selected by a UUID source key."""
+    """Own relation rows selected by a UUID source key.
+
+    The link query must bind that key in its stored representation.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     targets = models.ManyToManyField(UuidTarget, through="UuidLink")
 
     class Meta:
-        """Keep the UUID owner table in the disposable fixture app."""
+        """Keep the UUID owner table in the disposable fixture app.
+
+        The test owns its schema lifecycle.
+        """
 
         app_label = "scoped_constraint_fixture"
 
 
 class UuidLink(models.Model):
-    """Link UUID owners and targets through constrained foreign keys."""
+    """Link UUID owners and targets through constrained foreign keys.
+
+    The relation is checked only for the selected owner.
+    """
 
     owner = models.ForeignKey(UuidOwner, on_delete=models.CASCADE)
     target = models.ForeignKey(UuidTarget, on_delete=models.CASCADE)
 
     class Meta:
-        """Keep the UUID link table in the disposable fixture app."""
+        """Keep the UUID link table in the disposable fixture app.
+
+        The test owns its schema lifecycle.
+        """
 
         app_label = "scoped_constraint_fixture"
 
@@ -292,7 +316,10 @@ def test_omitted_update_still_checks_persisted_fk() -> None:
 
 @pytest.mark.django_db(transaction=True)
 def test_uuid_row_and_relation_keys_are_database_prepared() -> None:
-    """A UUID owner and target must still receive scoped FK checks."""
+    """A UUID owner and target must still receive scoped FK checks.
+
+    Raw SQL binds must use Django field conversion for each key.
+    """
     with connection.schema_editor() as editor:
         for model in (UuidTarget, UuidChild, UuidOwner, UuidLink):
             editor.create_model(model)
