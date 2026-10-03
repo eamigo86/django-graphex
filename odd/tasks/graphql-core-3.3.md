@@ -676,6 +676,16 @@ of scope.
         canonical artifacts. Raw chronology is retained under the stable
         `core33-publisher-t4b2c4` proof root. Final native and independent
         gates remain pending at this checkpoint.
+        Local exact behavior commit `f9f76ea803fe34de94d6d394331565b8494fb505`
+        passed 24 focused, 275 benchmark, and 4,663 unchanged full-suite
+        native-3.3 tests at 96.23% branch coverage. The complete coverage
+        gap sets, seven skips, three warnings, 23 subtests, and five known
+        documentation anchors matched the accepted baseline; Ruff, the
+        configured and natural-module type checks, and both docstring gates
+        passed. The eight historical JSON files, retained database, and three
+        private databases kept their verified hashes. This is local synthetic-stage
+        proof, not an actual new canonical bundle, independent acceptance, or
+        hosted approval; those remain pending.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
