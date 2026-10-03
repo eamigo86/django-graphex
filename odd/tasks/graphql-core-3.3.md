@@ -147,7 +147,7 @@ of scope.
     changed-line gates passed after a real adapter-forwarding regression
     covered the native-3.3 capability path under the root runner without
     exclusions. Independent and current-head hosted verification passed.
-- [ ] T4 — Adopt GraphQL-core 3.3 as the supported runtime, complete the
+- [x] T4 — Adopt GraphQL-core 3.3 as the supported runtime, complete the
   example, benchmark, documentation, and release-readiness migration without
   rewriting historical results. Route: delegated direct in coherent child PRs.
   The user selected a new four-library comparison with compatible core
@@ -170,7 +170,7 @@ of scope.
     failed at 94.96% despite green validation jobs; T4q tests address the
     identified capability-path coverage gap without altering runtime code.
     Rollback only this floor/locks/readiness/guidance child.
-  - [ ] T4b — Add a new comparison profile and benchmark harness/tests using
+  - [x] T4b — Add a new comparison profile and benchmark harness/tests using
     per-library compatible core versions; keep historical replay isolated
     and historical artifacts byte-identical. No new performance result is
     claimed until measured.
@@ -188,7 +188,7 @@ of scope.
       Rollback only this safety child; no canonical results or pins change.
       Local proof and work-unit commits are recorded below. Independent and
       hosted verification remain pending.
-    - [ ] T4b2 — Add the separately named runner, provenance, and measurements.
+    - [x] T4b2 — Add the separately named runner, provenance, and measurements.
       - [x] T4b2a — Add an independently executable, read-only named-profile
         preflight for one selected stack: clean source identity, installed
         freeze, runtime import, prepared seed, and fresh external destination.
@@ -954,7 +954,7 @@ of scope.
     skips; both Codecov checks succeeded. Tracker #212 remains open/draft
     against main and issue #210 remains open/approved. No main merge, tag,
     package publication, or new benchmark measurement occurred.
-  - [ ] T4d — Apply the selected future 4.0.0 package version only in its
+  - [x] T4d — Apply the selected future 4.0.0 package version only in its
     release-readiness unit, then run final independent and hosted gates. No
     main merge or publication follows automatically.
     Route: delegated direct because project/lock metadata, two changelogs,
@@ -1010,7 +1010,7 @@ of scope.
     Tracker run `37121554286` attempt 2 passed all 15 validations and both
     Codecov checks, with three publication jobs skipped; attempt 1's timeout
     remains historical. T4d remains open until the requested clean-doc check.
-  - [ ] T4e — Correct only the five verified historical broken hrefs and add
+  - [x] T4e — Correct only the five verified historical broken hrefs and add
     an executable heading-backed anchor contract, then prove a warning-free
     generated site and the unchanged native-3.3 test gate. Route: delegated
     direct because four documentation sources, one focused contract and this
@@ -1047,17 +1047,51 @@ of scope.
 
 ## Progress and next step
 
-Current checkpoint: the prepared 4.0.0 integration is
-`4087f04417f58964589d8a1e0e16a14b12f90dad`; T4e is the bounded
-documentation-anchor correction required by the user's final clean-doc
-request. Functional and earlier hosted gates passed, but the latest
-independent documentation check remains a historical PARTIAL; the T4e local
-candidate now builds with zero issues and still needs independent and hosted
-acceptance. Tracker-to-main
-approval, tag and publication have not occurred. Hosted CI has already built
-and validated 4.0.0 artifacts; that is not release publication. The earlier
-progress snapshots below remain historical
-evidence of their respective candidate states.
+Current checkpoint: implementation and release preparation are complete at
+integration `706d20ccac907bf247073f96103391d44aa97b3a`, tree
+`d636fa9266ab00c845255bac51c6a145f8770177`. T4d and the additional T4e
+clean-documentation requirement are verified. The package is prepared as
+4.0.0, not published; tracker #212 remains open/draft against main.
+
+The user-authorized rerun of tracker `37121554286` targeted the failed
+coverage job. GitHub also reran dependencies; attempt 2 passed all 15
+validations and both Codecov checks, with three publication jobs skipped.
+Attempt 1's setup-uv manifest download timeout remains failed history.
+
+Final independent checks at `4087f04` freshly executed 4,728 root tests at
+96.23%, 331 benchmark tests, 59 Playground tests, quickstart/type/mutation
+examples, Ruff, 79/82/102-module typing, both docstring gates and offline
+locks. Its five-link documentation PARTIAL remains an immutable prior report.
+T4e then corrected exactly those five hrefs with heading-backed RED/GREEN.
+The writer's clean `c899918` clone passed 4,729 full tests at 96.23%,
+331 benchmarks and 59 Playground tests with complete unchanged coverage
+and skip/warning sets. At task-only final `c84a781`, independent fresh
+53 focal tests, both docstring gates and generated-site readback passed;
+all five links resolve and Zensical reports **No issues found**. That verifier
+also authenticated, rather than repeated, the `c899918` full-suite proof.
+The parent separately repeated all 53 focal tests.
+
+PR #241 merged only into integration at `706d20c` with the accepted tree.
+Child `37135402863`, post-push `37135642881` and tracker `37135645807`
+each passed all 15 validations and both child/integration Codecov checks;
+three publication jobs skipped. All 82 protected result/raw/metadata/DB
+identities remain unchanged. Current package runtime code has the same tree
+as measured source `350ae84`; measured metadata 3.1.1, seed provenance and
+whole-stack versions were not relabeled as fresh 4.0.0 measurements.
+
+This final checkpoint is an inline, mechanical one-file status update using
+already observed proof; it introduces no behavior or additional tests. Its
+checks are structural readback, exact outside-task tree equality and diff
+validation, followed by its own hosted child gate. No new RED is claimed
+for bookkeeping. Earlier task snapshots remain historical evidence at their
+original identities. The Engram mirror remains pending because the runtime
+has no registered session identity.
+
+Next: explicit maintainer authorization for tracker-to-main, then all fresh
+main checks and a separate explicit authorization before the irreversible
+annotated release tag. No main merge, tag, publication, workflow dispatch or
+branch deletion is authorized by this checkpoint. Hosted CI already built
+and smoke-tested 4.0.0 validation artifacts; that is not publication.
 
 At the earlier T4q checkpoint, T0-T3 and the JSON, validation-cache, HTTP
 privacy, subscription privacy,
