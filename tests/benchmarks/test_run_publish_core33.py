@@ -753,16 +753,45 @@ def test_direct_script_and_module_help_do_not_run_a_workload() -> None:
     Raises:
         AssertionError: If help imports a live workload or fails.
     """
-    python = Path(__file__).resolve().parents[2] / ".venv/bin/python"
-    if not python.is_file():
-        python = Path("/Users/eamigo/Documents/Work/django-graphex/.venv/bin/python")
+    python = sys.executable
     source = Path(__file__).resolve().parents[2]
     for command in (
-        [str(python), "-m", "benchmarks.run_publish_core33", "--help"],
-        [str(python), str(source / "benchmarks/run_publish_core33.py"), "--help"],
+        [python, "-m", "benchmarks.run_publish_core33", "--help"],
+        [python, str(source / "benchmarks/run_publish_core33.py"), "--help"],
     ):
         result = subprocess.run(
             command, cwd=source, text=True, capture_output=True, check=False
         )
         assert result.returncode == 0
         assert "run" in result.stdout and "replay" in result.stdout
+
+
+def test_help_uses_the_executing_test_interpreter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use the active interpreter even when a checkout Python exists.
+
+    Args:
+        monkeypatch: Isolates the interpreter alias and subprocess observer.
+
+    Raises:
+        AssertionError: If either real help command selects another interpreter.
+    """
+    active = Path(sys.executable)
+    alias = f"{active.parent}/./{active.name}"
+    original_run = subprocess.run
+    observed: list[list[str]] = []
+
+    def checked_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        assert command[0] == alias
+        observed.append(command)
+        return original_run(command, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "executable", alias)
+        patch.setattr(subprocess, "run", checked_run)
+        test_direct_script_and_module_help_do_not_run_a_workload()
+
+    assert len(observed) == 2

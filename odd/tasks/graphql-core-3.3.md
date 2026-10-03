@@ -807,6 +807,23 @@ of scope.
         contradictory source rejection. Mixed explicit/legacy context without
         preflight is separately rejected. Local full native and independent
         acceptance remain pending; no actual raw or database was opened.
+        Independent exact-head verification of `b035567` passed 99 focal,
+        321 benchmark, and 4,709 full native-3.3 tests at 96.23% branch
+        coverage, with the baseline gaps, skips, warnings, and quality gates
+        unchanged. PR #237's first hosted run `37111329600` failed in all six
+        test-matrix jobs and base-install: each job reported only the direct
+        script/module help test failing because it tried a developer-specific
+        Python path absent on the runner. Reopen hosted acceptance for a
+        test-only portability correction using the executing interpreter;
+        preserve real help subprocess and no-workload checks. Observe a fresh
+        local cause-correct RED and GREEN, then repeat exact-head local gates.
+        The hosted failure remains a failure; no publication is authorized.
+        The fresh interpreter-alias control failed before the selection fix:
+        the help test chose the checkout Python rather than the active test
+        interpreter, although both paths existed locally. The test observes
+        the requested executable and still launches both real help commands.
+        Selecting the active interpreter passed both targeted controls after
+        the fix; exact-head full and hosted revalidation remain pending.
       - [ ] T4b2c6 — Generate and review the actual core33 eight-artifact
         bundle from the retained 24 measured raw results. Reuse the verified
         read-only replay path after independent and hosted acceptance of
