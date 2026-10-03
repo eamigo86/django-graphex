@@ -526,6 +526,9 @@ def test_creator_propagates_unexpected_legacy_read_failure(
     Args:
         tmp_path: Pytest-owned private filesystem root.
         monkeypatch: Fixture injecting one path-specific read error.
+
+    Raises:
+        AssertionError: If the private output exists after the read failure.
     """
     from benchmarks import comparison_seed_execution as execution
 

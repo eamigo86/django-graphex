@@ -468,6 +468,17 @@ of scope.
         fail closed. The independent PARTIAL remains historical evidence;
         full exact-candidate and independent rechecks still precede real
         private seed creation.
+        Correction work-unit commit
+        `151d613e982992ef61901b79410d4010d4dcc1d8` passed 28 focused,
+        221 benchmark, and 4,609 full native-3.3 tests at 96.23% branch
+        coverage; complete gaps, skips, warnings, five docs anchors, and
+        protected assets matched the retained baseline. Ruff, all three
+        typing routes, and strict docstrings passed. The configured standard
+        docstring gate exposed DOC005 in the new read-error test, so its
+        truthful assertion Raises section was added before final freeze;
+        both gates now report TOTAL 0. The failed standard-gate log is
+        retained, not waived. Final exact-head proof and independent review
+        remain required before real seed creation.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run
