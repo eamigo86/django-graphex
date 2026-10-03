@@ -87,6 +87,25 @@ value is the median of three per-run p95 values, not a pooled percentile over
 comparison. The core 3.3.0 and 3.2.13 stacks remain whole-stack diagnostics,
 not an equal-core competition.
 
+`comparison_seed.prepare_seed_plan` checks a proposed fresh, absolute,
+external private-seed destination for 1,000 or 2,000 authors using the named
+Graphex interpreter. It returns immutable source, profile, freeze, runtime,
+and intended database-path observations. This is read-only: it creates no
+directory or database and runs no migration or seed command. A later creator
+must recheck the destination and source before reserving them; the plan is
+neither proof of creator ownership nor a filesystem sandbox. It is not a
+measurement or permission to execute a changed or foreign plan.
+
+```python
+from pathlib import Path
+from benchmarks.comparison_seed import prepare_seed_plan
+
+plan = prepare_seed_plan(
+    "core33", Path("/absolute/external/envs"), Path("/absolute/external/seed-1000"), 1000
+)
+assert not plan.output_root.exists()
+```
+
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
 `PYTHONPATH` that points at newer source so the published wheel is imported.
