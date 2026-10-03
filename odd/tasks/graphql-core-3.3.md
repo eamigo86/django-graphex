@@ -526,6 +526,50 @@ of scope.
         eight canonical JSON files remained byte-identical. Local final-head
         and independent factual checks, hosted delivery, rotation, and
         publication remain separate gates; no HTTP or timing ran here.
+        Independent actual-data verification at documentary head `32690b7`
+        passed the complete read-only deterministic row contract for both
+        preserved seeds. Executable bytes remain bound to seed source
+        `1b5b941`; only this task document changed at `32690b7`. The first
+        child's lost audit events and failed external proof driver remain
+        disclosed. PR #234 merged only into integration as `97f2031671c8`.
+        Child run `37095541300`, integration run `37095991172`, and tracker
+        run `37095993760` each passed 15 validations with three publication
+        skips; child and tracker Codecov checks passed. This closes seed
+        creation only, not rotated measurements or canonical publication.
+      - [ ] T4b2c3 — Orchestrate one complete rotated batch from the two
+        already prepared private seeds. Route: delegated direct because a new
+        batch helper, focused tests, guide, and this checkpoint are non-trivial.
+        The coherent pending-version size exception applies without a numeric
+        ceiling; disclose actual additions plus deletions. Strict TDD from
+        current AGENTS.md requires a batch-specific RED, GREEN, then refactor;
+        focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_batch.py --no-cov` under native 3.3.
+        Accept only validated 1,000/2,000-author PreparedSeed records, prove
+        the older seed source's exact compatible data contract against current
+        clean source, and keep its original witness. Dispatch exactly three
+        cyclic library rotations per seed through existing prepare_run,
+        run_single, and validate_result seams: 24 distinct external outputs.
+        Aggregate only eight complete three-run groups with the existing
+        median helper, return detached provenance and raw paths, and retain
+        all partial outputs on failure. Reject changed seeds, source, freeze,
+        profile, DB, results, or unsafe output parent before claiming a batch.
+        This first stage uses stubs only: no actual HTTP/schema/timing, seed
+        creation, cleanup, legacy publisher, or canonical write. After local
+        native focal/full, typing, lint, docstrings, docs, baseline and asset
+        checks, independent inspection and a separate heavy-work cost forecast
+        precede any real 24-run batch. Roll back only the new helper, focused
+        tests, guide, and this checkpoint. New-profile atomic publication is
+        a separate following unit; T4b2 remains pending.
+        Stub-stage TDD: the new focal first failed import for the missing
+        helper. Additional cause-correct RED controls exposed acceptance of
+        an earlier raw file changed before batch completion, an owner-readable
+        seed, cross-library machine drift, and a forged current RunPlan; each
+        passed after its narrow correction. The current 29 focused cases pass
+        without HTTP, schema rebuilds, or actual dispatch. Both preserved
+        private seeds passed a separate read-only compatibility probe against
+        clean integration `97f2031`: their `1b5b941` source/tree witnesses
+        remain distinct, hashes and full selected freeze are intact. Final
+        exact-head gates and independent staged inspection remain pending.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its

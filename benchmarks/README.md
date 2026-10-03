@@ -127,6 +127,29 @@ ownership. They do not protect against a same-user actor changing every
 filesystem operation; the later runner must still preflight the returned
 database.
 
+`comparison_batch.run_batch` is the next, unpublished orchestration helper.
+It accepts exactly the existing 1,000- and 2,000-author `PreparedSeed` records,
+the named environment root, and an already existing owner-only external output
+parent. It does not create or reseed a database. For each seed, it dispatches
+three cyclic rotations of Graphex, Graphene, Strawberry, and Ariadne through
+the checked single-run runner: 24 fresh, distinct raw output directories in
+all. Only after every raw JSON passes the existing validator does it return
+eight detached three-run medians with their three retained raw paths and both
+the original seed and current measurement source witnesses. The older seed
+commit is accepted only when its Git source/tree and seed-generating files
+match the current data contract; it is never relabeled as the measuring commit.
+The parent must be prepared separately, for example as a fresh mode-0700
+directory outside the checkout, environments, and private seed directory.
+
+This helper has no CLI, publisher, cleanup, or canonical-result writer. A
+failed or incomplete batch raises and leaves every raw or partial output for
+inspection; no median is returned as a complete comparison. Source, selected
+freezes, seed bytes and SQLite sequences, raw files, and output-parent identity
+are rechecked around dispatch. These are bounded ordinary drift checks, not
+proof against an actor that can replace every filesystem operation. The
+four libraries use disclosed compatible whole stacks, not a common
+GraphQL-core version. No new performance figures are published by this helper.
+
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
 `PYTHONPATH` that points at newer source so the published wheel is imported.
