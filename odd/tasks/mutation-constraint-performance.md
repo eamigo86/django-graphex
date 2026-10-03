@@ -69,7 +69,7 @@ share of elapsed time; the separate diagnostic evidence below now does.
   witnesses; independently verify the measurements and semantic boundary.
   Owner/route: delegated profiler and independent verifier. Both completed;
   parent read both full reports and repeated the 14-test native-3.3 baseline.
-- [ ] MP2 — Correct the scaling path after the contract decision below. Add a
+- [x] MP2 — Correct the scaling path after the contract decision below. Add a
   cause-correct failing regression; implement the smallest safe bounded check;
   preserve invalid FK/M2M errors, nested rollback and connection reuse. Update
   current docs and both changelogs alongside behavior and tests. Run focal and
@@ -78,8 +78,9 @@ share of elapsed time; the separate diagnostic evidence below now does.
   evidence passed at 3721404, but independent verification reopened this task
   for inherited-parent and symmetric-mirror regressions. Both have permanent
   correction tests and final local proof at 60ab332. Independent MP3 and
-  actual PostgreSQL remain pending, not inferred from routing stand-ins. MP2 is
-  reopened for the independently reproduced proxy-mirror regression below.
+  actual PostgreSQL remain pending, not inferred from routing stand-ins. MP2
+  was reopened for the proxy-mirror regression below and now has fresh local
+  correction proof at e04a1ab; independent MP3 acceptance remains open.
 - [ ] MP3 — Independently validate the exact candidate. Run the unchanged full
   native-3.3 suite and applicable coverage/quality/docs/example/Playground and
   benchmark gates. Reconcile profiling results and limitations; record actual,
@@ -392,3 +393,39 @@ collection registers `tests_testmodel`; an unrelated user-delete cascade then
 failed because that model's table was absent. The failed 1,262-pass run is
 retained. Including that fixture-owning module in the related selection passed
 1,292 tests. This does not replace the required unchanged full suite.
+
+## MP2 proxy and inherited-relation local acceptance at e04a1ab
+
+The minimal correction uses the declared symmetric self-relation's model
+identity rather than the saved instance's exact Python class. A proxy and a
+concrete child inheriting the relation now both reject an invalid newly
+written mirror FK inside the recovery savepoint. The corresponding valid
+mutations succeed in the same outer transaction. An ordinary non-self
+custom-through relation remains source-owner-only. The raw RED and GREEN
+logs are retained under mutation-constraint-performance-proxy/.
+
+The exact clean e04a1ab clone passed 4,742 native-3.3 full-suite tests,
+seven skips, three warnings and 23 subtests. The unchanged configured
+branch-enabled combined line-plus-arc coverage gate passed at 96.26%
+(13,886/14,425) against the 95.01% threshold. The branch-arcs-only ratio is
+3,569/3,850 = 92.7013%; it is not a separate configured 95.01% gate.
+Changed-runtime diff-cover was 70/71 lines (98.6%), and changed-branch
+coverage was 27/28 arcs (96.43%), both above the requested 95.01% floor.
+Gap counts are 258 missing lines, 265 partial sites, 273 total missing
+branch sites and 281 missing arcs; counts are not source-position identities.
+All 331 benchmark and 59 standalone Playground tests, Ruff, configured
+79/82-file typing, both zero-issue docstring gates, zero-issue docs build
+and diff check passed on the behavior commit.
+
+Two NEW disposable 50k/100k-comment datasets from e04a1ab yielded post-only
+create-comment p50 values of 0.735667/0.621292 ms over 25 rollback-only
+timed requests each. A separate instrumented request at each size emitted
+SAVEPOINT, INSERT, keyed CASE FK SELECT and RELEASE. Both new database file
+hashes, cardinalities and SQLite sequences stayed unchanged across samples.
+These are not paired speedups, canonical medians, quiet-host guarantees or
+Ariadne comparisons. All 82 original protected objects and 295 prior proof
+files remained byte-and-stat identical; no retained DB was SQLite-opened.
+Actual PostgreSQL integration, hosted gates and independent MP3 acceptance
+remain pending; no main merge, tag, publication or environment refresh is
+authorized. The behavior commit is e04a1ab; this factual task checkpoint
+must not relabel older failed candidates or the independent PARTIAL as PASS.
