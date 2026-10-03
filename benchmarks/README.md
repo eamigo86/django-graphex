@@ -150,6 +150,38 @@ proof against an actor that can replace every filesystem operation. The
 four libraries use disclosed compatible whole stacks, not a common
 GraphQL-core version. No new performance figures are published by this helper.
 
+`comparison_publish.publish_core33` is the separate receipt-aware writer for
+an already completed batch. Its caller supplies the detached `BatchResult`,
+24 numbered `DispatchReceipt` records containing each exact RunPlan, raw path,
+and SHA-256, and an existing absolute results directory. It rereads every raw
+file, applies the shared profile validator, recomputes all eight three-run
+medians, then projects only portable versions, dataset, machine platform/CPU,
+surface, SQL/timing statistics, aggregation meaning, source and seed digests,
+and three raw digests. Private database, backend, schema, output and environment
+paths are excluded. The measured source version remains its original value;
+the writer's later checkout is not substituted into provenance.
+
+The writer stages all eight JSON files in a private sibling and installs the
+entire `results/core33/` directory with one atomic no-clobber rename. An
+occupied target is never replaced; failed or uncertain staging residue is
+retained for inspection, not deleted automatically. These checks are bounded
+integrity and no-clobber controls, not a same-user filesystem sandbox or a
+signed provenance receipt. This helper does not seed, measure, invoke the
+historical publisher, or update the eight old tracked result files. The new
+profile's actual canonical artifacts and any documentation using their numbers
+must be generated and reviewed in a later, explicit publication unit.
+
+Use a trusted results parent without concurrent pathname substitution. A
+foreign directory moved into the stage name after creation but before the first
+staging descriptor is acquired may be adopted. A foreign directory can receive
+all eight exclusive files; if it was empty, that foreign inode can then be
+installed as the complete bundle. An inherited filename colliding with one of
+the eight causes exclusive creation to fail rather than overwriting it. An
+extra, noncolliding inherited file causes validation to reject the bundle,
+but the eight added files remain as recoverable foreign-directory residue.
+Descriptor checks establish continuity from first acquisition, not creator
+ownership or immutable foreign state.
+
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
 `PYTHONPATH` that points at newer source so the published wheel is imported.

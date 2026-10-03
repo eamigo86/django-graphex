@@ -536,7 +536,7 @@ of scope.
         run `37095993760` each passed 15 validations with three publication
         skips; child and tracker Codecov checks passed. This closes seed
         creation only, not rotated measurements or canonical publication.
-      - [ ] T4b2c3 — Orchestrate one complete rotated batch from the two
+      - [x] T4b2c3 — Orchestrate one complete rotated batch from the two
         already prepared private seeds. Route: delegated direct because a new
         batch helper, focused tests, guide, and this checkpoint are non-trivial.
         The coherent pending-version size exception applies without a numeric
@@ -635,6 +635,72 @@ of scope.
         canonical result was published. Independent actual-data acceptance,
         hosted gates, and the separate publisher remain pending; T4b2c3 is
         still unchecked.
+        Independent actual-data acceptance passed at `95ebf2b` with the
+        measured `350ae84` source witness unchanged. PR #235 merged only into
+        integration as `224b3063f55eda413a71a2f8e69116e8f1166c99`;
+        child run `37102260315`, integration run `37102534707`, and tracker
+        run `37102538323` each passed 15 checks with three publication skips;
+        child and tracker Codecov checks succeeded. This closes only the
+        unpublished rotated-batch unit. The earlier pending statements above
+        are chronological, not current blockers for T4b2c3.
+      - [ ] T4b2c4 — Stage the portable core33 eight-artifact publisher.
+        Route: delegated direct, because a new publisher, focused tests,
+        benchmark ignore rules, guide, and this task document are non-trivial.
+        The coherent pending-version size exception has no numeric ceiling;
+        forecast roughly 600–900 authored lines including safety tests and
+        docs, then disclose the actual count. Strict TDD is enabled by the
+        current AGENTS.md: observe a publisher-specific RED, then GREEN and
+        refactor with `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_publish.py --no-cov` under the named
+        core-3.3 overlay. Accept a BatchResult plus 24 explicit dispatch
+        receipts, re-read exact raw bytes, reuse shared validation and median
+        math, and reject every missing, duplicate, drifted, or mixed witness
+        before installing anything. Project only portable allowlisted fields
+        into eight new `benchmarks/results/core33` JSON files; exclude private
+        paths and environment facts. Stage and validate all eight under a
+        unique same-filesystem private sibling, then install the whole directory
+        once with atomic no-clobber rename; occupied targets and failed stages
+        remain untouched or recoverable without automatic deletion. Keep the
+        old eight artifacts and legacy publisher unchanged. Verify native
+        focal, benchmarks, unchanged full coverage gate, baseline gap sets,
+        Ruff, typing, both docstring gates, docs anchors, diff, and protected
+        DB/JSON/blob identities in an exact clean commit clone. Rollback removes
+        only this publisher, its tests and guidance/ignore/task additions.
+        This unit uses synthetic receipts only: actual canonical generation,
+        hosted acceptance, and release/version work remain later stages.
+        Publisher-specific RED first observed the missing module (exit 2),
+        followed by 23 passing focused controls. A fresh one-shot foreign
+        staging-directory substitution then reproduced an unsafe install
+        (exit 1) before the held-directory identity check made 24 focused
+        controls pass. The test data are synthetic; neither run generated
+        canonical artifacts. Raw chronology is retained under the stable
+        `core33-publisher-t4b2c4` proof root. Final native and independent
+        gates remain pending at this checkpoint.
+        Local exact behavior commit `f9f76ea803fe34de94d6d394331565b8494fb505`
+        passed 24 focused, 275 benchmark, and 4,663 unchanged full-suite
+        native-3.3 tests at 96.23% branch coverage. The complete coverage
+        gap sets, seven skips, three warnings, 23 subtests, and five known
+        documentation anchors matched the accepted baseline; Ruff, the
+        configured and natural-module type checks, and both docstring gates
+        passed. The eight historical JSON files, retained database, and three
+        private databases kept their verified hashes. This is local synthetic-stage
+        proof, not an actual new canonical bundle, independent acceptance, or
+        hosted approval; those remain pending.
+        Independent staged verification at `f8c418f` passed 29 synthetic
+        controls, 248 separately checked numeric medians, and the unchanged
+        4,663-test native suite with the same quality and protected-state
+        baselines. Its ordinary pre-acquisition substitution control showed
+        that a foreign directory moved into the stage name after creation but
+        before the first descriptor can receive eight exclusive additions;
+        when empty it can be installed as the complete foreign-inode bundle.
+        An inherited colliding file was not overwritten, and an inherited
+        extra file caused rejection but left the additions as residue. The
+        first descriptor proves continuity from acquisition, not creator
+        ownership or unchanged foreign state. This reopens only documentary
+        boundary guidance, not publisher behavior or a universal sandbox
+        requirement. Hosted approval and actual canonical generation remain
+        pending. Evidence: `independent-publisher-f8c418f/report.md` under
+        the stable local recovery root.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
