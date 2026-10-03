@@ -81,11 +81,13 @@ share of elapsed time; the separate diagnostic evidence below now does.
   actual PostgreSQL remain pending, not inferred from routing stand-ins. MP2
   was reopened for the proxy-mirror regression below and now has fresh local
   correction proof at e04a1ab; independent MP3 acceptance remains open.
-- [ ] MP3 — Independently validate the exact candidate. Run the unchanged full
+- [x] MP3 — Independently validate the exact candidate. Run the unchanged full
   native-3.3 suite and applicable coverage/quality/docs/example/Playground and
   benchmark gates. Reconcile profiling results and limitations; record actual,
   unavailable and pending checks. Close a tracking work-unit commit only after
   observed proof. Owner/route: independent delegated verifier, parent readback.
+  Local acceptance is verified at 4972464; actual PostgreSQL, fresh hosted
+  matrix/gates, canonical comparison and delivery remain separate pending work.
 
 ## Acceptance and next step
 
@@ -429,3 +431,52 @@ Actual PostgreSQL integration, hosted gates and independent MP3 acceptance
 remain pending; no main merge, tag, publication or environment refresh is
 authorized. The behavior commit is e04a1ab; this factual task checkpoint
 must not relabel older failed candidates or the independent PARTIAL as PASS.
+
+## MP3 independent local acceptance at 4972464
+
+The independent verifier inspected and executed immutable candidate
+4972464cc1b8301ee8c5fd706b1c449c12fc4d39, tree
+b1e2239bf2a96e0cf7c05460bc3094878d8704a3. Its executable source matches
+e04a1abda35bf6def27eedb89bd37354b2d73202. All original inherited-parent,
+symmetric-mirror and proxy controls now pass, along with an actual separate
+SQLite write-alias control whose default database remained unopened.
+
+Fresh independent checks passed: 27 focal, 4,742 full, 331 benchmark and
+59 standalone Playground tests; Ruff, check-only format, configured 79/82-file
+mypy, both zero-issue docstring audits, zero-issue documentation build,
+generated anchors/document readbacks and git diff check. The seven skips,
+three warnings and 23 subtests match the retained baseline exactly; five skips
+are pending actual PostgreSQL cases. Configured combined line-plus-arc coverage
+is 13,886/14,425 (96.2634%). Global arcs alone are 3,569/3,850 (92.7013%),
+a distinct metric. Changed-runtime coverage independently passes at 70/71
+lines (98.5915%) and 27/28 arcs across 14 sites (96.4286%). The sole missing
+changed arc is the defensive saved-row-disappeared path, 120 to 121.
+
+The verifier authenticated the retained causal RED/GREEN sequences and
+recomputed latest post-only diagnostic p50 values of 0.735667/0.621292 ms
+from the 25 timed samples at each size. Each separate probe has four SQL
+statements and one row-keyed FK check, not a table-wide scan. All recorded
+responses pass the shared create-comment contract; recorded row/sequence and
+file-hash witnesses match. No profiling database was reopened or remeasured.
+These remain separate-session diagnostics, not paired speedups, canonical
+medians, continuous host-quietness evidence or an Ariadne ranking.
+
+Preservation passed for all 82 original protected objects, 295 prior evidence
+files and 172 additional proof files, plus all 640 out-of-scope tracked blobs
+and modes. Main, tag, root environment, canonical results and dependencies
+remain unchanged. The parent read the full report and independently repeated
+the exact 27-test focal command with the native 3.3 overlay from the clean
+verified clone; exit 0, 27 passed. Its log is retained under
+graphex-resume-2026-10-02/parent-mutation-4972464/focal-spot.log.
+
+Full local acceptance report:
+graphex-resume-2026-10-02/independent-mutation-4972464/report.md.
+Earlier failed-candidate reports remain unchanged and are not retroactively
+accepted. This checkpoint edits only this task document; no functional proof
+is claimed for changed runtime bytes because none change here.
+
+Next: separately validate actual PostgreSQL and the fresh hosted version matrix
+before integration/delivery; a new official whole-stack benchmark comparison
+requires its own measurement scope. No main merge, tag or publication is
+authorized or performed. Engram recovery mirror remains pending under the
+current unregistered-runtime restriction; RDD remains off.
