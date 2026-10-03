@@ -52,10 +52,13 @@ of scope.
   forecast at 200-320 authored lines and its separate new runner at 250-380;
   final examples/guidance and measured artifacts remain TBD. Generated locks
   are reported separately. The 400-line task heuristic does not justify
-  dropping tests or docs; each delivered child PR still respects its hard
-  authored-line budget. Delivery strategy: auto-chain using the human-approved feature-branch-chain.
-  Keep each child PR at or below 400 authored changed lines, with no authored
-  `size:exception` approved. The integration tracker remains draft until each
+  dropping tests or docs. Delivery strategy: auto-chain using the
+  human-approved feature-branch-chain. The maintainer later approved
+  `size:exception` for coherent pending-version PRs without a numeric ceiling;
+  disclose each actual additions-plus-deletions count and retain the chain's
+  reviewable behavior boundaries. Earlier under-400 stops and unit-scoped
+  exceptions below remain historical decisions. The integration tracker
+  remains draft until each
   child passes its own checks. PRs require an approved linked issue and exactly
   one `type:*` label; issue creation and approval are explicitly authorized.
   No main merge, versioned release, tag, or publication follows automatically.
@@ -150,7 +153,8 @@ of scope.
   The user selected a new four-library comparison with compatible core
   versions chosen separately for each library. Compare disclosed whole stacks,
   not libraries alone. Preserve the eight historical JSON results, versions.env,
-  constraints, and dated release notes. Package SemVer is still undecided.
+  constraints, and dated release notes. The selected future package version is
+  4.0.0, not yet applied or released.
   - [x] T4a — Raise only the runtime GraphQL-core bound to >=3.3.0,<3.4;
     scope-update root and Playground graphql-core lock entries; preserve
     package version 3.1.1. Own current-readiness contracts and bounded public
@@ -400,17 +404,133 @@ of scope.
         was invalid, not a configured failure; configured library mypy passed
         79 files. No database was created. Independent and hosted acceptance
         remain pending; T4b2c2b owns actual private seed creation.
-      - [ ] T4b2c2b — Reserve and build fresh private seeds from the checked
-        plan, then validate and retain failed attempts. This separate unit owns
-        exclusive directory/database creation, migrate then seed_bench,
-        protected-asset and cardinality checks, and the later cost notice for
-        actual 1,000/2,000-author writes. Rotated runs and all-or-nothing new
-        profile publication remain a further independent boundary.
+        PR #233 merged only into integration as
+        `f2013619704c36643a5df03762eae6e95c2d1a46`. Child
+        `37087831179` passed 15 validations and both Codecov checks;
+        integration push `37088175387` and tracker `37088179078` each passed
+        15 validations with three publication skips, and tracker Codecov passed.
+        Independent read-only preflight proof is retained under
+        `graphex-resume-2026-10-02/independent-seed-preflight-2867c8a/`.
+      - [x] T4b2c2b — Reserve and build fresh private seeds from the checked
+        plan, then validate and retain failed attempts. Route: delegated direct
+        because execution helper, focused tests, README, and checkpoint are
+        non-trivial. Forecast 300-500 authored lines; the approved coherent
+        migration size exception applies, without a numeric ceiling. Strict
+        TDD from current AGENTS.md requires creator-specific RED, GREEN, then
+        refactor; focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_seed_execution.py --no-cov` under
+        native GraphQL-core 3.3. Recheck every SeedPlan field before writes;
+        create only a fresh external private database using the selected named
+        interpreter, current committed migrations, and explicit sanitized
+        BENCH_DATABASE. Reject path, source, freeze, runtime, or DB drift;
+        validate shared cardinalities and fixed post 5000. Retain failed
+        attempt output without automatic deletion. Rollback only the creator,
+        its tests, guide, and checkpoint; keep preflight independently useful.
+        Mocked/local gates precede a separately forecast actual 1,000/2,000
+        author seed creation. Rotated runs and all-or-nothing new profile
+        publication remain a further independent boundary.
+        Creator-specific missing-entrypoint RED failed 12 cases before source;
+        normalized mocked GREEN passed 18 cases under the native 3.3 overlay.
+        The helper stages through an exclusive regular file beneath an
+        owner-only external parent, retains streams/residue, and uses atomic
+        no-clobber directory installation. Random staging-directory opening
+        is not creator-ownership proof or a same-user filesystem sandbox.
+        Actual seed creation, independent acceptance, and hosted gates remain
+        pending; no measured request or canonical publication is part of this
+        unit.
+        First local behavior commit:
+        `16621b6d4fc95eea7f066d07384e39b53b45c860`. Its exact clean clone
+        passed 18 focused and 211 benchmark tests, the unchanged full suite
+        at 4,599 passed/7 skipped/3 warnings/23 subtests and 96.23% branch
+        coverage, Ruff, configured 79-file and prior 82-file mypy plus the
+        natural 98-module creator import, both docstring gates at TOTAL 0,
+        and docs with five baseline anchors. Complete coverage gaps and skip/
+        warning records equal the retained CBC baseline; protected blobs,
+        eight canonical JSON, retained DB, and existing private seed match
+        their previous identities. The final focused test additionally pins
+        exact migration and seed flags; it does not authorize actual data
+        creation. Proof is retained under
+        `graphex-resume-2026-10-02/private-seed-creation-t4b2c2b/`.
+        Independent staged verification at `f484a1b` is PARTIAL: a clean
+        checkout without the ignored historical benchmarks/db.sqlite3 passes
+        the real read-only seed preflight, but the creator raises
+        FileNotFoundError before any guarded write or child command because
+        its retained-asset digest assumes that legacy file exists. Reopen
+        staged acceptance within T4b2c2b. Correction scope: observe either
+        absence or a present regular file and reject changes to that state;
+        fail closed for symlinks, nonregular objects, and read errors. Add a
+        fresh cause-correct RED before fixing the helper, then repeat native
+        focused/full and protected-asset checks. The prior missing-entrypoint
+        RED12 and mocked GREEN18 remain historical, not correction proof.
+        No real private seed or benchmark execution is authorized yet.
+        Correction RED failed seven of 28 focused cases on the pre-fix helper:
+        absent checkout, nonregular historical paths, and unexpected read
+        error handling exposed the retained-state assumption. After the
+        narrow absence-or-regular-file observation change, all 28 focused
+        mocked cases passed. Absent-to-present, present-to-absent, changed
+        bytes, symlink, dangling link, directory, and read-error controls
+        fail closed. The independent PARTIAL remains historical evidence;
+        full exact-candidate and independent rechecks still precede real
+        private seed creation.
+        Correction work-unit commit
+        `151d613e982992ef61901b79410d4010d4dcc1d8` passed 28 focused,
+        221 benchmark, and 4,609 full native-3.3 tests at 96.23% branch
+        coverage; complete gaps, skips, warnings, five docs anchors, and
+        protected assets matched the retained baseline. Ruff, all three
+        typing routes, and strict docstrings passed. The configured standard
+        docstring gate exposed DOC005 in the new read-error test, so its
+        truthful assertion Raises section was added before final freeze;
+        both gates now report TOTAL 0. The failed standard-gate log is
+        retained, not waived. Final exact-head proof and independent review
+        remain required before real seed creation.
+        Independent verification of `7e9cdf6` found a second bounded
+        acquisition defect after all ordinary checks passed: replacing a
+        regular retained file with a FIFO after lstat but before os.open
+        blocked the reader instead of reaching its type/inode rejection.
+        The independent two-second child was killed and reaped; original
+        sentinel and foreign FIFO remain intact under
+        `graphex-resume-2026-10-02/independent-seed-creation-7e9cdf6/`.
+        Keep T4b2c2b staged. Add a fresh bounded FIFO-specific RED, acquire
+        the retained path nonblocking without following links, and preserve
+        regular-file, inode, absence and read-error checks. Repeat native
+        full/protected gates; independent acceptance and actual seeds remain
+        pending. This is not a general same-user filesystem sandbox claim.
+        New acquisition-specific RED: the one-shot FIFO replacement timed
+        out in its bounded child, which was killed and reaped; focused runner
+        reported one failure and 28 passes before the source change. Adding
+        nonblocking no-follow acquisition while keeping regular/inode checks
+        yielded 29 focused passes. No FIFO reader waits for a writer, and
+        original/foreign residue remains intact. Final exact-head gates and
+        independent recheck still precede actual seed creation.
+        Staged independent verification at exact
+        `1b5b941e2555a5bffee8a109ee0a32fdef1258fd` / tree
+        `ebc8872c6660c355c460238be37c2047a922f28d` passed: the
+        one-shot FIFO substitution rejected promptly, 41 bounded filesystem
+        controls passed, clean-checkout preflight reached guarded reservation,
+        and focal 29, benchmark 222, full 4,610/96.23%, typing, docstrings,
+        docs, and protected-asset proofs were authenticated. The parent
+        repeated focal 29 with native 3.3. After one informational forecast
+        (3,000 authors, 30,000 posts, 150,000 comments; two migrations and
+        two seeds), the parent explicitly authorized exactly two fresh
+        private databases. At clean source witness `1b5b941` / tree `ebc8872`,
+        actual creation produced the 1,000-author seed (10,000 posts, 50,000
+        comments; SHA-256 `a09f1404…`) and 2,000-author seed (20,000 posts,
+        100,000 comments; SHA-256 `3d68cdc6…`). Both passed the shared shape
+        check and independent read-only row-content, order, integrity, and
+        sequence checks. The original external proof driver failed after the
+        first seed on a Path-versus-string cwd assertion; its raw failure is
+        retained, the first seed was not rerun, and its actual audit events
+        were not persisted. A read-only recovery authenticated that seed and
+        all four retained child streams; only the second seed has retained
+        actual child argv/cwd/env audit events. Root and prior private DBs and
+        eight canonical JSON files remained byte-identical. Local final-head
+        and independent factual checks, hosted delivery, rotation, and
+        publication remain separate gates; no HTTP or timing ran here.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
-  - [ ] T4d — Resolve package SemVer by separate product decision, then run
-    final independent and hosted release-readiness gates. No main merge or
-    publication follows automatically.
+  - [ ] T4d — Apply the selected future 4.0.0 package version only in its
+    release-readiness unit, then run final independent and hosted gates. No
+    main merge or publication follows automatically.
 
 ## Progress and next step
 
