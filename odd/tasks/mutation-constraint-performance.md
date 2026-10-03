@@ -480,3 +480,8 @@ before integration/delivery; a new official whole-stack benchmark comparison
 requires its own measurement scope. No main merge, tag or publication is
 authorized or performed. Engram recovery mirror remains pending under the
 current unregistered-runtime restriction; RDD remains off.
+
+MP3 tracking work-unit commit: 3400425f08fac89af14ceaf0a5568d1cdff094fc
+(docs(perf): record independent scoped-validation acceptance). This identity
+link changes only this feature document; the verified executable witness is
+still e04a1ab and the independently tested candidate is still 4972464.
