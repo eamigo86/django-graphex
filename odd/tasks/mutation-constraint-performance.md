@@ -69,12 +69,14 @@ share of elapsed time; the separate diagnostic evidence below now does.
   witnesses; independently verify the measurements and semantic boundary.
   Owner/route: delegated profiler and independent verifier. Both completed;
   parent read both full reports and repeated the 14-test native-3.3 baseline.
-- [ ] MP2 — Correct the scaling path after the contract decision below. Add a
+- [x] MP2 — Correct the scaling path after the contract decision below. Add a
   cause-correct failing regression; implement the smallest safe bounded check;
   preserve invalid FK/M2M errors, nested rollback and connection reuse. Update
   current docs and both changelogs alongside behavior and tests. Run focal and
   related checks, then close one Conventional work-unit commit with evidence.
-  Owner/route: one delegated writer. Runtime evidence is required, not N/A.
+  Owner/route: one delegated writer. Local native-3.3 runtime and diagnostic
+  evidence passed at 3721404; actual PostgreSQL remains pending, not inferred
+  from the non-SQLite routing test.
 - [ ] MP3 — Independently validate the exact candidate. Run the unchanged full
   native-3.3 suite and applicable coverage/quality/docs/example/Playground and
   benchmark gates. Reconcile profiling results and limitations; record actual,
@@ -90,8 +92,9 @@ structural bounded-work regression or correctness tests. A new whole-stack
 canonical comparison and hosted delivery are separate follow-ups; old numbers
 must remain explicitly attributed to their original measuring checkout.
 
-Progress: MP1 profiling verified; the human semantic-boundary decision for MP2
-is accepted. No production code/test/docs or canonical benchmark artifact has
+Historical MP1 checkpoint: profiling verified; the human semantic-boundary
+decision for MP2 is accepted. No production code/test/docs or canonical
+benchmark artifact has
 changed yet. Next: delegate one bounded strict-TDD writer for MP2, then rerun
 diagnostic timings with fresh data and independently verify the exact candidate.
 
@@ -215,3 +218,35 @@ stand-in is actual PostgreSQL integration. Their initial fixture typo failed
 before correction, and the two-test focused rerun passed. A new exact-head
 full/diff-coverage proof and post-change disposable performance profile remain
 pending.
+
+## MP2 local acceptance at executable commit 3721404
+
+The clean REAL clone at 37214043ff4959d7640c2c7b56e5712e08fb9f2f passed
+the unchanged native-3.3 full suite: 4,737 passed, seven skipped, three
+warnings, 23 subtests, and 96.25% branch coverage against the unchanged
+95.01% floor. Its gap **counts** equal the CBC baseline (258 missing lines,
+266 partial branch sites, 274 total missing branch sites, 282 missing arcs);
+runtime edits shift line identities, so count equality is not gap-identity
+equality. Diff-cover found 60/61 changed runtime executable lines covered
+(98.4%). Of 22 arcs on 11 changed branch sites, 21 were covered (95.45%);
+the missing arc is the saved-row-disappeared defensive branch at line 117.
+The 331 benchmark tests and all 59 standalone Playground tests passed.
+Ruff, configured mypy 79/82 files, both public docstring gates at zero,
+Zensical build with no issues, and diff checks passed in that same clone.
+
+Only two NEW disposable databases under the MP2 proof root were migrated and
+seeded for post-change diagnostic profiling. Their 50k/100k-comment
+create-comment outer-atomic request p50 values were 0.635958/0.476375 ms
+across 25 timed requests each. One separate instrumented request at each size
+had four statements: SAVEPOINT, INSERT, one primary-key-filtered CASE FK
+query, and RELEASE. Its FK query took 0.0077/0.0067 ms respectively; these
+instrumented values are not p50 components. Both private fixture hashes,
+row counts and SQLite sequences were unchanged before/after the rollback
+requests. This is a separate-session diagnostic against MP1's 5.851500 and
+10.595166 ms old-source baselines, NOT a paired controlled speedup estimate,
+new canonical median, quiet-host attestation, or Ariadne comparison. The 82
+retained protected objects remained byte-and-stat identical. No retained
+database was opened for SQLite work. Actual PostgreSQL integration and MP3
+independent verification are still pending; no main merge/tag/release is
+authorized. Full raw tests, SQL, driver commands, protections and limits are
+under graphex-resume-2026-10-02/mutation-constraint-performance-mp2/.
