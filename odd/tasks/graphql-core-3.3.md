@@ -575,7 +575,16 @@ of scope.
         docstring gate found one missing Raises section in a failure test.
         Its raw failure is retained. A truthful assertion Raises section was
         added without changing test behavior; both docstring gates now pass
-        locally at TOTAL 0. Recheck all final-head gates before acceptance.
+        locally at TOTAL 0. Behavior work unit `797fd4ad3b3d001d007d0859b4565eb0119deb6c`
+        and documentary correction `1bc15432263ded2832ede58927c973c9080764f7`
+        together passed exact-head clean-clone focal 29, benchmarks 251, and
+        full 4,639 tests at 96.23% branch coverage. Complete CBC gap, skip,
+        warning, and five docs-anchor sets match; Ruff, all typing routes,
+        both docstring gates, and protected assets passed. Two actual private
+        seeds and eight whole-stack RunPlans passed read-only final-head
+        preflight; no output directory, child, schema build, request, or timing
+        was created. Independent staged inspection and heavy-work cost notice
+        still precede actual rotation; T4b2c3 remains unchecked.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
