@@ -348,6 +348,64 @@ of scope.
         `01c9ea16f68edae1174a71a1fe0dd8faa86664ba`. Exact commit proof and
         local logs live in
         `graphex-resume-2026-10-02/profile-median-t4b2c1/`.
+        PR #232 merged only into integration as
+        `53b54ef715c735f8cdd86382878e6f78aba7155e`. Child
+        `37077748110`, integration push `37078103350`, and tracker
+        `37078107070` each passed 15 validations with three publication jobs
+        skipped; both Codecov checks passed. This closes only the pure median
+        helper, not rotated measurements or publication.
+      - [x] T4b2c2a — Return a checked, read-only SeedPlan for a future fresh
+        private named-profile database. Route: delegated direct because helper,
+        focused tests, guide, and checkpoint span non-trivial files; auto-chain
+        uses the existing feature-branch strategy. Own only
+        `benchmarks/comparison_seed.py`, its focused tests, concise
+        `benchmarks/README.md` guidance, and this task. Forecast 200-350
+        authored lines; this forecast was exceeded. The maintainer subsequently
+        approved a size exception for coherent migration PRs until the new
+        version is complete, without a numeric ceiling. Report each PR's actual
+        additions and deletions; do not compress tests or guide text to fit
+        the earlier 400-line budget. Strict TDD
+        from current AGENTS.md requires fresh preflight-specific RED before
+        code, GREEN/refactor; focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_seed.py --no-cov` under native 3.3.
+        Require 1,000/2,000 authors, a fresh absolute external destination,
+        clean source commit/tree/version, exact core33 Graphex interpreter,
+        freeze and runtime imports. Return trusted metadata only: no mkdir,
+        database, migration, seed, unlink, or publication. Run unchanged local
+        gates and read-only real preflights. Roll back only this helper, tests,
+        guide, and checkpoint. The 425-line full-lifecycle prototype was
+        suspended without commit, README, full gates, or real seed; its raw
+        RED/GREEN and exact bytes survive outside the checkout.
+        Fresh read-only preflight RED failed 19 missing-API cases before
+        extraction; 21 focused mocked cases passed after implementation.
+        These are not real seed builds. This unit rolls back through only the
+        helper, focused tests, guide, and this checkpoint; actual database
+        creation and independent/hosted acceptance remain pending.
+        The first local behavior commit is
+        `9b1461ab780a85c0561a7e9917925424685988ab`: 478 additions in four
+        owned files. Its exact clean clone passed 21 focused and 193 benchmark
+        tests, the unchanged full 4,581-test suite at 96.23% coverage, and two
+        real read-only plans; both destinations stayed absent. Coverage gap
+        sets equal the retained baseline (258 missed lines, 266 partial sites,
+        282 missing arcs); seven skips, three warnings, and 23 subtests remain.
+        Ruff, prior 82-file mypy, natural-module mypy, standard docstrings,
+        and docs passed. The strict-public DOC002 on SeedPlan's single-line
+        docstring was corrected in
+        `5562d03ac204b7862f30aeb8d041e423fef315d4`; its exact clean clone
+        passed the same 21 focused, 193 benchmark, and 4,581 full tests,
+        96.23% coverage, both docstring gates at TOTAL 0, all typing routes,
+        Ruff, and docs with the same five baseline anchors. Its complete
+        coverage gaps, skips, and warnings equal the retained baseline. Two
+        real checked plans remained read-only. The no-target mypy experiment
+        was invalid, not a configured failure; configured library mypy passed
+        79 files. No database was created. Independent and hosted acceptance
+        remain pending; T4b2c2b owns actual private seed creation.
+      - [ ] T4b2c2b — Reserve and build fresh private seeds from the checked
+        plan, then validate and retain failed attempts. This separate unit owns
+        exclusive directory/database creation, migrate then seed_bench,
+        protected-asset and cardinality checks, and the later cost notice for
+        actual 1,000/2,000-author writes. Rotated runs and all-or-nothing new
+        profile publication remain a further independent boundary.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Resolve package SemVer by separate product decision, then run
