@@ -425,3 +425,17 @@ def test_publisher_rejects_stage_replacement_before_install(
     assert (
         next(parent.glob(".core33-stage-*")) / "foreign-sentinel"
     ).read_bytes() == b"foreign"
+
+
+def test_publisher_documents_preacquisition_directory_limit() -> None:
+    """Keep the first-acquisition ownership boundary explicit for callers.
+
+    This assertion prevents a future guide or API simplification from claiming
+    that an acquired stage descriptor proves creation ownership.
+    """
+    guide = " ".join((run_comparison.BASE / "README.md").read_text().split())
+    api_doc = " ".join((publish_core33.__doc__ or "").split())
+    assert "before the first staging descriptor is acquired" in guide
+    assert "foreign directory can receive all eight exclusive files" in guide
+    assert "first acquired descriptor" in api_doc
+    assert "does not prove creator ownership" in api_doc

@@ -686,6 +686,21 @@ of scope.
         private databases kept their verified hashes. This is local synthetic-stage
         proof, not an actual new canonical bundle, independent acceptance, or
         hosted approval; those remain pending.
+        Independent staged verification at `f8c418f` passed 29 synthetic
+        controls, 248 separately checked numeric medians, and the unchanged
+        4,663-test native suite with the same quality and protected-state
+        baselines. Its ordinary pre-acquisition substitution control showed
+        that a foreign directory moved into the stage name after creation but
+        before the first descriptor can receive eight exclusive additions;
+        when empty it can be installed as the complete foreign-inode bundle.
+        An inherited colliding file was not overwritten, and an inherited
+        extra file caused rejection but left the additions as residue. The
+        first descriptor proves continuity from acquisition, not creator
+        ownership or unchanged foreign state. This reopens only documentary
+        boundary guidance, not publisher behavior or a universal sandbox
+        requirement. Hosted approval and actual canonical generation remain
+        pending. Evidence: `independent-publisher-f8c418f/report.md` under
+        the stable local recovery root.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its

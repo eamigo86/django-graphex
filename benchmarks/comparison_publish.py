@@ -394,7 +394,11 @@ def publish_core33(
     This does not run a child, open a seed database, or change historical JSON.
     A failed or uncertain stage remains for recovery; it is never automatically
     removed. Path checks bound ordinary drift, not a same-user filesystem
-    sandbox or an attestation of every loaded byte.
+    sandbox or an attestation of every loaded byte. The first acquired descriptor
+    checks continuity from acquisition; it does not prove creator ownership.
+    An empty foreign directory substituted before acquisition can receive the
+    exclusive writes and be installed. Callers need a trusted results parent
+    without concurrent path substitution.
 
     Args:
         batch: Complete unpublished batch with eight recorded median groups.

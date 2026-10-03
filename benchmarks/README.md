@@ -171,6 +171,17 @@ historical publisher, or update the eight old tracked result files. The new
 profile's actual canonical artifacts and any documentation using their numbers
 must be generated and reviewed in a later, explicit publication unit.
 
+Use a trusted results parent without concurrent pathname substitution. A
+foreign directory moved into the stage name after creation but before the first
+staging descriptor is acquired may be adopted. A foreign directory can receive
+all eight exclusive files; if it was empty, that foreign inode can then be
+installed as the complete bundle. An inherited filename colliding with one of
+the eight causes exclusive creation to fail rather than overwriting it. An
+extra, noncolliding inherited file causes validation to reject the bundle,
+but the eight added files remain as recoverable foreign-directory residue.
+Descriptor checks establish continuity from first acquisition, not creator
+ownership or immutable foreign state.
+
 The no-argument historical `setup_envs.sh` instead installs published
 django-graphex 3.1.0, not this checkout. Run historical tools without a
 `PYTHONPATH` that points at newer source so the published wheel is imported.
