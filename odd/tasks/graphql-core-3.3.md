@@ -526,6 +526,115 @@ of scope.
         eight canonical JSON files remained byte-identical. Local final-head
         and independent factual checks, hosted delivery, rotation, and
         publication remain separate gates; no HTTP or timing ran here.
+        Independent actual-data verification at documentary head `32690b7`
+        passed the complete read-only deterministic row contract for both
+        preserved seeds. Executable bytes remain bound to seed source
+        `1b5b941`; only this task document changed at `32690b7`. The first
+        child's lost audit events and failed external proof driver remain
+        disclosed. PR #234 merged only into integration as `97f2031671c8`.
+        Child run `37095541300`, integration run `37095991172`, and tracker
+        run `37095993760` each passed 15 validations with three publication
+        skips; child and tracker Codecov checks passed. This closes seed
+        creation only, not rotated measurements or canonical publication.
+      - [ ] T4b2c3 — Orchestrate one complete rotated batch from the two
+        already prepared private seeds. Route: delegated direct because a new
+        batch helper, focused tests, guide, and this checkpoint are non-trivial.
+        The coherent pending-version size exception applies without a numeric
+        ceiling; disclose actual additions plus deletions. Strict TDD from
+        current AGENTS.md requires a batch-specific RED, GREEN, then refactor;
+        focal runner is `.venv/bin/python -m pytest
+        tests/benchmarks/test_comparison_batch.py --no-cov` under native 3.3.
+        Accept only validated 1,000/2,000-author PreparedSeed records, prove
+        the older seed source's exact compatible data contract against current
+        clean source, and keep its original witness. Dispatch exactly three
+        cyclic library rotations per seed through existing prepare_run,
+        run_single, and validate_result seams: 24 distinct external outputs.
+        Aggregate only eight complete three-run groups with the existing
+        median helper, return detached provenance and raw paths, and retain
+        all partial outputs on failure. Reject changed seeds, source, freeze,
+        profile, DB, results, or unsafe output parent before claiming a batch.
+        This first stage uses stubs only: no actual HTTP/schema/timing, seed
+        creation, cleanup, legacy publisher, or canonical write. After local
+        native focal/full, typing, lint, docstrings, docs, baseline and asset
+        checks, independent inspection and a separate heavy-work cost forecast
+        precede any real 24-run batch. Roll back only the new helper, focused
+        tests, guide, and this checkpoint. New-profile atomic publication is
+        a separate following unit; T4b2 remains pending.
+        Stub-stage TDD: the new focal first failed import for the missing
+        helper. Additional cause-correct RED controls exposed acceptance of
+        an earlier raw file changed before batch completion, missing early
+        rejection of a publicly readable 0644 seed, cross-library machine
+        drift, and a forged current RunPlan; each passed after its narrow
+        correction. The private-mode RED reached a dirty-source error, not a
+        completed batch that accepted the seed. The current 29 focused cases
+        pass without HTTP, schema rebuilds, or actual dispatch. Both preserved
+        private seeds passed a separate read-only compatibility probe against
+        clean integration `97f2031`: their `1b5b941` source/tree witnesses
+        remain distinct, hashes and full selected freeze are intact. Final
+        exact-head gates and independent staged inspection remain pending.
+        The first committed candidate passed 29 focused, 251 benchmark, and
+        4,639 full tests at 96.23% coverage, but its configured standard
+        docstring gate found one missing Raises section in a failure test.
+        Its raw failure is retained. A truthful assertion Raises section was
+        added without changing test behavior; both docstring gates now pass
+        locally at TOTAL 0. Behavior work unit `797fd4ad3b3d001d007d0859b4565eb0119deb6c`
+        and documentary correction `1bc15432263ded2832ede58927c973c9080764f7`
+        together passed exact-head clean-clone focal 29, benchmarks 251, and
+        full 4,639 tests at 96.23% branch coverage. Complete CBC gap, skip,
+        warning, and five docs-anchor sets match; Ruff, all typing routes,
+        both docstring gates, and protected assets passed. Two actual private
+        seeds and eight whole-stack RunPlans passed read-only final-head
+        preflight; no output directory, measuring child, schema build, request,
+        or timing was created. Read-only runtime and freeze probe children did
+        run. Independent `45c018b` inspection found no behavior defect: 29
+        focused, 251 benchmark, and 4,639 full tests at 96.23% passed, along
+        with 28 bounded controls, both real read-only seed checks, and eight
+        RunPlans. Documentary acceptance was reopened for these two wording
+        errors and an external proof locator; the heavy-work cost forecast,
+        actual rotation, and hosted gates remain pending. T4b2c3 remains
+        unchecked.
+        Documentary correction `350ae84256fdad1b1a98a6e0bef8d0f63609257f`
+        passed independent staged readback: the prior full 4,639/96.23% proof
+        remains bound to `45c018b`, while final-head focal 29, both docstring
+        gates, and read-only two-seed/eight-plan checks passed. Parent repeated
+        focal 29 and gave the one informational forecast of about 14,040
+        rollback-only workload requests plus 120 schema-rebuild samples.
+        Exactly one actual 24-dispatch batch is now authorized against clean
+        source `350ae84` and the two preserved seeds; its results, database
+        invariants, and hosted checks are pending. No publication is authorized.
+        The first external proof driver exited 1 before the batch call: it
+        counted all 36 visible top-level result JSON files, including 28
+        pre-existing ignored historical files, rather than the eight tracked
+        canonical files. The original driver and raw failure are retained;
+        no output parent, measuring child, or workload was created. This is
+        a proof-driver assertion error, not a runtime batch verdict. Actual
+        execution remains pending a bounded parent-authorized correction;
+        no automatic retry or cleanup is allowed.
+        Parent inspected that failure, confirmed 36 visible files comprise
+        eight tracked canonical JSON and 28 ignored historical JSON, and
+        authorized a separate corrected external proof driver for the same
+        still-unstarted single batch call. The original driver, logs, and
+        report remain immutable evidence. The corrected driver must protect
+        both tracked and ignored inventories, observe a bounded quiet CPU
+        window, and stop without any measurement if preflight is uncertain.
+        The corrected external driver completed the first and only actual
+        `run_batch` call against clean source `350ae84`/tree `0afc1369`.
+        It recorded 24 distinct successful measuring children and raw JSON
+        files in the specified cyclic order, then eight detached, unpublished
+        three-run median groups. The original seed witness remains `1b5b941`;
+        both private DB hashes, SQLite sequences and row counts, the retained
+        root/older private DBs, eight tracked canonical JSON, and all 35
+        ignored historical JSON remained unchanged. A read-only proof replay
+        revalidated all 24 raw contracts and recomputed all eight medians.
+        The one-minute host load and several aggregate CPU-idle samples were
+        observed before execution, not a guarantee of quietness throughout.
+        Individual HTTP requests were not separately counted; the unchanged
+        harness contract implies 14,040 workload requests and 120 rebuild
+        samples. The corrected driver's actual child streams were retained
+        externally; the unmodified dispatcher itself discards them. No
+        canonical result was published. Independent actual-data acceptance,
+        hosted gates, and the separate publisher remain pending; T4b2c3 is
+        still unchecked.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
