@@ -334,6 +334,9 @@ def test_batch_keeps_partial_raw_output_without_aggregation(
     Args:
         tmp_path: Owned synthetic output paths.
         monkeypatch: Replaces the second child with failure.
+
+    Raises:
+        AssertionError: If failure returns a batch or removes retained output.
     """
     from benchmarks import comparison_batch
 

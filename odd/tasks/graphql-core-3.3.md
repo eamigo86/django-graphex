@@ -570,6 +570,12 @@ of scope.
         clean integration `97f2031`: their `1b5b941` source/tree witnesses
         remain distinct, hashes and full selected freeze are intact. Final
         exact-head gates and independent staged inspection remain pending.
+        The first committed candidate passed 29 focused, 251 benchmark, and
+        4,639 full tests at 96.23% coverage, but its configured standard
+        docstring gate found one missing Raises section in a failure test.
+        Its raw failure is retained. A truthful assertion Raises section was
+        added without changing test behavior; both docstring gates now pass
+        locally at TOTAL 0. Recheck all final-head gates before acceptance.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
