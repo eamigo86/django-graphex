@@ -1,5 +1,6 @@
 """SQLite mutation checks must be scoped to rows written by that mutation."""
 
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -92,6 +93,52 @@ class ScopedLink(models.Model):
 
         Each fixture table is created and removed by its owning test.
         """
+
+        app_label = "scoped_constraint_fixture"
+
+
+class UuidTarget(models.Model):
+    """Provide a UUID primary key for SQLite value adaptation."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+
+    class Meta:
+        """Keep the UUID table in the disposable fixture app."""
+
+        app_label = "scoped_constraint_fixture"
+
+
+class UuidChild(models.Model):
+    """Reference a UUID target from a directly written row."""
+
+    target = models.ForeignKey(UuidTarget, on_delete=models.CASCADE)
+
+    class Meta:
+        """Keep the UUID child table in the disposable fixture app."""
+
+        app_label = "scoped_constraint_fixture"
+
+
+class UuidOwner(models.Model):
+    """Own relation rows selected by a UUID source key."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    targets = models.ManyToManyField(UuidTarget, through="UuidLink")
+
+    class Meta:
+        """Keep the UUID owner table in the disposable fixture app."""
+
+        app_label = "scoped_constraint_fixture"
+
+
+class UuidLink(models.Model):
+    """Link UUID owners and targets through constrained foreign keys."""
+
+    owner = models.ForeignKey(UuidOwner, on_delete=models.CASCADE)
+    target = models.ForeignKey(UuidTarget, on_delete=models.CASCADE)
+
+    class Meta:
+        """Keep the UUID link table in the disposable fixture app."""
 
         app_label = "scoped_constraint_fixture"
 
@@ -241,3 +288,27 @@ def test_omitted_update_still_checks_persisted_fk() -> None:
         assert Post.objects.get(pk=post.pk).title == "Invalid first"
         transaction.set_rollback(True)
     assert Post.objects.count() == 0
+
+
+@pytest.mark.django_db(transaction=True)
+def test_uuid_row_and_relation_keys_are_database_prepared() -> None:
+    """A UUID owner and target must still receive scoped FK checks."""
+    with connection.schema_editor() as editor:
+        for model in (UuidTarget, UuidChild, UuidOwner, UuidLink):
+            editor.create_model(model)
+    try:
+        target = UuidTarget.objects.create()
+        child = UuidChild.objects.create(target=target)
+        owner = UuidOwner.objects.create()
+        with transaction.atomic():
+            UuidLink.objects.create(owner=owner, target=target)
+            _check_sqlite_written_relations(child, set(), "default")
+            _check_sqlite_written_relations(owner, {"targets"}, "default")
+            UuidChild.objects.filter(pk=child.pk).update(target_id=uuid.uuid4())
+            with pytest.raises(IntegrityError, match="target"):
+                _check_sqlite_written_relations(child, set(), "default")
+            transaction.set_rollback(True)
+    finally:
+        with connection.schema_editor() as editor:
+            for model in (UuidLink, UuidOwner, UuidChild, UuidTarget):
+                editor.delete_model(model)

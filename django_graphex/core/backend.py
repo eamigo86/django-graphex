@@ -94,33 +94,38 @@ def _check_sqlite_written_relations(
         if isinstance(field, models.ForeignKey) and field.db_constraint
     ]
     if fields:
-        columns = ", ".join(quote(field.column) for field in fields)
+        checks = []
+        parameters: list[Any] = []
+        for field in fields:
+            child_column = quote(field.column)
+            target = field.target_field
+            checks.append(
+                f"WHEN child.{child_column} IS NOT NULL AND NOT EXISTS "
+                f"(SELECT 1 FROM {quote(target.model._meta.db_table)} AS parent "
+                f"WHERE parent.{quote(target.column)} = child.{child_column}) "
+                "THEN %s"
+            )
+            parameters.append(field.name)
         with db.cursor() as cursor:
             cursor.execute(
-                f"SELECT {columns} FROM {quote(obj._meta.db_table)} "
-                f"WHERE {quote(pk.column)} = %s",
-                [obj.pk],
+                f"SELECT CASE {' '.join(checks)} ELSE NULL END "
+                f"FROM {quote(obj._meta.db_table)} AS child "
+                f"WHERE child.{quote(pk.column)} = %s",
+                [*parameters, pk.get_db_prep_value(obj.pk, db)],
             )
             row = cursor.fetchone()
             if row is None:
                 raise IntegrityError("The saved mutation row is missing.")
-            for field, value in zip(fields, row, strict=True):
-                if value is None:
-                    continue
-                target = field.target_field
-                cursor.execute(
-                    f"SELECT 1 FROM {quote(target.model._meta.db_table)} "
-                    f"WHERE {quote(target.column)} = %s LIMIT 1",
-                    [value],
-                )
-                if cursor.fetchone() is None:
-                    raise IntegrityError(f"Invalid foreign key in {field.name}.")
+            if row[0] is not None:
+                raise IntegrityError(f"Invalid foreign key in {row[0]}.")
 
     for name in m2m_names:
         relation = obj._meta.get_field(name)
         through = relation.remote_field.through
         source_field = through._meta.get_field(relation.m2m_field_name())
-        source_value = getattr(obj, source_field.target_field.attname)
+        source_value = source_field.target_field.get_db_prep_value(
+            getattr(obj, source_field.target_field.attname), db
+        )
         child_table = quote(through._meta.db_table)
         source_column = quote(source_field.column)
         with db.cursor() as cursor:

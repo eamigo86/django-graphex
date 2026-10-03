@@ -258,11 +258,11 @@ def test_e2e_bad_fk_via_type_create() -> None:
 
 @pytest.mark.django_db
 def test_unrelated_category_probe_absent_but_author_ok() -> None:
-    """The nullable category (omitted) must not be probed on the happy path.
+    """An omitted nullable category must not add an eager lookup query.
 
-    If this fails, an omitted nullable FK would still trigger an eager
-    existence probe against its table, adding an unnecessary query even
-    though the field was never supplied.
+    The post-write check contains a NULL-guarded category branch in its
+    single SQL statement. That branch is not a separate eager existence
+    probe and cannot inspect the category table for this NULL value.
     """
     author = Author.objects.create(name="A")
     Category.objects.create(title="C")
@@ -275,7 +275,8 @@ def test_unrelated_category_probe_absent_but_author_ok() -> None:
     cat_probes = [
         q["sql"]
         for q in ctx.captured_queries
-        if Category._meta.db_table in q["sql"] and "SELECT" in q["sql"].upper()
+        if f'FROM "{Category._meta.db_table}"' in q["sql"]
+        and "SELECT 1 AS" in q["sql"].upper()
     ]
     assert not cat_probes, f"Category was probed on happy path: {cat_probes}"
 

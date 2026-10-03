@@ -177,3 +177,21 @@ five new focused tests passed (19 total); related core/mutation tests passed
 1,295. The earlier invalid row remains for outer-commit enforcement, as chosen.
 This is not yet full native-3.3/quality/performance or independent acceptance;
 MP2 and MP3 remain open until those checks and separate review are observed.
+
+The first behavior commit, 3dc7e27bc4fff4e86abee2f16feca266aa5d3343,
+failed its unchanged clean-clone full suite in three candidate-caused contracts:
+the new bounded-query test, the four-statement benchmark SQL contract, and a
+reverse-child reread count. That 4,731-pass/three-failure run is retained, not
+relabeled as proof. A bounded correction folds persisted FK checks into one
+NULL-guarded CASE statement, keeps one explicit scoped-check SQL assertion
+separate from the two ORM rereads, and updates the benchmark statement shape
+without changing its four-statement count. An existing nullable-FK test now
+distinguishes an eager standalone category probe from the NULL-guarded branch
+of that single post-write statement. The observed correction RED and subsequent
+seven-test and 1,257-test GREEN logs are retained under the same proof root.
+A fresh UUID key regression then failed on an unadapted through-owner value;
+it passed after preparing row and owner key parameters with their Django
+fields. Composite primary keys retain the previous table-scoped fallback,
+rather than silently dropping checks for an unsupported row-key shape.
+The final exact-head full suite, changed-line coverage and disposable 50k/100k
+performance profile are still pending at this checkpoint.
