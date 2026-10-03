@@ -562,10 +562,12 @@ of scope.
         a separate following unit; T4b2 remains pending.
         Stub-stage TDD: the new focal first failed import for the missing
         helper. Additional cause-correct RED controls exposed acceptance of
-        an earlier raw file changed before batch completion, an owner-readable
-        seed, cross-library machine drift, and a forged current RunPlan; each
-        passed after its narrow correction. The current 29 focused cases pass
-        without HTTP, schema rebuilds, or actual dispatch. Both preserved
+        an earlier raw file changed before batch completion, missing early
+        rejection of a publicly readable 0644 seed, cross-library machine
+        drift, and a forged current RunPlan; each passed after its narrow
+        correction. The private-mode RED reached a dirty-source error, not a
+        completed batch that accepted the seed. The current 29 focused cases
+        pass without HTTP, schema rebuilds, or actual dispatch. Both preserved
         private seeds passed a separate read-only compatibility probe against
         clean integration `97f2031`: their `1b5b941` source/tree witnesses
         remain distinct, hashes and full selected freeze are intact. Final
@@ -582,9 +584,15 @@ of scope.
         warning, and five docs-anchor sets match; Ruff, all typing routes,
         both docstring gates, and protected assets passed. Two actual private
         seeds and eight whole-stack RunPlans passed read-only final-head
-        preflight; no output directory, child, schema build, request, or timing
-        was created. Independent staged inspection and heavy-work cost notice
-        still precede actual rotation; T4b2c3 remains unchecked.
+        preflight; no output directory, measuring child, schema build, request,
+        or timing was created. Read-only runtime and freeze probe children did
+        run. Independent `45c018b` inspection found no behavior defect: 29
+        focused, 251 benchmark, and 4,639 full tests at 96.23% passed, along
+        with 28 bounded controls, both real read-only seed checks, and eight
+        RunPlans. Documentary acceptance was reopened for these two wording
+        errors and an external proof locator; the heavy-work cost forecast,
+        actual rotation, and hosted gates remain pending. T4b2c3 remains
+        unchecked.
   - [ ] T4c — Complete Playground/example and migration guidance, verify
     quiet measurements and docs without relabeling old results.
   - [ ] T4d — Apply the selected future 4.0.0 package version only in its
