@@ -381,6 +381,18 @@ of scope.
         These are not real seed builds. This unit rolls back through only the
         helper, focused tests, guide, and this checkpoint; actual database
         creation and independent/hosted acceptance remain pending.
+        The first local behavior commit is
+        `9b1461ab780a85c0561a7e9917925424685988ab`: 478 additions in four
+        owned files. Its exact clean clone passed 21 focused and 193 benchmark
+        tests, the unchanged full 4,581-test suite at 96.23% coverage, and two
+        real read-only plans; both destinations stayed absent. Coverage gap
+        sets equal the retained baseline (258 missed lines, 266 partial sites,
+        282 missing arcs); seven skips, three warnings, and 23 subtests remain.
+        Ruff, prior 82-file mypy, natural-module mypy, standard docstrings,
+        and docs passed. A strict-public DOC002 on SeedPlan's single-line
+        docstring requires a follow-up documentary correction and fresh final
+        check; the no-target mypy experiment was invalid, while configured
+        library mypy separately passed 79 files. No database was created.
       - [ ] T4b2c2b — Reserve and build fresh private seeds from the checked
         plan, then validate and retain failed attempts. This separate unit owns
         exclusive directory/database creation, migrate then seed_bench,

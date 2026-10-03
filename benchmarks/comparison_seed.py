@@ -12,7 +12,10 @@ from . import run_comparison
 
 @dataclass(frozen=True)
 class SeedPlan:
-    """Bind a fresh destination to checked source and profile observations."""
+    """Bind a fresh destination to checked source and profile observations.
+
+    This read-only plan does not reserve or create its destination.
+    """
 
     profile: str
     library: str
