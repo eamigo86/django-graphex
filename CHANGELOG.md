@@ -2,13 +2,19 @@
 
 ## Unreleased
 
-Current source raises the runtime GraphQL-core floor to
-`graphql-core>=3.3.0,<3.4`. The root and Playground locks target the 3.3
-line. This is an in-progress migration, not a published package release;
-the package version and release date remain undecided. Custom execution
-backends must move from 3.2 `ExecutionContext` subclasses to the 3.3
-`Executor` API; renaming the view keyword alone is not sufficient. The
-3.1.1 security patch and its 3.2.13 requirement remain historical facts.
+The current checkout requires `graphql-core>=3.3.0,<3.4`; the root and
+Playground locks target 3.3. This is an unreleased migration: 4.0.0 is
+selected but the package metadata remains 3.1.1. Custom 3.2
+`ExecutionContext` subclasses must move to the 3.3 `Executor` API; the
+legacy view keyword remains an alias with explicit-argument precedence.
+Custom AST builders must construct immutable AST nodes, and subscription
+transports must handle 3.3 source-stream results. Synchronous queryset
+execution, directive coercion and query cost behavior retain compatibility
+tests. New core33 whole-stack results and explicit run/replay guidance are
+separate from the frozen 3.1.0 measurements. See the
+[unreleased upgrade guide](docs/UPGRADE-4.0.md) and
+[current comparison](docs/why.md#current-core33-comparison). The 3.1.1
+security patch and its 3.2.13 requirement remain historical facts.
 
 ## 3.1.1 — 2026-10-01
 

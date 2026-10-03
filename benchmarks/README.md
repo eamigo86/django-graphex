@@ -213,6 +213,12 @@ not timestamped live child events. Failures preserve private seeds, raw files,
 records, and staging residue for inspection; no reset or automatic deletion
 occurs. The publisher still refuses an occupied public target.
 
+The [current comparison](../docs/why.md#current-core33-comparison) renders
+all five request p50/SQL cells for both seed sizes directly from the eight
+committed core33 artifacts. Its historical 3.1.0 section remains separate;
+these new results still describe the measured 3.1.1-metadata migration
+checkout, not a published 4.0.0 build.
+
 The `replay` mode instead requires `--profile core33 --events`,
 `--raw-manifest`, `--batch-result`, and `--results-root`. It reconstructs the
 24 typed dispatch receipts from explicit retained files, compares their
