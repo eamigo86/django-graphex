@@ -69,15 +69,16 @@ share of elapsed time; the separate diagnostic evidence below now does.
   witnesses; independently verify the measurements and semantic boundary.
   Owner/route: delegated profiler and independent verifier. Both completed;
   parent read both full reports and repeated the 14-test native-3.3 baseline.
-- [ ] MP2 — Correct the scaling path after the contract decision below. Add a
+- [x] MP2 — Correct the scaling path after the contract decision below. Add a
   cause-correct failing regression; implement the smallest safe bounded check;
   preserve invalid FK/M2M errors, nested rollback and connection reuse. Update
   current docs and both changelogs alongside behavior and tests. Run focal and
   related checks, then close one Conventional work-unit commit with evidence.
   Owner/route: one delegated writer. Local native-3.3 runtime and diagnostic
-  evidence passed at 3721404, but independent verification reopened this task:
-  valid multi-table inheritance with a parent-owned FK fails on the new checker.
-  Actual PostgreSQL remains pending, not inferred from the routing stand-in.
+  evidence passed at 3721404, but independent verification reopened this task
+  for inherited-parent and symmetric-mirror regressions. Both have permanent
+  correction tests and final local proof at 60ab332. Independent MP3 and
+  actual PostgreSQL remain pending, not inferred from routing stand-ins.
 - [ ] MP3 — Independently validate the exact candidate. Run the unchanged full
   native-3.3 suite and applicable coverage/quality/docs/example/Playground and
   benchmark gates. Reconcile profiling results and limitations; record actual,
@@ -315,3 +316,39 @@ isolated delete alone passed. An uninstalled fixture app could not resolve the
 M2M reverse relation. The final fixture uses Django's isolated app registry
 and explicit temporary schema; the combined core/mutation run then passed
 1,261 tests. Both failed experiments and the corrected result are retained.
+
+## MP2 corrected local acceptance at executable commit 60ab332
+
+The bounded symmetric fix checks both source-owner and mirror target-owner
+through rows only for an actual symmetric self-relation. Other relations retain
+source-owner-only SQL. A valid callable-default pair and an invalid mirror
+created by ordinary Django relation management are tested. The invalid mirror
+raises inside the mutation savepoint; its owner and links roll back and the
+outer connection remains usable. The inheritance fix still checks parent-owned
+FK columns in their physical parent table. The immutable independent findings
+and all failed fixture and broader-run experiments remain retained separately.
+
+The final clean 60ab332 clone passed 4,740 native-3.3 full-suite tests with
+seven skips, three warnings, 23 subtests and 96.26% global branch coverage
+against the unchanged 95.01% floor. Diff-cover found 70/71 changed runtime
+lines covered (98.6%). Changed-branch analysis found 27/28 arcs covered
+(96.43%). Full gap counts are now 258 missing lines, 265 partial sites,
+273 all missing branch sites and 281 missing arcs versus the old CBC
+258/266/274/282; these are counts, not identical source positions. All 331
+benchmark and 59 standalone Playground tests, configured 79/82-file mypy,
+Ruff, both zero-issue docstring gates, zero-issue docs build and diff check
+passed. The exact command logs and coverage XML are under
+graphex-resume-2026-10-02/mutation-constraint-performance-inheritance/.
+
+Two new disposable 50k/100k-comment fixtures from 60ab332 supplied 25
+rollback-only timed create-comment requests each. Their post-only p50 values
+were 0.726333/0.729459 ms. One separately instrumented request at each size
+had four statements: SAVEPOINT, INSERT, keyed CASE FK check and RELEASE; the
+FK checks took 0.007458/0.006542 ms in those individual requests. Both new
+database hashes, cardinalities and SQLite sequences stayed unchanged across
+the rollback requests. The prior MP1 baseline was measured in another session:
+this is not a paired controlled speedup, an updated canonical median,
+continuous quiet-host proof or an Ariadne comparison. All 82 original retained
+objects remained byte-and-stat identical; no retained database was opened for
+SQLite work. Actual PostgreSQL integration and independent MP3 acceptance
+remain pending. No main merge, tag or release is authorized.
