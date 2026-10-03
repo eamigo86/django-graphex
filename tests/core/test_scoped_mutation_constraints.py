@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from django.db import IntegrityError, connection, connections, models, transaction
-from django.test.utils import CaptureQueriesContext
+from django.test.utils import CaptureQueriesContext, isolate_apps
 
 from django_graphex.core.backend import (
     PydanticBackend,
@@ -352,7 +352,16 @@ def test_custom_through_checks_only_current_owner_links() -> None:
         with transaction.atomic():
             ScopedLink.objects.create(owner=other, target_id="unrelated")
             ScopedLink.objects.create(owner=first, target_id=target.code)
-            _check_sqlite_written_relations(first, {"targets"}, "default")
+            with CaptureQueriesContext(connection) as captured:
+                _check_sqlite_written_relations(first, {"targets"}, "default")
+            link_checks = [
+                item["sql"]
+                for item in captured
+                if f'FROM "{ScopedLink._meta.db_table}" AS child' in item["sql"]
+            ]
+            assert link_checks
+            assert all('child."owner_id" =' in sql for sql in link_checks)
+            assert all(" OR " not in sql for sql in link_checks)
             ScopedLink.objects.create(owner=first, target_id="missing")
             with pytest.raises(IntegrityError, match="target"):
                 _check_sqlite_written_relations(first, {"targets"}, "default")
@@ -576,4 +585,120 @@ def test_inherited_parent_fk_failure_rolls_back_and_keeps_connection() -> None:
     finally:
         with connection.schema_editor() as editor:
             for model in (InheritedChild, InheritedParent, InheritedTarget):
+                editor.delete_model(model)
+
+
+@pytest.mark.django_db(transaction=True)
+@isolate_apps("tests")
+def test_symmetric_mirror_default_fk_rolls_back_with_direct_write() -> None:
+    """Reject an invalid mirror created by a normal symmetric relation set.
+
+    A subsequent valid mutation must work in the same outer transaction.
+    """
+    defaults: list[int] = []
+
+    def next_guard() -> int:
+        """Supply independently chosen guards for the two direct rows.
+
+        Returns:
+            The next configured guard key.
+        """
+        return defaults.pop(0)
+
+    class SymmetricGuard(models.Model):
+        """Provide the extra constrained target on each through row.
+
+        This fixture has no fields beyond the generated primary key.
+        """
+
+        class Meta:
+            """Register only in this test's isolated app registry.
+
+            Schema creation and removal belong to the test.
+            """
+
+            app_label = "tests"
+
+    class SymmetricNode(models.Model):
+        """Own a standard symmetric self-relation with a custom through model.
+
+        Adding one friend creates separate forward and mirror rows.
+        """
+
+        name = models.CharField(max_length=32)
+        friends = models.ManyToManyField(
+            "self",
+            symmetrical=True,
+            through="SymmetricLink",
+            through_fields=("source", "target"),
+        )
+
+        class Meta:
+            """Register only in this test's isolated app registry.
+
+            Schema creation and removal belong to the test.
+            """
+
+            app_label = "tests"
+
+    class SymmetricLink(models.Model):
+        """Store forward and mirror links with independently defaulted FKs.
+
+        The callable guard default differs for each direct row.
+        """
+
+        source = models.ForeignKey(
+            SymmetricNode, on_delete=models.CASCADE, related_name="outgoing_links"
+        )
+        target = models.ForeignKey(
+            SymmetricNode, on_delete=models.CASCADE, related_name="incoming_links"
+        )
+        guard = models.ForeignKey(
+            SymmetricGuard, on_delete=models.CASCADE, default=next_guard
+        )
+
+        class Meta:
+            """Register only in this test's isolated app registry.
+
+            Schema creation and removal belong to the test.
+            """
+
+            app_label = "tests"
+
+    with connection.schema_editor() as editor:
+        for model in (SymmetricGuard, SymmetricNode, SymmetricLink):
+            editor.create_model(model)
+    try:
+        guard = SymmetricGuard.objects.create()
+        peer = SymmetricNode.objects.create(name="peer")
+        backend = PydanticBackend(SymmetricNode)
+        assert peer.friends.symmetrical is True
+        with transaction.atomic():
+            defaults[:] = [guard.pk, 999999]
+            with pytest.raises(IntegrityError, match="guard"):
+                backend.save_object(
+                    None,
+                    None,
+                    _info(),
+                    {"name": "invalid", "friends": [peer.pk]},
+                )
+            assert SymmetricNode.objects.count() == 1
+            assert SymmetricLink.objects.count() == 0
+            assert SymmetricGuard.objects.filter(pk=guard.pk).exists()
+
+            defaults[:] = [guard.pk, guard.pk]
+            ok, node = backend.save_object(
+                None,
+                None,
+                _info(),
+                {"name": "valid", "friends": [peer.pk]},
+            )
+            assert ok, node
+            assert set(
+                SymmetricLink.objects.values_list("source_id", "target_id", "guard_id")
+            ) == {(node.pk, peer.pk, guard.pk), (peer.pk, node.pk, guard.pk)}
+    finally:
+        defaults.clear()
+        with connection.schema_editor() as editor:
+            for model in (SymmetricLink, SymmetricNode, SymmetricGuard):
                 editor.delete_model(model)

@@ -287,3 +287,31 @@ mutation guidance and the comparison page now explain the physical parent
 scope and that retained numbers predate this change. Final exact-head gates,
 independent recheck and fresh disposable post-correction profiling remain
 pending at this checkpoint.
+
+Independent verification also found a second direct-write regression at the
+same 2cebebc candidate: a standard symmetric self-M2M with a custom through
+model creates forward and mirror rows, but the scoped checker inspected only
+the new owner's outgoing rows. A callable default made the newly written
+mirror row's extra FK invalid; the backend returned success until outer COMMIT
+failed. Exact base 7eb3935 rejected it inside the mutation savepoint. MP2
+remains open for a fresh cause-correct RED and a mirror-only correction on
+genuinely symmetric self-relations. The inheritance-only 3a777b9 full and
+quality checks are intermediate proof, not final acceptance. The immutable
+reproduction is in independent-mutation-symmetric/report.md; MP3 remains open.
+
+The symmetric correction's first test fixture assumed its new installed-app
+tables were absent, but Django had already created them; that setup failure is
+retained separately and is not the cause-correct RED. The corrected fixture
+failed on inheritance-only 3a777b9 because the invalid mirror returned success.
+After the bounded mirror predicate, 25 FK/savepoint/scoped tests passed,
+including invalid mirror rollback and valid callable-default links. The
+non-self custom-through test asserts source-owner-only SQL. Final exact-head
+gates, disposable profile and independent MP3 remain pending here.
+
+The first GREEN fixture registered temporary symmetric models globally in the
+installed tests app. A combined core/mutation run then failed one unrelated
+delete because a separately registered test model's table was absent; the
+isolated delete alone passed. An uninstalled fixture app could not resolve the
+M2M reverse relation. The final fixture uses Django's isolated app registry
+and explicit temporary schema; the combined core/mutation run then passed
+1,261 tests. Both failed experiments and the corrected result are retained.

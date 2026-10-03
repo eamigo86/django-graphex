@@ -389,7 +389,9 @@ Example error response:
     `UPDATE`; it does not pre-check each FK. Within an outer transaction,
     SQLite validates constrained FKs on directly saved model rows, including
     concrete inheritance parent rows, and directly updated M2M links **after**
-    writing, inside the recovery savepoint. It does not scan unrelated rows
+    writing, inside the recovery savepoint. A symmetric self-relation checks
+    both its forward and mirror links, including constrained custom-through
+    fields. It does not scan unrelated rows
     in those tables for ordinary single-column primary keys;
     composite primary keys retain the previous table-scoped fallback rather
     than silently omitting a constraint check. Invalid FK or M2M input still

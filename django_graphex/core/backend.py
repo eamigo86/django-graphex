@@ -131,6 +131,20 @@ def _check_sqlite_written_relations(
         )
         child_table = quote(through._meta.db_table)
         source_column = quote(source_field.column)
+        owner_filter = f"child.{source_column} = %s"
+        owner_values = [source_value]
+        if (
+            relation.remote_field.symmetrical
+            and relation.remote_field.model is obj.__class__
+        ):
+            reverse_field = through._meta.get_field(relation.m2m_reverse_field_name())
+            reverse_value = reverse_field.target_field.get_db_prep_value(
+                getattr(obj, reverse_field.target_field.attname), db
+            )
+            owner_filter = (
+                f"({owner_filter} OR child.{quote(reverse_field.column)} = %s)"
+            )
+            owner_values.append(reverse_value)
         with db.cursor() as cursor:
             for field in through._meta.concrete_fields:
                 if not isinstance(field, models.ForeignKey) or not field.db_constraint:
@@ -139,12 +153,12 @@ def _check_sqlite_written_relations(
                 child_column = quote(field.column)
                 cursor.execute(
                     f"SELECT 1 FROM {child_table} AS child "
-                    f"WHERE child.{source_column} = %s "
+                    f"WHERE {owner_filter} "
                     f"AND child.{child_column} IS NOT NULL "
                     f"AND NOT EXISTS (SELECT 1 FROM {quote(target.model._meta.db_table)} "
                     f"AS parent WHERE parent.{quote(target.column)} = "
                     f"child.{child_column}) LIMIT 1",
-                    [source_value],
+                    owner_values,
                 )
                 if cursor.fetchone() is not None:
                     raise IntegrityError(f"Invalid foreign key in {field.name}.")
