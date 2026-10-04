@@ -508,3 +508,22 @@ boundary, and Python AST equality confirms no runtime semantics changed.
 The configured local Bandit scan then passed with no issues. Final clean-clone
 native-3.3/full/quality/protection checks and fresh hosted delivery are still
 pending at this checkpoint. No previous report or dataset is reclassified.
+
+Security behavior commit 354391d68334a1bc1babf221e68f327cce1a7e42
+passed the exact configured Bandit scan with zero issues in a clean real
+native-3.3 clone. That source's unchanged full suite passed 4,743 tests,
+seven skips, three warnings and 23 subtests at 96.26% configured combined
+coverage (95.01% floor). The 28-test FK/security focal, 331 benchmark tests
+and all 59 standalone Playground tests passed. Whole Ruff, 79/82-file mypy,
+both zero-issue docstring gates, zero-issue documentation build and diff check
+passed. Diff-cover against base 7eb3935 found 70/71 changed executable
+runtime lines covered (98.6%). The correction is annotation-only and has the
+same Python AST as 9846515, so it introduces no new runtime branch arcs;
+the earlier independent 27/28 changed-arc proof remains for those unchanged
+branches, not a newly measured arc-only percentage. All 82 retained protected
+objects match prior SHA, size, device, inode, mode and link count. The first
+test fixture attempted a direct dynamic-model M2M mutation whose registry
+relation was unavailable; that setup failure is retained, not called a
+security RED. The corrected SQL-binding control passed before annotation.
+Fresh hosted lint/matrix checks at this new head remain pending. Actual
+PostgreSQL17 passed on the earlier failed hosted run, not yet this candidate.
