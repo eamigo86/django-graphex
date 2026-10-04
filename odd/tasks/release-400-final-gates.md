@@ -122,7 +122,8 @@ script existed; the first implementation passed all 21. Normalization added
 Google-style test docstrings and check-only formatting, then the configured
 coverage-policy test and new suite passed 22 controls. The standalone checker
 reads only the Cobertura root's integer branches-covered/branches-valid and
-compares the exact fraction to the default 95.01% threshold. It rejects
+was intended to compare the exact fraction to the default 95.01% threshold.
+It rejects
 absent/malformed reports, zero totals, invalid counts and invalid thresholds;
 the XML's rounded branch-rate value never decides acceptance. The contributor
 guide documents this manual command without claiming CI wiring.
@@ -153,3 +154,32 @@ different from the earlier OC2 inventory; their SHA, size, device, mode and
 link counts match. This metadata drift is disclosed, not called full
 filesystem-identity equality or attributed to an unverified cause. Retained
 databases were hash/stat only and retain their recorded identities.
+
+## FG1 precision correction
+
+Parent structural review found that Decimal multiplication in the first
+checker could round a threshold immediately above 95.01% down to the covered
+fraction. A new real CLI control using 9,501/10,000 and threshold
+95.0100000000000000000000000001 failed against commit 8049fe12d561c6304a8eb2285803b7498aea744c:
+the checker incorrectly returned PASS. Before the source fix, this is a
+distinct cause-correct RED; it is not reconstructed from the first FG1 RED.
+
+The correction converts the parsed Decimal threshold to an exact Fraction
+and compares integer crossproducts; percentage rounding is display-only.
+The real CLI control then passed. Behavior/tests commit
+41198fff65e393e4887043b5abc6dbf8592e1ed0 (tree
+0bd5149e00fc8bdbe264da4190f1fc478c8dd7e8) passed 23 focal controls
+and a fresh native-3.3 clean-clone full run: 4,779 passed, seven skipped,
+three warnings, 23 subtests and 96.26% combined coverage. Ruff/check-only
+format, script/package/expanded/CLI typing, both zero-issue docstring audits,
+Bandit and clean Zensical build passed. Old and fresh XML still correctly
+fail the pure-branch gate at 3,569/3,850 = 92.7013%; FG2 remains open.
+
+A new FG1-correction snapshot before and after the edit/checks compared the
+same 129 protected paths and found exact SHA, size, device, inode, mode and
+link equality. It does not erase or explain the eight earlier new-series
+JSON inode differences versus the older OC2 inventory; no FG1-start inode
+snapshot exists. Retained databases were hash/stat checked only. Proof is
+under final-gates-fg1-precision/; original FG1 logs and report are unchanged.
+This task-only evidence checkpoint does not imply a separate full-suite run.
+FG2, FG3 and FG4 remain pending; package source tree is unchanged.
