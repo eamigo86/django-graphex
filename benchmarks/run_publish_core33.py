@@ -597,6 +597,7 @@ def run_publication(
     seed_parent: Path,
     output_parent: Path,
     results_root: Path,
+    series: str = "core33",
 ) -> Path:
     """Create fresh named seeds, measure once, retain receipts, then publish.
 
@@ -611,6 +612,7 @@ def run_publication(
         seed_parent: Existing owner-only external seed destination parent.
         output_parent: Existing empty owner-only external raw output parent.
         results_root: Existing trusted public results parent.
+        series: Fresh core33 publication child; default preserves prior API.
 
     Returns:
         Newly installed complete eight-artifact directory.
@@ -626,7 +628,7 @@ def run_publication(
         or runs != 3
     ):
         raise ValueError("run requires core33, authors 1000 2000, and three runs")
-    comparison_publish._check_target(results_root)
+    comparison_publish._check_target(results_root, series)
     _private_root(seed_parent, venv_root)
     _private_root(output_parent, venv_root)
     if (
@@ -653,11 +655,20 @@ def run_publication(
     seeds = tuple(create_private_seed(plan, venv_root) for plan in plans)
     batch = comparison_batch.run_batch(seeds, venv_root, output_parent)
     _write_evidence(output_parent, batch)
-    return comparison_publish.publish_core33(batch, batch.receipts, results_root)
+    if series == "core33":
+        return comparison_publish.publish_core33(batch, batch.receipts, results_root)
+    return comparison_publish.publish_core33(
+        batch, batch.receipts, results_root, series=series
+    )
 
 
 def replay_publication(
-    profile: str, events: Path, manifest: Path, batch_result: Path, results_root: Path
+    profile: str,
+    events: Path,
+    manifest: Path,
+    batch_result: Path,
+    results_root: Path,
+    series: str = "core33",
 ) -> Path:
     """Publish from explicit retained records without current runtime probes.
 
@@ -667,6 +678,7 @@ def replay_publication(
         manifest: Retained raw path and digest manifest.
         batch_result: Retained unpublished eight-group record.
         results_root: Existing trusted results parent with absent core33 child.
+        series: Fresh core33 publication child; default preserves prior API.
 
     Returns:
         Newly installed complete eight-artifact directory.
@@ -677,9 +689,13 @@ def replay_publication(
     """
     if profile != "core33":
         raise ValueError("replay requires the core33 profile")
-    comparison_publish._check_target(results_root)
+    comparison_publish._check_target(results_root, series)
     batch, receipts = load_replay(events, manifest, batch_result)
-    return comparison_publish.publish_core33(batch, receipts, results_root)
+    if series == "core33":
+        return comparison_publish.publish_core33(batch, receipts, results_root)
+    return comparison_publish.publish_core33(
+        batch, receipts, results_root, series=series
+    )
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -700,6 +716,7 @@ def make_parser() -> argparse.ArgumentParser:
     run.add_argument("--seed-parent", type=Path, required=True)
     run.add_argument("--output-parent", type=Path, required=True)
     run.add_argument("--results-root", type=Path, required=True)
+    run.add_argument("--series", default="core33")
     replay = commands.add_parser(
         "replay", help="validate retained evidence without measuring"
     )
@@ -708,6 +725,7 @@ def make_parser() -> argparse.ArgumentParser:
     replay.add_argument("--raw-manifest", type=Path, required=True)
     replay.add_argument("--batch-result", type=Path, required=True)
     replay.add_argument("--results-root", type=Path, required=True)
+    replay.add_argument("--series", default="core33")
     return parser
 
 
@@ -730,6 +748,7 @@ def main(argv: list[str] | None = None) -> None:
             args.seed_parent,
             args.output_parent,
             args.results_root,
+            args.series,
         )
     else:
         target = replay_publication(
@@ -738,6 +757,7 @@ def main(argv: list[str] | None = None) -> None:
             args.raw_manifest,
             args.batch_result,
             args.results_root,
+            args.series,
         )
     print(target)
 

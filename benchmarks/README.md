@@ -238,8 +238,19 @@ pathname substitution; neither is a same-user
 filesystem sandbox. The legacy `run_publish.py` command and its historical
 eight artifacts remain separate and unchanged.
 The installed `results/core33/` target is intentionally no-clobber; to repeat
-the replay, select a separate trusted results parent rather than deleting or
-overwriting these artifacts.
+the replay, select a fresh series or a separate trusted results parent rather
+than deleting or overwriting these artifacts.
+
+For a new comparison, select a fresh immutable child with `--series` in either
+mode. The default remains `core33` for existing callers. A series must be one
+portable `core33`-prefixed directory name; unsafe names and occupied children
+(including links) are refused before seed planning or replay reads. The
+prepared 4.0.0 comparison should use
+`core33-4.0.0-<full-measurement-commit>` after the measuring source is frozen,
+not a mutable `latest` pointer. For example, append
+`--series core33-4.0.0-<full-measurement-commit>` to either command above.
+The older `results/core33/` bundle stays intact. Selecting a fresh name does
+not strengthen the existing trusted-parent or pathname-substitution limits.
 
 ```sh
 .venv/bin/python -m benchmarks.run_publish_core33 replay \
