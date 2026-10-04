@@ -43,8 +43,12 @@ new validated median artifacts only.
   GraphEx distribution. No package build, reinstall or wheel substitution is
   needed or authorized. A wheel would alter the verified freeze and fail this
   profile's equality contract.
-- Run timing on the otherwise idle machine without concurrent local tests or
-  builds. Report observed quietness limitations, never invent continuous proof.
+- For OC2, the user accepts the existing background load as declared stable
+  and will not start additional work. Run no concurrent local tests or builds
+  during timing. Record aggregate pre/post conditions and the limit: neither
+  the user's declaration nor a pre-start sample proves constant load, thermal
+  stability, or an otherwise idle machine. Earlier 90%-idle refusals remain
+  historical observations, not a continuing gate for this accepted run.
 - Use the existing PostgreSQL 17 CI job for actual database proof. Do not probe
   ambient PostgreSQL servers, ports, SSH, sessions or credentials.
 - Technical artifacts remain English. Public docstrings are complete Google
@@ -62,11 +66,11 @@ new validated median artifacts only.
   named CLI/publisher with no-clobber, validation, replay and compatibility
   regressions; update benchmark instructions together. Delegated direct writer:
   preparation spans four-plus files and implementation is multi-file.
-- [ ] OC2 — Freeze clean measurement source and verified pinned stacks; execute
+- [x] OC2 — Freeze clean measurement source and verified pinned stacks; execute
   exactly one official three-repetition/two-size batch, validate all 24 runs and
   eight median groups, then install only the new immutable series. Delegated
   execution; independent arithmetic/provenance/preservation verification.
-- [ ] OC3 — Derive the current public tables, ratios, links and changelog notes
+- [x] OC3 — Derive the current public tables, ratios, links and changelog notes
   from the new eight JSON artifacts. Preserve dated historical comparisons and
   update executable docs/readiness contracts and example/Playground guidance
   only where necessary. Delegated direct writer with tests and docs together.
@@ -194,3 +198,151 @@ Only a factual task checkpoint follows this verified executable candidate;
 the final source freeze is the resulting commit, not the earlier test commit.
 The official-series child still needs independent exact-head acceptance and
 fresh hosted gates before OC2 measurement.
+
+## Current recovery checkpoint: quiet window required
+
+OC1 source freeze 01f82ab94c86a5f35918dec4ba51deee02a58ac9 passed bounded
+independent acceptance and its fresh hosted run 37171517182: all 15 validation
+jobs, actual PostgreSQL 17 and both Codecov checks. PR #244 merged only into
+integration as 266c6581a15f2aa6cdc4f41a71e8b5720e4bca26, with the identical
+tree. Integration push/tracker runs 37171809498 and 37171813788 also passed;
+tracker #212 remains draft and both Codecov checks passed. Publication jobs
+were skipped. Main and the existing release tag remain unchanged.
+
+The next delivery branch is codex/graphql-core-3.3-official-comparison-results,
+starting at 266c658. OC2's clean measurement clone is frozen at 01f82ab, not
+a later tracking or documentation commit. All four live interpreters, imported
+backends and complete installed freezes passed the pinned profile preflight.
+No package was installed or environment refreshed.
+
+OC2 remains open: no seed, timing request, raw batch or new result was created.
+Two initial aggregate CPU observations showed 63-78% idle. After a separate
+five-minute wait, three interval observations showed 67%, 67% and 66% idle,
+below the explicitly conservative pre-start heuristic of 90% per interval.
+The heuristic is not continuous host attestation or proof of individual-core
+starvation. No further polling, process termination or scheduling occurred.
+The new immutable series remains absent and all 82 protected objects matched.
+
+Preserved reports: official-comparison-oc2/report.md and
+official-comparison-oc2/preflight-v2-report.md under the existing external proof
+root. OC3 tables and OC5 final acceptance remain pending; no new 1x ratio or
+official measurement is claimed. Next: obtain a quiet window, refresh the
+pre-start observation, then execute the still-unstarted single authorized batch.
+This recovery edit is mechanical, factual documentation only; no new executable
+behavior or TDD RED is invented. Engram mirror remains pending under the host's
+unregistered-runtime restriction; RDD remains off.
+
+Quiet-window recovery work-unit commit:
+8ed1896d91006caa7f852b8014e03f437aa85615. Its rollback boundary is only this
+task checkpoint; the frozen measurement source and all public results are intact.
+
+## Accepted-background-load OC2 continuation
+
+The user explicitly authorizes proceeding under the few existing background
+loads they expect to remain constant, and will not launch additional work.
+This changes the prospective timing condition, not the historical failed
+90%-idle preflights above. Rotation and three repetitions reduce fixed order
+bias but cannot establish constant host load or thermal conditions. Capture
+pre/post aggregate CPU observations outside timed requests; do not inspect
+process identities or alter host processes/settings. No other local benchmark
+tests or builds run concurrently with the one 24-dispatch batch.
+
+The measurement source remains the clean 01f82ab commit and its frozen tree,
+not this task checkpoint or the publication branch HEAD. The new series and
+fresh private datasets are still absent at this checkpoint. OC2 remains open
+until the actual named CLI run, all raw/median contracts, preserved seeds and
+atomic eight-file installation are observed. Existing canonical results and
+historical raw evidence remain protected. The new run is not a retry of a
+partially measured batch: both earlier stops occurred before seeding/sampling.
+
+## OC2 measured-batch checkpoint: local proof, independent review pending
+
+The accepted-background-load run used the clean detached measurement checkout
+01f82ab94c86a5f35918dec4ba51deee02a58ac9 (tree
+cdcc9202ac809dc59032d148c79073fba4a0ea5d, source version 4.0.0),
+not this tracking branch. All four live named interpreters, complete installed
+freezes and backend import paths passed a fresh preflight. The fresh seeds
+were generated from that same source, so their source witness is 01f82ab,
+not the older 1b5b941 seed used by the historical diagnostic batch.
+
+One named core33 run completed from 2026-10-04 04:36:57 to 04:41:57 UTC:
+two new private seeds (1,000/2,000 authors), exactly 24 rotating dispatch
+starts and successes, eight median groups, and one atomic no-clobber install
+of the eight JSON files under
+results/core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/.
+The publisher rehashed all raw results and recomputed every median; an
+additional read-only replay validation matched all eight public bytes.
+Both fresh database hashes matched their retained seed witnesses after the
+batch, with exact 20x10x5 cardinalities and allocation sequences. All 82
+previously protected assets matched byte and filesystem identity before and
+after; the source checkout stayed clean. Benchmark contracts passed 344 tests
+after the timing processes closed.
+
+The user accepted existing background load rather than an idle-machine
+requirement. Pre/post aggregate CPU samples are recorded, but do not prove
+constant load or thermal stability during the batch. The three-repetition
+rotation reduces order bias; it does not eliminate this confounder. These are
+SQLite whole-stack results, not PostgreSQL benchmark timings or a guaranteed
+1x comparison. The original low-idle preflights remain failed historical
+stops. New numerical public tables are deferred to OC3 and must derive from
+the generated JSON, not this prose checkpoint.
+
+The new series remains a local generated artifact until independent OC2
+arithmetic/provenance/preservation review. OC2 stays unchecked for that
+acceptance boundary. The new child is ignored by the historical scratch
+pattern in benchmarks/.gitignore; add only its exact eight generated files
+explicitly to Git, without broadening the ignore rules or tracking stages.
+Full private proof: official-comparison-oc2/accepted-background-load/ under
+the existing external proof root. No remote, main, tag or release operation
+is authorized by this checkpoint.
+
+## OC2 independent acceptance and OC3 route
+
+The prior OC2 paragraphs are historical checkpoints. Independent review of
+d4ef486af0e283c49a1c22a5c8fee92d51e8b42c (tree
+e207ce75900bf15e6f5c1666cbe31884dd1f2091) accepted all 24 raw
+digests, 248 independently recomputed statistics, eight exact portable
+projections, and preserved 82 original plus 47 new protected objects. The
+72 journal start/context/success records were generated after the batch from
+checked receipts; they are not live timestamped child-event logs. Successful
+child streams and raw HTTP response bodies were not retained. The harness
+validates each first response, SQL probe, 15 warmups and 100 timed samples
+inside rollback-only requests. OC2 is complete locally, not a hosted or
+release approval. Full report: official-comparison-oc2-independent/report.md.
+
+OC3 is delegated direct because public comparison pages, both changelogs,
+benchmark instructions and executable documentation contracts need a coherent
+update. Strict TDD is ON from AGENTS.md; run the documentation focal with
+.venv/bin/python -m pytest tests/test_docs_core33_migration.py --no-cov.
+First observe RED while the old 3.1.1-source series is still selected, then
+derive the current table and claims from the new eight JSON artifacts. Keep
+both older canonical series and their dated facts; link new artifacts at
+publication commit d4ef486 and source separately at measured commit 01f82ab.
+No new benchmark execution, database connection or release operation belongs
+to OC3. Independent final and hosted checks remain later tasks.
+
+## OC3 local documentation acceptance
+
+The new JSON-backed documentation contract failed on the old current table,
+stack version, provenance and summary, then passed after the current page,
+README, benchmark guide and both changelogs selected the 4.0.0-source series.
+The earlier 3.1.1-source core33 table and original 3.1.0 comparison remain
+separate. New artifact links use publication commit d4ef486; the measuring
+source link uses 01f82ab, which has no new artifact directory. The published
+0.57× and 0.59× GraphEx/Ariadne create-comment ratios derive from the eight
+portable JSON files, not a cross-session baseline or PostgreSQL timing.
+
+Behavior/documentation commit d3f4632207d2cf98cdf2084b99b369416cc3155a
+and configured-docstring correction 8e4bc526c5d723d4c888b64a57b5d87d6a2eacf4
+form the local OC3 work unit. At exact 8e4bc52, a clean real native-3.3 clone
+passed 4,757 full tests with 96.26% combined coverage against 95.01%, 344
+benchmark tests, 59 standalone Playground tests, Ruff, configured/expanded/CLI
+typing, Bandit, both zero-issue docstring gates and a clean documentation
+build. An earlier 8e-predecessor full run passed but its standard docstring
+gate found one new single-line test docstring; that failed attempt is retained,
+not relabeled. The only subsequent correction expanded that docstring.
+Current artifact and source permalinks resolve to local Git objects and the
+generated site contains the current comparison anchor. No package source,
+benchmark executable, result JSON, profile, pin or retained database changed
+in OC3. Independent final review and fresh hosted delivery remain pending;
+OC3 local completion is not main, tag, wheel or publication approval.

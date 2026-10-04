@@ -19,29 +19,35 @@ All notable changes to this library are documented here. The format is based on
 **Release prepared, not published.** The package and both editable project
 locks now name 4.0.0, with `graphql-core>=3.3.0,<3.4`. A tag, built wheel,
 hosted release-artifact verification, and publication remain separate gates.
-Custom 3.2
-`ExecutionContext` subclasses must move to the 3.3 `Executor` API; the
+Custom 3.2 `ExecutionContext` subclasses must move to the 3.3 `Executor` API; the
 legacy view keyword remains an alias with explicit-argument precedence.
 Custom AST builders must construct immutable AST nodes, and subscription
 transports must handle the 3.3 source stream results. Synchronous queryset
 execution, directive coercion and query cost behavior retain compatibility
-tests. New core33 whole-stack results and explicit run/replay guidance are
-separate from the frozen 3.1.0 measurements. Their measured django-graphex
-source was still 3.1.1; no 4.0.0 benchmark was run. See the
-[4.0 upgrade guide](UPGRADE-4.0.md) and
+tests. The new official core33 SQLite comparison is in the immutable
+`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9` series,
+measured 4.0.0 source at commit
+`01f82ab94c86a5f35918dec4ba51deee02a58ac9` and installed later at
+`d4ef486af0e283c49a1c22a5c8fee92d51e8b42c`. Its GraphEx/Ariadne
+create-comment p50 ratios are 0.57× and 0.59× for 50,000 and 100,000
+comments, respectively; the GraphEx direct-write check retains four SQL
+statements versus Ariadne's one. These are three-run per-statistic medians of
+pinned SQLite whole stacks under accepted background load, not paired
+cross-session speedups, PostgreSQL timings or a published wheel. The earlier
+3.1.1-source core33 and 3.1.0 artifacts remain historical. See the
 [current comparison](why.md#current-core33-comparison). The dated 3.1.1
 security patch and its GraphQL-core 3.2.13 requirement remain historical facts.
 
 SQLite generic mutations now validate only their directly saved FK rows
 (including concrete inheritance parents) and updated M2M links, including
 both rows of a symmetric self-relation accessed through a proxy or concrete
-child, after the
-write, inside the rollback savepoint. This avoids
+child, after the write, inside the rollback savepoint. This avoids
 the table-wide deferred-FK scan that grew with unrelated rows, while retaining
 immediate structured errors for the mutation's own invalid relations. Earlier
 unrelated deferred violations remain the outer transaction's responsibility
 and still prevent commit if unresolved. PostgreSQL's existing check is unchanged.
-The frozen core33 results predate this change and are not new 4.0.0 timings.
+The earlier core33 results predate this change; the new 4.0.0-source series
+records the scoped SQLite check without rewriting that history.
 
 ## 3.1.1 — 2026-10-01
 

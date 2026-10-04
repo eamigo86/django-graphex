@@ -198,8 +198,12 @@ A fully wired example project lives in [`examples/playground/`](examples/playgro
 [Migration Guide](https://eamigo86.github.io/django-graphex/migration/).
 
 The [current core33 comparison](docs/why.md#current-core33-comparison) is
-derived from eight committed portable results, with three-run medians across
-different whole stacks; the original 3.1.0 figures remain historical.
+derived from eight committed portable results in `core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`,
+measured from the prepared 4.0.0 source. In the SQLite create-comment operation,
+GraphEx/Ariadne p50 was 0.57× at 50,000 comments and 0.59× at 100,000;
+these are whole-stack observations under accepted background load, not an
+equal-core or universal performance guarantee. Earlier 3.1.1-source core33 and
+3.1.0 figures remain historical.
 
 ## License
 
