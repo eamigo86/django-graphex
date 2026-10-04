@@ -485,3 +485,26 @@ MP3 tracking work-unit commit: 3400425f08fac89af14ceaf0a5568d1cdff094fc
 (docs(perf): record independent scoped-validation acceptance). This identity
 link changes only this feature document; the verified executable witness is
 still e04a1ab and the independently tested candidate is still 4972464.
+
+## Hosted security correction before dependency delivery
+
+The first hosted run for dependency PR #243 at 9846515 passed PostgreSQL 17
+and 14 of 15 validation jobs with both Codecov checks, but the lint/security
+job failed Bandit B608 at three dynamically assembled scoped-check statements
+in backend.py (old lines 102, 111 and 155). That run is a real failure, not a
+hosted pass or a reason to relax the security job. A fresh local configured
+Bandit command reproduced exactly those three findings before correction.
+
+The identifiers in those statements originate in Django model metadata and
+use connection.ops.quote_name; caller-owned row keys and diagnostic field
+names are passed as bound parameters. A new disposable-schema regression
+records pre-interpolation SQL and parameters for a SQL-looking owner key and
+SQL-keyword declared table names, verifies a valid mutation and scoped link,
+and confirms an invalid direct link is rejected without damaging unrelated
+rows or the outer connection. This behavioral control already passed before
+source annotations; the cause-correct RED is the actual configured Bandit
+scan. Exactly three local B608 annotations explain the identifier/parameter
+boundary, and Python AST equality confirms no runtime semantics changed.
+The configured local Bandit scan then passed with no issues. Final clean-clone
+native-3.3/full/quality/protection checks and fresh hosted delivery are still
+pending at this checkpoint. No previous report or dataset is reclassified.
