@@ -459,3 +459,21 @@ starting point remain unchanged before test edits. Existing correct behavior
 may pass immediately; the already-observed pure-branch failure is the
 coverage-objective RED. No production code, policy, benchmark or retained
 database mutation is authorized in this unit.
+
+The test work-unit commit 3b0fd1658e7d991c6d50a2b94c4d3605ba59e17a
+adds malformed SSE request, WebSocket timer/source teardown, and subscription
+permission-denial controls. Its clean native-3.3 clone passed 56 transport and
+permission focal tests, 4,891 full tests with seven skips, three warnings and
+23 subtests, 344 benchmark contracts without timing, and 59 standalone
+Playground tests. Combined coverage is 96.92%. Seven previously missing pure
+branch outcomes are covered, none newly missing, and the denominator remains
+3,864: **3,633/3,864 = 94.0217%**, still below 95.01% by 39 outcomes.
+The exact pure gate therefore exits 1; FG2 remains unchecked. Both genuine
+nonempty runtime diff-coverage comparisons remain 30/30 lines. Ruff, check-only
+format, configured/expanded/CLI typing, Bandit, both zero-issue docstring
+audits, Zensical and diff checks passed. The 129 current protected identities
+matched before and after. Raw logs and exact command ledger are under
+final-gates-fg2-transports/. A first configured docstring audit found seven
+test-docstring findings; corrected source passed before the tested commit.
+No package, coverage policy, benchmark or retained database was changed.
+This bounded FG2 partial does not start FG3 or FG5; the Engram mirror is pending.
