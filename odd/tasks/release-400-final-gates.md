@@ -123,8 +123,7 @@ Google-style test docstrings and check-only formatting, then the configured
 coverage-policy test and new suite passed 22 controls. The standalone checker
 reads only the Cobertura root's integer branches-covered/branches-valid and
 was intended to compare the exact fraction to the default 95.01% threshold.
-It rejects
-absent/malformed reports, zero totals, invalid counts and invalid thresholds;
+It rejects absent/malformed reports, zero totals, invalid counts and invalid thresholds;
 the XML's rounded branch-rate value never decides acceptance. The contributor
 guide documents this manual command without claiming CI wiring.
 
@@ -183,3 +182,46 @@ snapshot exists. Retained databases were hash/stat checked only. Proof is
 under final-gates-fg1-precision/; original FG1 logs and report are unchanged.
 This task-only evidence checkpoint does not imply a separate full-suite run.
 FG2, FG3 and FG4 remain pending; package source tree is unchanged.
+
+## FG2 partial test-coverage progress
+
+FG2 remains unchecked. The real FG1 baseline was 3,569/3,850 pure branches
+(92.7013%). Two new behavior-test work units cover conservative optimizer
+prefetch handling and pair-local compiler safeguards:
+79e2158f46027268cf94bd50971c9b42879f9eb1 and
+1b4d25afc7926c9568c0a1a596e53b27caa088e6. The tests assert join
+columns, full-load fallbacks, fragment plans, stable pair identity and
+fail-closed registry behavior; no package runtime or coverage policy changed.
+These existing behaviors passed immediately, so their objective was coverage
+of the already observed branch-gate RED, not a fabricated behavior RED.
+
+A fresh exact-commit native-3.3 clean-clone full run at 1b4d25a passed
+4,789 tests with seven skips, three warnings, 23 subtests and 96.42%
+combined coverage. The new pure-branch gate still correctly **fails**:
+3,582/3,850 = 93.0390%, a gain of 13 covered arcs with no denominator
+change or newly missing arc. Exactly 76 more covered arcs are required for
+95.01% at the unchanged denominator. The seven optimizer tests yielded 11
+arcs; three compiler safeguards yielded two. This is meaningful but well
+short of acceptance, so there is no FG2 completion claim and no FG3 wiring.
+
+Focal optimizer and compiler suites, all 344 benchmark contracts and all
+59 standalone Playground tests passed. The full clean-clone quality checks
+passed: Ruff/check-only format, script/configured/expanded/CLI mypy, both
+zero-issue docstring gates, Bandit, Zensical and diff check. A first
+Playground proof driver used the wrong settings module and failed before
+collection; its raw failure is retained, and the corrected existing
+config.settings invocation passed all 59. This was a proof-driver mistake,
+not a candidate test failure. The first benchmark log was overwritten by
+the corrected driver's duplicate benchmark run; its original command and
+observed 344-pass result remain in the driver and tool record, not an
+immutable separate stdout file.
+
+Next bounded cluster: exercise meaningful wrapper/fragment, nested prefetch
+and annotated promotion outcomes in utils.py, then native relation/type
+and schema/output compiler shapes. Current missing-arc concentrations are
+utils.py 57, types.py 44 and the schema/output compilers 22; there is no
+claim every arc is feasible or that merely calling a helper suffices.
+Evidence and exact raw logs are under final-gates-fg2/ in the retained
+external proof root; before/after protected snapshots of the same 129
+paths match exactly, including inode and database hash/stat identities.
+The historical older-OC2 inode distinction remains separate.
