@@ -44,7 +44,7 @@ branch requirement. Do not change library behavior merely to improve coverage.
 
 ## Tasks and implementation route
 
-- [ ] FG1 — Add a fail-closed pure-branch XML checker with executable boundary,
+- [x] FG1 — Add a fail-closed pure-branch XML checker with executable boundary,
   malformed/missing/zero-count and CLI tests. Integer/decimal exact comparison,
   never rounded XML rates. Demonstrate the accepted 92.70% baseline fails.
   Delegated direct: multi-file script/tests and preparation require a writer.
@@ -114,3 +114,42 @@ FG1 rollback removes only its checker/tests; FG2 removes its new tests;
 FG3 removes its workflow/template/docs/checker changes; prior runtime and
 benchmark results remain intact. A final local recovery-only checkpoint may
 record hosted results without pretending its own task bytes had a new CI run.
+
+## FG1 local acceptance and FG2 boundary
+
+The missing-checker focused suite failed 21 executable controls before the
+script existed; the first implementation passed all 21. Normalization added
+Google-style test docstrings and check-only formatting, then the configured
+coverage-policy test and new suite passed 22 controls. The standalone checker
+reads only the Cobertura root's integer branches-covered/branches-valid and
+compares the exact fraction to the default 95.01% threshold. It rejects
+absent/malformed reports, zero totals, invalid counts and invalid thresholds;
+the XML's rounded branch-rate value never decides acceptance. The contributor
+guide documents this manual command without claiming CI wiring.
+
+Behavior, tests and guide work-unit commit:
+167a057d97a00ad863358e36bb092afb0e16013f (tree
+5ff92481a79c67cb6f55fafae2199188468be8c9). A fresh clean native-3.3
+clone of that exact commit passed 22 focused controls and the unchanged full
+suite: 4,778 passed, seven skipped, three warnings and 23 subtests, with
+96.26% combined coverage above the existing 95.01% floor. Ruff/check-only
+format, standalone-script and configured/expanded/CLI typing, both zero-issue
+docstring audits, Bandit and clean Zensical build passed. Package runtime
+tree remains 125843bf27db5ce3af004e52e429c03a26054eeb. No coverage
+configuration, exclusion, denominator or existing gate changed.
+
+The accepted old XML and this fresh full-suite XML both correctly **fail**
+the new pure-branch checker: 3,569/3,850 = 92.7013%, below 95.01%. This is
+the real FG2 acceptance RED, not a checker failure or a fabricated runtime
+bug. FG2 must add meaningful behavior-focused tests and achieve the pure
+branch floor before FG3 wires the checker into CI. This task-only evidence
+checkpoint does not reclassify the unmet release gate as passed. Full local
+proof: final-gates-fg1/report.md under the retained external proof root.
+No installer, remote operation, database connection, benchmark measurement,
+main merge, tag or publication occurred. Engram mirror remains pending.
+Read-only protection checking found no content mismatch among 82 original and
+47 newer assets. Eight tracked new-series JSON files have inode numbers
+different from the earlier OC2 inventory; their SHA, size, device, mode and
+link counts match. This metadata drift is disclosed, not called full
+filesystem-identity equality or attributed to an unverified cause. Retained
+databases were hash/stat only and retain their recorded identities.
