@@ -742,3 +742,16 @@ and documentation changes follow measured evidence in separate commits, with
 historical source attribution unchanged. FG5 remains unchecked until those
 outcomes and checks are observed; FG4 is separate. The Engram mirror remains
 pending.
+
+The clean measurement source is bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e
+(tree 619d81147c006c1eeb4a10eadc4867140649e4dc), with the same runtime
+package tree 9d275e6fbf65529aab49d2f448ee5528d46df452. One official
+named-profile run completed 24 dispatches and installed eight JSON artifacts
+in the fresh core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e
+series. Two fresh private seeds contain 50,000 and 100,000 comments; 24 raw
+results and 72 post-batch receipt records are retained externally. The old
+129 protected assets matched before and after by bytes and filesystem state.
+The aggregate CPU observations do not prove stable background load. The
+current public table and documentation still describe the earlier 01f82
+series; updating them from these JSON files and independent arithmetic
+acceptance remain pending. FG5 therefore remains unchecked.
