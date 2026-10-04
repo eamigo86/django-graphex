@@ -58,7 +58,7 @@ new validated median artifacts only.
 
 ## Tasks and routing
 
-- [ ] OC1 — Add safe additive publication-series support through the existing
+- [x] OC1 — Add safe additive publication-series support through the existing
   named CLI/publisher with no-clobber, validation, replay and compatibility
   regressions; update benchmark instructions together. Delegated direct writer:
   preparation spans four-plus files and implementation is multi-file.
@@ -134,3 +134,18 @@ actual PostgreSQL 17 success but failed lint/security on three Bandit B608
 findings in the preceding performance change. That hosted run is not a pass;
 the separate dependency correction and fresh hosted checks are pending before
 official measurement. No performance source or Bandit policy is changed by OC1.
+
+OC1 behavior commit d010ac54a86c580b3ff8c1c7fbcf6d32f8946f8c closes
+the local work unit. The clean real clone at that exact commit used the official
+graphql-core 3.3.0 overlay: 344 benchmark tests, 59 Playground tests and the
+unchanged full suite (4,755 passed, seven skipped, three warnings, 23
+subtests; combined coverage 96.26% against 95.01%) passed. Ruff, configured
+79/82-file typing, natural CLI-module typing, both configured and strict
+docstring audits (zero in the clean clone), and the documentation build (zero
+issues) passed. The root checkout's ignored historical profiling scripts make
+the whole-root strict audit report 58 pre-existing findings; the clean clone
+contains only tracked source and passed that same audit with zero. No covered
+package code changed, so a package patch-coverage claim is not applicable.
+The independently rechecked OC1 candidate and hosted delivery remain pending.
+OC2 remains blocked by the dependency's hosted security failure and cannot
+start from OC1 local proof alone.
