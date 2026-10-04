@@ -364,3 +364,17 @@ final-gates-fg2-boundaries/. A further authorized decision is needed for
 remaining guard-line proof if those states cannot be reached through supported
 optimizer inputs; do not delete guards, add exclusions or count an empty
 diff-cover denominator as PASS. FG3/FG5/FG4 remain pending.
+
+### FG2-R private AST walker refactor authorization
+
+The parent authorized a behavior-preserving extraction of the existing nested
+fragment selection walker into one private module-level helper. Direct AST
+contracts can then exercise None input, unknown type, missing and cyclic
+fragments, repeated spreads, bound directives and schema type applicability
+without presenting invalid GraphQL documents as successful API requests. This
+is the REFACTOR phase of the already observed public behavior RED/GREEN, not a
+new public feature or permission to delete guards. Fresh helper-availability
+RED and then actual contract GREEN are required before rerunning the unchanged
+public regressions. The current package tree and both coverage failures above
+remain historical facts until a new exact candidate is measured; FG5 still
+waits for final runtime stabilization. No timing occurs in this unit.
