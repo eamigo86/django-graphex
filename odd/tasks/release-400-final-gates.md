@@ -53,7 +53,7 @@ branch requirement. Do not change library behavior merely to improve coverage.
   Do not alter runtime merely to improve coverage or change denominator policy.
   Delegated direct:
   multiple non-trivial test modules and fresh native full-suite execution.
-- [ ] FG2-R — Correct the independently observed valid-fragment annotation
+- [x] FG2-R — Correct the independently observed valid-fragment annotation
   failure in the optimizer, with strict cause-correct RED/GREEN, real GraphQL
   result and SQL regressions, behavioral documentation and both prepared-release
   changelogs. The user explicitly authorized this runtime correction after the
@@ -288,3 +288,34 @@ are historical facts at e220800, not invariants after a justified runtime
 change. Keep the coverage policy unchanged and disclose the new denominator.
 The local Engram mirror remains pending; RDD is off. This checkpoint precedes
 source edits and claims no new RED/GREEN or verification outcome.
+
+### FG2-R observed local acceptance
+
+The new real GraphQL/ORM fragment contract failed five positive fragment
+cases against e220800 before the source correction; three direct/directive
+controls passed. Its initial corrected run passed all eight, and the frozen
+behavior candidate 4d974a7ee6f936928d520087648ab0d53349169a (tree
+236f63db0315b6c89cef083cc208fb182b86fdee) passed 106 selected optimizer
+and directive tests. The promotion walker now follows applicable named and
+inline fragments at relation, child and list-wrapper levels, applying bound
+directives and schema type conditions. The tests assert actual non-null values
+and annotation SQL, not helper call counts.
+
+A clean real native-3.3 clone of that exact candidate passed 4,826 full tests,
+seven skips, three warnings and 23 subtests at 96.63% combined coverage. All
+344 benchmark contracts and 59 standalone Playground tests passed. Ruff and
+check-only format, configured/expanded/CLI mypy, Bandit, both zero-issue
+docstring audits, Zensical zero-issue build and diff check passed. The same
+129 protected files matched byte and stat identity before/after; retained
+databases were hash/stat only. Package source changed intentionally; the
+existing official benchmark series still describes its old measurement source
+and must not be relabeled. Complete raw proof is under final-gates-fragment-fix/.
+
+FG2 remains open: fresh pure branches are **3,608/3,864 = 93.3747%**, below
+95.01%; the checker correctly exits nonzero. This is 14 additional covered
+arcs with 14 additional valid outcomes versus e220800, not a coverage-policy
+change. At the new denominator, 64 more covered arcs are needed. FG3, FG4 and
+the separately authorized final-source benchmark regeneration FG5 remain
+pending. This task-only acceptance checkpoint has not had a separate full run;
+its rollback boundary is the behavior work unit above, with the prior
+measurements and canonical artifacts untouched.
