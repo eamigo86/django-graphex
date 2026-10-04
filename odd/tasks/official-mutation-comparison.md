@@ -70,7 +70,7 @@ new validated median artifacts only.
   exactly one official three-repetition/two-size batch, validate all 24 runs and
   eight median groups, then install only the new immutable series. Delegated
   execution; independent arithmetic/provenance/preservation verification.
-- [ ] OC3 — Derive the current public tables, ratios, links and changelog notes
+- [x] OC3 — Derive the current public tables, ratios, links and changelog notes
   from the new eight JSON artifacts. Preserve dated historical comparisons and
   update executable docs/readiness contracts and example/Playground guidance
   only where necessary. Delegated direct writer with tests and docs together.
@@ -320,3 +320,29 @@ both older canonical series and their dated facts; link new artifacts at
 publication commit d4ef486 and source separately at measured commit 01f82ab.
 No new benchmark execution, database connection or release operation belongs
 to OC3. Independent final and hosted checks remain later tasks.
+
+## OC3 local documentation acceptance
+
+The new JSON-backed documentation contract failed on the old current table,
+stack version, provenance and summary, then passed after the current page,
+README, benchmark guide and both changelogs selected the 4.0.0-source series.
+The earlier 3.1.1-source core33 table and original 3.1.0 comparison remain
+separate. New artifact links use publication commit d4ef486; the measuring
+source link uses 01f82ab, which has no new artifact directory. The published
+0.57× and 0.59× GraphEx/Ariadne create-comment ratios derive from the eight
+portable JSON files, not a cross-session baseline or PostgreSQL timing.
+
+Behavior/documentation commit d3f4632207d2cf98cdf2084b99b369416cc3155a
+and configured-docstring correction 8e4bc526c5d723d4c888b64a57b5d87d6a2eacf4
+form the local OC3 work unit. At exact 8e4bc52, a clean real native-3.3 clone
+passed 4,757 full tests with 96.26% combined coverage against 95.01%, 344
+benchmark tests, 59 standalone Playground tests, Ruff, configured/expanded/CLI
+typing, Bandit, both zero-issue docstring gates and a clean documentation
+build. An earlier 8e-predecessor full run passed but its standard docstring
+gate found one new single-line test docstring; that failed attempt is retained,
+not relabeled. The only subsequent correction expanded that docstring.
+Current artifact and source permalinks resolve to local Git objects and the
+generated site contains the current comparison anchor. No package source,
+benchmark executable, result JSON, profile, pin or retained database changed
+in OC3. Independent final review and fresh hosted delivery remain pending;
+OC3 local completion is not main, tag, wheel or publication approval.
