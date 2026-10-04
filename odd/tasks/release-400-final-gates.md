@@ -557,3 +557,28 @@ module succeeds without Channels before adding the next supported field and
 extension-boundary tests. This is a cause-correct test contract RED, distinct
 from the still-failing pure-branch coverage objective at 3,656/3,864. No
 runtime/package source, coverage policy, or retained data changes are allowed.
+
+Test work unit c0118ce4471ed467b40df2ff8213cba497bd332f moves the
+positive cached-stream control to the optional subscription suite. A clean
+clone with Channels imports deliberately blocked first failed that mixed core
+module (14 passed, one failed), then the corrected core module passed all 14
+controls; the moved subscription control passed with the optional extra. New
+field and input contracts cover a plain list item, an explicit paginated
+description, inherited native descriptors, canonical registered nested input
+identity, and repeated model-free input identity. An initial input fixture
+mistakenly expected a nonexistent Category.name field; correcting it to the
+real title field was a test-fixture repair, not a runtime defect.
+
+The exact clean native-3.3 clone passed 4,916 full tests, 344 benchmark
+contracts without timing, and 59 standalone Playground tests. Seven skips,
+three warnings, and 23 subtests remained. Combined coverage is 97.25%; five
+formerly missing pure outcomes are covered with none lost and an unchanged
+denominator: **3,661/3,864 = 94.7464%**. The pure gate still exits 1, with 11
+more outcomes needed at this denominator. Both nonempty package patch gates
+pass 30/30 changed lines; Ruff/check-only format, configured/expanded/CLI
+typing, Bandit, both zero-issue docstring audits, Zensical, and all 129
+protected identity checks pass. Package source remains
+9d275e6fbf65529aab49d2f448ee5528d46df452. Raw commands and arc diff are
+under final-gates-fg2-final-boundaries/. This task-only checkpoint follows the
+tested commit; it does not claim a second full run. FG2 remains unchecked;
+FG3, FG5, and FG4 have not started. The Engram mirror remains pending.
