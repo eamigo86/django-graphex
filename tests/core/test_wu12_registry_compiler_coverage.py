@@ -275,3 +275,56 @@ def test_compile_all_outputs_build_error_when_instance_lacks_gdx(
         compile_all_outputs()
     assert "NoGdxNode" in str(exc.value)
     assert "extensions['gdx']" in str(exc.value)
+
+
+def test_fork_output_class_reuses_existing_pair_instance() -> None:
+    """Reuse an already forked type instead of replacing its pair identity.
+
+    The per-pair object must be stable across repeated relation resolution.
+    """
+    from types import SimpleNamespace
+
+    from django_graphex.core.registry_compiler import fork_output_class
+
+    class _Node:
+        pass
+
+    forked = GraphQLObjectType("PairNode", fields={})
+    pair = SimpleNamespace(output_instances={_Node: forked})
+    assert fork_output_class(_Node, pair) is forked
+    assert pair.output_instances == {_Node: forked}
+
+
+def test_fork_output_class_refuses_unregistered_model_free_type() -> None:
+    """Avoid inventing a pair-local output type without model metadata.
+
+    Such a declaration cannot supply the relation thunk's model binding.
+    """
+    from types import SimpleNamespace
+
+    from django_graphex.core.registry_compiler import fork_output_class
+
+    class _NoModel:
+        _meta = SimpleNamespace(model=None)
+
+    pair = SimpleNamespace(output_instances={})
+    assert fork_output_class(_NoModel, pair) is None
+    assert pair.output_instances == {}
+
+
+def test_fork_output_class_refuses_pair_missing_registry_half() -> None:
+    """Do not fork a model-backed type into an incomplete registry pair.
+
+    A partial pair cannot keep schema-local source and output identities aligned.
+    """
+    from types import SimpleNamespace
+
+    from django_graphex.core.registry_compiler import fork_output_class
+    from tests.models import Author
+
+    class _ModelNode:
+        _meta = SimpleNamespace(model=Author, name="ModelNode")
+
+    pair = SimpleNamespace(output_instances={}, graphene=object(), output=None)
+    assert fork_output_class(_ModelNode, pair) is None
+    assert pair.output_instances == {}
