@@ -10,6 +10,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from pathlib import Path
 
 DEFAULT_THRESHOLD = Decimal("95.01")
@@ -71,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Command arguments, or process arguments when omitted.
 
     Returns:
-        Zero when the threshold is met, one below it, or parser exit on invalid input.
+        Zero when the threshold is met; one when it is not.
 
     Raises:
         SystemExit: The report or command arguments are invalid.
@@ -96,7 +97,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     percent = Decimal(covered) * 100 / Decimal(valid)
-    outcome = "PASS" if Decimal(covered) * 100 >= args.threshold * valid else "FAIL"
+    threshold = Fraction(args.threshold)
+    meets_threshold = (
+        covered * 100 * threshold.denominator >= threshold.numerator * valid
+    )
+    outcome = "PASS" if meets_threshold else "FAIL"
     print(
         f"pure branches: {covered}/{valid} = {percent:.4f}% "
         f"(required >= {args.threshold}%) — {outcome}"

@@ -166,3 +166,15 @@ def test_explicit_valid_threshold_uses_exact_fraction(tmp_path: Path) -> None:
     path = _write_report(tmp_path / "coverage.xml", covered="1", valid="2")
     assert _run_checker(path, "--threshold", "50").returncode == 0
     assert _run_checker(path, "--threshold", "50.01").returncode == 1
+
+
+def test_threshold_above_exact_boundary_cannot_round_down(tmp_path: Path) -> None:
+    """Reject a threshold strictly above the covered fraction.
+
+    Args:
+        tmp_path: Owned fixture directory.
+    """
+    path = _write_report(tmp_path / "coverage.xml", covered="9501", valid="10000")
+    result = _run_checker(path, "--threshold", "95.0100000000000000000000000001")
+    assert result.returncode == 1
+    assert "FAIL" in result.stdout
