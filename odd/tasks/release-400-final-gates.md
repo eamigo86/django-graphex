@@ -488,3 +488,23 @@ model, schema and pair effects rather than helper call counts or fabricated
 registry corruption. Package source, coverage policy, old results and retained
 databases remain unchanged. FG2 stays open until a fresh full-suite XML meets
 95.01%; FG3, FG5 and FG4 are not started by this unit.
+
+Test work unit 89179c18dd8f2ecb22521467e741ddb59d73774f covers real
+manager-to-queryset normalization, scalar-only isolated schema construction,
+global app-ready exclusion of a valid custom-registry output, stable same-pair
+recompilation, and two fields sharing one model type without cross-pair aliasing.
+It does not force legacy reverse-relation metadata absent from the observed
+Django 6.0.8 relation objects, or manufacture abstract model-free types. The
+exact clean native-3.3 clone passed 29 focal, 4,896 full, 344 benchmark-contract
+and 59 standalone Playground tests. Seven skips, three warnings and 23 subtests
+remained; combined
+coverage was 97.01%. Six previously missing branch outcomes are covered with
+no new missing outcome or denominator change: **3,639/3,864 = 94.1770%**.
+The pure gate exits 1; 33 additional outcomes are needed at this denominator,
+so FG2 remains unchecked. Both genuine nonempty runtime patch gates pass 30/30
+lines. Ruff/check-only format, configured/expanded/CLI mypy, Bandit, both
+zero-issue docstring audits, Zensical, diff check and 129 protected identity
+checks passed. Prior failed focal, docstring and formatter attempts remain in
+the new final-gates-fg2-registry-helpers/ proof directory. Package source,
+coverage policy and retained benchmark assets remain unchanged. FG3, FG5 and
+FG4 are still pending; the Engram mirror remains unavailable.
