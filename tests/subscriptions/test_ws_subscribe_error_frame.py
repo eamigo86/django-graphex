@@ -7,11 +7,11 @@ in "located_error" (always a "GraphQLError"), and the caller catches
 "GraphQLError" and returns it as a result. So a denying resolver never reaches
 the transport's "except Exception".
 
-One thing does: "assert_valid_execution_arguments" runs BEFORE that try block
-and raises a plain "TypeError" when "variable_values" is not a dict. A client
-that sends "variables" as an unparsed JSON string hits it, so the branch is
-client-reachable and must answer with an "error" frame that leaves the socket
-and its running operations alone.
+One thing does: invalid non-dict variables raise a plain "TypeError" before
+source construction. GraphQL-core 3.2 performed this check internally; the
+transport adapter retains it for 3.3, whose Executor.build does not. A client
+that sends an unparsed JSON string must receive an operation "error" frame
+without closing the socket or disturbing its other operations.
 """
 
 from __future__ import annotations
@@ -96,9 +96,9 @@ def _consumer() -> Any:
 async def test_non_dict_variables_are_framed_and_leave_the_socket_alive() -> None:
     """Answer a non-dict "variables" payload with an error frame, not a close.
 
-    Contract: without the "except Exception" around the subscribe call this
-    "TypeError" escapes "_run_operation" and kills the consumer task, taking
-    down every other subscription multiplexed on the same socket.
+    Contract: the adapter must reject malformed variables before invoking the
+    subscribe entry, and the consumer must frame that TypeError without killing
+    other subscriptions multiplexed on the socket.
     """
     consumer = _consumer()
 

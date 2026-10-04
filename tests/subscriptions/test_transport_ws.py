@@ -315,6 +315,47 @@ async def test_subscribe_next_then_complete(monkeypatch: pytest.MonkeyPatch) -> 
     await communicator.disconnect()
 
 
+async def test_variable_coercion_error_is_framed_without_starting_ws_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject an invalid variable for one operation without closing the socket.
+
+    Args:
+        monkeypatch: Fixture used to install an isolated channel layer.
+    """
+    from django_graphex.subscriptions.transports import ws
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+    app = ws.subscription_ws_consumer(schema=build_native_schema())
+    communicator = _make_communicator(app, layer=layer)
+    await _connect_and_ack(communicator)
+
+    await communicator.send_json_to(
+        {
+            "id": "bad",
+            "type": "subscribe",
+            "payload": {
+                "query": "subscription Bad($action: PostSubscriptionAction!) "
+                "{ post(action: $action) { id } }",
+                "operationName": "Bad",
+                "variables": {"action": "NOT_AN_ACTION"},
+            },
+        }
+    )
+    error = await communicator.receive_json_from(timeout=2)
+    assert error["type"] == "error"
+    assert error["id"] == "bad"
+    assert "NOT_AN_ACTION" in error["payload"][0]["message"]
+    assert _consumer_for(ws, communicator).started_source("bad") is None
+
+    await communicator.send_json_to(
+        {"id": "ok", "type": "subscribe", "payload": {"query": _SUB_QUERY}}
+    )
+    assert await _await_started_group(ws, communicator, "ok", timeout=2.0)
+    await communicator.disconnect()
+
+
 # ---------------------------------------------------------------------------
 # 3) N operations multiplexed over ONE socket
 # ---------------------------------------------------------------------------

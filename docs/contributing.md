@@ -148,9 +148,18 @@ def iter_ids(limit: int) -> Iterator[int]:
   and benchmark-harness changes.
 - Write tests for every feature and regression.
 - Keep branch coverage strictly above 95%; the root and changed-line floor is
-  **95.01%**.
+  **95.01%**. The combined line-plus-branch percentage is not the pure branch
+  percentage. After a fresh full-suite run, check the latter separately with
+  `python scripts/check_branch_coverage.py coverage.xml`. This command reads
+  the XML root's covered and valid branch counts, compares their exact fraction
+  with 95.01%, and rejects absent or invalid reports; it does not trust the
+  rounded branch-rate attribute. CI runs it after the full suite has written
+  fresh XML, alongside the unchanged combined and changed-line 95.01% gates.
 - Use descriptive test names
 - Follow the existing test structure
+- Capability-path tests may use strict legacy signatures to verify that a
+  newer GraphQL-core engine does not receive keywords unsupported by an older
+  API. They do not extend the declared runtime support range.
 
 The tool dependencies in `tox.ini` deliberately use bounded compatibility
 ranges. Keep those ranges identical to their entries in
@@ -172,6 +181,7 @@ suite and enforce changed-line coverage from its report:
 
 ```bash
 uv run pytest -q
+uv run python scripts/check_branch_coverage.py coverage.xml --threshold 95.01
 uvx 'diff-cover>=10.5.1,<11' coverage.xml \
   --compare-branch=origin/main --fail-under=95.01
 ```

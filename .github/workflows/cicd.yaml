@@ -6,6 +6,8 @@ on:
     - main
     # Release tracker branches (e.g. v1.2.1) run the full test pipeline on every merge.
     - 'v*.*.*'
+    # GraphQL-core migration integration runs checks before release planning.
+    - 'codex/graphql-core-3.3'
     tags:
     - 'v*.*.*'
   pull_request:
@@ -15,6 +17,9 @@ on:
     - 'v*.*.*'
     # Chained security-patch PRs target their preceding child branch.
     - 'codex/v3.1.1-*'
+    # Migration PRs target integration or their preceding child branch.
+    - 'codex/graphql-core-3.3'
+    - 'codex/graphql-core-3.3-*'
   workflow_dispatch:
 
 permissions:
@@ -167,6 +172,9 @@ jobs:
         # so plain pytest writes coverage.xml. A separate `coverage run` here
         # double-measures and leaves an empty .coverage (~0% reported).
         uv run pytest
+
+    - name: Enforce pure branch coverage
+      run: uv run python scripts/check_branch_coverage.py coverage.xml --threshold 95.01
 
     - name: Enforce changed-line coverage
       env:
@@ -362,6 +370,9 @@ jobs:
 
     - name: Build documentation
       run: uv run zensical build --clean -f zensical.yml
+
+    - name: Check generated documentation links
+      run: uv run python scripts/check_site_anchors.py site --base-path /django-graphex/
 
     - name: Setup Pages for a tagged release
       if: startsWith(github.ref, 'refs/tags/v')

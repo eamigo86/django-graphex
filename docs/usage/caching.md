@@ -14,6 +14,15 @@ DJANGO_GRAPHEX = {
 The view uses Django's `"default"` cache backend.  Any backend Django supports
 (local-memory, Redis, Memcached, database, …) works out of the box.
 
+The document-validation cache is separate from this HTTP response cache. Its
+per-schema entries also distinguish validation rules, error and query limits,
+and suggestion visibility. GraphQL-core 3.3 can omit schema suggestions during
+validation; a cached public error cannot be reused for a validation call that
+requests hidden suggestions. GraphQL-core 3.2 does not provide that native
+option, so the migration adapter preserves its existing validation behavior.
+This cache isolation alone does not configure HTTP or subscription error
+visibility; those call sites must request the native option separately.
+
 ---
 
 ## Cache key anatomy
@@ -55,7 +64,7 @@ and are neither read from nor written to the response cache.
 This partitioning applies to the **response entry**, which always carries the
 full identity.  Invalidation is grouped more coarsely for unauthenticated
 identities — see
-[Bucketing for unauthenticated identities](#bucketing-for-unauthenticated-identities).
+[Bucketing for unauthenticated identities](#bucketing-for-unauthenticated-identities-in-identity-scope).
 
 ---
 

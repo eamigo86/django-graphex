@@ -9,6 +9,7 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  custom_dir: docs-overrides
   # Keep the Material for MkDocs look & feel under Zensical (vs. the new "modern" default).
   variant: classic
   palette:
@@ -83,6 +84,7 @@ nav:
     - Quick Start: quickstart.md
     - Why graphex?: why.md
     - Migration Guide: migration.md
+    - Preparing for GraphQL-core 3.3: UPGRADE-4.0.md
     - Upgrade Guide (3.0 → 3.1): UPGRADE-3.1.md
     - Upgrade Guide (2.x → 3.0): UPGRADE-3.0.md
     - Upgrade Guide (1.x → 2.0): UPGRADE-2.0.md

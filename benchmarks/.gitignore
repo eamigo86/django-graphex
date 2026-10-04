@@ -20,6 +20,19 @@ results/*
 !results/2x_strawberry.json
 !results/2x_ariadne.json
 
+# The named core33 profile publishes a separate atomic eight-file bundle.
+# Keep its directory visible to Git while ignoring unapproved scratch files.
+!results/core33/
+results/core33/*
+!results/core33/graphex.json
+!results/core33/graphene.json
+!results/core33/strawberry.json
+!results/core33/ariadne.json
+!results/core33/2x_graphex.json
+!results/core33/2x_graphene.json
+!results/core33/2x_strawberry.json
+!results/core33/2x_ariadne.json
+
 # Ad-hoc profiler scripts and dumps (written against a point-in-time code
 # state; not part of the documented benchmark contract)
 profiles/

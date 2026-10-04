@@ -66,14 +66,17 @@ from graphql import (
     OperationType,
     create_source_event_stream,
     parse,
-    validate,
 )
 from graphql.utilities import get_operation_ast
 
-from ...security import format_graphql_error
+from ...security import format_graphql_error, introspection_disabled
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
-from . import operation_selection_error
+from . import (
+    _start_source_event_stream,
+    _validate_subscription_document,
+    operation_selection_error,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -480,11 +483,13 @@ def subscription_sse_view(
             # re-executed for EVERY delivered event, so an over-deep or over-costly
             # document is paid for repeatedly — the depth/cost guards matter more
             # here than on a one-shot query, not less.
-            validation_errors = validate(
+            hide_suggestions = introspection_disabled(None)
+            validation_errors = _validate_subscription_document(
                 conn_schema,
                 document,
                 DEFAULT_VALIDATION_RULES,
                 max_errors=graphql_api_settings.MAX_VALIDATION_ERRORS,
+                hide_suggestions=hide_suggestions,
             )
             if validation_errors:
                 pre_stream_result = ExecutionResult(data=None, errors=validation_errors)
@@ -494,12 +499,14 @@ def subscription_sse_view(
                 # short-circuits before the source), returning the started
                 # ChannelLayerSource — or an ExecutionResult when the subscribe
                 # resolver reported an error (deny).
-                source_or_result = await create_source_event_stream(
+                source_or_result = await _start_source_event_stream(
                     conn_schema,
                     document,
                     context_value=context,
                     variable_values=body["variables"],
                     operation_name=body["operationName"],
+                    source_factory=create_source_event_stream,
+                    hide_suggestions=hide_suggestions,
                 )
                 if isinstance(source_or_result, ExecutionResult):
                     pre_stream_result = source_or_result

@@ -27,7 +27,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from django.test import RequestFactory
@@ -233,3 +235,104 @@ async def test_a_rejected_ws_payload_leaves_the_socket_alive() -> None:
     assert consumer._closed_with == []
     assert [frame["id"] for frame in consumer._sent] == ["bad", "good"]
     assert "denied" in json.dumps(consumer._sent[1]["payload"])
+
+
+@pytest.mark.parametrize("variables", ["[1]", [1], "{"])
+async def test_sse_refuses_nonobject_variables_before_stream(variables: Any) -> None:
+    """Reject malformed variables before a stream or subscription can start.
+
+    Args:
+        variables: A decodable non-object or an invalid encoded value.
+    """
+    response = await _post_json(
+        json.dumps({"query": _SUB_QUERY, "variables": variables})
+    )
+    assert response.status_code == 400
+    assert response.content == b"Variables are invalid JSON."
+
+
+async def test_sse_fragment_only_document_is_not_a_subscription() -> None:
+    """Reject a parsed document without an executable operation.
+
+    Fragment definitions alone cannot start a subscription stream.
+    """
+    response = await _post_json(
+        json.dumps({"query": "fragment Tick on Subscription { onTick { id } }"})
+    )
+    assert response.status_code == 400
+    assert b"only serves subscription operations" in response.content
+
+
+async def test_ws_ack_cancels_only_pending_initialization_timer() -> None:
+    """Cancel a pending initialization timer but preserve a settled one.
+
+    Both accepted handshakes still produce exactly one acknowledgement.
+    """
+    loop = asyncio.get_running_loop()
+    consumer = _consumer()
+    consumer._acked = False
+    pending = loop.create_future()
+    consumer._init_timer = pending
+    await consumer._on_connection_init()
+    assert pending.cancelled()
+    assert consumer._sent == [{"type": "connection_ack"}]
+
+    settled_consumer = _consumer()
+    settled_consumer._acked = False
+    settled = loop.create_future()
+    settled.set_result(None)
+    settled_consumer._init_timer = settled
+    await settled_consumer._on_connection_init()
+    assert settled.done() and not settled.cancelled()
+    assert settled_consumer._sent == [{"type": "connection_ack"}]
+
+
+async def test_ws_disconnect_closes_all_orphan_sources() -> None:
+    """Sweep every source left behind by a finished operation.
+
+    The socket must not retain source or operation registrations afterward.
+    """
+    consumer = _consumer()
+    first = AsyncMock()
+    second = AsyncMock()
+    consumer._sources = {"first": first, "second": second}
+    await consumer.disconnect(1000)
+    first.aclose.assert_awaited_once()
+    second.aclose.assert_awaited_once()
+    assert consumer._sources == {}
+    assert consumer._operations == {}
+
+
+async def test_ws_server_close_drains_orphans_before_closing_socket() -> None:
+    """Release every orphan source before emitting a server socket close.
+
+    Both source cleanups must precede the close event in recorded order.
+    """
+    consumer = _consumer()
+    order: list[str] = []
+
+    async def close_source(name: str) -> None:
+        """Record a completed source cleanup before the socket closes.
+
+        Args:
+            name: The source identifier used for the teardown order.
+        """
+        order.append(name)
+
+    async def close_socket(code: int | None = None) -> None:
+        """Record the socket close after source cleanup.
+
+        Args:
+            code: The protocol close code.
+        """
+        assert code == 4400
+        order.append("socket")
+
+    consumer._sources = {
+        "first": SimpleNamespace(aclose=lambda: close_source("first")),
+        "second": SimpleNamespace(aclose=lambda: close_source("second")),
+    }
+    consumer.close = close_socket
+    await consumer._close(4400)
+    assert order == ["first", "second", "socket"]
+    assert consumer._sources == {}

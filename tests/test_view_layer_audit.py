@@ -28,6 +28,7 @@ makes "CsrfViewMiddleware.process_view" return before it ever touches
 
 import json
 from typing import Any
+from unittest.mock import patch
 
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
@@ -290,7 +291,7 @@ class DocumentCacheMaxsizeNoneTest(TestCase):
 
 
 class DeeplyNestedJsonBodyTest(TestCase):
-    """A deeply nested JSON body must be a 400, not an unhandled "RecursionError".
+    """A JSON decoder recursion error must be a 400, not an unhandled error.
 
     Covers audit finding (4).
     """
@@ -303,18 +304,24 @@ class DeeplyNestedJsonBodyTest(TestCase):
         self.factory = RequestFactory()
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_deeply_nested_json_body_returns_400(self) -> None:
-        """A 20 KB body of nested arrays MUST be refused with HTTP 400.
+    def test_json_decoder_recursion_error_returns_400(self) -> None:
+        """Return HTTP 400 when the decoder reaches its recursion limit.
 
-        "json.loads" raises "RecursionError", which is not a "ValueError", so
-        the existing "except (TypeError, ValueError)" handler let it escape into
-        an unhandled 500.
+        A fixed array depth is not portable across Python versions. A valid
+        body triggers the defensive path only because the decoder raises.
         """
-        body = '{"query": "{ hello }", "variables": ' + "[" * 10000 + "]" * 10000 + "}"
+        body = '{"query": "{ hello }"}'
         request = self.factory.post("/graphql/", body, content_type="application/json")
         request.user = AnonymousUser()
-        response = self.view(request)
+
+        with patch(
+            "django_graphex.views.json.loads", side_effect=RecursionError("depth")
+        ) as decoder:
+            response = self.view(request)
+
+        decoder.assert_called_once_with(body)
         self.assertEqual(response.status_code, 400)
+        self.assertIn(b"POST body sent invalid JSON.", response.content)
 
 
 @override_settings(**CACHE_ON)

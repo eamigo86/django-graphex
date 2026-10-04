@@ -35,6 +35,35 @@ from graphql import GraphQLBoolean
 from pydantic import PydanticUserError
 from pydantic._internal._model_construction import ModelMetaclass
 
+
+def test_descriptor_collection_respects_inherited_native_field_override() -> None:
+    """Collect inherited native fields with the subclass override intact.
+
+    A declared field on a child must replace the same-name base descriptor.
+    """
+    from graphql import GraphQLBoolean, GraphQLString
+
+    from django_graphex.core.base import _collect_descriptor_fields
+    from django_graphex.core.descriptors import field
+
+    class Base:
+        """Declare a reusable native field."""
+
+        flag = field(GraphQLBoolean)
+
+    class Child(Base):
+        """Override the inherited declaration with another native field."""
+
+        flag = field(GraphQLString)
+        label = field(GraphQLString)
+
+    collected = _collect_descriptor_fields(Child)
+
+    assert set(collected) == {"flag", "label"}
+    assert collected["flag"] is Child.flag
+    assert collected["flag"].type is GraphQLString
+
+
 # ---------------------------------------------------------------------------
 # Metaclass identity — driver runs WITHOUT a custom metaclass
 # ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ import os
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
 
 import django
+import pytest
 
 django.setup()
 
@@ -686,3 +687,84 @@ def test_compile_output_fields_skips_unnamed_field() -> None:
     # The nameless field produced no entry; the named one did.
     assert "title" in fields
     assert len(fields) == 1
+
+
+def test_reverse_relation_target_resolves_from_declaring_field() -> None:
+    """Resolve a reverse relation to the model owning its concrete field.
+
+    The reverse accessor itself does not carry a direct related-model target.
+    """
+    from django_graphex.core.output_compiler import _get_related_model
+
+    reverse = OcAuthor._meta.get_field("oc_books")
+    assert _get_related_model(reverse) is OcBook
+
+
+def test_unavailable_choices_enum_preserves_scalar_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the scalar field when enum construction cannot supply a type.
+
+    A failed enum conversion must not silently remove the model column.
+
+    Args:
+        monkeypatch: Replaces only the enum builder for this contract.
+    """
+    from django_graphex.converter import build_choices_enum_type
+    from django_graphex.core.output_compiler import _inner_output_type
+    from django_graphex.registry import get_global_registry
+
+    field = OcChoiceModel._meta.get_field("status")
+    assert callable(build_choices_enum_type)
+    monkeypatch.setattr(
+        "django_graphex.converter.build_choices_enum_type", lambda *_args: None
+    )
+    assert (
+        _inner_output_type(field, StubRegistry(), get_global_registry())
+        is GraphQLString
+    )
+
+
+def test_hstore_output_resolver_preserves_dict_and_object_values() -> None:
+    """Expose HStore mappings through the JSON scalar for both row shapes.
+
+    The accessor must preserve the mapping without coercing it to text.
+    """
+    from django_graphex.core.output_compiler import _to_graphql_field
+
+    class _HStoreField(models.Field):
+        def get_internal_type(self) -> str:
+            """Report the supported PostgreSQL field identity.
+
+            Returns:
+                Internal field name used by the output compiler.
+            """
+            return "HStoreField"
+
+    field = _HStoreField(name="labels", null=True)
+    resolved = _to_graphql_field(field, StubRegistry())["labels"].resolve
+
+    class _Row:
+        labels = {"a": "b"}
+
+    assert resolved({"labels": {"one": "two"}}, None) == {"one": "two"}
+    assert resolved(_Row(), None) == {"a": "b"}
+
+
+def test_binary_output_resolver_preserves_wire_compatible_values() -> None:
+    """Serialize bytes but retain null and already encoded string values.
+
+    Both dictionary and object rows share the same nullable wire contract.
+    """
+    from django_graphex.core.output_compiler import _to_graphql_field
+
+    field = models.BinaryField(name="payload", null=True)
+    resolved = _to_graphql_field(field, StubRegistry())["payload"].resolve
+
+    class _Row:
+        payload = memoryview(b"abc")
+
+    assert resolved({"payload": None}, None) is None
+    assert resolved({"payload": "YWJj"}, None) == "YWJj"
+    assert resolved(_Row(), None) == "YWJj"
+    assert resolved({"payload": bytearray(b"abc")}, None) == "YWJj"

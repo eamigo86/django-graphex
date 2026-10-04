@@ -25,14 +25,38 @@ from unittest.mock import patch
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
 from django.test import RequestFactory, TestCase, override_settings
-from graphql import GraphQLArgument, GraphQLBoolean, GraphQLError, GraphQLString
+from graphql import (
+    ExecutionResult,
+    GraphQLArgument,
+    GraphQLBoolean,
+    GraphQLEnumType,
+    GraphQLEnumValue,
+    GraphQLError,
+    GraphQLInputField,
+    GraphQLInputObjectType,
+    GraphQLList,
+    GraphQLString,
+)
 
+from django_graphex import views as views_module
 from django_graphex.core import ObjectType, field
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.security import DisableIntrospectionMiddleware, format_graphql_error
 from django_graphex.views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
 
 _INTROSPECTION_MIDDLEWARE = (DisableIntrospectionMiddleware,)
+_PROFILE_INPUT = GraphQLInputObjectType(
+    "ProfileInput", {"email": GraphQLInputField(GraphQLString)}
+)
+_ROLE = GraphQLEnumType("Role", {"ADMIN": GraphQLEnumValue("ADMIN")})
+_WRAPPER_INPUT = GraphQLInputObjectType(
+    "WrapperInput",
+    {
+        "child": GraphQLInputField(_PROFILE_INPUT),
+        "items": GraphQLInputField(GraphQLList(_PROFILE_INPUT)),
+        "role": GraphQLInputField(_ROLE),
+    },
+)
 
 
 class _Profile(ObjectType):
@@ -57,7 +81,15 @@ class _Query(ObjectType):
     # "nickname" is the argument name KnownArgumentNamesRule offers back when a
     # client sends "nicknam" -- an argument name is schema-derived just like a
     # field or type name.
-    greet = field(GraphQLString, args={"nickname": GraphQLArgument(GraphQLString)})
+    greet = field(
+        GraphQLString,
+        args={
+            "nickname": GraphQLArgument(GraphQLString),
+            "profile": GraphQLArgument(_PROFILE_INPUT),
+            "wrapper": GraphQLArgument(_WRAPPER_INPUT),
+            "role": GraphQLArgument(_ROLE),
+        },
+    )
 
     def resolve_hello(root: Any, info: Any) -> str:
         """Resolve the "hello" field to a fixed greeting.
@@ -647,6 +679,315 @@ class SuggestionLeakTest(TestCase):
         view = BaseGraphQLView.as_view(schema=_schema)
         errors = self._errors(view, "{ profile { emial } }")
         self.assertIn("Did you mean 'email'?", errors[0]["message"])
+
+
+class NativeHttpSuggestionPrivacyTest(TestCase):
+    """Native 3.3 HTTP errors hide schema hints without editing client text.
+
+    Legacy 3.2 requests remain real HTTP controls for the same documents.
+    """
+
+    def setUp(self) -> None:
+        """Build a view and request factory for each isolated case.
+
+        The document cache is reset by the suite fixture between cases.
+        """
+        self.factory = RequestFactory()
+        self.view = BaseGraphQLView.as_view(schema=_schema)
+
+    def _post(
+        self,
+        query: str,
+        variables: dict[str, Any] | None = None,
+        *,
+        private: bool = True,
+        view: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        """Return one real HTTP GraphQL validation or coercion error.
+
+        Args:
+            query: GraphQL document sent by the client.
+            variables: Optional input values sent with the document.
+            private: Whether configured introspection is disabled.
+            view: Optional view callable replacing the default.
+            headers: Optional request metadata for a per-request middleware hook.
+
+        Returns:
+            The first GraphQL error message in the HTTP 400 response.
+        """
+        with override_settings(
+            DJANGO_GRAPHEX={
+                "ALLOW_INTROSPECTION": not private,
+                "MIDDLEWARE": _INTROSPECTION_MIDDLEWARE,
+            }
+        ):
+            request = self.factory.post(
+                "/graphql/",
+                json.dumps({"query": query, "variables": variables}),
+                content_type="application/json",
+                **(headers or {}),
+            )
+            response = (view or self.view)(request)
+        self.assertEqual(response.status_code, 400)
+        return json.loads(response.content)["errors"][0]["message"]
+
+    def test_private_input_and_enum_errors_keep_client_data_not_hints(self) -> None:
+        """Cover inline, variable, object/list paths, and enum coercion.
+
+        Private native errors retain the invalid input without real schema names.
+        """
+        cases = (
+            ('{ greet(profile: { emial: "x" }) }', None, "emial"),
+            ('{ greet(wrapper: { child: { emial: "x" } }) }', None, "emial"),
+            ('{ greet(wrapper: { items: [{ emial: "x" }] }) }', None, "emial"),
+            (
+                "query($p: ProfileInput) { greet(profile: $p) }",
+                {"p": {"emial": "x"}},
+                "emial",
+            ),
+            (
+                "query($w: WrapperInput) { greet(wrapper: $w) }",
+                {"w": {"child": {"emial": "x"}}},
+                ".child",
+            ),
+            (
+                "query($w: WrapperInput) { greet(wrapper: $w) }",
+                {"w": {"items": [{"emial": "x"}]}},
+                ".items[0]",
+            ),
+            ("{ greet(role: ADMNI) }", None, "ADMNI"),
+            ("query($r: Role) { greet(role: $r) }", {"r": "ADMNI"}, "ADMNI"),
+            (
+                "query($w: WrapperInput) { greet(wrapper: $w) }",
+                {"w": {"role": "ADMNI"}},
+                ".role",
+            ),
+        )
+        for query, variables, retained in cases:
+            with self.subTest(query=query, variables=variables):
+                message = self._post(query, variables)
+                self.assertIn(retained, message)
+                if views_module._VALIDATE_SUPPORTS_HIDE_SUGGESTIONS:
+                    self.assertNotIn("Did you mean", message)
+                    self.assertNotIn("'email'?", message)
+                    self.assertNotIn("'ADMIN'?", message)
+
+    def test_private_quoted_keys_and_found_text_are_preserved(self) -> None:
+        """Never parse client-controlled delimiters as a suggestion boundary.
+
+        Both the unknown key and its value belong to the client, not the schema.
+        """
+        query = "query($p: ProfileInput) { greet(profile: $p) }"
+        cases = (
+            ("emial'", "Did you mean email?"),
+            ('emial"', "Did you mean email?"),
+            ("emial\\", "Did you mean email?"),
+            ("emial", "sentinel'. Did you mean 'client'? Found: retained"),
+            ("emial'. Did you mean 'client'? Found:", "retained"),
+        )
+        for key, value in cases:
+            with self.subTest(key=key):
+                message = self._post(query, {"p": {key: value}})
+                self.assertIn(key, message)
+                self.assertIn(value, message)
+                if views_module._VALIDATE_SUPPORTS_HIDE_SUGGESTIONS:
+                    self.assertNotIn("Did you mean 'email'?", message)
+
+    def test_public_and_private_validation_cache_modes_remain_distinct(self) -> None:
+        """Neither cached visibility mode may answer the opposite mode.
+
+        Warm the same document in both orders without clearing between modes.
+        """
+        query = '{ greet(profile: { emial: "x" }) }'
+        public = self._post(query, private=False)
+        private = self._post(query)
+        public_again = self._post(query, private=False)
+
+        self.assertIn("Did you mean 'email'?", public)
+        self.assertNotIn("Did you mean", private)
+        self.assertEqual(public_again, public)
+
+        views_module.clear_document_caches()
+        private_first = self._post(query)
+        public_after = self._post(query, private=False)
+        private_again = self._post(query)
+        self.assertNotIn("Did you mean", private_first)
+        self.assertIn("Did you mean 'email'?", public_after)
+        self.assertEqual(private_again, private_first)
+
+    def test_public_input_and_enum_hints_are_available(self) -> None:
+        """Keep native input and enum spelling help when schema is public.
+
+        Public hints remain useful when introspection is permitted.
+        """
+        cases = (
+            ('{ greet(profile: { emial: "x" }) }', None, "email"),
+            ("query($r: Role) { greet(role: $r) }", {"r": "ADMNI"}, "ADMIN"),
+        )
+        for query, variables, suggested in cases:
+            with self.subTest(query=query):
+                message = self._post(query, variables, private=False)
+                self.assertIn("Did you mean", message)
+                self.assertIn(suggested, message)
+
+    def test_native_execution_flag_uses_effective_request_middleware(self) -> None:
+        """The view's per-request chain must govern variable coercion hints.
+
+        A global setting alone cannot describe a dynamic view hook.
+        """
+
+        class PerRequestView(BaseGraphQLView):
+            """Choose the introspection middleware from request metadata.
+
+            The same view instance serves both public and private requests.
+            """
+
+            def get_middleware(self, request: Any) -> Any:
+                """Select the introspection guard only for private requests.
+
+                Args:
+                    request: The incoming HTTP request.
+
+                Returns:
+                    The middleware chain for this specific request.
+                """
+                return (
+                    _INTROSPECTION_MIDDLEWARE
+                    if request.META.get("HTTP_X_PRIVATE")
+                    else ()
+                )
+
+        view = PerRequestView.as_view(schema=_schema)
+        query = "query($r: Role) { greet(role: $r) }"
+        public = self._post(query, {"r": "ADMNI"}, view=view)
+        private = self._post(
+            query, {"r": "ADMNI"}, view=view, headers={"HTTP_X_PRIVATE": "1"}
+        )
+
+        if views_module._VALIDATE_SUPPORTS_HIDE_SUGGESTIONS:
+            self.assertIn("Did you mean", public)
+            self.assertNotIn("Did you mean", private)
+
+    def test_native_keyword_is_forwarded_on_legacy_runner_spy(self) -> None:
+        """Cover the native execution branch under the hosted 3.2 runner.
+
+        The spy strips only the unsupported test keyword before real execution.
+        """
+        original_execute = views_module.execute
+        forwarded: list[bool] = []
+
+        def recording_execute(schema: Any, document: Any, **options: Any) -> Any:
+            """Record native hiding, then delegate without an unsupported kwarg.
+
+            Args:
+                schema: The compiled schema being executed.
+                document: The parsed GraphQL document.
+                options: Native execution options.
+
+            Returns:
+                The real execution result.
+            """
+            forwarded.append(options.pop("hide_suggestions"))
+            return original_execute(schema, document, **options)
+
+        with (
+            patch.object(
+                views_module, "_EXECUTE_SUPPORTS_HIDE_SUGGESTIONS", True, create=True
+            ),
+            patch.object(views_module, "execute", side_effect=recording_execute),
+        ):
+            with override_settings(
+                DJANGO_GRAPHEX={
+                    "ALLOW_INTROSPECTION": False,
+                    "MIDDLEWARE": _INTROSPECTION_MIDDLEWARE,
+                }
+            ):
+                request = self.factory.post(
+                    "/graphql/",
+                    json.dumps({"query": "{ hello }"}),
+                    content_type="application/json",
+                )
+                response = self.view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(forwarded, [True])
+
+    def test_legacy_http_capabilities_omit_new_execution_options(self) -> None:
+        """Use the legacy backend keyword without native-only execution options.
+
+        A strict spy rejects unsupported options before returning a real HTTP
+        result, regardless of the GraphQL-core generation installed for tests.
+        """
+        backend = object
+        view = BaseGraphQLView.as_view(schema=_schema, executor_class=backend)
+        captured: list[dict[str, Any]] = []
+        validated: list[Any] = []
+        original_validate = views_module.validate
+
+        def legacy_validate(
+            schema: Any, document: Any, rules: Any, max_errors: Any
+        ) -> Any:
+            """Delegate validation without accepting native-only keywords.
+
+            Args:
+                schema: Request schema passed by the view.
+                document: Parsed request document.
+                rules: Validation rules configured for the view.
+                max_errors: Maximum validation errors for this request.
+
+            Returns:
+                Native validation errors for the document.
+            """
+            validated.append(document)
+            return original_validate(schema, document, rules, max_errors)
+
+        def legacy_execute(schema: Any, document: Any, **options: Any) -> Any:
+            """Assert the legacy call contract and return a query result.
+
+            Args:
+                schema: Request schema passed by the view.
+                document: Parsed request document.
+                **options: Execution options supported by the legacy API.
+
+            Returns:
+                A successful GraphQL result for the HTTP response.
+            """
+            self.assertIs(schema, _schema.graphql_schema)
+            self.assertIsNotNone(document)
+            self.assertIs(options["execution_context_class"], backend)
+            self.assertNotIn("executor_class", options)
+            self.assertNotIn("hide_suggestions", options)
+            self.assertNotIn("is_async_iterable", options)
+            captured.append(options)
+            return ExecutionResult(data={"hello": "world"})
+
+        with (
+            patch.object(
+                views_module, "_EXECUTION_BACKEND_KEYWORD", "execution_context_class"
+            ),
+            patch.object(views_module, "_VALIDATE_SUPPORTS_HIDE_SUGGESTIONS", False),
+            patch.object(views_module, "_EXECUTE_SUPPORTS_HIDE_SUGGESTIONS", False),
+            patch.object(views_module, "validate", side_effect=legacy_validate),
+            patch.object(views_module, "execute", side_effect=legacy_execute),
+            override_settings(
+                DJANGO_GRAPHEX={
+                    "ALLOW_INTROSPECTION": False,
+                    "MIDDLEWARE": _INTROSPECTION_MIDDLEWARE,
+                }
+            ),
+        ):
+            request = self.factory.post(
+                "/graphql/",
+                json.dumps({"query": "{ hello }"}),
+                content_type="application/json",
+            )
+            response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["data"], {"hello": "world"})
+        self.assertEqual(len(validated), 1)
+        self.assertEqual(len(captured), 1)
 
 
 @override_settings(

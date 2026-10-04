@@ -203,6 +203,20 @@ def test_django_list_field_unwraps_nonnull() -> None:
     assert field.type.of_type.of_type is TagType
 
 
+def test_django_list_field_wraps_plain_item_type_once() -> None:
+    """A plain item type produces a list with one non-null item wrapper.
+
+    The field must not require callers to supply a pre-wrapped item type.
+    """
+    from django_graphex.core.descriptors import NativeList, NativeNonNull
+
+    field = DjangoListField(TagType)
+
+    assert isinstance(field.type, NativeList)
+    assert isinstance(field.type.of_type, NativeNonNull)
+    assert field.type.of_type.of_type is TagType
+
+
 def test_filter_list_field_explicit_description_kept() -> None:
     """An explicit "description" argument must bypass the auto-generated "<Model> list" default.
 
@@ -212,6 +226,21 @@ def test_filter_list_field_explicit_description_kept() -> None:
     # An explicit description bypasses the auto "<Model> list" default (171->174).
     field = DjangoFilterListField(CategoryType, description="Custom desc")
     assert field.description == "Custom desc"
+
+
+def test_filter_paginate_list_field_explicit_description_kept() -> None:
+    """A paginated field retains its declared description and model binding.
+
+    The description must not be replaced by the generated model-list default.
+    """
+    field = DjangoFilterPaginateListField(
+        AuthorType,
+        pagination=LimitOffsetGraphqlPagination(),
+        description="Curated authors",
+    )
+
+    assert field.description == "Curated authors"
+    assert field.model is Author
 
 
 def test_paginate_field_without_pagination_runs_resolver(db: None) -> None:

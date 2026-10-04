@@ -16,12 +16,274 @@ count** per operation. It is deterministic and supports strict offline replay.
 
 ## What the published artifacts are
 
-These are **3.1.0 measurements**, not results for the 3.1.1 security patch.
+The original `results/` series contains **3.1.0 measurements**, not results
+for the 3.1.1 security patch.
 Their frozen environments use Django 6.0.6 and GraphQL-core 3.2.11 as recorded
 in `versions.env`, `constraints.txt`, and the eight tracked canonical JSON
 artifacts. The current library and Playground locks use patched versions, but
 changing historical pins or relabeling old timings would destroy provenance.
 New version claims require a new controlled measurement run and new artifacts.
+
+### Named GraphQL-core 3.3 comparison environment
+
+The separate `core33` profile records **whole-stack** inputs and has its own
+eight portable results under `results/core33/`. Its four exact freezes live
+under `comparison_profiles/core33/`:
+django-graphex source and Strawberry use core 3.3.0; Graphene and Ariadne use
+their compatible core 3.2.13. All use Python 3.12.11 and Django 6.0.8.
+Strawberry's pinned 0.328.0/0.90.0 pair passed the shared seeded nested
+response contract with its optimizer enabled. The profile does not modify the
+historical constraints, result files, or publisher.
+
+`setup_envs.sh --profile core33` validates every requested manifest/freeze
+before installation, builds only fresh `.venv-core33-<library>` environments,
+and refuses to overwrite an existing one. Set `BENCH_PYTHON` to an absolute
+Python 3.12.11 executable, `BENCH_UV_CACHE_DIR` to an isolated absolute cache,
+and optionally `BENCH_PROFILE_VENV_ROOT` to an isolated absolute directory.
+Set `BENCH_OFFLINE=1` for cache-only replay. Graphene additionally requires
+`BENCH_WHEEL_DIR` containing a verified upstream `promise-2.3-py3-none-any.whl`;
+the bootstrap never builds django-graphex or another upstream dependency.
+The current source is not installed into the new Graphex venv. The separate
+comparison preflight supplies it explicitly and records its commit/version.
+
+When the existing harness receives `BENCH_PROFILE=core33`, its measuring
+process also records a `profile_witness`: the loaded backend and schema paths,
+actual Python/Django/GraphQL-core versions, source commit and tree, source
+version read from the measured checkout, and selected manifest/freeze hashes.
+The historical harness without that variable keeps its original output
+contract. For a named profile, an optional BENCH_OUTPUT_FD must name the same
+directory as BENCH_OUTPUT_DIR; the harness then writes through that held
+directory descriptor with an empty filename prefix and exclusive creation.
+This is a write boundary, not a new runner or a sandbox for arbitrary callers.
+The named runner's read-only `validate_result(plan, result)` checks
+this witness against preflight, plus the selected stack, shared schema surface,
+five-operation SQL counts, iteration counts, and five schema rebuild samples.
+Timings must be finite, nonnegative numbers rather than JSON booleans; SQL
+counts must not be booleans either.
+It does not create an output or dispatch a measurement; validation does not
+turn an unmeasured profile into a published comparison.
+
+Before running a comparison, use run_comparison.py to preflight one named
+profile stack. Pass --profile core33, one --library, the absolute
+--venv-root containing its profile environment, an existing seeded SQLite
+--database, a fresh external --output-root, and --authors 1000 (or the
+matching seed size). By default the command prints source commit/tree, source
+version, and manifest and freeze digests without creating output. Add --execute
+for one diagnostic run through the selected interpreter and existing harness.
+It validates the measured result and refuses source, profile, runtime, seed,
+or output drift. On execution failure, it retains the output directory and any
+unvalidated partial result for inspection; the caller must remove known
+disposable output manually. Automatic cleanup cannot prove directory creation
+ownership from a later pathname lookup, so it must not delete a foreign regular
+result or empty replacement directory. An observed directory change is rejected
+before a successful result is returned, but this is not a filesystem sandbox. A
+single run is not a published comparison or a three-run median.
+
+`comparison_statistics.aggregate_three` is a pure helper for exactly three
+raw results from one already-prepared named-profile plan. It applies the same
+single-run validation to each result and returns detached per-statistic
+medians; callers retain the raw results separately. The five rebuild values
+are per-position diagnostic medians, not one raw rebuild series, and the p95
+value is the median of three per-run p95 values, not a pooled percentile over
+300 samples. This helper neither runs the harness nor writes or publishes a
+comparison. The core 3.3.0 and 3.2.13 stacks remain whole-stack diagnostics,
+not an equal-core competition.
+
+`comparison_seed.prepare_seed_plan` checks a proposed fresh, absolute,
+external private-seed destination for 1,000 or 2,000 authors using the named
+Graphex interpreter. It returns immutable source, profile, freeze, runtime,
+and intended database-path observations. This is read-only: it creates no
+directory or database and runs no migration or seed command. A later creator
+must recheck the destination and source before reserving them; the plan is
+neither proof of creator ownership nor a filesystem sandbox. It is not a
+measurement or permission to execute a changed or foreign plan.
+
+```python
+from pathlib import Path
+from benchmarks.comparison_seed import prepare_seed_plan
+
+plan = prepare_seed_plan(
+    "core33", Path("/absolute/external/envs"), Path("/absolute/external/seed-1000"), 1000
+)
+assert not plan.output_root.exists()
+```
+
+`comparison_seed_execution.create_private_seed(plan, envs_root)` is the
+separate write step. It rechecks every plan field, requires the destination's
+existing parent to be owner-only, and uses the selected Graphex interpreter
+with an explicit private database path. It runs committed migrations, then
+`seed_bench`, and checks the shared cardinalities and fixed post 5000 before
+installing the database without replacing an occupied destination. Migration
+and seed stdout/stderr files and failed attempt files remain for inspection;
+there is no automatic deletion. The returned `PreparedSeed` identifies the
+validated database, source plan, digest, and stream paths, not a benchmark
+measurement. A fresh checkout needs no historical `benchmarks/db.sqlite3`:
+its absence is observed and must remain absent; when that file exists, its
+regular-file type and bytes must remain unchanged. Symlinks and other
+nonregular historical paths fail closed. A FIFO substituted during acquisition
+is opened nonblocking and rejected by the regular-file/inode checks rather
+than waiting for a writer. Path and descriptor checks bound
+ordinary substitutions, but
+opening the random staging directory after creation does not attest creator
+ownership. They do not protect against a same-user actor changing every
+filesystem operation; the later runner must still preflight the returned
+database.
+
+`comparison_batch.run_batch` is the next, unpublished orchestration helper.
+It accepts exactly the existing 1,000- and 2,000-author `PreparedSeed` records,
+the named environment root, and an already existing owner-only external output
+parent. It does not create or reseed a database. For each seed, it dispatches
+three cyclic rotations of Graphex, Graphene, Strawberry, and Ariadne through
+the checked single-run runner: 24 fresh, distinct raw output directories in
+all. Only after every raw JSON passes the existing validator does it return
+eight detached three-run medians with their three retained raw paths and both
+the original seed and current measurement source witnesses. The older seed
+commit is accepted only when its Git source/tree and seed-generating files
+match the current data contract; it is never relabeled as the measuring commit.
+The parent must be prepared separately, for example as a fresh mode-0700
+directory outside the checkout, environments, and private seed directory.
+
+This helper has no CLI, publisher, cleanup, or canonical-result writer. A
+failed or incomplete batch raises and leaves every raw or partial output for
+inspection; no median is returned as a complete comparison. Source, selected
+freezes, seed bytes and SQLite sequences, raw files, and output-parent identity
+are rechecked around dispatch. These are bounded ordinary drift checks, not
+proof against an actor that can replace every filesystem operation. The
+four libraries use disclosed compatible whole stacks, not a common
+GraphQL-core version. No new performance figures are published by this helper.
+
+`comparison_publish.publish_core33` is the separate receipt-aware writer for
+an already completed batch. Its caller supplies the detached `BatchResult`,
+24 numbered `DispatchReceipt` records containing each exact RunPlan, raw path,
+SHA-256, and checked measuring-checkout schema context, and an existing
+absolute results directory. It rereads every raw
+file, applies the shared profile validator, recomputes all eight three-run
+medians, then projects only portable versions, dataset, machine platform/CPU,
+surface, SQL/timing statistics, aggregation meaning, source and seed digests,
+and three raw digests. Private database, backend, schema, output and environment
+paths are excluded. The measured source version remains its original value;
+the writer's later checkout is not substituted into provenance.
+
+The writer stages all eight JSON files in a private sibling and installs the
+entire `results/core33/` directory with one atomic no-clobber rename. An
+occupied target is never replaced; failed or uncertain staging residue is
+retained for inspection, not deleted automatically. These checks are bounded
+integrity and no-clobber controls, not a same-user filesystem sandbox or a
+signed provenance receipt. This helper does not seed, measure, invoke the
+historical publisher, or update the eight old tracked result files. The
+`results/core33/` bundle was generated once by replaying the retained 24
+measured raw results. Its eight artifacts record five operations over 100
+timed requests in each of three runs for both 1,000- and 2,000-author seeds.
+Every timing statistic is the median of that statistic across the three
+validated runs; a median of per-run p95 values is not a pooled 300-request
+p95. The measured django-graphex source remains 3.1.1 in provenance. These
+files remain the earlier 3.1.1-source core33 comparison; they do
+not replace the historical `results/` comparison or the newer prepared
+4.0.0-source series.
+
+Use a trusted results parent without concurrent pathname substitution. A
+foreign directory moved into the stage name after creation but before the first
+staging descriptor is acquired may be adopted. A foreign directory can receive
+all eight exclusive files; if it was empty, that foreign inode can then be
+installed as the complete bundle. An inherited filename colliding with one of
+the eight causes exclusive creation to fail rather than overwriting it. An
+extra, noncolliding inherited file causes validation to reject the bundle,
+but the eight added files remain as recoverable foreign-directory residue.
+Descriptor checks establish continuity from first acquisition, not creator
+ownership or immutable foreign state.
+
+Use `run_publish_core33.py` only with an explicit mode. The expensive `run`
+mode requires `--profile core33 --authors 1000 2000 --runs 3`, an existing
+named `--venv-root`, existing owner-only external `--seed-parent` with absent
+`seed-1000` and `seed-2000` children, empty owner-only external
+`--output-parent`, and trusted existing `--results-root` with no `core33`
+child. All paths must be absolute. For example:
+
+```sh
+.venv/bin/python -m benchmarks.run_publish_core33 run \
+  --profile core33 --authors 1000 2000 --runs 3 \
+  --venv-root /absolute/named-envs --seed-parent /absolute/private-seeds \
+  --output-parent /absolute/private-raws \
+  --results-root /absolute/checkout/benchmarks/results
+```
+
+It creates two private seeds, performs 24 rotated single-run
+measurements, retains their complete receipts as private `events.jsonl`,
+`raw-manifest.json`, and `batch-result.json`, then calls the eight-file
+publisher. These private records are written after a complete batch and are
+not timestamped live child events. Failures preserve private seeds, raw files,
+records, and staging residue for inspection; no reset or automatic deletion
+occurs. The publisher still refuses an occupied public target.
+
+The [current comparison](../docs/why.md#current-core33-comparison) renders
+all five request p50/SQL cells for both seed sizes directly from the eight
+committed artifacts in `core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`. Its earlier
+`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`, 3.1.1-source core33 and 3.1.0 series remain historical. The
+current series measures prepared 4.0.0 source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`, not a published
+wheel.
+
+The `replay` mode instead requires `--profile core33 --events`,
+`--raw-manifest`, `--batch-result`, and `--results-root`. It reconstructs the
+24 typed dispatch receipts from explicit retained files, compares their
+cross-file identities, and delegates raw-byte, result, and median validation
+to the same publisher. New complete-batch records carry one explicit schema
+context per dispatch. Older accepted journals recover that context only from
+each corroborating measuring-child cwd, harness argv, selected environment,
+and one matching preflight source witness. The explicit new format binds each
+dispatch directly and does not require that older preflight record. Missing,
+mixed, or contradictory contexts fail before installation; replay does not
+replace the measured checkout with the current command checkout. These are
+local corroborating records, not signed attestations of loaded source bytes.
+It never probes the current named environments, creates seeds, or reruns
+measurements. Both modes require a trusted results parent without concurrent
+pathname substitution; neither is a same-user
+filesystem sandbox. The legacy `run_publish.py` command and its historical
+eight artifacts remain separate and unchanged.
+The installed `results/core33/` target is intentionally no-clobber; to repeat
+the replay, select a fresh series or a separate trusted results parent rather
+than deleting or overwriting these artifacts.
+
+For a new comparison, select a fresh immutable child with `--series` in either
+mode. The default remains `core33` for existing callers. A series must be one
+portable `core33`-prefixed directory name; unsafe names and occupied children
+(including links) are refused before seed planning or replay reads. The
+prepared 4.0.0 comparison should use
+`core33-4.0.0-<full-measurement-commit>` after the measuring source is frozen,
+not a mutable `latest` pointer. For example, append
+`--series core33-4.0.0-<full-measurement-commit>` to either command above.
+The current prepared 4.0.0 SQLite result is installed at
+`results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/`. Its eight JSON files were generated from measuring
+source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` and committed later at `826d5bae87ed7bbe705cf309d46a16d3ad3cdf33`; publication identity is
+not measurement identity. The three-run per-statistic medians include
+create-comment GraphEx/Ariadne p50 ratios of 0.57× at 50,000 comments and
+0.51× at 100,000. Whole-stack graphql-core versions differ, and accepted
+background load was not proven stable throughout the run. The earlier
+`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/` remains available; neither series is a paired
+baseline or PostgreSQL timing result.
+
+The older `results/core33/` bundle stays intact. Selecting a fresh name does
+not strengthen the existing trusted-parent or pathname-substitution limits.
+
+```sh
+.venv/bin/python -m benchmarks.run_publish_core33 replay \
+  --profile core33 --events /absolute/private-raws/events.jsonl \
+  --raw-manifest /absolute/private-raws/raw-manifest.json \
+  --batch-result /absolute/private-raws/batch-result.json \
+  --results-root /absolute/checkout/benchmarks/results
+```
+
+The no-argument historical `setup_envs.sh` instead installs published
+django-graphex 3.1.0, not this checkout. Run historical tools without a
+`PYTHONPATH` that points at newer source so the published wheel is imported.
+It checks every requested historical destination before installation and
+refuses existing directories, files, and symlinks. If an install fails, it
+removes only environments created by that attempt; earlier freeze files and
+existing environments remain untouched. Choose an empty, disposable benchmark
+checkout for replay rather than deleting a historical environment in place.
+For offline Graphene replay, point `UV_FIND_LINKS` at an isolated directory
+containing the verified upstream promise 2.3 wheel when it is absent from uv's
+cache. The bootstrap still enforces the historical constraints and never
+builds django-graphex from this checkout.
 
 Every timing figure in the eight tracked canonical files under `results/` and on
 [Why django-graphex](https://eamigo86.github.io/django-graphex/why/) is the
@@ -184,6 +446,11 @@ both row counts and the SQLite sequence unchanged. BEGIN/ROLLBACK sit outside
 the timer and SQL capture, so isolation does not become part of the result. The
 graphex mutation itself records **4 request-internal SQL statements** on SQLite:
 `SAVEPOINT`, `INSERT`, deferred-FK `PRAGMA foreign_key_check`, and `RELEASE`.
+Those statements describe the earlier 3.1.1-source core33 artifacts. The
+prepared 4.0.0 source uses a scoped post-write SQLite FK lookup instead of
+the table-wide PRAGMA inside an outer transaction. A separate controlled
+comparison is now recorded in the immutable 4.0.0-source series above; the
+eight earlier core33 JSON files remain unchanged.
 
 ## What the harness records
 

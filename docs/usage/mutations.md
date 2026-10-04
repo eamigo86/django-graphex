@@ -384,16 +384,26 @@ Example error response:
 }
 ```
 
-!!! tip "FK existence check runs only on the failure path"
-    A valid mutation issues a single `INSERT`/`UPDATE` — the per-FK `SELECT 1`
-    existence pre-check is **not** run on the happy path. If the write raises an
-    `IntegrityError` (e.g. a bad FK pk), the same diagnostics that used to run
-    eagerly now run **after** the failure to attribute the exact field, so a bad
-    FK still returns the identical structured `errors[]` envelope. Nested writes
-    (`Meta.nested_fields`) similarly open a `transaction.atomic()` savepoint
-    **only when nested child work is actually present** — a plain, parent-only
-    create/update pays no savepoint overhead. Both changes are purely
-    performance-oriented: the observable response shape is unchanged.
+!!! tip "FK checks stay inside the mutation's rollback boundary"
+    In true autocommit, a valid plain mutation issues a single `INSERT` or
+    `UPDATE`; it does not pre-check each FK. Within an outer transaction,
+    SQLite validates constrained FKs on directly saved model rows, including
+    concrete inheritance parent rows, and directly updated M2M links **after**
+    writing, inside the recovery savepoint. A symmetric self-relation checks
+    both its forward and mirror links, including constrained custom-through
+    fields, even when accessed through a proxy or concrete child inheriting
+    the relation. It does not scan unrelated rows
+    in those tables for ordinary single-column primary keys;
+    composite primary keys retain the previous table-scoped fallback rather
+    than silently omitting a constraint check. Invalid FK or M2M input still
+    rolls back and returns the structured `errors[]` envelope. An earlier,
+    unrelated deferred violation can remain until the outer transaction
+    commits; that commit still fails if the violation is not repaired.
+    PostgreSQL and other
+    backends retain their existing deferred-constraint checks. The scoped
+    SQLite check covers direct model and relation writes, not arbitrary writes
+    from custom save methods or signals. Nested child work still has its own
+    atomic boundary; a plain autocommit mutation does not acquire one.
 
 ### Custom Mutation Logic
 

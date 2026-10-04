@@ -243,7 +243,7 @@ class _CostAnalyzer:
 
     def _page_size_argument(self, node: FieldNode) -> int | None:
         """Resolve the page-size argument value from the query, if present."""
-        for argument in node.arguments:
+        for argument in node.arguments or ():
             if argument.name.value not in self._pagination_args:
                 continue
             value = argument.value

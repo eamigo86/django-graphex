@@ -299,15 +299,16 @@ work anonymously.
 readable, not orderable and not filterable
 ([the canonical statement](../types.md#projection-security-boundary)) — here
 are all three axes, anonymously, with the answers the playground returns. It
-sets `ALLOW_INTROSPECTION = True`, so the `Did you mean …?` tails below are
-present; flip that flag off and the tails are stripped while the messages
-themselves stay.
+sets `ALLOW_INTROSPECTION = True`, so schema-derived `Did you mean …?` hints
+may appear. Flip that flag off and the hints are stripped while the rejection
+and any trailing `Found` detail remain. Input-field wording varies by
+graphql-core generation.
 
 | Query | Answer |
 |---|---|
 | `{ authors { results { bio } } }` | `Cannot query field 'bio' on type 'AuthorType'. Did you mean 'id'?` |
 | `{ authors { results(ordering: "bio") { name } } }` | `Invalid ordering field: 'bio'.` |
-| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Field 'bio' is not defined by type 'AuthorFilterInput'. Did you mean 'id'?` |
+| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | Rejected: `bio` is not an input field of `AuthorFilterInput`. |
 | `{ authors { results(ordering: "name", page: 1) { name } } }` | the control — still sorts, `Author 0`, `Author 1`, `Author 10`, … |
 
 The same rule is told on two columns where it matters more than on a bio:

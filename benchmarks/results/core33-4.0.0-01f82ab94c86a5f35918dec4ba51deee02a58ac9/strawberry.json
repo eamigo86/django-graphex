@@ -1,0 +1,128 @@
+{
+  "aggregation": {
+    "method": "per-statistic median of three validated raw runs",
+    "ops": "median of each per-run statistic; per-run p95 is not pooled p95",
+    "runs": 3,
+    "schema_rebuild_samples_ms": "per-position median of five diagnostic rebuild samples; not a raw run series"
+  },
+  "dataset": {
+    "authors": 1000,
+    "comments_per_post": 5,
+    "posts_per_author": 10
+  },
+  "library": "strawberry",
+  "machine": {
+    "cpu_count": 16,
+    "platform": "macOS-27.0.1-arm64-arm-64bit"
+  },
+  "measurement_source": {
+    "commit": "01f82ab94c86a5f35918dec4ba51deee02a58ac9",
+    "constraints_sha256": "be829227a4f47c2b822c1160b32147e9c611a68870bfc62e7a20fc8ee36a0947",
+    "manifest_sha256": "0cbad15a165506a61cb18c1a5da44750accbfe8a23e3aa99070145b33d5c3957",
+    "tree": "cdcc9202ac809dc59032d148c79073fba4a0ea5d",
+    "version": "4.0.0"
+  },
+  "operations": {
+    "create_comment": {
+      "iterations": 100,
+      "mean_ms": 1.865,
+      "min_ms": 1.2622,
+      "p50_ms": 1.5462,
+      "p95_ms": 3.1022,
+      "sql_queries": 8,
+      "stddev_ms": 0.5886
+    },
+    "filtered": {
+      "iterations": 100,
+      "mean_ms": 2.8854,
+      "min_ms": 2.043,
+      "p50_ms": 2.4776,
+      "p95_ms": 3.7539,
+      "sql_queries": 1,
+      "stddev_ms": 2.0543
+    },
+    "flat_list": {
+      "iterations": 100,
+      "mean_ms": 2.491,
+      "min_ms": 1.6953,
+      "p50_ms": 2.1377,
+      "p95_ms": 3.3474,
+      "sql_queries": 1,
+      "stddev_ms": 1.8496
+    },
+    "nested": {
+      "iterations": 100,
+      "mean_ms": 37.7488,
+      "min_ms": 29.7558,
+      "p50_ms": 33.819,
+      "p95_ms": 66.0378,
+      "sql_queries": 3,
+      "stddev_ms": 11.4769
+    },
+    "single": {
+      "iterations": 100,
+      "mean_ms": 1.3371,
+      "min_ms": 0.9598,
+      "p50_ms": 1.1398,
+      "p95_ms": 2.3048,
+      "sql_queries": 1,
+      "stddev_ms": 0.5126
+    }
+  },
+  "profile": "core33",
+  "raw_sha256": [
+    "702c801008904b6969e55ae5b9ff4aa91f26a383a28fcf8c1e93ab61a41e934e",
+    "c53812ba69d8cb466f1fe5f6e033c04fde01618981a65ebf199f69bb248466ab",
+    "f82feeee4a1bd6436b5cb10979514d4e295eb1c1a3956284163fcb830029b0fa"
+  ],
+  "schema": "django-graphex.core33.comparison.v1",
+  "schema_import_ms": 360.8802,
+  "schema_rebuild_diagnostic_ms": [
+    6.5348,
+    7.06,
+    7.9503,
+    7.7628,
+    7.6917
+  ],
+  "seed_source": {
+    "commit": "01f82ab94c86a5f35918dec4ba51deee02a58ac9",
+    "sha256": "e916e7dcf59e31678b2b5f2cebe0b87e9aaa7de02911b5a73d78f2301ec9074b",
+    "tree": "cdcc9202ac809dc59032d148c79073fba4a0ea5d"
+  },
+  "surface": {
+    "Author": [
+      "bio",
+      "email",
+      "id",
+      "name",
+      "posts"
+    ],
+    "Comment": [
+      "authorName",
+      "createdAt",
+      "id",
+      "isApproved",
+      "text"
+    ],
+    "Post": [
+      "author",
+      "body",
+      "comments",
+      "createdAt",
+      "id",
+      "status",
+      "title",
+      "viewsCount"
+    ]
+  },
+  "whole_stack": {
+    "django": "6.0.8",
+    "python": "3.12.11",
+    "versions": {
+      "django": "6.0.8",
+      "graphql-core": "3.3.0",
+      "strawberry-graphql": "0.328.0",
+      "strawberry-graphql-django": "0.90.0"
+    }
+  }
+}

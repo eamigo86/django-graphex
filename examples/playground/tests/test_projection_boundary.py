@@ -20,8 +20,9 @@ closes are visible on the very schema "make run" serves:
    to send. Naming it in "Meta.filter_fields" would fail the schema build
    instead of being dropped in silence.
 
-The README quotes an ANSWER for each of those rows, so the answers are pinned
-here too rather than only the refusal. Two of them carry graphql-core's
+The README explains the boundary for each row, so rejection is pinned here
+without depending on one graphql-core generation's wording. Two errors carry
+graphql-core's
 "Did you mean ...?" suggestion, which the library strips whenever introspection
 is actually disabled -- and the README's own Views section tells the reader to
 disable it. Both sides of that toggle are therefore pinned, because a reader who
@@ -146,11 +147,10 @@ def test_the_projected_column_is_not_orderable(db: object) -> None:
 
 
 def test_the_projected_column_is_not_filterable_over_the_wire(db: object) -> None:
-    """Assert sending a lookup for the hidden column answers the README's message.
+    """Assert sending a lookup for the hidden column is rejected.
 
     The static check below proves the input type carries no "bio" field; this
-    one proves a client that sends it anyway is refused, which is the row the
-    README tells the reader to paste into GraphiQL.
+    one proves a client that sends it anyway is refused, as the README shows.
 
     Args:
         db: The pytest-django database fixture that enables DB access.
@@ -159,9 +159,9 @@ def test_the_projected_column_is_not_filterable_over_the_wire(db: object) -> Non
         '{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }'
     )
 
-    assert messages == (
-        "Field 'bio' is not defined by type 'AuthorFilterInput'. Did you mean 'id'?"
-    )
+    assert "bio" in messages
+    assert "AuthorFilterInput" in messages
+    assert "Did you mean 'id'?" in messages
 
 
 def test_a_published_column_is_still_orderable(db: object) -> None:
@@ -175,7 +175,7 @@ def test_a_published_column_is_still_orderable(db: object) -> None:
     assert "errors" not in payload, payload
 
 
-def test_disabling_introspection_strips_the_suggestion_the_readme_quotes(
+def test_disabling_introspection_strips_schema_suggestions(
     db: object,
 ) -> None:
     """Assert the two suggestion-carrying answers lose their tail under the toggle.
@@ -197,7 +197,10 @@ def test_disabling_introspection_strips_the_suggestion_the_readme_quotes(
         )
 
     assert selected == "Cannot query field 'bio' on type 'AuthorType'."
-    assert filtered == "Field 'bio' is not defined by type 'AuthorFilterInput'."
+    assert "bio" in filtered
+    assert "AuthorFilterInput" in filtered
+    assert "Did you mean" not in filtered
+    assert "'id'" not in filtered
 
 
 def test_disabling_introspection_leaves_the_ordering_refusal_whole(db: object) -> None:

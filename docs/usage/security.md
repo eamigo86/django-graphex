@@ -96,12 +96,20 @@ names rebuilds much of the schema the middleware is there to hide:
 #   "Cannot query field 'emial' on type 'UserType'."
 ```
 
-Only the trailing suggestion sentence is removed — the rest of the message, the
-`locations` and the `path` are untouched, so a client that reports validation
-errors keeps working. The strip is active **only when introspection is actually
-disabled**: it needs `DisableIntrospectionMiddleware` in `MIDDLEWARE` *and*
-`ALLOW_INTROSPECTION=False`. With introspection open the same names are public
-anyway and the suggestion is a genuine development aid, so nothing changes.
+Under GraphQL-core 3.3, the HTTP view asks native validation and execution to
+omit schema-derived suggestions before they enter an error. That includes
+input-field hints before a `Found` clause and variable-coercion hints; client
+values, paths, and the `Found` detail remain intact. The current 3.2 runtime
+continues to filter its recognized legacy trailing suggestion forms. The
+`locations` and `path` fields are unchanged in either case.
+
+Suppression is active **only when introspection is actually disabled**: it
+needs `DisableIntrospectionMiddleware` in the effective middleware chain *and*
+`ALLOW_INTROSPECTION=False`. With introspection open, native hints remain useful.
+Under 3.3, SSE and WebSocket startup use the same private verdict for document
+validation and variable coercion before framing errors. Their existing 3.2
+formatter still covers recognized legacy trailing hints; it does not promise
+suppression of every quoted unknown-input spelling in that older generation.
 
 !!! note "Superusers do not get the suggestions back"
 
