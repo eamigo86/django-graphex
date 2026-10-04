@@ -43,8 +43,12 @@ new validated median artifacts only.
   GraphEx distribution. No package build, reinstall or wheel substitution is
   needed or authorized. A wheel would alter the verified freeze and fail this
   profile's equality contract.
-- Run timing on the otherwise idle machine without concurrent local tests or
-  builds. Report observed quietness limitations, never invent continuous proof.
+- For OC2, the user accepts the existing background load as declared stable
+  and will not start additional work. Run no concurrent local tests or builds
+  during timing. Record aggregate pre/post conditions and the limit: neither
+  the user's declaration nor a pre-start sample proves constant load, thermal
+  stability, or an otherwise idle machine. Earlier 90%-idle refusals remain
+  historical observations, not a continuing gate for this accepted run.
 - Use the existing PostgreSQL 17 CI job for actual database proof. Do not probe
   ambient PostgreSQL servers, ports, SSH, sessions or credentials.
 - Technical artifacts remain English. Public docstrings are complete Google
@@ -231,3 +235,22 @@ unregistered-runtime restriction; RDD remains off.
 Quiet-window recovery work-unit commit:
 8ed1896d91006caa7f852b8014e03f437aa85615. Its rollback boundary is only this
 task checkpoint; the frozen measurement source and all public results are intact.
+
+## Accepted-background-load OC2 continuation
+
+The user explicitly authorizes proceeding under the few existing background
+loads they expect to remain constant, and will not launch additional work.
+This changes the prospective timing condition, not the historical failed
+90%-idle preflights above. Rotation and three repetitions reduce fixed order
+bias but cannot establish constant host load or thermal conditions. Capture
+pre/post aggregate CPU observations outside timed requests; do not inspect
+process identities or alter host processes/settings. No other local benchmark
+tests or builds run concurrently with the one 24-dispatch batch.
+
+The measurement source remains the clean 01f82ab commit and its frozen tree,
+not this task checkpoint or the publication branch HEAD. The new series and
+fresh private datasets are still absent at this checkpoint. OC2 remains open
+until the actual named CLI run, all raw/median contracts, preserved seeds and
+atomic eight-file installation are observed. Existing canonical results and
+historical raw evidence remain protected. The new run is not a retry of a
+partially measured batch: both earlier stops occurred before seeding/sampling.
