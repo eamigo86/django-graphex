@@ -582,3 +582,16 @@ protected identity checks pass. Package source remains
 under final-gates-fg2-final-boundaries/. This task-only checkpoint follows the
 tested commit; it does not claim a second full run. FG2 remains unchecked;
 FG3, FG5, and FG4 have not started. The Engram mirror remains pending.
+
+### FG2 interface permission and schema boundary continuation
+
+This delegated direct test-only unit starts from 3,661/3,864 pure outcomes.
+Its primary contract is the conservative interface-permission fallback when
+no built schema can narrow the registered implementors, including an
+unmounted model. Additional supported schema boundaries may be covered with
+real parsed/executable GraphQL types and explicit output assertions. No
+production code, coverage policy, benchmark artifact or retained database
+change is authorized. Existing correct behavior may pass new tests at once;
+the observed pure-branch gate remains the coverage-objective RED. FG2 stays
+unchecked unless a fresh full XML reaches 95.01%; FG3, FG5 and FG4 remain
+pending. Rollback removes only this unit's tests and factual checkpoint.

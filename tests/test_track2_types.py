@@ -293,6 +293,30 @@ def test_unions_meta_round_trips_and_registry_lookup() -> None:
     assert reg.get_gfk_union(Track2GfkComment, "absent") is None
 
 
+def test_gfk_union_declared_outside_owner_registry_is_not_resolved() -> None:
+    """A union declaration alone does not register it in another pair.
+
+    The owner registry must fail closed until it contains the union itself.
+    """
+    union_registry = Registry()
+    owner_registry = Registry()
+    union = _make_union(union_registry, _make_member_types(union_registry))
+
+    class GfkCommentType(DjangoObjectType):
+        """Declare a GFK union from a different registry."""
+
+        class Meta:
+            """Bind the GFK owner to its own isolated registry."""
+
+            model = Track2GfkComment
+            registry = owner_registry
+            unions = {"target": union}
+
+    assert GfkCommentType._meta.unions["target"] is union
+    assert union._meta.name not in owner_registry._union_types
+    assert owner_registry.get_gfk_union(Track2GfkComment, "target") is None
+
+
 def test_unions_defaults_to_none_when_absent() -> None:
     """A DjangoObjectType without Meta.unions has _meta.unions falsy.
 
