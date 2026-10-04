@@ -691,3 +691,14 @@ the correction's before/after SHA and filesystem identities. Raw proof is under
 final-gates-fg3-correction/. FG3 remains unchecked until independent targeted
 acceptance; FG5 and FG4 remain pending. This task-only checkpoint does not
 claim a second full run. The Engram mirror remains pending.
+
+### FG3 deployment-root empty suffix completion
+
+Independent targeted verification of 9991651 passed the external theme
+override and nested guide link, but found one remaining path in that same
+root-relative contract: after removing the deployment prefix, an empty suffix
+is overwritten with the source page. Bare deployment-root links and homepage
+fragments from a nested page must resolve to the site root; fragment-only
+links must stay on their source page. Add a focused cause-correct failing CLI
+control before the one-condition checker fix. The previous independent PARTIAL
+and all proof remain intact. FG3 stays unchecked; FG5/FG4 remain pending.

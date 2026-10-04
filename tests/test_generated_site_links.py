@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.check_site_anchors import _destination
+
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "check_site_anchors.py"
 
@@ -140,6 +142,57 @@ def test_deployment_root_escape_still_fails(tmp_path: Path) -> None:
     result = _check(tmp_path, "--base-path", "/django-graphex/")
     assert result.returncode == 1
     assert "escapes site" in result.stderr
+
+
+def test_nested_deployment_root_and_home_anchor_resolve_to_homepage(
+    tmp_path: Path,
+) -> None:
+    """Keep an empty deployment-root suffix distinct from a local fragment.
+
+    Args:
+        tmp_path: Isolated generated-site directory.
+
+    Raises:
+        AssertionError: A nested page's root URL targets that page instead of home.
+    """
+    (tmp_path / "index.html").write_text('<h1 id="homepage">Home</h1>')
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    page = nested / "index.html"
+    page.write_text(
+        '<a href="/django-graphex/">Home</a>'
+        '<a href="/django-graphex/#homepage">Home anchor</a>'
+        '<a href="#local">Local</a><h2 id="local">Local</h2>'
+    )
+    result = _check(tmp_path, "--base-path", "/django-graphex/")
+    assert result.returncode == 0, result.stderr
+    assert _destination(
+        tmp_path.resolve(), page.resolve(), "/django-graphex/", "/django-graphex/"
+    ) == (tmp_path.resolve() / "index.html", "")
+    assert _destination(
+        tmp_path.resolve(), page.resolve(), "#local", "/django-graphex/"
+    ) == (page.resolve(), "local")
+
+
+def test_nested_home_anchor_rejects_missing_home_target(tmp_path: Path) -> None:
+    """Reject a missing homepage fragment without rejecting a local target.
+
+    Args:
+        tmp_path: Isolated generated-site directory.
+
+    Raises:
+        AssertionError: A missing homepage anchor is accepted.
+    """
+    (tmp_path / "index.html").write_text("<h1>Home</h1>")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "index.html").write_text(
+        '<a href="/django-graphex/#homepage">Home anchor</a>'
+        '<a href="#local">Local</a><h2 id="local">Local</h2>'
+    )
+    result = _check(tmp_path, "--base-path", "/django-graphex/")
+    assert result.returncode == 1
+    assert "homepage" in result.stderr
 
 
 def test_ci_checks_pure_branches_and_generated_site() -> None:

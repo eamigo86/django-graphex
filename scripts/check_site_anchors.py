@@ -65,7 +65,7 @@ def _destination(
     candidate = (
         site / raw_path.lstrip("/") if root_relative else source.parent / raw_path
     )
-    if not raw_path:
+    if not raw_path and not root_relative:
         candidate = source
     if candidate.suffix != ".html":
         candidate /= "index.html"
