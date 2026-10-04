@@ -65,7 +65,7 @@ branch requirement. Do not change library behavior merely to improve coverage.
   coverage was initially 23/27 changed lines, below 95.01%; the later private
   walker test boundary reached 30/30. No benchmark measurement was performed
   in the correction unit.
-- [ ] FG3 — Wire the pure-branch checker into the existing coverage job, repair
+- [x] FG3 — Wire the pure-branch checker into the existing coverage job, repair
   the 404 template, add a generated-site check to docs CI, and update contributor
   guidance and both prepared-release changelogs. Preserve the release graph.
   Delegated direct: workflow, template, helpers, tests and docs form one unit.
@@ -635,3 +635,26 @@ GREEN evidence. Update contributor guidance and the prepared changelogs only
 for these gates. The 15-job validation graph, runtime package, coverage policy,
 pins and benchmark artifacts remain unchanged. Rollback is this unit's CI,
 template, checker, tests and documentation only. FG5 and FG4 remain pending.
+
+FG3 work unit cb9061411f48341d5f2425fa7573f84f5adfd3a4 wires the exact
+branch gate after fresh coverage XML and retains the changed-line gate and
+existing validation job graph. A repository-owned 404
+override supplies the actual theme skip target; the generated-site checker
+resolves local HTML destinations and fragments under the configured deployment
+path. Six new contract tests failed before the checker, workflow and override
+existed; the generated 404 had the skip link but no target. The focused suite
+then passed 18 tests, and the clean built site passed 43 HTML pages with no
+broken local links and no Zensical issues.
+
+The exact clean native-3.3 clone of cb90614 passed 4,931 full tests with seven
+skips, three warnings, 23 subtests and 97.37% combined coverage. The separate
+pure gate passed at 3,672/3,864 = 95.0311%; both nonempty runtime patch checks
+remained 30/30. All 344 benchmark contracts, 59 standalone Playground tests,
+Ruff/check-only formatting, configured/expanded/CLI typing, Bandit, both
+zero-issue docstring audits, docs build, generated-site anchor check and diff
+check passed. The runtime package tree is unchanged at
+9d275e6fbf65529aab49d2f448ee5528d46df452; all 129 protected paths have
+matching FG3 before/after byte and filesystem identities. Raw commands and
+streams are under final-gates-fg3/. This factual checkpoint does not claim a
+second full run or independent/hosted acceptance. FG5 and FG4 remain pending;
+the Engram mirror remains pending.
