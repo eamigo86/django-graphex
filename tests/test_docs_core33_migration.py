@@ -93,7 +93,10 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
 
 
 def test_current_public_summary_uses_new_artifact_values() -> None:
-    """Keep the current public summary aligned with the new measured series."""
+    """Keep the current public summary aligned with the new measured series.
+
+    The expected ratios come from the committed portable result fields.
+    """
     graphex = _load_result("graphex", 1000)
     ariadne = _load_result("ariadne", 1000)
     create = "create_comment"
