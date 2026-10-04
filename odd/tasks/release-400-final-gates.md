@@ -415,3 +415,16 @@ change. FG3, FG5 final-source comparison and FG4 remain pending. The package
 hash changed intentionally under the authorized refactor; older official
 benchmark series retain their prior measured-source labels. This factual
 checkpoint is not a second full-suite run or hosted gate.
+
+### FG2 non-utils test continuation
+
+Independent verification accepted the private walker correction at 4776fa5:
+140 focused controls plus 22 fresh controls passed, and both genuine nonempty
+runtime patch comparisons covered 30/30 lines. This closes FG2-R's independent
+functional and patch gate, not the distinct FG2 global pure-branch gate.
+The next delegated direct work unit tests existing native input/compiler and
+date-format boundaries with concrete GraphQL shapes and formatted values.
+Its coverage objective starts at 3,617/3,864; tests of already-correct
+behavior can pass immediately without inventing a new behavioral RED. Package
+runtime, exclusions and measured benchmark sources remain unchanged. FG3,
+FG5 and FG4 remain pending, and the Engram mirror is still unavailable.
