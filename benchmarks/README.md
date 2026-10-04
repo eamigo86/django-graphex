@@ -253,7 +253,7 @@ not a mutable `latest` pointer. For example, append
 `--series core33-4.0.0-<full-measurement-commit>` to either command above.
 The current prepared 4.0.0 SQLite result is installed at
 `results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/`. Its eight JSON files were generated from measuring
-source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` and committed later at `58146dced3e62924a4b2aaae03ccd596bfccc80e`; publication identity is
+source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` and committed later at `826d5bae87ed7bbe705cf309d46a16d3ad3cdf33`; publication identity is
 not measurement identity. The three-run per-statistic medians include
 create-comment GraphEx/Ariadne p50 ratios of 0.57× at 50,000 comments and
 0.51× at 100,000. Whole-stack graphql-core versions differ, and accepted

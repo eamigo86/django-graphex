@@ -19,7 +19,7 @@ execution, directive coercion and query cost behavior retain compatibility
 tests. The current official core33 SQLite comparison is in the immutable
 `core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` series,
 measured from 4.0.0 source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` and installed later at
-`58146dced3e62924a4b2aaae03ccd596bfccc80e`. Its GraphEx/Ariadne create-comment p50 ratios are
+`826d5bae87ed7bbe705cf309d46a16d3ad3cdf33`. Its GraphEx/Ariadne create-comment p50 ratios are
 0.57× and 0.51× for 50,000 and 100,000 comments, respectively; the
 GraphEx direct-write check retains four SQL statements versus Ariadne's one.
 These are three-run per-statistic medians of pinned SQLite whole stacks under

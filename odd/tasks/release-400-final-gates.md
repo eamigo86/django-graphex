@@ -782,3 +782,31 @@ arithmetic and provenance acceptance is pending, so FG5 remains unchecked;
 FG4 and hosted/main/tag/publication approval are separate. This task-only
 checkpoint follows tested executable/documentation bytes and does not claim
 another full run or CI for its own commit. The Engram mirror remains pending.
+
+### FG5 local commit-policy normalization
+
+The branch-pr Conventional Commit pattern rejected the local artifact subject
+`data(benchmarks): retain final-source core33 results`; the other 39 subjects
+matched. Before changing history, the original final FG5 head
+125ac55441c63e22564dae521bf054300ab11c0b was retained at local branch
+`codex/recovery-fg5-pre-policy-125ac55`. Three descendant commit objects were
+recreated with their original trees and author metadata and adjusted parent
+links, without checkout or worktree/index reset. The artifact subject is now
+`chore(benchmarks): retain final-source core33 results` at
+826d5bae87ed7bbe705cf309d46a16d3ad3cdf33; its tree is exactly the old
+artifact tree c3277d40389a41ecfe8b024dc0f60afc247f634d. The unchanged
+docs and task trees moved to e31a2f5782b7ec062b0fc2c43538f02d951d7e80
+and 5697ac5ad1518d9e05c6a7376d5741b74de9ddc0. The measured source
+bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e did not move. All 40 current
+branch subjects match the supported pattern; all 139 old/new protected asset
+bytes and filesystem identities matched before and after the metadata-only
+rewrite. The old commits and earlier proof remain reachable on the recovery
+branch and are not relabeled as current publication identities.
+
+The executable current-doc contract then failed on the stale old artifact
+SHA before public docs were corrected to the new 826d artifact commit. The
+corrected public JSON links target the first commit containing those eight
+files; the measured source remains bf6e. No measurement, seed, replay,
+package, pin, version, or canonical JSON bytes were changed. Fresh exact-head
+functional proof follows in the separate commit-policy report. FG5 remains
+pending independent acceptance; FG4 and hosted delivery remain separate.

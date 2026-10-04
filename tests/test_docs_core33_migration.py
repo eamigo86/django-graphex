@@ -87,7 +87,7 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
     ):
         assert token in current
     assert f"benchmarks/results/{SERIES}/" in current
-    assert "58146dced3e62924a4b2aaae03ccd596bfccc80e" in current
+    assert "826d5bae87ed7bbe705cf309d46a16d3ad3cdf33" in current
     assert "bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e" in current
     assert "Historical core33 4.0.0 pre-fragment comparison" in page
     assert "benchmarks/run_publish_core33.py" in current
