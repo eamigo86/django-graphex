@@ -448,3 +448,14 @@ Zensical and diff checks passed. This is a bounded FG2 partial, not FG2
 acceptance or authority to wire FG3. Raw exact-clone proof is under
 final-gates-fg2-native-boundaries/; task-only evidence after the tested commit
 does not itself claim another full run.
+
+### FG2 transport and subscription-permission continuation
+
+The next delegated direct test unit exercises supported malformed SSE
+variables, WebSocket initialization and orphan-source lifecycle, and
+subscription permission denial. The frozen package tree
+9d275e6fbf65529aab49d2f448ee5528d46df452 and 3,626/3,864 pure-branch
+starting point remain unchanged before test edits. Existing correct behavior
+may pass immediately; the already-observed pure-branch failure is the
+coverage-objective RED. No production code, policy, benchmark or retained
+database mutation is authorized in this unit.
