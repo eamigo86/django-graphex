@@ -149,3 +149,31 @@ package code changed, so a package patch-coverage claim is not applicable.
 The independently rechecked OC1 candidate and hosted delivery remain pending.
 OC2 remains blocked by the dependency's hosted security failure and cannot
 start from OC1 local proof alone.
+
+## Merged dependency and OC1 acceptance checkpoint
+
+The preceding paragraphs are chronological snapshots. The dependency's first
+hosted B608 failure remains a failure, but the bounded correction at 79b4e38
+passed independent local security verification. Its fresh hosted run
+37169969883 passed all 15 validation jobs and both Codecov checks, including
+actual PostgreSQL 17; publication jobs were skipped. PR #243 then merged only
+into the tracker integration branch as 2d3853ddfce1ebf3eb6cd4fa9dff769fa3c50c34,
+with the exact tree of 79b4e38. The post-push and tracker hosted runs are
+pending at this checkpoint, not retroactive successes.
+
+OC1 independently passed at 678ebb4. The independent report authenticated
+the nine publisher and two command API missing-series RED failures, 84 fresh
+focal and 344 benchmark tests, 78 independent refusal controls, exact source
+and clean-clone provenance, and the writer's full 4,755-test/96.26% result.
+There was no separately observed missing-CLI-flag RED. The original 16 tracked
+benchmark JSON artifacts and all 82 retained protected objects remained
+unchanged. Package patch coverage and ShellCheck were not applicable to OC1.
+
+The local integration branch fast-forwarded from 7eb3935 to fetched 2d3853d.
+The official branch retained both OC1 commits and merged that dependency with
+one no-fast-forward merge; no reset, rebase, cherry-pick, source conflict,
+remote operation, main merge or tag change occurred. The official child PR
+should target integration 2d3853d so its review diff contains only the series
+unit and this task document, not the performance dependency. The exact merged
+candidate still requires clean-clone native-3.3 functional/quality proof,
+source freeze, independent review and fresh official hosted checks before OC2.
