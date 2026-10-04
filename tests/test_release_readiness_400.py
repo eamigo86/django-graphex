@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "4.0.0"
-DATE = "2026-10-03"
+DATE = "2026-10-04"
 
 
 def _project(path: Path) -> dict:
