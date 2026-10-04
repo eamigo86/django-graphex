@@ -519,3 +519,28 @@ branch acceptance gate is the observed RED. No package source, coverage policy,
 benchmark result, or retained database change is authorized. FG2 remains open
 until fresh full-suite XML proves at least 95.01%; FG3, FG5 and FG4 remain
 pending. Rollback removes only this unit's tests and progress checkpoint.
+
+Test work unit 96106e52554eb340a145d36302b975bd373b2cba exercises a real
+unpaginated list container, configured auto-list fallback, model declaration
+errors and argument compatibility, nonreserved filtering, subscription stream
+validation and class caching, native driver options/Meta/MRO behavior, and
+concrete nested-input permission labels. Its 15 focused controls pass. An
+initial fixture NameError and two incorrect test-surface assumptions were
+fixed before the tested commit; they were not runtime defects. A separate
+focused-coverage calibration passed the tests but predictably failed the
+configured full-suite coverage gate; it was not acceptance evidence.
+
+The exact clean native-3.3 clone of that work-unit commit passed 4,911 full
+tests, seven skips, three warnings and 23 subtests at 97.18% combined
+coverage; 344 benchmark contracts without timing and 59 standalone Playground
+tests passed. Seventeen formerly missing pure branch outcomes are covered,
+none newly missing, and the denominator is unchanged: **3,656/3,864 =
+94.6170%**. The exact pure checker still exits 1, leaving 16 outcomes to
+reach 95.01% at this denominator. Both nonempty runtime patch comparisons
+remain 30/30 changed lines. Ruff/check-only format, configured/expanded/CLI
+typing, Bandit, both zero-issue docstring audits, Zensical, diff check and all
+129 protected identity checks passed. Package source remains
+9d275e6fbf65529aab49d2f448ee5528d46df452. Raw evidence is under
+final-gates-fg2-declarations/. This task-only checkpoint follows the tested
+commit and does not claim a second full run. FG2 remains unchecked; FG3, FG5
+and FG4 have not started. The Engram mirror remains pending.
