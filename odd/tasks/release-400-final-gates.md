@@ -477,3 +477,14 @@ final-gates-fg2-transports/. A first configured docstring audit found seven
 test-docstring findings; corrected source passed before the tested commit.
 No package, coverage policy, benchmark or retained database was changed.
 This bounded FG2 partial does not start FG3 or FG5; the Engram mirror is pending.
+
+### FG2 helper and schema-identity continuation
+
+The next delegated direct test-only unit targets supported manager/queryset
+normalization and schema-registry identity/no-op boundaries. Its baseline is
+3,633/3,864 pure branches; existing behavior may pass new tests immediately,
+while the exact pure-branch gate is the coverage-objective RED. Test real
+model, schema and pair effects rather than helper call counts or fabricated
+registry corruption. Package source, coverage policy, old results and retained
+databases remain unchanged. FG2 stays open until a fresh full-suite XML meets
+95.01%; FG3, FG5 and FG4 are not started by this unit.

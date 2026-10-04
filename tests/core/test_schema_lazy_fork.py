@@ -151,6 +151,204 @@ def _invalidate_relation_caches(schema) -> None:
             gql_type.__dict__.pop("fields", None)
 
 
+def test_empty_isolated_pair_keeps_a_plain_native_query() -> None:
+    """Keep plain scalar fields available without model output registrations.
+
+    An empty, independent output registry must not suppress a legal scalar-only
+    query or create a pair-local model type that no field requested.
+    """
+    from graphql import GraphQLString, graphql_sync
+
+    from django_graphex.core import ObjectType, field
+    from django_graphex.core.base import SchemaRegistries
+    from django_graphex.core.registry_compiler import NativeOutputRegistry
+    from django_graphex.registry import Registry
+    from django_graphex.schema import DjangoGraphQLSchema
+
+    registry = Registry()
+    pair = SchemaRegistries(graphene=registry, output=NativeOutputRegistry())
+
+    class Query(ObjectType):
+        """A valid native query with no Django model output types."""
+
+        status = field(GraphQLString)
+
+        @staticmethod
+        def resolve_status(root: object, info: object) -> str:
+            """Return the scalar response without a model registry lookup.
+
+            Args:
+                root: Unused root value.
+                info: Unused GraphQL resolver context.
+
+            Returns:
+                The ready status.
+            """
+            return "ready"
+
+    schema = DjangoGraphQLSchema(query=Query, registries=pair)
+    result = graphql_sync(schema.graphql_schema, "{ status }")
+
+    assert result.errors is None
+    assert result.data == {"status": "ready"}
+    assert pair.output_instances == {}
+
+
+def test_global_compile_leaves_custom_registry_outputs_to_their_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leave a valid custom-registry model type out of app-ready compilation.
+
+    The global pass must not read the shared output registry when its only
+    available class belongs to an isolated schema registry. That class still
+    keeps its class-definition output instance for its later pair build.
+
+    Args:
+        monkeypatch: Restricts this compilation pass to the real local entry.
+
+    Raises:
+        AssertionError: If the global compiler accesses the shared registry.
+    """
+    from django_graphex.core import base
+    from django_graphex.core.registry_compiler import compile_all_outputs
+    from django_graphex.registry import Registry
+    from django_graphex.types import DjangoObjectType
+    from tests.models import BasicModel
+
+    local_registry = Registry()
+
+    class LocalType(DjangoObjectType):
+        """A model output registered only for a private schema pair."""
+
+        class Meta:
+            """Bind this type to an actual model and custom registry."""
+
+            model = BasicModel
+            registry = local_registry
+
+    entries = [entry for entry in base._gdx_output_registry if entry.cls is LocalType]
+    assert len(entries) == 1
+    original = LocalType._meta.graphql_output_type
+    monkeypatch.setattr(base, "_gdx_output_registry", entries)
+
+    def reject_shared_lookup() -> None:
+        """Reject a global-registry read for a custom-only compile pass.
+
+        Raises:
+            AssertionError: Always, because this pass has no global entries.
+        """
+        raise AssertionError("custom-only output must not enter global compile")
+
+    monkeypatch.setattr(base, "get_shared_output_registry", reject_shared_lookup)
+    assert compile_all_outputs() is None
+    assert LocalType._meta.graphql_output_type is original
+
+
+@pytest.mark.django_db
+def test_recompiling_one_pair_preserves_fork_identity_and_relation_result() -> None:
+    """Reuse pair-local output instances when an existing schema recompiles.
+
+    Recompiling after a schema was built must preserve each model's compiled
+    identity and leave relation resolution attached to the same pair.
+    """
+    from graphql import graphql_sync
+
+    from django_graphex.core.registry_compiler import compile_outputs_into
+    from tests.models import Author, Post
+
+    author = Author.objects.create(name="Ada")
+    post = Post.objects.create(title="First", author=author)
+    schema, author_class, post_class, pair = _build_schema_over_post(
+        type_name_author="RepeatedAuthorType",
+        type_name_post="RepeatedPostType",
+    )
+    initial = dict(pair.output_instances)
+
+    compile_outputs_into(pair)
+
+    assert pair.output_instances == initial
+    assert pair.output_instances[author_class] is initial[author_class]
+    assert pair.output_instances[post_class] is initial[post_class]
+    assert schema.graphql_schema.type_map["RepeatedPostType"] is initial[post_class]
+    result = graphql_sync(
+        schema.graphql_schema,
+        f"{{ post(id: {post.pk}) {{ title author {{ name }} }} }}",
+    )
+    assert result.errors is None
+    assert result.data == {"post": {"title": "First", "author": {"name": "Ada"}}}
+
+
+@pytest.mark.django_db
+def test_two_fields_reuse_one_model_type_per_pair_without_cross_pair_aliasing() -> None:
+    """Reuse a model output inside one pair but not across independent pairs.
+
+    Two root fields naming the same model must resolve through one pair-local
+    GraphQL type. Building a second pair over that declaration must not make
+    either first-pair field point at the later type.
+    """
+    from graphql import graphql_sync
+
+    from django_graphex.core import ObjectType
+    from django_graphex.core.base import SchemaRegistries
+    from django_graphex.core.registry_compiler import NativeOutputRegistry
+    from django_graphex.fields import DjangoObjectField
+    from django_graphex.registry import Registry
+    from django_graphex.schema import DjangoGraphQLSchema
+    from django_graphex.types import DjangoObjectType
+    from tests.models import BasicModel
+
+    first = BasicModel.objects.create(text="first")
+    second = BasicModel.objects.create(text="second")
+    local_registry = Registry()
+
+    class ItemType(DjangoObjectType):
+        """The output node reused by two independent root fields."""
+
+        class Meta:
+            """Bind the output node to the real model and custom registry."""
+
+            model = BasicModel
+            registry = local_registry
+
+    class Query(ObjectType):
+        """Expose two reads of the same model through one schema pair."""
+
+        left = DjangoObjectField(ItemType)
+        right = DjangoObjectField(ItemType)
+
+    def make_pair() -> SchemaRegistries:
+        """Return an independent registry pair for the declared output.
+
+        Returns:
+            A pair with its own compiled output and caches.
+        """
+        return SchemaRegistries(graphene=local_registry, output=NativeOutputRegistry())
+
+    left_pair = make_pair()
+    left_schema = DjangoGraphQLSchema(query=Query, registries=left_pair)
+    right_pair = make_pair()
+    right_schema = DjangoGraphQLSchema(query=Query, registries=right_pair)
+
+    left_type = left_pair.output_instances[ItemType]
+    right_type = right_pair.output_instances[ItemType]
+    assert left_type is not right_type
+    assert left_schema.graphql_schema.query_type.fields["left"].type is left_type
+    assert left_schema.graphql_schema.query_type.fields["right"].type is left_type
+    assert right_schema.graphql_schema.query_type.fields["left"].type is right_type
+    assert right_schema.graphql_schema.query_type.fields["right"].type is right_type
+
+    document = (
+        f"{{ left(id: {first.pk}) {{ text }} right(id: {second.pk}) {{ text }} }}"
+    )
+    for schema in (left_schema, right_schema):
+        result = graphql_sync(schema.graphql_schema, document)
+        assert result.errors is None
+        assert result.data == {
+            "left": {"text": "first"},
+            "right": {"text": "second"},
+        }
+
+
 # =========================================================================== #
 # THE CRUX GATE                                                                #
 # =========================================================================== #
