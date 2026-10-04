@@ -810,3 +810,21 @@ files; the measured source remains bf6e. No measurement, seed, replay,
 package, pin, version, or canonical JSON bytes were changed. Fresh exact-head
 functional proof follows in the separate commit-policy report. FG5 remains
 pending independent acceptance; FG4 and hosted delivery remain separate.
+
+The normalized public-link and executable contract work unit is
+2f59cd31e8ba3aaaec86fedf80ec72e65cfe9237 (tree
+b0ebc8d98845f97fdcc5e2b593845ba6ce8e0d19). Its focused new-artifact
+pointer contract failed before the link update and then passed six tests. The
+exact clean native-3.3 clone at this commit passed 4,936 full tests, seven
+skips, three warnings and 23 subtests at 97.37% combined coverage. Pure
+branches remain 3,672/3,864 = 95.0311%; both genuine runtime patch
+comparisons remain 30/30. The 344 benchmark contracts, 59 standalone
+Playground tests, Ruff/check-only format, configured and expanded mypy,
+CLI mypy, Bandit, both zero-issue docstring audits, Zensical and 42-page
+site-link check passed. All 139 protected old and new file SHA/stat identities
+matched before metadata normalization, after it, and after these checks.
+All 41 current branch commit subjects match the supported Conventional
+Commit pattern. Raw command and identity proof is retained at
+final-gates-fg5-commit-policy/. This task-only checkpoint does not attribute
+another full suite or hosted CI to itself. Independent FG5 arithmetic and
+provenance acceptance, FG4, and remote delivery remain pending.
