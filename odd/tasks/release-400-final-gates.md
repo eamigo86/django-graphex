@@ -670,3 +670,24 @@ the content root and preserves root-relative URL status through prefix removal,
 with real failing regressions before either fix. The prior local PASS and raw
 proof remain historical, not independent acceptance. FG5 and FG4 remain
 pending; the Engram mirror remains pending.
+
+Correction work unit 9991651472189f8efcf3dc66598c7427e8e7c9fd fixes
+both independently observed FG3 findings without changing the runtime package.
+A new nested deployment-root link test and an external theme-directory contract
+failed for their exact causes before the fix; the clean pre-fix build also
+emitted the raw 100-byte Jinja template. The override now lives outside docs,
+and the checker retains root-relative status after removing the deployment
+prefix. Focused tests pass 21 controls, including missing fragment and encoded
+escape failures. A fresh clean build emits 42 HTML pages with no raw override,
+retains the rendered 404 skip target, and passes all local anchor checks.
+
+The exact clean native-3.3 correction clone passed 4,934 full tests, seven
+skips, three warnings and 23 subtests at 97.37% combined coverage. The pure
+gate remained 3,672/3,864 = 95.0311%, and both genuine nonempty patch gates
+remained 30/30. All 344 benchmark contracts, 59 standalone Playground tests,
+Ruff/check-only formatting, configured/expanded/CLI typing, Bandit, both
+zero-issue docstring audits and Zensical passed. All 129 protected paths match
+the correction's before/after SHA and filesystem identities. Raw proof is under
+final-gates-fg3-correction/. FG3 remains unchecked until independent targeted
+acceptance; FG5 and FG4 remain pending. This task-only checkpoint does not
+claim a second full run. The Engram mirror remains pending.
