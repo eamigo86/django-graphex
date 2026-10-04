@@ -254,3 +254,44 @@ until the actual named CLI run, all raw/median contracts, preserved seeds and
 atomic eight-file installation are observed. Existing canonical results and
 historical raw evidence remain protected. The new run is not a retry of a
 partially measured batch: both earlier stops occurred before seeding/sampling.
+
+## OC2 measured-batch checkpoint: local proof, independent review pending
+
+The accepted-background-load run used the clean detached measurement checkout
+01f82ab94c86a5f35918dec4ba51deee02a58ac9 (tree
+cdcc9202ac809dc59032d148c79073fba4a0ea5d, source version 4.0.0),
+not this tracking branch. All four live named interpreters, complete installed
+freezes and backend import paths passed a fresh preflight. The fresh seeds
+were generated from that same source, so their source witness is 01f82ab,
+not the older 1b5b941 seed used by the historical diagnostic batch.
+
+One named core33 run completed from 2026-10-04 04:36:57 to 04:41:57 UTC:
+two new private seeds (1,000/2,000 authors), exactly 24 rotating dispatch
+starts and successes, eight median groups, and one atomic no-clobber install
+of the eight JSON files under
+results/core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/.
+The publisher rehashed all raw results and recomputed every median; an
+additional read-only replay validation matched all eight public bytes.
+Both fresh database hashes matched their retained seed witnesses after the
+batch, with exact 20x10x5 cardinalities and allocation sequences. All 82
+previously protected assets matched byte and filesystem identity before and
+after; the source checkout stayed clean. Benchmark contracts passed 344 tests
+after the timing processes closed.
+
+The user accepted existing background load rather than an idle-machine
+requirement. Pre/post aggregate CPU samples are recorded, but do not prove
+constant load or thermal stability during the batch. The three-repetition
+rotation reduces order bias; it does not eliminate this confounder. These are
+SQLite whole-stack results, not PostgreSQL benchmark timings or a guaranteed
+1x comparison. The original low-idle preflights remain failed historical
+stops. New numerical public tables are deferred to OC3 and must derive from
+the generated JSON, not this prose checkpoint.
+
+The new series remains a local generated artifact until independent OC2
+arithmetic/provenance/preservation review. OC2 stays unchecked for that
+acceptance boundary. The new child is ignored by the historical scratch
+pattern in benchmarks/.gitignore; add only its exact eight generated files
+explicitly to Git, without broadening the ignore rules or tracking stages.
+Full private proof: official-comparison-oc2/accepted-background-load/ under
+the existing external proof root. No remote, main, tag or release operation
+is authorized by this checkpoint.
