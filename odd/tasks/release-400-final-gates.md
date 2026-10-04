@@ -74,7 +74,7 @@ branch requirement. Do not change library behavior merely to improve coverage.
   state. Parent spot check, child/integration/tracker exact-head hosted gates;
   report remaining main/tag/publication approvals. Delegated verifier plus
   read-only parent remote orchestration; no invented release readiness.
-- [ ] FG5 — After the corrected runtime and FG2/FG3 stabilize, regenerate the
+- [x] FG5 — After the corrected runtime and FG2/FG3 stabilize, regenerate the
   official named-profile comparison from that final source, keeping earlier
   measurements attributed to their original source and preserving both series.
   The user authorized this future cost; actual datasets, timings, arithmetic,
@@ -828,3 +828,19 @@ Commit pattern. Raw command and identity proof is retained at
 final-gates-fg5-commit-policy/. This task-only checkpoint does not attribute
 another full suite or hosted CI to itself. Independent FG5 arithmetic and
 provenance acceptance, FG4, and remote delivery remain pending.
+
+### FG4 current-series wording correction
+
+Independent final verification at 24689797101c3039f138b7d23a1b0f0df3260bb8
+accepted FG5: all 24 raw receipts, eight portable projections, 248 numeric
+medians, source/seed/constraint witnesses, the 4,936-test native suite,
+coverage and quality gates, and protected old/new assets passed (see
+final-gates-fg4-independent/). FG5 is checked on that observed acceptance,
+not merely on the earlier writer report. FG4 remains open: the current
+comparison introduction said three distinct series while its own content
+retains four, including the 01f82 4.0.0 pre-fragment series. The new
+executable introduction contract failed for this precise omission before
+`docs/why.md` was corrected, then all seven focused migration-doc tests
+passed. This is a documentation-only correction; no result, source, seed,
+version, workflow or benchmark runtime is modified. Targeted final wording
+verification and hosted child/integration/tracker gates remain pending.

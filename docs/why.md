@@ -51,9 +51,11 @@ enforced in CI.
 
 ## How it compares
 
-The repository carries three distinct benchmark series. The current 4.0.0-source
-core33 results are below; the earlier 3.1.1-source core33 and original 3.1.0
-comparisons remain historical evidence, not current-package claims.
+The repository carries four distinct benchmark series. The current
+`core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` results are
+below. The earlier `core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`,
+3.1.1-source core33 and original 3.1.0 comparisons remain historical evidence,
+not current-package claims.
 
 ## Current core33 comparison
 

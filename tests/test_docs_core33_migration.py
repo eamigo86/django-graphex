@@ -25,6 +25,22 @@ def _load_result(library: str, authors: int) -> dict:
     return json.loads((RESULTS / f"{prefix}{library}.json").read_text(encoding="utf-8"))
 
 
+def test_comparison_intro_names_all_four_retained_series() -> None:
+    """Count the current series and each retained historical comparison."""
+    page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
+    intro = page.split("## How it compares", maxsplit=1)[1].split(
+        "## Current core33 comparison", maxsplit=1
+    )[0]
+    for label in (
+        "four distinct benchmark series",
+        SERIES,
+        "core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9",
+        "3.1.1-source core33",
+        "original 3.1.0",
+    ):
+        assert label in intro
+
+
 def test_current_comparison_table_is_derived_from_eight_artifacts() -> None:
     """Keep every published latency and SQL cell bound to committed data.
 
