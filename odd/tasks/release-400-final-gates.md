@@ -508,3 +508,14 @@ checks passed. Prior failed focal, docstring and formatter attempts remain in
 the new final-gates-fg2-registry-helpers/ proof directory. Package source,
 coverage policy and retained benchmark assets remain unchanged. FG3, FG5 and
 FG4 are still pending; the Engram mirror remains unavailable.
+
+### FG2 declaration and configuration continuation
+
+The next delegated direct, test-only unit exercises documented list-container
+configuration, model declaration errors and compatibility, native class-driver
+options, and nested-input permissions. Its baseline is 3,639/3,864 pure branch
+outcomes. Existing correct behavior may pass new tests immediately; the pure
+branch acceptance gate is the observed RED. No package source, coverage policy,
+benchmark result, or retained database change is authorized. FG2 remains open
+until fresh full-suite XML proves at least 95.01%; FG3, FG5 and FG4 remain
+pending. Rollback removes only this unit's tests and progress checkpoint.
