@@ -428,3 +428,23 @@ Its coverage objective starts at 3,617/3,864; tests of already-correct
 behavior can pass immediately without inventing a new behavioral RED. Package
 runtime, exclusions and measured benchmark sources remain unchanged. FG3,
 FG5 and FG4 remain pending, and the Engram mirror is still unavailable.
+
+The test work-unit commit d2b446cf0ec2129f5c136ce1a51c489bb86cbcbc
+adds 22 fixed-date and native input/compiler controls. They assert exact
+leap-day token output and malformed-token rejection, enum and relation input
+shapes for create/update/MTI/non-editable fields, and preservation of an
+ordinary field across a forked schema pair. Existing behavior passed the
+focused tests immediately. Its clean real native-3.3 clone passed 4,882 full
+tests, seven skips, three warnings and 23 subtests at 96.84% combined
+coverage; all 344 benchmark contracts and 59 standalone Playground tests
+passed. Nine formerly missing branch outcomes are now covered, with no newly
+missing outcomes or denominator change. The pure branch gate still correctly
+fails at **3,626/3,864 = 93.8406%**; 46 more covered outcomes are needed for
+95.01% at this denominator. Both genuine nonempty runtime patch comparisons
+remain 30/30 changed lines, since package tree
+9d275e6fbf65529aab49d2f448ee5528d46df452 is unchanged. Ruff, format,
+configured/expanded/CLI typing, Bandit, both zero-issue docstring audits,
+Zensical and diff checks passed. This is a bounded FG2 partial, not FG2
+acceptance or authority to wire FG3. Raw exact-clone proof is under
+final-gates-fg2-native-boundaries/; task-only evidence after the tested commit
+does not itself claim another full run.
