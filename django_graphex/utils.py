@@ -26,12 +26,19 @@ from graphql import (
     GraphQLList,
     GraphQLNonNull,
     GraphQLObjectType,
+    GraphQLSchema,
     GraphQLUnionType,
     get_named_type,
     is_type_sub_type_of,
 )
 from graphql.execution.values import get_argument_values
-from graphql.language.ast import FieldNode, FragmentSpreadNode, InlineFragmentNode
+from graphql.language.ast import (
+    FieldNode,
+    FragmentDefinitionNode,
+    FragmentSpreadNode,
+    InlineFragmentNode,
+    NamedTypeNode,
+)
 from text_unidecode import unidecode
 
 from ._directives_eval import is_selection_skipped
@@ -41,12 +48,8 @@ from .settings import graphql_api_settings
 
 if TYPE_CHECKING:
     from django.db.models import Field
-    from graphql import GraphQLResolveInfo, GraphQLSchema, GraphQLType
-    from graphql.language.ast import (
-        FragmentDefinitionNode,
-        NamedTypeNode,
-        SelectionSetNode,
-    )
+    from graphql import GraphQLResolveInfo, GraphQLType
+    from graphql.language.ast import SelectionSetNode
 
 
 # ``django.contrib.contenttypes.fields`` imports the ``ContentType`` MODEL at
