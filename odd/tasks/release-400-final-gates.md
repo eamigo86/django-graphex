@@ -544,3 +544,16 @@ typing, Bandit, both zero-issue docstring audits, Zensical, diff check and all
 final-gates-fg2-declarations/. This task-only checkpoint follows the tested
 commit and does not claim a second full run. FG2 remains unchecked; FG3, FG5
 and FG4 have not started. The Engram mirror remains pending.
+
+### FG2 optional-extra placement and final boundary continuation
+
+A clean-base simulation that blocked only optional Channels imports exposed a
+test-placement defect in the declaration unit: its positive cached-stream
+control fails in the core test module with the documented subscriptions-extra
+ImportError, although 14 other core controls pass. The production lazy-import
+behavior is correct. Move that positive control to the existing subscription
+suite, retain the pre-import missing-stream guard in core, and prove the core
+module succeeds without Channels before adding the next supported field and
+extension-boundary tests. This is a cause-correct test contract RED, distinct
+from the still-failing pure-branch coverage objective at 3,656/3,864. No
+runtime/package source, coverage policy, or retained data changes are allowed.

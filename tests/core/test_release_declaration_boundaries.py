@@ -209,26 +209,6 @@ def test_subscription_type_without_stream_rejects_declaration() -> None:
         NoStream.subscription_type()
 
 
-def test_subscription_type_reuses_declared_stream_class() -> None:
-    """Create one cached subscription class for a valid model stream.
-
-    Repeated access must preserve class identity and stream configuration.
-    """
-
-    class CachedStream(DjangoModelType):
-        """Declare a stream for an actual model type."""
-
-        class Meta:
-            """Bind the subscription stream and model."""
-
-            model = BasicModel
-            stream = "release-declaration-basic"
-
-    first = CachedStream.subscription_type()
-    assert CachedStream.subscription_type() is first
-    assert first._meta.stream == "release-declaration-basic"
-
-
 def test_native_options_overrides_are_preserved() -> None:
     """Apply explicit native option values without freezing the object.
 
