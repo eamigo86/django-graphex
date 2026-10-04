@@ -50,7 +50,7 @@ branch requirement. Do not change library behavior merely to improve coverage.
   malformed/missing/zero-count and CLI tests. Integer/decimal exact comparison,
   never rounded XML rates. Demonstrate the accepted 92.70% baseline fails.
   Delegated direct: multi-file script/tests and preparation require a writer.
-- [ ] FG2 — Add behavior-focused optimizer/compiler/type tests until fresh
+- [x] FG2 — Add behavior-focused optimizer/compiler/type tests until fresh
   full-suite pure branch coverage is at least 95.01%, with margin where useful.
   Do not alter runtime merely to improve coverage or change denominator policy.
   Delegated direct:
@@ -62,8 +62,9 @@ branch requirement. Do not change library behavior merely to improve coverage.
   read-only premise probe; it is not coverage padding or a proven regression
   against a prior release. Delegated direct: runtime, tests and docs form one
   coherent bounded unit. Functional correction passed, but independent patch
-  coverage was 23/27 changed lines, below 95.01%; test-only boundary proof is
-  pending. No benchmark measurement in the correction unit.
+  coverage was initially 23/27 changed lines, below 95.01%; the later private
+  walker test boundary reached 30/30. No benchmark measurement was performed
+  in the correction unit.
 - [ ] FG3 — Wire the pure-branch checker into the existing coverage job, repair
   the 404 template, add a generated-site check to docs CI, and update contributor
   guidance and both prepared-release changelogs. Preserve the release graph.
@@ -595,3 +596,30 @@ change is authorized. Existing correct behavior may pass new tests at once;
 the observed pure-branch gate remains the coverage-objective RED. FG2 stays
 unchecked unless a fresh full XML reaches 95.01%; FG3, FG5 and FG4 remain
 pending. Rollback removes only this unit's tests and factual checkpoint.
+
+Test work unit dea9e9c33a5994aecde26fecb67b7e37b2e40fae covers the
+conservative interface-permission fallback with and without a built schema,
+including an unmounted registered implementor; positional native-root schema
+execution; an explicitly named argument; positional-only permission hook
+keywords; configured lookup deduplication and a non-text field; an omitted
+filter beside an active sibling; and cross-registry GFK union refusal. The
+first argument test used the wrong adapter and failed before it was corrected
+to the intended native argument API; this was test-fixture repair, not a
+production defect. Correct existing behavior passed new tests immediately;
+the prior exact pure-branch gate failure was the coverage-objective RED.
+
+The exact clean native-3.3 clone passed 4,925 full tests, seven skips, three
+warnings and 23 subtests, with **97.37% combined coverage**. Eleven formerly
+missing pure outcomes are covered, none lost, at unchanged denominator:
+**3,672/3,864 = 95.0311%**, so the exact pure gate now exits 0. Both genuine
+nonempty runtime patch comparisons remain 30/30 changed lines. All 344
+benchmark contracts passed without timing and all 59 standalone Playground
+tests passed. Ruff/check-only format, configured/expanded/CLI typing, Bandit,
+both zero-issue docstring audits, Zensical, diff check and all 129 protected
+identity checks passed. The package tree remains
+9d275e6fbf65529aab49d2f448ee5528d46df452. Raw exact-command streams,
+fresh XML and arc diff are under final-gates-fg2-permission-boundaries/.
+FG2 is locally checked; independent and hosted acceptance remain separate.
+FG3, FG5 and FG4 have not started. This task-only checkpoint follows the
+tested commit and does not claim a second full run. The Engram mirror remains
+pending.
