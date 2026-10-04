@@ -194,3 +194,36 @@ Only a factual task checkpoint follows this verified executable candidate;
 the final source freeze is the resulting commit, not the earlier test commit.
 The official-series child still needs independent exact-head acceptance and
 fresh hosted gates before OC2 measurement.
+
+## Current recovery checkpoint: quiet window required
+
+OC1 source freeze 01f82ab94c86a5f35918dec4ba51deee02a58ac9 passed bounded
+independent acceptance and its fresh hosted run 37171517182: all 15 validation
+jobs, actual PostgreSQL 17 and both Codecov checks. PR #244 merged only into
+integration as 266c6581a15f2aa6cdc4f41a71e8b5720e4bca26, with the identical
+tree. Integration push/tracker runs 37171809498 and 37171813788 also passed;
+tracker #212 remains draft and both Codecov checks passed. Publication jobs
+were skipped. Main and the existing release tag remain unchanged.
+
+The next delivery branch is codex/graphql-core-3.3-official-comparison-results,
+starting at 266c658. OC2's clean measurement clone is frozen at 01f82ab, not
+a later tracking or documentation commit. All four live interpreters, imported
+backends and complete installed freezes passed the pinned profile preflight.
+No package was installed or environment refreshed.
+
+OC2 remains open: no seed, timing request, raw batch or new result was created.
+Two initial aggregate CPU observations showed 63-78% idle. After a separate
+five-minute wait, three interval observations showed 67%, 67% and 66% idle,
+below the explicitly conservative pre-start heuristic of 90% per interval.
+The heuristic is not continuous host attestation or proof of individual-core
+starvation. No further polling, process termination or scheduling occurred.
+The new immutable series remains absent and all 82 protected objects matched.
+
+Preserved reports: official-comparison-oc2/report.md and
+official-comparison-oc2/preflight-v2-report.md under the existing external proof
+root. OC3 tables and OC5 final acceptance remain pending; no new 1x ratio or
+official measurement is claimed. Next: obtain a quiet window, refresh the
+pre-start observation, then execute the still-unstarted single authorized batch.
+This recovery edit is mechanical, factual documentation only; no new executable
+behavior or TDD RED is invented. Engram mirror remains pending under the host's
+unregistered-runtime restriction; RDD remains off.
