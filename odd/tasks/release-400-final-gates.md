@@ -65,7 +65,7 @@ branch requirement. Do not change library behavior merely to improve coverage.
   coverage was initially 23/27 changed lines, below 95.01%; the later private
   walker test boundary reached 30/30. No benchmark measurement was performed
   in the correction unit.
-- [ ] FG3 — Wire the pure-branch checker into the existing coverage job, repair
+- [x] FG3 — Wire the pure-branch checker into the existing coverage job, repair
   the 404 template, add a generated-site check to docs CI, and update contributor
   guidance and both prepared-release changelogs. Preserve the release graph.
   Delegated direct: workflow, template, helpers, tests and docs form one unit.
@@ -725,3 +725,20 @@ Raw proof is under final-gates-fg3-root-completion/. FG3 remains unchecked
 until targeted independent regression acceptance; FG5/FG4 remain pending.
 This task-only checkpoint does not claim a second full run. The Engram mirror
 remains pending.
+
+### FG5 final-source measurement checkpoint
+
+Independent targeted verification accepted the final FG3 deployment-root
+correction at 247e149 (see final-gates-fg3-root-targeted-acceptance/), so FG3
+is checked. FG5 now owns exactly one additive named-profile batch from a clean
+real clone of this checkpoint commit: fresh private 1,000/2,000-author seeds,
+three rotated repetitions across four existing whole-stack profiles, 24 raw
+dispatches, eight validated median artifacts in a new commit-named result
+series. Preserve the existing series and all retained databases/results.
+The user accepted existing background load; pre/post aggregate observations
+do not establish continuous quietness, thermal stability or a paired speedup.
+No local verification runs concurrently with timed requests. Actual result
+and documentation changes follow measured evidence in separate commits, with
+historical source attribution unchanged. FG5 remains unchecked until those
+outcomes and checks are observed; FG4 is separate. The Engram mirror remains
+pending.
