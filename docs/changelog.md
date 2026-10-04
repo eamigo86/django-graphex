@@ -16,6 +16,10 @@ All notable changes to this library are documented here. The format is based on
 
 ## 4.0.0 — 2026-10-03
 
+Release validation now checks the exact pure-branch coverage percentage in
+addition to combined and changed-line coverage. The documentation build checks
+generated local links and provides the 404 page's theme skip-link target.
+
 **Release prepared, not published.** The package and both editable project
 locks now name 4.0.0, with `graphql-core>=3.3.0,<3.4`. A tag, built wheel,
 hosted release-artifact verification, and publication remain separate gates.

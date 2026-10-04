@@ -623,3 +623,15 @@ FG2 is locally checked; independent and hosted acceptance remain separate.
 FG3, FG5 and FG4 have not started. This task-only checkpoint follows the
 tested commit and does not claim a second full run. The Engram mirror remains
 pending.
+
+### FG3 CI and generated-site gate
+
+FG3 is the active delegated-direct unit: wire the exact pure-branch checker
+after fresh coverage XML without replacing the combined or changed-line gates;
+repair the generated 404 skip target in a repository-owned theme override;
+and run a local-anchor checker after the documentation build. Add executable
+workflow, checker and 404 controls before implementation, retaining RED then
+GREEN evidence. Update contributor guidance and the prepared changelogs only
+for these gates. The 15-job validation graph, runtime package, coverage policy,
+pins and benchmark artifacts remain unchanged. Rollback is this unit's CI,
+template, checker, tests and documentation only. FG5 and FG4 remain pending.
