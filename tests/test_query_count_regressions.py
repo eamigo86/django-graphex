@@ -243,7 +243,10 @@ class NestedChildResolvedOnceTest(TestCase):
 
         assert result.ok, getattr(result, "errors", None)
         selects = _selects_on(captured, AliasWinComment)
-        assert len(selects) == 2, "\n".join(selects)
+        relation_checks = [sql for sql in selects if "NOT EXISTS" in sql.upper()]
+        assert len(relation_checks) == 1, "\n".join(selects)
+        resolver_selects = [sql for sql in selects if sql not in relation_checks]
+        assert len(resolver_selects) == 2, "\n".join(selects)
 
         self.comment.refresh_from_db()
         assert self.comment.text == "edited"

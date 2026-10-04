@@ -448,7 +448,8 @@ with transaction.atomic():
     transaction.set_rollback(True)
 
 statements = [query["sql"].split()[0] for query in captured.captured_queries]
-assert statements == ["SAVEPOINT", "INSERT", "PRAGMA", "RELEASE"], statements
+assert statements == ["SAVEPOINT", "INSERT", "SELECT", "RELEASE"], statements
+assert not any("FOREIGN_KEY_CHECK" in query["sql"].upper() for query in captured.captured_queries)
 actual = len(captured.captured_queries)
 expected = EXPECTED_SQL["graphex"]["create_comment"]
 assert actual == expected, (actual, expected)
