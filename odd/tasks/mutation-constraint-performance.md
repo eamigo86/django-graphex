@@ -485,3 +485,45 @@ MP3 tracking work-unit commit: 3400425f08fac89af14ceaf0a5568d1cdff094fc
 (docs(perf): record independent scoped-validation acceptance). This identity
 link changes only this feature document; the verified executable witness is
 still e04a1ab and the independently tested candidate is still 4972464.
+
+## Hosted security correction before dependency delivery
+
+The first hosted run for dependency PR #243 at 9846515 passed PostgreSQL 17
+and 14 of 15 validation jobs with both Codecov checks, but the lint/security
+job failed Bandit B608 at three dynamically assembled scoped-check statements
+in backend.py (old lines 102, 111 and 155). That run is a real failure, not a
+hosted pass or a reason to relax the security job. A fresh local configured
+Bandit command reproduced exactly those three findings before correction.
+
+The identifiers in those statements originate in Django model metadata and
+use connection.ops.quote_name; caller-owned row keys and diagnostic field
+names are passed as bound parameters. A new disposable-schema regression
+records pre-interpolation SQL and parameters for a SQL-looking owner key and
+SQL-keyword declared table names, verifies a valid mutation and scoped link,
+and confirms an invalid direct link is rejected without damaging unrelated
+rows or the outer connection. This behavioral control already passed before
+source annotations; the cause-correct RED is the actual configured Bandit
+scan. Exactly three local B608 annotations explain the identifier/parameter
+boundary, and Python AST equality confirms no runtime semantics changed.
+The configured local Bandit scan then passed with no issues. Final clean-clone
+native-3.3/full/quality/protection checks and fresh hosted delivery are still
+pending at this checkpoint. No previous report or dataset is reclassified.
+
+Security behavior commit 354391d68334a1bc1babf221e68f327cce1a7e42
+passed the exact configured Bandit scan with zero issues in a clean real
+native-3.3 clone. That source's unchanged full suite passed 4,743 tests,
+seven skips, three warnings and 23 subtests at 96.26% configured combined
+coverage (95.01% floor). The 28-test FK/security focal, 331 benchmark tests
+and all 59 standalone Playground tests passed. Whole Ruff, 79/82-file mypy,
+both zero-issue docstring gates, zero-issue documentation build and diff check
+passed. Diff-cover against base 7eb3935 found 70/71 changed executable
+runtime lines covered (98.6%). The correction is annotation-only and has the
+same Python AST as 9846515, so it introduces no new runtime branch arcs;
+the earlier independent 27/28 changed-arc proof remains for those unchanged
+branches, not a newly measured arc-only percentage. All 82 retained protected
+objects match prior SHA, size, device, inode, mode and link count. The first
+test fixture attempted a direct dynamic-model M2M mutation whose registry
+relation was unavailable; that setup failure is retained, not called a
+security RED. The corrected SQL-binding control passed before annotation.
+Fresh hosted lint/matrix checks at this new head remain pending. Actual
+PostgreSQL17 passed on the earlier failed hosted run, not yet this candidate.

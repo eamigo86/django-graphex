@@ -98,8 +98,9 @@ def _check_sqlite_written_relations(
         for field in fields:
             child_column = quote(field.column)
             target = field.target_field
+            # Django-declared identifiers are quoted; diagnostic names are bound.
             checks.append(
-                f"WHEN child.{child_column} IS NOT NULL AND NOT EXISTS "
+                f"WHEN child.{child_column} IS NOT NULL AND NOT EXISTS "  # nosec B608
                 f"(SELECT 1 FROM {quote(target.model._meta.db_table)} AS parent "
                 f"WHERE parent.{quote(target.column)} = child.{child_column}) "
                 "THEN %s"
@@ -107,8 +108,9 @@ def _check_sqlite_written_relations(
             parameters.append(field.name)
         owner_pk = owner._meta.pk
         with db.cursor() as cursor:
+            # CASE fragments contain only quoted model metadata and placeholders.
             cursor.execute(
-                f"SELECT CASE {' '.join(checks)} ELSE NULL END "
+                f"SELECT CASE {' '.join(checks)} ELSE NULL END "  # nosec B608
                 f"FROM {quote(owner._meta.db_table)} AS child "
                 f"WHERE child.{quote(owner_pk.column)} = %s",
                 [
@@ -151,8 +153,9 @@ def _check_sqlite_written_relations(
                     continue
                 target = field.target_field
                 child_column = quote(field.column)
+                # Owner keys stay in parameters; table/column names are quoted.
                 cursor.execute(
-                    f"SELECT 1 FROM {child_table} AS child "
+                    f"SELECT 1 FROM {child_table} AS child "  # nosec B608
                     f"WHERE {owner_filter} "
                     f"AND child.{child_column} IS NOT NULL "
                     f"AND NOT EXISTS (SELECT 1 FROM {quote(target.model._meta.db_table)} "
