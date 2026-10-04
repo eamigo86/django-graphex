@@ -50,7 +50,11 @@ def test_named_author_fragment_distinguishes_computed_and_stored_leaves(
 
 
 def test_computed_leaf_and_annotation_keep_annotated_full_load_plan() -> None:
-    """Retain the child aggregate while avoiding an unsafe partial row load."""
+    """Retain the aggregate while avoiding an unsafe partial row load.
+
+    A computed leaf needs its full model row, but the selected aggregate must
+    still be attached to the child query.
+    """
     document = parse("{ post { coAuthors { displayName postCount } } }")
     selection = (
         document.definitions[0]
@@ -73,7 +77,11 @@ def test_computed_leaf_and_annotation_keep_annotated_full_load_plan() -> None:
 
 
 def test_reverse_fk_selected_owner_column_occurs_once() -> None:
-    """Preserve one FK-back key when the child also selects its owner."""
+    """Preserve one FK-back key when the child also selects its owner.
+
+    The narrowed child query needs both its selected fields and one stable
+    parent-link column for Django's reverse relation matching.
+    """
     document = parse("{ author { posts { title author { id } } } }")
     selection = (
         document.definitions[0]
@@ -96,7 +104,11 @@ def test_reverse_fk_selected_owner_column_occurs_once() -> None:
 
 
 def test_registered_wrapper_descends_into_promoted_relation() -> None:
-    """Resolve a wrapper's row type before planning its annotated FK."""
+    """Resolve a wrapper's row type before planning its annotated FK.
+
+    The annotation plan belongs to the inner row relation, not to the
+    transparent list wrapper itself.
+    """
     document = parse("{ allPosts { results { author { name postCount } } } }")
     selection = document.definitions[0].selection_set.selections[0].selection_set
     wrapper_type = _PostListTypePromo._meta.graphql_output_type
