@@ -1,14 +1,20 @@
-# Preparing for GraphQL-core 3.3
+# Upgrading to django-graphex 4.0
 
-## 4.0.0 release prepared
+## Version requirements
 
-The current source checkout and its editable project locks name 4.0.0 and
-require `graphql-core>=3.3.0,<3.4`. This is a local release-preparation
-state: 4.0.0 is not published, and no wheel, tag, or package release is
-attested here. Install and test the checkout explicitly when evaluating
-it; ordinary package-manager commands may still fetch the published 3.1.1
-line and its older GraphQL-core requirement. Do not infer compatibility from
-an installed 3.1.1 distribution's metadata.
+django-graphex 4.0.0 requires `graphql-core>=3.3.0,<3.4`. The historical
+3.1.1 release requires `graphql-core>=3.2.13,<3.3`; its metadata does not
+establish compatibility with the 3.3 API. Check custom integrations below
+before upgrading, then select the version explicitly:
+
+```bash
+uv add "django-graphex==4.0.0"
+# or
+pip install "django-graphex==4.0.0"
+```
+
+The Playground installs the parent checkout in editable mode, so it tests
+that source rather than an independently installed wheel.
 
 ### Check custom integration code
 

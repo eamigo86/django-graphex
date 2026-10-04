@@ -1,8 +1,11 @@
-"""Contracts for the prepared, unpublished 4.0.0 migration release."""
+"""Contracts for the 4.0.0 migration release and historical provenance."""
 
 import json
+import re
 import tomllib
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "4.0.0"
@@ -52,8 +55,8 @@ def test_prepared_version_agrees_with_both_local_locks() -> None:
         assert package["source"] == {"editable": source}
 
 
-def test_400_notes_are_dated_but_explicitly_not_published() -> None:
-    """Close migration notes without treating preparation as publication.
+def test_400_notes_are_dated_and_describe_version_requirements() -> None:
+    """Keep dated migration notes independent of publication status.
 
     The two earlier dated release sections remain intact below the new notes.
     """
@@ -68,7 +71,7 @@ def test_400_notes_are_dated_but_explicitly_not_published() -> None:
             "## 3.1.1 — 2026-10-01", maxsplit=1
         )[0]
         for term in (
-            "Release prepared, not published",
+            "4.0.0 requires",
             "graphql-core>=3.3.0,<3.4",
             "Executor",
             "immutable AST",
@@ -83,22 +86,68 @@ def test_400_notes_are_dated_but_explicitly_not_published() -> None:
         assert "## 3.1.0 — 2026-09-03" in notes or path.name == "CHANGELOG.md"
 
 
-def test_release_guidance_names_prepared_checkout_not_published_wheel() -> None:
-    """Keep the guide, root README and Playground on the prepared status.
+def test_release_guidance_names_versioned_install_and_migration() -> None:
+    """Explain the version boundary and an explicit upgrade path.
 
-    Ordinary package-manager installation is not proof of an unpublished wheel.
+    Dependency requirements do not assert that a distribution was published.
     """
     guide = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     playground = (ROOT / "examples/playground/README.md").read_text(encoding="utf-8")
     benchmark = (ROOT / "benchmarks/README.md").read_text(encoding="utf-8")
-    assert "4.0.0 release prepared" in guide
-    assert "not published" in guide
-    assert "4.0.0 prepared checkout" in readme
-    assert "prepared 4.0.0 checkout" in playground
+    assert "# Upgrading to django-graphex 4.0" in guide
+    assert "## Version requirements" in guide
+    for text in (guide, readme):
+        assert "graphql-core>=3.3.0,<3.4" in text
+        assert "graphql-core>=3.2.13,<3.3" in text
+        assert 'pip install "django-graphex==4.0.0"' in text
+    assert "4.0.0 checkout" in playground
     assert "graphql-core 3.3" in playground
     assert "not yet used by the website" not in benchmark
     assert "docs/why.md#current-core33-comparison" in benchmark
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    (
+        "README.md",
+        "docs/UPGRADE-4.0.md",
+        "CHANGELOG.md",
+        "docs/changelog.md",
+        "examples/playground/README.md",
+        "docs/installation.md",
+        "docs/usage/subscriptions.md",
+        "docs/why.md",
+    ),
+)
+def test_current_release_copy_does_not_expire_after_publication(
+    relative_path: str,
+) -> None:
+    """Reject obsolete current status without rewriting measurement history.
+
+    Args:
+        relative_path: Public documentation carrying current version guidance.
+    """
+    text = (ROOT / relative_path).read_text(encoding="utf-8")
+    if relative_path in ("CHANGELOG.md", "docs/changelog.md"):
+        text = text.split("## 3.1.1 — 2026-10-01", maxsplit=1)[0]
+    elif relative_path == "docs/why.md":
+        text = text.split("## Current core33 comparison", maxsplit=1)[1].split(
+            "### Historical core33 3.1.1-source comparison", maxsplit=1
+        )[0]
+    text = " ".join(text.replace("**", "").split()).lower()
+    for obsolete in (
+        "release prepared",
+        "prepared checkout",
+        "prepared 4.0.0 checkout",
+        "prepared 4.0.0 source checkout",
+        "preparing for graphql-core 3.3",
+        "no 4.0.0 package release is claimed",
+        "has not been published",
+        "not yet published",
+    ):
+        assert obsolete not in text
+    assert re.search(r"4\.0\.0 (?:distribution |is )?not published", text) is None
 
 
 def test_measured_core33_bundle_retains_original_311_source() -> None:
