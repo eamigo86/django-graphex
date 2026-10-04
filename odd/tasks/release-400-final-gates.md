@@ -225,3 +225,33 @@ Evidence and exact raw logs are under final-gates-fg2/ in the retained
 external proof root; before/after protected snapshots of the same 129
 paths match exactly, including inode and database hash/stat identities.
 The historical older-OC2 inode distinction remains separate.
+
+### FG2 native relation and compiler continuation
+
+Work unit ba95c1f3b56b70e4bfbcc911768bb03216e2b31b adds 29 executable
+behavioral cases across native output scalar/choice handling, forward and
+reverse relation projection, reverse one-to-one resolution, permission labels,
+resolver binding, and compiled Django output arguments. They check concrete
+GraphQL field shapes, selected containers, values, and absent-relation behavior;
+existing correct behavior passed without a fabricated runtime RED. An initial
+test call omitted the documented third compiler argument and failed; its log
+is retained separately from the corrected focal run.
+
+The normalized exact-commit clean-clone run passed 4,818 tests, seven skips,
+three warnings and 23 subtests with 96.60% combined coverage. The exact
+pure-branch gate still correctly fails at **3,594/3,850 = 93.3506%**: 12 new
+arcs, no new missing arcs and an unchanged denominator. Exactly 64 additional
+covered arcs are needed for the 95.01% floor. All 344 benchmark contracts,
+59 standalone Playground tests, 88 selected compiler/relation tests, Ruff,
+check-only formatting, configured/expanded/CLI mypy, both zero-issue docstring
+audits, Bandit and the zero-issue documentation build passed. The 129 protected
+asset records matched byte and stat identity before/after this unit; package
+source tree 125843bf27db5ce3af004e52e429c03a26054eeb and all public
+documentation bytes remain unchanged. Raw commands and arc identities are in
+the external final-gates-fg2-types/ proof directory.
+
+FG2 remains unchecked, with FG3 and FG4 pending. The next coherent behavior
+test cluster should target the larger remaining optimizer/type gaps rather than
+claiming that the current compiler cases meet the release floor. Rolling back
+this work unit removes its three test-file changes only; this factual task
+checkpoint is not a fresh full-suite execution.
