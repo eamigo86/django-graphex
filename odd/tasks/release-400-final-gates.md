@@ -55,7 +55,7 @@ branch requirement. Do not change library behavior merely to improve coverage.
   Do not alter runtime merely to improve coverage or change denominator policy.
   Delegated direct:
   multiple non-trivial test modules and fresh native full-suite execution.
-- [ ] FG2-R — Correct the independently observed valid-fragment annotation
+- [x] FG2-R — Correct the independently observed valid-fragment annotation
   failure in the optimizer, with strict cause-correct RED/GREEN, real GraphQL
   result and SQL regressions, behavioral documentation and both prepared-release
   changelogs. The user explicitly authorized this runtime correction after the
@@ -378,3 +378,40 @@ RED and then actual contract GREEN are required before rerunning the unchanged
 public regressions. The current package tree and both coverage failures above
 remain historical facts until a new exact candidate is measured; FG5 still
 waits for final runtime stabilization. No timing occurs in this unit.
+
+### FG2-R private walker local acceptance
+
+The new direct AST contract failed at collection before extraction because
+the private iterator did not exist (red-01 exit 2); it was an internal seam
+RED, not a second public behavior bug. The module-level private iterator now
+accepts explicit selection, current schema object type, schema, fragment map
+and bound directive values, and the three existing promotion call levels reuse
+it. Direct tests cover applicable typed/untyped, interface, alias, missing,
+repeated, unknown-type and directive selections, plus conservative None and
+cyclic unvalidated-AST boundaries. No cyclic AST is described as a valid
+GraphQL request. The original public fragment regressions remain unchanged.
+
+Behavior/tests commit dab451964f7c62dcac3f3a0fd4a122156b66e35e first
+passed 140 focused cases. Its native full suite passed, but diff-cover exposed
+two newly added type-only import lines as uncovered (30/32), so that candidate
+is not claimed as patch PASS. The narrow type-import correction commit
+4776fa50f2bbda83f8436cdd00f24087616ffce2 (tree
+603c0f41c0d204aad2d5b7847c9534c068e0e39e; package tree
+9d275e6fbf65529aab49d2f448ee5528d46df452) is the exact tested source.
+Its clean real native-3.3 clone passed 140 focused and 4,860 full tests,
+seven skips, three warnings and 23 subtests, with 96.74% combined coverage.
+Both genuine nonempty diff-cover comparisons, against e220800 and integration
+3415e9, passed **30/30 changed runtime lines** without coverage exclusions.
+All 344 benchmark contracts, 59 standalone Playground tests, Ruff/check-only
+format, configured/expanded/CLI mypy, Bandit, both zero-issue docstring gates,
+clean Zensical build and diff check passed. Protected 129-item byte/stat
+identities matched; old canonical data and retained databases were untouched.
+Raw chronology and exact commands are under final-gates-fragment-walker/.
+
+FG2-R is locally complete, subject to parent independent verification. The
+distinct FG2 pure-branch floor remains open: **3,617/3,864 = 93.6077%**,
+below 95.01%, although five covered outcomes were gained with no denominator
+change. FG3, FG5 final-source comparison and FG4 remain pending. The package
+hash changed intentionally under the authorized refactor; older official
+benchmark series retain their prior measured-source labels. This factual
+checkpoint is not a second full-suite run or hosted gate.
