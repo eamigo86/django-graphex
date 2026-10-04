@@ -333,3 +333,34 @@ passing gate. Missing lines are the untyped inline condition, unavailable
 current type, absent selection set and active cyclic spread guards. The full
 partial report is under final-gates-fragment-independent/. FG2-R remains open
 for test-only boundary coverage; FG2's global pure floor also remains open.
+
+### FG2 test-only boundary continuation
+
+Test work unit a95549238c9a0ae657c38bdd07b09b067892e3a8 (tree
+5284dea98392c453ad6e3303b3bf95b3873f571d) adds 16 meaningful cases:
+valid nested named/typed/untyped fragments with distinct real author counts,
+bound directives, selected wrapper count, and explicit optimizer column-plan
+contracts for computed versus stored leaves, annotations, reverse-FK owner
+keys and the registered list wrapper. A later test-docstring-only correction
+is 0cd0b58671ce0c2514e2aa14ae76ec893d92a7b6. The runtime package tree
+remains f682c637f25ecaaaaf19b287617d3248f50ef391.
+
+The exact 0cd0b58 clean-clone run passed 122 selected tests, 4,842 full tests
+at 96.68% combined coverage, all 344 benchmark contracts, 59 standalone
+Playground tests and all Ruff, type, Bandit, zero-docstring and documentation
+gates. The pure checker still correctly fails: **3,612/3,864 = 93.4783%**;
+60 further covered outcomes are required at this denominator. The nonempty,
+source-path-bound patch result improved from 23/27 to **24/27 = 88.89%**,
+still below 95.01%, against both e220800 and integration 3415e9. Missing
+changed runtime statements are the unavailable-current-type, absent-selection
+and active-cycle guards. An unvalidated cyclic GraphQL AST returned an error
+before reaching the new promotion walker; this did not prove that guard or
+become a valid-query success test. No runtime source, coverage policy or
+canonical artifact changed. All 129 protected path identities matched.
+
+FG2-R and FG2 remain unchecked. This bounded test unit did not establish the
+two coverage floors. The local report and immutable attempts are under
+final-gates-fg2-boundaries/. A further authorized decision is needed for
+remaining guard-line proof if those states cannot be reached through supported
+optimizer inputs; do not delete guards, add exclusions or count an empty
+diff-cover denominator as PASS. FG3/FG5/FG4 remain pending.
