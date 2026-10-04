@@ -217,9 +217,10 @@ occurs. The publisher still refuses an occupied public target.
 
 The [current comparison](../docs/why.md#current-core33-comparison) renders
 all five request p50/SQL cells for both seed sizes directly from the eight
-committed artifacts in `core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`. Its older 3.1.1-source core33 and
-3.1.0 sections remain historical; the new series measures the prepared 4.0.0
-checkout, not a published 4.0.0 wheel.
+committed artifacts in `core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`. Its earlier
+`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`, 3.1.1-source core33 and 3.1.0 series remain historical. The
+current series measures prepared 4.0.0 source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`, not a published
+wheel.
 
 The `replay` mode instead requires `--profile core33 --events`,
 `--raw-manifest`, `--batch-result`, and `--results-root`. It reconstructs the
@@ -250,15 +251,15 @@ prepared 4.0.0 comparison should use
 `core33-4.0.0-<full-measurement-commit>` after the measuring source is frozen,
 not a mutable `latest` pointer. For example, append
 `--series core33-4.0.0-<full-measurement-commit>` to either command above.
-The official prepared 4.0.0 SQLite result is already installed at
-`results/core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/`. Its eight JSON files were generated from measuring
-source `01f82ab94c86a5f35918dec4ba51deee02a58ac9` and committed later at
-`d4ef486af0e283c49a1c22a5c8fee92d51e8b42c`; publication identity is not
-measurement identity. The three-run per-statistic medians include create-comment
-GraphEx/Ariadne p50 ratios of 0.57× at 50,000 comments and 0.59× at
-100,000. Whole-stack graphql-core versions differ, and accepted background
-load was not proven stable through the run. Do not use the old 3.1.1-source
-result as a paired baseline or relabel this SQLite result as PostgreSQL timing.
+The current prepared 4.0.0 SQLite result is installed at
+`results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/`. Its eight JSON files were generated from measuring
+source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` and committed later at `58146dced3e62924a4b2aaae03ccd596bfccc80e`; publication identity is
+not measurement identity. The three-run per-statistic medians include
+create-comment GraphEx/Ariadne p50 ratios of 0.57× at 50,000 comments and
+0.51× at 100,000. Whole-stack graphql-core versions differ, and accepted
+background load was not proven stable throughout the run. The earlier
+`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/` remains available; neither series is a paired
+baseline or PostgreSQL timing result.
 
 The older `results/core33/` bundle stays intact. Selecting a fresh name does
 not strengthen the existing trusted-parent or pathname-substitution limits.
