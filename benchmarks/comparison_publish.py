@@ -41,6 +41,7 @@ FILENAMES = {
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 PORTABLE_TEXT = re.compile(r"[A-Za-z0-9_.+-]{1,120}\Z")
+SERIES_NAME = re.compile(r"core33(?:-[A-Za-z0-9][A-Za-z0-9._-]{0,119})?\Z")
 
 
 def _hex(value: object, pattern: re.Pattern[str]) -> bool:
@@ -107,18 +108,21 @@ def _portable_versions(value: object) -> dict[str, str]:
     return dict(value)
 
 
-def _check_target(results_root: Path) -> Path:
-    """Require an external caller-selected results parent and absent core33 name.
+def _check_target(results_root: Path, series: str = "core33") -> Path:
+    """Require an external results parent and one absent core33 series name.
 
     Args:
         results_root: Existing result directory; never created here.
+        series: Single portable child name; defaults to the historical target.
 
     Returns:
-        Still-absent core33 destination.
+        Still-absent selected destination.
 
     Raises:
         ValueError: If the parent is linked, relative, or occupied.
     """
+    if type(series) is not str or SERIES_NAME.fullmatch(series) is None:
+        raise ValueError("core33 series needs one safe child name")
     if (
         not results_root.is_absolute()
         or results_root != results_root.resolve()
@@ -127,7 +131,7 @@ def _check_target(results_root: Path) -> Path:
         or results_root.name != "results"
     ):
         raise ValueError("an existing unlinked absolute results parent is required")
-    target = results_root / "core33"
+    target = results_root / series
     try:
         target.lstat()
     except FileNotFoundError:
@@ -391,7 +395,10 @@ def _check_stage_identity(stage: Path, descriptor: int) -> None:
 
 
 def publish_core33(
-    batch: BatchResult, receipts: Sequence[DispatchReceipt], results_root: Path
+    batch: BatchResult,
+    receipts: Sequence[DispatchReceipt],
+    results_root: Path,
+    series: str = "core33",
 ) -> Path:
     """Atomically install eight portable core33 medians from retained raw bytes.
 
@@ -408,6 +415,7 @@ def publish_core33(
         batch: Complete unpublished batch with eight recorded median groups.
         receipts: Twenty-four numbered raw-path, plan, and byte-digest records.
         results_root: Existing results directory for a new core33 child.
+        series: Fresh single-directory series name; defaults to core33.
 
     Returns:
         Newly installed core33 directory containing exactly eight files.
@@ -416,7 +424,7 @@ def publish_core33(
         ValueError: If provenance, raw bytes, medians, portability, or target fails.
         OSError: If staging or atomic no-clobber installation fails.
     """
-    target = _check_target(results_root)
+    target = _check_target(results_root, series)
     groups = _read_receipts(batch, receipts)
     artifacts = _artifacts(batch, groups)
     stage = Path(tempfile.mkdtemp(prefix=".core33-stage-", dir=results_root))
@@ -435,7 +443,7 @@ def publish_core33(
             raise ValueError(f"raw bytes changed; staged bundle retained at {stage}")
         _check_stage_identity(stage, descriptor)
         _check_stage(stage, artifacts)
-        _check_target(results_root)
+        _check_target(results_root, series)
         _rename_noreplace(stage, target)
     finally:
         os.close(descriptor)

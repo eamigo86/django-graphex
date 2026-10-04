@@ -700,6 +700,185 @@ def test_run_failure_preserves_private_partial_and_never_publishes(
     assert not (results / "core33").exists()
 
 
+def test_new_series_refuses_occupied_target_before_seed_planning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject an occupied selected series without reaching costly live work.
+
+    Args:
+        tmp_path: Test-owned destinations.
+        monkeypatch: Guard against any seed planning.
+    """
+    from benchmarks import run_publish_core33 as command
+
+    root, seeds, output, results = _private_directories(tmp_path)
+    (results / "core33").mkdir()
+    occupied = results / ("core33-4.0.0-" + "a" * 40)
+    occupied.write_bytes(b"foreign")
+    monkeypatch.setattr(
+        command, "prepare_seed_plan", lambda *args: pytest.fail("planned occupied run")
+    )
+    with pytest.raises(ValueError, match="occupied"):
+        run_publication(
+            "core33",
+            (1000, 2000),
+            3,
+            root,
+            seeds,
+            output,
+            results,
+            series=occupied.name,
+        )
+    assert occupied.read_bytes() == b"foreign"
+    assert not any(seeds.iterdir())
+    assert not any(output.iterdir())
+
+
+def test_replay_checks_selected_series_before_reading_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An occupied replay target cannot read private evidence or stage files.
+
+    Args:
+        tmp_path: Test-owned results directory.
+        monkeypatch: Guard against private evidence reads.
+    """
+    from benchmarks import run_publish_core33 as command
+
+    results = tmp_path / "results"
+    results.mkdir()
+    occupied = results / ("core33-4.0.0-" + "a" * 40)
+    occupied.symlink_to(tmp_path, target_is_directory=True)
+    monkeypatch.setattr(
+        command, "load_replay", lambda *args: pytest.fail("read occupied replay")
+    )
+    with pytest.raises(ValueError, match="occupied"):
+        replay_publication(
+            "core33",
+            tmp_path / "events",
+            tmp_path / "manifest",
+            tmp_path / "batch",
+            results,
+            series=occupied.name,
+        )
+    assert occupied.is_symlink()
+
+
+def test_new_series_reaches_both_explicit_modes_without_live_measurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Forward the selected child through run and replay without a legacy fallback.
+
+    Args:
+        tmp_path: Test-owned private and public parents.
+        monkeypatch: Replaces work and evidence with synthetic records.
+    """
+    from benchmarks import run_publish_core33 as command
+
+    root, seeds, output, results = _private_directories(tmp_path)
+    series = "core33-4.0.0-" + "a" * 40
+    (results / "core33").mkdir()
+    batch = BatchResult((), (), ())
+    seen: list[str] = []
+    monkeypatch.setattr(command, "prepare_seed_plan", lambda p, v, d, a: a)
+    monkeypatch.setattr(command, "create_private_seed", lambda a, v: a)
+    monkeypatch.setattr(comparison_batch, "run_batch", lambda *args: batch)
+    monkeypatch.setattr(command, "_write_evidence", lambda *args: None)
+    monkeypatch.setattr(command, "load_replay", lambda *args: (batch, ()))
+
+    def publish(
+        result: BatchResult, receipts: tuple[()], parent: Path, *, series: str
+    ) -> Path:
+        """Record the requested child without installing synthetic artifacts.
+
+        Args:
+            result: Synthetic complete batch.
+            receipts: Synthetic dispatch receipts.
+            parent: Existing public parent.
+            series: Requested child name.
+
+        Returns:
+            Selected destination path.
+        """
+        assert result is batch and parent == results
+        seen.append(series)
+        return parent / series
+
+    monkeypatch.setattr(comparison_publish, "publish_core33", publish)
+    assert (
+        run_publication(
+            "core33", (1000, 2000), 3, root, seeds, output, results, series=series
+        )
+        == results / series
+    )
+    assert (
+        replay_publication(
+            "core33",
+            tmp_path / "events",
+            tmp_path / "manifest",
+            tmp_path / "batch",
+            results,
+            series=series,
+        )
+        == results / series
+    )
+    assert seen == [series, series]
+    assert not (results / series).exists()
+
+
+def test_parser_accepts_explicit_series_in_run_and_replay() -> None:
+    """Expose the same optional series flag in both command modes.
+
+    Raises:
+        AssertionError: If one parser drops or rewrites the selected series.
+    """
+    from benchmarks.run_publish_core33 import make_parser
+
+    parser = make_parser()
+    for mode, extra in (
+        (
+            "run",
+            [
+                "--authors",
+                "1000",
+                "2000",
+                "--runs",
+                "3",
+                "--venv-root",
+                "/private/envs",
+                "--seed-parent",
+                "/private/seeds",
+                "--output-parent",
+                "/private/raws",
+            ],
+        ),
+        (
+            "replay",
+            [
+                "--events",
+                "/private/events",
+                "--raw-manifest",
+                "/private/manifest",
+                "--batch-result",
+                "/private/batch",
+            ],
+        ),
+    ):
+        args = parser.parse_args(
+            [
+                mode,
+                "--profile",
+                "core33",
+                "--results-root",
+                "/private/results",
+                "--series",
+                "core33-4.0.0-" + "a" * 40,
+                *extra,
+            ]
+        )
+        assert args.series == "core33-4.0.0-" + "a" * 40
+
+
 def test_failed_batch_retains_raw_and_does_not_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -213,6 +213,55 @@ def test_publisher_installs_exact_portable_eight_file_bundle(tmp_path: Path) -> 
             assert private not in content
 
 
+def test_publisher_adds_fresh_series_without_replacing_historical_bundle(
+    tmp_path: Path,
+) -> None:
+    """Install a separate series while preserving the occupied legacy target.
+
+    Args:
+        tmp_path: Test-owned raw and results directory.
+    """
+    batch, receipts, parent = _fixture(tmp_path)
+    historical = parent / "core33"
+    historical.mkdir()
+    marker = historical / "graphex.json"
+    marker.write_bytes(b"historical")
+
+    target = publish_core33(batch, receipts, parent, series="core33-4.0.0-" + "a" * 40)
+
+    assert target.name == "core33-4.0.0-" + "a" * 40
+    assert {path.name for path in target.iterdir()} == PUBLIC_NAMES
+    assert marker.read_bytes() == b"historical"
+
+
+@pytest.mark.parametrize(
+    "series",
+    (
+        "",
+        ".",
+        "..",
+        "../escape",
+        "core33/escape",
+        "/tmp/escape",
+        " core33",
+        "core33\\escape",
+    ),
+)
+def test_publisher_rejects_unsafe_series_before_staging(
+    tmp_path: Path, series: str
+) -> None:
+    """Reject names that could escape or ambiguously name the public child.
+
+    Args:
+        tmp_path: Test-owned fixture directory.
+        series: Unsafe selected series name.
+    """
+    batch, receipts, parent = _fixture(tmp_path)
+    with pytest.raises(ValueError):
+        publish_core33(batch, receipts, parent, series=series)
+    assert list(parent.iterdir()) == []
+
+
 @pytest.mark.parametrize(
     "case",
     (

@@ -36,9 +36,13 @@ new validated median artifacts only.
   response, SQL, rollback-isolation and provenance contracts. Record versions
   and the actual measuring source, not a later documentation/merge commit.
 - Existing whole-stack pins stay fixed. Root environment remains unchanged.
-  Prefer verified retained isolated stacks; any necessary new environments
-  must be separate and pinned. No local distribution build; use GitHub's
-  audited artifact if a current installed GraphEx distribution is needed.
+  Reuse the four receipt-named isolated core33 stacks under
+  runtime-four-profile-prep-a37e/envs. Their freeze sidecars match the committed
+  pins. The runner imports the selected clean GraphEx source and derives its
+  version from pyproject.toml; this profile deliberately has no installed
+  GraphEx distribution. No package build, reinstall or wheel substitution is
+  needed or authorized. A wheel would alter the verified freeze and fail this
+  profile's equality contract.
 - Run timing on the otherwise idle machine without concurrent local tests or
   builds. Report observed quietness limitations, never invent continuous proof.
 - Use the existing PostgreSQL 17 CI job for actual database proof. Do not probe
@@ -109,3 +113,24 @@ measurement, PostgreSQL execution or fresh hosted success is claimed yet.
 
 Next: prepare the dependency PR and OC1 with strict TDD, then freeze the actual
 measurement candidate and verify its isolated installed stacks before timing.
+
+Initial feature tracking commit: d64d90bc4bbf2f8996295ad24083f50be954f7a7.
+OC1 decision: thread an explicit validated single-directory series through the
+existing run, replay and publisher APIs, retaining the core33 profile and its
+legacy default for compatibility. Reject unsafe or occupied targets before an
+expensive run. The new official invocation selects
+core33-4.0.0-<actual full measurement commit>, a fresh immutable series; no
+historical output, constraint or installed environment is modified.
+
+OC1 local implementation uses an optional safe single-child series on the
+publisher, both command modes, and both Python entry points. The original
+core33 default remains compatible. Fresh publisher and command regressions
+were observed RED on the absent parameter, then the focused suite reached
+GREEN (84 passed). The full native-3.3, documentation, and independent gates
+are still pending at this checkpoint; OC2 must not start from focal proof.
+
+The dependency PR #243 is open and draft. Its first hosted run established an
+actual PostgreSQL 17 success but failed lint/security on three Bandit B608
+findings in the preceding performance change. That hosted run is not a pass;
+the separate dependency correction and fresh hosted checks are pending before
+official measurement. No performance source or Bandit policy is changed by OC1.
