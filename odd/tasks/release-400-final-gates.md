@@ -755,3 +755,30 @@ The aggregate CPU observations do not prove stable background load. The
 current public table and documentation still describe the earlier 01f82
 series; updating them from these JSON files and independent arithmetic
 acceptance remain pending. FG5 therefore remains unchecked.
+
+The artifact work unit 58146dced3e62924a4b2aaae03ccd596bfccc80e
+published eight portable JSON files locally without changing runtime code.
+The documentation and executable parity contract at
+990c0eccabf90f7b678151f65d345ece6e8a33e0 derive the current table
+and both create-comment ratios from those files, link the artifact commit
+separately from measuring source bf6e1ed, and retain the 01f82 series as
+historical. The documentation contract first failed against the stale public
+pointer and table, then passed all six tests after the update. This is local
+repository publication only, not a hosted release or remote publication.
+
+The exact clean native-3.3 clone of 990c0ec passed 4,936 full tests with seven
+skips, three warnings, 23 subtests and 97.37% combined coverage. Pure branches
+were 3,672/3,864 = 95.0311%; both nonempty runtime patch comparisons covered
+30/30 changed lines. All 344 benchmark contracts, 59 standalone Playground
+tests, Ruff/check-only format, configured and expanded mypy, CLI mypy,
+Bandit, both zero-issue docstring gates, Zensical's clean build and all 42
+site-page local-link checks passed. The original 129 protected identities and
+new eight artifact/two-seed SHA-256 values remained unchanged. The measured
+SQLite create-comment GraphEx/Ariadne p50 ratios were 0.57x (about 43% lower)
+at 50,000 comments and 0.51x (about 49% lower) at 100,000; these are scoped
+whole-stack observations with accepted background load, not a guarantee.
+Full raw proof is under final-gates-fg5-official-final-source/. Independent
+arithmetic and provenance acceptance is pending, so FG5 remains unchecked;
+FG4 and hosted/main/tag/publication approval are separate. This task-only
+checkpoint follows tested executable/documentation bytes and does not claim
+another full run or CI for its own commit. The Engram mirror remains pending.
