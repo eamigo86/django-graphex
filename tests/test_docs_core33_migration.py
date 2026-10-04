@@ -5,7 +5,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RESULTS = ROOT / "benchmarks/results/core33"
+SERIES = "core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9"
+RESULTS = ROOT / "benchmarks/results" / SERIES
 LIBRARIES = ("graphex", "graphene", "strawberry", "ariadne")
 OPERATIONS = ("flat_list", "nested", "single", "filtered", "create_comment")
 
@@ -66,7 +67,7 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
     """
     page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
     current = page.split("## Current core33 comparison", maxsplit=1)[1].split(
-        "### Historical 3.1.0 comparison", maxsplit=1
+        "### Historical core33 3.1.1-source comparison", maxsplit=1
     )[0]
     current = " ".join(current.replace("**", "").split())
     result = _load_result("graphex", 1000)
@@ -82,11 +83,31 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
         "not a pooled 300-sample percentile",
         "schema rebuild",
         "Raw SHA-256",
-        "unreleased migration checkout",
+        "prepared 4.0.0 source",
     ):
         assert token in current
-    assert "benchmarks/results/core33/" in current
+    assert f"benchmarks/results/{SERIES}/" in current
+    assert "d4ef486af0e283c49a1c22a5c8fee92d51e8b42c" in current
+    assert "01f82ab94c86a5f35918dec4ba51deee02a58ac9" in current
     assert "benchmarks/run_publish_core33.py" in current
+
+
+def test_current_public_summary_uses_new_artifact_values() -> None:
+    """Keep the current public summary aligned with the new measured series."""
+    graphex = _load_result("graphex", 1000)
+    ariadne = _load_result("ariadne", 1000)
+    create = "create_comment"
+    graphex_ms = graphex["operations"][create]["p50_ms"]
+    ariadne_ms = ariadne["operations"][create]["p50_ms"]
+    ratio = graphex_ms / ariadne_ms
+    for path in (ROOT / "README.md", ROOT / "docs/why.md"):
+        text = path.read_text(encoding="utf-8")
+        assert SERIES in text
+        assert f"{ratio:.2f}×" in text
+    for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
+        current = path.read_text(encoding="utf-8").split("## 3.1.1", 1)[0]
+        assert SERIES in current
+        assert "measured 4.0.0 source" in current
 
 
 def test_current_stack_versions_match_committed_results() -> None:

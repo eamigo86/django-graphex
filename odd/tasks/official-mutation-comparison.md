@@ -66,7 +66,7 @@ new validated median artifacts only.
   named CLI/publisher with no-clobber, validation, replay and compatibility
   regressions; update benchmark instructions together. Delegated direct writer:
   preparation spans four-plus files and implementation is multi-file.
-- [ ] OC2 — Freeze clean measurement source and verified pinned stacks; execute
+- [x] OC2 — Freeze clean measurement source and verified pinned stacks; execute
   exactly one official three-repetition/two-size batch, validate all 24 runs and
   eight median groups, then install only the new immutable series. Delegated
   execution; independent arithmetic/provenance/preservation verification.
@@ -295,3 +295,28 @@ explicitly to Git, without broadening the ignore rules or tracking stages.
 Full private proof: official-comparison-oc2/accepted-background-load/ under
 the existing external proof root. No remote, main, tag or release operation
 is authorized by this checkpoint.
+
+## OC2 independent acceptance and OC3 route
+
+The prior OC2 paragraphs are historical checkpoints. Independent review of
+d4ef486af0e283c49a1c22a5c8fee92d51e8b42c (tree
+e207ce75900bf15e6f5c1666cbe31884dd1f2091) accepted all 24 raw
+digests, 248 independently recomputed statistics, eight exact portable
+projections, and preserved 82 original plus 47 new protected objects. The
+72 journal start/context/success records were generated after the batch from
+checked receipts; they are not live timestamped child-event logs. Successful
+child streams and raw HTTP response bodies were not retained. The harness
+validates each first response, SQL probe, 15 warmups and 100 timed samples
+inside rollback-only requests. OC2 is complete locally, not a hosted or
+release approval. Full report: official-comparison-oc2-independent/report.md.
+
+OC3 is delegated direct because public comparison pages, both changelogs,
+benchmark instructions and executable documentation contracts need a coherent
+update. Strict TDD is ON from AGENTS.md; run the documentation focal with
+.venv/bin/python -m pytest tests/test_docs_core33_migration.py --no-cov.
+First observe RED while the old 3.1.1-source series is still selected, then
+derive the current table and claims from the new eight JSON artifacts. Keep
+both older canonical series and their dated facts; link new artifacts at
+publication commit d4ef486 and source separately at measured commit 01f82ab.
+No new benchmark execution, database connection or release operation belongs
+to OC3. Independent final and hosted checks remain later tasks.

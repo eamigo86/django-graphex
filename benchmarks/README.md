@@ -16,7 +16,8 @@ count** per operation. It is deterministic and supports strict offline replay.
 
 ## What the published artifacts are
 
-These are **3.1.0 measurements**, not results for the 3.1.1 security patch.
+The original `results/` series contains **3.1.0 measurements**, not results
+for the 3.1.1 security patch.
 Their frozen environments use Django 6.0.6 and GraphQL-core 3.2.11 as recorded
 in `versions.env`, `constraints.txt`, and the eight tracked canonical JSON
 artifacts. The current library and Playground locks use patched versions, but
@@ -176,9 +177,9 @@ timed requests in each of three runs for both 1,000- and 2,000-author seeds.
 Every timing statistic is the median of that statistic across the three
 validated runs; a median of per-run p95 values is not a pooled 300-request
 p95. The measured django-graphex source remains 3.1.1 in provenance. These
-files now supply the website's separate current core33 comparison; they do
-not replace the historical `results/` comparison and are not a 4.0.0
-measurement.
+files remain the earlier 3.1.1-source core33 comparison; they do
+not replace the historical `results/` comparison or the newer prepared
+4.0.0-source series.
 
 Use a trusted results parent without concurrent pathname substitution. A
 foreign directory moved into the stage name after creation but before the first
@@ -216,9 +217,9 @@ occurs. The publisher still refuses an occupied public target.
 
 The [current comparison](../docs/why.md#current-core33-comparison) renders
 all five request p50/SQL cells for both seed sizes directly from the eight
-committed core33 artifacts. Its historical 3.1.0 section remains separate;
-these new results still describe the measured 3.1.1-metadata migration
-checkout, not a published 4.0.0 build.
+committed artifacts in `core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`. Its older 3.1.1-source core33 and
+3.1.0 sections remain historical; the new series measures the prepared 4.0.0
+checkout, not a published 4.0.0 wheel.
 
 The `replay` mode instead requires `--profile core33 --events`,
 `--raw-manifest`, `--batch-result`, and `--results-root`. It reconstructs the
@@ -249,6 +250,16 @@ prepared 4.0.0 comparison should use
 `core33-4.0.0-<full-measurement-commit>` after the measuring source is frozen,
 not a mutable `latest` pointer. For example, append
 `--series core33-4.0.0-<full-measurement-commit>` to either command above.
+The official prepared 4.0.0 SQLite result is already installed at
+`results/core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/`. Its eight JSON files were generated from measuring
+source `01f82ab94c86a5f35918dec4ba51deee02a58ac9` and committed later at
+`d4ef486af0e283c49a1c22a5c8fee92d51e8b42c`; publication identity is not
+measurement identity. The three-run per-statistic medians include create-comment
+GraphEx/Ariadne p50 ratios of 0.57× at 50,000 comments and 0.59× at
+100,000. Whole-stack graphql-core versions differ, and accepted background
+load was not proven stable through the run. Do not use the old 3.1.1-source
+result as a paired baseline or relabel this SQLite result as PostgreSQL timing.
+
 The older `results/core33/` bundle stays intact. Selecting a fresh name does
 not strengthen the existing trusted-parent or pathname-substitution limits.
 
@@ -434,11 +445,11 @@ both row counts and the SQLite sequence unchanged. BEGIN/ROLLBACK sit outside
 the timer and SQL capture, so isolation does not become part of the result. The
 graphex mutation itself records **4 request-internal SQL statements** on SQLite:
 `SAVEPOINT`, `INSERT`, deferred-FK `PRAGMA foreign_key_check`, and `RELEASE`.
-Those recorded core33 results measured the earlier 3.1.1 checkout. The prepared
-4.0.0 source now uses a scoped post-write SQLite FK lookup instead of the
-table-wide PRAGMA inside an outer transaction. Its new request timing is only
-diagnostic until a separate controlled comparison is measured and published;
-the eight existing core33 JSON files remain unchanged.
+Those statements describe the earlier 3.1.1-source core33 artifacts. The
+prepared 4.0.0 source uses a scoped post-write SQLite FK lookup instead of
+the table-wide PRAGMA inside an outer transaction. A separate controlled
+comparison is now recorded in the immutable 4.0.0-source series above; the
+eight earlier core33 JSON files remain unchanged.
 
 ## What the harness records
 
