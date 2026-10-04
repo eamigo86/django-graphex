@@ -50,8 +50,16 @@ branch requirement. Do not change library behavior merely to improve coverage.
   Delegated direct: multi-file script/tests and preparation require a writer.
 - [ ] FG2 — Add behavior-focused optimizer/compiler/type tests until fresh
   full-suite pure branch coverage is at least 95.01%, with margin where useful.
-  Keep runtime/source and denominator policy unchanged. Delegated direct:
+  Do not alter runtime merely to improve coverage or change denominator policy.
+  Delegated direct:
   multiple non-trivial test modules and fresh native full-suite execution.
+- [ ] FG2-R — Correct the independently observed valid-fragment annotation
+  failure in the optimizer, with strict cause-correct RED/GREEN, real GraphQL
+  result and SQL regressions, behavioral documentation and both prepared-release
+  changelogs. The user explicitly authorized this runtime correction after the
+  read-only premise probe; it is not coverage padding or a proven regression
+  against a prior release. Delegated direct: runtime, tests and docs form one
+  coherent bounded unit. No benchmark measurement in the correction unit.
 - [ ] FG3 — Wire the pure-branch checker into the existing coverage job, repair
   the 404 template, add a generated-site check to docs CI, and update contributor
   guidance and both prepared-release changelogs. Preserve the release graph.
@@ -61,6 +69,12 @@ branch requirement. Do not change library behavior merely to improve coverage.
   state. Parent spot check, child/integration/tracker exact-head hosted gates;
   report remaining main/tag/publication approvals. Delegated verifier plus
   read-only parent remote orchestration; no invented release readiness.
+- [ ] FG5 — After the corrected runtime and FG2/FG3 stabilize, regenerate the
+  official named-profile comparison from that final source, keeping earlier
+  measurements attributed to their original source and preserving both series.
+  The user authorized this future cost; actual datasets, timings, arithmetic,
+  protected-state checks and publication are a separate bounded unit before
+  FG4 final acceptance, not part of FG2-R.
 
 ## Strict TDD and checks
 
@@ -255,3 +269,22 @@ test cluster should target the larger remaining optimizer/type gaps rather than
 claiming that the current compiler cases meet the release floor. Rolling back
 this work unit removes its three test-file changes only; this factual task
 checkpoint is not a fresh full-suite execution.
+
+## FG2-R authorized runtime correction boundary
+
+The read-only exact-e220800 optimizer premise probe found a valid-query bug:
+flat `author { name postCount }` returned the annotated value 1 with two
+request SQL statements, but the same selection inside valid named and inline
+fragments returned null without GraphQL errors and emitted one joined query
+without the annotation. The original failed two-of-three probe is retained
+under final-gates-fg2-optimizer/ and did not change repository source.
+
+The user explicitly approved correcting this behavior with strict TDD and
+regenerating the official comparison against final code. FG2-R owns only the
+fragment-aware promotion correction, real GraphQL/ORM tests and behavior docs;
+FG5 owns the later costly benchmark regeneration. FG2, FG3, FG4 and FG5 remain
+pending. The previously measured package tree and pure 3,594/3,850 coverage
+are historical facts at e220800, not invariants after a justified runtime
+change. Keep the coverage policy unchanged and disclose the new denominator.
+The local Engram mirror remains pending; RDD is off. This checkpoint precedes
+source edits and claims no new RED/GREEN or verification outcome.

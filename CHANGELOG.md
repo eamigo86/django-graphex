@@ -37,6 +37,13 @@ and still prevent commit if unresolved. PostgreSQL's existing check is unchanged
 The earlier core33 results predate this change; the new 4.0.0-source series
 records the scoped SQLite check without rewriting that history.
 
+Related `AnnotatedField` selections inside applicable named or inline GraphQL
+fragments now receive the same optimizer promotion as direct selections;
+fragment type conditions and bound directives remain respected. Previously,
+valid fragment-only related annotations could return `null` without a GraphQL
+error. The official comparison above predates this correction and retains its
+original source attribution; a final-source comparison is pending.
+
 ## 3.1.1 — 2026-10-01
 
 This patch raises the required GraphQL-core version to 3.2.13 while staying

@@ -27,6 +27,7 @@ from graphql import (
     GraphQLObjectType,
     GraphQLUnionType,
     get_named_type,
+    is_type_sub_type_of,
 )
 from graphql.execution.values import get_argument_values
 from graphql.language.ast import FragmentSpreadNode, InlineFragmentNode
@@ -3390,6 +3391,68 @@ def _apply_optimizations(
         return_type = get_named_type(info.return_type)
         if isinstance(return_type, GraphQLObjectType):
 
+            def _fragment_applies(
+                condition_node: Any, current_type: GraphQLObjectType | None
+            ) -> bool:
+                """Check a fragment condition against the current schema type.
+
+                Args:
+                    condition_node: The fragment's optional type condition.
+                    current_type: The object type whose fields are being walked.
+
+                Returns:
+                    Whether GraphQL can select this fragment on the object.
+                """
+                if condition_node is None:
+                    return True
+                if current_type is None:
+                    return False
+                condition = info.schema.get_type(condition_node.name.value)
+                return condition is not None and is_type_sub_type_of(
+                    info.schema, current_type, condition
+                )
+
+            def _selected_fields(
+                selection_set: Any,
+                current_type: GraphQLObjectType | None,
+                active_fragments: frozenset[str] = frozenset(),
+            ) -> Iterator[Any]:
+                """Yield selected fields through applicable fragment wrappers.
+
+                Args:
+                    selection_set: The current GraphQL selections.
+                    current_type: The object type at this selection level.
+                    active_fragments: Named fragments on the current recursion path.
+
+                Yields:
+                    Field nodes selected for this type and directive context.
+                """
+                if selection_set is None:
+                    return
+                for node in selection_set.selections:
+                    if is_selection_skipped(node, info.variable_values):
+                        continue
+                    if isinstance(node, FragmentSpreadNode):
+                        name = node.name.value
+                        if name in active_fragments:
+                            continue
+                        fragment = (info.fragments or {}).get(name)
+                        if fragment is not None and _fragment_applies(
+                            fragment.type_condition, current_type
+                        ):
+                            yield from _selected_fields(
+                                fragment.selection_set,
+                                current_type,
+                                active_fragments | {name},
+                            )
+                    elif isinstance(node, InlineFragmentNode):
+                        if _fragment_applies(node.type_condition, current_type):
+                            yield from _selected_fields(
+                                node.selection_set, current_type, active_fragments
+                            )
+                    else:
+                        yield node
+
             def _detect_promotions(
                 gql_t: Any,
                 graphene_t: Any,
@@ -3420,9 +3483,7 @@ def _apply_optimizations(
                     else {}
                 )
 
-                for fnode in sel_set.selections:
-                    if isinstance(fnode, (FragmentSpreadNode, InlineFragmentNode)):
-                        continue
+                for fnode in _selected_fields(sel_set, gql_t):
                     fname = fnode.name.value
                     fsnake = to_snake_case(fname)
                     fsub = getattr(fnode, "selection_set", None)
@@ -3463,9 +3524,7 @@ def _apply_optimizations(
                                     )
                                     or {}
                                 )
-                    for sel in fsub.selections:
-                        if isinstance(sel, (FragmentSpreadNode, InlineFragmentNode)):
-                            continue
+                    for sel in _selected_fields(fsub, sub_gql):
                         sname = sel.name.value
                         ssnake = to_snake_case(sname)
                         if isinstance(
@@ -3495,9 +3554,9 @@ def _apply_optimizations(
                 )
                 # Also walk through wrapper field (results).
                 if fields_asts[0].selection_set:
-                    for fnode in fields_asts[0].selection_set.selections:
-                        if isinstance(fnode, (FragmentSpreadNode, InlineFragmentNode)):
-                            continue
+                    for fnode in _selected_fields(
+                        fields_asts[0].selection_set, return_type
+                    ):
                         fname = fnode.name.value
                         fsub = getattr(fnode, "selection_set", None)
                         if fsub is None or fname.lower() in _PLUMBING_FIELDS:
