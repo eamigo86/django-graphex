@@ -17,7 +17,9 @@ branch requirement. Do not change library behavior merely to improve coverage.
   approved issue #210 and draft tracker #212. Retained authorization permits
   child pushes/PRs/comments and integration-only merges after exact-head gates.
 - No main merge, tag, publication, workflow dispatch, remote server access,
-  dependency refresh, benchmark timing, seed/reset or branch deletion.
+  dependency refresh or branch deletion. FG5 separately authorizes additive
+  fresh private seeds and final-source benchmark timing; earlier retained
+  databases and canonical results remain protected. No timing occurs in FG2.
 - Runtime identity is unregistered. All agent-attributed Engram tools are
   prohibited; the local task file is the recovery record and mirror is pending.
 - RDD remains globally off. Do not start or enable a native review lifecycle.
@@ -53,13 +55,15 @@ branch requirement. Do not change library behavior merely to improve coverage.
   Do not alter runtime merely to improve coverage or change denominator policy.
   Delegated direct:
   multiple non-trivial test modules and fresh native full-suite execution.
-- [x] FG2-R — Correct the independently observed valid-fragment annotation
+- [ ] FG2-R — Correct the independently observed valid-fragment annotation
   failure in the optimizer, with strict cause-correct RED/GREEN, real GraphQL
   result and SQL regressions, behavioral documentation and both prepared-release
   changelogs. The user explicitly authorized this runtime correction after the
   read-only premise probe; it is not coverage padding or a proven regression
   against a prior release. Delegated direct: runtime, tests and docs form one
-  coherent bounded unit. No benchmark measurement in the correction unit.
+  coherent bounded unit. Functional correction passed, but independent patch
+  coverage was 23/27 changed lines, below 95.01%; test-only boundary proof is
+  pending. No benchmark measurement in the correction unit.
 - [ ] FG3 — Wire the pure-branch checker into the existing coverage job, repair
   the 404 template, add a generated-site check to docs CI, and update contributor
   guidance and both prepared-release changelogs. Preserve the release graph.
@@ -319,3 +323,13 @@ the separately authorized final-source benchmark regeneration FG5 remain
 pending. This task-only acceptance checkpoint has not had a separate full run;
 its rollback boundary is the behavior work unit above, with the prior
 measurements and canonical artifacts untouched.
+
+Independent read-only verification of 4d974a7 passed 106 writer-selected
+controls and 14 additional real GraphQL/ORM fragment controls. It found no
+scoped behavior defect. The authenticated writer XML and nonempty path-bound
+diff-cover result, however, covered only 23/27 changed runtime lines
+(85.1852%). An earlier empty-denominator diff-cover exit zero was not a
+passing gate. Missing lines are the untyped inline condition, unavailable
+current type, absent selection set and active cyclic spread guards. The full
+partial report is under final-gates-fragment-independent/. FG2-R remains open
+for test-only boundary coverage; FG2's global pure floor also remains open.
