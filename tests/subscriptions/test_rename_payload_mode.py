@@ -233,3 +233,25 @@ def test_model_type_forwards_payload_mode() -> None:
     sub_cls = NoteType.subscription_type()
     assert sub_cls._meta.payload_mode == "full"
     assert sub_cls._payload_is_full() is True
+
+
+def test_model_type_reuses_declared_stream_class() -> None:
+    """Create one cached subscription class for a valid model stream.
+
+    Repeated access preserves class identity and stream configuration. This
+    positive control belongs with tests requiring the optional Channels extra.
+    """
+    from django_graphex.types import DjangoModelType
+
+    class CachedStream(DjangoModelType):
+        """Declare a stream for an actual model type."""
+
+        class Meta:
+            """Bind the subscription stream and model."""
+
+            model = RenamePayloadNote
+            stream = "release-declaration-basic"
+
+    first = CachedStream.subscription_type()
+    assert CachedStream.subscription_type() is first
+    assert first._meta.stream == "release-declaration-basic"

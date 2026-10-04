@@ -18,6 +18,7 @@ from django_graphex.utils import (
     get_reverse_fields,
     get_type,
     is_required,
+    maybe_queryset,
     not_found_error,
     parse_validation_exc,
 )
@@ -73,6 +74,26 @@ class RelationHelpersTest(TestCase):
         # yields nothing, but the function must still run without error.
         result = list(get_reverse_fields(Author))
         self.assertIsInstance(result, list)
+
+    def test_maybe_queryset_resolves_a_manager_without_replacing_other_values(
+        self,
+    ) -> None:
+        """Return a queryable manager selection and preserve existing values.
+
+        The manager path must expose real model rows; already selected querysets
+        and non-ORM values retain their caller-owned identity.
+        """
+        author = Author.objects.create(name="Ada")
+        manager_result = maybe_queryset(Author.objects)
+
+        self.assertEqual(list(manager_result.values_list("name", flat=True)), ["Ada"])
+        self.assertEqual(manager_result.model, Author)
+        self.assertEqual(manager_result.get().pk, author.pk)
+
+        queryset = Author.objects.filter(pk=author.pk)
+        self.assertIs(maybe_queryset(queryset), queryset)
+        values = [author]
+        self.assertIs(maybe_queryset(values), values)
 
 
 # --------------------------------------------------------------------------- #

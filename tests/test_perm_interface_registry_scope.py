@@ -186,6 +186,64 @@ class InterfaceLabelScopeTest(TestCase):
         }
         assert possible == {"ScopeBook", "ScopeMagazine"}
 
+    def test_unbuilt_interface_uses_conservative_registry_permissions(self) -> None:
+        """Without a built schema, include every registered implementor.
+
+        The conservative fallback includes the unreachable ghost until a
+        concrete schema can establish its actual possible types.
+        """
+        from django_graphex.core.perm_labels import (
+            _interface_perms,
+            required_perms_for,
+        )
+
+        interface = _scope_schema.graphql_schema.type_map["ScopeProduct"]
+        gdx = (interface.extensions or {})["gdx"]
+
+        assert _interface_perms(interface, gdx, schema=None) == frozenset().union(
+            *(
+                required_perms_for(model, "retrieve")
+                for model in (
+                    Track2Book,
+                    Track2Magazine,
+                    Author,
+                )
+            )
+        )
+
+    def test_schema_without_implementors_uses_registry_fallback(self) -> None:
+        """An interface with no mounted implementor stays conservatively gated.
+
+        A schema can expose an interface field before it mounts concrete types.
+        The registry fallback must not make that field public.
+        """
+        from graphql import GraphQLField, GraphQLObjectType, GraphQLSchema
+
+        from django_graphex.core.perm_labels import (
+            _interface_perms,
+            required_perms_for,
+        )
+
+        interface = _scope_schema.graphql_schema.type_map["ScopeProduct"]
+        gdx = (interface.extensions or {})["gdx"]
+        schema = GraphQLSchema(
+            query=GraphQLObjectType(
+                "UnresolvedQuery", {"product": GraphQLField(interface)}
+            )
+        )
+
+        assert schema.get_possible_types(interface) == []
+        assert _interface_perms(interface, gdx, schema) == frozenset().union(
+            *(
+                required_perms_for(model, "retrieve")
+                for model in (
+                    Track2Book,
+                    Track2Magazine,
+                    Author,
+                )
+            )
+        )
+
     def test_every_mounted_implementor_perm_is_enough(self) -> None:
         """Assert the schema, not the registry, decides the label.
 

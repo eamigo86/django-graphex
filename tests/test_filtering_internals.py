@@ -259,6 +259,20 @@ def test_to_q_skips_unset_values() -> None:
     assert q == models.Q()
 
 
+def test_to_q_skips_unset_top_level_field_without_dropping_sibling() -> None:
+    """An omitted top-level filter leaves a supplied sibling active.
+
+    GraphQL may deliver a nullable field as None beside a real lookup.
+    """
+    q, many = to_q(
+        {"name": None, "rating": {"gt": 3}},
+        FilterModel,
+    )
+
+    assert q == models.Q(rating__gt=3)
+    assert many is False
+
+
 def test_to_q_range_requires_two_elements() -> None:
     """ "to_q" must raise GraphQLError when a "range" lookup does not have exactly two elements.
 

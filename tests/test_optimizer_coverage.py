@@ -2003,6 +2003,74 @@ class TestComputeChildOnly(TestCase):
     def _sel(self, query):
         return _parse(query)
 
+    def test_absent_child_selection_does_not_narrow_relation(self) -> None:
+        """Keep a relation fully loaded when its child selection is absent.
+
+        A scalar relation request cannot safely infer deferred child columns.
+        """
+        from .models import Author, Post
+
+        relation = Author._meta.get_field("posts")
+        self.assertIsNone(_compute_child_only(Post, relation, None, {}))
+
+    def test_generic_relation_without_child_gfk_stays_full_load(self) -> None:
+        """Avoid narrowing generic children that lack the required join columns.
+
+        The resulting queryset must retain the complete child row.
+        """
+        from .models import Tag
+
+        relation = Profile._meta.get_field("notes")
+        selection, fragments = _parse("{ profile { notes { label } } }")
+        child_selection = selection.selections[0].selection_set
+        self.assertIsNone(
+            _compute_child_only(Tag, relation, child_selection, fragments)
+        )
+
+    def test_reverse_relation_without_fk_metadata_stays_full_load(self) -> None:
+        """Avoid a narrow plan when reverse-FK join metadata is unavailable.
+
+        Without the back-reference, child rows cannot be assigned to parents.
+        """
+        from types import SimpleNamespace
+
+        from .models import Post
+
+        selection, fragments = _parse("{ author { posts { title } } }")
+        child_selection = selection.selections[0].selection_set
+        missing_join = SimpleNamespace(one_to_many=True, many_to_many=False)
+        self.assertIsNone(
+            _compute_child_only(Post, missing_join, child_selection, fragments)
+        )
+
+    def test_generic_relation_falls_back_to_single_available_gfk(self) -> None:
+        """Keep the available generic join pair when exact metadata does not match.
+
+        A single available generic key pair remains sufficient for prefetching.
+        """
+        from types import SimpleNamespace
+
+        import django_graphex.utils as utils_module
+
+        selection, fragments = _parse("{ profile { notes { label } } }")
+        child_selection = selection.selections[0].selection_set
+        relation = SimpleNamespace(
+            content_type_field_name="not_a_content_type",
+            object_id_field_name="not_an_object_id",
+        )
+        with mock.patch.object(
+            utils_module,
+            "_generic_relation_type",
+            return_value=type(relation),
+        ):
+            plan = _compute_child_only(
+                OptTaggedItem, relation, child_selection, fragments
+            )
+        self.assertIsNotNone(plan)
+        self.assertIn("content_type_id", plan.only_cols)
+        self.assertIn("object_id", plan.only_cols)
+        self.assertNotIn("tagger_ct_id", plan.only_cols)
+
     def test_reverse_fk_includes_fk_back(self) -> None:
         """A reverse-FK child's FK-back column is always included in only_cols, even when unrequested.
 
@@ -2149,6 +2217,49 @@ class TestCollectPrefetchOnlySets(TestCase):
 
     See the tests below for the exact contract covered.
     """
+
+    def test_missing_fragment_does_not_invent_prefetch(self) -> None:
+        """An unresolved fragment cannot add a prefetch plan.
+
+        Only fields present in the selected operation contribute lookups.
+        """
+        from .models import Author
+
+        selection, fragments = _parse("{ author { ...Unavailable name } }")
+        self.assertEqual(_collect_prefetch_only_sets(Author, selection, fragments), {})
+
+    def test_named_fragment_keeps_reverse_fk_join_columns(self) -> None:
+        """A selected named fragment preserves its reverse-FK join plan.
+
+        The child columns retain the back-reference and requested title.
+        """
+        from .models import Author
+
+        selection, fragments = _parse(
+            "{ author { ...AuthorPosts } } "
+            "fragment AuthorPosts on Author { posts { title } }"
+        )
+        result = _collect_prefetch_only_sets(Author, selection, fragments)
+        self.assertIn("posts", result)
+        self.assertIn("author_id", result["posts"].only_cols)
+        self.assertIn("title", result["posts"].only_cols)
+
+    def test_unknown_relation_classification_does_not_add_plan(self) -> None:
+        """An unclassified relation cannot become a prefetch path.
+
+        An unknown classification degrades conservatively to no plan.
+        """
+        import django_graphex.utils as utils_module
+
+        from .models import Author
+
+        selection, fragments = _parse("{ author { posts { title } } }")
+        with mock.patch.object(
+            utils_module, "_relation_optimization", return_value=None
+        ):
+            self.assertEqual(
+                _collect_prefetch_only_sets(Author, selection, fragments), {}
+            )
 
     def test_gfk_target_skip_no_crash_gap3(self) -> None:
         """A GFK-target key never appears in the returned map, and the walk does not raise.

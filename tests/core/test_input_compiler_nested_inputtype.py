@@ -60,6 +60,65 @@ from pydantic import BaseModel
 
 from django_graphex.core.input_compiler import compile_input_type
 
+
+@pytest.mark.django_db
+def test_registered_nested_input_reuses_canonical_compiled_type() -> None:
+    """A model-backed child input keeps its registered GraphQL type identity.
+
+    The parent's field must reference the child's canonical compiled type.
+    """
+    from django_graphex.types import DjangoInputObjectType
+    from tests.models import Category
+
+    class CategoryCreate(DjangoInputObjectType):
+        """Declare the model-backed child input."""
+
+        class Meta:
+            """Bind the child input to the category model."""
+
+            model = Category
+            input_for = "create"
+
+    class Outer(BaseModel):
+        """Reference the registered child through a parent input."""
+
+        category: CategoryCreate
+
+    parent = compile_input_type(Outer, name="RegisteredCategoryParent")
+    field_type = parent.fields["category"].type
+    child = field_type.of_type if isinstance(field_type, GraphQLNonNull) else field_type
+
+    assert child is CategoryCreate._meta.graphql_input_type
+    assert "title" in child.fields
+
+
+def test_repeated_unregistered_child_fields_share_compiled_type() -> None:
+    """Repeated child fields reuse one input type during schema assembly.
+
+    GraphQL requires a stable named input type for both references.
+    """
+
+    class Child(BaseModel):
+        """Provide a model-free nested input."""
+
+        value: str
+
+    class Parent(BaseModel):
+        """Reference the same nested input twice."""
+
+        first: Child
+        second: Child
+
+    parent = compile_input_type(Parent, name="RepeatedChildParent")
+    first = parent.fields["first"].type
+    second = parent.fields["second"].type
+    first_child = first.of_type if isinstance(first, GraphQLNonNull) else first
+    second_child = second.of_type if isinstance(second, GraphQLNonNull) else second
+
+    assert first_child is second_child
+    assert set(first_child.fields) == {"value"}
+
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

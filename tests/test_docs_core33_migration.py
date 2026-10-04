@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SERIES = "core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9"
+SERIES = "core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e"
 RESULTS = ROOT / "benchmarks/results" / SERIES
 LIBRARIES = ("graphex", "graphene", "strawberry", "ariadne")
 OPERATIONS = ("flat_list", "nested", "single", "filtered", "create_comment")
@@ -23,6 +23,25 @@ def _load_result(library: str, authors: int) -> dict:
     """
     prefix = "2x_" if authors == 2000 else ""
     return json.loads((RESULTS / f"{prefix}{library}.json").read_text(encoding="utf-8"))
+
+
+def test_comparison_intro_names_all_four_retained_series() -> None:
+    """Count the current series and each retained historical comparison.
+
+    The introduction must not omit the pre-fragment 4.0.0 result series.
+    """
+    page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
+    intro = page.split("## How it compares", maxsplit=1)[1].split(
+        "## Current core33 comparison", maxsplit=1
+    )[0]
+    for label in (
+        "four distinct benchmark series",
+        SERIES,
+        "core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9",
+        "3.1.1-source core33",
+        "original 3.1.0",
+    ):
+        assert label in intro
 
 
 def test_current_comparison_table_is_derived_from_eight_artifacts() -> None:
@@ -87,8 +106,9 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
     ):
         assert token in current
     assert f"benchmarks/results/{SERIES}/" in current
-    assert "d4ef486af0e283c49a1c22a5c8fee92d51e8b42c" in current
-    assert "01f82ab94c86a5f35918dec4ba51deee02a58ac9" in current
+    assert "826d5bae87ed7bbe705cf309d46a16d3ad3cdf33" in current
+    assert "bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e" in current
+    assert "Historical core33 4.0.0 pre-fragment comparison" in page
     assert "benchmarks/run_publish_core33.py" in current
 
 
@@ -97,20 +117,25 @@ def test_current_public_summary_uses_new_artifact_values() -> None:
 
     The expected ratios come from the committed portable result fields.
     """
-    graphex = _load_result("graphex", 1000)
-    ariadne = _load_result("ariadne", 1000)
-    create = "create_comment"
-    graphex_ms = graphex["operations"][create]["p50_ms"]
-    ariadne_ms = ariadne["operations"][create]["p50_ms"]
-    ratio = graphex_ms / ariadne_ms
+    ratios = []
+    for authors in (1000, 2000):
+        graphex = _load_result("graphex", authors)
+        ariadne = _load_result("ariadne", authors)
+        graphex_ms = graphex["operations"]["create_comment"]["p50_ms"]
+        ariadne_ms = ariadne["operations"]["create_comment"]["p50_ms"]
+        ratios.append(graphex_ms / ariadne_ms)
     for path in (ROOT / "README.md", ROOT / "docs/why.md"):
         text = path.read_text(encoding="utf-8")
         assert SERIES in text
-        assert f"{ratio:.2f}×" in text
+        for ratio in ratios:
+            assert f"{ratio:.2f}×" in text
     for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
         current = path.read_text(encoding="utf-8").split("## 3.1.1", 1)[0]
         assert SERIES in current
-        assert "measured 4.0.0 source" in current
+        assert "4.0.0 source" in current
+        assert _load_result("graphex", 1000)["measurement_source"]["commit"] in current
+        for ratio in ratios:
+            assert f"{ratio:.2f}×" in current
 
 
 def test_current_stack_versions_match_committed_results() -> None:

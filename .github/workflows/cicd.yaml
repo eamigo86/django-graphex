@@ -173,6 +173,9 @@ jobs:
         # double-measures and leaves an empty .coverage (~0% reported).
         uv run pytest
 
+    - name: Enforce pure branch coverage
+      run: uv run python scripts/check_branch_coverage.py coverage.xml --threshold 95.01
+
     - name: Enforce changed-line coverage
       env:
         BASE_REF: ${{ github.base_ref || 'main' }}
@@ -367,6 +370,9 @@ jobs:
 
     - name: Build documentation
       run: uv run zensical build --clean -f zensical.yml
+
+    - name: Check generated documentation links
+      run: uv run python scripts/check_site_anchors.py site --base-path /django-graphex/
 
     - name: Setup Pages for a tagged release
       if: startsWith(github.ref, 'refs/tags/v')

@@ -7,7 +7,8 @@ import inspect
 import logging
 import re
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, Iterator
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.models import (
@@ -25,11 +26,19 @@ from graphql import (
     GraphQLList,
     GraphQLNonNull,
     GraphQLObjectType,
+    GraphQLSchema,
     GraphQLUnionType,
     get_named_type,
+    is_type_sub_type_of,
 )
 from graphql.execution.values import get_argument_values
-from graphql.language.ast import FragmentSpreadNode, InlineFragmentNode
+from graphql.language.ast import (
+    FieldNode,
+    FragmentDefinitionNode,
+    FragmentSpreadNode,
+    InlineFragmentNode,
+    NamedTypeNode,
+)
 from text_unidecode import unidecode
 
 from ._directives_eval import is_selection_skipped
@@ -3242,6 +3251,87 @@ def _drop_superseded_prefetches(base: QuerySet, incoming: list[Any]) -> QuerySet
     return base.prefetch_related(*kept) if kept else base
 
 
+def _promotion_fragment_applies(
+    condition_node: NamedTypeNode | None,
+    current_type: GraphQLObjectType | None,
+    schema: GraphQLSchema,
+) -> bool:
+    """Check a promotion fragment condition against the actual schema type.
+
+    Args:
+        condition_node: The fragment's optional type condition.
+        current_type: The object type whose fields are being walked.
+        schema: The schema containing both type definitions.
+
+    Returns:
+        Whether this fragment can select fields on the current object.
+    """
+    if condition_node is None:
+        return True
+    if current_type is None:
+        return False
+    condition = schema.get_type(condition_node.name.value)
+    return condition is not None and is_type_sub_type_of(
+        schema, current_type, condition
+    )
+
+
+def _iter_promotion_fields(
+    selection_set: SelectionSetNode | None,
+    current_type: GraphQLObjectType | None,
+    schema: GraphQLSchema,
+    fragments: dict[str, FragmentDefinitionNode] | None,
+    variable_values: dict[str, Any] | None,
+    active_fragments: frozenset[str] = frozenset(),
+) -> Iterator[FieldNode]:
+    """Yield promotion-relevant fields through applicable fragment wrappers.
+
+    Args:
+        selection_set: The selections at the current GraphQL type level.
+        current_type: The object type at that level, if resolved.
+        schema: The schema used to check fragment type applicability.
+        fragments: Named fragment definitions in this operation.
+        variable_values: Bound values for include and skip directives.
+        active_fragments: Named fragments on this recursion path only.
+
+    Yields:
+        Selected field nodes with schema names, independent of response aliases.
+    """
+    if selection_set is None:
+        return
+    for node in selection_set.selections:
+        if is_selection_skipped(node, variable_values):
+            continue
+        if isinstance(node, FragmentSpreadNode):
+            name = node.name.value
+            if name in active_fragments:
+                continue
+            fragment = (fragments or {}).get(name)
+            if fragment is not None and _promotion_fragment_applies(
+                fragment.type_condition, current_type, schema
+            ):
+                yield from _iter_promotion_fields(
+                    fragment.selection_set,
+                    current_type,
+                    schema,
+                    fragments,
+                    variable_values,
+                    active_fragments | {name},
+                )
+        elif isinstance(node, InlineFragmentNode):
+            if _promotion_fragment_applies(node.type_condition, current_type, schema):
+                yield from _iter_promotion_fields(
+                    node.selection_set,
+                    current_type,
+                    schema,
+                    fragments,
+                    variable_values,
+                    active_fragments,
+                )
+        else:
+            yield node
+
+
 def _apply_optimizations(
     base: QuerySet,
     model: type[Model],
@@ -3420,9 +3510,9 @@ def _apply_optimizations(
                     else {}
                 )
 
-                for fnode in sel_set.selections:
-                    if isinstance(fnode, (FragmentSpreadNode, InlineFragmentNode)):
-                        continue
+                for fnode in _iter_promotion_fields(
+                    sel_set, gql_t, info.schema, info.fragments, info.variable_values
+                ):
                     fname = fnode.name.value
                     fsnake = to_snake_case(fname)
                     fsub = getattr(fnode, "selection_set", None)
@@ -3463,9 +3553,9 @@ def _apply_optimizations(
                                     )
                                     or {}
                                 )
-                    for sel in fsub.selections:
-                        if isinstance(sel, (FragmentSpreadNode, InlineFragmentNode)):
-                            continue
+                    for sel in _iter_promotion_fields(
+                        fsub, sub_gql, info.schema, info.fragments, info.variable_values
+                    ):
                         sname = sel.name.value
                         ssnake = to_snake_case(sname)
                         if isinstance(
@@ -3495,9 +3585,13 @@ def _apply_optimizations(
                 )
                 # Also walk through wrapper field (results).
                 if fields_asts[0].selection_set:
-                    for fnode in fields_asts[0].selection_set.selections:
-                        if isinstance(fnode, (FragmentSpreadNode, InlineFragmentNode)):
-                            continue
+                    for fnode in _iter_promotion_fields(
+                        fields_asts[0].selection_set,
+                        return_type,
+                        info.schema,
+                        info.fragments,
+                        info.variable_values,
+                    ):
                         fname = fnode.name.value
                         fsub = getattr(fnode, "selection_set", None)
                         if fsub is None or fname.lower() in _PLUMBING_FIELDS:

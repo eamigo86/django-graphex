@@ -9,6 +9,7 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  custom_dir: docs-overrides
   # Keep the Material for MkDocs look & feel under Zensical (vs. the new "modern" default).
   variant: classic
   palette:

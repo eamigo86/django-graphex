@@ -249,3 +249,50 @@ def test_authorize_subscription_without_action_stays_view_only() -> None:
         sub.authorize_subscription(_info(user))  # no action kwarg -> no raise
     finally:
         parent.permission_classes = ()
+
+
+def test_subscription_permission_denies_unauthenticated_user_before_backend() -> None:
+    """Reject an anonymous subscription before consulting model permissions.
+
+    An unexpected backend call is an assertion failure rather than a denial.
+
+    Raises:
+        AssertionError: If the backend is reached for the anonymous user.
+    """
+
+    class _NoBackendUser(_User):
+        """Fail if the permission backend is reached after authentication denial."""
+
+        def has_perms(self, perms: list[str]) -> bool:
+            """Reject a backend call that should never occur.
+
+            Args:
+                perms: The permission codenames that must not be checked.
+
+            Raises:
+                AssertionError: Always, because anonymous users fail earlier.
+            """
+            raise AssertionError(f"anonymous backend call for {perms}")
+
+    info = _info(_NoBackendUser(set(), authenticated=False))
+    assert not DjangoModelPermissions().has_subscribe_permission(
+        info, Post, subscription_action="create"
+    )
+    parent, sub = _subscription_cls()
+    parent.permission_classes = (DjangoModelPermissions,)
+    try:
+        with pytest.raises(GraphQLError):
+            sub.authorize_subscription(info, action="create")
+    finally:
+        parent.permission_classes = ()
+
+
+def test_subscription_permission_rejects_missing_model_before_backend() -> None:
+    """Fail a model-less subscribe check before constructing permissions.
+
+    Without a model, no application label or model codename may be inferred.
+    """
+    info = _info(_User({"tests.view_post"}))
+    assert not DjangoModelPermissions().has_subscribe_permission(
+        info, None, subscription_action="create"
+    )

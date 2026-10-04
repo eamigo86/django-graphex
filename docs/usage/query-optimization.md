@@ -412,6 +412,12 @@ A forward-FK relation that the optimizer placed in `select_related` is
 `AnnotatedField` — DB annotations cannot be pushed through a SQL `JOIN`, so the
 child annotation rides on the promoted `Prefetch`'s queryset instead.
 
+This promotion also follows applicable named and inline GraphQL fragments on
+the relation or its list results wrapper. It respects fragment type conditions
+and bound `@include`/`@skip` directives: an excluded `AnnotatedField` does not
+trigger the extra prefetch. Previously, selecting a related annotation only
+through a valid fragment could resolve it as `null` without a GraphQL error.
+
 The promotion follows the whole forward-FK chain, not just its first hop: in
 `{ comments { post { author { postCount } } } }` it is `post__author` that gets
 promoted, so an `AnnotatedField` several hops down resolves like any other. (It
