@@ -26,7 +26,10 @@ def _load_result(library: str, authors: int) -> dict:
 
 
 def test_comparison_intro_names_all_four_retained_series() -> None:
-    """Count the current series and each retained historical comparison."""
+    """Count the current series and each retained historical comparison.
+
+    The introduction must not omit the pre-fragment 4.0.0 result series.
+    """
     page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
     intro = page.split("## How it compares", maxsplit=1)[1].split(
         "## Current core33 comparison", maxsplit=1
