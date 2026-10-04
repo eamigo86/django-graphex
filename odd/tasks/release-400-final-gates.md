@@ -65,7 +65,7 @@ branch requirement. Do not change library behavior merely to improve coverage.
   coverage was initially 23/27 changed lines, below 95.01%; the later private
   walker test boundary reached 30/30. No benchmark measurement was performed
   in the correction unit.
-- [x] FG3 — Wire the pure-branch checker into the existing coverage job, repair
+- [ ] FG3 — Wire the pure-branch checker into the existing coverage job, repair
   the 404 template, add a generated-site check to docs CI, and update contributor
   guidance and both prepared-release changelogs. Preserve the release graph.
   Delegated direct: workflow, template, helpers, tests and docs form one unit.
@@ -658,3 +658,15 @@ matching FG3 before/after byte and filesystem identities. Raw commands and
 streams are under final-gates-fg3/. This factual checkpoint does not claim a
 second full run or independent/hosted acceptance. FG5 and FG4 remain pending;
 the Engram mirror remains pending.
+
+### FG3 independent correction
+
+Independent verification of cb90614 is partial, so FG3 is reopened. A clean
+site build copies the raw 404 Jinja override because its custom directory is
+inside docs; also, a nested page's deployment-root absolute link is incorrectly
+resolved relative to that nested page. The actual rendered 404 skip target and
+CI gate order passed. This bounded correction moves only the override outside
+the content root and preserves root-relative URL status through prefix removal,
+with real failing regressions before either fix. The prior local PASS and raw
+proof remain historical, not independent acceptance. FG5 and FG4 remain
+pending; the Engram mirror remains pending.

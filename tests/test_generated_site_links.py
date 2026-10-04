@@ -12,17 +12,18 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "check_site_anchors.py"
 
 
-def _check(site: Path) -> subprocess.CompletedProcess[str]:
+def _check(site: Path, *options: str) -> subprocess.CompletedProcess[str]:
     """Run the real site checker against an isolated generated-site fixture.
 
     Args:
         site: Directory containing generated HTML pages.
+        options: Additional checker command arguments.
 
     Returns:
         Completed checker process with captured streams.
     """
     return subprocess.run(
-        [sys.executable, str(CHECKER), str(site)],
+        [sys.executable, str(CHECKER), str(site), *options],
         capture_output=True,
         text=True,
         check=False,
@@ -80,6 +81,67 @@ def test_site_checker_rejects_broken_local_links(
     assert expected in result.stderr
 
 
+def test_deployment_root_link_from_nested_page_resolves_at_site_root(
+    tmp_path: Path,
+) -> None:
+    """Keep a deployment-root link absolute after removing its URL prefix.
+
+    Args:
+        tmp_path: Isolated generated-site directory.
+
+    Raises:
+        AssertionError: A valid nested-page link is resolved relative to the page.
+    """
+    (tmp_path / "index.html").write_text('<a href="guide/#topic%20%C3%A9">Guide</a>')
+    guide = tmp_path / "guide"
+    guide.mkdir()
+    (guide / "index.html").write_text('<h2 id="topic é">Topic</h2>')
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "index.html").write_text(
+        '<a href="/django-graphex/guide/#topic%20%C3%A9">Guide</a>'
+    )
+    result = _check(tmp_path, "--base-path", "/django-graphex/")
+    assert result.returncode == 0, result.stderr
+
+
+def test_deployment_root_missing_fragment_still_fails(tmp_path: Path) -> None:
+    """Reject a missing target even for a deployment-root hyperlink.
+
+    Args:
+        tmp_path: Isolated generated-site directory.
+
+    Raises:
+        AssertionError: The checker accepts a missing root-relative fragment.
+    """
+    (tmp_path / "index.html").write_text(
+        '<a href="/django-graphex/guide/#absent">Guide</a>'
+    )
+    guide = tmp_path / "guide"
+    guide.mkdir()
+    (guide / "index.html").write_text('<h2 id="topic">Topic</h2>')
+    result = _check(tmp_path, "--base-path", "/django-graphex/")
+    assert result.returncode == 1
+    assert "absent" in result.stderr
+
+
+def test_deployment_root_escape_still_fails(tmp_path: Path) -> None:
+    """Reject encoded parent traversal in a deployment-root hyperlink.
+
+    Args:
+        tmp_path: Isolated generated-site directory.
+
+    Raises:
+        AssertionError: The checker follows a link outside the generated site.
+    """
+    (tmp_path / "index.html").write_text(
+        '<a href="/django-graphex/%2e%2e/private/#topic">Outside</a>'
+    )
+    result = _check(tmp_path, "--base-path", "/django-graphex/")
+    assert result.returncode == 1
+    assert "escapes site" in result.stderr
+
+
 def test_ci_checks_pure_branches_and_generated_site() -> None:
     """Require both new gates without replacing the existing coverage gates.
 
@@ -109,7 +171,9 @@ def test_404_template_provides_the_theme_skip_target() -> None:
         AssertionError: The override or configured target is absent.
     """
     config = (ROOT / "zensical.yml").read_text()
-    assert "custom_dir: docs/overrides" in config
-    template = (ROOT / "docs" / "overrides" / "404.html").read_text()
+    assert "custom_dir: docs-overrides" in config
+    template_path = ROOT / "docs-overrides" / "404.html"
+    assert not template_path.is_relative_to(ROOT / "docs")
+    template = template_path.read_text()
     assert '{% extends "main.html" %}' in template
     assert 'id="__skip"' in template

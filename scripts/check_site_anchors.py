@@ -55,16 +55,15 @@ def _destination(
     if parsed.scheme or parsed.netloc:
         return None
     raw_path = unquote(parsed.path)
-    if raw_path.startswith("/") and base_path != "/":
+    root_relative = raw_path.startswith("/")
+    if root_relative and base_path != "/":
         if not raw_path.startswith(base_path):
             return None
         raw_path = raw_path[len(base_path) :]
     if raw_path and Path(raw_path).suffix not in ("", ".html"):
         return None
     candidate = (
-        site / raw_path.lstrip("/")
-        if raw_path.startswith("/")
-        else source.parent / raw_path
+        site / raw_path.lstrip("/") if root_relative else source.parent / raw_path
     )
     if not raw_path:
         candidate = source
