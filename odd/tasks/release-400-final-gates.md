@@ -702,3 +702,26 @@ fragments from a nested page must resolve to the site root; fragment-only
 links must stay on their source page. Add a focused cause-correct failing CLI
 control before the one-condition checker fix. The previous independent PARTIAL
 and all proof remain intact. FG3 stays unchecked; FG5/FG4 remain pending.
+
+Work unit 247e149d98409ddf4bf998605844f43fe7444698 adds the exact
+deployment-home regression before its one-condition fix. The focused RED was
+one genuine nested homepage-anchor failure; GREEN passes 23 focal/release
+controls, including bare root, homepage anchor, same-document fragment, missing
+home anchor, percent-decoded nested guide, encoded traversal and missing-page
+boundaries. The previous targeted independent PARTIAL remains attached to
+9991651 and is not rewritten as acceptance.
+
+The exact clean native-3.3 clone at 247e149 passed 4,936 full tests with seven
+skips, three warnings, 23 subtests and 97.37% combined coverage. Pure branches
+remain 3,672/3,864 = 95.0311%; both nonempty runtime patch checks remain
+30/30. The actual prior deployment-home fixture now passes the production CLI.
+The clean build emits 42 HTML pages, no raw Jinja override, and passes local
+anchor checks. All 344 benchmark contracts, 59 standalone Playground tests,
+Ruff/check-only format, configured/expanded/CLI typing, Bandit, both zero-issue
+docstring audits, Zensical and all 129 protected identity checks passed. The
+runtime package remains 9d275e6fbf65529aab49d2f448ee5528d46df452. The
+full final-check ledger has 18 commands, not the earlier writer report's 17.
+Raw proof is under final-gates-fg3-root-completion/. FG3 remains unchecked
+until targeted independent regression acceptance; FG5/FG4 remain pending.
+This task-only checkpoint does not claim a second full run. The Engram mirror
+remains pending.
