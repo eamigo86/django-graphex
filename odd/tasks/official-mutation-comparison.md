@@ -177,3 +177,20 @@ should target integration 2d3853d so its review diff contains only the series
 unit and this task document, not the performance dependency. The exact merged
 candidate still requires clean-clone native-3.3 functional/quality proof,
 source freeze, independent review and fresh official hosted checks before OC2.
+
+The dependency's integration push run 37170467198 and tracker PR run
+37170469338 subsequently passed all 15 validation jobs, including
+PostgreSQL 17; the tracker also passed both Codecov checks. The tracker
+remains draft, and these are dependency/integration gates, not hosted proof
+for the official-series child.
+
+The merged official candidate 24a6e6f passed a fresh real-clone native-3.3
+full suite (4,756 passed; seven skipped; three warnings; 23 subtests;
+96.26% combined coverage), 344 benchmark contracts, 28 scoped-security
+focals, 59 standalone Playground tests, Bandit, Ruff, configured and CLI
+typing, both zero-issue docstring gates, and a clean documentation build.
+All 82 protected assets matched their earlier byte and filesystem identity.
+Only a factual task checkpoint follows this verified executable candidate;
+the final source freeze is the resulting commit, not the earlier test commit.
+The official-series child still needs independent exact-head acceptance and
+fresh hosted gates before OC2 measurement.
