@@ -227,3 +227,7 @@ pre-start observation, then execute the still-unstarted single authorized batch.
 This recovery edit is mechanical, factual documentation only; no new executable
 behavior or TDD RED is invented. Engram mirror remains pending under the host's
 unregistered-runtime restriction; RDD remains off.
+
+Quiet-window recovery work-unit commit:
+8ed1896d91006caa7f852b8014e03f437aa85615. Its rollback boundary is only this
+task checkpoint; the frozen measurement source and all public results are intact.
