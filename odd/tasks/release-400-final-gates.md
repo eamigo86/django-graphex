@@ -844,3 +844,24 @@ executable introduction contract failed for this precise omission before
 passed. This is a documentation-only correction; no result, source, seed,
 version, workflow or benchmark runtime is modified. Targeted final wording
 verification and hosted child/integration/tracker gates remain pending.
+
+The four-series wording and regression work unit is
+6b3c73b7d003f2d5bb8426b91e5b307190a70c8f. The first exact clean-clone
+run passed 4,937 full tests but the configured standard docstring audit found
+DOC002 on the new single-line test docstring; that candidate was not accepted
+as a complete gate pass. The focused follow-up
+b53a48e0c6a5fb4a9721833dd98b6de443d93355 makes it multiline without
+changing the assertion or public wording. Its fresh exact native-3.3 clone
+passed 4,937 full tests, seven skips, three warnings and 23 subtests at
+97.37% combined coverage; pure branches were 3,672/3,864 = 95.0311%, and
+both genuine runtime patch checks remained 30/30. All 344 benchmark
+contracts, 59 standalone Playground tests, Ruff/check-only formatting,
+configured/expanded/CLI mypy, Bandit, both zero-issue docstring gates,
+Zensical and 42-page site-link checker passed. The independent 139 protected,
+149 additional and 14 seed-stream/reservation/freeze witness paths retained
+exact SHA/stat identities. Root strict-docstring auditing still sees ignored
+historical files; the clean tracked clone audit passed and those ignored files
+were not deleted. Full raw proof is under final-gates-fg4-wording-completion/.
+This factual task-only checkpoint does not claim another full run at its own
+identity. FG4 remains open for targeted wording acceptance and hosted gates;
+main, tag and publication still need separate maintainer approval.
