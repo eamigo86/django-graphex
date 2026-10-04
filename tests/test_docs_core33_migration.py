@@ -169,6 +169,8 @@ def test_upgrade_guide_and_changelogs_cover_the_actual_migration() -> None:
     guide = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
     nav = (ROOT / "zensical.yml").read_text(encoding="utf-8")
     assert "UPGRADE-4.0.md" in nav
+    heading = guide.splitlines()[0].removeprefix("# ")
+    assert f"- {heading}: UPGRADE-4.0.md" in nav
     assert "## Version requirements" in guide
     for token in (
         "graphql-core>=3.3.0,<3.4",
