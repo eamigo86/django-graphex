@@ -161,6 +161,23 @@ def iter_ids(limit: int) -> Iterator[int]:
   newer GraphQL-core engine does not receive keywords unsupported by an older
   API. They do not extend the declared runtime support range.
 
+### Resolver fixture ownership
+
+Assign a `functools.partial` resolver to the **field definition instance**, as
+`GraphQLField` does, not to its class. Class-owned partials can change binding
+behavior across Python versions, warning on Python 3.13 and binding on Python
+3.14. A defensive helper returning `None` is not sufficient evidence that its
+intended paginator type guard was reached.
+
+For a synchronous resolver-shape regression, assert that the field instance
+owns the exact partial, its `func` is the original bound method and `__self__`
+is the original field object. Observe the `paginator_instance` property read
+and the exact non-paginator sentinel before asserting the result is `None`.
+The shape-inspection helper must not execute a resolver query. Keep native and
+custom-resolver companion tests intact; do not change the production helper or
+filter warnings to accommodate a malformed fixture. Run the focused contract
+with `--no-cov`, then the related/full suite and fresh supported-Python CI.
+
 ### Codecov upload policy
 
 The coverage job keeps the commit-pinned Codecov action and installs the
