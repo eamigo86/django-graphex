@@ -2,15 +2,20 @@
 
 ## Unreleased
 
-## 4.0.0 — 2026-10-03
+## 4.0.0 — 2026-10-05
 
 Release validation now checks the exact pure-branch coverage percentage in
 addition to combined and changed-line coverage. The documentation build checks
 generated local links and provides the 404 page's theme skip-link target.
 
-**Release prepared, not published.** The package and both editable project
-locks now name 4.0.0, with `graphql-core>=3.3.0,<3.4`. A tag, built wheel,
-hosted release-artifact verification, and publication remain separate gates.
+CI installs pinned `codecov-cli` 11.3.1 from official PyPI over verified HTTPS,
+keeping the existing action, authentication and coverage gates. This replaces
+the standalone-binary GPG/checksum verification with PyPI distribution trust;
+`fail_ci_if_error: true` makes installation or upload errors fail the job.
+Actual upload and both exact-commit Codecov checks remain required for release.
+
+**django-graphex 4.0.0 requires `graphql-core>=3.3.0,<3.4`.** The package
+and both editable project locks use this version and dependency range.
 Custom 3.2 `ExecutionContext` subclasses must move to the 3.3 `Executor` API; the
 legacy view keyword remains an alias with explicit-argument precedence.
 Custom AST builders must construct immutable AST nodes, and subscription

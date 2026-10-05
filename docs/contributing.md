@@ -161,6 +161,37 @@ def iter_ids(limit: int) -> Iterator[int]:
   newer GraphQL-core engine does not receive keywords unsupported by an older
   API. They do not extend the declared runtime support range.
 
+### Codecov upload policy
+
+The coverage job keeps the commit-pinned Codecov action and installs the
+fixed `codecov-cli` 11.3.1 release from official PyPI instead of fetching
+`latest` from the standalone-binary host. Its acquisition/failure inputs are:
+
+```yaml
+use_pypi: true
+version: v11.3.1
+fail_ci_if_error: true
+```
+
+The [pinned action wrapper](https://github.com/codecov/codecov-action/blob/fb8b3582c8e4def4969c97caa2f19720cb33a72f/dist/codecov.sh)
+uses pip's exact-version requirement for this route. This pins the CLI, not
+its transitive dependencies or the entire hosted runner environment. The
+[official PyPI release metadata](https://pypi.org/project/codecov-cli/11.3.1/)
+is available for that version; local source checks do not prove a hosted
+runner can install it or send a report.
+
+**Distribution-trust tradeoff:** the PyPI route uses verified HTTPS and skips
+the wrapper's standalone-binary GPG/checksum verification. It is not equivalent
+signature proof; the accepted trust boundary is PyPI package distribution and
+pip's normal TLS verification. Do not add insecure TLS, alternate download
+hosts, validation-disable inputs or error-swallowing overrides. Existing token,
+coverage.xml report and all 95.01% coverage gates remain unchanged.
+
+Installation or upload failure must fail the coverage job. Before release,
+verify the installed CLI version and actual upload, plus
+both Codecov project and patch checks on the exact commit. A green job or
+structural workflow test alone is not upload acceptance.
+
 The tool dependencies in `tox.ini` deliberately use bounded compatibility
 ranges. Keep those ranges identical to their entries in
 `dependency-groups.dev` in `pyproject.toml`; the dependency-contract test

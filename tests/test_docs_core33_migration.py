@@ -1,4 +1,4 @@
-"""Executable documentation contracts for the unpublished core33 migration."""
+"""Executable documentation contracts for the core33 migration."""
 
 import json
 import re
@@ -164,12 +164,14 @@ def test_current_stack_versions_match_committed_results() -> None:
 def test_upgrade_guide_and_changelogs_cover_the_actual_migration() -> None:
     """Expose implemented breaking changes without declaring a release.
 
-    The upgrade guide remains explicitly unpublished until the version task.
+    Version requirements remain accurate before and after publication.
     """
     guide = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
     nav = (ROOT / "zensical.yml").read_text(encoding="utf-8")
     assert "UPGRADE-4.0.md" in nav
-    assert "## 4.0.0 release prepared" in guide
+    heading = guide.splitlines()[0].removeprefix("# ")
+    assert f"- {heading}: UPGRADE-4.0.md" in nav
+    assert "## Version requirements" in guide
     for token in (
         "graphql-core>=3.3.0,<3.4",
         "Executor",
@@ -191,7 +193,7 @@ def test_upgrade_guide_and_changelogs_cover_the_actual_migration() -> None:
             assert token in notes
 
 
-def test_playground_banner_targets_prepared_checkout() -> None:
+def test_playground_banner_targets_400_checkout() -> None:
     """Avoid presenting the example as a v3.1-only application.
 
     Existing security and example guidance remains valid for this checkout.
@@ -199,6 +201,6 @@ def test_playground_banner_targets_prepared_checkout() -> None:
     page = (ROOT / "examples/playground/README.md").read_text(encoding="utf-8")
     banner = page.split("A small, runnable", maxsplit=1)[0]
     assert "Targets django-graphex v3.1" not in banner
-    assert "prepared 4.0.0 checkout" in banner.lower()
+    assert "4.0.0 checkout" in banner.lower()
     assert "graphql-core 3.3" in banner
     assert "--no-migrations --no-cov" in page
