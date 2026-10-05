@@ -14,6 +14,9 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Make the non-paginator resolver fixture own its partial on the field instance,
+  preserving bound-method identity and observing the paginator type-guard path
+  across Python versions without changing production pagination behavior.
 - Close SQLite connections deterministically in named comparison preflight and
   seed-identity readers, including errors. Disposable benchmark-test writers
   commit or roll back before close; historical results and timings are unchanged.

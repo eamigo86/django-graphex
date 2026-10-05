@@ -876,30 +876,67 @@ class TestWalkerPaginationArgExtraction(TestCase):
     def test_paginator_resolution_helper_returns_none_when_not_base_paginator(
         self,
     ) -> None:
-        """G2 guard: _resolve_results_paginator returns None when bound object's
-        paginator_instance is not a BaseDjangoGraphqlPagination instance.
+        """Reject a non-paginator reached through the original bound resolver.
 
-        This directly exercises the isinstance gate inside _resolve_results_paginator.
+        The field definition must own the exact partial on its instance. Observed
+        property access proves the production helper reaches the type guard,
+        rather than returning None after an unrelated resolver-shape mismatch.
         """
         from functools import partial
 
+        from django_graphex.paginations.pagination import BaseDjangoGraphqlPagination
         from django_graphex.utils import _resolve_results_paginator
 
-        # Simulate a bound object whose paginator_instance is NOT a BaseDjangoGraphqlPagination.
-        class _FakeField:
-            paginator_instance = object()  # not a BaseDjangoGraphqlPagination
+        non_paginator = object()
+        paginator_reads: list[object] = []
 
-            def list_resolver(self, manager, *args, **kwargs):  # pragma: no cover
+        class _FakeField:
+            """Expose an observable non-paginator on the resolver owner."""
+
+            @property
+            def paginator_instance(self) -> object:
+                """Record and return the exact value inspected by the type guard.
+
+                Returns:
+                    The non-paginator sentinel owned by this fixture.
+                """
+                paginator_reads.append(non_paginator)
+                return non_paginator
+
+            def list_resolver(
+                self, manager: object, *args: object, **kwargs: object
+            ) -> list[object]:
+                """Provide the bound callable shape without executing a query.
+
+                Args:
+                    manager: Manager bound into the partial.
+                    *args: Positional resolver arguments.
+                    **kwargs: Named resolver arguments.
+
+                Returns:
+                    An empty result if invoked.
+                """
                 return []
 
         fake_field = _FakeField()
-        resolve_fn = partial(fake_field.list_resolver, object())
+        original_bound_method = fake_field.list_resolver
+        resolve_fn = partial(original_bound_method, object())
 
         class _FakeFieldDef:
-            resolve = resolve_fn
+            """Stand in for the GraphQL field definition."""
 
-        result = _resolve_results_paginator(_FakeFieldDef())
+        field_def = _FakeFieldDef()
+        field_def.resolve = resolve_fn
+        self.assertIs(field_def.resolve, resolve_fn)
+        self.assertIs(vars(field_def).get("resolve"), resolve_fn)
+        self.assertIs(resolve_fn.func, original_bound_method)
+        self.assertIs(resolve_fn.func.__self__, fake_field)
+        self.assertNotIsInstance(non_paginator, BaseDjangoGraphqlPagination)
+        self.assertEqual(paginator_reads, [])
 
+        result = _resolve_results_paginator(field_def)
+
+        self.assertEqual(paginator_reads, [non_paginator])
         self.assertIsNone(
             result,
             "_resolve_results_paginator must return None when paginator_instance is not BaseDjangoGraphqlPagination",
