@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tempfile
 import tomllib
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -175,7 +176,12 @@ def _check_database(database: Path, authors: int) -> None:
         ValueError: If seed cardinalities or fixed operation IDs differ.
     """
     try:
-        with sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True) as connection:
+        with (
+            closing(
+                sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+            ) as connection,
+            connection,
+        ):
             counts = tuple(
                 connection.execute(f"SELECT COUNT(*) FROM benchapp_{table}").fetchone()[
                     0
@@ -392,7 +398,12 @@ def _database_identity(database: Path) -> tuple[str, tuple[tuple[str, int], ...]
     Returns:
         Database digest and ordered sequence values.
     """
-    with sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True) as connection:
+    with (
+        closing(
+            sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+        ) as connection,
+        connection,
+    ):
         sequence = tuple(
             connection.execute("SELECT name, seq FROM sqlite_sequence ORDER BY name")
         )

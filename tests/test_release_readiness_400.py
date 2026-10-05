@@ -62,11 +62,11 @@ def test_400_notes_are_dated_and_describe_version_requirements() -> None:
     """
     for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
         notes = path.read_text(encoding="utf-8")
-        assert (
-            notes.split("## Unreleased", maxsplit=1)[1]
-            .lstrip()
-            .startswith(f"## {VERSION} — {DATE}")
+        after_unreleased = notes.split("## Unreleased", maxsplit=1)[1]
+        first_release_heading = next(
+            line for line in after_unreleased.splitlines() if line.startswith("## ")
         )
+        assert first_release_heading == f"## {VERSION} — {DATE}"
         current = notes.split(f"## {VERSION} — {DATE}", maxsplit=1)[1].split(
             "## 3.1.1 — 2026-10-01", maxsplit=1
         )[0]

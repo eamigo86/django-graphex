@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from pathlib import Path
+from types import TracebackType
+from typing import Any
 
 import pytest
 
@@ -20,6 +25,237 @@ from benchmarks.run_publish import (
     EXPECTED_VERSIONS,
     OPERATIONS,
 )
+
+
+class _TrackedConnection(sqlite3.Connection):
+    """Observe real transaction exit, deterministic close and injected faults."""
+
+    def __init__(self, database: str | Path, **kwargs: Any) -> None:
+        """Initialize a real disposable SQLite connection and event recorder.
+
+        Args:
+            database: Disposable database path or read-only URI.
+            **kwargs: SQLite connection options.
+        """
+        super().__init__(database, **kwargs)
+        self.events: list[str] = []
+        self.execute_error: sqlite3.Error | None = None
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        """Exit the real transaction before recording commit or rollback.
+
+        Args:
+            exception_type: Raised exception class, if any.
+            exception: Raised exception instance, if any.
+            traceback: Exception traceback, if any.
+
+        Returns:
+            Whether the transaction suppresses the exception.
+        """
+        result = super().__exit__(exception_type, exception, traceback)
+        self.events.append("rollback" if exception_type else "commit")
+        return bool(result)
+
+    def close(self) -> None:
+        """Close the actual connection and record each ownership release."""
+        super().close()
+        self.events.append("close")
+
+    def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> sqlite3.Cursor:
+        """Execute real SQL unless this connection has an injected fault.
+
+        Args:
+            sql: Statement passed to SQLite.
+            parameters: Bound statement values.
+
+        Returns:
+            Cursor containing the actual result.
+
+        Raises:
+            sqlite3.Error: If the injected fault or SQLite execution fails.
+        """
+        if self.execute_error is not None:
+            raise self.execute_error
+        return super().execute(sql, parameters)
+
+
+@pytest.fixture
+def tracked_connections(monkeypatch: pytest.MonkeyPatch) -> list[_TrackedConnection]:
+    """Track disposable real connections without replacing transaction behavior.
+
+    Args:
+        monkeypatch: Fixture installing the tracking connection factory.
+
+    Returns:
+        Connections in acquisition order.
+    """
+    original = sqlite3.connect
+    connections: list[_TrackedConnection] = []
+
+    def connect(database: str | Path, **kwargs: Any) -> _TrackedConnection:
+        """Acquire a tracked real connection through the original factory.
+
+        Args:
+            database: Disposable database path or read-only URI.
+            **kwargs: Original connection options.
+
+        Returns:
+            Newly acquired connection.
+        """
+        connection = original(database, factory=_TrackedConnection, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    return connections
+
+
+@contextmanager
+def _writer_connection(database: Path) -> Iterator[sqlite3.Connection]:
+    """Own the disposable fixture transaction used by all three writer scopes.
+
+    Args:
+        database: Disposable seed or simulated-child database.
+
+    Yields:
+        Connection with the real SQLite commit/rollback context.
+    """
+    with closing(sqlite3.connect(database)) as connection, connection:
+        yield connection
+
+
+@pytest.mark.parametrize("helper", ["_check_database", "_database_identity"])
+@pytest.mark.parametrize("failure", [None, "execute", "validation", "acquisition"])
+def test_readers_release_connection_and_preserve_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_connections: list[_TrackedConnection],
+    helper: str,
+    failure: str | None,
+) -> None:
+    """Preserve read-only values and fault semantics while closing acquired readers.
+
+    Args:
+        tmp_path: Disposable database location.
+        monkeypatch: Fixture injecting precise connection faults.
+        tracked_connections: Observed real connections.
+        helper: Reader helper under test.
+        failure: Fault path, or successful materialization.
+
+    Raises:
+        sqlite3.OperationalError: Injected acquisition fault, caught by the contract.
+    """
+    database = tmp_path / "reader.sqlite3"
+    with closing(sqlite3.connect(database)) as connection, connection:
+        for table, count in (("author", 1), ("post", 10), ("comment", 50)):
+            connection.execute(f"CREATE TABLE benchapp_{table} (id INTEGER)")
+            connection.executemany(
+                f"INSERT INTO benchapp_{table} VALUES (?)",
+                [(5000 if table == "post" and i == 0 else i,) for i in range(count)],
+            )
+        connection.execute(
+            "CREATE TABLE allocation (id INTEGER PRIMARY KEY AUTOINCREMENT)"
+        )
+        connection.execute("INSERT INTO allocation DEFAULT VALUES")
+    before = database.read_bytes()
+    tracked_connections.clear()
+    original = sqlite3.connect
+    fault = sqlite3.OperationalError("injected reader fault")
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def connect(database_uri: str, **kwargs: Any) -> _TrackedConnection:
+        """Witness read-only acquisition and inject the requested failure.
+
+        Args:
+            database_uri: Reader database URI.
+            **kwargs: Reader connection options.
+
+        Returns:
+            Real tracked connection.
+
+        Raises:
+            sqlite3.OperationalError: For the acquisition fault contract.
+        """
+        calls.append((database_uri, kwargs))
+        if failure == "acquisition":
+            raise fault
+        reader = original(database_uri, **kwargs)
+        if failure == "execute":
+            reader.execute_error = fault
+        return reader
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    if failure in {"execute", "acquisition"}:
+        error = ValueError if helper == "_check_database" else sqlite3.OperationalError
+        with pytest.raises(error) as caught:
+            getattr(run_comparison, helper)(
+                database, 1
+            ) if helper == "_check_database" else run_comparison._database_identity(
+                database
+            )
+        assert (
+            caught.value.__cause__ is fault
+            if helper == "_check_database"
+            else caught.value is fault
+        )
+    elif helper == "_check_database" and failure == "validation":
+        with pytest.raises(ValueError, match="seed does not match"):
+            run_comparison._check_database(database, 2)
+    elif helper == "_check_database":
+        run_comparison._check_database(database, 1)
+    else:
+        assert run_comparison._database_identity(database) == (
+            hashlib.sha256(before).hexdigest(),
+            (("allocation", 1),),
+        )
+    assert calls == [(f"{database.as_uri()}?mode=ro", {"uri": True})]
+    assert database.read_bytes() == before
+    if failure == "acquisition":
+        assert not tracked_connections
+    else:
+        assert len(tracked_connections) == 1
+        assert tracked_connections[0].events == [
+            "rollback" if failure == "execute" else "commit",
+            "close",
+        ]
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_fixture_writer_exits_transaction_before_close(
+    tmp_path: Path, tracked_connections: list[_TrackedConnection], rollback: bool
+) -> None:
+    """Prove actual commit persistence or rollback before writer ownership release.
+
+    Args:
+        tmp_path: Disposable writer database location.
+        tracked_connections: Observed real connections.
+        rollback: Whether to inject an exception inside the transaction.
+
+    Raises:
+        ValueError: Injected rollback signal, caught after transaction exit.
+    """
+    database = tmp_path / "writer.sqlite3"
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.execute("CREATE TABLE evidence (value INTEGER)")
+    tracked_connections.clear()
+    try:
+        with _writer_connection(database) as connection:
+            connection.execute("INSERT INTO evidence VALUES (1)")
+            if rollback:
+                raise ValueError("injected writer rollback")
+    except ValueError as error:
+        assert rollback and str(error) == "injected writer rollback"
+    writer = tracked_connections[0]
+    assert writer.events == ["rollback" if rollback else "commit", "close"]
+    with closing(sqlite3.connect(database)) as observer:
+        assert observer.execute("SELECT COUNT(*) FROM evidence").fetchone() == (
+            0 if rollback else 1,
+        )
 
 
 def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -208,14 +444,17 @@ def test_preflight_reports_source_and_freeze_without_creating_output(
     assert not output.exists()
 
 
-def test_seed_preflight_reads_without_resetting(tmp_path: Path) -> None:
+def test_seed_preflight_reads_without_resetting(
+    tmp_path: Path, tracked_connections: list[_TrackedConnection]
+) -> None:
     """Require the fixed workload post and retain the original database bytes.
 
     Args:
         tmp_path: Disposable database location.
+        tracked_connections: Observed real connections.
     """
     database = tmp_path / "seed.sqlite3"
-    with sqlite3.connect(database) as connection:
+    with _writer_connection(database) as connection:
         for table in ("author", "post", "comment"):
             connection.execute(f"CREATE TABLE benchapp_{table} (id INTEGER)")
         connection.execute("INSERT INTO benchapp_author VALUES (1)")
@@ -229,6 +468,7 @@ def test_seed_preflight_reads_without_resetting(tmp_path: Path) -> None:
     before = database.read_bytes()
     run_comparison._check_database(database, 1)
     assert database.read_bytes() == before
+    assert tracked_connections[0].events == ["commit", "close"]
     with pytest.raises(ValueError, match="seed"):
         run_comparison._check_database(database, 2)
 
@@ -931,18 +1171,21 @@ def test_cli_execution_is_explicit_and_reports_result(
 
 
 def test_single_run_rejects_seed_and_sequence_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tracked_connections: list[_TrackedConnection],
 ) -> None:
     """Reject a child that changes prepared SQLite bytes or allocation state.
 
     Args:
         tmp_path: Disposable profile, seed, and output paths.
         monkeypatch: Fixture simulating a mutating child.
+        tracked_connections: Observed real connections.
     """
     _, venv_root = _workspace(tmp_path, monkeypatch)
     output = tmp_path / "run"
     database = tmp_path / "seed.sqlite3"
-    with sqlite3.connect(database) as connection:
+    with _writer_connection(database) as connection:
         connection.execute(
             "CREATE TABLE allocation (id INTEGER PRIMARY KEY AUTOINCREMENT)"
         )
@@ -953,8 +1196,14 @@ def test_single_run_rejects_seed_and_sequence_changes(
     before = run_comparison._database_identity(database)
 
     def child(_command: list[str], **_kwargs: object) -> None:
+        """Simulate committed allocation drift inside a closed transaction.
+
+        Args:
+            _command: Ignored measuring command.
+            **_kwargs: Ignored subprocess options.
+        """
         (output / "graphex.json").write_text(json.dumps(_measured_result(plan)))
-        with sqlite3.connect(database) as connection:
+        with _writer_connection(database) as connection:
             connection.execute("INSERT INTO allocation DEFAULT VALUES")
 
     monkeypatch.setattr(run_comparison.subprocess, "run", child)
@@ -962,6 +1211,9 @@ def test_single_run_rejects_seed_and_sequence_changes(
         run_comparison.run_single(plan)
     assert run_comparison._database_identity(database) != before
     assert (output / "graphex.json").is_file()
+    assert all(
+        connection.events == ["commit", "close"] for connection in tracked_connections
+    )
 
 
 def test_single_run_retains_partial_output_after_child_failure(

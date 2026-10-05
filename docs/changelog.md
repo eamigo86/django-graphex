@@ -14,6 +14,10 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Close SQLite connections deterministically in named comparison preflight and
+  seed-identity readers, including errors. Disposable benchmark-test writers
+  commit or roll back before close; historical results and timings are unchanged.
+
 ## 4.0.0 — 2026-10-05
 
 Release validation now checks the exact pure-branch coverage percentage in
