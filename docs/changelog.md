@@ -14,7 +14,7 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
-## 4.0.0 — 2026-10-04
+## 4.0.0 — 2026-10-05
 
 Release validation now checks the exact pure-branch coverage percentage in
 addition to combined and changed-line coverage. The documentation build checks
