@@ -79,6 +79,13 @@ result or empty replacement directory. An observed directory change is rejected
 before a successful result is returned, but this is not a filesystem sandbox. A
 single run is not a published comparison or a three-run median.
 
+The named comparison preflight and seed-identity readers close each owned
+SQLite connection deterministically after materializing their results, including
+error paths. Read-only URI mode remains enforced. Disposable writer fixtures
+exit their transaction (commit or rollback) before closing the connection;
+SQLite's transaction context alone does not release connection ownership.
+This resource fix changes no measured request boundaries or stored timings.
+
 `comparison_statistics.aggregate_three` is a pure helper for exactly three
 raw results from one already-prepared named-profile plan. It applies the same
 single-run validation to each result and returns detached per-statistic
