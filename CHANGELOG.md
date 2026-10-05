@@ -8,6 +8,12 @@ Release validation now checks the exact pure-branch coverage percentage in
 addition to combined and changed-line coverage. The documentation build checks
 generated local links and provides the 404 page's theme skip-link target.
 
+CI installs pinned `codecov-cli` 11.3.1 from official PyPI over verified HTTPS,
+keeping the existing action, authentication and coverage gates. This replaces
+the standalone-binary GPG/checksum verification with PyPI distribution trust;
+`fail_ci_if_error: true` makes installation or upload errors fail the job.
+Actual upload and both exact-commit Codecov checks remain required for release.
+
 **django-graphex 4.0.0 requires `graphql-core>=3.3.0,<3.4`.** The package
 and both editable project locks use this version and dependency range.
 Custom 3.2 `ExecutionContext` subclasses must move to the 3.3 `Executor` API; the

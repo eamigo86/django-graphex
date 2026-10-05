@@ -255,3 +255,64 @@ def test_tag_version_is_rejected_before_the_artifact_build() -> None:
     assert workflow.index("Verify tag matches the package version") < workflow.index(
         "uv build"
     )
+
+
+def test_codecov_upload_pins_pypi_cli_and_fails_closed() -> None:
+    """Use the pinned supported acquisition route without swallowing errors.
+
+    Exact step inputs preserve authentication and reports while rejecting
+    alternate binaries, TLS bypasses, validation overrides and skipped uploads.
+    """
+    coverage = _job("coverage")
+    marker = "    - name: Upload coverage to Codecov\n"
+    assert coverage.count(marker) == 1
+    upload = coverage.split(marker, maxsplit=1)[1]
+    assert (
+        upload.strip()
+        == "\n".join(
+            (
+                "      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7",
+                "      with:",
+                "        token: ${{ secrets.CODECOV_TOKEN }}",
+                "        files: ./coverage.xml",
+                "        use_pypi: true",
+                "        version: v11.3.1",
+                "        fail_ci_if_error: true",
+                "        verbose: true",
+            )
+        ).strip()
+    )
+
+
+def test_codecov_distribution_tradeoff_and_acceptance_are_documented() -> None:
+    """Explain the acquisition trust change and real hosted acceptance.
+
+    A version pin and a green job do not prove a complete upload or signed
+    standalone-binary provenance for a Python-package installation.
+    """
+    documents = [CONTRIBUTING_DOCS.read_text(encoding="utf-8")]
+    for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
+        documents.append(
+            path.read_text(encoding="utf-8").split("## 3.1.1", maxsplit=1)[0]
+        )
+    for document in documents:
+        for requirement in (
+            "codecov-cli",
+            "11.3.1",
+            "PyPI",
+            "HTTPS",
+            "GPG/checksum",
+            "fail_ci_if_error",
+        ):
+            assert requirement in document
+    guidance = documents[0]
+    for requirement in (
+        "use_pypi: true",
+        "version: v11.3.1",
+        "fail_ci_if_error: true",
+        "not equivalent",
+        "transitive dependencies",
+        "both Codecov project and patch checks",
+        "exact commit",
+    ):
+        assert requirement in guidance
