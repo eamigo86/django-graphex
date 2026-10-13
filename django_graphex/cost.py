@@ -35,6 +35,7 @@ from graphql.validation import ValidationRule
 
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
+from ._fragment_cycles import find_fragment_cycle
 from .core.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
@@ -322,6 +323,9 @@ def analyze_cost(
     Returns:
         report: A "CostReport" with the estimated total and the configured
             budget.
+
+    Raises:
+        GraphQLError: If any named fragments form a reference cycle.
     """
     from graphql.language import FragmentDefinitionNode, OperationDefinitionNode
 
@@ -332,6 +336,10 @@ def analyze_cost(
             fragments[definition.name.value] = definition
         elif isinstance(definition, OperationDefinitionNode):
             operations.append(definition)
+
+    cycle = find_fragment_cycle(document)
+    if cycle is not None:
+        raise GraphQLError("Cyclic fragment reference in document.", cycle)
 
     operation = None
     if operation_name is not None:
@@ -365,6 +373,15 @@ class CostLimitValidationRule(ValidationRule):
     sends the real, possibly much larger, variable values at execution time.
     """
 
+    def enter_document(self, node: DocumentNode, *_args: Any) -> None:
+        """Check the fragment graph before any operation's cost expansion.
+
+        Args:
+            node: The document definition root.
+            *_args: Additional visitor arguments supplied by graphql-core.
+        """
+        self._cyclic_fragments = find_fragment_cycle(node) is not None
+
     def enter_operation_definition(
         self, node: OperationDefinitionNode, *_args: Any
     ) -> None:
@@ -374,6 +391,8 @@ class CostLimitValidationRule(ValidationRule):
             node: The operation definition AST node.
             *_args: Additional visitor arguments supplied by graphql-core.
         """
+        if self._cyclic_fragments:
+            return
         max_cost = _settings_value("MAX_QUERY_COST")
         if not max_cost:
             return

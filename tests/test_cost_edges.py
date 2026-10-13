@@ -3,9 +3,11 @@
 and fragment paths) and "CostLimitValidationRule".
 """
 
+import pytest
 from django.test import override_settings
 from graphql import (
     GraphQLArgument,
+    GraphQLError,
     GraphQLField,
     GraphQLInt,
     GraphQLList,
@@ -16,7 +18,12 @@ from graphql import (
     parse,
     validate,
 )
-from graphql.language import FieldNode, NameNode
+from graphql.language import (
+    FieldNode,
+    FragmentDefinitionNode,
+    NameNode,
+    OperationDefinitionNode,
+)
 
 from django_graphex.cost import CostLimitValidationRule, _CostAnalyzer, analyze_cost
 
@@ -108,15 +115,29 @@ def test_non_pagination_argument_is_ignored_for_multiplier() -> None:
 
 
 @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
-def test_cyclic_fragment_spread_costed_once() -> None:
-    """A fragment that spreads itself must be costed once, not recursed forever.
+def test_cyclic_fragment_spread_raises_graphql_error() -> None:
+    """A self-spreading fragment raises instead of returning truncated cost.
 
-    Fragment "F" spreads itself; the second encounter must be short-circuited
-    so the analyzer terminates instead of recursing infinitely.
+    The original one-unit report silently omitted its cyclic spread.
     """
     doc = parse("{ items(limit: 2) { ...F } } fragment F on Item { name ...F }")
-    # name is free; the self-spread is guarded -> just the list own cost.
-    assert analyze_cost(_schema(), doc).total == 1
+    with pytest.raises(GraphQLError, match="Cyclic fragment reference"):
+        analyze_cost(_schema(), doc)
+
+    # Keep the private walker's guard defensive if it is used independently.
+    fragment = next(
+        definition
+        for definition in doc.definitions
+        if isinstance(definition, FragmentDefinitionNode)
+    )
+    operation = next(
+        definition
+        for definition in doc.definitions
+        if isinstance(definition, OperationDefinitionNode)
+    )
+    analyzer = _CostAnalyzer(_schema(), lambda _name: fragment, {}, {})
+    assert analyzer.operation_cost(operation) == 1
+    assert analyzer._cycle_cuts == 1
 
 
 # --------------------------------------------------------------------------- #

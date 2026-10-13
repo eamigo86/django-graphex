@@ -278,6 +278,39 @@ costs `1 + 1×(51 + 0) = 52`.
 - **`variable_values`** — bound variables, so a variabled page size (`limit: $first`)
   is costed exactly instead of falling back to the `MAX_PAGE_SIZE` cap.
 
+### Cyclic fragments and direct callers
+
+The cost and depth rules now inspect the named-fragment reference graph before
+expanding selections. Standard GraphQL validation still reports cyclic
+fragments as request errors before resolvers run; a compact branching cycle
+cannot make either rule repeatedly traverse its expanded paths. Acyclic
+documents, including repeated spreads that each contribute full cost, keep
+their existing estimates and depth verdicts.
+
+**Compatibility change for direct callers:** `analyze_cost()` now raises
+`GraphQLError` when *any* named fragments in the parsed document form a cycle,
+even if the selected operation does not spread that fragment. Previously it
+could return a truncated, misleading `CostReport`. For example,
+`{ root { ...F } } fragment F on Node { child { ...F } }` is cyclic; it no
+longer has a usable cost report. Validate the document first, or catch the
+exception when accepting unvalidated documents:
+
+```python
+from graphql import GraphQLError, parse, validate
+from django_graphex.cost import analyze_cost
+
+document = parse(query_text)
+errors = validate(schema.graphql_schema, document)
+if errors:
+    raise errors[0]  # Includes standard cyclic-fragment errors.
+
+try:
+    report = analyze_cost(schema.graphql_schema, document)
+except GraphQLError:
+    # Needed when calling directly without prior validation.
+    raise
+```
+
 A handy use is a regression test that fails if a query gets more expensive:
 
 ```python

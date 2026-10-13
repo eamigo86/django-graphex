@@ -14,6 +14,10 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Reject cyclic named-fragment graphs before cost/depth expansion. Direct
+  `analyze_cost()` now raises `GraphQLError` for a cyclic document rather than
+  returning a truncated cost, including cycles outside the selected operation;
+  validate first or catch the error. Acyclic costs and depth verdicts are unchanged.
 - Validate only the eight named canonical benchmark results and copy only those
   files into provenance-test fixtures. Ignored local diagnostic JSON no longer
   causes unrelated validation failures; missing or invalid canonical results

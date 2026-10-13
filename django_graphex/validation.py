@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from graphql import GraphQLError, OperationType, get_named_type
 from graphql.language import (
+    DocumentNode,
     FieldNode,
     FragmentSpreadNode,
     InlineFragmentNode,
@@ -28,6 +29,7 @@ from graphql.validation import ValidationRule
 
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
+from ._fragment_cycles import find_fragment_cycle
 from .core.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
@@ -93,6 +95,16 @@ class DepthLimitValidationRule(ValidationRule):
         self._clean_spreads: set[tuple[str, str, int | None]] = set()
         #: Counts cycle-guard short-circuits so truncated walks are not cached.
         self._cycle_cuts = 0
+        self._cyclic_fragments = False
+
+    def enter_document(self, node: DocumentNode, *_args: Any) -> None:
+        """Check the fragment graph before any operation's depth expansion.
+
+        Args:
+            node: The document definition root.
+            *_args: Additional visitor arguments supplied by graphql-core.
+        """
+        self._cyclic_fragments = find_fragment_cycle(node) is not None
 
     def enter_operation_definition(
         self, node: OperationDefinitionNode, *_args: Any
@@ -103,6 +115,8 @@ class DepthLimitValidationRule(ValidationRule):
             node: The operation definition AST node.
             *_args: Additional visitor arguments supplied by graphql-core.
         """
+        if self._cyclic_fragments:
+            return
         schema = self.context.schema
         root_type = {
             OperationType.QUERY: schema.query_type,
