@@ -17,12 +17,83 @@ RESULTS = BENCHMARKS / "results"
 DELIVERY_BASE = "4d595f1c4822d37a520a188892a943caa744f2ea"
 
 
-def _copy_canonical(tmp_path: Path) -> tuple[Path, Path]:
+def _copy_canonical(tmp_path: Path, source: Path = RESULTS) -> tuple[Path, Path]:
+    """Copy only the named canonical results into an isolated fixture.
+
+    Args:
+        tmp_path: Destination parent for the results and constraints copy.
+        source: Directory containing the eight source canonical files.
+
+    Returns:
+        paths: The copied results directory and constraints file.
+    """
     results = tmp_path / "results"
-    shutil.copytree(RESULTS, results)
+    results.mkdir(parents=True)
+    for name in run_publish.CANONICAL_RESULTS:
+        shutil.copy2(source / name, results / name)
     constraints = tmp_path / "constraints.txt"
     shutil.copy2(BENCHMARKS / "constraints.txt", constraints)
     return results, constraints
+
+
+def test_validator_ignores_unrelated_diagnostic_json(tmp_path: Path) -> None:
+    """Validate the eight canonical artifacts without reading local diagnostics.
+
+    Args:
+        tmp_path: Isolated directory holding valid results and unrelated files.
+    """
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in run_publish.CANONICAL_RESULTS:
+        shutil.copy2(RESULTS / name, results / name)
+    (results / "diagnostic.json").write_text('{"note": "not canonical"}')
+    (results / "malformed.json").write_text("{")
+    (results / "diagnostics").mkdir()
+    (results / "diagnostics" / "nested.json").write_text("{")
+
+    run_publish.validate_canonical_results(
+        results,
+        constraints_path=BENCHMARKS / "constraints.txt",
+        repo_root=REPO_ROOT,
+    )
+
+
+def test_copy_canonical_fixture_ignores_diagnostics(tmp_path: Path) -> None:
+    """Copy only canonical names into the provenance-test fixture.
+
+    Args:
+        tmp_path: Isolated source and destination directories.
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in run_publish.CANONICAL_RESULTS:
+        shutil.copy2(RESULTS / name, source / name)
+    (source / "diagnostic.json").write_text('{"note": "not canonical"}')
+    (source / "malformed.json").write_text("{")
+    (source / "diagnostics").mkdir()
+    (source / "diagnostics" / "nested.json").write_text("{")
+    copied, _constraints = _copy_canonical(tmp_path / "destination", source)
+    assert {path.name for path in copied.iterdir()} == set(
+        run_publish.CANONICAL_RESULTS
+    )
+
+
+def test_missing_canonical_file_still_fails_with_diagnostics(tmp_path: Path) -> None:
+    """Reject a missing canonical artifact even when diagnostic JSON exists.
+
+    Args:
+        tmp_path: Isolated directory missing one expected result.
+    """
+    results = tmp_path / "results"
+    results.mkdir()
+    missing = next(iter(run_publish.CANONICAL_RESULTS))
+    for name in run_publish.CANONICAL_RESULTS:
+        if name != missing:
+            shutil.copy2(RESULTS / name, results / name)
+    (results / "diagnostic.json").write_text('{"note": "not canonical"}')
+
+    with pytest.raises(AssertionError, match="exactly eight expected artifacts"):
+        run_publish.validate_canonical_results(results)
 
 
 def _rewrite_all(results: Path, field: str, value: str) -> None:
@@ -92,7 +163,8 @@ def test_canonical_results_require_reachable_delivery_ancestry(
 
 
 @pytest.mark.parametrize(
-    "field", ("commit", "measurement_tree", "constraints_sha256", "delivery_base_commit")
+    "field",
+    ("commit", "measurement_tree", "constraints_sha256", "delivery_base_commit"),
 )
 def test_canonical_results_reject_provenance_drift(tmp_path: Path, field: str) -> None:
     """Reject one artifact whose provenance differs from its peers.
@@ -112,7 +184,8 @@ def test_canonical_results_reject_provenance_drift(tmp_path: Path, field: str) -
 
 
 @pytest.mark.parametrize(
-    "field", ("commit", "measurement_tree", "constraints_sha256", "delivery_base_commit")
+    "field",
+    ("commit", "measurement_tree", "constraints_sha256", "delivery_base_commit"),
 )
 def test_canonical_results_require_full_lowercase_shas(
     tmp_path: Path, field: str
@@ -209,7 +282,5 @@ def test_suite_checkouts_provide_full_history_for_ancestry_check(
         next_job: Following job used to bound the workflow slice.
     """
     workflow = (REPO_ROOT / ".github/workflows/cicd.yaml").read_text()
-    suite_job = workflow.split(f"  {job}:\n", 1)[1].split(
-        f"\n  {next_job}:", 1
-    )[0]
+    suite_job = workflow.split(f"  {job}:\n", 1)[1].split(f"\n  {next_job}:", 1)[0]
     assert "fetch-depth: 0" in suite_job

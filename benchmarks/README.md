@@ -563,6 +563,14 @@ full-history checkout without trying to resolve the local measurement commit:
 python benchmarks/run_publish.py --validate-existing
 ```
 
+This read-only validation selects the eight named canonical JSON files, not
+every JSON file in `results/`. Ignored local summaries or diagnostic reruns
+may coexist there without changing the provenance verdict. A missing or
+invalid canonical file still fails its existing contract checks; unrelated
+files are neither opened nor removed. The provenance tests use the same
+eight-name selection when copying fixtures. This does not rerun measurements
+or change the publisher's output.
+
 ## Layout
 
 ```

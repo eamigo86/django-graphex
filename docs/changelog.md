@@ -14,6 +14,10 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Validate only the eight named canonical benchmark results and copy only those
+  files into provenance-test fixtures. Ignored local diagnostic JSON no longer
+  causes unrelated validation failures; missing or invalid canonical results
+  still fail, with no timing or published-artifact changes.
 - Make the non-paginator resolver fixture own its partial on the field instance,
   preserving bound-method identity and observing the paginator type-guard path
   across Python versions without changing production pagination behavior.
