@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Restore populated auto-derived `DecimalField` output under graphql-core 3.3
+  by converting its Django `Decimal` value for the existing `Float` field.
+  The SDL and exact Decimal input mapping remain unchanged; Float output still
+  rounds large values, while an explicitly declared `Decimal` scalar preserves
+  decimal text when required.
 - Bound optimizer planning for valid repeated-fragment graphs to distinct
   model, type, and relation-path contexts. Existing projections, prefetches,
   annotation promotion, ordered plan/alias precedence, GraphQL results, and SQL

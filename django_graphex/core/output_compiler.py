@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import logging
 from datetime import timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from graphql import (
@@ -775,6 +776,32 @@ def _to_graphql_field(
         return {
             camel_name: GraphQLField(type_=GraphQLFloat, resolve=_duration_resolver)
         }
+
+    # An auto-derived DecimalField keeps its established Float SDL, but a
+    # populated Django column returns Decimal, which GraphQLFloat rejects.
+    # Adapt only this field's resolved value; explicit scalar and resolver
+    # overrides are compiled separately and retain their own contracts.
+    if field.get_internal_type() == "DecimalField":
+
+        def _decimal_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
+            """Convert an auto-derived Decimal value for the existing Float field.
+
+            Args:
+                root: Model instance or mapping that owns the field.
+                _info: Unused GraphQL execution context.
+                _name: Django column name captured for this field.
+
+            Returns:
+                The Float-compatible value, or the unchanged non-Decimal value.
+            """
+            value = (
+                root.get(_name)
+                if isinstance(root, dict)
+                else getattr(root, _name, None)
+            )
+            return float(value) if isinstance(value, Decimal) else value
+
+        return {camel_name: GraphQLField(type_=GraphQLFloat, resolve=_decimal_resolver)}
 
     # ``BinaryField`` has the same shape of defect as ``DurationField`` above:
     # the SDL surface is ``String`` (graphene parity), but the column yields

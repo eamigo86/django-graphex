@@ -1551,6 +1551,30 @@ How Django model fields map to GraphQL **output** types:
 | `FileField` / `ImageField` | `String` — the storage name on output; on input, a storage path **or** the file a multipart part carries (see [Mutations › Automatic multipart uploads](mutations.md#automatic-multipart-uploads)) |
 | `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
 
+An automatically derived `DecimalField` keeps the existing `Float` output
+type. Populated values now serialize as numbers (for example,
+`Decimal("19.99")` returns `19.99`) instead of returning `null` with a Float
+serialization error. This is **not** an exact-decimal wire format: the Float
+value of `Decimal("9007199254740993.01")` is `9007199254740994.0`. The
+existing Decimal input scalar still parses decimal strings exactly. If exact
+output is required, explicitly declare a field with the `Decimal` scalar and
+return the original value from its resolver:
+
+```python
+from django_graphex.core import field
+from django_graphex.core.scalars import GdxDecimal
+from django_graphex.types import DjangoObjectType
+
+class PriceType(DjangoObjectType):
+    amount = field(GdxDecimal, resolver=lambda root, info: root.amount)
+
+    class Meta:
+        model = Price
+```
+
+This opt-in field returns a decimal string, not the automatic Float number;
+clients must handle that representation intentionally.
+
 Worked example — `ArrayField` (incl. a `choices` base) and a range field:
 
 ```python
