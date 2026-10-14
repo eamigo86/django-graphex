@@ -1557,6 +1557,30 @@ class Profile(models.Model):
 The enum member's *description* carries the original label, so the
 human-readable text is never lost.
 
+### Generated enum name collisions
+
+The generated enum type name combines the Django app label, model name and
+field name, then converts the result to camel case. Distinct paths can
+therefore normalize to the same GraphQL name. For example,
+`shop.Order.line_status` and `shop_order.Line.status` both become
+`shopOrderLineStatusEnum`.
+
+When both fields are used in one registry, django-graphex reuses that enum
+only if their generated members, raw values and descriptions agree. If they
+differ, schema construction raises `ImproperlyConfigured` naming the enum and
+both fields instead of publishing one field with the other's choices. This
+check runs when the affected fields are compiled, not as an eager scan of
+every model at startup. Separate registries can independently use the same
+name, but combining both incompatible types in one GraphQL schema still
+requires distinct names.
+
+There is no per-field enum-name override. To resolve a collision, keep only
+one of the conflicting fields in that schema or rename an app, model or field
+so their generated names differ. A rename changes the GraphQL enum name and
+may require a Django migration and client SDL/type updates; check those
+effects before making it. Existing names and values are unchanged where no
+incompatible collision exists.
+
 ### `MultiSelectField` { #multiselectfield }
 
 When the optional `django-multiselectfield` package is installed, a

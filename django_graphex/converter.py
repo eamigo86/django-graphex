@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from functools import singledispatch
 from typing import TYPE_CHECKING, Any, Iterator
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.db.models import Choices, JSONField
 from django.utils.encoding import force_str
@@ -318,9 +319,9 @@ def build_choices_enum_type(
     """Build (or fetch the cached) graphql-core "GraphQLEnumType" for a choices field.
 
     Canonical builder. Reuses "get_choices" (the 4-tier "choice_enum_name"
-    cascade) for the value names + per-choice descriptions, and compiles via
-    "core.compiler.compile_enum" so the native OUTPUT and FILTER-INPUT paths
-    share ONE instance per (model, field) pair:
+    cascade) for the value names + per-choice descriptions. The enum is built
+    without the schema compiler's process-global name cache; native OUTPUT,
+    generated INPUT and FILTER-INPUT paths share the registry-scoped instance:
 
     * "GraphQLEnumValue.value" carries the RAW python value, so resolution
       returns the stored value.
@@ -343,18 +344,18 @@ def build_choices_enum_type(
     Returns:
         A "GraphQLEnumType" for the field's choices, or None when the field has
         no usable choices.
+
+    Raises:
+        ImproperlyConfigured: Another field in this registry already uses the
+            generated enum name for an incompatible choices definition.
     """
     from graphql import GraphQLEnumType  # noqa: PLC0415
 
-    from .core.compiler import compile_enum  # noqa: PLC0415
+    from .core.compiler import _new_enum  # noqa: PLC0415
     from .core.ir import EnumSpec  # noqa: PLC0415
 
     name = choices_enum_name(field, input_flag)
     slot_key = f"{_NATIVE_ENUM_SLOT_PREFIX}{name}"
-
-    cached = registry.get_type_for_enum(slot_key)
-    if isinstance(cached, GraphQLEnumType):
-        return cached
 
     choices = getattr(field, "choices", None)
     if not choices:
@@ -369,13 +370,35 @@ def build_choices_enum_type(
     if not values:
         return None
 
-    enum_type = compile_enum(
+    enum_type = _new_enum(
         EnumSpec(
             name=name,
             values=tuple(values),
             descriptions=descriptions or None,
         )
     )
+    meta = field.model._meta
+    origin = f"{meta.app_label}.{meta.object_name}.{field.name}"
+    cached = registry.get_type_for_enum(slot_key)
+    if isinstance(cached, GraphQLEnumType):
+        same_values = len(cached.values) == len(enum_type.values) and all(
+            old_name == new_name
+            and type(old.value) is type(new.value)
+            and old.value == new.value
+            and old.description == new.description
+            and old.deprecation_reason == new.deprecation_reason
+            for (old_name, old), (new_name, new) in zip(
+                cached.values.items(), enum_type.values.items(), strict=True
+            )
+        )
+        if not same_values:
+            first_origin = cached.extensions.get("gdx_choices_origin", "<unknown>")
+            raise ImproperlyConfigured(
+                f"Choices enum {name!r} has incompatible definitions from "
+                f"{first_origin} and {origin}."
+            )
+        return cached
+    enum_type.extensions["gdx_choices_origin"] = origin
     registry.register_enum(slot_key, enum_type)
     return enum_type
 

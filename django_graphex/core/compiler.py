@@ -212,6 +212,20 @@ def compile_enum(spec: EnumSpec) -> GraphQLEnumType:
         if isinstance(existing, GraphQLEnumType):
             return existing
 
+    enum_type = _new_enum(spec)
+    _TYPE_CACHE[spec.name] = enum_type
+    return enum_type
+
+
+def _new_enum(spec: EnumSpec) -> GraphQLEnumType:
+    """Construct an enum without the schema compiler's global name cache.
+
+    Args:
+        spec: The intermediate-representation enum spec to compile.
+
+    Returns:
+        A fresh GraphQL enum preserving raw values and descriptions.
+    """
     values: dict[str, GraphQLEnumValue] = {}
     for graphql_name, raw_value in spec.values:
         description = None
@@ -222,12 +236,10 @@ def compile_enum(spec: EnumSpec) -> GraphQLEnumType:
             description=description,
         )
 
-    enum_type = GraphQLEnumType(
+    return GraphQLEnumType(
         name=spec.name,
         values=values,
     )
-    _TYPE_CACHE[spec.name] = enum_type
-    return enum_type
 
 
 # ---------------------------------------------------------------------------
