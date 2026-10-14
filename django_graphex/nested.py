@@ -422,7 +422,7 @@ class NestedFieldsMixin:
                         # cannot apply, and without this rule a client could
                         # rewrite ANY row of the related table by naming its pk.
                         #
-                        # An ID-only FK link has already passed the request's
+                        # This FK link has already passed the request's
                         # destination output scope before the first write;
                         # child WRITE permissions still do not run for a link.
                         item_pk = cls._child_pk(child_model, item)
@@ -750,7 +750,7 @@ class NestedFieldsMixin:
                 # Same link rule as the forward branch of "save_with_nested":
                 # an M2M row is shared by every parent that links it, so a
                 # payload naming a row this parent is NOT already linked to
-                # may only ATTACH it. An ID-only reference already passed the
+                # may only ATTACH it. This ID-link operation already passed the
                 # destination output scope before the parent was written, but
                 # does not run child WRITE permissions. A missing pk with
                 # actual child data still falls through to the writer, which
