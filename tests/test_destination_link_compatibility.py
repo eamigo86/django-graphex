@@ -320,6 +320,63 @@ def test_same_concrete_proxy_queryset_still_allows_link() -> None:
 
 
 @pytest.mark.django_db
+def test_malformed_destination_id_uses_structured_missing_error() -> None:
+    """An unparseable integer ID must not escape as a raw ORM exception.
+
+    The scope guard checks an externally supplied ID before any parent write.
+    """
+    with isolated_default_pair():
+
+        class ScopedAuthor(DjangoObjectType):
+            """Register the destination type with an active row hook."""
+
+            class Meta:
+                """Bind the author model."""
+
+                model = Author
+
+            @classmethod
+            def get_queryset(cls, queryset: QuerySet, info: Any) -> QuerySet:
+                """Return the configured author scope unchanged.
+
+                Args:
+                    queryset: The author queryset to scope.
+                    info: The request resolve info.
+
+                Returns:
+                    The author queryset.
+                """
+                return queryset
+
+        class PostCRUD(DjangoModelType):
+            """Generate a post create mutation."""
+
+            class Meta:
+                """Bind the post model."""
+
+                model = Post
+
+        result = PostCRUD.create(
+            None,
+            _info(),
+            **{
+                PostCRUD._meta.input_field_name: {
+                    "title": "invalid-link",
+                    "author": "not-an-integer",
+                }
+            },
+        )
+        assert result.ok is False
+        assert [(error.field, error.messages) for error in result.errors] == [
+            (
+                "author",
+                ['Invalid pk "not-an-integer" - object does not exist.'],
+            )
+        ]
+        assert not Post.objects.exists()
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("shape", ("duplicate_join", "slice"))
 def test_visible_id_remains_linkable_through_supported_queryset_shapes(
     shape: str,
