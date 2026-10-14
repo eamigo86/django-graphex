@@ -1145,7 +1145,8 @@ class DjangoObjectType(NativeObjectType):
 
         Raises:
             ImproperlyConfigured: If the legacy "Meta.gfk_unions" key is declared
-                (renamed to "unions" in v2.0).
+                (renamed to "unions" in v2.0), or if a distinct public output
+                type already registers this model in the same Registry.
         """
         # HARD rename guard (v2.0): ``Meta.gfk_unions`` -> ``Meta.unions`` (mirrors
         # the ``gfk_types`` -> ``types`` rename). A subclass still declaring the old
@@ -1392,20 +1393,19 @@ class DjangoObjectType(NativeObjectType):
                 extensions={"gdx": _gdx_payload},
             )
 
-            # Last-wins: make THIS class's instance the canonical one for the
-            # model so relation thunks resolve to it — consistent with the
-            # graphene Registry's (model, None) last-registration-wins rule and
-            # with registry.register(cls) above.  When skip_registry=True the
-            # class is NOT canonical in the graphene Registry, so do not let it
-            # claim the shared slot either.
+            # The accepted public class's instance is canonical for this model
+            # in its Registry. Registry.register(cls) above rejects a distinct
+            # second public class before this companion slot can be overwritten;
+            # re-registering the identical class remains valid. A skip_registry
+            # class is not public in that Registry, so it cannot claim the slot.
             #
             # item-b (B5): during a FORKED build, the GLOBAL shared output
             # registry must NOT be touched (an auto-created pair type would
             # overwrite the global model slot, leaking into default-pair schemas).
             # The forked type is registered in its PAIR output registry by
             # ``compile_outputs_into`` / ``fork_output_class`` instead. Outside a
-            # fork this is byte-identical (the global last-wins write a custom- or
-            # global-registry type relies on for default-pair relation resolution).
+            # fork, this writes only the accepted type to its Registry companion
+            # for default-pair relation resolution.
             #
             # Registry-scoped stamping: ``_shared_registry`` is the class's OWN
             # registry companion (``registry.output_registry()``). For the GLOBAL
