@@ -358,8 +358,8 @@ def build_choices_enum_type(
         no usable choices.
 
     Raises:
-        ImproperlyConfigured: Another field in this registry already uses the
-            generated enum name for an incompatible choices definition.
+        ImproperlyConfigured: A field generates ambiguous member names, or
+            another field in this registry defines the same enum incompatibly.
     """
     from graphql import GraphQLEnumType  # noqa: PLC0415
 
