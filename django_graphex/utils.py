@@ -2002,7 +2002,8 @@ def _collect_prefetch_only_sets(
     promoted_lookups: "frozenset[str] | None" = None,
     schema: Any = None,
     fmap_cache: "dict[tuple[int, str], Any] | None" = None,
-    _seen: set[tuple[int, type[Model], str, int]] | None = None,
+    _memo: dict[tuple[int, type[Model], str, int], dict[str, PrefetchPlan]]
+    | None = None,
 ) -> dict[str, PrefetchPlan]:
     """Map each direct prefetch lookup to its child column plan.
 
@@ -2038,19 +2039,26 @@ def _collect_prefetch_only_sets(
         fmap_cache: Optional request-scoped memoization dict (see
             _relation_field_map).  Threading it prevents redundant
             _meta.get_fields() calls from the .only()-narrowing pass (#66).
-        _seen: Selection contexts already expanded into this plan map.
+        _memo: Per-traversal plan effects keyed by selection, model, type,
+            and relation path. Cached effects are reapplied in encounter order.
 
     Returns:
         The completed {dotted_lookup: PrefetchPlan} dict.
     """
     if _out is None:
         _out = {}
-    if _seen is None:
-        _seen = set()
+    if _memo is None:
+        _memo = {}
     context = (id(selection_set), model, _prefix, id(gql_type))
-    if context in _seen:
+    if context in _memo:
+        _out.update(_memo[context])
         return _out
-    _seen.add(context)
+    # The context's effect is independent of entries already in the caller's
+    # map. Keep it local so a later repeated spread can restore overwritten
+    # plans, even when its first write happened to equal the prior value.
+    target_out = _out
+    _out = {}
+    _memo[context] = _out
 
     # The child's source class for AnnotatedField self-collection lives on
     # ``child_gql.extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type``
@@ -2082,7 +2090,7 @@ def _collect_prefetch_only_sets(
                     promoted_lookups=promoted_lookups,
                     schema=schema,
                     fmap_cache=fmap_cache,
-                    _seen=_seen,
+                    _memo=_memo,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -2114,7 +2122,7 @@ def _collect_prefetch_only_sets(
                 promoted_lookups=promoted_lookups,
                 schema=schema,
                 fmap_cache=fmap_cache,
-                _seen=_seen,
+                _memo=_memo,
             )
             continue
 
@@ -2145,7 +2153,7 @@ def _collect_prefetch_only_sets(
                     promoted_lookups=promoted_lookups,
                     schema=schema,
                     fmap_cache=fmap_cache,
-                    _seen=_seen,
+                    _memo=_memo,
                 )
             continue
 
@@ -2207,7 +2215,7 @@ def _collect_prefetch_only_sets(
                     promoted_lookups=promoted_lookups,
                     schema=schema,
                     fmap_cache=fmap_cache,
-                    _seen=_seen,
+                    _memo=_memo,
                 )
             # If this path was promoted to prefetch by the AnnotatedField promotion
             # pass, also build a PrefetchPlan for it so child annotations are injected.
@@ -2253,7 +2261,8 @@ def _collect_prefetch_only_sets(
         if plan is not None:
             _out[lookup] = plan
 
-    return _out
+    target_out.update(_out)
+    return target_out
 
 
 def _build_member_queryset(member_model: type[Model], plan: PrefetchPlan) -> QuerySet:
@@ -2867,7 +2876,7 @@ def _walk_annotated_fields(
     aliases: dict,
     names: set,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
-    _seen: set[tuple[int, int, int]] | None = None,
+    _memo: dict[tuple[int, int, int], tuple[dict, dict, set]] | None = None,
 ) -> None:
     """Walk a GraphQL selection set and collect AnnotatedField declarations.
 
@@ -2885,19 +2894,26 @@ def _walk_annotated_fields(
         names: Accumulator set of snake_case field names of selected AnnotatedFields.
         _fmap_cache: Optional request-scoped memoization dict (see
             _relation_field_map).
-        _seen: Selection contexts already expanded into these accumulators.
+        _memo: Per-traversal annotation, alias, and name effects by selection
+            and GraphQL/source type. Cached writes replay in encounter order.
     """
     # Lazy import avoids the fields <-> utils circular import.
     from .fields import AnnotatedField  # noqa: PLC0415
 
     if selection_set is None:
         return
-    if _seen is None:
-        _seen = set()
+    if _memo is None:
+        _memo = {}
     context = (id(selection_set), id(gql_type), id(graphene_type))
-    if context in _seen:
+    if context in _memo:
+        cached_annotations, cached_aliases, cached_names = _memo[context]
+        annotations.update(cached_annotations)
+        aliases.update(cached_aliases)
+        names.update(cached_names)
         return
-    _seen.add(context)
+    target_annotations, target_aliases, target_names = annotations, aliases, names
+    annotations, aliases, names = {}, {}, set()
+    _memo[context] = (annotations, aliases, names)
 
     rel_map = (
         _relation_field_map(
@@ -2922,7 +2938,7 @@ def _walk_annotated_fields(
                     aliases,
                     names,
                     _fmap_cache=_fmap_cache,
-                    _seen=_seen,
+                    _memo=_memo,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -2945,7 +2961,7 @@ def _walk_annotated_fields(
                 aliases,
                 names,
                 _fmap_cache=_fmap_cache,
-                _seen=_seen,
+                _memo=_memo,
             )
             continue
 
@@ -3008,8 +3024,12 @@ def _walk_annotated_fields(
                 aliases,
                 names,
                 _fmap_cache=_fmap_cache,
-                _seen=_seen,
+                _memo=_memo,
             )
+
+    target_annotations.update(annotations)
+    target_aliases.update(aliases)
+    target_names.update(names)
 
 
 def _collect_annotated_fields(

@@ -8,12 +8,21 @@ from typing import Any
 import pytest
 from django.contrib.auth import get_user_model
 from django.db import connection
+from django.db.models import F, Value
 from django.test.utils import CaptureQueriesContext
-from graphql import build_schema, graphql_sync, parse
+from graphql import (
+    GraphQLInt,
+    build_schema,
+    graphql_sync,
+    parse,
+    specified_rules,
+    validate,
+)
 
 import django_graphex.utils as utils
+from django_graphex.fields import AnnotatedField
 from tests.models import AuditArticle, Author, Post
-from tests.test_optimizer_phase_d import _AuthorTypePromo, _promo_schema
+from tests.test_optimizer_phase_d import _AuthorTypePromo, _PostTypePromo, _promo_schema
 
 
 def _repeated_fragment_document(levels: int) -> tuple[Any, dict[str, Any]]:
@@ -239,3 +248,67 @@ def test_promotion_consumer_bounds_repeated_spreads_without_changing_rows(
     assert result.data == flat.data
     assert result.data["allPosts"]["results"][0]["author"]["postCount"] == 1
     assert len(captured) == len(flat_captured) == 2
+
+
+@pytest.mark.django_db
+def test_interleaved_fragment_restores_last_prefetch_annotation_plan() -> None:
+    """Reapply a repeated plan after an interleaved plain relation selection.
+
+    A last-write-wins plan map must preserve the final fragment's annotation.
+    """
+    author = Author.objects.create(name="Ada", bio="")
+    Post.objects.create(title="P", author=author)
+    post_type = _PostTypePromo._meta.graphql_output_type.name
+    query = (
+        "{ allPosts { results { ...A author { name } ...A } } } "
+        f"fragment A on {post_type} {{ author {{ name postCount }} }}"
+    )
+    schema = _promo_schema.graphql_schema
+    assert validate(schema, parse(query), rules=specified_rules) == []
+
+    with CaptureQueriesContext(connection) as captured:
+        result = graphql_sync(schema, query)
+
+    assert result.errors is None
+    assert result.data["allPosts"]["results"][0]["author"] == {
+        "name": "Ada",
+        "postCount": 1,
+    }
+    assert len(captured) == 2
+    assert any("_gqx_ann_post_count" in entry["sql"] for entry in captured)
+
+
+def test_interleaved_fragment_restores_last_annotation_alias_value() -> None:
+    """Reapply alias writes when a repeated fragment follows another field.
+
+    The final fragment must restore its alias value after the middle field.
+    """
+    schema = build_schema(
+        "type Query { author: Author } type Author { one: Int two: Int }"
+    )
+    document = parse("{ author { ...A two ...A } } fragment A on Author { one }")
+    assert validate(schema, document, rules=specified_rules) == []
+    fields = {
+        "one": AnnotatedField(GraphQLInt, F("shared"), aliases={"shared": Value(1)}),
+        "two": AnnotatedField(GraphQLInt, F("shared"), aliases={"shared": Value(2)}),
+    }
+    source_type = SimpleNamespace(_meta=SimpleNamespace(fields=fields))
+    info = SimpleNamespace(fragments={"A": document.definitions[1]})
+    selection = document.definitions[0].selection_set.selections[0].selection_set
+    annotations: dict[str, Any] = {}
+    aliases: dict[str, Any] = {}
+    names: set[str] = set()
+
+    utils._walk_annotated_fields(
+        schema.get_type("Author"),
+        source_type,
+        selection,
+        info,
+        annotations,
+        aliases,
+        names,
+    )
+
+    assert aliases["shared"].value == 1
+    assert names == {"one", "two"}
+    assert set(annotations) == {"_gqx_ann_one", "_gqx_ann_two"}

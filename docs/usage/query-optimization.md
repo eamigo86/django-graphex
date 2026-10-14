@@ -61,7 +61,10 @@ subtree once for every spread route. For example, two spreads of a fragment
 selecting `author { name }` keep the same `select_related("author")` and column
 projection as before. Reusing that fragment under different relation paths still
 plans each path separately. This changes optimizer planning work, not GraphQL
-execution, response fields, query cost, or the number of SQL queries.
+execution, response fields, query cost, or the number of SQL queries. Repeated
+fragment plans are reapplied in selection order, so a later spread retains its
+existing precedence over an interleaved selection of the same relation or
+annotation alias.
 
 ## Example
 
