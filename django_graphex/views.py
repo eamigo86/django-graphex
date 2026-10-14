@@ -784,6 +784,141 @@ class BaseGraphQLView(View):
             content_type="application/json",
         )
 
+    def _enforce_request_body_size(self, request: Any) -> None:
+        """Reject an oversized POST before parsing or accessing document caches.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Raises:
+            HttpError: If the existing configured body cap is exceeded, or an
+                unmeasurable multipart stream has no declared length.
+        """
+        # Body-size guard: reject before JSON parsing when
+        # MAX_REQUEST_BODY_SIZE is configured and the body exceeds it.
+        #
+        # Security note: Content-Length is a CLIENT-SUPPLIED header and
+        # MUST NOT be trusted to pass the guard.  A spoofed low value
+        # would let an oversized body bypass the check entirely.
+        #
+        # Two-stage strategy:
+        #   1. Fast-reject: if Content-Length is present AND already
+        #      exceeds the cap, reject immediately without reading the
+        #      body (avoids buffering an honest large upload).
+        #   2. Authoritative check: measure the body itself and verify it
+        #      is ≤ max_body.  This catches spoofed-low / absent / garbage
+        #      Content-Length values.  Multipart is measured by seeking
+        #      rather than by reading — see below.
+        #
+        # Accessing request.body here is safe: dispatch runs before
+        # parse_body, so the stream has not been consumed yet.  Django
+        # caches the result in request._body on first access.  If the
+        # body is so large that Django itself raises RequestDataTooBig /
+        # SuspiciousOperation (DATA_UPLOAD_MAX_MEMORY_SIZE), that
+        # exception surfaces as Django's own 400 response — we do not
+        # mask it, but we also do not let the guard 500 on it.
+        max_body = graphql_api_settings.MAX_REQUEST_BODY_SIZE
+        if max_body is not None and request.method.lower() == "post":
+            from django.http import HttpResponse as _HR
+
+            content_type = self.get_content_type(request)
+
+            # --- Stage 1: fast-reject on honest oversized Content-Length ---
+            content_length_str = request.META.get("CONTENT_LENGTH", "")
+            try:
+                declared_length = int(content_length_str)
+            except (ValueError, TypeError):
+                declared_length = None
+
+            if declared_length is not None and declared_length > max_body:
+                raise HttpError(
+                    _HR(status=413),
+                    message=(
+                        f"Request body ({declared_length} bytes) exceeds the "
+                        f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                        "Split the request or increase the limit."
+                    ),
+                )
+
+            # --- Stage 2: authoritative check on the actual body length ---
+            # Stage 1 compared the cap against a number the CLIENT chose, so
+            # on its own it bounds nothing: a body declaring less than it
+            # carries sails straight through it. Stage 2 is what makes the
+            # cap mean something, and it must therefore run for every content
+            # type — multipart included, which is where the bypass lived.
+            if content_type == "multipart/form-data":
+                # Measure the stream instead of reading it. Reading
+                # request.body here would be WRONG: "dispatch" carries
+                # @ensure_csrf_cookie, whose process_view runs the full CSRF
+                # token check whenever a csrftoken cookie is present, and
+                # that check reads request.POST. For multipart that drains
+                # the stream before we get here, so request.body raises
+                # RawPostDataException (HTTP 500) — and this endpoint plants
+                # the cookie on every response, so only a client's FIRST
+                # multipart POST ever survived. Reading also drags multipart
+                # under DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB by default),
+                # which streaming multipart otherwise escapes, and doubles
+                # peak memory for an upload that would have gone to disk.
+                #
+                # A seek costs none of that. Under ASGI "_stream" is the
+                # SpooledTemporaryFile "ASGIHandler.read_body" already
+                # filled, so its true size is one seek away: nothing is
+                # allocated, "_read_started" is never set, and the parser
+                # still sees a pristine stream. The position is saved and
+                # restored rather than assumed to be zero, because the CSRF
+                # check above may already have consumed it.
+                stream = getattr(request, "_stream", None)
+                measured_length = None
+                if stream is not None and stream.seekable():
+                    position = stream.tell()
+                    measured_length = stream.seek(0, os.SEEK_END)
+                    stream.seek(position)
+
+                if measured_length is not None and measured_length > max_body:
+                    raise HttpError(
+                        _HR(status=413),
+                        message=(
+                            f"Request body ({measured_length} bytes) exceeds "
+                            f"the MAX_REQUEST_BODY_SIZE limit of {max_body} "
+                            "bytes. Split the request or increase the limit."
+                        ),
+                    )
+
+                # Not seekable means a WSGI LimitedStream, which Django has
+                # already capped at CONTENT_LENGTH — an under-declared length
+                # truncates the body it lies about instead of smuggling it,
+                # and stage 1 refused every declared length above the cap. So
+                # the only unbounded case left is an ABSENT length, which
+                # WSGIRequest turns into a limit of zero: the request was
+                # doomed anyway, but it died as an opaque "must provide query
+                # string" 400. 411 says what actually went wrong. It is not
+                # 413 because the size is unknown, not known-too-big.
+                if measured_length is None and declared_length is None:
+                    raise HttpError(
+                        _HR(status=411),
+                        message=(
+                            "A multipart/form-data request must declare a "
+                            "Content-Length while MAX_REQUEST_BODY_SIZE is "
+                            "set, because this server cannot measure its "
+                            "body. Send a declared length instead of a "
+                            "chunked body."
+                        ),
+                    )
+            else:
+                # If reading the body raises Django's RequestDataTooBig /
+                # SuspiciousOperation, that propagates as Django's own
+                # response (we neither mask it nor 500 on it).
+                actual_length = len(request.body)
+                if actual_length > max_body:
+                    raise HttpError(
+                        _HR(status=413),
+                        message=(
+                            f"Request body ({actual_length} bytes) exceeds the "
+                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                            "Split the request or increase the limit."
+                        ),
+                    )
+
     @method_decorator(ensure_csrf_cookie)
     def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
         """Handle a GraphQL GET/POST request (and GraphiQL/batch).
@@ -860,130 +995,7 @@ class BaseGraphQLView(View):
                     )
                 )
 
-            # Body-size guard: reject before JSON parsing when
-            # MAX_REQUEST_BODY_SIZE is configured and the body exceeds it.
-            #
-            # Security note: Content-Length is a CLIENT-SUPPLIED header and
-            # MUST NOT be trusted to pass the guard.  A spoofed low value
-            # would let an oversized body bypass the check entirely.
-            #
-            # Two-stage strategy:
-            #   1. Fast-reject: if Content-Length is present AND already
-            #      exceeds the cap, reject immediately without reading the
-            #      body (avoids buffering an honest large upload).
-            #   2. Authoritative check: measure the body itself and verify it
-            #      is ≤ max_body.  This catches spoofed-low / absent / garbage
-            #      Content-Length values.  Multipart is measured by seeking
-            #      rather than by reading — see below.
-            #
-            # Accessing request.body here is safe: dispatch runs before
-            # parse_body, so the stream has not been consumed yet.  Django
-            # caches the result in request._body on first access.  If the
-            # body is so large that Django itself raises RequestDataTooBig /
-            # SuspiciousOperation (DATA_UPLOAD_MAX_MEMORY_SIZE), that
-            # exception surfaces as Django's own 400 response — we do not
-            # mask it, but we also do not let the guard 500 on it.
-            max_body = graphql_api_settings.MAX_REQUEST_BODY_SIZE
-            if max_body is not None and request.method.lower() == "post":
-                from django.http import HttpResponse as _HR
-
-                content_type = self.get_content_type(request)
-
-                # --- Stage 1: fast-reject on honest oversized Content-Length ---
-                content_length_str = request.META.get("CONTENT_LENGTH", "")
-                try:
-                    declared_length = int(content_length_str)
-                except (ValueError, TypeError):
-                    declared_length = None
-
-                if declared_length is not None and declared_length > max_body:
-                    raise HttpError(
-                        _HR(status=413),
-                        message=(
-                            f"Request body ({declared_length} bytes) exceeds the "
-                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
-                            "Split the request or increase the limit."
-                        ),
-                    )
-
-                # --- Stage 2: authoritative check on the actual body length ---
-                # Stage 1 compared the cap against a number the CLIENT chose, so
-                # on its own it bounds nothing: a body declaring less than it
-                # carries sails straight through it. Stage 2 is what makes the
-                # cap mean something, and it must therefore run for every content
-                # type — multipart included, which is where the bypass lived.
-                if content_type == "multipart/form-data":
-                    # Measure the stream instead of reading it. Reading
-                    # request.body here would be WRONG: "dispatch" carries
-                    # @ensure_csrf_cookie, whose process_view runs the full CSRF
-                    # token check whenever a csrftoken cookie is present, and
-                    # that check reads request.POST. For multipart that drains
-                    # the stream before we get here, so request.body raises
-                    # RawPostDataException (HTTP 500) — and this endpoint plants
-                    # the cookie on every response, so only a client's FIRST
-                    # multipart POST ever survived. Reading also drags multipart
-                    # under DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB by default),
-                    # which streaming multipart otherwise escapes, and doubles
-                    # peak memory for an upload that would have gone to disk.
-                    #
-                    # A seek costs none of that. Under ASGI "_stream" is the
-                    # SpooledTemporaryFile "ASGIHandler.read_body" already
-                    # filled, so its true size is one seek away: nothing is
-                    # allocated, "_read_started" is never set, and the parser
-                    # still sees a pristine stream. The position is saved and
-                    # restored rather than assumed to be zero, because the CSRF
-                    # check above may already have consumed it.
-                    stream = getattr(request, "_stream", None)
-                    measured_length = None
-                    if stream is not None and stream.seekable():
-                        position = stream.tell()
-                        measured_length = stream.seek(0, os.SEEK_END)
-                        stream.seek(position)
-
-                    if measured_length is not None and measured_length > max_body:
-                        raise HttpError(
-                            _HR(status=413),
-                            message=(
-                                f"Request body ({measured_length} bytes) exceeds "
-                                f"the MAX_REQUEST_BODY_SIZE limit of {max_body} "
-                                "bytes. Split the request or increase the limit."
-                            ),
-                        )
-
-                    # Not seekable means a WSGI LimitedStream, which Django has
-                    # already capped at CONTENT_LENGTH — an under-declared length
-                    # truncates the body it lies about instead of smuggling it,
-                    # and stage 1 refused every declared length above the cap. So
-                    # the only unbounded case left is an ABSENT length, which
-                    # WSGIRequest turns into a limit of zero: the request was
-                    # doomed anyway, but it died as an opaque "must provide query
-                    # string" 400. 411 says what actually went wrong. It is not
-                    # 413 because the size is unknown, not known-too-big.
-                    if measured_length is None and declared_length is None:
-                        raise HttpError(
-                            _HR(status=411),
-                            message=(
-                                "A multipart/form-data request must declare a "
-                                "Content-Length while MAX_REQUEST_BODY_SIZE is "
-                                "set, because this server cannot measure its "
-                                "body. Send a declared length instead of a "
-                                "chunked body."
-                            ),
-                        )
-                else:
-                    # If reading the body raises Django's RequestDataTooBig /
-                    # SuspiciousOperation, that propagates as Django's own
-                    # response (we neither mask it nor 500 on it).
-                    actual_length = len(request.body)
-                    if actual_length > max_body:
-                        raise HttpError(
-                            _HR(status=413),
-                            message=(
-                                f"Request body ({actual_length} bytes) exceeds the "
-                                f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
-                                "Split the request or increase the limit."
-                            ),
-                        )
+            self._enforce_request_body_size(request)
 
             data = self.parse_body(request)
             show_graphiql = self.graphiql and self.can_display_graphiql(request, data)
@@ -1930,6 +1942,9 @@ class GraphQLView(BaseGraphQLView):
 
         When "CACHE_ACTIVE" is True:
 
+        * The configured POST body cap is checked before operation parsing or
+          parse, validation, and response-cache access; refusals use the base
+          view's established HTTP error envelope.
         * Cache keys are partitioned by user identity (see "cache_key_prefix") so
           one user's cached response is never served to another user. Their v2
           shape also records invalidation scope, counter namespace and version.
@@ -1975,6 +1990,20 @@ class GraphQLView(BaseGraphQLView):
         """
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
+
+        # The base view enforces the same configured cap, but the cache-active
+        # path classifies the GraphQL document before reaching base dispatch.
+        # Preflight here so an oversized body never reaches parse or cache work.
+        # On refusal, delegate to base dispatch for its established 413/411
+        # error envelope and content-type behavior.
+        if (
+            graphql_api_settings.MAX_REQUEST_BODY_SIZE is not None
+            and request.method.lower() == "post"
+        ):
+            try:
+                self._enforce_request_body_size(request)
+            except HttpError:
+                return self.super_call(request, *args, **kwargs)
 
         # RequestFactory-based callers may deliberately reuse a request object.
         # Never let execution state from a prior dispatch leak into this one.

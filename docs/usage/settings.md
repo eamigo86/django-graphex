@@ -275,6 +275,13 @@ These settings apply to `Base64FileInput` — an opt-in input type for sending f
 | `MAX_UPLOAD_SIZE` | `None` | Maximum **decoded** size (bytes) of a single `Base64FileInput` field. **Required** when `Base64FileInput` is used — raises `ImproperlyConfigured` at call time when absent and no per-field `max_size` override is given. A per-field `max_size` kwarg on `.to_uploaded_file()` or `decode_base64_file()` overrides this global cap for that specific call. Example: `5 * 1024 * 1024` (5 MB). |
 | `MAX_REQUEST_BODY_SIZE` | `None` | Maximum total HTTP request **body length** (bytes), checked in `BaseGraphQLView.dispatch` **before** JSON parsing. This is the primary memory-safety cap: the entire base64 string is already in the HTTP body before any resolver runs, so rejecting here prevents full-body allocation above the threshold. The per-field decoded-size pre-check in `decode_base64_file` is a secondary guard that saves the decode allocation for payloads that slip past (e.g. when this setting is unset). Requests that exceed the limit receive **HTTP 413**; a `multipart/form-data` POST that declares no `Content-Length` receives **HTTP 411** on a server whose request stream cannot be measured (WSGI), because it is then the one body whose size is unknowable. `None` = disabled (not recommended for public-facing endpoints). Example: `20 * 1024 * 1024` (20 MB). See [How the guard reads each content type](#how-the-guard-reads-each-content-type) below. |
 
+When `CACHE_ACTIVE=True`, `GraphQLView` applies the same configured POST body
+limit **before** operation parsing or parse, validation, and response-cache
+access. A request exceeding the cap still receives HTTP 413, even if an
+identical query was cached earlier. This is an ordering fix, not a new limit:
+`None` still disables the body cap, and it does not bound retained cache bytes
+or request reception by an ASGI server.
+
 ### How the guard reads each content type
 
 The guard runs in two stages. Stage 1 rejects a declared `Content-Length` above

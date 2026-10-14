@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Enforce the existing `MAX_REQUEST_BODY_SIZE` POST limit before the cache-active
+  view parses a GraphQL document or accesses parse, validation, or response
+  caches. Oversized requests keep their HTTP 413 response; the configured limit,
+  default, valid/cache-hit behavior, and multipart measurement remain unchanged.
+
 - Change auto-derived `DecimalField` output from `Float` numbers to the
   existing `Decimal` scalar's exact JSON strings, including model objects
   returned by generated mutations. `19.99` becomes `"19.99"`; large values no
