@@ -15,7 +15,9 @@ native path / runtime still reads:
   * the relation "Dynamic" descriptors (FK / O2O / M2M / reverse rels),
   * the nested-list ("_nested_list_object_field") descriptors.
 
-PARAMOUNT: the compiled native SDL scalar NAMES must stay BYTE-IDENTICAL
+PARAMOUNT: the compiled native SDL scalar NAMES stay stable except the
+individually approved A8 BigInteger -> BigInt change. Other fields remain
+BYTE-IDENTICAL
 ("CustomDate" / "CustomDateTime" / "CustomTime" / "UUID" / "JSONString"
 / "String" for Binary / …). Those names come from "core/scalars.py" via the
 output compiler, NOT from the skipped converter descriptors — so skipping must not
@@ -179,8 +181,8 @@ def test_construct_fields_keeps_relation_descriptors_on_native() -> None:
 # ---------------------------------------------------------------------------
 # RED 3: SDL byte-parity — every scalar name + FK survives, unchanged
 # ---------------------------------------------------------------------------
-def test_native_scalar_sdl_is_byte_identical_after_skip() -> None:
-    """The native SDL scalar names must be UNCHANGED after the converter skip.
+def test_native_scalar_sdl_is_byte_identical_except_approved_bigint() -> None:
+    """Retain native scalar names except the individually approved BigInt change.
 
     Byte-identical to the captured baseline (built from core/scalars.py via the
     output compiler, NOT from the skipped converter descriptors).
@@ -195,7 +197,7 @@ def test_native_scalar_sdl_is_byte_identical_after_skip() -> None:
         "char: String",
         "text: String",
         "integer: Int",
-        "bigInteger: Int",
+        "bigInteger: BigInt",
         "boolean: Boolean",
         "floating: Float",
         "decimal: Float",

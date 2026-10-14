@@ -1,5 +1,11 @@
 # Mutations
 
+Generated inputs for `BigIntegerField` and `PositiveBigIntegerField` use
+`BigInt` decimal strings, not GraphQL `Int` numbers. This preserves the full
+64-bit value through validation and the ORM; see
+[64-bit integers](types.md#bigint-64-bit-integers) for the wire contract and
+client migration.
+
 GraphQL mutations allow you to modify data on your server. `django-graphex` provides powerful tools to create mutations from Django models, making CRUD operations simple and consistent.
 
 ## DjangoModelMutation

@@ -179,6 +179,7 @@ def _scalar_by_internal() -> dict[str, GraphQLScalarType]:
     the native backend is inactive.
     """
     from django_graphex.core.scalars import (
+        GdxBigInt,
         GdxDecimal,
         GdxFilterDate,
         GdxFilterDateTime,
@@ -193,10 +194,10 @@ def _scalar_by_internal() -> dict[str, GraphQLScalarType]:
         "SmallAutoField": GraphQLID,
         "IntegerField": GraphQLInt,
         "SmallIntegerField": GraphQLInt,
-        "BigIntegerField": GraphQLInt,
+        "BigIntegerField": GdxBigInt,
         "PositiveIntegerField": GraphQLInt,
         "PositiveSmallIntegerField": GraphQLInt,
-        "PositiveBigIntegerField": GraphQLInt,
+        "PositiveBigIntegerField": GdxBigInt,
         "CharField": GraphQLString,
         "TextField": GraphQLString,
         "EmailField": GraphQLString,

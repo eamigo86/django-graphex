@@ -45,6 +45,7 @@ from graphql import (
 
 from django_graphex._strconv import to_camel_case as _to_camel_case
 from django_graphex.core.scalars import (
+    GdxBigInt,
     GdxDate,
     GdxDateTime,
     GdxJSON,
@@ -106,10 +107,10 @@ def _build_django_to_gql() -> dict:
         # Numeric
         models.IntegerField: GraphQLInt,
         models.SmallIntegerField: GraphQLInt,
-        models.BigIntegerField: GraphQLInt,
+        models.BigIntegerField: GdxBigInt,
         models.PositiveIntegerField: GraphQLInt,
         models.PositiveSmallIntegerField: GraphQLInt,
-        models.PositiveBigIntegerField: GraphQLInt,
+        models.PositiveBigIntegerField: GdxBigInt,
         models.AutoField: GraphQLID,
         models.BigAutoField: GraphQLID,
         models.SmallAutoField: GraphQLID,

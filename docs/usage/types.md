@@ -1537,7 +1537,9 @@ How Django model fields map to GraphQL **output** types:
 | Django field | GraphQL output |
 |---|---|
 | `CharField` / `TextField` / `SlugField` / … | `String` |
-| `IntegerField` / `AutoField` / `BigIntegerField` | `Int` |
+| `IntegerField` / `SmallIntegerField` / `PositiveIntegerField` | `Int` |
+| `BigIntegerField` / `PositiveBigIntegerField` | `BigInt` — decimal strings on the wire (see [BigInt](#bigint-64-bit-integers)) |
+| `AutoField` / `BigAutoField` / `SmallAutoField` | `ID` |
 | `FloatField` / `DecimalField` | `Float` |
 | `BooleanField` | `Boolean` |
 | `DateField` / `DateTimeField` / `TimeField` | `CustomDate` / `CustomDateTime` / `CustomTime` (see [input formats](#accepted-datetime-input-formats)) |
@@ -1550,6 +1552,36 @@ How Django model fields map to GraphQL **output** types:
 | `GenericForeignKey` | a typed union when declared in `Meta.unions`, otherwise a flat `GenericForeignKeyType` |
 | `FileField` / `ImageField` | `String` — the storage name on output; on input, a storage path **or** the file a multipart part carries (see [Mutations › Automatic multipart uploads](mutations.md#automatic-multipart-uploads)) |
 | `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
+
+### BigInt: 64-bit integers
+
+Auto-derived `BigIntegerField` and `PositiveBigIntegerField` use the `BigInt`
+scalar in output, generated mutation input, and automatic filter lookups.
+The JSON wire value is **always a decimal string**, even for small values:
+`42` in Python becomes `"42"` in a GraphQL response. Input literals and
+variables must likewise be strings; numeric JSON values, GraphQL integer
+literals, booleans, floats, fractions, exponents, leading zeroes and Unicode
+digits are rejected. The scalar accepts the signed 64-bit range
+`-9223372036854775808` through `9223372036854775807`; model validation still
+requires nonnegative values for `PositiveBigIntegerField`. Resolvers and Django
+ORM filters receive Python integers, not strings. Nullability is unchanged:
+ordinary output fields remain nullable and an explicit BigInteger primary key
+remains non-null.
+
+```graphql
+# Output
+{ item { bigCount } } # {"item": {"bigCount": "9007199254740993"}}
+
+# Generated mutation input and automatic filter input
+mutation { createItem(newItem: {bigCount: "9007199254740993"}) { ok } }
+{ items(filter: { bigCount: { exact: "9007199254740993" } }) { bigCount } }
+```
+
+Clients migrating from the former `Int` mapping must update variable types
+from `Int` to `BigInt` and send decimal strings. `IntegerField` remains `Int`;
+auto-generated primary keys remain `ID`, including `BigAutoField`. An explicitly
+declared field or custom scalar keeps its own contract. This change does not
+alter `DecimalField` output or precision.
 
 An automatically derived `DecimalField` keeps the existing `Float` output
 type. Populated values now serialize as numbers (for example,

@@ -65,6 +65,27 @@ class IDScalar:
         return core_schema.any_schema()
 
 
+class BigIntValue:
+    """Distinct model-derived BigInteger annotation retaining Python integers.
+
+    The input compiler maps this marker to the BigInt wire scalar. Pydantic
+    validates the parsed scalar value as an integer before model persistence.
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+        """Validate a parsed BigInt as a Python integer.
+
+        Args:
+            source: The marker annotation being compiled.
+            handler: Unused Pydantic schema handler.
+
+        Returns:
+            A strict integer core schema.
+        """
+        return core_schema.int_schema(strict=True)
+
+
 class FileScalar:
     """Marker annotation for a Django "FileField" (and "ImageField").
 
@@ -153,6 +174,8 @@ _STR = (
 #: their internal-type string, never imported.
 FIELD_TYPES: dict[str, Any] = {
     **{name: int for name in _INT},
+    "BigIntegerField": BigIntValue,
+    "PositiveBigIntegerField": BigIntValue,
     **{name: str for name in _STR},
     # A ``NullBooleanField`` reports "BooleanField" from ``get_internal_type()``,
     # so it needs no key of its own here (and could never reach one).
@@ -241,6 +264,8 @@ def _field_def(field: models.Field, partial: bool) -> tuple[Any, Any]:
             constraints["max_digits"] = field.max_digits
         if field.decimal_places is not None:
             constraints["decimal_places"] = field.decimal_places
+    if field.get_internal_type() == "PositiveBigIntegerField":
+        constraints["ge"] = 0
 
     description = str(field.help_text) if field.help_text else str(field.verbose_name)
 
@@ -400,6 +425,10 @@ def build_model_schema(
         if field.name in exclude:
             continue
         pk_type = _scalar_type(field.related_model._meta.pk)
+        # A relation ID is not a model-derived BigInteger column input. Keep
+        # the existing Int list contract even for an explicit BigInteger pk.
+        if pk_type is BigIntValue:
+            pk_type = int
         definitions[field.name] = (list[pk_type] | None, Field(default=None))  # type: ignore[valid-type]
 
     kwargs: dict[str, Any] = {"__module__": __name__}

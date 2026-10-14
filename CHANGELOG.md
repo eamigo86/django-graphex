@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Map auto-derived `BigIntegerField` and `PositiveBigIntegerField` to the
+  precise `BigInt` scalar in output, generated mutation inputs and automatic
+  filters. Wire values are bounded decimal strings, including small values;
+  model/ORM values remain Python integers. This is an approved breaking SDL and
+  client-variable change; ordinary `Int`, generated `ID`, and explicit scalar
+  overrides are unchanged.
+
 - Make the converter integration test register its User relation target in a
   test-local, allowlisted registry. The test now passes in isolation without
   weakening its relation assertion or changing production relation behavior.

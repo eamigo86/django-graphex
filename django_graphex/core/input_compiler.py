@@ -176,10 +176,12 @@ def _native_scalar_map() -> dict[type, GraphQLScalarType]:
         # GDX_SCALAR_MAP is keyed by name; we need type→scalar mapping.
         # The scalars module maps Python types we care about here:
         from django_graphex.core.fields import (  # type: ignore[import]
+            BigIntValue,
             IDScalar,
             JSONScalar,
         )
         from django_graphex.core.scalars import (  # type: ignore[import]
+            GdxBigInt,
             GdxDate,
             GdxDateTime,
             GdxDecimal,
@@ -189,6 +191,7 @@ def _native_scalar_map() -> dict[type, GraphQLScalarType]:
         )
 
         return {
+            BigIntValue: GdxBigInt,
             datetime.date: GdxDate,
             datetime.datetime: GdxDateTime,
             datetime.time: GdxTime,

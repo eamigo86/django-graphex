@@ -1,6 +1,6 @@
 """Native GraphQL scalar singletons for the output compiler.
 
-7 owned "GraphQLScalarType" singletons plus "GDX_SCALAR_MAP".
+8 owned "GraphQLScalarType" singletons plus "GDX_SCALAR_MAP".
 
 CustomDateFormat bypass:
     All three date/time scalars honour a "CustomDateFormat" wrapper FIRST —
@@ -280,6 +280,89 @@ GdxDecimal = GraphQLScalarType(
 
 
 # ---------------------------------------------------------------------------
+# GdxBigInt
+# ---------------------------------------------------------------------------
+
+
+_BIGINT_MIN = -(1 << 63)
+_BIGINT_MAX = (1 << 63) - 1
+
+
+def _bigint_serialize(value: Any) -> str:
+    """Serialize a signed 64-bit integer as a canonical decimal string.
+
+    Args:
+        value: Python integer returned by a Django BigInteger field.
+
+    Returns:
+        The exact decimal string used on the GraphQL wire.
+
+    Raises:
+        GraphQLError: If the value is not a signed 64-bit integer.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise GraphQLError(f"BigInt cannot represent value: {value!r}")
+    if not _BIGINT_MIN <= value <= _BIGINT_MAX:
+        raise GraphQLError(f"BigInt cannot represent out-of-range value: {value!r}")
+    return str(value)
+
+
+def _bigint_parse_value(value: Any) -> int:
+    """Parse a bounded canonical ASCII decimal string to a Python integer.
+
+    Args:
+        value: GraphQL variable or string literal value.
+
+    Returns:
+        The exact signed 64-bit Python integer.
+
+    Raises:
+        GraphQLError: If the value is non-string, malformed, or out of range.
+    """
+    if not isinstance(value, str) or not 1 <= len(value) <= 20:
+        raise GraphQLError("BigInt requires a decimal string of at most 20 characters")
+    digits = value[1:] if value.startswith("-") else value
+    if (
+        not digits
+        or any(char < "0" or char > "9" for char in digits)
+        or (len(digits) > 1 and digits.startswith("0"))
+        or value == "-0"
+    ):
+        raise GraphQLError(f"BigInt requires a canonical decimal string: {value!r}")
+    parsed = int(value)
+    if not _BIGINT_MIN <= parsed <= _BIGINT_MAX:
+        raise GraphQLError(f"BigInt is outside the signed 64-bit range: {value!r}")
+    return parsed
+
+
+def _bigint_parse_literal(ast: Any, variable_values: Any = None) -> int:
+    """Parse only GraphQL string literals, never numeric literals.
+
+    Args:
+        ast: GraphQL value node supplied by the query document.
+        variable_values: Unused GraphQL parser compatibility argument.
+
+    Returns:
+        The exact signed 64-bit Python integer.
+
+    Raises:
+        GraphQLError: If the node is not a valid BigInt string literal.
+    """
+    if not isinstance(ast, StringValueNode):
+        raise GraphQLError(f"BigInt requires a string literal: {ast!r}")
+    return _bigint_parse_value(ast.value)
+
+
+GdxBigInt = GraphQLScalarType(
+    name="BigInt",
+    description="Signed 64-bit integer serialized and parsed as a decimal string.",
+    serialize=_bigint_serialize,
+    parse_value=_bigint_parse_value,
+    parse_literal=_bigint_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
 # GdxUUID
 # ---------------------------------------------------------------------------
 
@@ -457,7 +540,7 @@ GdxJSON = GraphQLScalarType(
 
 
 # ---------------------------------------------------------------------------
-# GDX_SCALAR_MAP — 7 custom singletons (8 keys: JSON has a legacy alias) + 5
+# GDX_SCALAR_MAP — 8 custom singletons (9 keys: JSON has a legacy alias) + 5
 # graphql-core builtins
 # ---------------------------------------------------------------------------
 
@@ -472,6 +555,7 @@ GDX_SCALAR_MAP: dict[str, GraphQLScalarType] = {
     "CustomDateTime": GdxDateTime,
     "CustomTime": GdxTime,
     "Decimal": GdxDecimal,
+    "BigInt": GdxBigInt,
     "UUID": GdxUUID,
     "JSONString": GdxJSONString,
     # The RAW JSON scalar is reachable under BOTH keys: the canonical ``JSON``

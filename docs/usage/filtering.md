@@ -9,6 +9,8 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
 - **Opt-in per type** via `Meta.filter_fields`.
 - A single nested **`filter:`** argument of a generated `<Model>FilterInput` type.
 - **Per-field lookups** (`exact`, `icontains`, `in`, `range`, `isnull`, …).
+- BigInteger lookups use `BigInt` decimal-string values (see
+  [64-bit integers](types.md#bigint-64-bit-integers)); the ORM receives integers.
 - **Relation descent** (`author: { name: { … } }`), to-many auto-`distinct()`.
 - **Logical operators**: `and`, `or`, `not` (arbitrarily nested).
 - `choices` fields filter through their generated **Enum**.
