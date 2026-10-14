@@ -381,6 +381,13 @@ user is denied (fail-closed). `""` (default) disables it, and the public
 
 ### Permission-scoped schema (`PERMISSION_SCOPED_SCHEMA`)
 
+Generated mutation FK/M2M ID links have a separate **destination row-scope**
+check when the destination public type overrides `get_queryset`. Hidden and
+nonexistent IDs return the same structured invalid-pk error before the parent
+write; child write permissions do not run for a link. This does not scope
+automatic relation expansion or ORM relation-filter joins. See
+[mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
+
 With [`PERMISSION_SCOPED_SCHEMA`](settings.md#security) enabled,
 `AuthenticatedGraphQLView` serves **each authenticated request a schema pruned to
 the caller's permissions** — a field the caller lacks perms for is *absent* from

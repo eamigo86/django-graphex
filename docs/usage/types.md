@@ -151,6 +151,11 @@ argument names.
 Override `get_queryset(cls, queryset, info)` to scope what a type exposes on a
 per-request basis — for example, to restrict rows to the current user's data:
 
+Generated FK/M2M **mutation ID links** also consult the registered destination
+type's hook in the request schema. Hidden and nonexistent link IDs return the
+same structured error before a write; see
+[mutation link scoping and migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
+
 ```python
 class ArticleType(DjangoObjectType):
     class Meta:

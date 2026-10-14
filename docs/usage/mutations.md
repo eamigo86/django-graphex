@@ -711,13 +711,103 @@ related objects alongside the parent. The same engine backs both
     mutation on the child model directly, or attach it first and edit it in a
     second call.
 
-!!! info "The link paths are deliberately not gated"
-    Attaching an existing row through a **forward** `ForeignKey` /
-    `OneToOneField` or a `ManyToManyField` by pk (the **link rule** above) is
-    not a write on the child, so it does not run the child's permissions or
-    scoping. It is the same reachability the plain `category: ID` surface has
-    always offered — a nested payload cannot do anything there that a plain id
-    reference could not.
+!!! info "ID links use the destination's public row scope"
+    A generated create or update now checks **forward `ForeignKey` IDs** and
+    **`ManyToManyField` ID lists** against the destination
+    `DjangoObjectType.get_queryset` for the **current request schema**. This
+    includes nested link operations such as `{"id": "7"}`. When the existing
+    link rule ignores extra child attributes, that operation is checked too;
+    the attributes still do not write the child. A hidden ID and
+    a nonexistent ID both return the ordinary structured relation error:
+    `Invalid pk "7" - object does not exist.` The parent and its other nested
+    objects are not saved on that validation failure. The link still does not
+    WRITE the child and does not run child add/change permissions.
+
+    This is an output-type **row-scope** check, not global model row-level
+    security. If the request schema has no registered destination output type
+    with an overridden `get_queryset`, the existing ID-link path is unchanged
+    and adds no lookup. The hook must synchronously return a Django
+    `QuerySet` for that destination model; a broader returned queryset cannot
+    authorize an ID absent from it. Each distinct requested ID under an active
+    hook requires an existence lookup. Omitted relations stay untouched;
+    nullable `null` and empty nested inputs keep their existing meanings.
+
+    Forward `OneToOneField`, reverse adoption, generic relations, and payloads
+    that actually CREATE or UPDATE a child retain their separate existing
+    rules. For example, a missing M2M ID accompanied by required child data
+    can create a child rather than link an existing one. This does not
+    change automatic relation expansion on reads or ORM relation-filter joins;
+    see [row-scope boundaries](types.md#relation-scope-hatch).
+
+#### Migrating ID links hidden by a destination scope
+
+Suppose `AuthorType.get_queryset` excludes the author with ID `7`, while
+`PostType` generates mutations for `Post.author` and `Post.tags`:
+
+```python
+from django.db.models import QuerySet
+from graphql import GraphQLResolveInfo
+from django_graphex.types import DjangoModelType, DjangoObjectType
+from .models import Author, Post
+
+
+class AuthorType(DjangoObjectType):
+    class Meta:
+        model = Author
+
+    @classmethod
+    def get_queryset(
+        cls, queryset: QuerySet, info: GraphQLResolveInfo
+    ) -> QuerySet:
+        return queryset.exclude(name="HiddenAuthor")
+
+class PostType(DjangoModelType):
+    class Meta:
+        model = Post
+```
+
+Previously, a generated link to that hidden row could succeed. Now **both**
+generated operations reject its ID before saving the parent:
+
+```graphql
+mutation {
+  postCreate(newPost: {title: "Draft", body: "", author: "7"}) {
+    ok
+    errors { field messages }
+  }
+}
+
+mutation {
+  postUpdate(newPost: {id: "12", author: "7"}) {
+    ok
+    errors { field messages }
+  }
+}
+```
+
+For either operation, the relation error has the same shape as an absent row:
+
+```json
+{"ok": false, "errors": [{"field": "author", "messages": ["Invalid pk \"7\" - object does not exist."]}]}
+```
+
+An ID-only `tags: ["8"]` input follows the same rule for a registered
+`TagType`: its error uses `"field": "tags"`. Repeated IDs are checked once
+per distinct value, and the existing input order is otherwise preserved.
+
+Before upgrading:
+
+1. Identify generated create/update clients that link FK or M2M rows hidden
+   from their callers, including nested link payloads whose extra attributes
+   were already ignored by the link rule.
+2. Make authorized rows available through the destination type's
+   `get_queryset` for those requests, or expose a separate, explicitly
+   authorized workflow. Do **not** broaden a tenant scope merely to keep an
+   old ID-link request succeeding.
+3. Register the destination public type in the same schema `Registry` that
+   serves the mutation. A type in an unrelated Registry does not supply that
+   request's scope. Hand-written mutations must enforce their own relation
+   policy.
 
 #### The nested child input type
 

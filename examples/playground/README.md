@@ -131,6 +131,14 @@ control — no resolver, so it keeps both axes and
 
 `tests/test_relation_scope_hatch.py` pins all of it.
 
+Generated mutation ID links have a **different** boundary from these read
+paths: `commentCreate` linking `Comment.post` by ID now checks the destination
+`PostType.get_queryset` before writing the comment. Anonymous callers already
+fail the playground's comment write permission; authenticated callers see the
+full Post queryset. This does not make row scope global for auto-expanded reads
+or relation-filter joins. See
+[mutation ID-link migration](../../docs/usage/mutations.md#migrating-id-links-hidden-by-a-destination-scope).
+
 ### Safe ordering (anti-oracle hardening)
 
 The ordering allowlist is active on all paginated fields. Beyond the projection

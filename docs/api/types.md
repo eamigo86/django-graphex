@@ -187,8 +187,14 @@ Check if the root object is of this type.
 
 #### `get_queryset(queryset, info)` (classmethod)
 
-Override to customize the queryset used for this type. Applied wherever the type
-is mounted — at the root and through a parent relation alike.
+Override to customize the queryset used for this type. Queryset-backed root and
+mounted list/node paths use this hook. Generated FK/M2M mutation ID links also
+check the registered destination type's hook in the request schema before
+persisting the parent. A hidden link ID returns the same structured
+`Invalid pk` error as a nonexistent ID; see
+[mutation link migration](../usage/mutations.md#migrating-id-links-hidden-by-a-destination-scope).
+Automatically expanded relation attributes and ORM relation-filter joins do
+not invoke this hook; see [the row-scope boundary](../usage/types.md#relation-scope-hatch).
 
 **Parameters:**
 - `queryset` (`QuerySet`): Base queryset

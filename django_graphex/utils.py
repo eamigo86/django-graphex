@@ -3968,7 +3968,8 @@ def apply_object_type_get_queryset(
     """Apply a "DjangoObjectType.get_queryset" row-level scope to a queryset.
 
     The choke point for the per-request scoping hook on the paths that build a
-    QUERYSET. It has exactly three callers: "queryset_factory" (a fresh
+    QUERYSET. It also scopes a generated mutation's destination FK/M2M ID
+    link before persistence. The read callers are "queryset_factory" (a fresh
     manager), "DjangoObjectType.get_node" (a primary-key lookup), and the
     related fast path in "DjangoFilterListField.list_resolver" (a parent's
     relation accessor).

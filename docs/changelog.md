@@ -14,6 +14,16 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Check generated create/update foreign-key and many-to-many ID links against
+  the request schema's destination `DjangoObjectType.get_queryset` when it is
+  overridden. Hidden and nonexistent target IDs now share the ordinary
+  structured invalid-pk error before persistence, including nested link
+  operations whose extra attributes are ignored. Actual child writes and
+  unscoped/default-hook paths retain their previous behavior and query
+  cost; child-write permissions, relation reads, and ORM filter joins are
+  unchanged. Apps that intentionally link read-hidden rows must migrate their
+  destination scope or link workflow.
+
 - Reject ambiguous generated `choices` enum member names with
   `ImproperlyConfigured` instead of assigning positional suffixes that could
   change literal meaning when choices are reordered. Adjust affected choices

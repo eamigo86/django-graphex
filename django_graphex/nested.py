@@ -16,7 +16,8 @@ previously carried duplicate, buggy copies) and makes it:
 * link-not-rewrite -- on a relation whose rows the parent does not own (forward
   FK/O2O and M2M) a pk the parent is not already attached to only LINKS that
   row; its other fields are ignored, so no client can edit an arbitrary row of
-  the related table by naming its pk,
+  the related table by naming its pk. FK/M2M ID links additionally check the
+  registered destination output type's request-scoped get_queryset hook,
 * safe by default -- additive M2M/reverse semantics (existing links are never
   removed) and empty "[]" / "{}" payloads are a no-op.
 
@@ -30,12 +31,17 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured
-from django.db import transaction
+from django.db import router, transaction
+from django.db.models import ForeignKey, ManyToManyField
 
 from .backends import backend_for_nested
 from .errors import ErrorType
 from .permissions import supported_kwargs
-from .utils import get_Object_or_None, not_found_error
+from .utils import (
+    apply_object_type_get_queryset,
+    get_Object_or_None,
+    not_found_error,
+)
 
 if TYPE_CHECKING:
     from django.db.models import Model
@@ -381,6 +387,7 @@ class NestedFieldsMixin:
 
         try:
             with boundary:
+                cls._validate_destination_links(data, instance, nested, info)
                 deferred: list[tuple[str, Any, str, Any, Any]] = []
                 for field, child_model in nested.items():
                     if field not in data:
@@ -415,15 +422,9 @@ class NestedFieldsMixin:
                         # cannot apply, and without this rule a client could
                         # rewrite ANY row of the related table by naming its pk.
                         #
-                        # The LINK half is deliberately not scoped, and NOT
-                        # because a linkable row is unscoped -- a child host's
-                        # "filter_queryset" may well hide it. It is because a
-                        # link writes nothing on the child and is the same
-                        # reachability the plain "fwd: ID" relation input has
-                        # always offered; scoping only this spelling would make
-                        # two surfaces for one operation disagree. Restricting
-                        # WHICH rows may be linked is not a decision this path
-                        # takes today (see docs/usage/mutations.md).
+                        # An ID-only FK link has already passed the request's
+                        # destination output scope before the first write;
+                        # child WRITE permissions still do not run for a link.
                         item_pk = cls._child_pk(child_model, item)
                         current_pk = (
                             getattr(instance, relation.attname, None)
@@ -469,6 +470,127 @@ class NestedFieldsMixin:
                 return True, obj
         except _NestedError as error:
             return False, error.errors
+
+    @classmethod
+    def _validate_destination_links(
+        cls,
+        data: dict[str, Any],
+        instance: Model | None,
+        nested: dict[str, Any],
+        info: GraphQLResolveInfo,
+    ) -> None:
+        """Reject ID links outside the request's destination output scope.
+
+        Only a registered public output type with an overridden row hook adds
+        a lookup. The ordinary unscoped path still delegates existence checks
+        to the backend, without a new query on successful writes. A nested
+        payload with extra fields is still a link when the existing writer
+        ignores those fields; an actual child create/update stays outside this
+        row-scope guard.
+
+        Args:
+            data: The mutation input before nested fields are removed.
+            instance: The parent being updated, or None for a create.
+            nested: Declared nested relation fields.
+            info: Request resolve info carrying the schema's Registry pair.
+
+        Raises:
+            _NestedError: If a requested link is hidden or nonexistent.
+            TypeError: If a destination hook returns a queryset for another model.
+        """
+        from .types import DjangoObjectType
+
+        schema = getattr(info, "schema", None)
+        extensions = getattr(schema, "extensions", None) or {}
+        pair = extensions.get("gdx_registry")
+        if pair is not None:
+            registry = pair.graphene
+        else:
+            registry = cls._meta.registry
+        alias = (
+            instance._state.db if instance is not None else None
+        ) or router.db_for_write(cls._meta.model, instance=instance)
+
+        for relation in cls._meta.model._meta.get_fields():
+            field = relation.name
+            if field not in data or data[field] in (None, [], {}):
+                continue
+            is_fk = isinstance(relation, ForeignKey) and not relation.one_to_one
+            is_m2m = isinstance(relation, ManyToManyField)
+            if not (is_fk or is_m2m):
+                continue
+            target = relation.related_model
+            output_type = registry.get_type_for_model(target) if registry else None
+            if output_type is None or not issubclass(output_type, DjangoObjectType):
+                continue
+            if (
+                output_type.get_queryset.__func__
+                is DjangoObjectType.get_queryset.__func__
+            ):
+                continue
+
+            if field in nested:
+                values = data[field] if isinstance(data[field], list) else [data[field]]
+                ids = []
+                for item in values:
+                    identifier = cls._child_pk(target, item)
+                    if identifier is None:
+                        continue
+                    if (
+                        is_fk
+                        and instance is not None
+                        and str(identifier)
+                        == str(getattr(instance, relation.attname, None))
+                    ):
+                        continue
+                    if is_m2m:
+                        existing = get_Object_or_None(
+                            target._default_manager.db_manager(alias), pk=identifier
+                        )
+                        if existing is None and set(item) - {
+                            target._meta.pk.name,
+                            "id",
+                        }:
+                            continue  # actual child creation, not an ID link
+                        if (
+                            instance is not None
+                            and getattr(instance, field).filter(pk=identifier).exists()
+                        ):
+                            continue  # already linked: actual child update
+                    ids.append(identifier)
+                lookup = target._meta.pk.name
+            elif is_fk and not hasattr(data[field], "keys"):
+                ids = [data[field]]
+                lookup = relation.target_field.name
+            elif is_m2m and isinstance(data[field], (list, tuple)):
+                ids = [value for value in data[field] if not hasattr(value, "keys")]
+                lookup = target._meta.pk.name
+            else:
+                continue
+
+            if not ids:
+                continue
+            queryset = target._default_manager.db_manager(alias).all()
+            scoped = apply_object_type_get_queryset(queryset, output_type, info)
+            if not (
+                issubclass(scoped.model, target) or issubclass(target, scoped.model)
+            ):
+                raise TypeError(
+                    f"{output_type.__name__}.get_queryset returned a queryset "
+                    f"for {scoped.model.__name__}, expected {target.__name__}."
+                )
+            for identifier in dict.fromkeys(ids):
+                if get_Object_or_None(scoped, **{lookup: identifier}) is None:
+                    raise _NestedError(
+                        [
+                            ErrorType(
+                                field=field,
+                                messages=[
+                                    f'Invalid pk "{identifier}" - object does not exist.'
+                                ],
+                            )
+                        ]
+                    )
 
     # -- relation introspection ------------------------------------------------
 
@@ -625,16 +747,17 @@ class NestedFieldsMixin:
             manager = getattr(parent, field)
             children = []
             for item in items:
-                # Same link rule as the forward branch of "save_with_nested",
-                # and ungated for the same reason: an M2M row is shared by every
-                # parent that links it, so a payload naming a row this parent is
-                # NOT already linked to may only ATTACH it -- writing its fields
-                # would let a client edit an arbitrary row of the related table
-                # by naming its pk -- and attaching is exactly what the plain
-                # "tags: [ID!]" input already does, unscoped. A pk that matches
-                # no row falls through to the writer, which creates, exactly as
-                # it did before; a pk this parent ALREADY carries falls through
-                # too, and there "_persist_child" applies the child's scope.
+                # Same link rule as the forward branch of "save_with_nested":
+                # an M2M row is shared by every parent that links it, so a
+                # payload naming a row this parent is NOT already linked to
+                # may only ATTACH it. An ID-only reference already passed the
+                # destination output scope before the parent was written, but
+                # does not run child WRITE permissions. A missing pk with
+                # actual child data still falls through to the writer, which
+                # creates; a missing link-only pk is refused by the preceding
+                # destination check when scoped. A pk this parent ALREADY
+                # carries falls through, and "_persist_child" applies the
+                # child's write scope.
                 #
                 # The row is resolved FIRST, through the lookup helper that
                 # reports an uncoercible pk as "no row", so a malformed pk never

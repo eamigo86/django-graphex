@@ -164,6 +164,13 @@ observe actions stay view-only:
 
 Notes:
 
+- **ID links are row-scoped separately from write permissions.** Generated
+  create/update FK and M2M ID links check the destination public type's
+  `get_queryset` when it has an override, but linking does not run the
+  child's add/change permission. See
+  [mutation link scoping](mutations.md#migrating-id-links-hidden-by-a-destination-scope)
+  for the hidden-ID error and migration steps.
+
 - **Relations are gated by the model they point at.** `permission_classes` runs
   on the CRUD/subscribe entry points of *this* type; it does not run again on a
   nested relation resolver. Reading a related model through a relation field

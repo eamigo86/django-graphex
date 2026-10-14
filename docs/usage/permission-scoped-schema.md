@@ -423,6 +423,12 @@ loses `filter: { author: { name: { icontains: … } } }` exactly as they lose
 The full schema is untouched; each pruned variant carries its own clone of the
 input, so a full-permission caller keeps the whole filter surface.
 
+Generated mutation FK/M2M **ID links** have a separate row-level check: when
+the destination public type overrides `get_queryset`, a hidden ID is refused
+like a nonexistent one before the parent is written. This does not make ORM
+relation-filter joins or auto-expanded reads globally scoped. See
+[mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
+
 !!! warning "The `@filter_field` body is still yours to scope"
 
     A custom filter argument is an opaque scalar whose ORM lookup lives in your
