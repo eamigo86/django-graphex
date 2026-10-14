@@ -248,7 +248,11 @@ def _python_type(field: models.Field) -> Any:
     if field.choices:
         return _choices_enum(field)
     if isinstance(field, (models.ForeignKey, models.OneToOneField)):
-        return _scalar_type(field.related_model._meta.pk)
+        pk_type = _scalar_type(field.related_model._meta.pk)
+        # Relation inputs retain ID on the wire, whose parsed value is a string.
+        # Keep Pydantic's integer coercion for a BigInteger target key rather
+        # than applying the strict value-column BigInt marker to an ID.
+        return int if pk_type is BigIntValue else pk_type
     return _scalar_type(field)
 
 
@@ -264,7 +268,10 @@ def _field_def(field: models.Field, partial: bool) -> tuple[Any, Any]:
             constraints["max_digits"] = field.max_digits
         if field.decimal_places is not None:
             constraints["decimal_places"] = field.decimal_places
-    if field.get_internal_type() == "PositiveBigIntegerField":
+    if (
+        py_type is BigIntValue
+        and field.get_internal_type() == "PositiveBigIntegerField"
+    ):
         constraints["ge"] = 0
 
     description = str(field.help_text) if field.help_text else str(field.verbose_name)

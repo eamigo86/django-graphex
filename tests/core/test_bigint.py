@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from django.db import models
+from django.test import RequestFactory
 from graphql import (
     GraphQLArgument,
     GraphQLError,
@@ -24,6 +25,7 @@ from django_graphex.core.input_compiler import compile_input_type
 from django_graphex.core.scalars import GdxBigInt
 from django_graphex.fields import DjangoFilterListField
 from django_graphex.filtering.native_schema import build_filter_input_type
+from django_graphex.mutation import DjangoModelMutation
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoObjectType
@@ -89,6 +91,39 @@ class _BigKeyType(DjangoObjectType):
         """Select the test-only primary-key model."""
 
         model = _BigKey
+
+
+class _BigRelationTarget(models.Model):
+    """Use a regular BigInteger primary key behind a relation ID input."""
+
+    id = models.BigIntegerField(primary_key=True)
+
+    class Meta:
+        """Bind the test-only relation target to the installed tests app."""
+
+        app_label = "tests"
+
+
+class _BigRelationHost(models.Model):
+    """Accept an existing ID-typed foreign key to a BigInteger target."""
+
+    target = models.ForeignKey(_BigRelationTarget, on_delete=models.CASCADE)
+
+    class Meta:
+        """Bind the test-only relation host to the installed tests app."""
+
+        app_label = "tests"
+
+
+class _PositiveBigChoice(models.Model):
+    """Expose a numeric choice through the existing GraphQL Enum input."""
+
+    positive = models.PositiveBigIntegerField(choices=[(1, "One"), (2, "Two")])
+
+    class Meta:
+        """Bind the test-only choices model to the installed tests app."""
+
+        app_label = "tests"
 
 
 def _echo_schema(input_type: Any, captured: list[Any]) -> GraphQLSchema:
@@ -415,6 +450,130 @@ def test_relation_ids_with_explicit_bigint_pk_keep_old_input_type() -> None:
 
     compiled = compile_input_type(build_model_schema(_Host), name="BigRelHostInput")
     assert str(compiled.fields["related"].type) == "[Int!]"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("wire", ["42", 42])
+def test_bigint_foreign_key_id_mutation_accepts_existing_wire_values(
+    wire: str | int,
+) -> None:
+    """Keep both ID wire representations valid for a BigInteger-key relation.
+
+    Args:
+        wire: Existing string or integer GraphQL ID variable value.
+    """
+    local_registry = Registry()
+
+    class _TargetType(DjangoObjectType):
+        """Register the relation target for the generated input."""
+
+        class Meta:
+            """Use the test-only target and private registry."""
+
+            model = _BigRelationTarget
+            registry = local_registry
+
+    class _CreateHost(DjangoModelMutation):
+        """Create a relation host through the production mutation path."""
+
+        class Meta:
+            """Use the test-only host and private registry."""
+
+            model = _BigRelationHost
+            registry = local_registry
+
+    class _RootQuery(ObjectType):
+        """Provide the required query root."""
+
+        noop = field(GraphQLString)
+
+    class _RootMutation(ObjectType):
+        """Mount the generated relation mutation."""
+
+        create_host = _CreateHost.CreateField()
+
+    schema = DjangoGraphQLSchema(
+        query=_RootQuery,
+        mutation=_RootMutation,
+        registries=isolated_pair(local_registry),
+    ).graphql_schema
+    mutation = schema.mutation_type.fields["createHost"]
+    argument_name, argument = next(iter(mutation.args.items()))
+    assert str(argument.type.of_type.fields["target"].type) == "ID!"
+    _BigRelationTarget.objects.create(id=42)
+
+    result = graphql_sync(
+        schema,
+        f"mutation($input: {argument.type}) {{ createHost({argument_name}: $input) {{ ok errors {{ field messages }} }} }}",
+        variable_values={"input": {"target": wire}},
+        context_value=RequestFactory().post(
+            "/graphql/", content_type="application/json"
+        ),
+    )
+
+    assert result.errors is None
+    assert result.data["createHost"]["ok"] is True, result.formatted
+    assert _BigRelationHost.objects.get().target_id == 42
+
+
+@pytest.mark.django_db
+def test_positive_bigint_numeric_choice_mutation_accepts_valid_enum() -> None:
+    """Keep a valid numeric choice accepted by its existing Enum input.
+
+    Invalid Enum members must still be rejected before persistence.
+    """
+    local_registry = Registry()
+
+    class _CreateChoice(DjangoModelMutation):
+        """Create a numeric-choice row through the production mutation path."""
+
+        class Meta:
+            """Use the test-only choice model and private registry."""
+
+            model = _PositiveBigChoice
+            registry = local_registry
+
+    class _RootQuery(ObjectType):
+        """Provide the required query root."""
+
+        noop = field(GraphQLString)
+
+    class _RootMutation(ObjectType):
+        """Mount the generated choices mutation."""
+
+        create_choice = _CreateChoice.CreateField()
+
+    schema = DjangoGraphQLSchema(
+        query=_RootQuery,
+        mutation=_RootMutation,
+        registries=isolated_pair(local_registry),
+    ).graphql_schema
+    mutation = schema.mutation_type.fields["createChoice"]
+    argument_name, argument = next(iter(mutation.args.items()))
+    enum_type = argument.type.of_type.fields["positive"].type.of_type
+    choice_name = next(
+        name for name, choice in enum_type.values.items() if choice.value == 1
+    )
+    result = graphql_sync(
+        schema,
+        f"mutation($input: {argument.type}) {{ createChoice({argument_name}: $input) {{ ok errors {{ field messages }} }} }}",
+        variable_values={"input": {"positive": choice_name}},
+        context_value=RequestFactory().post(
+            "/graphql/", content_type="application/json"
+        ),
+    )
+
+    assert result.errors is None
+    assert result.data["createChoice"]["ok"] is True
+    assert _PositiveBigChoice.objects.get().positive == 1
+
+    invalid = graphql_sync(
+        schema,
+        f"mutation($input: {argument.type}) {{ createChoice({argument_name}: $input) {{ ok }} }}",
+        variable_values={"input": {"positive": "INVALID"}},
+    )
+    assert invalid.errors
+    assert _PositiveBigChoice.objects.count() == 1
 
 
 @pytest.mark.django_db(transaction=True)

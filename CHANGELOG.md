@@ -7,7 +7,9 @@
   filters. Wire values are bounded decimal strings, including small values;
   model/ORM values remain Python integers. This is an approved breaking SDL and
   client-variable change; ordinary `Int`, generated `ID`, and explicit scalar
-  overrides are unchanged.
+  overrides are unchanged. Relation IDs to BigInteger primary keys still accept
+  string or integer values through `ID` input; numeric-choice fields keep their
+  generated Enum input.
 
 - Make the converter integration test register its User relation target in a
   test-local, allowlisted registry. The test now passes in isolation without

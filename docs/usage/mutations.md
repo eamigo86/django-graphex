@@ -5,6 +5,9 @@ Generated inputs for `BigIntegerField` and `PositiveBigIntegerField` use
 64-bit value through validation and the ORM; see
 [64-bit integers](types.md#bigint-64-bit-integers) for the wire contract and
 client migration.
+Relation IDs retain their generated `ID` input (including relations to regular
+BigInteger primary keys), accepting string and integer ID values. A positive
+BigInteger field with `choices` retains its generated Enum input.
 
 GraphQL mutations allow you to modify data on your server. `django-graphex` provides powerful tools to create mutations from Django models, making CRUD operations simple and consistent.
 

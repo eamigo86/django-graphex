@@ -1583,6 +1583,11 @@ auto-generated primary keys remain `ID`, including `BigAutoField`. An explicitly
 declared field or custom scalar keeps its own contract. This change does not
 alter `DecimalField` output or precision.
 
+Foreign-key linking still uses the generated `ID` input, even when the target
+has a regular `BigIntegerField` primary key: send its ID as a string or an
+ordinary JSON integer. A `PositiveBigIntegerField` with `choices` still uses
+its generated Enum input rather than a `BigInt` input.
+
 An automatically derived `DecimalField` keeps the existing `Float` output
 type. Populated values now serialize as numbers (for example,
 `Decimal("19.99")` returns `19.99`) instead of returning `null` with a Float
