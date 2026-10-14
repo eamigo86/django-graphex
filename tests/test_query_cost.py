@@ -443,9 +443,7 @@ class CostViewWiringTest(TestCase):
         """
         self.assertIn(CostLimitValidationRule, GraphQLView.validation_rules)
 
-    @override_settings(
-        DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000, "SCHEMA": "tests.schema.schema"}
-    )
+    @override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 1000})
     def test_get_query_cost_returns_payload(self) -> None:
         """Assert "get_query_cost" returns a requestedCost/maxCost payload.
 
@@ -459,7 +457,6 @@ class CostViewWiringTest(TestCase):
         class _Query(ObjectType):
             owner = field(_Owner)
 
-        view = GraphQLView()
-        view.schema = DjangoGraphQLSchema(query=_Query)
+        view = GraphQLView(schema=DjangoGraphQLSchema(query=_Query))
         cost = view.get_query_cost("{ owner { name } }", {}, None)
         self.assertEqual(cost, {"requestedCost": 1, "maxCost": None})
