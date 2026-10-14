@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Reject ambiguous generated `choices` enum member names with
+  `ImproperlyConfigured` instead of assigning positional suffixes that could
+  change literal meaning when choices are reordered. Adjust affected choices
+  to generate distinct names and migrate clients using suffixed literals;
+  unambiguous members and automatic enum type names are unchanged.
+
 - Reject incompatible automatic `choices` enums that normalize to the same
   GraphQL type name in one registry with `ImproperlyConfigured` naming both
   model fields. Compatible definitions, including reordered members, still

@@ -7,6 +7,8 @@ exercise the converter's own normalization directly.
 
 from typing import Any
 
+import pytest
+from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 
 from django_graphex.converter import (
@@ -211,15 +213,14 @@ def test_naming_last_resort_prefix_when_label_unusable() -> None:
     assert _names((("1", ""), ("2", "   "))) == ["A_1", "A_2"]
 
 
-def test_naming_dedupes_colliding_names() -> None:
-    """Two choices that generate the same name must be de-duplicated with a suffix.
+def test_naming_rejects_colliding_names() -> None:
+    """Two choices generating one member name must fail before enum creation.
 
-    Ships broken if colliding generated names silently overwrite each other
-    in the resulting GraphQL enum instead of getting a unique suffix.
+    Raises:
+        ImproperlyConfigured: Both labels normalize to the same member name.
     """
-    names = _names((("1", "A B"), ("2", "A_B")))
-    assert names[0] == "A_B"
-    assert names[1] != names[0]  # de-duplicated with a suffix
+    with pytest.raises(ImproperlyConfigured, match="A_B"):
+        _names((("1", "A B"), ("2", "A_B")))
 
 
 def test_naming_blank_value_becomes_empty() -> None:
@@ -268,30 +269,36 @@ def _enum_for(choices: Any, field_name: str) -> Any:
     return build_choices_enum_type(field, Registry())
 
 
-def test_naming_dedupes_colliding_names_across_groups() -> None:
-    """Repeated labels in two different option groups must not collapse into one name.
+def test_naming_rejects_colliding_names_across_groups() -> None:
+    """Repeated labels in separate option groups must be rejected.
 
-    Ships broken if the de-duplication state is reset per option group, so a
-    label repeated across groups ("Other", "None", "Unknown") yields the same
-    enum-member name twice and one stored value disappears from the enum.
+    Raises:
+        ImproperlyConfigured: Both groups generate the same member name.
     """
-    names = _names(_GROUPED_COLLIDING)
-    assert names[0] == "OTHER"
-    assert names[1] != names[0]
-    assert len(set(names)) == 2
+    with pytest.raises(ImproperlyConfigured, match="OTHER"):
+        _names(_GROUPED_COLLIDING)
 
 
-def test_grouped_colliding_labels_keep_every_value_in_the_enum() -> None:
-    """Every stored value of a grouped choices field must round-trip through the enum.
+def test_grouped_colliding_labels_reject_enum_creation() -> None:
+    """A grouped member collision must fail before any value can be published.
 
-    Ships broken if a cross-group name collision drops a member: the enum then
-    exposes one name bound to the WRONG stored value, serialization of the
-    missing value raises, and an input of that name writes the other value.
+    Raises:
+        ImproperlyConfigured: Both groups generate the same member name.
     """
-    enum = _enum_for(_GROUPED_COLLIDING, "grouped_colliding")
+    with pytest.raises(ImproperlyConfigured, match="OTHER"):
+        _enum_for(_GROUPED_COLLIDING, "grouped_colliding")
 
-    assert {value.value for value in enum.values.values()} == {1, 2}
-    # Both stored values serialize, and each name parses back to its own value.
+
+def test_grouped_unique_labels_keep_every_value_in_the_enum() -> None:
+    """Unambiguous grouped members still round-trip every stored value.
+
+    The collision rule does not reject a grouped declaration merely because
+    its groups contain numeric raw values.
+    """
+    enum = _enum_for(
+        [("Sports", [(1, "Other Sports")]), ("Arts", [(2, "Other Arts")])],
+        "grouped_unique",
+    )
     for stored in (1, 2):
         name = enum.serialize(stored)
         assert enum.parse_value(name) == stored

@@ -1557,6 +1557,23 @@ class Profile(models.Model):
 The enum member's *description* carries the original label, so the
 human-readable text is never lost.
 
+### Generated enum member collisions
+
+Each choice in one field must generate a distinct enum **member** name. For
+example, `[(1, "Alpha"), (2, "Alpha")]` generates `ALPHA` twice because
+numeric values fall back to their labels. Schema construction now raises
+`ImproperlyConfigured` naming the ambiguous member and field. Previously the
+members were assigned `ALPHA` and `ALPHA_1` by position; reordering the
+choices could silently reverse which stored value a GraphQL literal meant.
+Adjust the choices so the generated names differ, for example
+`[(1, "Alpha"), (2, "Beta")]`. Values can also normalize to the same name,
+so changing labels alone does not resolve every collision. This rule applies
+to output, generated mutation input and filters through the shared choices
+enum. Unambiguous member names and the enum **type** naming rule below are
+unchanged. The check runs when an affected field is compiled, not as a
+mandatory eager startup scan. Clients that used a positional suffix must
+update their enum literals when the choices are corrected.
+
 ### Generated enum name collisions
 
 The generated enum type name combines the Django app label, model name and

@@ -205,26 +205,35 @@ def _normalize_choices(choices: Any) -> Any:
     return choices
 
 
+class _AmbiguousChoicesMemberError(ImproperlyConfigured):
+    """Identify a generated member collision.
+
+    Other configuration errors from custom choices declarations propagate
+    without receiving a misleading collision origin.
+    """
+
+
 def get_choices(
     choices: Any, converted_names: list[str] | None = None
 ) -> Iterator[tuple[str, Any, Any]]:
     """Extract choices from Django field choices recursively.
 
-    The de-duplication state is threaded through the recursion so a label
-    repeated across two option groups ("Other", "None", "Unknown" are routine)
-    gets the same numeric suffix a repeated label inside ONE group would get,
-    instead of collapsing into a single enum member bound to the last value.
-    Names that do not collide are never suffixed, so existing SDL is untouched.
+    Generated member names must be unique across all groups. Positional
+    suffixes are not safe: reordering choices would change which stored value
+    an existing GraphQL literal represents. The shared state spans recursion.
 
     Args:
         choices: Django field choices in any supported form (an iterable of
             pairs, a mapping, a callable, or an enumeration type), possibly
             nested for grouped choices.
         converted_names: Names already emitted by an enclosing call, or None to
-            start a fresh de-duplication scope. Internal to the recursion.
+            start a fresh validation scope. Internal to the recursion.
 
     Yields:
         Tuples of (name, value, description) for each leaf choice.
+
+    Raises:
+        ImproperlyConfigured: Two choices generate the same member name.
     """
     choices = _normalize_choices(choices)
     if converted_names is None:
@@ -234,8 +243,11 @@ def get_choices(
             yield from get_choices(help_text, converted_names)
         else:
             name = choice_enum_name(value, help_text)
-            while name in converted_names:
-                name += f"_{len(converted_names)!s}"
+            if name in converted_names:
+                raise _AmbiguousChoicesMemberError(
+                    f"Ambiguous generated choices enum member {name!r}; "
+                    "adjust the choices to generate distinct member names."
+                )
             converted_names.append(name)
             description = help_text
             yield name, value, description
@@ -363,10 +375,17 @@ def build_choices_enum_type(
 
     values: list[tuple[str, Any]] = []
     descriptions: dict[str, str] = {}
-    for choice_name, value, description in get_choices(choices):
-        values.append((choice_name, value))
-        if description is not None:
-            descriptions[choice_name] = force_str(description)
+    try:
+        for choice_name, value, description in get_choices(choices):
+            values.append((choice_name, value))
+            if description is not None:
+                descriptions[choice_name] = force_str(description)
+    except _AmbiguousChoicesMemberError as error:
+        meta = field.model._meta
+        origin = f"{meta.app_label}.{meta.object_name}.{field.name}"
+        raise ImproperlyConfigured(
+            f"Choices enum {name!r} for {origin}: {error}"
+        ) from error
     if not values:
         return None
 

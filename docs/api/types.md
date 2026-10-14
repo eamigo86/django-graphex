@@ -141,6 +141,12 @@ class UserType(DjangoObjectType):
 | `max_depth` | `int` | `None` | Max nested-object depth below this type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of a field returning this type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 
+An automatically derived model field with `choices` uses a generated GraphQL
+enum. If two choices generate the same **member** name, compiling the affected
+type raises `ImproperlyConfigured` instead of assigning a positional suffix.
+Adjust the choices so their generated names differ; see
+[Generated enum member collisions](../usage/types.md#generated-enum-member-collisions).
+
 !!! danger "`only_fields` / `exclude_fields` are a security boundary"
     A column this type projects away must not be **readable, orderable or
     filterable** through it. `ordering` rejects it at query time; a
