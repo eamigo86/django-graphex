@@ -32,6 +32,10 @@ from graphql import (  # noqa: E402
 )
 from graphql.execution import default_field_resolver  # noqa: E402
 
+from tests._schema_isolation import isolated_default_registry_pair  # noqa: E402
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 # ---------------------------------------------------------------------------
 # _rendered_field_name — explicit name vs camelCase (lines 82-85)
 # ---------------------------------------------------------------------------

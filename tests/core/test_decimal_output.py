@@ -68,6 +68,12 @@ class DecimalMutationRecord(models.Model):
         app_label = "tests"
 
 
+_AUTO_REGISTRY = Registry()
+_EXPLICIT_DECIMAL_REGISTRY = Registry()
+_EXPLICIT_FLOAT_REGISTRY = Registry()
+_PRIMARY_REGISTRY = Registry()
+
+
 class _DecimalOutputType(DjangoObjectType):
     """Expose automatically compiled model fields without overrides."""
 
@@ -75,6 +81,7 @@ class _DecimalOutputType(DjangoObjectType):
         """Identify the model for native output compilation."""
 
         model = _DecimalOutputModel
+        registry = _AUTO_REGISTRY
 
 
 class _AutoQuery(ObjectType):
@@ -118,6 +125,7 @@ class _ExplicitDecimalType(DjangoObjectType):
         """Identify the model for the declared output override."""
 
         model = _DecimalOutputModel
+        registry = _EXPLICIT_DECIMAL_REGISTRY
 
 
 class _ExplicitQuery(ObjectType):
@@ -162,6 +170,7 @@ class _ExplicitFloatType(DjangoObjectType):
         """Bind the legacy output override to the test model."""
 
         model = _DecimalOutputModel
+        registry = _EXPLICIT_FLOAT_REGISTRY
 
 
 class _ExplicitFloatQuery(ObjectType):
@@ -201,6 +210,7 @@ class _PrimaryDecimalType(DjangoObjectType):
         """Identify the model for native primary-key output compilation."""
 
         model = _PrimaryDecimalModel
+        registry = _PRIMARY_REGISTRY
 
 
 class _PrimaryQuery(ObjectType):

@@ -9,6 +9,10 @@ from typing import Any
 import pytest
 from graphql import GraphQLArgument, GraphQLField, GraphQLString
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 
 @pytest.fixture(autouse=True)
 def _isolate_output_registry() -> Iterator[None]:

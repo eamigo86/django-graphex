@@ -1235,19 +1235,18 @@ class DjangoObjectType(NativeObjectType):
         # ----------------------------------------------------------------
         # NATIVE PATH: create EXACTLY ONE GraphQLObjectType per DjangoObjectType,
         # ONCE, here at class definition — identity-stable.  Its relation fields
-        # are LAZY THUNKS that resolve against the SHARED GLOBAL output registry
-        # (django_graphex.core.base.get_shared_output_registry()), NEVER a
-        # per-class local registry.
+        # are LAZY THUNKS that resolve against this class's Registry companion.
+        # The global Registry uses the shared output registry; a custom Registry
+        # uses its own companion, keeping public schemas isolated.
         #
         # Why a single instance + shared-registry thunks: relations CANNOT be
         # resolved at class-definition time (the related type may be defined
-        # later).  By closing the field thunk over the GLOBAL registry, the
-        # relation lookup runs lazily — after compile_all_outputs() has
-        # registered every type's stub — so it resolves to the related type's
-        # real GraphQLObjectType instead of degrading to GraphQLString.
+        # later). The thunk closes over this Registry's output companion and
+        # resolves lazily after its related type has been registered, avoiding
+        # a premature GraphQLString fallback.
         #
         # compile_all_outputs() (called at app-ready) POPULATES/validates these
-        # existing instances against the SAME shared registry.  It NEVER creates
+        # existing instances against their Registry companion. It NEVER creates
         # a second GraphQLObjectType for an already-registered type, so the
         # instance pinned by mutation.py (mutation.py:434/456) at mutation
         # class-def time is the SAME object that ends up in the assembled
@@ -1301,10 +1300,8 @@ class DjangoObjectType(NativeObjectType):
                 _gdx_output_registry.append(_entry)
 
             # OUTPUT registry: the source of truth for this type's relation
-            # thunks. Keyed by MODEL with last-registration-wins semantics,
-            # mirroring the graphene Registry (registry.get_type_for_model(model)).
-            # Relation thunks of OTHER types resolve a FK/M2M to whatever instance
-            # is the canonical (last-registered) type for the related model.
+            # thunks. One registered public output per model is canonical
+            # within each Registry; distinct public views use distinct pairs.
             #
             # Registry-scoped: use the class's OWN registry companion, NOT the
             # process-global shared registry directly. For the GLOBAL registry
@@ -1343,9 +1340,9 @@ class DjangoObjectType(NativeObjectType):
             _excl = list(exclude_fields) if exclude_fields else None
             _incl = list(include_fields) if include_fields else None
 
-            # LAZY field thunk bound to the SHARED registry.  Evaluated on first
-            # `.fields` access; by app-ready (compile_all_outputs) every model's
-            # canonical instance is in the shared registry so relation lookups
+            # LAZY field thunk bound to this Registry's output companion.
+            # Evaluated on first `.fields` access; by app-ready every model's
+            # canonical instance is in its companion so relation lookups
             # resolve to the real related GraphQLObjectType (not GraphQLString).
             #
             # item-b (B5): built via the SHARED ``_make_output_thunk_for`` factory

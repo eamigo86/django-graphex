@@ -37,6 +37,10 @@ from types import ModuleType
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 
 def _top_level_imported_names(module: ModuleType) -> set[str]:
     """Return the set of names imported at MODULE TOP LEVEL.

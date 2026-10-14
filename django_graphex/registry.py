@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from django.core.exceptions import ImproperlyConfigured
+
 if TYPE_CHECKING:
     from django.db.models import Model
 
@@ -169,6 +171,8 @@ class Registry:
         Raises:
             TypeError: if "cls" is not a DjangoObjectType/DjangoInputObjectType.
             ValueError: if the type's registry does not match this instance.
+            ImproperlyConfigured: if a distinct public output type is already
+                registered for this model in this registry.
         """
         from .types import (
             DjangoInputObjectType,
@@ -194,7 +198,21 @@ class Registry:
             raise ValueError("Registry for a Model must match.")
 
         if not getattr(cls._meta, "skip_registry", False):
-            self._types[(cls._meta.model, for_input)] = cls
+            key = (cls._meta.model, for_input)
+            if for_input is None and issubclass(cls, DjangoObjectType):
+                existing = self._types.get(key)
+                if existing is not None and existing is not cls:
+                    raise ImproperlyConfigured(
+                        "Model {model} already has public output type {existing} "
+                        "in this Registry; cannot register distinct type "
+                        "{candidate}. Use a separate Registry for a distinct "
+                        "public schema.".format(
+                            model=cls._meta.model.__name__,
+                            existing=existing.__name__,
+                            candidate=cls.__name__,
+                        )
+                    )
+            self._types[key] = cls
 
     def get_type_for_model(
         self, model: type[Model], for_input: str | None = None

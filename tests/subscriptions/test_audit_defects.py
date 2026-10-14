@@ -36,7 +36,6 @@ from asgiref.sync import sync_to_async  # noqa: E402
 from channels.layers import InMemoryChannelLayer  # noqa: E402
 from channels.testing import WebsocketCommunicator  # noqa: E402
 
-from django_graphex.types import DjangoObjectType as _DOT  # noqa: E402
 from tests.models import Post  # noqa: E402
 from tests.subscriptions._sse import sse_frames  # noqa: E402
 
@@ -49,26 +48,6 @@ pytestmark = pytest.mark.django_db(transaction=True)
 # DjangoObjectType is identity-stable, per-test registration pollutes the shared
 # output registry).
 # ---------------------------------------------------------------------------
-
-
-class _AuditTagT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Tag"]).Tag
-
-
-class _AuditCategoryT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Category"]).Category
-
-
-class _AuditAuthorT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Author"]).Author
-
-
-class _AuditPostT(_DOT):
-    class Meta:
-        model = Post
 
 
 def _build_native_schema(subscription_type: Any = None) -> GraphQLSchema:

@@ -34,6 +34,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 # ---------------------------------------------------------------------------
 # (1) Relation identity — single instance, no String fallback, both directions
 # ---------------------------------------------------------------------------

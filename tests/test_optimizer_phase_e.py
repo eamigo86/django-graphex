@@ -1087,6 +1087,12 @@ def _build_related_field_forward_schema():
     _REG_RELFWD = Registry()
     captured_kwargs: list[dict] = []
 
+    _PostType = _gtype(
+        "_RelFwdPostType",
+        (DjangoObjectType,),
+        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
+    )
+
     _InnerPostListType = _gtype(
         "_RelFwdInnerPostListType",
         (DjangoListObjectType,),
@@ -1111,12 +1117,6 @@ def _build_related_field_forward_schema():
     # PostType exposes "author" as a forward FK (a plain related field). The
     # walker descends Post -> author via the related-field branch, then reaches
     # the hooked nested list on AuthorType.
-    _PostType = _gtype(
-        "_RelFwdPostType",
-        (DjangoObjectType,),
-        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
-    )
-
     _PostListType = _gtype(
         "_RelFwdPostListType",
         (DjangoListObjectType,),
@@ -1258,27 +1258,6 @@ def _build_site_b_multi_schema():
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Tag, "registry": _REG_SITE_B_MULTI})},
     )
-    # Nested list of posts hung off Category (the multi-segment descendant target).
-    _CatPostListType = _gtype(
-        "_SBMCatPostListType",
-        (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_SITE_B_MULTI})},
-    )
-
-    _CategoryType = _gtype(
-        "_SBMCategoryType",
-        (DjangoObjectType,),
-        {
-            "posts": DjangoNestedListObjectField(_CatPostListType, accessor="posts"),
-            # select_related("author") is valid ONLY on Post — if mis-paired onto
-            # Comment/Tag this raises, exposing a broken multi-segment descent.
-            "optimize_posts": _record("category_posts", "author"),
-            "Meta": type(
-                "Meta", (), {"model": Category, "registry": _REG_SITE_B_MULTI}
-            ),
-        },
-    )
-
     # PostType owns TWO unfiltered hooked nested lists (comments, tags) and exposes
     # "category" (FK) for the multi-segment descent.
     _PostType = _gtype(
@@ -1306,6 +1285,27 @@ def _build_site_b_multi_schema():
                     # expose category so the FK descent into Category.posts works
                     "only_fields": ["id", "title", "comments", "tags", "category"],
                 },
+            ),
+        },
+    )
+
+    # Nested list of posts hung off Category (the multi-segment descendant target).
+    _CatPostListType = _gtype(
+        "_SBMCatPostListType",
+        (DjangoListObjectType,),
+        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_SITE_B_MULTI})},
+    )
+
+    _CategoryType = _gtype(
+        "_SBMCategoryType",
+        (DjangoObjectType,),
+        {
+            "posts": DjangoNestedListObjectField(_CatPostListType, accessor="posts"),
+            # select_related("author") is valid ONLY on Post — if mis-paired onto
+            # Comment/Tag this raises, exposing a broken multi-segment descent.
+            "optimize_posts": _record("category_posts", "author"),
+            "Meta": type(
+                "Meta", (), {"model": Category, "registry": _REG_SITE_B_MULTI}
             ),
         },
     )

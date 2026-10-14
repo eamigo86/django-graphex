@@ -24,6 +24,10 @@ import inspect
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 # ---------------------------------------------------------------------------
 # Import-safety: descriptors.py must NOT import graphene at module top level
 # ---------------------------------------------------------------------------

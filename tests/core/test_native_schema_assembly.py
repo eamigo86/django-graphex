@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 
 @pytest.mark.django_db
 def test_native_schema_query_type_is_canonical_native_instance() -> None:

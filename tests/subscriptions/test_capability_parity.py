@@ -72,75 +72,15 @@ from graphql import (  # noqa: E402
 # registration mirrors production.
 # ---------------------------------------------------------------------------
 from django_graphex.types import DjangoObjectType as _DOT
-from tests.models import Author, Category, Post, Tag  # noqa: E402
+from tests.models import Post  # noqa: E402
 
 if TYPE_CHECKING:
     from django_graphex.subscriptions import Subscription
 
 
-class TagT(_DOT):
-    """Module-scoped output node type for the Tag model.
-
-    Registered once at import time so the shared output registry keeps a
-    single canonical GraphQLObjectType instance for Tag.
-    """
-
-    class Meta:
-        """Binds this node type to the Tag model.
-
-        No other options are set; the default output field set is used.
-        """
-
-        model = Tag
-
-
-class CategoryT(_DOT):
-    """Module-scoped output node type for the Category model.
-
-    Registered once at import time so the shared output registry keeps a
-    single canonical GraphQLObjectType instance for Category.
-    """
-
-    class Meta:
-        """Binds this node type to the Category model.
-
-        No other options are set; the default output field set is used.
-        """
-
-        model = Category
-
-
-class AuthorT(_DOT):
-    """Module-scoped output node type for the Author model.
-
-    Registered once at import time so the shared output registry keeps a
-    single canonical GraphQLObjectType instance for Author.
-    """
-
-    class Meta:
-        """Binds this node type to the Author model.
-
-        No other options are set; the default output field set is used.
-        """
-
-        model = Author
-
-
-class PostT(_DOT):
-    """Module-scoped output node type for the Post model.
-
-    Registered once at import time so the shared output registry keeps a
-    single canonical GraphQLObjectType instance for Post, matching the FK
-    and M2M nested types used by AuthorT/TagT.
-    """
-
-    class Meta:
-        """Binds this node type to the Post model.
-
-        No other options are set; the default output field set is used.
-        """
-
-        model = Post
+# Reuse the transport suite's Post node rather than declaring a second public
+# Post type in its registry.
+from tests.subscriptions._transport_schema import _PostT as PostT  # noqa: E402
 
 
 def _register_post_node_types() -> type[_DOT]:

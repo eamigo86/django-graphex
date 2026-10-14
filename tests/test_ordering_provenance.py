@@ -102,38 +102,17 @@ prov_schema = DjangoGraphQLSchema(query=ProvQuery, registries=isolated_pair(_RPR
 
 
 # ---------------------------------------------------------------------------
-# Divergence schema: the CONTAINER is declared BEFORE the node it serves
+# Projected schema: the node is declared BEFORE its container
 # ---------------------------------------------------------------------------
 
 _RDIV = Registry()
 
 
-class DivPostListType(DjangoListObjectType):
-    """Container declared while the registry holds NO node type for Post.
-
-    Class definition therefore cannot see the projecting node type below: the
-    registry auto-creates an unprojected stand-in, and the eager allowlist stamp
-    reads that stand-in instead of the type that ends up serving "results".
-    """
-
-    class Meta:
-        """Configuration for "DivPostListType".
-
-        Declared first on purpose so the eager stamp and the "results" thunk
-        resolve different node types.
-        """
-
-        model = Post
-        registry = _RDIV
-        pagination = LimitOffsetGraphqlPagination(default_limit=10, max_limit=20)
-
-
 class DivPostType(DjangoObjectType):
-    """Post node hiding "views", registered AFTER the container above.
+    """Post node hiding "views", registered before its container.
 
-    Registration is last-wins, so this is the type the container's "results"
-    thunk resolves -- and the type whose projection the ordering allowlist has
-    to describe.
+    The container reuses this canonical node, whose projection also gates
+    client-supplied ordering.
     """
 
     class Meta:
@@ -147,10 +126,28 @@ class DivPostType(DjangoObjectType):
         exclude_fields = ("views",)
 
 
-class DivQuery(ObjectType):
-    """Root query exposing the post list whose node type was declared late.
+class DivPostListType(DjangoListObjectType):
+    """Container bound to the already projected Post node.
 
-    The declaration order above is the whole point of this schema.
+    The container must not create an unprojected stand-in that could later be
+    replaced by another public output class in the same registry.
+    """
+
+    class Meta:
+        """Configuration for "DivPostListType".
+
+        Declared after the projected node so the output identity is stable.
+        """
+
+        model = Post
+        registry = _RDIV
+        pagination = LimitOffsetGraphqlPagination(default_limit=10, max_limit=20)
+
+
+class DivQuery(ObjectType):
+    """Root query exposing the post list with a predeclared node type.
+
+    The declaration order keeps one public output class per model.
     """
 
     posts = DjangoListObjectField(DivPostListType)
@@ -336,7 +333,7 @@ class ServerDefaultOrderingTests(TestCase):
 class DivergentAllowlistStampTests(TestCase):
     """The allowlist must follow the type that actually serves "results".
 
-    Pins the divergence the eager class-definition stamp could not see.
+    Pins the projected node as the only public output for this registry.
     """
 
     @classmethod
@@ -349,8 +346,8 @@ class DivergentAllowlistStampTests(TestCase):
         Post.objects.create(title="low", author=author, views=1)
         Post.objects.create(title="high", author=author, views=99)
 
-    def test_hidden_column_is_not_orderable_when_the_node_registers_late(self) -> None:
-        """A late-registered projecting node type must still gate the ordering.
+    def test_hidden_column_is_not_orderable_with_the_canonical_node(self) -> None:
+        """The canonical projecting node type must gate client ordering.
 
         The served node projection rejects its hidden views column.
         """

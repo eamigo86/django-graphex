@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Reject a second distinct public `DjangoObjectType` for the same exact Django
+  model and `Registry` with `ImproperlyConfigured`, rather than silently
+  replacing the type used by nested relations. Re-registering the same class
+  remains idempotent; separate registries, input/mutation registrations, and
+  non-registering internal forks are unchanged. Existing public/admin schema
+  variants over one model must use separate registries.
+
 - Roll back default-database writes when GraphQL execution returns errors
   under `ATOMIC_MUTATIONS=True`, and mark Django `ATOMIC_REQUESTS` requests
   for rollback on those errors or the established mutation error flag.

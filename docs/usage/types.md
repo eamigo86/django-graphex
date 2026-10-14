@@ -46,6 +46,49 @@ or as the output of a [mutation](mutations.md). Relations on the model are expos
 as nested lists with the uniform `results` / `totalCount` shape — see
 [Nested lists](nested-lists.md).
 
+### One public output type per model and registry
+
+A `Registry` accepts one public `DjangoObjectType` class per exact Django model.
+Declaring another class for that model in the **same registry** now raises
+`ImproperlyConfigured` before the new type can replace the relation target.
+Registering the **same class** again is harmless. Distinct registries may each
+define their own public view of the model:
+
+```python
+from django_graphex.registry import Registry
+
+public_registry = Registry()
+admin_registry = Registry()
+
+class PublicUser(DjangoObjectType):
+    class Meta:
+        model = User
+        registry = public_registry
+        only_fields = ("id", "username")
+
+class AdminUser(DjangoObjectType):
+    class Meta:
+        model = User
+        registry = admin_registry
+        only_fields = ("id", "username", "is_staff")
+```
+
+Build each schema with its own `SchemaRegistries` pair, including a separate
+`NativeOutputRegistry`, so nested relations resolve within the matching
+registry. Do not put both classes in one registry and rely on declaration
+order: a `Post.user` relation would otherwise select the last class and could
+publish fields the public schema did not intend. To migrate an existing schema,
+keep one registered public type per model, or split genuinely different public
+and administrative schemas into separate registries. Input types and generated
+mutation inputs retain their own registration rules; this output guard does
+not change them.
+
+When a `DjangoListObjectType` has no previously registered node for its model,
+it creates a public `GenericType` node in that registry. If the same schema
+needs a projected or custom node, declare its `DjangoObjectType` **before** the
+list container so the container reuses it. A later distinct node is rejected;
+the container's generated node is not an internal non-registering fork.
+
 !!! warning "Django accounts are not generic CRUD resources"
     Keep the four-field projection above behind an authenticated endpoint and
     leave response caching disabled unless its key includes every identity and
@@ -694,6 +737,10 @@ class Query(ObjectType):
 Descriptors work the same on a **`DjangoObjectType`**: declare the field on the
 class body and it is merged with the model-derived fields. When `source=` isn't
 enough, back the field with a **`resolve_<name>` method** — the contract is:
+
+The following `UserType` declaration is an independent example of the one
+public type you would register for `User`; do not declare it alongside the
+earlier `UserType` in one registry.
 
 - The method name is `resolve_` + the **snake_case attribute name** of a field
   declared on the class (`full_name` → `resolve_full_name`).

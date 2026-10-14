@@ -34,6 +34,10 @@ from typing import Any
 
 import pytest
 
+from django_graphex.registry import Registry
+
+_SCALAR_KINDS_REGISTRY = Registry()
+
 # The graphene scalar descriptor types converter builds for scalar field kinds.
 _DEAD_SCALAR_DESC_NAMES = {
     "String",
@@ -71,6 +75,7 @@ def _register_author_node():
             """Bind the node to "Author" so the scalar model's FK compiles."""
 
             model = Author
+            registry = _SCALAR_KINDS_REGISTRY
 
     return _SkAuthorType
 
@@ -92,6 +97,7 @@ def _scalar_kinds_meta_fields():
     class _SkType(DjangoObjectType):
         class Meta:
             model = ScalarKindsModel
+            registry = _SCALAR_KINDS_REGISTRY
 
     return _SkType
 
@@ -168,6 +174,7 @@ def test_construct_fields_keeps_relation_descriptors_on_native() -> None:
     class _PostType(DjangoObjectType):
         class Meta:
             model = Post
+            registry = Registry()
 
     meta_fields = _PostType._meta.fields
     # FK (author/category) + M2M (tags/co_authors) + reverse FK (comments) are

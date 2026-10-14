@@ -790,6 +790,12 @@ user_type = registry.get_type_for_model(User)
 registry.register(CustomUserType)
 ```
 
+Registering the same class again is idempotent. Registering a distinct public
+`DjangoObjectType` for the same exact model in this registry raises
+`ImproperlyConfigured` before it can replace the nested relation target. Use
+separate registries and schema pairs for intentionally different public views;
+see [one public output type per model and registry](../usage/types.md#one-public-output-type-per-model-and-registry).
+
 ### Custom Registry
 
 `Registry` is part of the public API and can be imported directly from

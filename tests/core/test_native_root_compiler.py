@@ -22,6 +22,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 
 @pytest.mark.django_db
 def test_compile_native_root_returns_graphql_object_type() -> None:

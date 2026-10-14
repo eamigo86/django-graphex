@@ -1,31 +1,23 @@
 """Per-schema registry isolation helpers for the top-level test suite.
 
-The native compile path historically resolved relation / list-container /
-optimizer types against PROCESS-GLOBAL registries (a single graphene
-"Registry" + the shared "NativeOutputRegistry", keyed by model, last-wins).
-When two test MODULES define output types over the SAME model with the SAME
-type name (e.g. "PostListType", "ArticleGenericType") and are collected
-together, the global last-wins slot makes two distinct same-named
-"GraphQLObjectType" instances reachable in one schema, and graphql-core raises
-"Schema must contain uniquely named types" at build time (issue #1590).
+A public DjangoObjectType now has one canonical model slot per Registry. Tests
+that intentionally build distinct public schemas must use separate Registry
+instances, and a schema's native output companion must resolve its relations
+within that same pair. The isolated_pair helper supplies this explicit pair.
 
-item-b (B0-B5) gave "DjangoGraphQLSchema" a "registries=" kwarg + a
-lazy-fork: a schema built with a DISTINCT "SchemaRegistries" pair (its
-graphene "Registry" AND "NativeOutputRegistry" both distinct from the
-global ones) forks PAIR-LOCAL output instances, so two schemas over the same
-model coexist with no collision and no cross-schema leak.
-
-This module is the test-side glue: declare a module-scoped graphene "Registry",
-tag each output type's "Meta.registry" with it, then build the schema with
-"isolated_pair(<that registry>)". The pair carries the module's graphene
-registry plus a FRESH "NativeOutputRegistry" and fresh compile caches, which
-triggers the fork and keeps the module's types out of the shared global
-namespace.
+Some legacy builders use DjangoModelType or other APIs that select the default
+Registry without a Meta.registry option. The per-test isolated_default_pair
+scope gives those builders a fresh default pair and restores the process
+singletons afterward; it never disables the duplicate-public-output guard.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
+
+import pytest
 
 from django_graphex.core.base import SchemaRegistries
 from django_graphex.core.registry_compiler import NativeOutputRegistry
@@ -57,3 +49,45 @@ def isolated_pair(graphene_registry: Any) -> SchemaRegistries:
         interface_cache={},
         filter_input_cache={},
     )
+
+
+@contextmanager
+def isolated_default_pair() -> Iterator[None]:
+    """Scope the hard-coded default pair to one generated CRUD test builder.
+
+    DjangoModelType currently chooses the process-global Registry rather than
+    accepting Meta.registry. Tests of that public builder need a fresh default
+    pair for their own model graph, but must restore the module singletons and
+    output entries so another test cannot inherit those registrations. The
+    registration guard itself stays active inside this scope.
+
+    Yields:
+        Control while a temporary default Registry and native companion live.
+    """
+    import django_graphex.core.base as base_module
+    import django_graphex.registry as registry_module
+    from django_graphex.core.registry_compiler import NativeOutputRegistry
+    from django_graphex.registry import Registry
+
+    previous_registry = registry_module.registry
+    previous_output = base_module._gdx_shared_output_registry
+    entries = list(base_module._gdx_output_registry)
+    registry_module.registry = Registry()
+    base_module._gdx_shared_output_registry = NativeOutputRegistry()
+    try:
+        yield
+    finally:
+        registry_module.registry = previous_registry
+        base_module._gdx_shared_output_registry = previous_output
+        base_module._gdx_output_registry[:] = entries
+
+
+@pytest.fixture
+def isolated_default_registry_pair() -> Iterator[None]:
+    """Give one test its own default output registry pair.
+
+    Yields:
+        Control while the test owns a temporary default registry pair.
+    """
+    with isolated_default_pair():
+        yield

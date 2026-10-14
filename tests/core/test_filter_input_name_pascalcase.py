@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
 
 @pytest.mark.django_db
 def test_native_filter_input_name_is_pascalcase_filterinput() -> None:
@@ -52,6 +54,7 @@ def test_native_filter_input_name_is_pascalcase_filterinput() -> None:
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
 def test_filter_input_name_in_schema_type_map_is_pascalcase() -> None:
     """Assert that a filterable list field registers its input as PascalCase.
 

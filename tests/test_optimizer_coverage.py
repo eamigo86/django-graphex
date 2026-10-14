@@ -2861,22 +2861,6 @@ class ETagListType(DjangoListObjectType):
         registry = RAUTHOR
 
 
-class EProfileListType(DjangoListObjectType):
-    """ "Profile" list type registered on the isolated Author-rooted e2e "Registry".
-
-    See the tests below for the exact contract covered.
-    """
-
-    class Meta:
-        """Bind the list type to "Profile" under the isolated registry "RAUTHOR".
-
-        See the tests below for the exact contract covered.
-        """
-
-        model = Profile
-        registry = RAUTHOR
-
-
 class EProfileType(DjangoObjectType):
     """ "Profile" object type registered on the isolated Author-rooted e2e "Registry".
 
@@ -2885,6 +2869,22 @@ class EProfileType(DjangoObjectType):
 
     class Meta:
         """Bind the type to "Profile" under the isolated registry "RAUTHOR".
+
+        See the tests below for the exact contract covered.
+        """
+
+        model = Profile
+        registry = RAUTHOR
+
+
+class EProfileListType(DjangoListObjectType):
+    """ "Profile" list type registered on the isolated Author-rooted e2e "Registry".
+
+    See the tests below for the exact contract covered.
+    """
+
+    class Meta:
+        """Bind the list type to "Profile" under the isolated registry "RAUTHOR".
 
         See the tests below for the exact contract covered.
         """
