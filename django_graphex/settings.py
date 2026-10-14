@@ -119,6 +119,9 @@ DEFAULTS = {
     # list fields cost 1 unless a type declares `Meta.complexity`.
     "MAX_QUERY_COST": None,  # None disables the budget (queries are never blocked)
     "EXPOSE_QUERY_COST": False,  # True -> add `extensions.cost` to responses
+    # Per-field @replace output cap in Unicode characters (not encoded bytes).
+    # None restores the former uncapped behavior.
+    "MAX_REPLACE_OUTPUT_LENGTH": 1_000_000,
     # Multiplier for a list field whose page size is unknown (no literal/variable
     # value and no MAX_PAGE_SIZE cap to fall back to).
     "DEFAULT_LIST_MULTIPLIER": 10,
@@ -208,6 +211,7 @@ IMPORT_STRINGS = ("DEFAULT_PAGINATION_CLASS", "MIDDLEWARE", "SCHEMA")
 LIMIT_MINIMUMS = {
     "MAX_QUERY_DEPTH": (1, "Use None to disable the global depth guard."),
     "MAX_QUERY_COST": (1, "Use None to disable the cost budget."),
+    "MAX_REPLACE_OUTPUT_LENGTH": (1, "Use None to disable the output cap."),
     "PERMISSION_SCHEMA_CACHE_MAXSIZE": (
         0,
         "Use 0 to cache nothing, or None to keep the calibrated default.",
@@ -285,6 +289,14 @@ class _BaseAPISettings:
             value = _perform_import(value, attr)
         if attr in LIMIT_MINIMUMS:
             _validate_limit(value, attr, self.setting_name)
+        if (
+            attr == "MAX_REPLACE_OUTPUT_LENGTH"
+            and value is not None
+            and (isinstance(value, bool) or not isinstance(value, int))
+        ):
+            raise ImproperlyConfigured(
+                f"{self.setting_name}['{attr}'] must be a positive integer or None."
+            )
         if attr in SETTING_CHOICES:
             _validate_choice(value, attr, self.setting_name)
         setattr(self, attr, value)

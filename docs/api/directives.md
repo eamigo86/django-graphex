@@ -361,6 +361,16 @@ Replace occurrences of a substring.
 | `new` | `String!` | Yes | Replacement string |
 | `count` | `Int` | No | Max number of replacements (-1 for all) |
 
+The resulting string is limited by `MAX_REPLACE_OUTPUT_LENGTH`, which defaults
+to **1,000,000 Unicode characters** (not UTF-8 bytes). The directive predicts
+the exact result length before calling Python's replacement operation and
+returns a GraphQL field error when it would exceed the cap; a result exactly
+at the cap is accepted. This is a **per-result** guard, not a total query
+quota. Empty `old` inserts between characters and at both ends, subject to
+`count`; an already oversized value is rejected even if `count: 0` or no
+substring matches. Set the setting to `None` only if an independent output
+limit makes uncapped legacy behavior safe for your API.
+
 #### TruncateGraphQLDirective
 
 Shorten a string to `length` characters, appending `end` (default `"…"`).

@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Limit each `@replace` result to 1,000,000 Unicode characters by default,
+  predicting Python's nonoverlapping replacement length before allocation.
+  Over-limit results now produce a GraphQL field error, including when no
+  replacement occurs; a result at the cap remains valid. Configure
+  `MAX_REPLACE_OUTPUT_LENGTH` with a positive integer or `None` to restore
+  uncapped legacy behavior. This is a per-result cap, not a query-wide quota,
+  and does not change other directives or the HTTP body limit.
+
 - Enforce the existing `MAX_REQUEST_BODY_SIZE` POST limit before the cache-active
   view parses a GraphQL document or accesses parse, validation, or response
   caches. Oversized requests keep their HTTP 413 response; the configured limit,

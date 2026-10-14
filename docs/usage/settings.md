@@ -68,6 +68,7 @@ DJANGO_GRAPHEX = {
     # --- File uploads (opt-in — Base64FileInput) --------------------------- #
     "MAX_UPLOAD_SIZE": None,        # Required when Base64FileInput is used
     "MAX_REQUEST_BODY_SIZE": None,  # Body-size guard (primary memory cap)
+    "MAX_REPLACE_OUTPUT_LENGTH": 1_000_000,  # Unicode characters per @replace result; None = uncapped
 }
 ```
 
@@ -274,6 +275,7 @@ These settings apply to `Base64FileInput` — an opt-in input type for sending f
 |---|---|---|
 | `MAX_UPLOAD_SIZE` | `None` | Maximum **decoded** size (bytes) of a single `Base64FileInput` field. **Required** when `Base64FileInput` is used — raises `ImproperlyConfigured` at call time when absent and no per-field `max_size` override is given. A per-field `max_size` kwarg on `.to_uploaded_file()` or `decode_base64_file()` overrides this global cap for that specific call. Example: `5 * 1024 * 1024` (5 MB). |
 | `MAX_REQUEST_BODY_SIZE` | `None` | Maximum total HTTP request **body length** (bytes), checked in `BaseGraphQLView.dispatch` **before** JSON parsing. This is the primary memory-safety cap: the entire base64 string is already in the HTTP body before any resolver runs, so rejecting here prevents full-body allocation above the threshold. The per-field decoded-size pre-check in `decode_base64_file` is a secondary guard that saves the decode allocation for payloads that slip past (e.g. when this setting is unset). Requests that exceed the limit receive **HTTP 413**; a `multipart/form-data` POST that declares no `Content-Length` receives **HTTP 411** on a server whose request stream cannot be measured (WSGI), because it is then the one body whose size is unknowable. `None` = disabled (not recommended for public-facing endpoints). Example: `20 * 1024 * 1024` (20 MB). See [How the guard reads each content type](#how-the-guard-reads-each-content-type) below. |
+| `MAX_REPLACE_OUTPUT_LENGTH` | `1_000_000` | Maximum **Unicode characters** in each `@replace` result, not encoded bytes or a query-wide quota. The exact Python replacement length (including empty-substring insertions and `count`) is checked **before** replacement allocation; results above the cap produce a GraphQL field error with normal null propagation. A result at the cap is allowed. Must be a positive integer; `None` restores the former uncapped behavior, which is unsafe without another output limit. Other directives are unaffected. |
 
 When `CACHE_ACTIVE=True`, `GraphQLView` applies the same configured POST body
 limit **before** operation parsing or parse, validation, and response-cache

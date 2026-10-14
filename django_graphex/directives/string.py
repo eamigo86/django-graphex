@@ -23,6 +23,7 @@ from graphql import (
 )
 
 from django_graphex._strconv import to_camel_case, to_snake_case
+from django_graphex.settings import graphql_api_settings
 
 from ..utils import to_kebab_case
 from .base import BaseExtraGraphQLDirective
@@ -861,12 +862,44 @@ class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):
             The string with occurrences of "old" replaced by "new", or None
             when the field value is None. When "count" is given only the first
             "count" occurrences are replaced.
+
+        Raises:
+            GraphQLError: When the predicted output exceeds the configured
+                per-field Unicode-character limit.
         """
         count = args.get("count")
         count = -1 if count is None else int(count)
         return _apply_str(
-            value, lambda text: text.replace(args.get("old"), args.get("new"), count)
+            value, lambda text: _bounded_replace(text, args["old"], args["new"], count)
         )
+
+
+def _bounded_replace(text: str, old: str, new: str, count: int) -> str:
+    """Predict the exact nonoverlapping replacement length before allocation.
+
+    Args:
+        text: Source string.
+        old: Substring to replace, possibly empty.
+        new: Replacement string.
+        count: Maximum replacements; negative means all.
+
+    Returns:
+        The replaced string when its result fits the configured cap.
+
+    Raises:
+        GraphQLError: If the resulting string would exceed the cap.
+    """
+    maximum = graphql_api_settings.MAX_REPLACE_OUTPUT_LENGTH
+    if maximum is not None:
+        occurrences = len(text) + 1 if old == "" else text.count(old)
+        replacements = min(occurrences, count) if count >= 0 else occurrences
+        predicted = len(text) + replacements * (len(new) - len(old))
+        if predicted > maximum:
+            raise GraphQLError(
+                f"@replace output length {predicted} exceeds "
+                f"MAX_REPLACE_OUTPUT_LENGTH={maximum}."
+            )
+    return text.replace(old, new, count)
 
 
 class TruncateGraphQLDirective(BaseExtraGraphQLDirective):
