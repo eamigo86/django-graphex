@@ -88,6 +88,8 @@ part of `DJANGO_GRAPHEX` like everything else.
 | `MIDDLEWARE` | `()` | GraphQL **execution** middleware chain — dotted paths or callables/objects. The bundled security middlewares plug in here, e.g. `"django_graphex.security.DisableIntrospectionMiddleware"` and `"…AuthenticatedFieldsMiddleware"`, plus `"django_graphex.middleware.GraphQLDirectiveMiddleware"` if you use directives. Accepts import strings. Used as the view's default when `middleware=` isn't passed. |
 | `SUBSCRIPTION_PATH` | `None` | Path of the WebSocket subscription endpoint advertised to GraphiQL / the bundled client. `None` = default routing. See [Subscriptions](subscriptions.md). |
 | `ATOMIC_MUTATIONS` | `False` | Wrap each mutation in `transaction.atomic()`. GraphQL execution errors and the established mutation error flag roll back writes in that operation. Structured `ok: false` data is not itself an execution error; an earlier successful sibling root field is not retroactively rolled back. |
+| `MAX_VALIDATION_ERRORS` | `None` | Cap the number of GraphQL validation errors returned in a single response (also honored by the WS/SSE subscription transports). `None` = no cap. |
+| `SUBSCRIPTION_CONNECTION_INIT_TIMEOUT` | `3.0` | Seconds the `graphql-transport-ws` server waits for the first `connection_init` after the socket opens before closing with code **4408** (`connectionInitWaitTimeout`). The transport factory may override it. |
 
 When Django enables `ATOMIC_REQUESTS` on the default database, GraphQL
 execution errors and the mutation error flag mark the entire request
@@ -96,8 +98,6 @@ before a later GraphQL execution error may already be durable. Rolled-back
 atomic writes do not advance the GraphQL response-cache version; durable
 non-atomic writes still invalidate cached responses. This guarantee covers
 the default database connection, not arbitrary additional database aliases.
-| `MAX_VALIDATION_ERRORS` | `None` | Cap the number of GraphQL validation errors returned in a single response (also honored by the WS/SSE subscription transports). `None` = no cap. |
-| `SUBSCRIPTION_CONNECTION_INIT_TIMEOUT` | `3.0` | Seconds the `graphql-transport-ws` server waits for the first `connection_init` after the socket opens before closing with code **4408** (`connectionInitWaitTimeout`). The transport factory may override it. |
 
 ## Pagination
 
