@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Change auto-derived `DecimalField` output from `Float` numbers to the
+  existing `Decimal` scalar's exact JSON strings, including model objects
+  returned by generated mutations. `19.99` becomes `"19.99"`; large values no
+  longer round through binary Float. Clients must migrate output SDL/types and
+  number handling. Generated Decimal inputs and filters, explicit overrides,
+  ordinary Float fields, and primary-key nullability are unchanged. An
+  explicitly declared `Float` field with a Decimal-to-float resolver retains
+  the former numeric output at the cost of precision. This output scalar cannot
+  recover digits already rounded by a database backend.
 - Map auto-derived `BigIntegerField` and `PositiveBigIntegerField` to the
   precise `BigInt` scalar in output, generated mutation inputs and automatic
   filters. Wire values are bounded decimal strings, including small values;
@@ -26,12 +35,9 @@ All notable changes to this library are documented here. The format is based on
 - Make the converter integration test register its User relation target in a
   test-local, allowlisted registry. The test now passes in isolation without
   weakening its relation assertion or changing production relation behavior.
-- Restore populated auto-derived `DecimalField` output under graphql-core 3.3
-  by converting its Django `Decimal` value for the existing `Float` field.
-  The SDL and exact Decimal input mapping remain unchanged; Float output still
-  rounds large values, while an explicitly declared `Decimal` scalar preserves
-  decimal text when required. Decimal primary keys retain `Float!` and their
-  non-null error propagation.
+- Previously restored populated auto-derived `DecimalField` output under
+  graphql-core 3.3 through the existing `Float` field; the new default above
+  supersedes that interim Float output without changing Decimal input parsing.
 - Bound optimizer planning for valid repeated-fragment graphs to distinct
   model, type, and relation-path contexts. Existing projections, prefetches,
   annotation promotion, ordered plan/alias precedence, GraphQL results, and SQL

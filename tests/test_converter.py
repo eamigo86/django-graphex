@@ -46,6 +46,7 @@ from django_graphex.core.output_compiler import _to_graphql_field
 from django_graphex.core.scalars import (
     GdxDate,
     GdxDateTime,
+    GdxDecimal,
     GdxJSON,
     GdxTime,
     GdxUUID,
@@ -179,13 +180,13 @@ class ConverterTest(TestCase):
         self.assertIs(_native_scalar(field), GraphQLFloat)
 
     def test_convert_decimal_field(self) -> None:
-        """DecimalField must convert to GraphQLFloat, matching graphene-django #1508.
+        """DecimalField must use the approved exact native output scalar.
 
-        Ships broken if DecimalField stops mapping to GraphQLFloat, breaking
-        parity with the historical graphene-django behavior.
+        Native output intentionally differs from historical graphene-django
+        Float parity; the legacy converter dispatcher is not used here.
         """
         field = TestModel._meta.get_field("decimal_field")
-        self.assertIs(_native_scalar(field), GraphQLFloat)
+        self.assertIs(_native_scalar(field), GdxDecimal)
 
     def test_convert_boolean_field(self) -> None:
         """BooleanField must convert to GraphQLBoolean on the native output path.

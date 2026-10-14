@@ -25,7 +25,6 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from graphql import (
     GraphQLBoolean,
-    GraphQLFloat,
     GraphQLNonNull,
     GraphQLString,
 )
@@ -39,7 +38,7 @@ from django_graphex.converter import (
     convert_postgres_range_to_string,
 )
 from django_graphex.core.output_compiler import _to_graphql_field
-from django_graphex.core.scalars import GdxUUID
+from django_graphex.core.scalars import GdxDecimal, GdxUUID
 from django_graphex.fields import ArrayField
 from django_graphex.registry import Registry
 from django_graphex.types import DjangoInputObjectType, DjangoObjectType
@@ -277,15 +276,14 @@ def test_binary_field_converts_to_binary_scalar() -> None:
     assert out is GraphQLString
 
 
-def test_decimal_field_converts_to_float() -> None:
-    """DecimalField must collapse to GraphQLFloat (graphene-django parity).
+def test_decimal_field_converts_to_exact_scalar() -> None:
+    """DecimalField must select the approved exact native output scalar.
 
-    Ships broken if DecimalField stops mapping to GraphQLFloat on the native
-    scalar dispatcher.
+    The retired graphene scalar dispatcher is not the live output path.
     """
     field = models.DecimalField(max_digits=5, decimal_places=2)
     out = _native_scalar(field, name="amount")
-    assert out is GraphQLFloat
+    assert out is GdxDecimal
 
 
 def test_uuid_field_converts_to_uuid() -> None:

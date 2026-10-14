@@ -1540,7 +1540,8 @@ How Django model fields map to GraphQL **output** types:
 | `IntegerField` / `SmallIntegerField` / `PositiveIntegerField` | `Int` |
 | `BigIntegerField` / `PositiveBigIntegerField` | `BigInt` — decimal strings on the wire (see [BigInt](#bigint-64-bit-integers)) |
 | `AutoField` / `BigAutoField` / `SmallAutoField` | `ID` |
-| `FloatField` / `DecimalField` | `Float` |
+| `FloatField` | `Float` |
+| `DecimalField` | `Decimal` — exact decimal strings on the wire (see [Decimal output](#decimal-output)) |
 | `BooleanField` | `Boolean` |
 | `DateField` / `DateTimeField` / `TimeField` | `CustomDate` / `CustomDateTime` / `CustomTime` (see [input formats](#accepted-datetime-input-formats)) |
 | any field with `choices` | a generated `Enum` (see above) |
@@ -1580,41 +1581,79 @@ mutation { createItem(newItem: {bigCount: "9007199254740993"}) { ok } }
 Clients migrating from the former `Int` mapping must update variable types
 from `Int` to `BigInt` and send decimal strings. `IntegerField` remains `Int`;
 auto-generated primary keys remain `ID`, including `BigAutoField`. An explicitly
-declared field or custom scalar keeps its own contract. This change does not
-alter `DecimalField` output or precision.
+declared field or custom scalar keeps its own contract.
 
 Foreign-key linking still uses the generated `ID` input, even when the target
 has a regular `BigIntegerField` primary key: send its ID as a string or an
 ordinary JSON integer. A `PositiveBigIntegerField` with `choices` still uses
 its generated Enum input rather than a `BigInt` input.
 
-An automatically derived `DecimalField` keeps the existing `Float` output
-type. Populated values now serialize as numbers (for example,
-`Decimal("19.99")` returns `19.99`) instead of returning `null` with a Float
-serialization error. This is **not** an exact-decimal wire format: the Float
-value of `Decimal("9007199254740993.01")` is `9007199254740994.0`. The
-existing Decimal input scalar still parses decimal strings exactly. If exact
-output is required, explicitly declare a field with the `Decimal` scalar and
-return the original value from its resolver:
+### Decimal output
+
+An automatically derived `DecimalField` now uses the existing `Decimal` scalar
+for output. A model value of `Decimal("19.99")` returns the JSON string
+`"19.99"`; `Decimal("9007199254740993.01")` returns the exact string
+`"9007199254740993.01"` instead of the rounded Float value
+`9007199254740994.0`. This applies to model queries and model objects returned
+by generated mutations. Ordinary `FloatField` still returns a JSON number.
+Nullable Decimal fields still return `null` when unset. A Decimal primary key
+retains its non-null wrapper (`Decimal!`), including GraphQL null-error
+propagation.
+
+The scalar preserves the Decimal value **received from Django**; it cannot
+restore digits a database backend has already rounded. In the SQLite test
+backend, a generated mutation immediately returned
+`"9007199254740993.01"`, but reloading that stored row produced
+`Decimal("9007199254740990.00")`. Do not infer exact persistence at that
+magnitude from the immediate GraphQL response; verify your database's Decimal
+storage behavior separately if stored precision is required.
+
+This is a breaking output SDL and JSON contract: clients should change output
+selections and generated types from `Float`/number to `Decimal`/string. Decimal
+mutation inputs and automatic filters already use the `Decimal` scalar and do
+not change. To retain a numeric Float output deliberately, declare an explicit
+field and convert the Decimal in its resolver; this gives up exact precision:
 
 ```python
+from decimal import Decimal
+
+from django.db import models
+from graphql import GraphQLFloat, GraphQLResolveInfo
+
 from django_graphex.core import field
-from django_graphex.core.scalars import GdxDecimal
 from django_graphex.types import DjangoObjectType
 
+
+class Price(models.Model):
+    amount = models.DecimalField(max_digits=32, decimal_places=2)
+
+    class Meta:
+        app_label = "shop"
+
+
+def numeric_amount(root: Price, info: GraphQLResolveInfo) -> float:
+    """Return the deliberately rounded legacy Float representation.
+
+    Args:
+        root: The model value being rendered.
+        info: Unused GraphQL execution context.
+
+    Returns:
+        The Decimal converted to a floating-point number.
+    """
+    return float(root.amount)
+
+
 class PriceType(DjangoObjectType):
-    amount = field(GdxDecimal, resolver=lambda root, info: root.amount)
+    amount = field(GraphQLFloat, resolver=numeric_amount)
 
     class Meta:
         model = Price
 ```
 
-As with other automatically derived primary keys, a `DecimalField` primary
-key retains its non-null output wrapper (`Float!`); a null value propagates a
-GraphQL field error rather than silently weakening the schema.
-
-This opt-in field returns a decimal string, not the automatic Float number;
-clients must handle that representation intentionally.
+An explicitly declared `Decimal` scalar or custom resolver keeps its own
+contract. This change does not introduce a new parser policy for non-finite or
+extreme-exponent input values.
 
 Worked example — `ArrayField` (incl. a `choices` base) and a range field:
 

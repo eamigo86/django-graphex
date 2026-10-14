@@ -181,8 +181,8 @@ def test_construct_fields_keeps_relation_descriptors_on_native() -> None:
 # ---------------------------------------------------------------------------
 # RED 3: SDL byte-parity — every scalar name + FK survives, unchanged
 # ---------------------------------------------------------------------------
-def test_native_scalar_sdl_is_byte_identical_except_approved_bigint() -> None:
-    """Retain native scalar names except the individually approved BigInt change.
+def test_native_scalar_sdl_preserves_approved_bigint_and_decimal() -> None:
+    """Retain native scalar names except approved BigInt and Decimal changes.
 
     Byte-identical to the captured baseline (built from core/scalars.py via the
     output compiler, NOT from the skipped converter descriptors).
@@ -200,7 +200,7 @@ def test_native_scalar_sdl_is_byte_identical_except_approved_bigint() -> None:
         "bigInteger: BigInt",
         "boolean: Boolean",
         "floating: Float",
-        "decimal: Float",
+        "decimal: Decimal",
         "duration: Float",
         "uuidField: UUID",
         "date: CustomDate",
