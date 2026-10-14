@@ -15,6 +15,7 @@ instance — the native equivalent of graphene's "source" semantics.
 from __future__ import annotations
 
 from typing import Any, Callable
+from unittest.mock import patch
 
 import pytest
 from django.db import models
@@ -22,6 +23,7 @@ from django.test import TestCase
 from graphql import GraphQLField, GraphQLInt, GraphQLString, graphql_sync
 
 from django_graphex.core import ObjectType, field
+from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoModelType, DjangoObjectType
 from tests.models import DummyModel, UUIDItem, UUIDThing
@@ -305,20 +307,27 @@ class CustomFieldsConflictTest(TestCase):
         pre-existing registered type.
         """
 
-        # Registering a DjangoObjectType first means the serializer type reuses
-        # it; fields declared on the serializer type can't be injected, so we
-        # warn instead of silently dropping them.
-        class _ItemObjectType(DjangoObjectType):
-            class Meta:
-                model = UUIDItem
+        # An earlier test may have registered a generated UUIDItem output in
+        # the global registry. Keep this conflict local while preserving the
+        # actual serializer-to-incumbent reuse and warning assertions.
+        local_registry = Registry()
+        with patch(
+            "django_graphex.types.get_global_registry", return_value=local_registry
+        ):
 
-        with pytest.warns(UserWarning, match="already registered"):
-
-            class ItemModelType(DjangoModelType):
-                extra = field(GraphQLString, resolver=_read_attr("label"))
-
+            class _ItemObjectType(DjangoObjectType):
                 class Meta:
                     model = UUIDItem
+                    registry = local_registry
+
+            with pytest.warns(UserWarning, match="already registered"):
+
+                class ItemModelType(DjangoModelType):
+                    extra = field(GraphQLString, resolver=_read_attr("label"))
+
+                    class Meta:
+                        model = UUIDItem
 
         self.assertIs(ItemModelType._meta.output_type, _ItemObjectType)
         self.assertNotIn("extra", ItemModelType._meta.output_type._meta.fields)
+        self.assertIs(local_registry.get_type_for_model(UUIDItem), _ItemObjectType)
