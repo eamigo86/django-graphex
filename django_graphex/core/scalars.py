@@ -267,10 +267,10 @@ def _decimal_parse_literal(ast: Any, variable_values: Any = None) -> decimal.Dec
 
 
 GdxDecimal = GraphQLScalarType(
-    # graphene exposes a ``Decimal`` scalar (used by the filter/input path for
-    # DecimalField lookups). On OUTPUT, graphene-django collapses DecimalField
-    # to ``Float`` (converter.py convert_field_to_float), so this singleton is
-    # NOT used by the output compiler — only the input/filter path. (See #1508.)
+    # Share one Decimal scalar across automatically derived DecimalField output,
+    # generated mutation input, and filter lookup values. Historical
+    # graphene-django output used Float; the approved native output default
+    # now serializes exact decimal text through this singleton.
     name="Decimal",
     description="Arbitrary-precision decimal scalar. Serializes as string.",
     serialize=_decimal_serialize,
