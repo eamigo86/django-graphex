@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Reject bare-string and unknown `DjangoObjectType.Meta.only_fields` or
+  `exclude_fields` selectors at class definition, before registry mutation.
+  Previously a typo could leave a sensitive model field published. Valid model,
+  reverse-relation, private, and declared custom field names remain accepted;
+  declared custom fields still compile independently of model projection.
+
 - Reject a second distinct public `DjangoObjectType` for the same exact Django
   model and `Registry` with `ImproperlyConfigured`, rather than silently
   replacing the type used by nested relations. Re-registering the same class

@@ -131,8 +131,8 @@ class UserType(DjangoObjectType):
 | `model` | `Model` | Required | Django model class |
 | `registry` | `Registry` | Global registry | Type registry instance |
 | `skip_registry` | `bool` | `False` | Skip automatic type registration |
-| `only_fields` | `tuple/list` | `()` | Include only specified fields. **A security boundary** — see below |
-| `exclude_fields` | `tuple/list` | `()` | Exclude specified fields. **A security boundary** — see below |
+| `only_fields` | `tuple/list` | `()` | Include only specified model or declared output fields. Unknown names and bare strings fail at class definition. **A security boundary** — see below |
+| `exclude_fields` | `tuple/list` | `()` | Exclude specified model or declared output fields. Unknown names and bare strings fail at class definition. **A security boundary** — see below |
 | `include_fields` | `tuple/list` | `()` | Additional fields to include |
 | `filter_fields` | `dict` | `None` | Field filtering configuration. An entry naming a projected-away column **fails the schema build** |
 | `interfaces` | `tuple` | `()` | GraphQL interfaces to implement |
@@ -148,6 +148,12 @@ class UserType(DjangoObjectType):
     what "hidden" means when a declaration or a relation is involved, its one
     exception and the two boundaries it cannot close are stated once, in
     [The projection is a security boundary](../usage/types.md#projection-security-boundary).
+
+    Write complete field names in a collection: `exclude_fields = ("password",)`,
+    not `exclude_fields = "password"`. A typo such as `"passwrod"` now raises
+    `ImproperlyConfigured` before the type registers. Model fields, reverse
+    relation names, and explicitly declared output fields are valid names;
+    a declared output field is still compiled independently of model projection.
 
 !!! warning "Unknown Meta options raise ImproperlyConfigured"
     Any key not in the table above is rejected at server startup with

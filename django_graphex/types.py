@@ -242,6 +242,66 @@ def _model_field_names(model: type) -> set[str]:
     return names
 
 
+def _validate_output_selectors(
+    cls: type,
+    model: type[Model],
+    only_fields: Any,
+    exclude_fields: Any,
+) -> tuple[Any, Any]:
+    """Validate public output projections before compilation or registration.
+
+    Args:
+        cls: The public output class being configured.
+        model: The Django model projected by the class.
+        only_fields: Names selected for output, or an empty value.
+        exclude_fields: Names omitted from output, or an empty value.
+
+    Returns:
+        The validated selectors, with one-shot iterators materialized for reuse.
+
+    Raises:
+        ImproperlyConfigured: A selector is a bare string or names no model or
+            declared output field.
+    """
+    from ._strconv import to_camel_case
+
+    allowed = {name for name, _field in get_model_fields(model)}
+    for base in cls.__mro__:
+        for name, descriptor in base.__dict__.items():
+            if isinstance(descriptor, (NativeMountedField, NativeField)):
+                allowed.add(name)
+                allowed.add(getattr(descriptor, "name", None) or to_camel_case(name))
+
+    validated = []
+    for option, selector in (
+        ("only_fields", only_fields),
+        ("exclude_fields", exclude_fields),
+    ):
+        if selector is None:
+            validated.append(None)
+            continue
+        if isinstance(selector, (str, bytes)):
+            raise ImproperlyConfigured(
+                f"{cls.__name__}.Meta.{option} must contain field names, "
+                "not a bare string. Use a tuple such as ('field_name',)."
+            )
+        try:
+            names = list(selector)
+        except TypeError as exc:
+            raise ImproperlyConfigured(
+                f"{cls.__name__}.Meta.{option} must be an iterable of field names."
+            ) from exc
+        for name in names:
+            if not isinstance(name, str) or name not in allowed:
+                raise ImproperlyConfigured(
+                    f"{cls.__name__}.Meta.{option} names unknown field {name!r} "
+                    f"on model {model.__name__}. Check the spelling or declare "
+                    "a custom output field before selecting it."
+                )
+        validated.append(tuple(names) if iter(selector) is selector else selector)
+    return validated[0], validated[1]
+
+
 def _is_declared_class_attr(src_cls: type, field_name: str) -> bool:
     """Return True when *field_name* is a user-DECLARED class attribute (Slice D).
 
@@ -1128,8 +1188,8 @@ class DjangoObjectType(NativeObjectType):
             registry: Registry to register this type in; defaults to the
                 global registry.
             skip_registry: When True, do not register this type.
-            only_fields: Model field names to include exclusively.
-            exclude_fields: Model field names to exclude.
+            only_fields: Model or declared output field names to include exclusively.
+            exclude_fields: Model or declared output field names to exclude.
             include_fields: Extra model field names to include.
             filter_fields: Field names usable for filtering.
             interfaces: GraphQL interfaces this type implements.
@@ -1144,9 +1204,10 @@ class DjangoObjectType(NativeObjectType):
             **options: Extra options forwarded to the parent implementation.
 
         Raises:
-            ImproperlyConfigured: If the legacy "Meta.gfk_unions" key is declared
-                (renamed to "unions" in v2.0), or if a distinct public output
-                type already registers this model in the same Registry.
+            ImproperlyConfigured: If a field selector is a bare string or names
+                an unknown field, the legacy "Meta.gfk_unions" key is declared
+                (renamed to "unions" in v2.0), or a distinct public output type
+                already registers this model in the same Registry.
         """
         # HARD rename guard (v2.0): ``Meta.gfk_unions`` -> ``Meta.unions`` (mirrors
         # the ``gfk_types`` -> ``types`` rename). A subclass still declaring the old
@@ -1171,6 +1232,10 @@ class DjangoObjectType(NativeObjectType):
             "The attribute registry in {} needs to be an instance of "
             'Registry, received "{}".'
         ).format(cls.__name__, registry)
+
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields
+        )
 
         # Collect @filter_field-decorated methods and validate reserved names.
         custom_filters = collect_custom_filters(cls)
