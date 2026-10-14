@@ -1363,7 +1363,9 @@ class BaseGraphQLView(View):
             ):
                 with transaction.atomic():
                     result = execute(schema, document, **execute_options)
-                    rolled_back = getattr(request, MUTATION_ERRORS_FLAG, False) is True
+                    rolled_back = getattr(
+                        request, MUTATION_ERRORS_FLAG, False
+                    ) is True or bool(result.errors)
                     if rolled_back:
                         transaction.set_rollback(True)
                 if not rolled_back:
@@ -1373,7 +1375,7 @@ class BaseGraphQLView(View):
             # Non-atomic execution may have committed work before a later
             # resolver reports an error, so mark it immediately before handing
             # control to graphql-core.  Atomic execution is marked only after
-            # its transaction exits without an explicit rollback above.
+            # its transaction exits without a rollback above.
             if is_mutation:
                 setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
             return execute(schema, document, **execute_options)
@@ -2216,11 +2218,15 @@ class GraphQLView(BaseGraphQLView):
             document=parsed_document,
         )
 
+        if getattr(request, MUTATION_ERRORS_FLAG, False) is True:
+            set_rollback()
+
         status_code = 200
         if execution_result:
             response: dict[str, Any] = {}
 
             if execution_result.errors:
+                set_rollback()
                 response["errors"] = [
                     self.format_error(e, request) for e in execution_result.errors
                 ]

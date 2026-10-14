@@ -393,6 +393,15 @@ Example error response:
 }
 ```
 
+An `ok: false` result is structured mutation data, not a GraphQL execution
+error. It rolls back that generated mutation's own failed write, but does not
+undo an earlier successful sibling root mutation. With `ATOMIC_MUTATIONS=True`,
+a GraphQL execution error in any sibling root field instead rolls back the
+entire mutation operation on the default database. Django's `ATOMIC_REQUESTS`
+also rolls back the default-database request transaction on GraphQL execution
+errors. The response can retain partial data for writes that were rolled back;
+do not treat partial response data as proof that a row was committed.
+
 !!! tip "FK checks stay inside the mutation's rollback boundary"
     In true autocommit, a valid plain mutation issues a single `INSERT` or
     `UPDATE`; it does not pre-check each FK. Within an outer transaction,

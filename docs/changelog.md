@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Roll back default-database writes when GraphQL execution returns errors
+  under `ATOMIC_MUTATIONS=True`, and mark Django `ATOMIC_REQUESTS` requests
+  for rollback on those errors or the established mutation error flag.
+  Rolled-back writes no longer advance the GraphQL response-cache version;
+  durable non-atomic writes still invalidate it. Structured native mutation
+  `ok: false` data remains distinct from a GraphQL execution error.
+
 - Limit each `@replace` result to 1,000,000 Unicode characters by default,
   predicting Python's nonoverlapping replacement length before allocation.
   Over-limit results now produce a GraphQL field error, including when no
