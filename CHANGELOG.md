@@ -6,7 +6,8 @@
   by converting its Django `Decimal` value for the existing `Float` field.
   The SDL and exact Decimal input mapping remain unchanged; Float output still
   rounds large values, while an explicitly declared `Decimal` scalar preserves
-  decimal text when required.
+  decimal text when required. Decimal primary keys retain `Float!` and their
+  non-null error propagation.
 - Bound optimizer planning for valid repeated-fragment graphs to distinct
   model, type, and relation-path contexts. Existing projections, prefetches,
   annotation promotion, ordered plan/alias precedence, GraphQL results, and SQL

@@ -801,7 +801,12 @@ def _to_graphql_field(
             )
             return float(value) if isinstance(value, Decimal) else value
 
-        return {camel_name: GraphQLField(type_=GraphQLFloat, resolve=_decimal_resolver)}
+        decimal_type = (
+            GraphQLNonNull(GraphQLFloat)
+            if getattr(field, "primary_key", False)
+            else GraphQLFloat
+        )
+        return {camel_name: GraphQLField(type_=decimal_type, resolve=_decimal_resolver)}
 
     # ``BinaryField`` has the same shape of defect as ``DurationField`` above:
     # the SDL surface is ``String`` (graphene parity), but the column yields

@@ -1572,6 +1572,10 @@ class PriceType(DjangoObjectType):
         model = Price
 ```
 
+As with other automatically derived primary keys, a `DecimalField` primary
+key retains its non-null output wrapper (`Float!`); a null value propagates a
+GraphQL field error rather than silently weakening the schema.
+
 This opt-in field returns a decimal string, not the automatic Float number;
 clients must handle that representation intentionally.
 

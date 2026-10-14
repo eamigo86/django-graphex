@@ -13,7 +13,12 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
 django.setup()
 
 from django.db import models  # noqa: E402
-from graphql import GraphQLFloat, GraphQLResolveInfo, graphql_sync  # noqa: E402
+from graphql import (  # noqa: E402
+    GraphQLFloat,
+    GraphQLNonNull,
+    GraphQLResolveInfo,
+    graphql_sync,
+)
 
 from django_graphex.core import ObjectType, field  # noqa: E402
 from django_graphex.core.input_compiler import _native_scalar_map  # noqa: E402
@@ -105,6 +110,45 @@ class _ExplicitQuery(ObjectType):
         return info.context["item"]
 
 
+class _PrimaryDecimalModel(models.Model):
+    """Unmigrated model with a Decimal primary key."""
+
+    amount = models.DecimalField(max_digits=32, decimal_places=2, primary_key=True)
+
+    class Meta:
+        """Attach the primary-key model to the existing test app."""
+
+        app_label = "tests"
+
+
+class _PrimaryDecimalType(DjangoObjectType):
+    """Expose an automatically compiled Decimal primary key."""
+
+    class Meta:
+        """Identify the model for native primary-key output compilation."""
+
+        model = _PrimaryDecimalModel
+
+
+class _PrimaryQuery(ObjectType):
+    """Expose a primary-key model supplied by the request context."""
+
+    item = field(_PrimaryDecimalType)
+
+    @staticmethod
+    def resolve_item(root: Any, info: GraphQLResolveInfo) -> _PrimaryDecimalModel:
+        """Return the in-memory primary-key model without querying a database.
+
+        Args:
+            root: Unused root value.
+            info: GraphQL execution context containing the model.
+
+        Returns:
+            The primary-key model supplied by the test request.
+        """
+        return info.context["item"]
+
+
 @pytest.mark.parametrize(
     ("amount", "expected"),
     [
@@ -163,3 +207,41 @@ def test_explicit_decimal_scalar_and_input_mapping_stay_precise() -> None:
     input_scalar = _native_scalar_map()[Decimal]
     assert input_scalar is GdxDecimal
     assert input_scalar.parse_value("9007199254740993.01") == exact
+
+
+def test_decimal_primary_key_keeps_nonnull_float_and_numeric_output() -> None:
+    """Preserve the inherited primary-key wrapper while adapting a Decimal.
+
+    The auto-derived field must retain Float! and still render numeric values.
+    """
+    schema = DjangoGraphQLSchema(query=_PrimaryQuery).graphql_schema
+    item_type = schema.query_type.fields["item"].type
+    amount_type = item_type.fields["amount"].type
+    assert isinstance(amount_type, GraphQLNonNull)
+    assert amount_type.of_type is GraphQLFloat
+
+    result = graphql_sync(
+        schema,
+        "{ item { amount } }",
+        context_value={"item": _PrimaryDecimalModel(amount=Decimal("19.99"))},
+    )
+    assert result.errors is None
+    assert result.data == {"item": {"amount": 19.99}}
+
+
+def test_null_decimal_primary_key_propagates_nonnull_error() -> None:
+    """Retain the pre-C1 GraphQL error envelope for a null primary key.
+
+    A null value must null the parent object rather than its field alone.
+    """
+    schema = DjangoGraphQLSchema(query=_PrimaryQuery).graphql_schema
+    result = graphql_sync(
+        schema,
+        "{ item { amount } }",
+        context_value={"item": _PrimaryDecimalModel(amount=None)},
+    )
+    assert result.data == {"item": None}
+    assert result.errors is not None
+    assert len(result.errors) == 1
+    assert result.errors[0].path == ["item", "amount"]
+    assert "Cannot return null for non-nullable field" in result.errors[0].message
