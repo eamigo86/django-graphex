@@ -233,8 +233,9 @@ def hosts_for_nested(registry: Any, model: Any) -> tuple[Any, ...]:
     Returns:
         The hosts declared for the model in that registry AND in the global one
         (see "host_registries"), nearest first, or an empty tuple when there
-        are none (a child with no host of its own keeps the previous path
-        unchanged). No de-duplication is needed: "host_registries" never repeats
+        are none. With no host, existing nullable reverse-FK orphans cannot be
+        adopted by ID; other child creation and owned-child paths remain.
+        No de-duplication is needed: "host_registries" never repeats
         a registry, and a host is appended to exactly one of them.
     """
     return tuple(
@@ -682,6 +683,10 @@ class NestedFieldsMixin:
             relation: The Django relation object.
             sub_data: The nested payload (dict or list).
             info: GraphQL resolve info for the current request.
+
+        Raises:
+            _NestedError: If a reverse child belongs to another parent, or an
+                existing nullable reverse-FK orphan has no update-serving host.
         """
         if kind in ("reverse_one", "reverse_many"):
             fk_name = relation.field.name  # FK on the child pointing to parent
@@ -737,6 +742,29 @@ class NestedFieldsMixin:
                                         f"Object {child_pk} does not "
                                         f"belong to this "
                                         f"{parent_model_name}."
+                                    ],
+                                )
+                            ]
+                        )
+
+                    # Adopting an existing nullable reverse-FK orphan is a
+                    # CHILD update, even when the parent names it by ID. The
+                    # scope check above keeps its usual privacy precedence;
+                    # without an update-serving child host there is no policy
+                    # capable of authorizing this otherwise unscoped write.
+                    if (
+                        kind == "reverse_many"
+                        and relation.field.null
+                        and current_owner_id is None
+                        and not hosts_serving(cls._meta.registry, child_model, "update")
+                    ):
+                        raise _NestedError(
+                            [
+                                ErrorType(
+                                    field=field,
+                                    messages=[
+                                        "Adopting an existing child by ID requires "
+                                        "a registered child update host."
                                     ],
                                 )
                             ]

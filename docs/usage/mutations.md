@@ -697,6 +697,104 @@ related objects alongside the parent. The same engine backs both
   compare against. Those two relations are protected by the **link rule**
   above instead — the row is attached, never rewritten.
 
+#### Adopting an existing reverse-FK orphan by ID
+
+An existing child whose **nullable reverse foreign key is null** is different
+from a new child. Naming that row's `id` in a generated parent update
+adopts and writes the child. The operation now requires at least one registered
+child `DjangoModelType` or `DjangoModelMutation` that serves **update**. Each
+applicable host's existing row scope and authorization must admit the child.
+The parent mutation's registry and the intentional global registry contribute
+hosts; an unrelated private registry cannot authorize this write. A plain
+read-only output type or a create-only child host does not serve update.
+
+For example, assume `Address.customer` is nullable, `Address.tenant_id` exists,
+and `CustomerMutation` declares `nested_fields = {"addresses": Address}`. This
+child write host lets a tenant adopt only its visible orphans:
+
+```python
+from typing import Any
+
+from django.db.models import QuerySet
+from graphql import GraphQLResolveInfo
+
+from django_graphex.mutation import DjangoModelMutation
+
+from .models import Address
+
+
+class AddressMutation(DjangoModelMutation):
+    class Meta:
+        model = Address
+        model_operations = ("update",)
+
+    @classmethod
+    def filter_queryset(
+        cls,
+        qs: QuerySet[Address],
+        info: GraphQLResolveInfo,
+        **kwargs: Any,
+    ) -> QuerySet[Address]:
+        """Limit child updates to the request tenant.
+
+        Args:
+            qs: Candidate address rows.
+            info: Current GraphQL request.
+            **kwargs: Additional filtering context.
+
+        Returns:
+            Addresses in the request tenant.
+        """
+        return qs.filter(tenant_id=info.context.user.tenant_id)
+```
+
+Before this guard, the following existing-orphan ID could be adopted with no
+child update host. Now, with no eligible host, it returns a structured error
+and rolls back the entire parent mutation, including earlier sibling writes:
+
+```graphql
+mutation {
+  updateCustomer(newCustomer: {
+    id: "1"
+    addresses: [{ id: "3", street: "789 Elm St" }]
+  }) {
+    ok
+    errors { field messages }
+  }
+}
+```
+
+```json
+{
+  "data": {
+    "updateCustomer": {
+      "ok": false,
+      "errors": [{
+        "field": "addresses",
+        "messages": ["Adopting an existing child by ID requires a registered child update host."]
+      }]
+    }
+  }
+}
+```
+
+**Migration:** find parent update mutations that name an existing unowned child
+by `id`. Register a child update-serving host before schema construction, then
+make its queryset/permission checks express the intended visible and writable
+rows. Review callers that intentionally adopted read-hidden children; they
+must use an explicitly authorized child workflow instead. Registering a host
+does not infer tenant ownership or grant blanket access. A child hidden by its
+host still receives the usual not-found response; a permission refusal retains
+the child's existing permission error. No host is needed for creating a **new**
+child without an existing ID (including generated parent create), or updating a
+child already owned by this parent. The generated nested-create input does not
+accept an existing child ID.
+Adoption from a **different** parent remains forbidden, and a missing ID keeps
+the existing child-creation/validation behavior. Reverse one-to-one and generic
+relations are outside this rule. Unlike the separate [FK/M2M ID-link scope](#migrating-id-links-hidden-by-a-destination-scope),
+this is a **child write** and its host checks apply; automatic relation reads
+and ORM relation-filter joins remain separate boundaries.
+
 !!! warning "Reverse child re-parenting"
     Attempting to assign an existing reverse child (by pk) to a new parent via
     the nested write path will fail with a validation error if the child's FK or

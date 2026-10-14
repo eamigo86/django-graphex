@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Require a registered update-serving child write host to adopt an existing
+  nullable reverse-FK orphan by ID through a generated parent update. The
+  host's existing scope and permissions apply; without one the mutation
+  returns a structured error and rolls back. New children, already-owned
+  children, and the different-parent guard are unchanged. Applications that
+  intentionally adopted hostless or read-hidden orphans must register an
+  appropriate child update host and review their authorization policy.
+
 - Check generated create/update foreign-key and many-to-many ID links against
   the request schema's destination `DjangoObjectType.get_queryset` when it is
   overridden. Hidden and nonexistent target IDs now share the ordinary

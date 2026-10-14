@@ -388,6 +388,11 @@ write; child write permissions do not run for a link. This does not scope
 automatic relation expansion or ORM relation-filter joins. See
 [mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
 
+Adopting an existing nullable reverse-FK orphan by ID is a **child write**, not
+an FK/M2M ID link. It requires an update-serving child host and passes that
+host's existing scope and permission checks; see
+[reverse-FK orphan adoption](mutations.md#adopting-an-existing-reverse-fk-orphan-by-id).
+
 With [`PERMISSION_SCOPED_SCHEMA`](settings.md#security) enabled,
 `AuthenticatedGraphQLView` serves **each authenticated request a schema pruned to
 the caller's permissions** — a field the caller lacks perms for is *absent* from
