@@ -16,11 +16,12 @@ All notable changes to this library are documented here. The format is based on
 
 - Reject incompatible automatic `choices` enums that normalize to the same
   GraphQL type name in one registry with `ImproperlyConfigured` naming both
-  model fields. Compatible definitions still reuse one enum; existing
-  noncolliding names and output, mutation-input and filter behavior are
-  unchanged. Distinct registries remain isolated. Resolve a collision by
-  separating the schema surfaces or renaming an app, model or field, with the
-  corresponding client/schema migration; no enum-name override was added.
+  model fields. Compatible definitions, including reordered members, still
+  reuse one enum; existing noncolliding names and output, mutation-input and
+  filter behavior are unchanged. Distinct registries remain isolated. Resolve
+  a collision by separating schema surfaces or renaming an app, model or field.
+  Such a change needs a corresponding client/schema migration; no enum-name
+  override was added.
 
 - Reject bare-string and unknown `DjangoObjectType.Meta.only_fields` or
   `exclude_fields` selectors at class definition, before registry mutation.

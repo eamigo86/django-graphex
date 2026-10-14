@@ -279,11 +279,11 @@ def convert_django_field_with_choices(
 def choices_enum_name(field: DjangoField, input_flag: str | None = None) -> str:
     """Return the CANONICAL GraphQL enum name for a choices field.
 
-    Keyed by (app_label, object_name, field_name) so two models that share a
-    class name across different Django apps — and carry the same choices-field
-    name — never collide in the registry (mirrors the (model_class, for_input)
-    keying used for object/input types). When "input_flag" is set the name is
-    suffixed so an input-only enum never clobbers the output slot.
+    Derived from (app_label, object_name, field_name), then normalized to
+    camel case. Distinct model-field paths can normalize to the same name;
+    the choices builder checks their definitions before reusing one registry
+    slot. When "input_flag" is set the name is suffixed so an input-only enum
+    never clobbers the output slot.
 
     This is the SINGLE source of truth for the choices-enum name shared by the
     converter, the native OUTPUT compiler and the native filter-input builder, so
@@ -381,16 +381,18 @@ def build_choices_enum_type(
     origin = f"{meta.app_label}.{meta.object_name}.{field.name}"
     cached = registry.get_type_for_enum(slot_key)
     if isinstance(cached, GraphQLEnumType):
-        same_values = len(cached.values) == len(enum_type.values) and all(
-            old_name == new_name
-            and type(old.value) is type(new.value)
-            and old.value == new.value
-            and old.description == new.description
-            and old.deprecation_reason == new.deprecation_reason
-            for (old_name, old), (new_name, new) in zip(
-                cached.values.items(), enum_type.values.items(), strict=True
-            )
-        )
+        same_values = cached.values.keys() == enum_type.values.keys()
+        if same_values:
+            for member_name, old in cached.values.items():
+                new = enum_type.values[member_name]
+                if (
+                    type(old.value) is not type(new.value)
+                    or old.value != new.value
+                    or old.description != new.description
+                    or old.deprecation_reason != new.deprecation_reason
+                ):
+                    same_values = False
+                    break
         if not same_values:
             first_origin = cached.extensions.get("gdx_choices_origin", "<unknown>")
             raise ImproperlyConfigured(

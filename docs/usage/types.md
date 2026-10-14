@@ -1566,13 +1566,14 @@ therefore normalize to the same GraphQL name. For example,
 `shopOrderLineStatusEnum`.
 
 When both fields are used in one registry, django-graphex reuses that enum
-only if their generated members, raw values and descriptions agree. If they
-differ, schema construction raises `ImproperlyConfigured` naming the enum and
-both fields instead of publishing one field with the other's choices. This
-check runs when the affected fields are compiled, not as an eager scan of
-every model at startup. Separate registries can independently use the same
-name, but combining both incompatible types in one GraphQL schema still
-requires distinct names.
+only if their generated members, raw values and descriptions agree, even when
+the members are declared in a different order. The first enum's order is kept.
+If the definitions differ, schema construction raises `ImproperlyConfigured`
+naming the enum and both fields instead of publishing one field with the
+other's choices. The check runs as each affected field is compiled; it does
+not scan every model eagerly at startup. Separate registries can independently
+use the same name, but combining both incompatible types in one GraphQL schema
+still requires distinct names.
 
 There is no per-field enum-name override. To resolve a collision, keep only
 one of the conflicting fields in that schema or rename an app, model or field

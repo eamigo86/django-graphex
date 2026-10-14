@@ -6,14 +6,15 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.test.utils import isolate_apps
-from graphql import GraphQLField, GraphQLObjectType
+from graphql import GraphQLField, GraphQLObjectType, get_named_type, graphql_sync
 
 from django_graphex.converter import build_choices_enum_type, choices_enum_name
+from django_graphex.core import ObjectType, field
 from django_graphex.core.output_compiler import _to_graphql_field
 from django_graphex.filtering.native_schema import _choices_enum
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
-from django_graphex.types import DjangoInputObjectType
+from django_graphex.types import DjangoInputObjectType, DjangoObjectType
 
 
 def _collision_fields() -> tuple[models.Field, models.Field]:
@@ -186,3 +187,66 @@ def test_filter_input_rejects_incompatible_enum() -> None:
     with pytest.raises(ImproperlyConfigured, match="shopOrderLineStatusEnum"):
         _choices_enum(second_field, registry)
     assert _choices_enum(first_field, registry) is first
+
+
+@isolate_apps()
+def test_reordered_compatible_choices_share_public_schema_and_inputs() -> None:
+    """Preserve a public schema when unique enum members only change order.
+
+    Output serialization, generated create inputs and filters must reuse the
+    incumbent enum without changing its presentation order.
+    """
+    first_field, second_field = _collision_fields()
+    second_field.choices = tuple(reversed(first_field.choices))
+    type_registry = Registry()
+    first_model = first_field.model
+    second_model = second_field.model
+
+    class First(DjangoObjectType):
+        class Meta:
+            model = first_model
+            registry = type_registry
+
+    class Second(DjangoObjectType):
+        class Meta:
+            model = second_model
+            registry = type_registry
+
+    class Query(ObjectType):
+        first = field(First, resolver=lambda *_: first_model(line_status="open"))
+        second = field(Second, resolver=lambda *_: second_model(status="closed"))
+
+    schema = DjangoGraphQLSchema(query=Query)
+    result = graphql_sync(schema.graphql_schema, "{first{lineStatus} second{status}}")
+    assert result.errors is None
+    assert result.data == {
+        "first": {"lineStatus": "OPEN"},
+        "second": {"status": "CLOSED"},
+    }
+
+    enum_type = build_choices_enum_type(first_field, type_registry)
+    assert enum_type is not None
+    assert list(enum_type.values) == ["OPEN", "CLOSED"]
+    assert build_choices_enum_type(second_field, type_registry) is enum_type
+    assert _choices_enum(first_field, type_registry) is enum_type
+    assert _choices_enum(second_field, type_registry) is enum_type
+
+    class FirstInput(DjangoInputObjectType):
+        class Meta:
+            model = first_model
+            registry = type_registry
+            input_for = "create"
+
+    class SecondInput(DjangoInputObjectType):
+        class Meta:
+            model = second_model
+            registry = type_registry
+            input_for = "create"
+
+    first_input_enum = get_named_type(
+        FirstInput._meta.graphql_input_type.fields["lineStatus"].type
+    )
+    second_input_enum = get_named_type(
+        SecondInput._meta.graphql_input_type.fields["status"].type
+    )
+    assert first_input_enum is second_input_enum is enum_type
